@@ -1,0 +1,861 @@
+// @module-tag tree-scan
+import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
+import { pyBetween, pyMethod } from '../../design/pySource'
+import { filesUnder, readSource } from '../../test/sourceTree'
+
+// ── A destructive dialog's body is a CLAIM about the backend ────────────────────────────────────
+//
+// #1603 made every danger dialog carry a body; #1608 made every `confirmDelete` name its subject.
+// Neither asked the next question: **is the body TRUE?** Two were checked against the handlers that
+// implement them, and both were materially incomplete — not wrong, just quiet about the part a user
+// cannot see:
+//
+//   tasks/TaskDetail        "Delete this task?" / "This cannot be undone." — the ONLY destructive
+//                           dialog in the app whose subject appears in NEITHER its title nor its body
+//                           (the seven other hand-rolled ones all interpolate theirs), and it omitted
+//                           that deleting a prerequisite UNBLOCKS whatever was waiting on it.
+//   knowledge/KnowledgeDetail  "This removes it from the knowledge base." — which is the one thing a
+//                           user already knows from pressing Delete. It also takes their HIGHLIGHTS
+//                           (the only content on that surface they wrote) and the FILE stored in the
+//                           library.
+//
+// 🔑 SO THIS RAIL READS THE PYTHON. A body that describes behaviour has to fail when the behaviour
+// changes, or it decays into confident fiction. (Three other web tests already read the backend
+// source, so the idiom is the repo's own, not an invention here.)
+
+const SRC = join(process.cwd(), 'src')
+const PY = join(__dirname, '../../../../src/personalclaw')
+const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const web = (rel: string) => strip(readSource(join(SRC, rel)))
+const py = (rel: string) => readSource(join(PY, rel))
+
+describe('the task delete states what the backend really does', () => {
+  it('claims the unblock, and the backend performs it', () => {
+    const ui = web('pages/tasks/TaskDetail.tsx')
+    expect(ui, 'the sentence exists').toMatch(
+      /waiting on it \$\{dependents\.length === 1 \? 'becomes' : 'become'\} unblocked/,
+    )
+    // 🪤 AND THAT THE BODY ACTUALLY USES IT — caught by mutation: deleting the interpolation while
+    // leaving the `unblocks` const in place kept the first assertion green, so the claim existed and
+    // was never rendered. Not the first rail here to check a DEFINITION instead of its
+    // SUPPLY; the composed string is the only thing a user sees.
+    expect(ui, 'and the body interpolates it').toMatch(
+      /body: `This cannot be undone\.\$\{unblocks\}\$\{withComments\}`/,
+    )
+    const impl = py('tasks/native.py')
+    const del = impl.slice(impl.indexOf('async def delete_task'), impl.indexOf('def graph(self)'))
+    expect(del, 'edges pointing at the deleted task are dropped').toMatch(
+      /d\.depends_on_task_id != task_id/,
+    )
+    expect(del, 'and every former dependent is re-evaluated').toMatch(
+      /reconcile\.reconcile_blocked_status\(tasks, t\.id\)/,
+    )
+  })
+
+  it('the count comes from the set the Blocks section shows', () => {
+    // One definition: the sentence can only appear when it is true, and it cannot disagree with the
+    // list right below it.
+    const ui = web('pages/tasks/TaskDetail.tsx')
+    expect(ui).toMatch(/const dependents = allTasks\.filter\(\(t\) => prereqIds\(t\)\.includes\(task\.id\)\)/)
+    expect((ui.match(/allTasks\.filter\(\(t\) => prereqIds/g) ?? []).length, 'computed once').toBe(1)
+  })
+
+  it('names the task — it was the one dialog naming its subject nowhere', () => {
+    const ui = web('pages/tasks/TaskDetail.tsx')
+    expect(ui).toMatch(/title: `Delete "\$\{task\.title\}"\?`/)
+    expect(ui, 'the anonymous form must not come back').not.toMatch(/title: 'Delete this task\?'/)
+  })
+
+  it('claims the comments, because the backend now removes them', () => {
+    // 🔑 THIS ASSERTION USED TO PIN AN ABSENCE, and the absence was a BACKEND DEFECT it existed to
+    // stop the copy from papering over: task comments live in a separate `_comments_<id>.json`, and
+    // `delete_task` unlinked only the task file, so the thread was orphaned on disk and still served
+    // by `GET /api/tasks/<gone-id>/comments`. The rail's own closing note said "when someone DOES fix
+    // it, this test fails — which is the point: it tells them the dialog can now say so." That is what
+    // happened (#554), so the pin flips rather than being deleted: the cleanup must stay, and the
+    // sentence that now describes it must stay true.
+    const impl = py('tasks/native.py')
+    const del = impl.slice(impl.indexOf('async def delete_task'), impl.indexOf('def graph(self)'))
+    expect(del, 'the sidecar is unlinked with the task').toMatch(
+      /self\._comments_path\(task_id\)\.unlink\(missing_ok=True\)/,
+    )
+    const ui = web('pages/tasks/TaskDetail.tsx')
+    // COUNTED from the same derived field the row badge reads, so the claim cannot appear on a task
+    // with no comments — the discipline the highlight sentence below already follows.
+    expect(ui, 'the dialog counts them').toMatch(/const comments = task\.comment_count \?\? 0/)
+    expect(ui, 'and says they go').toMatch(/Its \$\{comments\} comment\$\{comments === 1 \? '' : 's'\}/)
+    // 🪤 AND THAT THE BODY SUPPLIES IT — the same mutation that caught `unblocks` being defined and
+    // never rendered.
+    expect(ui, 'the body interpolates it').toMatch(
+      /body: `This cannot be undone\.\$\{unblocks\}\$\{withComments\}`/,
+    )
+  })
+})
+
+describe('the knowledge delete states what the backend really takes', () => {
+  it('claims the highlights, and the schema cascades them', () => {
+    expect(web('pages/knowledge/KnowledgeDetail.tsx'), 'the dialog counts them').toMatch(
+      /Its \$\{annotations\.length\} highlight/,
+    )
+    const store = py('knowledge/store.py')
+    // 🪤 SCOPED TO THE ANNOTATIONS TABLE. The first draft matched that FK clause anywhere in the file,
+    // and several other tables carry the identical column — so deleting the cascade from `annotations`
+    // left the assertion green on a schema that no longer removes the user's highlights. Take the one
+    // DDL block the claim is about.
+    const ddl = store.slice(store.indexOf('CREATE TABLE IF NOT EXISTS annotations'))
+    const annotations = ddl.slice(0, ddl.indexOf(');'))
+    expect(annotations, 'the annotations DDL must be found').toContain('quote TEXT NOT NULL')
+    expect(annotations, 'and its item_id must cascade').toMatch(
+      /item_id TEXT NOT NULL REFERENCES items\(id\) ON DELETE CASCADE/,
+    )
+    // 🪤 A CASCADE IN THE DDL IS INERT IN SQLITE UNLESS THE PRAGMA IS ON — the claim rests on both.
+    // Scoped to the CONNECTION SETUP, because the file also toggles the pragma off and back on inside
+    // migration blocks: a match anywhere passed while the connect-time enforcement was gone, which is
+    // the state where nothing cascades during normal use. (Third hole of this exact shape in this one
+    // rail — a backend repeats its idioms, so a cross-language pin has to name the block it means.)
+    const connect = store.slice(store.indexOf('self.db = connect_shared('))
+    expect(connect.slice(0, 400), 'the connection itself enables foreign keys')
+      .toMatch(/PRAGMA foreign_keys=ON/)
+  })
+
+  it('claims the stored file, and the handler unlinks it', () => {
+    expect(web('pages/knowledge/KnowledgeDetail.tsx')).toMatch(
+      /The file stored in your library is deleted too\./,
+    )
+    const h = py('dashboard/handlers/knowledge.py')
+    const del = h.slice(h.indexOf('async def delete_item'), h.indexOf('async def delete_item_annotation'))
+    expect(del, 'the tracked paths').toMatch(/victims = \[item\.get\("file_path"\), item\.get\("thumbnail_path"\)\]/)
+    expect(del, 'and the derived media artifacts').toMatch(/files_root\.glob\(f"\{item_id\}\.\*"\)/)
+    // Why the copy says "in your library" rather than "the file": the unlink is fenced to that dir, so
+    // an indexed file living elsewhere is NOT removed and the sentence must stay true either way.
+    expect(del, 'fenced to the library files dir').toMatch(/files_root = Path\(knowledge_files_dir\(\)\)\.resolve\(\)/)
+  })
+
+  it('both clauses are conditional — no claim about what this item does not have', () => {
+    const ui = web('pages/knowledge/KnowledgeDetail.tsx')
+    expect(ui, 'highlights clause gated on there being some').toMatch(/annotations\.length > 0\s*\n?\s*\?/)
+    expect(ui, 'file clause gated on there being a file').toMatch(/item\.file_path \?/)
+    // Same supply check as the task dialog: two composed clauses that the body never interpolates are
+    // two sentences nobody reads.
+    expect(ui, 'and the body composes both').toMatch(
+      /body: `This removes it from the knowledge base\.\$\{highlights\}\$\{stored\}`/,
+    )
+  })
+})
+
+describe('no destructive dialog names its subject NOWHERE', () => {
+  const FIXED_SUBJECT_DIALOGS = [
+    {
+      file: 'pages/settings/AccountPanel.tsx',
+      title: "'Turn off password sign-in?'",
+    },
+    {
+      file: 'pages/settings/AccountPanel.tsx',
+      title: "'Turn off the 2FA requirement?'",
+    },
+    {
+      file: 'pages/settings/SecurityPanel.tsx',
+      title: "'Allow egress to all private networks?'",
+    },
+    {
+      // One key signs every sign-in to the gateway: the key is the subject, not one of a list.
+      file: 'pages/settings/SecurityPanel.tsx',
+      title: "'Replace the sign-in key?'",
+    },
+  ]
+
+  // Components, and the `use*.ts` controller hooks a page's handlers live in (the chat's regions are
+  // these), so a dialog does not leave the census by moving into one.
+  const walk = (d: string): string[] =>
+    filesUnder(d, (n) => (/\.tsx$/.test(n) || /^use[A-Z]\w*\.ts$/.test(n)) && !/\.test\.tsx?$/.test(n))
+
+  /** The balanced `{…}` object literal starting at `i`. */
+  function objectAt(src: string, i: number): string {
+    let depth = 0
+    for (let j = i; j < Math.min(src.length, i + 1600); j++) {
+      if (src[j] === '{') depth++
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i, j + 1) }
+    }
+    return src.slice(i, i + 1600)
+  }
+
+  it('every hand-rolled danger dialog identifies what it is about', () => {
+    // 🪤 #1608's ratchet was keyed on `confirmDelete(` callers, so a HAND-ROLLED `confirm({danger:true})`
+    // was outside its population entirely — which is how the task delete kept asking about "this task"
+    // for five more passes. Keyed here on the danger dialogs themselves.
+    //
+    // The bar is "title OR body identifies it", not "the title interpolates": seven of the eight
+    // subject-less TITLES name their subject in the BODY instead (`"${s.title}" and its history will be
+    // permanently removed.`), which is just as clear to a reader and must not be reported.
+    // 🪤 AND THE RULE IS "A DIALOG OPENED FROM A LIST", which the first draft missed by reporting
+    // three surfaces that each have exactly ONE subject: a project cockpit, a file viewer, a run
+    // detail. (The cockpit's one, its Stop, left for `pages/loop/stopLoop.ts` when the Code list, a
+    // project's Work board and the planning walkthrough took a Stop too: from a list it names the
+    // loop, so it needs no exemption and the cockpit is back in the census.) There "this run" / "this file" is the page you are on, named in its own header, and the
+    // bodies are already the best in the app ("Work already written to the workspace is kept. Pause
+    // instead…"). Interpolating a name there would add nothing.
+    //
+    // Their exemption rests on surface CARDINALITY, which no regex can verify — so the honest guard is
+    // this fixed list plus the assertion below that each still holds exactly one such dialog. A second
+    // one appearing in any of them changes the count and fails, which is when the judgement needs
+    // re-making by a person.
+    //
+    // Fixed settings controls are different from list rows: "password sign-in", "the 2FA
+    // requirement", "all private networks" and "the sign-in key" are the subjects themselves, not
+    // placeholders for one item selected from a collection. Keep their exact literal titles in a
+    // counted inventory instead of requiring fake interpolation merely to satisfy this source scan.
+    // `ToggleRow` is a typed forwarding boundary; its callers supply the required title/body, and
+    // the dedicated confirmWeakeningToggles suite verifies the two consumers introduced with that
+    // boundary.
+    // (The file viewer was the third: its one dialog was "File changed on disk — overwrite?", which
+    // left when the gateway began refusing a stale save instead (`lib/staleWrite.ts`). With no
+    // dialog it needs no exemption, so it is back in the census like any other file.)
+    const SINGLE_SUBJECT_SURFACES = [
+      'pages/workflows/WorkflowRunDetail.tsx',  // one run
+    ]
+    const anonymous: string[] = []
+    const fixedSubjectsSeen = new Set<string>()
+    let typedForwardersSeen = 0
+    for (const abs of walk(SRC)) {
+      const rel = abs.replace(SRC + '/', '')
+      if (SINGLE_SUBJECT_SURFACES.includes(rel)) continue
+      const src = strip(readSource(abs))
+      for (const m of src.matchAll(/confirm\(\s*\{/g)) {
+        const obj = objectAt(src, src.indexOf('{', m.index!))
+        if (!/danger:\s*true/.test(obj)) continue
+        const titleAndBody = (obj.match(/title:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
+          + (obj.match(/body:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
+        if (!titleAndBody.includes('${')) {
+          const fixed = FIXED_SUBJECT_DIALOGS.find(
+            (dialog) => dialog.file === rel && obj.includes(`title: ${dialog.title}`),
+          )
+          if (fixed) {
+            fixedSubjectsSeen.add(`${fixed.file}:${fixed.title}`)
+            continue
+          }
+          if (
+            rel === 'pages/settings/settingsUI.tsx'
+            && /title:\s*confirmOn\.title/.test(obj)
+            && /body:\s*confirmOn\.body/.test(obj)
+          ) {
+            typedForwardersSeen++
+            continue
+          }
+          anonymous.push(`${rel}: ${(obj.match(/title: ([^\n]*)/)?.[1] ?? '?').slice(0, 46)}`)
+        }
+      }
+    }
+    expect(anonymous, 'a dialog that identifies its subject in neither title nor body').toEqual([])
+    expect(
+      [...fixedSubjectsSeen].sort(),
+      'the fixed-setting exemption must stay exact and non-vacuous',
+    ).toEqual(FIXED_SUBJECT_DIALOGS.map((dialog) => `${dialog.file}:${dialog.title}`).sort())
+    expect(typedForwardersSeen, 'ToggleRow must forward one required title/body pair').toBe(1)
+  })
+
+  it('each single-subject surface still holds exactly one such dialog', () => {
+    // The vacuity floor for the exemption above: if one of these grows a second anonymous danger
+    // dialog, its "the subject is the page" reason no longer covers both.
+    const counts: Record<string, number> = {}
+    for (const rel of ['pages/workflows/WorkflowRunDetail.tsx']) {
+      const src = strip(readSource(join(SRC, rel)))
+      let n = 0
+      for (const m of src.matchAll(/confirm\(\s*\{/g)) {
+        const obj = objectAt(src, src.indexOf('{', m.index!))
+        if (!/danger:\s*true/.test(obj)) continue
+        const titleAndBody = (obj.match(/title:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
+          + (obj.match(/body:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
+        if (!titleAndBody.includes('${')) n++
+      }
+      counts[rel] = n
+    }
+    expect(counts).toEqual({
+      'pages/workflows/WorkflowRunDetail.tsx': 1,
+    })
+  })
+})
+
+describe('two more bodies: one corrected, one confirmed', () => {
+  it('the bulk dismiss says what survives, and this page is what keeps them', () => {
+    // 🪤 The irreversibility half was already true (restore 409s on anything not FILTERED, and nothing
+    // un-dismisses). What was missing is that dismissal is not deletion: this page's own `handled` filter
+    // includes dismissed items, so they stay readable one tab away. Both halves are now asserted TOGETHER,
+    // because the copy is only honest as a pair.
+    const ui = web('pages/inbox/InboxPage.tsx')
+    expect(ui, 'the whole sentence').toContain(
+      'There is no undo — but they stay readable under ${SETTLED_FILTER_LABEL}.',
+    )
+    // …naming that filter by the label the page shows for it: the sentence said "Handled" beside
+    // a filter labelled "Done".
+    expect(ui, 'by the name the page gives the filter').toMatch(
+      /const SETTLED_FILTER_LABEL = FILTERS\.find\(\(f\) => f\.key === 'handled'\)!\.label/,
+    )
+    // The Done filter reads the one settled set, which the detail panel's settled state reads too.
+    expect(ui, "and the filter that makes the second half true").toMatch(
+      /filter === 'handled' \? isSettled\(it\.status\)/,
+    )
+    expect(web('pages/inbox/inboxMeta.ts'), 'whose set holds the dismissed').toMatch(
+      /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed', 'expired'\]/,
+    )
+    // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
+    // which deletes its record — so for those rows "they stay readable under Done" is not the
+    // whole story, and the copy owes the user the part Done does not keep.
+    expect(ui, 'the proposal half').toContain(
+      'Skill proposals are also rejected, which removes them from the Skills queue.',
+    )
+    const h = py('dashboard/handlers_inbox.py')
+    expect(h, 'and the server is what makes that sentence true').toMatch(
+      /def _dismiss\([\s\S]{0,3000}skill_proposals\.reject\(pid\)/,
+    )
+  })
+
+  it('the no-undo half is still true — restore refuses a dismissed item', () => {
+    const h = py('dashboard/handlers_inbox.py')
+    const restore = h.slice(h.indexOf('async def api_inbox_restore'))
+    expect(restore.slice(0, 1400), 'only a FILTERED item can be restored').toMatch(
+      /if item\.status != ItemStatus\.FILTERED\.value:[\s\S]{0,120}status=409/,
+    )
+    // If an un-dismiss path ever appears, the copy owes the user that instead — this fails first.
+    expect(web('pages/inbox/InboxDetail.tsx'), 'the only Restore control is for the filtered case')
+      .toMatch(/A second-opinion check flagged this claim/)
+  })
+
+  it('the chat delete really does take the history it promises', () => {
+    // The delete dialog moved with the chat history page's controller.
+    expect(web('pages/chat/history/useChatHistory.ts')).toContain('and its history will be permanently removed')
+    const h = py('dashboard/chat_handlers.py')
+    const del = h.slice(h.indexOf('async def api_chat_session_delete'))
+    // The handler hands the delete to the one way a chat is deleted, so the claim is verified in
+    // the caller AND in what it calls.
+    expect(del.slice(0, 3000), 'the handler deletes through the one path').toMatch(
+      /await delete_chats\(state, \[name\], by=by\)/,
+    )
+    const forget = py('dashboard/chat_forget.py')
+    const one = forget.slice(forget.indexOf('async def delete_chats('), forget.indexOf('def forget_what_memory_drew_from('))
+    expect(one, 'which purges what the chat persisted').toMatch(
+      /purge_chat\(state, history_key, keys=spelled, attachments=files\)/,
+    )
+    const purge = forget.slice(forget.indexOf('def purge_chat('))
+    expect(purge.slice(0, 3000), 'the on-disk artifacts are purged').toMatch(
+      /conversation_log\.delete_session\(history_key\)/,
+    )
+    // 🪤 And the reason the claim is worth pinning rather than assuming: the handler had to grow a
+    // disk-purge fallback because "Delete" used to 404 for a non-resident session, leaving its JSONL on
+    // disk and letting the chat RESURRECT on reopen — the exact opposite of what this sentence promises.
+    expect(del.slice(0, 3000)).toMatch(/letting it resurrect on reopen/)
+  })
+
+  it('the chat delete takes what memory drew from it alone, and keeps what came from elsewhere too', () => {
+    // 🪤 The sentence this replaced promised the history was gone while every episode, fact and
+    // summary memory drew from the chat stayed and was recalled into other chats. Both halves of the
+    // new one are claims about the store's provenance rule, so both are read back from the Python.
+    const ui = web('pages/chat/history/useChatHistory.ts')
+    expect(ui, 'what goes').toContain(
+      'and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it.',
+    )
+    expect(ui, 'what stays').toContain(
+      'What also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, as do the files, Knowledge, artifacts and skills you kept.',
+    )
+    const forget = py('dashboard/chat_forget.py')
+    const one = forget.slice(forget.indexOf('async def delete_chats('), forget.indexOf('def forget_what_memory_drew_from('))
+    expect(one, 'the delete forgets what memory filed under the chat').toMatch(
+      /forget_what_memory_drew_from\(state, keys\)/,
+    )
+    const writes = py('memory_writes.py')
+    const core = writes.slice(writes.indexOf('def forget_what_sessions_left('))
+    expect(core.slice(0, 2400), 'from the records, the daily history and the digests').toMatch(
+      /purge_records_from\(keeps_nothing, written_by=written_by\)[\s\S]*forget_history_entries[\s\S]*rebuild_daily_digests/,
+    )
+    const store = py('vector_memory.py')
+    const rule = store.slice(store.indexOf('def purge_records_from('), store.indexOf('def _values_in_history('))
+    // A stamped session is the whole answer: SHARED (filed under no one session) is never one that
+    // keeps nothing, so a record another chat or the owner also stands behind stays.
+    expect(rule, 'the stamp decides').toMatch(
+      /return gone\(session\) if session is not None else any\(gone\(key\) for key in named\)/,
+    )
+    // "a fact you edited in Memory": a live row other work writes again is filed under no one.
+    expect(store, 'a rewrite by other work shares the row').toMatch(
+      /source_session = CASE WHEN semantic_memory\.is_deleted = 1 OR semantic_memory\.source_session IS excluded\.source_session THEN excluded\.source_session ELSE \? END/,
+    )
+    // "a lesson you taught in another chat too": a lesson said again is a sighting that shares it.
+    expect(store, 'a lesson said again shares the row').toMatch(
+      /self\._observe_lesson\(says_it, source\)\s*\n\s*self\._confirmed\("semantic_memory", "key", says_it\)/,
+    )
+  })
+})
+
+describe('the project delete, and the two workflow bodies', () => {
+  // 🔴 THIS RAIL WAS THE REASON THE FALSE COPY SHIPPED, AND IT IS THE MOST INSTRUCTIVE FAILURE IN THIS
+  // FILE. Its previous form asserted `'task lists are removed — the tasks themselves stay'` and titled
+  // itself *"which is the way round the code works"* — then verified that against
+  // `tasks/hierarchy.py::delete_project`, **the callee**. Against that function every assertion was
+  // TRUE: it does unlink each list file, and its docstring does say "the task provider owns task
+  // deletion". So the rail was green, confident, and wrong about the operation.
+  //
+  // What it never read is the CALLER. `tasks/hierarchy_handlers.py::api_projects_delete` cascades
+  // before it delegates — `list_all_tasks(project=…, limit=10_000)` → `delete_task(t.id)` →
+  // `native.py`'s `path.unlink()` — added by #457 because orphaned rows pointing at dead list ids were
+  // "unreachable from every scoped view". So the tasks are hard-deleted, and this file, whose entire
+  // premise is that destructive copy is VERIFIED against the code, was the thing certifying the
+  // opposite.
+  //
+  // 🔑 THE GENERAL LESSON, and why the change below is a RE-POINT and not a relaxation: **a blast-radius
+  // rail must verify against the handler the button actually invokes, never against a function that
+  // handler calls.** A callee's contract is a true statement about a smaller thing. The assertions now
+  // read the caller; the old callee facts are KEPT, because they are still true and still worth pinning,
+  // just no longer mistaken for the whole story.
+  it('names the TASK deletion the handler performs — verified against the caller, not the callee', () => {
+    const ui = web('pages/projects/ProjectsSection.tsx')
+    // The copy must state the loss and its permanence.
+    expect(ui, 'the task loss is named').toMatch(/Every task in this project is permanently deleted/)
+    // 🪤 Both wrong forms are pinned out. "task lists detached" was the ORIGINAL defect (it implied the
+    // lists survive unattached); "the tasks themselves stay" was the fix that replaced it and asserted
+    // safety instead. Neither may return.
+    expect(ui, 'the original misleading word must not come back').not.toContain('task lists detached')
+    expect(ui, 'and neither may the false reassurance that replaced it')
+      .not.toContain('the tasks themselves stay')
+
+    // The CALLER — the operation the button runs. This is the assertion that was missing.
+    const handler = py('tasks/hierarchy_handlers.py')
+    const del = handler.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(del, 'found the delete handler').not.toBe('')
+    // `collect_tasks`, not `list_all_tasks(..., limit=10_000)`: the copy promises EVERY task in the
+    // project, and the old call was a 10,000-row window wearing a number that looked like a promise
+    // (#485). A window here would under-delete silently while the dialog claimed completeness.
+    expect(del, 'it resolves every task in the project').toMatch(/collect_tasks\(project=/)
+    expect(del, 'and not through a windowed read').not.toMatch(/list_all_tasks\(/)
+    // The deletion loop is now shared with the task-list door as `_cascade_delete_tasks`, so the
+    // caller-not-callee rule above is satisfied by pinning the HANDOFF as well as the loop: the
+    // handler passes every doomed task in this project, and the helper deletes each id. One hop, both
+    // ends nailed down, which is what keeps this from sliding back into certifying a callee.
+    expect(del, 'and hands every one of them to the shared cascade')
+      .toMatch(/_cascade_delete_tasks\(\[t\.id for t in doomed\]\)/)
+    const cascade = handler.match(/async def _cascade_delete_tasks[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(cascade, 'found the shared cascade').not.toBe('')
+    expect(cascade, 'which deletes each task').toMatch(/delete_task\(tid\)/)
+
+    // The callee facts, kept: still true, and the list-unlink half of the copy still rests on them.
+    const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
+    expect(h, 'list files are unlinked, not detached').toMatch(
+      /self\._list_path\(tl\.id\)\.unlink\(missing_ok=True\)/,
+    )
+    expect(h, 'and this FUNCTION genuinely does leave task rows to the provider').toMatch(
+      /the task provider owns task deletion/,
+    )
+  })
+
+  it('the force re-confirm names it too — the same cascade runs on that path', () => {
+    // It was incomplete rather than wrong, which is why it passed every earlier review: a careful,
+    // accurate enumeration of loops/workers/worktrees/branches/chats that simply never said "tasks",
+    // so its "can't be undone" read as being about the loops.
+    const ui = web('pages/projects/ProjectsSection.tsx')
+    const force = ui.match(/title: 'Project still has active work'[\s\S]*?body: `([^`]*)`/)?.[1] ?? ''
+    expect(force, 'found the force dialog').not.toBe('')
+    expect(force, 'the task loss is named on the force path too').toMatch(/task/i)
+    expect(force, 'and its existing enumeration survives').toMatch(/bound loops/i)
+  })
+
+  it('the workspace-untouched half holds for the dialog that says it', () => {
+    // The rmtree DOES take the project's own `worktrees/` — but those exist only for bound loops/code
+    // work, and that case is refused without ?force and gets its own dialog. So this sentence is true
+    // wherever it is shown. Both halves pinned, because the guard is what makes the copy safe.
+    const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
+    expect(h, 'the project dir goes wholesale').toMatch(/shutil\.rmtree\(self\._project_dir\(project_id\)/)
+    const handler = py('tasks/hierarchy_handlers.py')
+    expect(handler, 'bound work is refused without force').toMatch(
+      /rmtree its worktrees out\s*\n?\s*#?\s*from under git/,
+    )
+    expect(web('pages/projects/ProjectsSection.tsx'), 'and the force path has its own warning')
+      .toMatch(/STOPS and REMOVES any bound loops/)
+  })
+
+  it('a workflow run really does keep its own spec copy', () => {
+    expect(web('pages/workflows/WorkflowsListPage.tsx')).toContain(
+      'Existing runs keep their own copy of the spec and are unaffected.',
+    )
+    expect(py('workflows/service.py'), 'the run persists its own spec at start')
+      .toMatch(/store\.write_spec\(run\.id, spec\)/)
+  })
+
+  it('cancel stops the run without deleting what finished', () => {
+    expect(web('pages/workflows/WorkflowRunDetail.tsx')).toContain('In-flight steps are stopped. Completed work is kept.')
+    const cancel = py('workflows/service.py').slice(
+      py('workflows/service.py').indexOf('def cancel_run('),
+      py('workflows/service.py').indexOf('async def delete_run('),
+    )
+    // The distinction the copy rests on: cancel requests a terminal status; DELETING a run is a separate,
+    // explicit call. If cancel ever started removing rows, "Completed work is kept" would be false.
+    expect(cancel, 'cancel does not delete').not.toMatch(/delete|rmtree|unlink/)
+    expect(py('workflows/service.py'), 'deletion is its own deliberate operation')
+      .toMatch(/async def delete_run\(/)
+  })
+})
+
+describe('four more bodies, all already true — pinned so they stay that way', () => {
+  it('the tag delete really re-parents children instead of deleting the branch', () => {
+    // 🔑 THE FRAGILE ONE. This body promises "Its N nested tags become top-level rather than being
+    // deleted", and nothing in `delete_tag` re-parents anything — the promise rests entirely on
+    // `ON DELETE SET NULL` on the tags self-FK, which SQLite honours only with the pragma on. Same
+    // two-part dependency as the annotations cascade, so both parts are pinned: lose either and a
+    // parent delete silently destroys the branch beneath it while the dialog says it will not.
+    const ui = web('pages/knowledge/TagManager.tsx')
+    expect(ui).toContain('become top-level rather than being deleted')
+    const store = py('knowledge/store.py')
+    const ddl = store.slice(store.indexOf('CREATE TABLE IF NOT EXISTS tags'))
+    expect(ddl.slice(0, ddl.indexOf(');')), 'the self-FK sets null').toMatch(
+      /parent_id INTEGER REFERENCES tags\(id\) ON DELETE SET NULL/,
+    )
+    const connect = store.slice(store.indexOf('self.db = connect_shared('))
+    expect(connect.slice(0, 400), 'and the connection enforces foreign keys').toMatch(/PRAGMA foreign_keys=ON/)
+    // And the untag half of the same sentence.
+    expect(ui).toMatch(/This removes the tag from \$\{t\.usage_count\} item/)
+    expect(pyMethod(store, '    def delete_tag'), 'the docstring states the same contract')
+      .toMatch(/Children are re-parented to root rather than deleted/)
+  })
+
+  it('the shelf delete leaves the items alone', () => {
+    expect(web('pages/knowledge/KnowledgeListPage.tsx')).toContain(
+      'The shelf goes away. The items on it stay in your library.',
+    )
+    const del = pyMethod(py('knowledge/store.py'), '    def delete_collection')
+    expect(del, 'membership rows and the collection row go').toMatch(/DELETE FROM collection_items/)
+    expect(del, 'and the items table is never touched').not.toMatch(/DELETE FROM items/)
+  })
+
+  it('the skill delete really removes the directory', () => {
+    expect(web('pages/skills/SkillInspector.tsx')).toContain('This removes it from disk. This cannot be undone.')
+    expect(pyMethod(py('skills/loader.py'), '    def delete_skill'), 'rmtree, not a registry flag')
+      .toMatch(/shutil\.rmtree\(skill_dir\)/)
+  })
+})
+
+describe('the stop-project dialog, and the file delete', () => {
+  it('says a running task keeps its unmerged work — the half that used to cost work', () => {
+    // 🔴 Stop is TERMINAL. Its teardown used to force-remove every task worktree, so a task still
+    // at work lost its edits, approved ones included, and the dialog had to warn of it. Every ending
+    // now keeps work nobody merged and the project's page lists it to merge or discard.
+    // Said once for every Stop control (the cockpit's, the Code list's, the Work board's).
+    const ui = web('pages/loop/stopLoop.ts')
+    expect(ui).toContain("a task's work that isn't merged yet is kept on its own branch")
+    // …a running task's and, on an Attended loop, finished work still waiting for her merge.
+    expect(ui, 'both kinds of unmerged work').toContain('a task still running and finished work waiting for you to merge it alike')
+    expect(ui, 'and where it can be acted on').toContain('lists it for you to review and merge or discard')
+    expect(ui, 'and how merged work got there').toContain('already merged into your workspace stays there')
+    // The mechanism, both halves. The sweep removes only a worktree holding nothing unmerged…
+    const sweep = pyMethod(py('loop/worktree.py'), 'def sweep_finished')
+    expect(sweep, 'unmerged work is kept').toMatch(/if work\.unmerged:\n\s+kept\.append\(work\)/)
+    expect(sweep, 'and only the rest removed').toMatch(/remove_worktree\(workspace, work\.task_id/)
+    // …and the reason the "merged" half is true: a FINISHED task is merged back first.
+    expect(py('loop/kinds/sdlc.py'), 'a finished task merges into the workspace')
+      .toMatch(/worktree\.merge_worktree\(ws, tid/)
+  })
+
+  it('stop really is terminal, and ends its run the way every ending does', () => {
+    const stop = pyMethod(py('loop/manager.py'), 'async def stop')
+    expect(stop, 'a terminal status, then the one ending').toMatch(/LoopStatus\.STOPPED[\s\S]{0,200}await end_run\(state, svc, loop_id\)/)
+    const settle = pyMethod(py('loop/manager.py'), 'async def _settle_worktrees')
+    expect(settle, 'whose worktree half sweeps, not discards')
+      .toMatch(/kept = await asyncio\.to_thread\(worktree\.sweep_finished, ws, ids, project\)/)
+    expect(settle, 'and only a delete discards').toMatch(/if discard:\n\s+await asyncio\.to_thread\(worktree\.discard/)
+  })
+
+  it('the folder delete really recurses', () => {
+    const ui = web('pages/files/FilesSection.tsx')
+    expect(ui).toContain('This deletes the folder and all its contents. This cannot be undone.')
+    // Conditional on `is_dir`, so a file does not get the folder sentence.
+    expect(ui).toMatch(/entry\.is_dir \? 'This deletes the folder and all its contents/)
+    const h = py('dashboard/handlers/files.py')
+    const del = h.slice(h.indexOf('async def api_file_delete'))
+    expect(del.slice(0, 2200), 'a directory is rmtree-d').toMatch(/shutil\.rmtree\(path\)/)
+    expect(del.slice(0, 2200), 'and a root is refused').toMatch(/refusing to delete a root directory/)
+  })
+})
+
+describe('the conflict-resolve body, per choice', () => {
+  const ui = () => web('pages/settings/DurabilityPanel.tsx')
+  /** The question's body for the two choices that write: bounded by what ends it, not by a guess. */
+  const writingBody = () => pyBetween(ui(), "body: choice === 'keep_local'", "confirmLabel: 'Write it'")
+
+  it('promises reversibility ONLY for the choice that earns it', () => {
+    // 🔴 It said "The version you don't pick stays in the shared store" for all three choices. Only
+    // `keep_local` discards the REMOTE row — the one the shared store actually holds. The other two
+    // discard THIS machine's edit, which no store keeps.
+    expect(ui()).toMatch(/choice === 'keep_local'/)
+    expect(ui(), 'the reversible branch names the other side').toContain(
+      "The other machine's version stays in the shared store, so you can still decide differently from that side.",
+    )
+    expect(writingBody(), 'and the destructive branch says what is gone').toContain(
+      "in place of this machine's edit, which is not kept anywhere else — only a snapshot has it.",
+    )
+    expect(ui(), 'the unconditional promise must not come back').not.toContain(
+      "The version you don't pick stays in the shared store",
+    )
+  })
+
+  it('the backend pushes nothing, which is what makes the keep_local half true', () => {
+    const mod = py('durability/conflict_resolve.py')
+    expect(mod, 'resolving is a LOCAL write').toMatch(/Nothing is pushed from here/)
+    // …and the detector re-holds the id, so the other side really can still decide.
+    // 🪤 Bounded by the NEXT bullet, not by a character count — the span is longer than the 400 I first
+    // guessed, which is the same mistake `pySource`'s own docstring exists to prevent.
+    const keepLocal = pyBetween(mod, '``keep_local``', '``take_remote``')
+    expect(keepLocal, 'the keep_local bullet must be found').toMatch(/three shas are unchanged/)
+    expect(keepLocal, 'the divergence is detected and held again').toMatch(/HOLDS the\s+id again/)
+  })
+
+  it('take_remote and accept_proposal converge the two machines on what they compare', () => {
+    const mod = py('durability/conflict_resolve.py')
+    expect(pyBetween(mod, '``take_remote``', '``accept_proposal``'), 'take_remote converges onto the remote sha')
+      .toMatch(/local becomes the remote sha, as two homes compare a row/)
+    expect(pyBetween(mod, '``accept_proposal``', '**The other machine'), 'accept_proposal writes a third sha')
+      .toMatch(/local becomes a THIRD sha/)
+  })
+
+  it('take_remote and accept_proposal write the other machine\'s edit, and this machine keeps its own part', () => {
+    // 🔴 The body said the other version is written "replacing this machine's copy". The write takes
+    // it in the way a sync takes an edit only the other machine made: what the two machines compare
+    // becomes the other machine's, and what is this machine's own stays — an automation's switch,
+    // what happened to it here, the grant where it still runs the same. So each link of that rule is
+    // read where it is implemented, and the body is checked for the sentence that is true of it.
+    const write = pyMethod(py('durability/conflict_resolve.py'), 'def resolve_conflict')
+    expect(write, 'the resolve writes through the take-in, and nothing else').toContain(
+      'reconcile.take_in(entry, dest, rec.entity_id, row)',
+    )
+    expect(write, 'there is no whole-row writer of its own left beside it').not.toMatch(/writeback\.apply_rows\(/)
+
+    const reconcile = py('durability/reconcile.py')
+    const takeIn = pyMethod(reconcile, 'def take_in')
+    expect(takeIn, 'a row this home has takes the other machine\'s version in as an edit').toMatch(
+      /return _edited_there\(entry, here, there\), True/,
+    )
+    expect(takeIn, 'a row this home no longer has comes in by the store\'s arrival rule').toMatch(
+      /entry\.arrives\(there\)/,
+    )
+    const edited = pyMethod(reconcile, 'def _edited_there')
+    expect(edited, 'the edit is taken over what the two homes compare').toContain(
+      'forward(here, there, compared=entry.compared)',
+    )
+    expect(edited, 'and then by the store\'s own rule for what follows from it').toContain(
+      'entry.edit_arrives(here, edited)',
+    )
+    const forward = pyMethod(py('durability/merge.py'), 'def forward')
+    expect(forward, 'the result starts from THIS home\'s row').toMatch(/out = dict\(local\)/)
+    expect(forward, 'and only the compared keys become the peer\'s').toMatch(
+      /every other key stays as\s+this home has it/,
+    )
+
+    // The automation store is one of those whose rows hold a part that is one machine's: the switch
+    // and what happened to it are not what two homes compare, so the take-in leaves them here.
+    const triggers = pyBetween(py('durability/inventory.py'), 'id="triggers"', 'id="crons"')
+    expect(triggers, 'the automation store compares what a person made').toContain('compared=_trigger_compared')
+    expect(triggers, 'and has a rule for an edit that arrives').toContain('edit_arrives=_trigger_edit_arrives')
+    const store = py('triggers/store.py')
+    expect(pyMethod(store, 'def what_it_is'), 'what two homes compare leaves the runtime fields out')
+      .toMatch(/name not in RUNTIME_FIELDS/)
+    const runtime = pyBetween(store, 'RUNTIME_FIELDS: tuple[str, ...] = (', '\n)')
+    expect(runtime, 'and they are the switch and what happened to it').toContain('"enabled"')
+    expect(runtime).toContain('"run_count"')
+
+    const body = writingBody()
+    expect(body, 'the body names the edit it writes over').toMatch(/in place of this machine's edit/)
+    expect(body, 'and says, per store, what this machine keeps').toMatch(/\$\{c\.arrival \? ` \$\{c\.arrival\}` : ''\}/)
+    expect(body, 'the whole-row claim must not come back').not.toMatch(/replacing this machine's copy/)
+  })
+
+  it('a resolved record is never silently re-applied — the other half of "decide again"', () => {
+    // The copy says you decide again from the OTHER SIDE, not by re-resolving here, and the backend
+    // enforces exactly that.
+    expect(py('durability/conflict_resolve.py')).toMatch(
+      /``already_resolved``\s*the record was reviewed already \(never re-applied silently\)/,
+    )
+  })
+})
+
+describe('the last three bodies, and what this sweep does NOT claim', () => {
+  it('the intent delete really takes what it gathered', () => {
+    const ui = web('pages/knowledge/KnowledgeListPage.tsx')
+    expect(ui).toContain('Everything it gathered goes with it')
+    expect(ui, 'and the no-outcomes branch says only the intent goes').toContain(
+      'It has gathered nothing yet, so only the intent itself goes.',
+    )
+    // The handler drops the outcomes BEFORE the intent, which is what makes the sentence true.
+    const h = py('dashboard/handlers/knowledge.py')
+    const del = h.slice(h.indexOf('async def delete_intent('), h.indexOf('async def list_intent_outcomes'))
+    expect(del, 'outcomes are deleted with it').toMatch(/delete_intent_outcomes\(intent_id\)/)
+  })
+
+  it('the theme delete really falls back to the default when the theme was active', () => {
+    const ui = web('pages/settings/DesignPanel.tsx')
+    expect(ui).toContain('You are using this theme, so the app goes back to its default colors.')
+    expect(ui, 'and the inactive branch says what a theme IS').toContain('a saved theme is a file, not a snapshot')
+    // The mechanism for the active branch — without this the app would point at a scheme that is gone.
+    const app = web('app/appearance.tsx')
+    expect(app, 'the active scheme reverts to the default').toMatch(
+      /p\.scheme === id\s*\n?\s*\? \{ \.\.\.p, scheme: DEFAULT_SCHEME/,
+    )
+    expect(app, 'and the theme itself is a deleted file').toMatch(/await api\.deleteTheme\(slug\)/)
+  })
+
+  it('records the two bodies this sweep deliberately did NOT decide', () => {
+    // 🪤 AN HONEST BOUNDARY, asserted so it is not mistaken for coverage. Both of these delete something
+    // real and carry only the helper's default ("This cannot be undone."), and in both cases I could not
+    // state a further consequence WITHOUT guessing:
+    //
+    //   MultiInstanceCard  deleting one provider instance unlinks its JSON and nothing else. Whether a
+    //                      use case pointed at its models loses that selection depends on how instance
+    //                      refs are named: `_prune_removed_providers` drops refs by PROVIDER NAME, so a
+    //                      surviving sibling instance keeps the name known and the ref lingers instead.
+    //                      Either outcome deserves copy — but which one it is needs tracing that ref
+    //                      format end to end, not a plausible sentence.
+    //   LocalModelManager  says nothing about disk — and it is now the Ollama card too (the separate
+    //                      Ollama manager that said "This frees disk on the Ollama host" was unreachable
+    //                      and is gone). The delete delegates through `local_models.registry` to a
+    //                      runtime manager that lives outside core, so the disk claim is not core's to
+    //                      make until that manager is read.
+    //
+    // Asserting the CURRENT state means a later pass finds this note rather than re-deriving it, and a
+    // change to either body trips a test that points at the open question.
+    expect(web('pages/settings/MultiInstanceCard.tsx'), 'still the default body')
+      .toMatch(/confirmDelete\('instance', inst\.display_name \|\| inst\.id\)/)
+    expect(web('pages/settings/LocalModelManager.tsx'), 'still the default body')
+      .toMatch(/confirmDelete\('model', name\)/)
+    // And the reason the instance question is open, pinned to the code that makes it open.
+    expect(py('providers/use_cases.py'), 'pruning keys on the provider NAME, not the instance')
+      .toMatch(/str\(r\)\.split\(":", 1\)\[0\] in known/)
+  })
+})
+
+describe('three more bodies, checked against their handlers', () => {
+  it('the provider delete states the selections it drops, and the handler drops them', () => {
+    const ui = web('pages/settings/ModelBackends.tsx')
+    expect(ui, 'the clause exists').toContain('Any use case set to one of its models loses that selection.')
+    expect(ui, 'and the body composes it').toMatch(
+      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}\$\{referenced\}`/,
+    )
+    const h = py('dashboard/handlers/providers.py')
+    const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
+    expect(del, 'the handler drops the active-model refs').toMatch(/_drop_provider_active_models\(name\)/)
+    // …and drops them for EVERY use case, which is why the copy does not name one.
+    const dropper = h.slice(h.indexOf('def _drop_provider_active_models'))
+    expect(dropper.slice(0, 700), 'across every use case').toMatch(/for use_case, refs in list\(active\.items\(\)\)/)
+  })
+
+  it('the credential clause is conditional AND true — the handler deletes the key it names', () => {
+    const ui = web('pages/settings/ModelBackends.tsx')
+    expect(ui, 'gated on a key actually being stored').toMatch(
+      /const saved = provider\.stored_secrets\?\.length \?\? 0/,
+    )
+    expect(ui).toContain(' The key saved for it is deleted too.')
+    // …and the other half: a Settings → Secrets credential the instance only REFERENCES is not
+    // purged, so the dialog says it stays — gated on the flag that reads exactly that reference.
+    expect(ui, 'the referenced credential stays, and says so').toMatch(
+      /provider\.key_in_store \? ' The credential it uses from Settings → Secrets stays saved\.'/,
+    )
+    const referenced = pyMethod(py('dashboard/handlers/providers.py'), 'def _key_in_store')
+    expect(referenced, 'read from the credential store').toMatch(/CredentialStore\(config_dir\(\)\)\.resolve\(entry\.credential\)\.secret/)
+    const h = py('dashboard/handlers/providers.py')
+    const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
+    // 🪤 THE CLAIM IS A DELETION, so it is pinned as one. This rail used to pin the opposite ("the
+    // handler never touches the store") and said the sentence must be rewritten the day that changed:
+    // the key now lives in the credential store and the delete path purges exactly the instance's own
+    // keys. If it ever stops, this fails rather than the dialog promising a revocation that did not happen.
+    expect(del, 'the delete path purges the instance-owned keys').toMatch(
+      /secret_refs\.purge\(\[secret_refs\.provider_owner\(name\)\.prefix\]\)/,
+    )
+    const list = h.slice(h.indexOf('async def api_providers_list'), h.indexOf('async def api_provider_types'))
+    expect(list, 'and the list reports them, by name only').toMatch(/"stored_secrets": secret_refs\.owned_field_names\(/)
+  })
+
+  it('the schedule delete really removes the run history it promises', () => {
+    expect(web('pages/schedule/ScheduleDetail.tsx')).toContain('Its run history is removed too.')
+    const h = py('dashboard/handlers/triggers.py')
+    const del = h.slice(h.indexOf('if request.method == "DELETE":'))
+    expect(del.slice(0, 3000), 'the second half of the delete').toMatch(
+      /await _runs_store\(\)\.delete_for_job\(raw\)/,
+    )
+  })
+
+  it('a report’s schedule delete keeps the report, as its body says', () => {
+    // The body for an automation that is a report's schedule names what STAYS: the report, with no
+    // schedule. So the delete must hand the deleted row to the report, and that must clear the
+    // report's schedule and save it, never delete it.
+    expect(web('pages/schedule/ScheduleDetail.tsx')).toContain(
+      "'The report stays, with no schedule: it runs when you press Run now. Its run history is removed too. This cannot be undone.'",
+    )
+    const handlers = py('dashboard/handlers/triggers.py')
+    const del = pyBetween(handlers, 'if request.method == "DELETE":', '    # PUT')
+    expect(del, 'the delete branch must be found').toMatch(/await _runs_store\(\)\.delete_for_job\(raw\)/)
+    // The delete is `_deleted`, which answers instead when the app serving the row kept it, so the
+    // report is told only once its automation is really gone.
+    expect(del, 'and the schedule delete tells the report').toMatch(
+      /_deleted\(store, raw\)\) is not None:\n\s+return refused\n\s+_report_unscheduled\(gone\.trigger\)/,
+    )
+    expect(pyMethod(handlers, 'def _deleted('), 'after deleting the row').toMatch(/\n\s+store\.delete\(raw\)\n/)
+    const removal = pyMethod(py('knowledge/report_schedules.py'), 'def adopt_removal')
+    expect(removal, 'which clears the report’s schedule and saves the report').toMatch(
+      /defn\.schedule = ScheduleDefinition\(kind=""\)\n\s+research_reports\.save_report\(defn\)/,
+    )
+    expect(removal, 'and never deletes it').not.toMatch(/delete_report/)
+  })
+
+  it('the MCP remove says it deletes the saved values, and never reaches another tool’s config', () => {
+    // 🪤 I EXPECTED A CROSS-APP BLAST RADIUS HERE AND WAS WRONG, and the rail that recorded it is kept
+    // for the half that still matters: the delete never touches Claude Code's `~/.claude.json`
+    // (`_CC_GLOBAL_JSON`), so a server imported from there stays there, and the copy owes the user
+    // nothing about it. What DID grow is the other half: the delete takes the server out of mcp.json
+    // AND the agent config, and the second write deletes every value it owned in the credential store
+    // (`secret_refs.remove_mcp_servers`, the one delete both the Tools page and the provider card use).
+    // "Its tools will no longer be available." was true and incomplete, so the body names that too.
+    const h = py('dashboard/handlers/mcp.py')
+    // SLICED TO THE WHOLE BRANCH, bounded by the code that ENDS it, never a character budget: the first
+    // version of this rail took a fixed window that stopped just short of the store loop.
+    const fn = h.slice(h.indexOf('async def api_mcp_server_detail'))
+    const del = fn.slice(fn.indexOf('if request.method == "DELETE":'), fn.indexOf('# PUT — add or edit'))
+    expect(del, 'the delete branch must be found').toMatch(/remove_mcp_servers\(\[name\]\)/)
+    expect(del, 'and it does not write the claude-code config').not.toMatch(/_CC_GLOBAL_JSON|claude\.json/)
+    const refs = py('config/secret_refs.py')
+    const one = refs.slice(refs.indexOf('def remove_mcp_servers'), refs.indexOf('def foreign_mcp_spec'))
+    expect(one, 'the one delete walks both PersonalClaw documents').toMatch(/for path in mcp_documents\(\):/)
+    expect(one, 'through the writer that deletes unreferenced values').toMatch(/write_mcp_document\(path, doc\)/)
+    expect(one, 'and no other tool’s file').not.toMatch(/claude\.json|_CC_GLOBAL_JSON/)
+    expect(py('providers/mcp_instances.py'), 'the provider card deletes through it too')
+      .toMatch(/return bool\(remove_mcp_servers\(\[instance_id\]\)\)/)
+    expect(web('pages/tools/ToolsPage.tsx'), 'so the body names the values')
+      .toContain('Its tools will no longer be available, and the values saved for it are deleted from your credential store.')
+  })
+  // 🪤 THIS ASSERTION WAS COUPLED TO A LOCATION, NOT A PROPERTY — the second rail in this campaign to
+  // fail that way (the project-delete case above was the first). It required the literal
+  // `confirmDelete('project', p.name, { body })`, which silently assumed the body was built INLINE in
+  // each page. All three properties it protects are intact; only the spelling moved. Hoisting the body
+  // to `pages/code/codeMeta.ts` was itself part of a fix — the two files' bodies were byte-identical and
+  // both wrongly promised "your workspace folder and its files are left untouched" while the handler
+  // force-deleted `pclaw/task-*` branches — so a rail that reds on the hoist is a rail that would have
+  // argued for keeping the duplication. Re-pointed to the property: rides the helper, passes a CUSTOM
+  // body, and that body still carries the destruction warning. Where the sentence LIVES is not the
+  // invariant; that it exists, is custom, and is verified against the handler is.
+  it('the two project deletes ride the shared ritual, with a custom destruction body', () => {
+    // Both code surfaces hand-rolled `confirm({ title: `Delete project …`, danger })` —
+    // composing exactly what confirmDelete() composes, so the hand-roll was drift, and it kept both
+    // sites outside every ratchet keyed on `confirmDelete(` callers. They ride the helper now. The
+    // custom body remains the point of these dialogs, so the pin still requires one to be passed
+    // rather than falling back to the default. The body is handed the work the ended run kept
+    // (`api.uLoopKeptWork`), the one thing a delete discards without asking task by task.
+    // The cockpit's delete moved with its actions into `cockpit/cockpitActions.ts`.
+    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/cockpit/cockpitActions.ts']) {
+      const src = web(rel)
+      expect(src, `${rel} rides the shared ritual with a custom body`)
+        .toMatch(/confirmDelete\('project', p\.name, \{ body: \w+\(p, kept\) \}\)/)
+      expect(src, `${rel} asks what the run kept before it asks`).toContain('api.uLoopKeptWork(')
+      expect(src, `${rel} keeps no hand-rolled project-delete dialog`)
+        .not.toMatch(/confirm\(\{ title: `Delete project/)
+      // 🪤 And neither may rebuild the sentence locally again — the duplication is what let one wrong
+      // clause ship in two files at once.
+      expect(src, `${rel} must not hand-roll the body`).not.toContain('left untouched')
+    }
+    // The managed-folder warning still exists — at its one owner now. `pages/code/codeMeta.ts` and
+    // `deleteNamesTheBranches.test.ts` own the copy's CONTENT; this rail owns the ritual.
+    expect(web('pages/code/codeMeta.ts'), 'the greenfield warning survives the hoist')
+      .toContain('deleting it also removes those files')
+  })
+})

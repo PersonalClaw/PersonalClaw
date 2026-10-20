@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "health-os",
+  "version": "1.0.0",
+  "displayName": "Health OS",
+  "description": "An honest health log: daily capture that records rather than advises, a routine-checkup cadence tracker, a weekly assembly template, and a two-tier health roster.",
+  "author": "PersonalClaw",
+  "license": "MIT",
+  "pclaw_requires": ">=0.1",
+  "components": [
+    {"kind": "skill", "id": "health-journal", "path": "skills/health-journal/SKILL.md", "depends_on": []},
+    {"kind": "skill", "id": "health-checkup-tracker", "path": "skills/health-checkup-tracker/SKILL.md", "depends_on": []},
+    {"kind": "agent", "id": "health-companion", "path": "agents/health-companion.md", "depends_on": ["skill:health-journal", "skill:health-checkup-tracker"]},
+    {"kind": "agent", "id": "health-nutrition-coach", "path": "agents/health-nutrition-coach.md", "depends_on": ["skill:health-journal"]},
+    {"kind": "prompt", "id": "health-checkup-nudge", "path": "prompts/health-checkup-nudge.yaml", "depends_on": []},
+    {"kind": "template", "id": "health-weekly-journal", "path": "templates/health-weekly-journal.json", "depends_on": ["agent:health-companion", "skill:health-journal", "skill:health-checkup-tracker"]},
+    {"kind": "trigger", "id": "health-checkup-cadence", "path": "triggers/health-checkup-cadence.json", "depends_on": ["template:health-weekly-journal", "prompt:health-checkup-nudge"]}
+  ],
+  "requirements": [
+    {"kind": "connector", "id": "health-records", "description": "A health-records MCP server exposing read-only visit and lab history. Configure it, substitute your own, or skip and keep the journal purely local.", "required": false, "env_hint": "HEALTH_API_KEY"}
+  ],
+  "pack_owned": ["skills/health-*", "templates/health-*", "prompts/health-*", "agents/health-*"]
+}

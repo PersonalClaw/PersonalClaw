@@ -1,0 +1,1572 @@
+"""App Platform REST API.
+
+The lifecycle layer exposed over HTTP, plus the backend reverse-proxy:
+
+    GET    /api/apps                      — installed apps + state
+    GET    /api/apps/{name}               — manifest + status + config + backend
+    POST   /api/apps/preview              — what installing/updating a source grants + runs
+    POST   /api/apps                      — install from source (path | git URL), with consent
+    POST   /api/apps/{name}/enable        — enable (run onEnable, register)
+    POST   /api/apps/{name}/disable       — disable
+    POST   /api/apps/{name}/update        — atomic update from source
+    DELETE /api/apps/{name}               — deactivate | ?remove=1 remove-keep-data
+                                            | ?force=1 remove-everything (dep ledger)
+    GET    /api/apps/{name}/uninstall-preview — classify shared deps + data/ facts
+    GET    /api/apps/{name}/config        — read config + the configSchema
+    PUT    /api/apps/{name}/config        — validate + persist config
+    *      /apps/{name}/api/{tail:.*}      — reverse-proxy to the app's backend
+
+Lifecycle routes are SEL-audited inside the manager. Install/update run the
+shared scanner gate: a ``dangerous`` verdict or an invalid signature is refused
+(non-overridable). Everything else commits only with CONSENT: ``POST
+/api/apps/preview`` stages the source and returns what it grants and runs, the
+scan of those exact bytes, and a ``consent`` digest; an install (or an update that
+changes what the app gets, or scans with warnings) commits only when the request
+echoes that digest back as ``consent``, and only if the bytes still match it. A
+request without it — ``confirm: true`` included — is answered 409 with the same
+review, and nothing is installed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw import session_keys
+from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body, require_string, string_field
+from personalclaw.security import (
+    is_sensitive_path,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
+
+logger = logging.getLogger(__name__)
+
+
+def _redact(text: str) -> str:
+    """Redact exfil URLs + credentials from LLM-derived agent output before it
+    crosses back to an app (same two-pass discipline as messaging._redact)."""
+    text, _ = redact_exfiltration_urls(text or "")
+    text, _ = redact_credentials(text)
+    return text
+
+
+# Hop-by-hop headers that must not be forwarded across the proxy boundary.
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+    }
+)
+_PROXY_TIMEOUT = 30  # seconds for an app-backend round trip
+
+
+def register_app_routes(app: web.Application) -> None:
+    """Register the App Platform REST + proxy routes on an aiohttp app.
+
+    Specific sub-paths are registered before the catch-all ``/api/apps/{name}``
+    GET/DELETE so routing isn't shadowed."""
+    app.router.add_get("/api/apps", api_apps_list)
+    app.router.add_post("/api/apps", api_app_install)
+    # Registered BEFORE the catch-all /api/apps/{name} so "preview" isn't parsed as a name.
+    app.router.add_post("/api/apps/preview", api_app_preview)
+    # Store catalog + git-source management — registered BEFORE the catch-all
+    # /api/apps/{name} so "catalog"/"sources" aren't parsed as an app name.
+    app.router.add_get("/api/apps/catalog", api_app_catalog)
+    app.router.add_get("/api/apps/sources", api_app_sources_list)
+    app.router.add_post("/api/apps/sources", api_app_sources_add)
+    app.router.add_delete("/api/apps/sources", api_app_sources_remove)
+    app.router.add_get("/api/apps/local-sources", api_app_local_sources_list)
+    app.router.add_post("/api/apps/local-sources", api_app_local_sources_add)
+    app.router.add_delete("/api/apps/local-sources", api_app_local_sources_remove)
+    app.router.add_post("/api/apps/{name}/enable", api_app_enable)
+    app.router.add_post("/api/apps/{name}/disable", api_app_disable)
+    app.router.add_post("/api/apps/{name}/update", api_app_update)
+    app.router.add_get("/api/apps/{name}/uninstall-preview", api_app_uninstall_preview)
+    app.router.add_get("/api/apps/{name}/config", api_app_config_get)
+    app.router.add_put("/api/apps/{name}/config", api_app_config_put)
+    app.router.add_post("/api/apps/{name}/agent-run", api_app_agent_run)
+    app.router.add_get("/api/apps/{name}/agent-run/{run_id}", api_app_agent_run_status)
+    app.router.add_post("/api/apps/{name}/token", api_app_token)
+    # App-to-app messaging broker — the ONLY app-to-app path. Registered
+    # BEFORE the catch-all /api/apps/{name} so "message" isn't parsed as an app name.
+    app.router.add_post("/api/apps/message", api_app_message_send)
+    app.router.add_get("/api/apps/message", api_app_message_poll)
+    app.router.add_get("/api/apps/{name}", api_app_get)
+    app.router.add_delete("/api/apps/{name}", api_app_uninstall)
+    app.router.add_get("/apps/{name}/ui/{tail:.*}", api_app_ui_asset)
+    app.router.add_route("*", "/apps/{name}/api/{tail:.*}", api_app_proxy)
+
+
+def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error: str = "") -> None:
+    """Append one app-lifecycle row to the security event log.
+
+    🔴 `resources` carries the app SOURCE, which for a git app is a URL — and a URL may carry
+    credentials in its userinfo (`https://user:token@host/repo.git`). This wrote it verbatim into an
+    HMAC-chained, append-only log (#406), which is the one surface here that CANNOT be cleaned up
+    afterwards: rewriting a row breaks the chain, so a leaked secret is in the audit trail
+    permanently. That is why this call site is screened even though the source is also refused at
+    `catalog.add_git_source` — the refusal stops new ones, and this stops the ones that arrive by
+    any other route.
+
+    Screened ONCE, here, at the point of entry to the log: the row can never be cleaned after it
+    is written, so the screen has to come before it, where this field is known to be a source.
+
+    A request carrying an app's identity (``request["app"]``, an app-scoped token) is the app's
+    doing, so its row names the app: an app's refused agent task was audited as the owner's.
+    """
+    try:
+        from personalclaw.security import redact_credentials
+        from personalclaw.sel import sel as _s
+
+        safe_resources, _ = redact_credentials(resources)
+        safe_error, _ = redact_credentials(error)
+        app = request.get("app", "")
+        _s().log_api_access(
+            caller=f"app:{app}" if app else request.get("user", "dashboard"),
+            operation=op,
+            outcome=outcome,
+            source="apps",
+            resources=safe_resources,
+            error=safe_error,
+        )
+    except Exception:
+        pass
+
+
+def _reconcile_app_crons(request: web.Request) -> None:
+    """Re-run app-cron reconciliation after a lifecycle transition (install /
+    enable / disable / uninstall / update).
+
+    App-declared manifest crons are otherwise reconciled only once at gateway
+    startup, while MCP servers reconcile on every transition — so without this a
+    disabled/uninstalled app's cron kept firing agent jobs (and a freshly-enabled
+    app's cron didn't register) until the next restart. Reconciliation is
+    idempotent + declarative (diffs desired app:* triggers against registered ones),
+    so calling it on each transition simply converges the scheduler. Best-effort:
+    any error is swallowed, never blocking the lifecycle response.
+
+    Reconciles into the unified TRIGGER STORE. It used to pass `state.crons`, which wrote
+    `crons.json` — a file the clock engine does not read — so a freshly enabled app's cron was inert
+    until the next boot imported it, which is exactly the restart this seam exists to avoid.
+    The `--no-crons` guard moved with it: the store is a file, not a service, so the `state.crons`
+    presence check no longer answers the question. `no_crons` on the dashboard state does."""
+    try:
+        state = request.app.get("state")
+        if state is not None and getattr(state, "no_crons", False):
+            return
+        from personalclaw.apps.app_crons import reconcile_app_crons
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        reconcile_app_crons(TriggerStore(base_dir=config_dir()))
+    except Exception:
+        logger.debug("app cron reconcile after lifecycle transition failed", exc_info=True)
+
+
+def _app_status(name: str) -> dict[str, Any]:
+    """Runtime status for an app: backend running/port, its workers, and why it needs a restart
+    (if it does).
+
+    ``backendExit`` is how the backend's last run ended and the last lines it printed, while it
+    is not running because that run ended on its own (``BackendSupervisor.last_exit``), else
+    ``None``; ``workers`` is each background worker's state and, while its process is not
+    running, the same account of its last run (``WorkerSupervisor.report``). ``restartReason``
+    is what an update or reinstall could not take out of the process — the clause the Apps page
+    states after "Restart the gateway to finish:", ``""`` when only the installed version runs.
+    """
+    from personalclaw.apps import app_runtime
+    from personalclaw.apps.backend_runtime import get_backend_supervisor
+    from personalclaw.apps.worker_runtime import get_worker_supervisor
+
+    backends = get_backend_supervisor()
+    rb = backends.get(name)
+    return {
+        "backendRunning": rb is not None,
+        "backendPort": rb.port if rb else None,
+        "backendExit": None if rb is not None else backends.last_exit(name),
+        "workers": get_worker_supervisor().report(name),
+        "restartReason": app_runtime.restart_reason(name),
+    }
+
+
+def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
+    """Whether any provider the raw manifest declares runs ``execution: "sidecar"``."""
+    from personalclaw.apps.manifest import EXECUTION_SIDECAR
+
+    declared = [manifest.get("provider"), *(manifest.get("providers") or [])]
+    return any(isinstance(p, dict) and p.get("execution") == EXECUTION_SIDECAR for p in declared)
+
+
+def _quality_wire(raw: Any) -> dict[str, Any]:
+    """The DECLARED quality axes, and only those.
+
+    Routed through :class:`~personalclaw.apps.manifest.QualityDeclaration` rather than
+    passed through raw, so the tri-state survives one hop: an axis the app never
+    declared is ABSENT here, not ``false``. Passing the raw dict through would work
+    today and break the moment a manifest carries a junk axis; parsing keeps the
+    Library wire and the Store's catalog wire on one shape.
+    """
+    from personalclaw.apps.manifest import QualityDeclaration
+
+    if not isinstance(raw, dict):
+        return {}
+    return QualityDeclaration.from_dict(raw).to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
+
+async def api_apps_list(request: web.Request) -> web.Response:
+    """GET /api/apps — installed apps with manifest summary + runtime state.
+
+    On this existing read path (no polling loop) we also compute which installed
+    apps have a newer version available from their source — a local source, or the Store
+    source the app was installed from, as the Store's own discovery last read it — tag each
+    such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    notification per newly-available version (deduped by ``name + latest_version`` in
+    ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
+    of the app starts when none was found: the source it was installed from."""
+    from personalclaw.apps.app_manager import enable_refusal, installed_disclosure, is_native
+    from personalclaw.apps.catalog import (
+        resolve_hero_url,
+        source_kind_for_origin,
+        surface_app_updates,
+        update_source_for,
+    )
+    from personalclaw.apps.disclosure import describe
+    from personalclaw.apps.manager import app_dir, list_apps, ui_revision
+
+    # Compute available updates + emit the (deduped) notifications, on this read path.
+    # Best-effort: an update-check failure must never break the apps list.
+    updates_by_name: dict[str, dict[str, Any]] = {}
+    try:
+        state = request.app.get("state")
+        updates = await asyncio.to_thread(surface_app_updates, state)
+        updates_by_name = {u["name"]: u for u in updates}
+    except Exception:
+        logger.debug("apps list: update surfacing skipped", exc_info=True)
+
+    out: list[dict[str, Any]] = []
+    for app in list_apps():
+        manifest = app.get("manifest", {})
+        name = app.get("name", "")
+        # A provider app's settings live in Settings > Providers; a non-provider
+        # app's settings (setup.configSchema) are aggregated in Settings > Apps.
+        # Surface both signals so each surface can filter without an N+1 fetch.
+        is_provider = bool(manifest.get("provider"))
+        # `hasConfig` = does the app have ANY settings surface. Mirror
+        # `_effective_config_schema`: an explicit setup.configSchema OR a provider
+        # app's provider.settingsSchema. Reading only setup.configSchema wrongly
+        # reported hasConfig=false for provider apps whose config lives under
+        # provider.settingsSchema (e.g. native-vector-memory/tasks/skills/
+        # notifications) — so the Apps UI hid their Configure action.
+        config_schema = (manifest.get("setup", {}) or {}).get("configSchema") or {}
+        provider_block = manifest.get("provider", {}) or {}
+        provider_schema = provider_block.get("settingsSchema") or {}
+        # A multi-instance provider's settingsSchema describes an INSTANCE, not the app: its
+        # settings surface is its instance list in Settings → Providers, and there is no
+        # app-level config to Configure (see `_configured_per_instance`).
+        per_instance = bool(provider_block.get("multiInstance")) and not config_schema.get(
+            "properties"
+        )
+        has_config = not per_instance and bool(
+            config_schema.get("properties") or provider_schema.get("properties")
+        )
+        # Contributed UI pages (route/label/icon) so the shell can register each as
+        # a nav target under the Apps section — not just a single per-app page.
+        ui_pages = [
+            {
+                "route": p.get("route", ""),
+                "label": p.get("label", ""),
+                "icon": p.get("icon", ""),
+            }
+            for p in (manifest.get("ui", {}) or {}).get("pages", [])
+            if p.get("route")
+        ]
+        # Where it came from, never its manifest's own word: any app can declare `native`.
+        native = is_native(name)
+        out.append(
+            {
+                "name": name,
+                "displayName": manifest.get("displayName") or name,
+                "version": app.get("version", ""),
+                "description": manifest.get("description", ""),
+                "enabled": app.get("enabled", False),
+                "origin": app.get("origin", ""),
+                # The Store's `sourceKind` reading of that origin, resolved HERE so no
+                # frontend has to translate between the two provenance vocabularies (which
+                # is how the detail panel came to render `origin || 'local'` — claiming
+                # "local" for an app whose origin the record did not carry). "" when the
+                # origin has no reading, and the surface then shows nothing.
+                "sourceKind": source_kind_for_origin(str(app.get("origin", "")), native=native),
+                # A native app is locked on — the FE hides uninstall/disable/update and
+                # shows a "native, always-on" notice, offering Configure only.
+                "native": native,
+                # Concrete provenance (path / git URL / "builtin" / "registry:name") so
+                # the Store/Library can group installed apps under their source divider.
+                "source": app.get("source", ""),
+                "icon": manifest.get("icon", ""),
+                # Optional hero/banner image → resolved to a data: URI from the
+                # installed app dir (empty when the manifest declares none / unreadable).
+                "heroUrl": resolve_hero_url(app_dir(name), str(manifest.get("heroImage", ""))),
+                "hasBackend": bool(manifest.get("backend", {}).get("entryPoint")),
+                "hasUI": bool(manifest.get("ui", {}).get("pages")),
+                "uiPages": ui_pages,
+                # The genui components module, paired with the
+                # capability that grants it. The shell loads it for an ENABLED app so its
+                # components exist for a chat-born widget, not only on the app's own page.
+                "uiComponents": str((manifest.get("ui", {}) or {}).get("components", "")),
+                # What every UI bundle URL of this app carries, so an update is imported afresh.
+                "uiRevision": ui_revision(name, manifest.get("ui", {}) or {}),
+                "uiCapabilities": [str(c) for c in (manifest.get("uiCapabilities") or []) if c],
+                "isProvider": is_provider,
+                "providerType": (
+                    (manifest.get("provider") or {}).get("type", "") if is_provider else ""
+                ),
+                # The provider's DECLARED capabilities — the field the Store catalog already
+                # carries for an app that is not installed yet. `providerType` alone cannot tell
+                # a chat model from a speech one (faster-whisper and piper-tts are both `model`),
+                # so a surface that sorts installed apps by what they do needs this to sort them
+                # the way it sorts installable ones: onboarding's lanes, which used to lose an
+                # installed speech app entirely and offer "Install" for it again.
+                "providerCapabilities": (
+                    [str(c) for c in (manifest.get("provider") or {}).get("capabilities") or []]
+                    if is_provider
+                    else []
+                ),
+                "hasConfig": has_config,
+                "configuredPerInstance": per_instance,
+                # A provider of it runs its engine in a child process with its own Python
+                # environment, which Configure offers to install (Install engine).
+                "sidecar": _runs_a_sidecar(manifest),
+                # Everything it gets and runs, as its install consent showed it: what it needs
+                # that PersonalClaw does not install, the permissions the gateway enforces, its
+                # scheduled jobs, and what it runs on this machine. The panel renders it with the
+                # consent's own component, so an installed app says what the Store said before
+                # it went in. `None` when its manifest cannot be read.
+                "disclosure": installed_disclosure(name),
+                "permissions": manifest.get("permissions", {}),
+                "tags": [str(t) for t in manifest.get("tags", []) if t],
+                # The DECLARED quality block, for the Library card's badge row.
+                # `{}` when the app declared nothing — the card must render no badges
+                # there, never a row of misses: absent and "declared false" are
+                # different facts. Read straight off the manifest (not defaulted per
+                # axis) so an undeclared axis stays undeclared on the wire.
+                "quality": _quality_wire(manifest.get("quality")),
+                # Why this core does not run it here, the sentence its enable is refused with
+                # (a core older than it needs; the desktop app, which runs no Python child of
+                # an app). "" while it can run.
+                "refused": enable_refusal(name),
+                "installedAt": app.get("installedAt", ""),
+                "updatedAt": app.get("updatedAt", ""),
+                # A newer version is available from this app's source. The card
+                # renders an "update available" badge and the Store nav counts these.
+                "updateAvailable": name in updates_by_name,
+                "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
+                # Where that version was found: the Update dialog starts from it.
+                "latestSource": updates_by_name.get(name, {}).get("latestSource", ""),
+                # Where an Update starts when no newer version was found: the source the app
+                # was installed from, when an update can come from there ("" otherwise).
+                "updateSource": update_source_for(app),
+                **_app_status(name),
+            }
+        )
+
+    # The bundled PROVIDER extensions (native tool/knowledge/memory/… providers
+    # + the mcp/openai adapters) register via the extension loader, not the app
+    # manager's installed-apps dir, so list_apps() above never sees them — yet they
+    # ARE app-platform-registered providers the user expects in the Library. Append
+    # them here (deduped by name) so Settings>Providers and Store>Library show the
+    # SAME provider universe. They're platform-managed (always-on, not user-
+    # uninstallable) → flagged platform:true so the Library renders them as such.
+    try:
+        from personalclaw.providers.registry import get_provider_registry
+
+        have = {a["name"] for a in out}
+        # The always-on platform tool provider (filesystem+shell) isn't a registered
+        # extension (per-session in the runtime), so synthesize it here too — same
+        # entry Settings>Providers shows — so both surfaces list the identical
+        # provider universe.
+        if "personalclaw-filesystem" not in have:
+            out.append(
+                {
+                    "name": "personalclaw-filesystem",
+                    "displayName": "Filesystem & Shell Tools",
+                    "version": "1.0.0",
+                    "description": "Always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
+                    "bash, full-result retrieval. Required by the agent.",
+                    "enabled": True,
+                    "origin": "bundled",
+                    # Synthesized rows are shipped-with-the-product by construction.
+                    "sourceKind": "native",
+                    "icon": "FolderCog",
+                    "heroUrl": "",
+                    "hasBackend": False,
+                    "hasUI": False,
+                    "uiPages": [],
+                    "isProvider": True,
+                    "providerType": "tool",
+                    "hasConfig": False,
+                    "configuredPerInstance": False,
+                    # Core's own tools, not an app: there is no manifest to disclose.
+                    "disclosure": None,
+                    "permissions": {},
+                    "tags": [],
+                    "installedAt": "",
+                    "updatedAt": "",
+                    # Always-on, non-uninstallable ⇒ a NATIVE app (the one tier flag).
+                    # No separate `platform` flag — the app category is `native`; whether
+                    # it has settings is `hasConfig` (False here → UI shows "manage elsewhere").
+                    "native": True,
+                    "status": "running",
+                }
+            )
+            have.add("personalclaw-filesystem")
+        for ext in get_provider_registry().list_extensions():
+            if ext.name in have:
+                continue
+            out.append(
+                {
+                    "name": ext.name,
+                    "displayName": ext.manifest.displayName or ext.name,
+                    "version": ext.manifest.version,
+                    "description": ext.manifest.description,
+                    "enabled": ext.enabled,
+                    "origin": "bundled",
+                    # This branch only runs for an extension NOT already in `out` (i.e. not a
+                    # disk-installed app), so it is shipped-with-the-product by construction.
+                    "sourceKind": "native",
+                    "icon": ext.manifest.icon,
+                    # Extension providers installed on disk may ship a hero image; resolve
+                    # from their app dir (no-op → "" when absent or not disk-installed).
+                    "heroUrl": resolve_hero_url(app_dir(ext.name), ext.manifest.heroImage),
+                    "hasBackend": False,
+                    "hasUI": False,
+                    "uiPages": [],
+                    "isProvider": True,
+                    "providerType": ext.provider_config.type,
+                    "hasConfig": not ext.provider_config.multiInstance
+                    and bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    "configuredPerInstance": bool(ext.provider_config.multiInstance),
+                    "disclosure": describe(ext.manifest),
+                    "permissions": {},
+                    "tags": [],
+                    "installedAt": "",
+                    "updatedAt": "",
+                    # Always-on, non-uninstallable ⇒ NATIVE (the single tier flag). Config
+                    # affordance is driven by `hasConfig` above, not a separate flag.
+                    "native": True,
+                    "status": "running" if ext.enabled else "stopped",
+                }
+            )
+    except Exception:
+        logger.debug("apps list: bundled provider extensions append skipped", exc_info=True)
+
+    return web.json_response({"apps": out})
+
+
+async def api_app_catalog(request: web.Request) -> web.Response:
+    """GET /api/apps/catalog — available-to-install apps (Store): bundled-but-not-
+    installed manifests + the configured git source URLs."""
+    from personalclaw.apps import catalog
+
+    result = await asyncio.to_thread(catalog.available_catalog)
+    return web.json_response(result)
+
+
+async def api_app_sources_list(request: web.Request) -> web.Response:
+    """GET /api/apps/sources — the configured git source URLs (defaults + user)."""
+    from personalclaw.apps import catalog
+
+    return web.json_response({"sources": catalog.list_git_sources()})
+
+
+async def api_app_sources_add(request: web.Request) -> web.Response:
+    """POST /api/apps/sources — add a user git source URL ``{url}``."""
+    from personalclaw.apps import catalog
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    url = str(body.get("url", "")).strip()
+    if not url:
+        return web.json_response({"error": "url is required"}, status=400)
+    try:
+        catalog.add_git_source(url)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _sel_log("apps.source_add", "ok", url, request)
+    return web.json_response({"ok": True, "sources": catalog.list_git_sources()})
+
+
+async def api_app_sources_remove(request: web.Request) -> web.Response:
+    """DELETE /api/apps/sources?url=… — remove a user git source URL."""
+    from personalclaw.apps import catalog
+
+    url = request.query.get("url", "").strip()
+    if not url:
+        return web.json_response({"error": "url is required"}, status=400)
+    catalog.remove_git_source(url)
+    _sel_log("apps.source_remove", "ok", url, request)
+    return web.json_response({"ok": True, "sources": catalog.list_git_sources()})
+
+
+async def api_app_local_sources_list(request: web.Request) -> web.Response:
+    """GET /api/apps/local-sources — the configured local app-source directories."""
+    from personalclaw.apps import catalog
+
+    return web.json_response({"sources": catalog.list_local_sources()})
+
+
+async def api_app_local_sources_add(request: web.Request) -> web.Response:
+    """POST /api/apps/local-sources — add a local app-source dir ``{path}`` (a
+    directory of app subdirs; its apps then surface in the Store catalog)."""
+    from personalclaw.apps import catalog
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    path = str(body.get("path", "")).strip()
+    if not path:
+        return web.json_response({"error": "path is required"}, status=400)
+    try:
+        catalog.add_local_source(path)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _sel_log("apps.local_source_add", "ok", path, request)
+    return web.json_response({"ok": True, "sources": catalog.list_local_sources()})
+
+
+async def api_app_local_sources_remove(request: web.Request) -> web.Response:
+    """DELETE /api/apps/local-sources?path=… — remove a local app-source dir."""
+    from personalclaw.apps import catalog
+
+    path = request.query.get("path", "").strip()
+    if not path:
+        return web.json_response({"error": "path is required"}, status=400)
+    catalog.remove_local_source(path)
+    _sel_log("apps.local_source_remove", "ok", path, request)
+    return web.json_response({"ok": True, "sources": catalog.list_local_sources()})
+
+
+async def api_app_get(request: web.Request) -> web.Response:
+    """GET /api/apps/{name} — full manifest + status + saved config."""
+    from personalclaw.apps.app_config import read_stored
+    from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.manager import _read_installed, ui_revision
+    from personalclaw.apps.secret_fields import mask_secrets
+
+    name = request.match_info["name"]
+    meta = _read_installed(name)
+    if meta is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    manifest = _manifest_of(name)
+    # Effective schema (setup.configSchema OR a provider app's provider.settingsSchema) —
+    # same source the dedicated /config endpoint uses, so a provider app's detail view shows
+    # its real config surface, not empty (reading only setup.configSchema
+    # hides provider settings).
+    schema = _effective_config_schema(manifest) if manifest else {}
+    # This route serves the SAME stored config as ``GET /api/apps/{name}/config``, which has
+    # masked it — and this one did not, so an app's credentials travelled in the clear here
+    # while the neighbouring route two functions below withheld them. Measured on a live
+    # gateway: ``GET /api/apps/openai-models`` returned the stored api_key verbatim. One
+    # policy, one owner; a route that carries a config is not exempt for being a detail view.
+    # An app configured per instance has NO app-level config: a file left from before that
+    # was true is neither served nor masked by a schema that no longer describes it.
+    # The STORED form: a reference is masked whatever its field is called, and no value is read.
+    masked: dict[str, Any] = {}
+    secret_set: list[str] = []
+    if manifest is None or not _configured_per_instance(manifest):
+        masked, secret_set = mask_secrets(read_stored(name), schema)
+    manifest_wire = manifest.to_dict() if manifest else None
+    return web.json_response(
+        {
+            "name": name,
+            "installed": meta.to_dict(),
+            "manifest": manifest_wire,
+            "config": masked,
+            "configSchema": schema,
+            "_secret_set": secret_set,
+            # The same revision the list carries: the app page versions its bundle URL with it.
+            "uiRevision": ui_revision(name, (manifest_wire or {}).get("ui") or {}),
+            **_app_status(name),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+
+def _consent_token(body: Any) -> str:
+    """The ``consent`` digest a request echoes back from ``POST /api/apps/preview``, or ``""``.
+
+    Only a string is consent. ``confirm: true``, ``consent: true`` and every other
+    stand-in read as NO consent — the point of a digest is that a client cannot hold one
+    without having fetched the review it came with, so nothing that could be sent blind
+    may substitute for it."""
+    value = body.get("consent") if isinstance(body, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _listed_by(body: Any) -> str:
+    """The registry a Store card says listed the source (``listedBy``), or ``""``.
+
+    It can only make a fetch stricter: a source named here is held to the listing rules
+    (``apps/source.resolve``), and a registry the owner did not configure trusts no host."""
+    value = body.get("listedBy") if isinstance(body, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+async def api_app_preview(request: web.Request) -> web.Response:
+    """POST /api/apps/preview — review ``{source, name?, listedBy?}`` before anything is installed.
+
+    Stages the source (clones a git URL) and answers what installing it — or, with
+    ``name``, updating that installed app to it — would grant and run
+    (``disclosure``; ``previous`` for an update), the scan of those exact bytes, and the
+    ``consent`` digest the install must echo back. Commits nothing, runs nothing the
+    bundle ships, and writes no audit row: it is a read.
+
+    200 for every bundle it could read, a refusal included — "the scanner found dangerous
+    content" is a finished review whose answer is no, and the dialog shows it.
+    400 ``app_listing_refused`` when a registry listing named an address PersonalClaw will
+    not fetch from for it, ``app_source_unresolved`` when the source cannot be fetched, and
+    ``app_preview_failed`` when the bundle cannot be offered at all (the message says why).
+    """
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
+
+    body = await json_object_body(request)
+    src = require_string(body, "source")
+    name = string_field(body, "name") or None
+
+    try:
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
+    except app_source.SourceRefused as exc:
+        return json_error("app_listing_refused", message=str(exc), status=400)
+    except app_source.SourceError as exc:
+        return json_error("app_source_unresolved", message=str(exc), status=400)
+
+    def _do_preview():
+        try:
+            return app_manager.preview(resolved.path, origin=resolved.origin, name=name)
+        finally:
+            if resolved.cleanup:
+                app_source._rmtree(resolved.cleanup_path)
+
+    result = await asyncio.to_thread(_do_preview)
+    if result.scan is None and not result.needs_client_install:
+        return json_error(
+            "app_preview_failed", message=result.error or "this app cannot be read", status=400
+        )
+    return web.json_response(result.to_dict(), status=200)
+
+
+async def api_app_install(request: web.Request) -> web.Response:
+    """POST /api/apps — install from ``{source, consent}``.
+
+    ``source`` is a local directory path or a git URL. ``consent`` is the digest
+    ``POST /api/apps/preview`` returned for the review the owner accepted; the install
+    commits only if the staged bytes still carry it. Without it — or when the bytes have
+    changed since — the answer is 409 with a fresh review (disclosure, scan, digest) and
+    nothing is installed. A ``dangerous`` verdict or an invalid signature is always
+    refused.
+
+    ``source`` is read as the review reads it (``request_validation``): a missing, blank or
+    non-string one is a 400 naming the field before anything is fetched. It was
+    ``str()``-coerced, so ``null`` or a list became the path ``"None"`` or ``"['x']"``."""
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
+
+    body = await json_object_body(request)
+    src = require_string(body, "source")
+    consent = _consent_token(body)
+
+    try:
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
+    except app_source.SourceError as exc:
+        _sel_log("apps.install", "error", src, request, error=str(exc))
+        return web.json_response({"error": str(exc)}, status=400)
+
+    def _do_install():
+        try:
+            return app_manager.install(
+                resolved.path,
+                origin=resolved.origin,
+                consent=consent,
+                caller=request.get("user", "dashboard"),
+                source_ref=src,
+            )
+        finally:
+            if resolved.cleanup:
+                app_source._rmtree(resolved.cleanup_path)
+
+    result = await asyncio.to_thread(_do_install)
+
+    # 201 installed · 409 awaiting consent · 200 client-install directive
+    # (a VALID app that installs on the user's machine, not a bad request — the body
+    # carries the copy-paste one-liner) · 400 a genuine bad/failed request.
+    if result.ok:
+        status = 201
+    elif result.needs_consent:
+        status = 409
+    elif result.needs_client_install:
+        status = 200
+    else:
+        status = 400
+    _sel_log(
+        "apps.install",
+        "ok" if result.ok else "refused",
+        result.name or src,
+        request,
+        error=result.error,
+    )
+    payload = result.to_dict()
+    if result.ok:
+        _reconcile_app_crons(request)  # register a freshly-installed app's crons now
+        payload["providerErrors"] = await _provider_errors(result.name)
+    return web.json_response(payload, status=status)
+
+
+def _engine_installing(request: web.Request, name: str) -> web.Response | None:
+    """A 409 while *name*'s engine install runs (Install engine), else ``None``.
+
+    pip writes into the app's own Python environment inside its folder for as long as that
+    takes, and an update swaps the folder while a removal deletes it: either one under a live
+    pip leaves an environment every later step believes. The answer is shaped like a refused
+    install so the Update dialog shows its sentence.
+    """
+    from personalclaw.apps.app_manager import display_name_of
+    from personalclaw.dashboard.model_downloads import ModelDownloadRegistry
+
+    # The registry is what starts an engine install, so a process without one has none running.
+    downloads = getattr(request.app.get("state"), "model_downloads", None)
+    registry = downloads() if callable(downloads) else None
+    if not isinstance(registry, ModelDownloadRegistry) or not registry.install_running(name):
+        return None
+    return web.json_response(
+        {
+            "ok": False,
+            "name": name,
+            "needs_consent": False,
+            "reason": "engine_installing",
+            "error": (
+                f"{display_name_of(name)} is installing its engine. Wait for that to finish, "
+                "or cancel it, then try again"
+            ),
+        },
+        status=409,
+    )
+
+
+async def api_app_update(request: web.Request) -> web.Response:
+    """POST /api/apps/{name}/update — atomic update from ``{source, consent?}``.
+
+    An update that changes what the app gets, or scans with warnings, commits only with
+    the ``consent`` digest ``POST /api/apps/preview {source, name}`` returned; one that
+    changes none of it needs none (409 otherwise, with the review). ``source`` is read as the
+    install reads it: a missing or non-string one is a 400 naming the field."""
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
+
+    name = request.match_info["name"]
+    body = await json_object_body(request)
+    src = require_string(body, "source")
+    if (busy := _engine_installing(request, name)) is not None:
+        return busy
+    consent = _consent_token(body)
+
+    try:
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
+    except app_source.SourceError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    def _do_update():
+        try:
+            return app_manager.update(
+                resolved.path,
+                name,
+                origin=resolved.origin,
+                consent=consent,
+                caller=request.get("user", "dashboard"),
+            )
+        finally:
+            if resolved.cleanup:
+                app_source._rmtree(resolved.cleanup_path)
+
+    result = await asyncio.to_thread(_do_update)
+
+    status = 200 if result.ok else (409 if result.needs_consent else 400)
+    _sel_log("apps.update", "ok" if result.ok else "error", name, request, error=result.error)
+    payload = result.to_dict()
+    if result.ok:
+        _reconcile_app_crons(request)  # a manifest edit may add/remove/retime crons
+        payload["providerErrors"] = await _provider_errors(name)
+    return web.json_response(payload, status=status)
+
+
+async def _provider_errors(name: str) -> list[str]:
+    """Why any provider the app just registered serves nothing, one sentence each.
+
+    Read after the new tool providers' names are checked (``providers.routes.admit_tool_names``),
+    so a tool provider refused because a name it offers belongs to another provider is in the
+    answer to the change that registered it. The app itself is installed and on; only that
+    provider is not, and its card in Settings → Providers keeps the same sentence.
+    """
+    from personalclaw.providers.registry import get_provider_registry
+    from personalclaw.providers.routes import admit_tool_names
+
+    await admit_tool_names()
+    ext = get_provider_registry().get(name)
+    return [rec.error for rec in ext.chain() if rec.error] if ext is not None else []
+
+
+async def api_app_enable(request: web.Request) -> web.Response:
+    from personalclaw.apps import app_manager
+
+    name = request.match_info["name"]
+    ok = await asyncio.to_thread(
+        app_manager.enable,
+        name,
+        caller=request.get("user", "dashboard"),
+    )
+    _sel_log("apps.enable", "ok" if ok else "error", name, request)
+    if not ok:
+        # The sentence the refusal was made with, when this core will not run the app here (the
+        # Apps page shows the same one); else the enable failed for a reason of its own.
+        refused = await asyncio.to_thread(app_manager.enable_refusal, name)
+        return web.json_response({"error": refused or f"enable failed for {name!r}"}, status=400)
+    _reconcile_app_crons(request)  # register the app's manifest crons now, not at next restart
+    return web.json_response(
+        {"ok": True, "name": name, "enabled": True, "providerErrors": await _provider_errors(name)}
+    )
+
+
+async def api_app_disable(request: web.Request) -> web.Response:
+    from personalclaw.apps import app_manager
+
+    name = request.match_info["name"]
+    ok = await asyncio.to_thread(
+        app_manager.disable,
+        name,
+        caller=request.get("user", "dashboard"),
+    )
+    _sel_log("apps.disable", "ok" if ok else "error", name, request)
+    if not ok:
+        return web.json_response({"error": f"disable failed for {name!r}"}, status=400)
+    _reconcile_app_crons(request)  # prune the now-disabled app's crons immediately
+    return web.json_response({"ok": True, "name": name, "enabled": False})
+
+
+async def api_app_uninstall(request: web.Request) -> web.Response:
+    """remove an app: no flag deactivates, ``?remove=1`` keeps ``data/``, ``?force=1`` wipes.
+
+    The first line is the operator-facing summary in ``reference/routes.md`` (the
+    generator takes it verbatim), so it names all three rungs on its own.
+
+    * (no flag)     — uninstall = DEACTIVATE. Nothing leaves disk.
+    * ``?remove=1`` — remove the app's files, KEEP its ``data/`` (issue #2541).
+    * ``?force=1``  — remove everything, ``data/`` included.
+
+    ``force`` is read first, so ``?force=1&remove=1`` wipes: when a request asks for
+    two different promises about the user's data, the destructive one is the one that
+    was explicitly confirmed, and honouring the weaker flag would silently keep data a
+    caller asked to destroy. The default stays DEACTIVATE — an unflagged DELETE has
+    never removed files and must not start now.
+    """
+    from personalclaw.apps import app_manager
+
+    name = request.match_info["name"]
+    force = request.query.get("force") in ("1", "true", "yes")
+    remove = not force and request.query.get("remove") in ("1", "true", "yes")
+    caller = request.get("user", "dashboard")
+    if force:
+        fn, op = app_manager.force_uninstall, "apps.force_uninstall"
+    elif remove:
+        fn, op = app_manager.uninstall_keep_data, "apps.uninstall_keep_data"
+    else:
+        fn, op = app_manager.uninstall, "apps.uninstall"
+    if (force or remove) and (busy := _engine_installing(request, name)) is not None:
+        return busy
+    ok = await asyncio.to_thread(fn, name, caller=caller)
+    _sel_log(op, "ok" if ok else "error", name, request)
+    if not ok:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    _reconcile_app_crons(request)  # prune the uninstalled app's crons immediately
+    return web.json_response(
+        {"ok": True, "name": name, "forced": force, "removed": remove, "dataPreserved": remove}
+    )
+
+
+async def api_app_uninstall_preview(request: web.Request) -> web.Response:
+    """classify shared deps and report what the app's ``data/`` holds.
+
+    The ``data`` block lets the removal-confirm dialogs name the trade the user is about
+    to make instead of describing it in the abstract.
+
+    Resolves the PARENT app first (#2940). This answered ``200 {"dependencies": [],
+    "data": {"present": false, ...}}`` for a name that is not installed — indistinguishable from a
+    real app with no shared deps and no data, while every other door on the same ``{name}``
+    (including the ``DELETE`` this preview exists to describe) 404s ``app 'x' not installed``. A
+    preview is the input to a destructive confirm dialog, so a ghost name rendered a real dialog
+    promising to remove nothing.
+
+    Uses ``_manifest_of`` — the SAME predicate the sibling doors on this path already use — rather
+    than ``apps.manager._read_installed``, which reads a different file (``installed.json`` vs the
+    ``app.json`` manifest) out of the retired storage module. Two predicates for "is this app
+    installed" on one path is how the next door disagrees.
+    """
+    from personalclaw.apps import app_manager
+
+    name = request.match_info["name"]
+    if app_manager._manifest_of(name) is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    classifications = app_manager.preview_uninstall(name)
+    return web.json_response(
+        {
+            "name": name,
+            "dependencies": [c.to_dict() for c in classifications],
+            "data": app_manager.describe_app_data(name),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
+def _effective_config_schema(manifest) -> dict[str, Any]:
+    """The schema that drives an app's config UI: an explicit ``setup.configSchema``
+    if declared, else a provider app's ``provider.settingsSchema`` (where a
+    pluggable provider declares its user-configurable settings). Lets a
+    provider-only app expose its settings without duplicating the schema.
+
+    A MULTI-INSTANCE provider's ``settingsSchema`` describes one of its INSTANCES, not
+    the app, so it never becomes app-level config — see :func:`_configured_per_instance`.
+    """
+    schema = manifest.setup.configSchema
+    if schema:
+        return schema
+    if manifest.provider and manifest.provider.settingsSchema:
+        if manifest.provider.multiInstance:
+            return {}
+        return manifest.provider.settingsSchema
+    return {}
+
+
+def _configured_per_instance(manifest) -> str | None:
+    """The refusal for app-level config on an app whose settings live on its instances.
+
+    Measured before this existed: Apps → Ollama → Configure saved
+    ``apps/ollama-models/data/config.json`` (200 OK) while chat read the instance in
+    ``config.json`` ``providers[]``, which stayed at localhost and kept failing after a
+    restart. Nothing reads app-level config for a multi-instance provider, so there is no
+    such thing to save — only instances, managed in Settings → Providers.
+    """
+    if manifest.setup.configSchema or not manifest.provider or not manifest.provider.multiInstance:
+        return None
+    who = manifest.displayName or manifest.name
+    return (
+        f"{who} keeps its settings on each instance, not on the app. Add, edit, test or "
+        "remove its instances in Settings → Providers."
+    )
+
+
+async def api_app_config_get(request: web.Request) -> web.Response:
+    """GET /api/apps/{name}/config — an app's settings, with its credentials masked.
+
+    An app reaches only its own: the gateway refuses one naming another app before this runs
+    (``apps/permissions.ROUTE_AUTHZ``)."""
+    from personalclaw.apps.app_config import read_stored
+    from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.secret_fields import mask_secrets
+
+    name = request.match_info["name"]
+    manifest = _manifest_of(name)
+    if manifest is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    refusal = _configured_per_instance(manifest)
+    if refusal:
+        return web.json_response({"error": refusal}, status=409)
+    schema = _effective_config_schema(manifest)
+    # Write-only sensitive fields: mask the stored secret, never send it in the clear.
+    # ``_secret_set`` tells the UI which sensitive fields are already set. Served from
+    # the STORED form, so this route never reads a credential: each reference is masked,
+    # whether or not the schema declared its field sensitive.
+    masked, secret_set = mask_secrets(read_stored(name), schema)
+    # The PUT below writes the whole file, so the config carries the revision it must name
+    # (`personalclaw/stale_write.py`) — of this masked form, never of the stored secrets.
+    return web.json_response(
+        {
+            "name": name,
+            "config": masked,
+            "schema": schema,
+            "_secret_set": secret_set,
+            "revision": revision_of(masked),
+        }
+    )
+
+
+async def api_app_config_put(request: web.Request) -> web.Response:
+    """PUT /api/apps/{name}/config — save an app's settings, and apply them to its providers.
+
+    An app writes only its own: the gateway refuses one naming another app before this runs
+    (``apps/permissions.ROUTE_AUTHZ``)."""
+    from personalclaw.apps.app_config import AppConfigError, read_stored, write_config
+    from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
+
+    name = request.match_info["name"]
+    manifest = _manifest_of(name)
+    if manifest is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    refusal = _configured_per_instance(manifest)
+    if refusal:
+        return web.json_response({"error": refusal}, status=409)
+    try:
+        values = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    schema = _effective_config_schema(manifest)
+    stored = read_stored(name)
+    # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE FORM WAS BUILT FROM. This replaces the
+    # whole file — and deletes the credentials the new one stops referencing — with a form built
+    # from the copy it read, so a form opened before Settings → Providers, another tab, or the
+    # app itself saved this file put its stale values back over that save. Compared in the
+    # masked form the GET hands out; no `await` between this check and the write below.
+    # Named as Settings → Providers names it (`providers/routes.handle_patch_config`): the two
+    # routes write the same file, so a refusal from either is about the same thing.
+    stale = stale_write_refusal(
+        request, mask_secrets(stored, schema)[0], what=f"the settings of {name!r}"
+    )
+    if stale is not None:
+        _sel_log("apps.config", refusal_outcome(stale), name, request)
+        return stale
+    # A sensitive field carrying the mask sentinel (or empty when it was already set)
+    # means "keep the stored secret" — don't overwrite it with the placeholder. What is
+    # folded back is the stored REFERENCE, which the write keeps as it is; a reference that
+    # names another owner's credential is refused there, with what to do instead.
+    values = preserve_unchanged_secrets(values, stored, schema)
+    try:
+        write_config(name, values, schema)
+    except AppConfigError as exc:
+        _sel_log("apps.config", "error", name, request, error=str(exc))
+        return web.json_response({"error": str(exc)}, status=400)
+    _sel_log("apps.config", "ok", name, request)
+    # The saved values reach the app's live provider now — the rebuild the providers route
+    # does, shared, so Configure → Save needs no restart for any app.
+    from personalclaw.providers.routes import apply_saved_settings
+
+    await apply_saved_settings(name)
+    # Never echo the freshly-saved secret back either: the response is what reached the disk,
+    # masked — a credential-named field the schema did not declare included. The revision is
+    # of this same read, so a form that stays open saves its next edit over what it now shows.
+    masked, secret_set = mask_secrets(read_stored(name), schema)
+    return web.json_response(
+        {
+            "ok": True,
+            "name": name,
+            "config": masked,
+            "_secret_set": secret_set,
+            "revision": revision_of(masked),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Background agent tasks: an app runs a headless agent + polls its result.
+# This is the NON-iframe agentic path — for apps that act on agent output
+# rather than show a human a chat window. Held to the app's permissions.agent tier.
+# ---------------------------------------------------------------------------
+
+
+def _app_agent_tier(name: str) -> str:
+    """The agent tier the app may run work at now (``permissions.agent_tier_now``).
+
+    Its lifecycle half is not redundant with ``app_permission_middleware``. That runs only for a
+    request carrying an app identity, and ``_agent_run_identity`` falls back to the path segment
+    for OWNER-initiated calls — which the dashboard makes whenever app-token minting failed, and
+    minting is exactly what refuses a disabled app. So the fallback was the one way to start an
+    agent run for an app the owner had switched off.
+    """
+    from personalclaw.apps.permissions import agent_tier_now
+
+    return agent_tier_now(name)
+
+
+def _no_agent_tier(name: str) -> web.Response:
+    """The 403 for an app that may run no agent work, saying why in words that are true
+    (``permissions.no_agent_work``)."""
+    from personalclaw.apps.permissions import no_agent_work
+
+    return web.json_response({"error": no_agent_work(name)}, status=403)
+
+
+def _agent_run_identity(request: web.Request) -> tuple[str, str]:
+    """Return ``(request_app, name)`` — the caller's verified app identity, and the
+    app identity these routes must gate on.
+
+    The URL's ``{name}`` is caller-chosen, so gating on it checks the WRONG app: an
+    app that legitimately declares ``api: ["/api/apps"]`` (prefix-matched by
+    ``app_permission_middleware``) could name any agent-permitted app in the path and
+    borrow its permission. ``request["app"]`` is the verified identity from the
+    app-scoped token, so it wins whenever it is present. ``request_app`` is empty for
+    owner-initiated calls (dashboard / CLI), which fall back to the path segment —
+    the only identity they carry."""
+    request_app = request.get("app", "")
+    return request_app, (request_app or request.match_info["name"])
+
+
+async def api_app_agent_run(request: web.Request) -> web.Response:
+    """POST /api/apps/{name}/agent-run — start a background agent task.
+
+    Body: ``{task, tier?, agent?, max_turns?}``. Runs a headless, silent subagent on behalf of the
+    app at the app's ``agent`` tier, or at the narrower ``tier`` the task asks for, and returns its
+    ``{id, tier}``; the app polls ``/agent-run/{id}`` for the result. The tier is the CALLING app's,
+    not the app named in the path's, and the run is held to it (``subagent_tier``):
+
+    * ``text`` — the model is handed the task alone and shown no tools, so a text task names no
+      agent (it runs on the worker that has none);
+    * ``read`` — an agent with read-only tools;
+    * ``tools`` — an agent with the owner's tools.
+
+    The app approves none of its run's calls, whatever the tier: each one that needs approval asks
+    the owner. A task that asks for a wider tier than its app's is refused, and nothing runs."""
+    from personalclaw.apps.agent_tiers import AGENT_TEXT, AGENT_TIERS, capability_class
+    from personalclaw.apps.permissions import agent_tier_shortfall
+
+    _, name = _agent_run_identity(request)
+    held = _app_agent_tier(name)
+    if not held:
+        _sel_log("apps.agent_run", "denied", name, request, error="agent permission not granted")
+        return _no_agent_tier(name)
+
+    state = request.app["state"]
+    if not getattr(state, "subagents", None):
+        return web.json_response({"error": "subagents not available"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    # `(body or {}).get(...)` reads as a None-guard and is not one: a body of `[1]`,
+    # `"x"` or `5` is valid JSON and truthy, so `.get` raised AttributeError and the
+    # route answered 500 for what is plainly a malformed request. An empty list slipped
+    # through only because it is falsy, which is the tell that the guard was accidental.
+    if body is not None and not isinstance(body, dict):
+        return json_error("invalid_body", message="JSON body must be an object", status=400)
+    body = body or {}
+    task = str(body.get("task", "")).strip()
+    if not task:
+        return web.json_response({"error": "task is required"}, status=400)
+    agent = str(body.get("agent", "")) or ""
+    try:
+        max_turns = int(body.get("max_turns", 0) or 0)
+    except (TypeError, ValueError):
+        max_turns = 0
+    # The tier this task asks for: its app's own unless it names a narrower one.
+    tier = body.get("tier")
+    if tier is None or tier == "":
+        tier = held
+    if tier not in AGENT_TIERS:
+        return json_error(
+            "agent_tier_unknown",
+            message=(
+                f'"tier" must be "text", "read" or "tools", or left out for the app\'s own '
+                f"({held!r}) — got: {json.dumps(tier, default=str)}"
+            ),
+            status=400,
+        )
+    short = agent_tier_shortfall(held, tier)
+    if short:
+        refusal = (
+            f"This task {short}. A task may ask for its app's tier or a narrower one: the tier is "
+            "declared in the app's app.json, and the owner agrees to it when installing the app."
+        )
+    elif tier == AGENT_TEXT and agent:
+        refusal = (
+            f'This task is a "text" task and names an agent ({agent!r}), and a text task runs on '
+            "none: its model is handed the task alone, with no tools. Leave the agent out, or ask "
+            'for "read" or "tools" if the app holds one.'
+        )
+    else:
+        refusal = ""
+    if refusal:
+        _sel_log("apps.agent_run", "denied", name, request, error=refusal)
+        return json_error("agent_tier_exceeded", message=refusal, status=403)
+
+    # App-run agents are headless and silent (no chat surfacing), tagged by the app so the run is
+    # attributable, and held to the tier: what the run may use is the tier's capability class (a
+    # text task no tools at all, a read task read-only ones, a tools task every tool), and `app` is
+    # what lets it start on the app's install consent while approving none of its calls.
+    info = state.subagents.spawn(
+        task,
+        parent_session_key=session_keys.APP.key(name),
+        agent=agent,
+        max_turns=max_turns,
+        capability_class=capability_class(tier),
+        silent=True,
+        app=name,
+    )
+    if not info:
+        return web.json_response(
+            {"error": f"capacity reached ({state.subagents.max_concurrent})"}, status=429
+        )
+    if info.done and info.error:
+        _sel_log("apps.agent_run", "error", name, request, error=info.error)
+        return web.json_response({"error": info.error}, status=400)
+    _sel_log("apps.agent_run", "ok", name, request, error="")
+    return web.json_response(
+        {"id": info.id, "task": task, "status": "running", "tier": tier}, status=202
+    )
+
+
+async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
+    """GET /api/apps/{name}/agent-run/{run_id} — poll a background agent task.
+
+    Returns ``{id, done, result?, error?, turns?, elapsed?}``. Requires the ``agent``
+    permission of the CALLING app, and the run must belong to that app."""
+    request_app, name = _agent_run_identity(request)
+    run_id = request.match_info["run_id"]
+    if not _app_agent_tier(name):
+        return _no_agent_tier(name)
+
+    state = request.app["state"]
+    if not getattr(state, "subagents", None):
+        return web.json_response({"error": "subagents not available"}, status=503)
+    info = state.subagents.get(run_id)
+    if not info:
+        return web.json_response({"error": "not found"}, status=404)
+    # SubagentManager keeps ONE flat run table shared by every spawner (chat, cron,
+    # workflow stages, the owner's /api/spawn), so the permission gate alone would
+    # hand an app any run id it can guess. Scope an app to the runs it spawned —
+    # ``api_app_agent_run`` stamps ``parent_session_key`` with the app identity.
+    # 404, not 403: a 403 would confirm the run exists, turning this into an id
+    # oracle over every other spawner's runs. An owner-initiated call carries no app
+    # identity (the dashboard reaches this route when app-token minting failed) and
+    # is not scoped — the owner already sees every run via /api/spawn.
+    if request_app and info.parent_session_key != session_keys.APP.key(request_app):
+        _sel_log(
+            "apps.agent_run_status",
+            "denied",
+            f"{name}:{run_id}",
+            request,
+            error="run not owned by this app",
+        )
+        return web.json_response({"error": "not found"}, status=404)
+    data: dict[str, Any] = {
+        "id": info.id,
+        "task": info.task,
+        "done": info.done,
+        "turns": info.turns,
+        "elapsed": round(time.time() - info.started),
+    }
+    if info.done:
+        result = info.result
+        if getattr(info, "result_path", "") and not is_sensitive_path(info.result_path):
+            try:
+                result = await asyncio.to_thread(
+                    Path(info.result_path).read_text, encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                pass
+        data["result"] = _redact(result or "")
+        data["error"] = _redact(info.error) if info.error else ""
+    return web.json_response(data)
+
+
+# ---------------------------------------------------------------------------
+# Per-app identity token (untrusted-app sandbox)
+# ---------------------------------------------------------------------------
+
+
+async def api_app_token(request: web.Request) -> web.Response:
+    """POST /api/apps/{name}/token — the app-scoped identity token this app should use.
+
+    An installed app's SDK calls this on mount; the returned token carries an
+    ``app`` claim so every subsequent app request (fetch ``Authorization: Bearer`` +
+    the ``/api/ws?app_token=`` handshake) is attributable to THIS app. The token
+    auth middleware sets ``request["app"]`` from the claim, and the app-permission
+    middleware + WS event filter gate on it. Bound to the current owner user (an app
+    never exceeds the owner's own reach) and short-lived: ``expires_in`` is what is LEFT
+    of it, because the token is the one the app is already using while it has more than
+    half its hour left (``token_auth.app_session_token``) rather than a fresh mint each time.
+
+    Only the OWNER (a non-app request) may mint an app token — an app can't mint a
+    token for a different app to escalate."""
+    import time as _time
+
+    from personalclaw.apps.manager import _read_installed
+    from personalclaw.dashboard.token_auth import app_session_token
+
+    name = request.match_info["name"]
+    # Reject minting from within an app context (no privilege escalation across apps).
+    if request.get("app", ""):
+        return web.json_response({"error": "apps may not mint tokens"}, status=403)
+
+    meta = _read_installed(name)
+    if meta is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    if not meta.enabled:
+        return web.json_response({"error": f"app {name!r} is disabled"}, status=403)
+
+    user_id = request.get("user", "dashboard")
+    token, expires_at = app_session_token(user_id, name)
+    return web.json_response({"token": token, "expires_in": max(0, int(expires_at - _time.time()))})
+
+
+# ---------------------------------------------------------------------------
+# App-to-app messaging broker
+# ---------------------------------------------------------------------------
+# The ONE gateway-mediated path for one app to message another. The sender's
+# identity is the verified app-scoped token (request["app"]), never a body field,
+# so it can't be spoofed; the broker permission-checks the pair, caps + fences the
+# payload, and delivers to the target's broker-owned queue. See apps/messaging.py.
+
+
+async def api_app_message_send(request: web.Request) -> web.Response:
+    """POST /api/apps/message — send a typed message ``{to, type, payload}`` to
+    another app.
+
+    The SENDER is ``request["app"]`` (the verified app-scoped token identity), NOT a
+    body field — so an app cannot claim to be a different sender. Requires the
+    sender's ``appMessaging`` grant for the target: an undeclared pair is refused
+    403 AND written to the SEL audit chain (fail closed). The payload is size-capped
+    and fenced as untrusted before it reaches the target."""
+    from personalclaw.apps.messaging import AppMessageError, send_message
+
+    sender = request.get("app", "")
+    if not sender:
+        # No verified app identity ⇒ not an app-originated request. The broker is an
+        # app-to-app seam; refuse rather than let an unauthenticated/owner call forge
+        # a "from" out of the body.
+        return web.json_response(
+            {"error": "app-scoped identity required to send an app message"}, status=403
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    target = str(body.get("to", "")).strip()
+    msg_type = str(body.get("type", "")).strip()
+    payload = body.get("payload", "")
+    if not target:
+        return web.json_response({"error": "'to' (target app) is required"}, status=400)
+    if not msg_type:
+        return web.json_response({"error": "'type' is required"}, status=400)
+    try:
+        msg = send_message(sender=sender, target=target, msg_type=msg_type, payload=payload)
+    except AppMessageError as exc:
+        return web.json_response({"error": str(exc)}, status=exc.status)
+    return web.json_response({"ok": True, "id": msg.id, "to": target}, status=202)
+
+
+async def api_app_message_poll(request: web.Request) -> web.Response:
+    """GET /api/apps/message — drain THIS app's inbox (read-once).
+
+    Scoped to ``request["app"]`` — an app reads only its OWN queue, never another
+    app's. Each message carries the (verified) sender, the typed discriminator, and
+    the fenced payload."""
+    from personalclaw.apps.messaging import drain_queue
+
+    reader = request.get("app", "")
+    if not reader:
+        return web.json_response(
+            {"error": "app-scoped identity required to read app messages"}, status=403
+        )
+    return web.json_response({"messages": drain_queue(reader)})
+
+
+# ---------------------------------------------------------------------------
+# Reverse proxy: /apps/{name}/api/{tail} → the app's backend subprocess
+# ---------------------------------------------------------------------------
+
+
+async def api_app_proxy(request: web.Request) -> web.StreamResponse:
+    """Reverse-proxy a request to an app's backend subprocess.
+
+    Matches ``/apps/{name}/api/{tail:.*}`` for any method. 404 if the app isn't
+    installed, 502 if its backend isn't running, 403 if the app is disabled.
+
+    The owner's session credential (cookie / bearer / ``?token=``) is STRIPPED before
+    forwarding — an app backend must never receive the owner's token (it could replay it
+    against the full gateway API). Instead we forward the app's app-scoped token so the
+    backend has an identity bounded to its own declared permissions."""
+    import aiohttp
+
+    from personalclaw.apps.backend_runtime import get_backend_supervisor
+    from personalclaw.apps.manager import _read_installed
+    from personalclaw.dashboard.token_auth import app_session_token
+
+    name = request.match_info["name"]
+    tail = request.match_info.get("tail", "")
+
+    meta = _read_installed(name)
+    if meta is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    if not meta.enabled:
+        return web.json_response({"error": f"app {name!r} is disabled"}, status=403)
+
+    rb = get_backend_supervisor().get(name)
+    if rb is None:
+        return web.json_response(
+            {"error": "The app's backend is not running. Check the app's logs and try again."},
+            status=502,
+        )
+
+    # The tail path (plus any query string) is exactly what the backend's aiohttp sees
+    # as request.raw_path, so we sign THAT — the verifier reconstructs the identical
+    # string. Build the upstream URL from the same target so the two never drift.
+    from yarl import URL
+
+    from personalclaw.apps.app_secret import proxy_signature
+    from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
+    from personalclaw.proxy_signature import PROXY_SIGNATURE_HEADER
+
+    # The query loses its credentials for the same reason the headers below lose the cookie
+    # and Authorization: `?token=` is the owner's token and `?app_token=` an app's, and the
+    # backend must hold neither — nor may the client error this proxy logs on a failure,
+    # whose text can carry the upstream URL.
+    forwarded_query = [
+        (k, v) for k, v in request.rel_url.query.items() if k not in RESERVED_QUERY_PARAMS
+    ]
+    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(forwarded_query)
+    path_qs = target_url.raw_path_qs
+
+    # Fail closed: without the per-app secret we cannot prove this request came from the
+    # gateway proxy, so we must NOT forward it unsigned (that would defeat the whole
+    # inbound-auth boundary). The supervisor minted it at start(); a missing secret means
+    # the backend was never started protected. The body is read here, before the signature
+    # that covers it.
+    body = await request.read()
+    signature = proxy_signature(name, request.method, path_qs, body)
+    if signature is None:
+        logger.warning("app %s proxy: secret missing; refusing to forward unsigned", name)
+        return web.json_response({"error": "app backend not available"}, status=502)
+
+    # Strip the owner credential (cookie + Authorization) and any inbound app-identity
+    # headers, then attach this app's app-scoped token so the backend is bounded to its
+    # own permissions rather than borrowing the owner's session. The app's CURRENT token,
+    # not a fresh mint per request: every mint is a session, and minting on every proxied
+    # request signed the owner's other devices out.
+    _STRIP = _HOP_BY_HOP | {"cookie", "authorization", "x-personalclaw-app"}
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _STRIP}
+    user_id = request.get("user", "dashboard")
+    fwd_headers["Authorization"] = f"Bearer {app_session_token(user_id, name)[0]}"
+    fwd_headers["X-PersonalClaw-App"] = name
+    # Signed so the backend's fail-closed middleware can prove it came from the gateway proxy.
+    # The signature covers ts + method + the exact wire path + a hash of the body, within a
+    # ±60s window (replay protection).
+    fwd_headers[PROXY_SIGNATURE_HEADER] = signature
+    timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(
+                request.method,
+                target_url,
+                headers=fwd_headers,
+                data=body or None,
+                allow_redirects=False,
+            ) as upstream:
+                resp = web.StreamResponse(status=upstream.status)
+                for k, v in upstream.headers.items():
+                    if k.lower() not in _HOP_BY_HOP:
+                        resp.headers[k] = v
+                await resp.prepare(request)
+                async for chunk in upstream.content.iter_chunked(8192):
+                    await resp.write(chunk)
+                await resp.write_eof()
+                return resp
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        # The raw exception text ("Cannot connect to host 127.0.0.1:41733 ssl:default [...]")
+        # used to travel to the app UI verbatim — appSdk's fetch helper surfaces `error` in a
+        # toast. One owned sentence per failure class on the wire; the raw text goes
+        # to the log, which is the caller's job per providers/failure_copy's contract.
+        # TimeoutError first: a total-timeout raises builtin TimeoutError (not a ClientError),
+        # while connect/read-phase ServerTimeoutError IS one — the isinstance catches both.
+        logger.warning("app %s proxy failed: %s", name, exc)
+        copy = (
+            "The app's backend timed out. Check the app's logs and try again."
+            if isinstance(exc, TimeoutError)
+            else "The app's backend could not be reached. Check the app's logs and try again."
+        )
+        return web.json_response({"error": copy}, status=502)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("app %s proxy failed: %s", name, exc)
+        return web.json_response(
+            {
+                "error": (
+                    "The request to the app's backend failed unexpectedly. "
+                    "Check the app's logs and try again."
+                )
+            },
+            status=502,
+        )
+
+
+# ---------------------------------------------------------------------------
+# UI asset serving: /apps/{name}/ui/{tail} → files under the app's ui/ dir
+# ---------------------------------------------------------------------------
+
+_UI_CONTENT_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+    ".map": "application/json",
+}
+
+
+async def api_app_ui_asset(request: web.Request) -> web.StreamResponse:
+    """Serve an installed app's contributed UI bundle file (the ESM the frontend
+    code-splits in to mount the app's page). Confined to the app's ``ui/`` dir
+    with a path-traversal guard; only enabled apps serve UI.
+
+    ``no-cache``, so a browser asks again before it reuses a copy (a 304 when nothing
+    changed): an update or a reinstall swaps these files in at the same paths. The SPA also
+    versions every bundle URL with the app's ``uiRevision``, so a page that already imported
+    the old URL does not get the old module back either."""
+    from personalclaw.apps.manager import _read_installed, app_dir
+
+    name = request.match_info["name"]
+    tail = request.match_info.get("tail", "")
+    meta = _read_installed(name)
+    if meta is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    if not meta.enabled:
+        return web.json_response({"error": f"app {name!r} is disabled"}, status=403)
+
+    ui_root = (app_dir(name) / "ui").resolve()
+    target = (ui_root / tail).resolve()
+    if not target.is_relative_to(ui_root) or not target.is_file():
+        return web.json_response({"error": "not found"}, status=404)
+
+    ctype = _UI_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+    return web.FileResponse(target, headers={"Content-Type": ctype, "Cache-Control": "no-cache"})

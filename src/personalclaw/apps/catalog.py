@@ -1,0 +1,2036 @@
+"""App catalog — what's AVAILABLE to install, for the Store half of the App page.
+
+The App page has two halves:
+  * **Library** — what's installed (``apps.manager.list_apps``).
+  * **Store** — what's available to install, which this module enumerates from two
+    sources:
+      1. **Native** — manifests PersonalClaw ships under ``apps/native/`` (native)
+         that aren't currently installed (e.g. a default provider the user
+         force-uninstalled, or a bundled app they haven't added yet).
+      2. **Git sources** — a user-managed list of git URLs (seeded with any
+         PersonalClaw-bundled defaults). Each entry is an installable app source;
+         the catalog reports it as available without cloning (the clone happens at
+         install time, behind the scanner gate).
+
+A catalog entry is metadata only — installing one routes through the normal
+``app_manager.install`` (path for bundled, git URL for sources), so the scanner
+gate + lifecycle are unchanged.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import logging
+import re
+import shutil
+import socket
+import time
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+from personalclaw import python_children
+from personalclaw.apps.disclosure import describe
+from personalclaw.apps.manifest import AppManifest
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
+from personalclaw.security import mask_child_output
+from personalclaw.versions import is_newer, order_key
+
+logger = logging.getLogger(__name__)
+
+_SOURCES_FILENAME = "app-sources.json"
+
+# Hero-image resolution. An app's ``heroImage`` is a path RELATIVE to its dir; we
+# read the file and inline it as a ``data:`` URI so BOTH installed apps and
+# not-yet-installed catalog entries render a banner with no per-file serving route
+# (and no dependence on the app being enabled). Guardrails: confined to the app
+# dir (traversal-safe), only known raster/vector image types, size-capped so a
+# stray large asset can't bloat the catalog payload.
+_HERO_MAX_BYTES = 1_500_000  # ~1.5 MB — generous for a banner, bounds the payload
+_HERO_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+}
+
+
+def resolve_hero_url(app_dir: Path, hero_rel: str) -> str:
+    """Resolve a manifest ``heroImage`` (relative path) under ``app_dir`` to a
+    ``data:`` URI, or ``""`` when unset / missing / disallowed. Traversal-guarded,
+    type-allowlisted, and size-capped — a bad value degrades to no hero, never an
+    error (the card just falls back to the icon layout)."""
+    import base64
+
+    rel = (hero_rel or "").strip()
+    if not rel:
+        return ""
+    try:
+        root = app_dir.resolve()
+        target = (root / rel).resolve()
+        # Confine to the app dir (reject ../ escapes and absolute reroutes).
+        if root not in target.parents and target != root:
+            return ""
+        if not target.is_file():
+            return ""
+        mime = _HERO_MIME.get(target.suffix.lower())
+        if not mime:
+            return ""
+        data = target.read_bytes()
+        if len(data) > _HERO_MAX_BYTES:
+            logger.debug("hero image %s exceeds %d bytes — skipping", target, _HERO_MAX_BYTES)
+            return ""
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except OSError:
+        logger.debug("could not read hero image %r under %s", hero_rel, app_dir, exc_info=True)
+        return ""
+
+
+# Git source URLs PersonalClaw ships as Store defaults. The published first-party
+# apps repo is a default source, so a shipped ``pip install`` surfaces every
+# first-party app in the Store WITHOUT the dev workspace tree — uninstalled, so the
+# per-app install-consent contract is preserved (nothing runs until the user opts
+# in). User-added URLs accumulate alongside these. This is a Store-listing default
+# only — it never auto-installs.
+#
+# 🔴 It is still folded into every read of :func:`list_git_sources`, so it cannot be
+# removed ROW-WISE — but it is no longer un-turn-off-able. ``apps.bundled_source_enabled``
+# drops it from every read, and :func:`network_source_hosts` names the hosts a Store read
+# reaches so the surface can DISCLOSE the egress. Before this, "cannot be turned off" and
+# "happens before the user configured anything" held together (#2528 finding 1), which is
+# a stronger claim than the rest of this codebase makes — an app can declare
+# ``"network": false``. A Store with no sources is a poor first run, so the default stays
+# LISTED; what changes is that it is disclosed and refusable.
+_DEFAULT_GIT_SOURCES: tuple[str, ...] = ("https://github.com/PersonalClaw/PersonalClawApps.git",)
+
+# The curated app REGISTRY — a SEEDED default, deliberately NOT a
+# member of the tuple above. That distinction IS the mechanism: ``_DEFAULT_GIT_SOURCES`` is
+# folded into every read of :func:`list_git_sources`, so a bundled default cannot be removed
+# (the next read puts it back) — which is exactly why the docstring above says "not
+# user-removable". The registry has to be REMOVABLE, so instead of being folded in on read it
+# is written ONCE into ``app-sources.json`` as an ordinary row (:func:`seed_default_git_sources`,
+# run at gateway start) alongside a marker recording that the seed already happened. From then
+# on it is a normal user entry: the existing DELETE removes it, and the marker — which survives
+# the removal — is what stops the next start from seeding it again.
+#
+# Gated by ``apps.registry_source_enabled``: flag off means the seed never runs, so an operator
+# who does not want a shipped NETWORK source never acquires one. Listing-only either way — a
+# source contributes Store cards, and installing one still goes through the single scanner-gated
+# install path (nothing is fetched-and-run without explicit per-app consent).
+_REGISTRY_GIT_SOURCE = "https://github.com/PersonalClaw/registry.git"
+
+# Marker recorded in the sources file once the registry seed has run. Its ABSENCE means "never
+# seeded"; its PRESENCE is what makes a removal stick across restarts.
+_SEEDED_REGISTRY_KEY = "registry"
+
+
+def _first_party_source() -> Path | None:
+    """The always-present, read-only FIRST-PARTY app source — DEV filesystem path.
+
+    First-party apps live in the workspace ``apps/`` dir (a sibling of the
+    ``PersonalClaw/`` core repo). This is the DEV convenience source: when you're
+    working out of the workspace tree, the apps beside core surface in the Store
+    without network. A SHIPPED install has no workspace tree, so this returns None
+    there — the published apps repo in ``_DEFAULT_GIT_SOURCES`` is what makes
+    first-party apps appear on a plain ``pip install`` (uninstalled — the user opts
+    in). Resolved relative to the package: ``.../PersonalClaw/src/personalclaw/`` →
+    ``.../PersonalClaw/`` → ``../apps``. Not user-removable (not in the persisted
+    list)."""
+    # catalog.py is at src/personalclaw/apps/catalog.py → parents: apps, personalclaw,
+    # src, PersonalClaw, <workspace>. The workspace holds apps/ beside PersonalClaw/.
+    workspace_apps = Path(__file__).resolve().parents[4] / "apps"
+    return workspace_apps if workspace_apps.is_dir() else None
+
+
+# Env override so a packaged/relocated install can point at a local first-party dir
+# (e.g. this workspace's PersonalClawApps clone) instead of the published git source
+# in _DEFAULT_GIT_SOURCES — used for offline dev + tests.
+import os as _os  # noqa: E402
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+_FIRST_PARTY_ENV = "PERSONALCLAW_FIRST_PARTY_APPS_DIR"
+
+
+@dataclass
+class CatalogEntry:
+    """One available-to-install app surfaced in the Store."""
+
+    name: str
+    displayName: str  # noqa: N815
+    description: str = ""
+    version: str = ""
+    icon: str = ""
+    heroUrl: str = ""  # noqa: N815 — resolved data: URI (from manifest heroImage), "" if none
+    author: str = ""
+    source: str = ""  # install source: a local path (bundled) or git URL
+    sourceKind: str = "bundled"  # noqa: N815 — "bundled" | "git"
+    isProvider: bool = False  # noqa: N815
+    providerType: str = ""  # noqa: N815
+    # The provider's DECLARED capabilities (``provider.capabilities``: chat, stt, tts,
+    # search, messaging, …). ``providerType`` alone cannot tell a chat model from a
+    # speech model — faster-whisper (stt) and piper-tts (tts) are both
+    # ``providerType: "model"``, so a surface that groups apps by what they DO (the
+    # onboarding essential-apps step) needs the capability list, not free-text ``tags``,
+    # which are author-controlled and unvalidated. Empty for a non-provider app or for a
+    # registry-index pointer whose manifest has not been fetched yet.
+    providerCapabilities: list[str] = field(default_factory=list)  # noqa: N815
+    tags: list[str] = field(default_factory=list)
+    # Federation: when this entry came from a source's registry index (not a
+    # direct dir-scan), the install POINTER — the exact source string to hand
+    # app_manager.install (repo URL, optionally with a #subdirectory) so install
+    # still routes through source.resolve + the scanner, unchanged. "" for a
+    # dir-scanned entry (source itself is the pointer).
+    pointer: str = ""
+    # Whether a manifest was actually READ for this entry (issue 614): a registry
+    # pointer has no manifest yet, so its empty permissions mean "not known", while a
+    # scanned manifest with no permissions block means "declared none". The consent
+    # UI must say different things for those two — this flag is the one authority.
+    consentKnown: bool = False  # noqa: N815
+    # Install-consent transparency — every field from here to `mcpServers` is ONE
+    # projection, `apps/disclosure.describe(manifest)`, splatted in by each scan site, so a
+    # card and the install dialog cannot disclose different things about one manifest.
+    # Metadata only; empty for a registry-index card (pointer-only, manifest not yet
+    # fetched), whose install dialog reads the same projection from the fetched bytes.
+    permissions: dict[str, Any] = field(default_factory=dict)
+    crons: list[dict[str, Any]] = field(default_factory=list)
+    # The Python packages installing this app pip-installs into ``<home>/app-python``, which
+    # the GATEWAY loads into its own process, each tagged with whether core owns the name — from
+    # ``app_manager.describe_python_dependencies``, which reads the same core pin set the
+    # install guard gates on. Consent enumerated permissions, messaging, desktop reach,
+    # network and dashboard code and never this, which is the more consequential of the
+    # lot: a third-party package enters the interpreter holding the owner's credentials,
+    # filesystem and network reach. Empty ``[]`` for an app declaring none (the surface
+    # then renders nothing — an empty section would alarm without informing) and for a
+    # registry-index pointer, whose manifest is not read until install; ``consentKnown``
+    # is again the one authority for which of those two silences it is.
+    pythonDependencies: list[dict[str, Any]] = field(default_factory=list)  # noqa: N815
+    # What Install engine puts in the app's own Python environment, where its sidecar child runs
+    # it, and what it needs that PersonalClaw does not install (`{name, why, how}`). Both are
+    # read before install from the same projection, so the card and the dialog say one thing.
+    sidecarDependencies: list[str] = field(default_factory=list)  # noqa: N815
+    requires: list[dict[str, str]] = field(default_factory=list)
+    # The programs it starts outside PersonalClaw and what of the owner's each runs with, the npm
+    # packages core installs for it, and where outside its own folder it writes — the same
+    # projection again, so the card and the dialog say one thing.
+    launches: list[dict[str, Any]] = field(default_factory=list)
+    npmPackages: list[str] = field(default_factory=list)  # noqa: N815
+    writes: list[dict[str, str]] = field(default_factory=list)
+    # #492. Whether this app ships browser code — the one consent fact the permission
+    # block cannot state. A UI bundle is imported into the DASHBOARD PAGE
+    # (`appSdk.loadContributedModule`, no iframe), so it runs with the host DOM, the
+    # owner's session and same-origin `/api/*` reach, and the `api` allowlist above
+    # bounds its backend and its SDK client rather than its page code
+    # (docs/security/limitations.md §4). Consent has to be able to SAY that before the
+    # install, so these are the same two field names the installed-app wire uses
+    # (`dashboard/handlers/apps.py`) and the same meanings: `hasUI` is a declared page,
+    # `uiComponents` the genui module the SHELL loads for an enabled app with no page
+    # visit at all. Both empty/False for a registry-index pointer, whose manifest is not
+    # read until install — `consentKnown` is what says which of those two silences it is.
+    hasUI: bool = False  # noqa: N815
+    uiComponents: str = ""  # noqa: N815
+    # What the install RUNS beyond its grants: a server process of its own and the sandbox tier
+    # it runs in, each provider module the gateway loads, the shell command of each lifecycle
+    # hook, the CLI setup/doctor steps, each connector-pack parser, each MCP server it adds to
+    # the assistant (`{name, launches}`), the skills it installs for your agents, and the
+    # sentence saying which of that runs as you. `disclosure.describe` documents each.
+    hasBackend: bool = False  # noqa: N815
+    backendSandbox: str = ""  # noqa: N815
+    providers: list[dict[str, str]] = field(default_factory=list)
+    onInstall: str = ""  # noqa: N815
+    onUpdate: str = ""  # noqa: N815
+    onEnable: str = ""  # noqa: N815
+    onDisable: str = ""  # noqa: N815
+    onUninstall: str = ""  # noqa: N815
+    cliSetup: str = ""  # noqa: N815
+    cliDoctor: str = ""  # noqa: N815
+    sources: list[dict[str, str]] = field(default_factory=list)
+    mcpServers: list[dict[str, str]] = field(default_factory=list)  # noqa: N815
+    skills: list[str] = field(default_factory=list)
+    runsAsYou: str = ""  # noqa: N815
+    # The app's DECLARED quality block, rendered as the card's badge row. Only
+    # the axes the manifest actually declared appear here — an empty dict means the app
+    # claimed nothing, which the card renders as no badges, NOT as a row of misses.
+    # Verified in the apps-repo CI for first-party apps (apps/quality.py).
+    quality: dict[str, Any] = field(default_factory=dict)
+    # #1778: the app's declared core-version floor evaluated against THIS core, so a
+    # version refusal is visible on the consent card next to the permissions, crons and
+    # scan verdict rather than arriving as a mystery error after the user clicks Install.
+    # ``{"state", "required", "host", "reason"}``; ``state == "ok"`` with an empty
+    # ``required`` means the app declared no floor. Empty ``{}`` for a registry-index
+    # pointer card, whose manifest has not been fetched yet — same as ``permissions``.
+    coreCompatibility: dict[str, Any] = field(default_factory=dict)  # noqa: N815
+    # Registry provenance — what the REGISTRY INDEX claims about a listing, as opposed
+    # to what the app's own manifest claims about itself. Three fields, and the distinction
+    # is the whole point of carrying them separately from ``author``/``quality``:
+    #
+    #   * ``maintainer``      — who LISTED the app in the index. Not necessarily its author,
+    #                           and explicitly not a PersonalClaw endorsement of either.
+    #   * ``lastValidated``   — when the registry last checked the listing (ISO-8601).
+    #   * ``lastScanVerdict`` — the verdict THAT check recorded (``clean`` | anything else).
+    #
+    # 🔴 ALL THREE ARE THE LISTING'S OWN CLAIM, fetched over the network from the index, and
+    # none of them is the install-time scan gate. The gate still runs at install, unchanged
+    # (``app_manager.install``) — so the surface rendering these must say so, or a "clean"
+    # from a month-old registry check reads as "PersonalClaw scanned this for you". That
+    # trust-washing risk is why the copy lives in ONE place (``web/src/lib/provenance.ts``)
+    # and is pinned by ``storeCardRegistryProvenance.test.tsx`` rather than typed per-card.
+    #
+    # Empty on every non-registry entry — a bundled/local/first-party card has no index
+    # listing behind it, so it renders no provenance line at all. That is a DONE-WHEN
+    # clause, not an incidental: ``test_a_dirscanned_card_carries_no_registry_provenance`` reds if a
+    # scan path starts populating these.
+    maintainer: str = ""
+    lastValidated: str = ""  # noqa: N815
+    lastScanVerdict: str = ""  # noqa: N815
+    # Why this card cannot be installed here, as one sentence; "" means installable. The card is
+    # still shown with the sentence rather than dropped: a Store whose apps silently vanish reads
+    # as broken. Two things refuse a card:
+    #
+    #   * A registry listing names where its app downloads from, and that is third-party data.
+    #     When it names a place PersonalClaw will not fetch from for someone else's listing (a
+    #     folder on this machine, this computer, a private network, the cloud metadata service),
+    #     it is refused. Judged on what the Store read can see without the network: a host written
+    #     as a NAME is judged when an install connects to it (`apps/source.resolve`, `net/git.py`).
+    #   * The desktop app cannot run what the app's manifest runs as a Python child: its own
+    #     server, worker, engine, parse scripts, or packages it does not carry
+    #     (`python_children.app_refusal`, the sentence its install and enable are refused with).
+    refused: str = ""
+    # The registry source whose listing named this card's download address. Set only when the
+    # listing names its own ``repo``; "" when the app downloads from the owner's own source. The
+    # install dialog sends it back, so a fetch is held to the listing rules even when this
+    # process has not read that index yet (after a restart, with a Store page still open).
+    listedBy: str = ""  # noqa: N815
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Provenance + collision precedence — ONE OWNER (#2528)
+#
+# Two sources can carry an app of the SAME NAME: the shipped git source publishes the
+# first-party apps, and the same bundles routinely sit in a local dir the user added.
+# That is a COLLISION TO RESOLVE BY RULE, not a tie to break by arrival order — and
+# before this, five scan functions each kept a private ``seen`` set and the three
+# frontend merges each concatenated the wire lists in a DIFFERENT order, so "which copy
+# won" depended on who you asked. The card a user reads (description, permissions, tags)
+# could therefore describe different bytes than the ones about to be installed, with
+# nothing on screen naming which copy won.
+#
+# ``SOURCE_PRECEDENCE`` is the whole rule: earlier wins. It is ordered by how much the
+# user can be said to have vouched for the bytes:
+#   * ``native``      — ships inside the wheel; mandatory, and resurfaced only to self-heal.
+#   * ``bundled``     — also shipped with the product.
+#   * ``first-party`` — the workspace ``apps/`` dir on this machine (dev/offline).
+#   * ``local``       — a directory the USER added. They put these bytes on disk.
+#   * ``git``         — a remote. Least vouched-for, so it never shadows anything above it.
+# A remote git source can no longer shadow a local one; a genuinely-bundled app is still
+# labelled as bundled. An unknown kind sorts last rather than raising — a new source kind
+# that forgot to declare itself must lose a collision, not win one by accident.
+SOURCE_PRECEDENCE: tuple[str, ...] = ("native", "bundled", "first-party", "local", "git")
+
+#: An INSTALLED app records a coarser ``origin`` (``apps/manager.py``) than a catalog
+#: entry's ``sourceKind``. This is the one translation between the two vocabularies, so
+#: no surface has to invent its own reading of "where did these bytes come from".
+_ORIGIN_TO_SOURCE_KIND: dict[str, str] = {
+    "builtin": "bundled",
+    "registry": "bundled",
+    "local": "local",
+    "external": "git",
+}
+
+
+def precedence_rank(source_kind: str) -> int:
+    """Where *source_kind* sits on :data:`SOURCE_PRECEDENCE` — lower wins a collision.
+
+    An unrecognised kind ranks last (never wins), so adding a source kind without
+    placing it on the ladder degrades to "loses every collision" rather than to
+    "wins by accident"."""
+    try:
+        return SOURCE_PRECEDENCE.index(source_kind)
+    except ValueError:
+        return len(SOURCE_PRECEDENCE)
+
+
+def source_kind_for_origin(origin: str, *, native: bool = False) -> str:
+    """The ``sourceKind`` vocabulary term for an INSTALLED app's recorded ``origin``.
+
+    The Store speaks ``sourceKind``; the Library speaks ``origin``. Surfaces that must
+    label an installed app's provenance (Settings → Tools) read this rather than
+    re-deciding, which is how #2514 happened: that page badged every non-locked native
+    provider ``built-in``, collapsing "shipped with the product" into "I installed it
+    from somewhere". Returns ``""`` for an origin with no reading, so a caller shows
+    NOTHING rather than guessing."""
+    if native:
+        return "native"
+    return _ORIGIN_TO_SOURCE_KIND.get(origin.strip(), "")
+
+
+def resolve_catalog_entries(entries: list[CatalogEntry]) -> list[CatalogEntry]:
+    """THE single place that decides which copy of an app name the Store surfaces.
+
+    Two jobs, both of which used to be spread across every scanner:
+
+    * **Library exclusion.** An app already installed is not "available to install" —
+      it lives in the Library tab. Done once here, so a scanner's CACHED result can no
+      longer hide an app that was uninstalled after the cache filled.
+    * **Collision resolution.** At most ONE entry per name survives: an installable entry
+      over a ``refused`` one, then by :data:`SOURCE_PRECEDENCE`. The wire payload therefore
+      carries no name twice, which is what makes every consumer agree: no concatenation
+      order, filter or lookup downstream can resolve a collision differently, because there
+      is none left to resolve.
+
+    Ties inside one rank go to the first entry seen, which preserves the existing
+    listed-source order (defaults before user entries). Insertion order is preserved
+    for the survivors so the Store's grouping is stable across reads.
+
+    🔴 If you are adding a second place that picks between same-named entries, stop —
+    ``test_one_owner_resolves_a_catalog_name_collision`` reds on exactly that.
+    """
+    installed = _installed_names()
+    winners: dict[str, CatalogEntry] = {}
+    for entry in entries:
+        if not entry.name or entry.name in installed:
+            continue
+        current = winners.get(entry.name)
+        if current is None:
+            winners[entry.name] = entry
+        elif bool(entry.refused) != bool(current.refused):
+            # An installable card beats a refused one whatever their sources, so a listing
+            # nobody can install never hides a copy that can be.
+            if not entry.refused:
+                winners[entry.name] = entry
+        elif precedence_rank(entry.sourceKind) < precedence_rank(current.sourceKind):
+            winners[entry.name] = entry
+    return list(winners.values())
+
+
+# ---------------------------------------------------------------------------
+# Registry index (federated app sources)
+#
+# A source (git URL or local dir) MAY publish an ``app-registry.json`` at its root:
+# a lightweight pointer list so the Store can enumerate the source's apps WITHOUT
+# cloning each one. Absent → we fall back to today's clone-then-scan (git) / dir-scan
+# (local). The index is metadata only + untrusted: install still routes every app
+# through ``source.resolve`` + the supply-chain scanner, so a malicious index can at
+# worst list apps that then fail the scanner — it never widens the trust boundary.
+# ---------------------------------------------------------------------------
+
+_REGISTRY_FILENAME = "app-registry.json"
+_REGISTRY_TTL_SECS = 3600.0  # 1h — stale-better-than-a-clone-per-list; refetched after
+# module-level cache: source string → (fetched_at_epoch, pointers). Bounded by the
+# small number of configured sources.
+_registry_cache: dict[str, tuple[float, list["RegistryPointer"]]] = {}
+
+# Git-source subdirectory scan cache: url → (fetched_at_epoch, entries).
+# A shorter TTL than the registry index — re-clones are heavier, but staleness is worse
+# for discovery (a user adds a source + expects to see it immediately).
+_GIT_SCAN_TTL_SECS = 300.0  # 5 minutes
+_git_scan_cache: dict[str, tuple[float, list["CatalogEntry"]]] = {}
+# What a SINGLE-app git source (a root ``app.json``) offers, read off the same clone the scan
+# makes: url → version. The Store lists such a source by its URL rather than as a card, so the
+# scan cache holds nothing for it, and the update check would otherwise have no version for an
+# app installed from it (:func:`_offered_versions`).
+_git_root_versions: dict[str, str] = {}
+
+# ── Bounding the catalog build (#408) ──
+#
+# The per-git-process timeouts below (60/30/90s) bound ONE clone; they never bounded the
+# sum, and they do not bound the DNS/TCP connect underneath — which is where a blackholed
+# address spends its time. One unreachable source therefore cost the Store 135s to open.
+# So the whole build gets a wall-clock budget: every source loop stops when it is spent,
+# and every git call is handed only the time that is actually left. A source that is cut
+# off is REPORTED (``unavailableSources`` on the wire) rather than silently dropped —
+# degrading quietly would just replace a slow Store with an inexplicably empty one.
+#
+# TWO bounds, because a single total is not enough. Measured on a seeded home with one
+# blackholed source added:
+#
+# * A total alone, clamped to "whatever is left", lets ONE dead source swallow the entire
+#   budget in a single connect — at a 45s total every load cost the full 45s and the healthy
+#   first-party source came back as ``reason: "budget"`` with zero apps.
+# * A total set BELOW a healthy configuration's legitimate cost cuts good sources instead:
+#   the shipped first-party source alone needs ~20s to shallow-clone and scan its 65 apps.
+#
+# So the total is set above a healthy configuration's cost, and no single source may consume
+# more than its own ceiling — which sits above a legitimate clone but well below the total.
+# One unreachable source therefore costs its ceiling ONCE and leaves the rest of the budget
+# for sources that can answer. The repeat cost is owned by the failure backoff below: after
+# the first load a dead source is skipped without a clone at all.
+_CATALOG_BUDGET_SECS = 60.0
+_CATALOG_PER_SOURCE_SECS = 25.0
+
+# A failing registry fetch used to be deliberately uncached ("a blip shouldn't poison the
+# catalog"), which meant a PERMANENTLY bad source re-paid its full timeout on every single
+# load, forever. The honest distinction is between "blipped once" and "has failed N times
+# in a row": cache the failure, and back it off geometrically from a short base up to the
+# success TTL. Never longer — a source that comes back is always retried, so this is a
+# backoff and not a death sentence.
+_REGISTRY_FAIL_BASE_SECS = 60.0
+_REGISTRY_FAIL_MAX_SECS = _REGISTRY_TTL_SECS
+# source string → (last_failure_at_epoch, consecutive_failures)
+_registry_failures: dict[str, tuple[float, int]] = {}
+
+
+def _budget_remaining(deadline: float | None) -> float | None:
+    """Seconds of catalog budget left, or ``None`` when the caller set no deadline
+    (``available_catalog`` always does; a direct caller may legitimately not)."""
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def _budget_spent(deadline: float | None) -> bool:
+    """Whether the build must stop touching the network."""
+    remaining = _budget_remaining(deadline)
+    return remaining is not None and remaining <= 0.0
+
+
+def _git_timeout(cap: float, deadline: float | None) -> float:
+    """The timeout for one git call: its own cap, clamped to BOTH the remaining budget and
+    the per-source ceiling.
+
+    Clamping matters as much as stopping between sources — otherwise the first bad source
+    burns its full 60/90s cap. Clamping to the remainder alone is not enough either: that
+    hands one blackholed source the whole rest of the budget, which is how a 45s total
+    produced a 45s load with zero apps. Never below 1s, so a nearly-spent budget fails fast
+    instead of passing git a zero timeout."""
+    bounded = min(cap, _CATALOG_PER_SOURCE_SECS)
+    remaining = _budget_remaining(deadline)
+    return bounded if remaining is None else max(1.0, min(bounded, remaining))
+
+
+def _scan_order(sources: list[str]) -> list[str]:
+    """*sources*, with known-failing ones last — otherwise stable.
+
+    A shared budget spends itself in iteration order, so a dead source listed FIRST starves
+    the healthy ones behind it: measured on a seeded home, adding one blackholed URL pushed
+    the real first-party source into ``reason: "budget"`` and the Store's first open showed
+    none of its apps. Trying the sources that answered last time first spends the budget on
+    the ones most likely to produce cards. Purely an ordering hint — every source is still
+    attempted, and one that recovers loses its penalty as soon as its record clears."""
+    return sorted(sources, key=lambda u: 1 if u in _registry_failures else 0)
+
+
+def _registry_backoff_secs(source: str) -> float:
+    """How long *source* is currently backed off for. 0 when it has no failure record."""
+    rec = _registry_failures.get(source)
+    if rec is None:
+        return 0.0
+    _at, consecutive = rec
+    return min(_REGISTRY_FAIL_BASE_SECS * (2 ** max(0, consecutive - 1)), _REGISTRY_FAIL_MAX_SECS)
+
+
+def _registry_backed_off(source: str, *, now: float) -> bool:
+    rec = _registry_failures.get(source)
+    if rec is None:
+        return False
+    return (now - rec[0]) < _registry_backoff_secs(source)
+
+
+def _note_registry_failure(source: str, *, now: float) -> None:
+    _at, consecutive = _registry_failures.get(source, (0.0, 0))
+    _registry_failures[source] = (now, consecutive + 1)
+    # A SHIPPED default that cannot be fetched is worth an operator's attention: nobody
+    # added it, so nobody thinks to look for it — the only other signal is a Store card
+    # quietly missing. A user-added source stays at debug (logged by _read_git_registry):
+    # its owner chose the URL and the Store already names it under unavailableSources.
+    # ONCE PER STREAK, not per failure: ``consecutive`` here is the PRE-increment count, so
+    # 0 is the streak's first failure. A line per failure is the log spam the backoff above
+    # exists to prevent, and a recovered source clears its record so the next streak warns
+    # again.
+    if consecutive == 0 and source == _REGISTRY_GIT_SOURCE:
+        logger.warning(
+            "app registry: could not fetch the shipped default app source %s — the Store "
+            "will list it as unavailable until it answers. It is retried with backoff, so "
+            "a transient outage needs no action; remove the source if it is gone for good.",
+            source,
+        )
+
+
+@dataclass
+class RegistryPointer:
+    """One entry in a source's ``app-registry.json`` — a pointer to an installable
+    app, resolved to a CatalogEntry card without cloning. ``repo``/``subdirectory``
+    build the install pointer; the display fields are index-provided hints (the
+    authoritative manifest is only read at install time)."""
+
+    name: str
+    repo: str = ""  # git URL (or path) to clone/read at install; "" → same source
+    branch: str = ""  # optional ref
+    subdirectory: str = ""  # optional path within the repo where app.json lives
+    displayName: str = ""  # noqa: N815 — index hint
+    description: str = ""
+    version: str = ""
+    icon: str = ""
+    author: str = ""
+    tags: list[str] = field(default_factory=list)
+    # The index's own provenance claims about this listing. snake_case here because
+    # that is what the published ``app-registry.json`` spells (measured against
+    # ``PersonalClaw/registry`` @ c0b35b6c8: 4/4 listings carry all three) — the camelCase
+    # rename to the wire happens once, in :func:`_pointer_to_entry`.
+    #
+    # ``maintainer`` is deliberately NOT folded into ``author``. They answer different
+    # questions ("who wrote this" vs "who listed it here"), and collapsing them would let a
+    # listing assert authorship it never claimed.
+    maintainer: str = ""
+    last_validated: str = ""
+    last_scan_verdict: str = ""
+    # Why ``repo`` cannot be downloaded from, judged on its form (:func:`listing_repo_refusal`);
+    # "" when the form is fine. The pointer is kept either way, so the Store can say why.
+    refused: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "RegistryPointer | None":
+        name = str(d.get("name", "")).strip()
+        if not name:
+            return None  # a pointer with no name is unusable — skip it
+        repo = str(d.get("repo", "")).strip()
+        refused = listing_repo_refusal(repo) if repo else ""
+        if refused:
+            logger.debug("app registry: listing %r is not installable: %s", name, refused)
+        return cls(
+            name=name,
+            repo=repo,
+            refused=refused,
+            branch=str(d.get("branch", "")).strip(),
+            subdirectory=str(d.get("subdirectory", "")).strip(),
+            displayName=str(d.get("displayName", "")).strip(),
+            description=str(d.get("description", "")).strip(),
+            version=str(d.get("version", "")).strip(),
+            icon=str(d.get("icon", "")).strip(),
+            author=str(d.get("author", "")).strip(),
+            tags=[str(t) for t in (d.get("tags") or []) if str(t).strip()],
+            maintainer=str(d.get("maintainer", "")).strip(),
+            last_validated=str(d.get("last_validated", "")).strip(),
+            last_scan_verdict=str(d.get("last_scan_verdict", "")).strip(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# What a registry listing may name
+#
+# A listing's ``repo`` is third-party data, and it is where an install then fetches from. So
+# PersonalClaw never fetches from it anything the owner has not chosen: not a folder on this
+# machine, not this computer, not a private network, not the cloud metadata service. Checked in
+# three places, one rule:
+#   * the Store read, on what it can see without the network (the URL's form and an address
+#     written as a literal), so the card says why before anyone clicks;
+#   * the install, which resolves the host at that moment (`apps/source.resolve`);
+#   * the fetch itself, where every host git connects to is judged as it connects, redirects
+#     included (`net/git.py`).
+# The owner's own choices stay reachable: the host of a registry source they added, a host on
+# their egress allow-list, and anything they type into Install from URL, which is not a listing.
+# ---------------------------------------------------------------------------
+
+#: The rule every listing refusal states, in the Store, the install dialog and the API error alike.
+_LISTING_RULE = "A registry listing can only download from a public https:// address."
+_SHOWN_CHARS = 200
+
+
+def _shown(text: str) -> str:
+    """Third-party text quoted in a sentence, bounded so an index cannot fill a card with it."""
+    return text if len(text) <= _SHOWN_CHARS else text[: _SHOWN_CHARS - 1] + "…"
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def listing_repo_refusal(repo: str) -> str:
+    """Why a listing's ``repo`` cannot be downloaded from, judged on its form, or ``""``.
+
+    It must name a remote repository, never a folder on this machine (a path, ``~``, ``file://``,
+    or a ``.git``-suffixed path git would clone off the disk). A folder installs only as the owner's
+    own act: Install from URL, or adding it as a source. The form is the published registry's own
+    contract (``validate_registry.py`` ``check_repo_url`` in the registry repository): a plain
+    ``https://`` URL with a host, no credentials and no explicit port."""
+    if any(c.isspace() or not c.isprintable() for c in repo):
+        return (
+            "Not installable: this listing's download address contains spaces or control "
+            f"characters. {_LISTING_RULE}"
+        )
+    if _SCP_LIKE_REMOTE_RE.match(repo):
+        return (
+            f"Not installable: this listing's download address ({_shown(repo)}) is not an "
+            f"https:// URL. {_LISTING_RULE}"
+        )
+    try:
+        parts = urlsplit(repo)
+        port = parts.port
+    except ValueError:
+        return (
+            f"Not installable: this listing's download address ({_shown(repo)}) is not a URL. "
+            f"{_LISTING_RULE}"
+        )
+    if parts.scheme in ("", "file"):
+        return (
+            f"Not installable: this listing points at a folder on this computer ({_shown(repo)}). "
+            f"{_LISTING_RULE} To install a folder you trust, use Install from URL."
+        )
+    if parts.scheme != "https":
+        return (
+            f"Not installable: this listing's download address ({_shown(repo)}) is not an "
+            f"https:// URL. {_LISTING_RULE}"
+        )
+    if "@" in parts.netloc:
+        return (
+            f"Not installable: this listing's download address carries credentials. {_LISTING_RULE}"
+        )
+    if not parts.hostname:
+        return (
+            f"Not installable: this listing's download address ({_shown(repo)}) names no host. "
+            f"{_LISTING_RULE}"
+        )
+    if port is not None:
+        return (
+            f"Not installable: this listing's download address ({_shown(repo)}) names a port. "
+            f"{_LISTING_RULE}"
+        )
+    return ""
+
+
+def _place(host: str, address: str, category: str) -> str:
+    """Where a refused connection would have gone: ``this computer (127.0.0.1)``, or
+    ``a private network (nas.example, which resolves to 10.0.0.4)`` for a name."""
+    from personalclaw.net.guard import PLACES
+
+    if category == "metadata":
+        what = "the cloud-metadata address" if address else "the cloud-metadata service"
+    else:
+        what = PLACES.get(category, "a non-public address")
+    host = _shown(host)
+    if _is_ip_literal(host) or not address:
+        return f"{what} ({host})"
+    return f"{what} ({host}, which resolves to {address})"
+
+
+def listing_address_refusal(decision: Any) -> str:
+    """The sentence for the egress guard refusing a listing's download host, or ``""`` when the
+    decision is not a refusal to show (allowed, or a name that did not resolve)."""
+    if decision.allow or decision.category in ("", "unresolvable"):
+        return ""
+    if decision.category == "deny_list":
+        return (
+            f"Not installable: this listing downloads from {_shown(decision.host)}, which is on "
+            "your egress deny list."
+        )
+    if decision.category == "malformed":
+        return f"Not installable: {decision.reason}. {_LISTING_RULE}"
+    from personalclaw.net.guard import ALLOWED_HOSTS, OWNER_CAN_ALLOW
+
+    sentence = (
+        "Not installable: this listing downloads from "
+        f"{_place(decision.host, decision.address, decision.category)}. {_LISTING_RULE}"
+    )
+    if decision.category in OWNER_CAN_ALLOW:
+        sentence += f" If {_shown(decision.host)} is yours, add it to {ALLOWED_HOSTS}."
+    return sentence
+
+
+def listing_fetch_refusal(url: str, refusal: Any) -> str:
+    """The sentence for a connection the git tunnel refused while downloading listing *url*
+    (a :class:`personalclaw.net.git.TunnelRefusal`): a redirect, or the listing's own host
+    answering differently when git connected than when it was checked."""
+    host = _shown(refusal.host)
+    if refusal.category == "port":
+        return (
+            f"Not installed: the listing's server redirected the download to {host} port "
+            f"{refusal.port}, and a listing download only connects to port 443."
+        )
+    if refusal.category == "method":
+        return (
+            "Not installed: the listing's server redirected the download to a plain http:// "
+            f"address ({host}). {_LISTING_RULE}"
+        )
+    if refusal.category == "deny_list":
+        return f"Not installed: the download reached {host}, which is on your egress deny list."
+    place = _place(refusal.host, refusal.address, refusal.category)
+    if refusal.host != (urlsplit(url).hostname or "").lower():
+        return (
+            f"Not installed: the listing's server redirected the download to {place}. "
+            f"{_LISTING_RULE}"
+        )
+    return (
+        f"Not installed: when PersonalClaw connected to download this listing, it led to {place}. "
+        f"{_LISTING_RULE}"
+    )
+
+
+def listing_unreachable(host: str, reason: str) -> str:
+    """The sentence for a listing's download host that did not resolve or answer."""
+    return f"Could not reach {_shown(host)} to download this app ({reason})."
+
+
+def _literal_only(host: str) -> list[str]:
+    """A resolver that answers only for an IP literal. The Store read uses it, so reading the
+    Store never asks DNS about a host a third party chose: :func:`network_source_hosts` tells the
+    owner which hosts a Store read contacts, and a listing's host is not one of them."""
+    if _is_ip_literal(host):
+        return [str(ipaddress.ip_address(host))]
+    raise socket.gaierror(f"{host!r} is judged when an install connects to it")
+
+
+def _git_remote_host(url: str) -> str:
+    """The host a git remote URL names (``https://h/…``, ``ssh://u@h/…`` or ``u@h:path``), or
+    ``""`` for a ``file://`` URL, a path, or anything unparseable."""
+    if match := _SCP_LIKE_REMOTE_RE.match(url):
+        return match.group(0).split("@", 1)[1].split(":", 1)[0].lower()
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    if parts.scheme in ("", "file"):
+        return ""
+    return (parts.hostname or "").lower()
+
+
+def listing_policy(registry: str) -> Any:
+    """The egress policy a fetch named by a listing in *registry* runs under.
+
+    :func:`personalclaw.net.policy.listing_egress_policy`, with the registry's own host trusted
+    when *registry* is a git source the owner configured: they chose that host, so its listings
+    may point back at it. A registry that is not configured (a client naming one that was
+    removed, or never added) trusts nothing beyond the owner's allow-list."""
+    from personalclaw.net.policy import listing_egress_policy
+
+    configured = {_git_source_key(u) for u in list_git_sources()}
+    trusted = _git_remote_host(registry) if _git_source_key(registry) in configured else ""
+    return listing_egress_policy(trusted)
+
+
+def _install_pointer(source: str, p: RegistryPointer) -> str:
+    """The exact string an install of *p* hands ``source.resolve``: the repo the listing names
+    (the source itself when it names none), with ``#subdirectory`` when the app lives in one."""
+    repo = p.repo or source
+    return repo + (f"#{p.subdirectory}" if p.subdirectory else "")
+
+
+def listing_source_for(install_source: str) -> str | None:
+    """The registry source whose index listed *install_source* as where an app downloads from,
+    or ``None``. Only a listing that names its own ``repo`` counts: one that names none downloads
+    from the owner's own source. Answers from the indexes this process has read (a Store read
+    fills them); an install from a Store card also says which registry listed it."""
+    for source, (_at, pointers) in list(_registry_cache.items()):
+        for p in pointers:
+            if p.repo and _install_pointer(source, p) == install_source:
+                return source
+    return None
+
+
+def _parse_registry(text: str) -> list[RegistryPointer]:
+    """Parse ``app-registry.json`` content → pointer list. Tolerant: accepts either a
+    bare array of pointers or an object ``{"apps": [...]}``; drops malformed entries;
+    returns [] on any parse error (caller falls back to the scan path)."""
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("app registry: unparseable index", exc_info=True)
+        return []
+    raw = data.get("apps", []) if isinstance(data, dict) else data
+    if not isinstance(raw, list):
+        return []
+    out: list[RegistryPointer] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        p = RegistryPointer.from_dict(item)
+        if p is None or p.name in seen:
+            continue
+        seen.add(p.name)
+        out.append(p)
+    return out
+
+
+def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None:
+    """Fetch ONLY ``app-registry.json`` from a git source, cheaply — a shallow
+    treeless clone (blob:none, depth 1) then read the one file, no full checkout of
+    every app. Returns the file text, "" if the source has no index, or None on a
+    git/timeout error (caller falls back to clone-then-scan). Never raises.
+
+    ``deadline`` (a ``time.monotonic()`` instant) clamps each git call to the catalog
+    budget that is actually left — the per-call caps below bound one clone, not the sum."""
+    import subprocess
+    import tempfile
+
+    from personalclaw.net.git import git_env
+
+    tmp = tempfile.mkdtemp(prefix="pclaw-registry-")
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--", url, tmp],
+            capture_output=True,
+            text=True,
+            timeout=_git_timeout(60, deadline),
+            env=git_env(site="app-source-git", remote=True),
+        )
+        if proc.returncode != 0:
+            logger.debug(
+                "app registry: git fetch failed for %s: %s",
+                url,
+                mask_child_output(proc.stderr, tail=True),
+            )
+            return None
+        # Pull just the index file out of the tree without checking out the rest. The clone is
+        # partial, so this reads the file's blob from the source: the same remote, the same agent.
+        show = subprocess.run(
+            ["git", "-C", tmp, "show", f"HEAD:{_REGISTRY_FILENAME}"],
+            capture_output=True,
+            text=True,
+            timeout=_git_timeout(30, deadline),
+            env=git_env(site="app-source-git", remote=True),
+        )
+        # A source with no registry index → git exits non-zero on the missing path.
+        return show.stdout if show.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        logger.debug("app registry: git fetch errored for %s", url, exc_info=True)
+        return None
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _fetch_registry_index(
+    source: str, *, is_git: bool, now: float, deadline: float | None = None
+) -> list[RegistryPointer] | None:
+    """Return a source's registry-index pointers, cached ~1h. None = the source has
+    NO usable index (caller keeps the clone-then-scan / dir-scan path). Never raises.
+
+    ``now`` (epoch secs) is injected so the TTL is deterministic in tests; ``deadline``
+    (a ``time.monotonic()`` instant) is the catalog-wide budget."""
+    cached = _registry_cache.get(source)
+    if cached is not None and (now - cached[0]) < _REGISTRY_TTL_SECS:
+        return cached[1] or None
+    text: str | None
+    if is_git:
+        # A source inside its failure-backoff window is skipped WITHOUT a clone — this is
+        # the whole repeat cost of #408. It is a window, not a verdict: once it elapses the
+        # source is tried again, so a repo that went away and came back recovers by itself.
+        if _registry_backed_off(source, now=now):
+            return None
+        text = _read_git_registry(source, deadline=deadline)
+        if text is None:
+            _note_registry_failure(source, now=now)
+            return None  # git error → backed off above; fall back to clone-then-scan
+        _registry_failures.pop(source, None)  # answered → the streak resets
+    else:
+        p = Path(source).expanduser() / _REGISTRY_FILENAME
+        try:
+            text = p.read_text(encoding="utf-8") if p.is_file() else ""
+        except OSError:
+            return None
+    pointers = _parse_registry(text) if text else []
+    _registry_cache[source] = (now, pointers)
+    return pointers or None
+
+
+def _pointer_to_entry(
+    source: str, p: RegistryPointer, *, is_git: bool, policy: Any = None
+) -> CatalogEntry:
+    """Build a Store card from a registry pointer. The install POINTER is the repo the
+    pointer names (falling back to the source itself), with a ``#subdirectory`` suffix
+    when the app lives in a subdir — the exact string install hands to source.resolve.
+
+    ``policy`` is :func:`listing_policy` for *source*, passed in by a caller building many
+    cards from one index so the operator config is read once, not per card."""
+    pointer = _install_pointer(source, p)
+    refused = ""
+    if p.repo:
+        refused = p.refused
+        if not refused:
+            from personalclaw.net.guard import evaluate
+
+            decision = evaluate(p.repo, policy or listing_policy(source), resolver=_literal_only)
+            refused = listing_address_refusal(decision)
+    return CatalogEntry(
+        name=p.name,
+        displayName=p.displayName or p.name,
+        description=p.description,
+        version=p.version,
+        icon=p.icon,
+        author=p.author,
+        source=source,
+        sourceKind="git" if is_git else "local",
+        tags=list(p.tags),
+        pointer=pointer,
+        # The index's provenance claims, renamed to the wire's camelCase HERE and only
+        # here. Populated on a registry card and nowhere else — this function is the single
+        # registry→card constructor, which is what makes "local/first-party cards unchanged"
+        # a property of the code rather than a promise.
+        maintainer=p.maintainer,
+        lastValidated=p.last_validated,
+        lastScanVerdict=p.last_scan_verdict,
+        refused=refused,
+        listedBy=source if p.repo else "",
+    )
+
+
+def _mark_unavailable(sink: list[dict[str, str]] | None, source: str, reason: str) -> None:
+    """Record that *source* did not contribute this round, de-duped by source.
+
+    A build that quietly returns fewer apps is the same silent-wrong the original bug was
+    (a spinner that never explains itself); naming the source is what lets the Store say
+    "1 source unavailable — <url>" so the user can remove it."""
+    if sink is None:
+        return
+    if not any(u["source"] == source for u in sink):
+        sink.append({"source": source, "reason": reason})
+
+
+def _git_source_failure_reason() -> str:
+    """Why a git source failed: ``"no-git"`` when this machine has no ``git``, else
+    ``"unreachable"``.
+
+    Every git source is read by shelling out to ``git clone`` (:func:`_fetch_registry_index`,
+    :func:`_scan_git_source`), so on a machine with no ``git`` on PATH the failure is not a
+    network fact at all — it is certain, it applies to every git source, and retrying will
+    never fix it. Measured on a minimal ``python:3.13-slim`` container, which is what a
+    ``pip install personalclaw`` on a fresh machine can look like: ``github.com`` resolved
+    and an HTTPS ``GET`` of the repository's ``info/refs`` returned **200**, while the whole
+    catalog reported ``reason: "unreachable"`` — so the one reason a user could act on was
+    reported as the one thing they could do nothing about.
+
+    Distinguishing them is what lets the Store drop "it will be retried automatically" (it
+    will not help) and lets first-run setup name a missing dependency instead of asserting
+    that no app exists."""
+    return "unreachable" if shutil.which("git") else "no-git"
+
+
+def _scan_registries(
+    *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
+) -> list[CatalogEntry]:
+    """Enumerate apps from every configured source's registry index (git + local),
+    as install cards — WITHOUT cloning each app. Sources with no index contribute
+    nothing here (their apps still surface via the existing git-URL list / local
+    dir-scan). Skips apps already installed or already surfaced by a dir-scan.
+
+    That last sentence is now TRUE, and it is :func:`resolve_catalog_entries` that makes
+    it true. This function used to claim it while carrying a private ``seen`` set that
+    only knew about its own two loops — and because the git loop runs first and shared
+    that set, a REMOTE pointer silently dropped the LOCAL pointer for the same name
+    (#2528 finding 2), the exact opposite of the promise. Enumeration and precedence are
+    separate jobs now: this one lists everything it can see, and the resolver decides.
+
+    ``deadline`` is the catalog-wide wall-clock budget (#408): the git loop below stops
+    when it is spent rather than paying one timeout per remaining source, and appends what
+    it skipped to ``unavailable`` so the Store can name the source at fault. Local sources
+    are a cheap on-disk read, so they are never budget-gated."""
+    out: list[CatalogEntry] = []
+    for url in _scan_order(list_git_sources()):
+        if _budget_spent(deadline):
+            _mark_unavailable(unavailable, url, "budget")
+            continue
+        backed_off = _registry_backed_off(url, now=now)
+        pointers = _fetch_registry_index(url, is_git=True, now=now, deadline=deadline) or []
+        policy = listing_policy(url) if pointers else None
+        for p in pointers:
+            out.append(_pointer_to_entry(url, p, is_git=True, policy=policy))
+        # Report a source whose index we could not read THIS round. A source with no index
+        # at all is not a failure (it falls through to the subdir scan), so only an actual
+        # failure record counts — including one we just inherited from a previous round.
+        if backed_off or url in _registry_failures:
+            _mark_unavailable(unavailable, url, _git_source_failure_reason())
+    for root in list_local_sources():
+        pointers = _fetch_registry_index(root, is_git=False, now=now, deadline=deadline) or []
+        policy = listing_policy(root) if pointers else None
+        for p in pointers:
+            out.append(_pointer_to_entry(root, p, is_git=False, policy=policy))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Git source subdirectory scan (multi-app repos without a registry index)
+#
+# When a git source has NO ``app-registry.json`` AND no root ``app.json``, it's
+# likely a multi-app repo (subdirs each containing ``app.json``). This mirrors
+# ``_scan_local_sources`` for git: shallow-clone, scan immediate subdirs, build
+# CatalogEntry cards. Cached per-URL with a short TTL so catalog page loads
+# don't re-clone each time.
+# ---------------------------------------------------------------------------
+
+
+def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> list[CatalogEntry]:
+    """Shallow-clone a git source, scan immediate subdirs for ``app.json``,
+    and return installable CatalogEntry objects (with ``pointer=url#subdir``).
+
+    Returns cached results within the TTL. Returns [] on any clone/scan error
+    (resilient — a bad source degrades to invisible, never an error page).
+    Skips sources that have a registry index (handled by ``_scan_registries``).
+
+    Enumeration only: install-state and name-collision filtering belong to
+    :func:`resolve_catalog_entries`. Keeping them out of the CACHED result is also a
+    fix — a cache filled while an app was installed used to keep hiding that app for
+    up to the TTL after it was uninstalled.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    # Cache hit?
+    cached = _git_scan_cache.get(url)
+    if cached is not None and (now - cached[0]) < _GIT_SCAN_TTL_SECS:
+        return cached[1]
+
+    from personalclaw.net.git import git_env
+
+    entries: list[CatalogEntry] = []
+    tmp = tempfile.mkdtemp(prefix="pclaw-gitscan-")
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", "--", url, tmp],
+            capture_output=True,
+            text=True,
+            timeout=_git_timeout(90, deadline),
+            env=git_env(site="app-source-git", remote=True),
+        )
+        if proc.returncode != 0:
+            logger.debug(
+                "git scan: clone failed for %s: %s",
+                url,
+                mask_child_output(proc.stderr, tail=True),
+            )
+            _git_scan_cache[url] = (now, [])
+            return []
+
+        root = Path(tmp)
+        # Set again below only while the repository is still a single app.
+        _git_root_versions.pop(url, None)
+
+        # If a registry index exists, this source is handled by
+        # _scan_registries — don't double-surface.
+        if (root / _REGISTRY_FILENAME).is_file():
+            _git_scan_cache[url] = (now, [])
+            return []
+
+        # If a root app.json exists, it's a single-app repo — the existing
+        # git-source URL list already surfaces it for direct install. Its version is kept
+        # for the update check of an app installed from it.
+        if (root / "app.json").is_file():
+            try:
+                _git_root_versions[url] = AppManifest.from_json_file(root / "app.json").version
+            except Exception:
+                logger.debug("git scan: bad root manifest in %s", url, exc_info=True)
+            _git_scan_cache[url] = (now, [])
+            return []
+
+        # Scan immediate subdirs for app.json manifests.
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            manifest_file = entry / "app.json"
+            if not manifest_file.is_file():
+                continue
+            try:
+                m = AppManifest.from_json_file(manifest_file)
+            except Exception:
+                logger.debug(
+                    "git scan: bad manifest %s in %s",
+                    entry.name,
+                    url,
+                    exc_info=True,
+                )
+                continue
+            entries.append(
+                CatalogEntry(
+                    name=m.name,
+                    displayName=m.displayName or m.name,
+                    description=m.description,
+                    version=m.version,
+                    icon=m.icon,
+                    heroUrl=resolve_hero_url(entry, m.heroImage),
+                    author=m.author,
+                    source=url,
+                    sourceKind="git",
+                    isProvider=bool(m.provider),
+                    providerType=(m.provider.type if m.provider else ""),
+                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                    tags=list(m.tags),
+                    quality=(m.quality.to_dict() if m.quality else {}),
+                    pointer=f"{url}#{entry.name}",
+                    consentKnown=True,
+                    **describe(m),
+                    coreCompatibility=m.core_compatibility().to_dict(),
+                    refused=python_children.app_refusal(m),
+                )
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        logger.debug(
+            "git scan: error scanning %s",
+            url,
+            exc_info=True,
+        )
+        entries = []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    _git_scan_cache[url] = (now, entries)
+    return entries
+
+
+def _scan_git_sources(
+    *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
+) -> list[CatalogEntry]:
+    """Scan all configured git sources that lack a registry index, returning
+    discovered multi-app subdirectory entries. Sources WITH a registry index
+    are skipped (already handled by ``_scan_registries``).
+
+    Enumeration only — :func:`resolve_catalog_entries` owns install-state and
+    name-collision filtering.
+
+    Budget-gated for the same reason as :func:`_scan_registries` (#408) — and it has to be
+    the same gate: bounding one of these two loops and not the other leaves the Store just
+    as slow, because a bad source is walked by BOTH on a cold load."""
+    out: list[CatalogEntry] = []
+    for url in _scan_order(list_git_sources()):
+        if _budget_spent(deadline):
+            _mark_unavailable(unavailable, url, "budget")
+            continue
+        entries = _scan_git_source(url, now=now, deadline=deadline)
+        if not entries and _git_scan_cache.get(url, (0.0, None))[1] == []:
+            # An empty scan is ambiguous: a source with an index or a root app.json
+            # legitimately contributes nothing here. Only flag one the registry pass also
+            # failed on, so a healthy single-app repo is never reported as unavailable.
+            if url in _registry_failures:
+                _mark_unavailable(unavailable, url, _git_source_failure_reason())
+        out.extend(entries)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Git source list (user-managed, persisted)
+# ---------------------------------------------------------------------------
+
+
+def _sources_path() -> Path:
+    return config_dir() / "apps" / _SOURCES_FILENAME
+
+
+def _git_source_key(url: str) -> str:
+    """The identity of a git source for de-duplication.
+
+    One repository typed two ways is ONE source: GitHub serves the published apps repo
+    at both ``…/PersonalClawApps`` and ``…/PersonalClawApps.git``, so comparing raw
+    strings lets a user "add" a repo that already ships as a default and pay a second
+    full shallow clone per catalog refresh for zero extra apps.
+
+    A comparison key ONLY — the original string is what gets cloned, because the suffix
+    is load-bearing for some remotes (a bare repo at ``file:///…/apps.git`` does not
+    exist without it). Case is preserved: some hosts serve case-sensitive paths."""
+    return url.strip().rstrip("/").removesuffix(".git")
+
+
+def bundled_source_enabled() -> bool:
+    """Whether the shipped ``_DEFAULT_GIT_SOURCES`` are listed at all.
+
+    ``apps.bundled_source_enabled`` — the operator's off switch for the one network
+    source a brand-new home has before it has been configured. Defaults ON so a first
+    run still finds apps; a config-read failure also reads ON, because losing the Store's
+    only source on an unreadable config is a worse failure than listing a default the
+    user can see and turn off. Sibling of ``apps.registry_source_enabled``, which does
+    the same job for the curated registry."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().apps.bundled_source_enabled)
+    except Exception:
+        logger.debug("could not read apps.bundled_source_enabled; listing defaults", exc_info=True)
+        return True
+
+
+def list_git_sources() -> list[str]:
+    """The configured git source URLs (defaults + user-added), de-duped in order.
+
+    De-duped by :func:`_git_source_key`, so a default and a user entry naming the same
+    repo collapse to the default (listed first).
+
+    The shipped defaults are omitted entirely when ``apps.bundled_source_enabled`` is
+    off — a user entry naming the same repo then stands on its own, because it was typed
+    deliberately."""
+    seen: set[str] = set()
+    out: list[str] = []
+    defaults = _DEFAULT_GIT_SOURCES if bundled_source_enabled() else ()
+    for url in (*defaults, *_read_user_sources()):
+        u = url.strip()
+        if u and (key := _git_source_key(u)) not in seen:
+            seen.add(key)
+            out.append(u)
+    return out
+
+
+def network_source_hosts() -> list[str]:
+    """The remote HOSTS a Store read contacts, de-duped, in listed order.
+
+    The disclosure surface for finding 1: the Store lists a shipped git source before the
+    user has configured anything, so the page that triggers the fetch can NAME where it
+    reaches. A ``file://`` source, an unparseable URL, or an all-local configuration
+    contributes nothing — so an empty list means opening the Store touches no network,
+    and the UI can say so honestly rather than always showing a warning.
+
+    A registry LISTING's host is not on it because a Store read never contacts one: the Store
+    judges a listing without DNS (:func:`_literal_only`), and the host is resolved when an
+    install connects to it."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in list_git_sources():
+        host = _git_remote_host(url)
+        if host and host not in seen:
+            seen.add(host)
+            out.append(host)
+    return out
+
+
+def _read_sources() -> dict[str, list[str]]:
+    """The typed user-sources store ``{"git": [...], "local": [...], "seeded": [...]}``.
+
+    Back-reads the legacy flat ``{"sources": [urls]}`` shape (git-only) as ``git`` so
+    an existing sources file upgrades transparently on the next write.
+
+    ``seeded`` holds the markers of shipped sources already written into ``git`` once
+    (currently just ``"registry"``). It is NOT a source list — it is the record that lets
+    a seeded default stay removed: removing the row leaves the marker, so the next start
+    does not re-seed it."""
+    p = _sources_path()
+    if not p.is_file():
+        return {"git": [], "local": [], "seeded": []}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        logger.warning("failed to read app sources list", exc_info=True)
+        return {"git": [], "local": [], "seeded": []}
+    git = [str(u) for u in data.get("git", data.get("sources", [])) if str(u).strip()]
+    local = [str(u) for u in data.get("local", []) if str(u).strip()]
+    seeded = [str(u) for u in data.get("seeded", []) if str(u).strip()]
+    return {"git": git, "local": local, "seeded": seeded}
+
+
+def _write_sources(sources: dict[str, list[str]]) -> None:
+    p = _sources_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(
+        p,
+        json.dumps(
+            {
+                "git": sources.get("git", []),
+                "local": sources.get("local", []),
+                # Persisted by every write path, not just the seeder: add/remove read the
+                # whole dict and write it back, so dropping this key here would erase the
+                # marker on the next source edit and silently resurrect a removed default.
+                "seeded": sources.get("seeded", []),
+            },
+            indent=2,
+        )
+        + "\n",
+    )
+
+
+def _read_user_sources() -> list[str]:
+    """Legacy shim: the user GIT sources only (used by list_git_sources)."""
+    return _read_sources()["git"]
+
+
+#: Schemes a git remote may use. `file` is load-bearing rather than defensive: a bare repo at
+#: `file:///…/apps.git` is a real source and the test fixtures use exactly that form.
+_GIT_SOURCE_SCHEMES: frozenset[str] = frozenset({"https", "http", "ssh", "git", "file"})
+
+#: `git@github.com:owner/repo.git` — the SCP-like remote, which has NO scheme and is the
+#: commonest way an ssh remote is written. A rule that only understood `<scheme>://…` rejects it.
+_SCP_LIKE_REMOTE_RE = re.compile(r"^[A-Za-z0-9._~-]+@[A-Za-z0-9.-]+:(?!//).+")
+
+
+def _validate_git_source(url: str) -> str:
+    """Return *url* unchanged, or raise `ValueError` naming what is wrong with it.
+
+    Two independent problems this closes, in one function because they are one line of defence.
+
+    🔴 **A credential in the URL (#406).** `https://user:token@host/repo.git` was accepted and then
+    written verbatim into `app-sources.json` AND into the HMAC-chained append-only audit log, where
+    it cannot be cleaned up afterwards. The precedent is already shipped at
+    `cli_app_new.py:_validated_template_url`, which refuses userinfo and allowlists the scheme for
+    exactly this reason; this is the same three lines on the source path.
+
+    The rule distinguishes a USERNAME from a SECRET, because `ssh://git@github.com/owner/repo.git`
+    is an ordinary remote and refusing all userinfo would break it:
+      * userinfo containing `:` is a password, and is refused for every scheme;
+      * for `http`/`https`, ANY userinfo is refused — nobody puts a bare username in an https git
+        remote except to carry a token (`https://<PAT>@github.com/…` is the documented GitHub form).
+
+    🔴 **Any string at all was accepted (#280).** `not-a-git-url` persisted silently and then
+    rendered in the Store as its own source group with no apps under it and no error, which reads as
+    a working source that happens to be empty. It is refused at the point of entry now.
+
+    NOT covered here, deliberately: a syntactically valid but UNREACHABLE source still renders as an
+    empty group rather than an errored one. That is #280's other half and it is a Store rendering
+    question, not a validation one.
+    """
+    from urllib.parse import urlsplit
+
+    u = url.strip()
+    if not u:
+        raise ValueError("empty source URL")
+
+    if _SCP_LIKE_REMOTE_RE.match(u):
+        # `user@host:path`. The userinfo here is an ssh USER, and scp-like syntax has no password
+        # field at all, so there is nothing to refuse.
+        return u
+
+    parts = urlsplit(u)
+    if parts.scheme not in _GIT_SOURCE_SCHEMES:
+        raise ValueError(
+            f"not a git remote: scheme {parts.scheme or '(none)'!r} is not one of "
+            f"{', '.join(sorted(_GIT_SOURCE_SCHEMES))} — expected something like "
+            "https://github.com/owner/repo.git or git@github.com:owner/repo.git"
+        )
+    if parts.scheme != "file" and not parts.hostname:
+        raise ValueError("not a git remote: the URL names no host")
+    if parts.password:
+        raise ValueError(
+            "the source URL carries a password in its userinfo — remove it and use a credential "
+            "helper or an ssh key. A URL stored here is written to the audit log, which is "
+            "append-only and cannot be cleaned up afterwards."
+        )
+    if parts.username and parts.scheme in ("http", "https"):
+        raise ValueError(
+            "the source URL carries credentials in its userinfo — an https git remote needs no "
+            "username, and a token placed there would be persisted and audit-logged. Use a "
+            "credential helper, or an ssh remote."
+        )
+    return u
+
+
+def add_git_source(url: str) -> list[str]:
+    """Add a user git source URL; returns the updated USER git list (excludes defaults).
+
+    Idempotent by :func:`_git_source_key`: re-adding a repo already configured — as a
+    user entry OR as a bundled default, with or without a ``.git`` suffix — is a no-op,
+    so the Store never lists one repository twice or clones it twice per refresh."""
+    u = _validate_git_source(url)
+    src = _read_sources()
+    key = _git_source_key(u)
+    known = {_git_source_key(x) for x in (*_DEFAULT_GIT_SOURCES, *src["git"])}
+    if key not in known:
+        src["git"].append(u)
+        _write_sources(src)
+    return src["git"]
+
+
+def remove_git_source(url: str) -> list[str]:
+    """Remove a user git source URL (a bundled default can't be removed).
+
+    Matched by :func:`_git_source_key`, so the URL that removes a source is any spelling
+    of the one that added it."""
+    key = _git_source_key(url)
+    src = _read_sources()
+    src["git"] = [x for x in src["git"] if _git_source_key(x) != key]
+    _write_sources(src)
+    return src["git"]
+
+
+def seed_default_git_sources() -> list[str]:
+    """Write the shipped registry git source into ``app-sources.json`` — once, ever.
+
+    Run at gateway start (``_app_sources_seed_startup``). Returns the URLs actually seeded:
+    empty on every start after the first, empty when the row is already configured, and
+    empty whenever ``apps.registry_source_enabled`` is off.
+
+    The marker is recorded ONLY when the flag is on, so flipping the flag on later still
+    seeds; and it is recorded even if the row was already present by another route, so the
+    seeder never fights a user who added the registry by hand.
+
+    Config-read failures are non-fatal and seed NOTHING: a shipped network source is
+    opt-out-able state, and the safe direction for an unreadable config is to add no source
+    the operator never saw."""
+    from personalclaw.config.loader import AppConfig
+
+    try:
+        enabled = bool(AppConfig.load().apps.registry_source_enabled)
+    except Exception:
+        logger.warning("could not read apps.registry_source_enabled; not seeding", exc_info=True)
+        return []
+    if not enabled:
+        return []
+    src = _read_sources()
+    if _SEEDED_REGISTRY_KEY in src["seeded"]:
+        return []
+    seeded: list[str] = []
+    known = {_git_source_key(x) for x in (*_DEFAULT_GIT_SOURCES, *src["git"])}
+    if _git_source_key(_REGISTRY_GIT_SOURCE) not in known:
+        src["git"].append(_REGISTRY_GIT_SOURCE)
+        seeded.append(_REGISTRY_GIT_SOURCE)
+    src["seeded"].append(_SEEDED_REGISTRY_KEY)
+    _write_sources(src)
+    return seeded
+
+
+def default_git_sources() -> list[str]:
+    """Which CURRENTLY-LISTED git sources PersonalClaw itself put there (as listed).
+
+    The bundled tuple plus the seeded registry. The Store labels these "Default" so a user
+    can tell a shipped source from one they typed. Matched by :func:`_git_source_key`, so a
+    default spelled with or without ``.git`` still reads as a default."""
+    keys = {_git_source_key(u) for u in (*_DEFAULT_GIT_SOURCES, _REGISTRY_GIT_SOURCE)}
+    return [u for u in list_git_sources() if _git_source_key(u) in keys]
+
+
+def builtin_git_sources() -> list[str]:
+    """The listed git sources that cannot be removed ROW-WISE — the bundled tuple only.
+
+    Folded into every read of :func:`list_git_sources`, so ``remove_git_source`` on one is a
+    no-op by construction; the Store hides the remove control for these rather than offering
+    a button that silently does nothing. The seeded registry is deliberately absent: it is a
+    real row in the sources file and removing it persists.
+
+    "Cannot be removed" is NOT "cannot be turned off" any more: these are dropped from every
+    read when ``apps.bundled_source_enabled`` is off, and the Store points at that switch
+    where it used to just hide a button (#2528 finding 1)."""
+    keys = {_git_source_key(u) for u in _DEFAULT_GIT_SOURCES}
+    return [u for u in list_git_sources() if _git_source_key(u) in keys]
+
+
+# ── Local-directory app sources ─────────────────────────────────────────────
+# A local source is a directory containing app subdirs (each with an app.json) —
+# the dev-loop equivalent of a git source (e.g. the post-split ``apps/`` tree). The
+# install pipeline already handles a local path (source.resolve → origin="local");
+# this adds the persisted source list + dir-scan so local apps surface in the Store.
+
+
+def _default_local_sources() -> list[str]:
+    """Always-present, read-only local sources: the FIRST-PARTY apps dir.
+
+    Resolution: if the env override is SET, it wins exclusively — a valid dir is the
+    source, any other value (incl. a nonexistent path) DISABLES the default (this is
+    how tests neutralize it). If the env is unset, fall back to the resolved workspace
+    ``apps/`` (dev); empty if that doesn't exist (a shipped install without the tree)."""
+    if _FIRST_PARTY_ENV in _os.environ:
+        env = _os.environ[_FIRST_PARTY_ENV].strip()
+        p = Path(env).expanduser() if env else None
+        return [str(p)] if (p and p.is_dir()) else []
+    fp = _first_party_source()
+    return [str(fp)] if fp else []
+
+
+def first_party_sources() -> set[str]:
+    """Paths that are first-party defaults — always present, NOT user-removable."""
+    return set(_default_local_sources())
+
+
+def list_local_sources() -> list[str]:
+    """Local app-source dirs: the first-party default(s) FIRST (always present,
+    read-only), then user-added ones. De-duped in order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for path in (*_default_local_sources(), *_read_sources()["local"]):
+        p = path.strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def add_local_source(path: str) -> list[str]:
+    """Add a local app-source directory; returns the updated local list. Rejects a
+    non-directory (a source must be a dir of app subdirs, not a single app or a file)."""
+    from pathlib import Path
+
+    p = path.strip()
+    if not p:
+        raise ValueError("empty source path")
+    if not Path(p).expanduser().is_dir():
+        raise ValueError(f"not a directory: {p}")
+    src = _read_sources()
+    if p not in src["local"]:
+        src["local"].append(p)
+        _write_sources(src)
+    return src["local"]
+
+
+def remove_local_source(path: str) -> list[str]:
+    """Remove a USER-added local app-source directory. A first-party default source
+    is read-only (always present) and cannot be removed."""
+    p = path.strip()
+    if p in first_party_sources():
+        raise ValueError("cannot remove a first-party (built-in) app source")
+    src = _read_sources()
+    src["local"] = [x for x in src["local"] if x != p]
+    _write_sources(src)
+    return src["local"]
+
+
+def _scan_local_sources() -> list[CatalogEntry]:
+    """Scan each configured local source dir for immediate subdirs with a valid
+    ``app.json``, surfacing them as one-click-installable catalog entries (mirrors
+    ``available_bundled``'s manifest read).
+
+    Enumeration only — :func:`resolve_catalog_entries` owns install-state and
+    name-collision filtering. Two local roots carrying the same app name are resolved
+    there too: ``first-party`` outranks a user-added ``local`` dir by rule, where it
+    used to depend on this function's iteration order."""
+    from pathlib import Path
+
+    out: list[CatalogEntry] = []
+    for root in list_local_sources():
+        base = Path(root).expanduser()
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            manifest_file = entry / "app.json" if entry.is_dir() else None
+            if not manifest_file or not manifest_file.is_file():
+                continue
+            try:
+                m = AppManifest.from_json_file(manifest_file)
+            except Exception:
+                logger.warning("catalog: bad local manifest %s", entry, exc_info=True)
+                continue
+            # First-party default source → badge as "first-party"; user dirs → "local".
+            kind = "first-party" if root in first_party_sources() else "local"
+            out.append(
+                CatalogEntry(
+                    name=m.name,
+                    displayName=m.displayName or m.name,
+                    description=m.description,
+                    version=m.version,
+                    icon=m.icon,
+                    heroUrl=resolve_hero_url(entry, m.heroImage),
+                    author=m.author,
+                    source=str(entry),
+                    sourceKind=kind,
+                    isProvider=bool(m.provider),
+                    providerType=(m.provider.type if m.provider else ""),
+                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                    tags=list(m.tags),
+                    quality=(m.quality.to_dict() if m.quality else {}),
+                    consentKnown=True,
+                    **describe(m),
+                    coreCompatibility=m.core_compatibility().to_dict(),
+                    refused=python_children.app_refusal(m),
+                )
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Available-app enumeration
+# ---------------------------------------------------------------------------
+
+
+def _installed_names() -> set[str]:
+    from personalclaw.apps.manager import list_apps
+
+    return {a.get("name", "") for a in list_apps()}
+
+
+def available_bundled() -> list[CatalogEntry]:
+    """Native manifests not currently in the Library — installable from
+    their on-disk path.
+
+    Native apps are seeded ENABLED at first run and are locked-on (can't be
+    uninstalled), so in normal operation none are ever "available but absent" and
+    this returns empty. It stays as a defensive self-heal: if a native app's
+    installed record is somehow missing (a corrupted state), it resurfaces here so
+    the seed path (or a manual re-add) can restore it — native apps are mandatory.
+
+    Enumeration only: :func:`resolve_catalog_entries` drops the ones already in the
+    Library, so the "available but absent" filter lives in one place with every other
+    source's. The packaged set is the seed's own (``app_manager.packaged_native_apps``), and
+    an install from one of these folders records the app as the native app it is."""
+    from personalclaw.apps.app_manager import packaged_native_apps
+
+    out: list[CatalogEntry] = []
+    for entry, m in packaged_native_apps():
+        out.append(
+            CatalogEntry(
+                name=m.name,
+                displayName=m.displayName or m.name,
+                description=m.description,
+                version=m.version,
+                icon=m.icon,
+                heroUrl=resolve_hero_url(entry, m.heroImage),
+                author=m.author,
+                source=str(entry),
+                sourceKind="native",
+                isProvider=bool(m.provider),
+                providerType=(m.provider.type if m.provider else ""),
+                providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                tags=list(m.tags),
+                quality=(m.quality.to_dict() if m.quality else {}),
+                consentKnown=True,
+                **describe(m),
+                coreCompatibility=m.core_compatibility().to_dict(),
+                refused=python_children.app_refusal(m),
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Update surfacing
+#
+# An installed app's SOURCE may offer a newer version than the copy on disk. We
+# surface that WITHOUT a polling loop: the latest-available version is computed on
+# the existing ``/api/apps`` read path, and nothing on that path touches the network.
+# Two places answer it:
+#
+# * a LOCAL source: its on-disk manifests (the same dir-scan ``_scan_local_sources`` does),
+#   matched by the app's name — the dev loop;
+# * the Store source the app was INSTALLED from: a Store card installs from a
+#   pointer — ``url#app`` from a multi-app repository, a registry listing's repo, or a
+#   single-app repository's URL — and ``installed.json`` records it. What that pointer
+#   offers now is read from the Store's OWN discovery caches: the registry indexes
+#   (``_registry_cache``, 1 h), the multi-app scans (``_git_scan_cache``, 5 min) and the
+#   single-app versions the same scans read (``_git_root_versions``). The Store's catalog
+#   read is what refreshes them, under its budget and failure backoff, and the Apps page
+#   makes that read whenever it opens — so an app installed from GitHub is checked exactly
+#   as often as the Store is looked at, and never by a poller. Before this, only local
+#   sources were read, so an app installed from the Store never showed an update.
+#
+# One notification per ``(name, latest_version)`` is delivered through the registered
+# ``apps/update`` attention kind, deduped by a persisted ``entity_settings/app_updates.json``
+# high-water mark so re-computing on every read never re-nags — only a version NEWER than the
+# one already announced fires again.
+# ---------------------------------------------------------------------------
+
+_APP_UPDATES_ENTITY = "app_updates"
+
+
+def _latest_local_versions() -> dict[str, tuple[str, str]]:
+    """``{app_name: (highest version, the directory it is in)}`` across the configured LOCAL
+    sources.
+
+    Unlike ``_scan_local_sources`` (which OMITS installed apps, since it feeds the Store's
+    "available to install" list), this includes every app a local source declares — because
+    the whole point here is to compare an INSTALLED app against the newer copy its source now
+    carries. On-disk manifest reads only; a bad manifest is skipped, never fatal."""
+    from pathlib import Path
+
+    latest: dict[str, tuple[str, str]] = {}
+    for root in list_local_sources():
+        base = Path(root).expanduser()
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            manifest_file = entry / "app.json" if entry.is_dir() else None
+            if not manifest_file or not manifest_file.is_file():
+                continue
+            try:
+                m = AppManifest.from_json_file(manifest_file)
+            except Exception:
+                logger.debug("update check: bad local manifest %s", entry, exc_info=True)
+                continue
+            if not m.name or not m.version:
+                continue
+            current = latest.get(m.name)
+            if current is None or order_key(m.version) > order_key(current[0]):
+                latest[m.name] = (m.version, str(entry))
+    return latest
+
+
+def _pointer_key(repository: str, subdirectory: str) -> tuple[str, str]:
+    """An install pointer's identity: its repository by :func:`_git_source_key` (so one
+    repository typed with and without ``.git`` is one) and the subdirectory."""
+    return _git_source_key(repository), subdirectory.strip("/")
+
+
+def _offered_versions() -> dict[tuple[str, str], str]:
+    """What each install pointer the Store has discovered offers now: ``{pointer key: highest
+    version}``, read from the Store's own discovery caches — the registry indexes, the
+    multi-app scans and the single-app versions those scans read. Only sources still
+    configured count: a source the owner removed is no longer asked. No network."""
+    from personalclaw.apps.source import git_pointer
+
+    configured = {_git_source_key(u) for u in list_git_sources()}
+    offered: dict[tuple[str, str], str] = {}
+
+    def note(pointer: str, version: str) -> None:
+        parts = git_pointer(pointer)
+        if parts is None or not version:
+            return
+        key = _pointer_key(*parts)
+        if key not in offered or order_key(version) > order_key(offered[key]):
+            offered[key] = version
+
+    for source, (_at, pointers) in list(_registry_cache.items()):
+        if _git_source_key(source) in configured:
+            for p in pointers:
+                note(_install_pointer(source, p), p.version)
+    for url, (_at, entries) in list(_git_scan_cache.items()):
+        if _git_source_key(url) in configured:
+            for entry in entries:
+                note(entry.pointer, entry.version)
+    for url, version in list(_git_root_versions.items()):
+        if _git_source_key(url) in configured:
+            note(url, version)
+    return offered
+
+
+def update_source_for(app: Mapping[str, Any]) -> str:
+    """Where an Update of installed ``app`` starts: the source it was installed from, when an
+    update can come from there — a git repository (the Store's pointer, or a URL the owner
+    typed) or a folder that still exists — else ``""``. Never for an app PersonalClaw ships:
+    those update with PersonalClaw itself."""
+    from personalclaw.apps.source import git_pointer
+
+    source = str(app.get("source") or "").strip()
+    if not source or str(app.get("origin") or "") == "builtin":
+        return ""
+    if git_pointer(source) is not None:
+        return source
+    return source if Path(source).expanduser().is_dir() else ""
+
+
+def updates_available() -> list[dict[str, Any]]:
+    """Installed apps whose source now offers a NEWER version.
+
+    Compares each installed app's on-disk version against the highest version offered for it,
+    using the one version comparison (:mod:`personalclaw.versions`): what the configured
+    local sources declare under its name, and what the Store source it was installed from
+    offers now (:func:`_offered_versions`, matched by its recorded install pointer). Returns
+    one entry per out-of-date app::
+
+        {"name", "displayName", "installedVersion", "latestVersion", "latestSource"}
+
+    ``latestSource`` is where the newer version was found — the directory, or the pointer the
+    app was installed from — and what the Update dialog starts from, so the owner does not
+    have to type where the gateway just looked.
+
+    Pure + cheap (on-disk and in-memory reads, no network, no side effects) — safe to call on
+    the ``/api/apps`` read path. An app with no newer version, or whose source is not known
+    to offer one, is simply absent, and so is a native app: it is updated with PersonalClaw,
+    and an update from a source is refused, so a folder holding an app of its name offers it
+    nothing."""
+    from personalclaw.apps.app_manager import is_native
+    from personalclaw.apps.manager import list_apps
+    from personalclaw.apps.source import git_pointer
+
+    latest = _latest_local_versions()
+    offered = _offered_versions()
+    out: list[dict[str, Any]] = []
+    for app in list_apps():
+        name = app.get("name", "")
+        installed_version = str(app.get("version", ""))
+        if not name or is_native(name):
+            continue
+        candidates: list[tuple[str, str]] = []
+        if name in latest:
+            candidates.append(latest[name])
+        source = str(app.get("source") or "").strip()
+        pointer = git_pointer(source) if str(app.get("origin") or "") != "builtin" else None
+        if pointer is not None and _pointer_key(*pointer) in offered:
+            candidates.append((offered[_pointer_key(*pointer)], source))
+        if not candidates:
+            continue
+        latest_version, latest_source = max(candidates, key=lambda c: order_key(c[0]))
+        if is_newer(latest_version, installed_version):
+            manifest = app.get("manifest") or {}
+            out.append(
+                {
+                    "name": name,
+                    "displayName": manifest.get("displayName") or name,
+                    "installedVersion": installed_version,
+                    "latestVersion": latest_version,
+                    "latestSource": latest_source,
+                }
+            )
+    return out
+
+
+def _load_notified() -> dict[str, str] | None:
+    """The per-app high-water mark of the latest version we've already notified about
+    (``entity_settings/app_updates.json`` → ``{"notified": {name: version}}``). Tolerant: a
+    read that fails another way means we've announced nothing (fail open — a duplicate
+    notification is a lesser evil than a silently-swallowed one).
+
+    None when the file is there and cannot be read. It is never written over then
+    (``_save_entity_settings`` refuses), so no mark could be kept and every read of the Apps page
+    would announce each update again: none is announced until it can be read. The Apps page
+    still lists every update. A file holding nothing holds no mark, and is written over."""
+    try:
+        from personalclaw import record_files
+        from personalclaw.providers.entity_routes import _entity_settings_path
+
+        try:
+            data = record_files.read(_entity_settings_path(_APP_UPDATES_ENTITY), dict)
+        except record_files.Unreadable:
+            return None
+        notified = (data or {}).get("notified")
+        return {str(k): str(v) for k, v in notified.items()} if isinstance(notified, dict) else {}
+    except Exception:
+        logger.debug("app-update notified state unreadable", exc_info=True)
+        return {}
+
+
+def _save_notified(notified: dict[str, str]) -> None:
+    from personalclaw.providers.entity_routes import _save_entity_settings
+
+    _save_entity_settings(_APP_UPDATES_ENTITY, {"notified": notified})
+
+
+def surface_app_updates(state: Any) -> list[dict[str, Any]]:
+    """Compute available updates AND emit ONE notification per newly-available version.
+
+    The dedup contract: a notification fires the first time an app's source offers a
+    given ``latestVersion``, and never again for that version — even after the inbox row is
+    dismissed — because the high-water mark is persisted OUTSIDE the inbox
+    (``entity_settings/app_updates.json``), keyed by ``name``. Only a version strictly newer
+    than the one last announced re-fires. Emission routes through the registered
+    ``apps/update`` attention kind via ``emit_attention_item`` (dual-honesty: even if the
+    kind's delivery rule is muted, the inbox row still lands and ``state.notify`` still runs —
+    the rules layer, not this code, decides whether to toast).
+
+    Returns the same list as :func:`updates_available` so a caller on the read path can attach
+    it to its response without recomputing. Best-effort: a persistence/emit error is logged and
+    never breaks the read path."""
+    updates = updates_available()
+    if state is None:
+        return updates
+    try:
+        notified = _load_notified()
+    except Exception:
+        notified = {}
+    if notified is None:
+        return updates
+    changed = False
+    for u in updates:
+        name = u["name"]
+        latest_version = u["latestVersion"]
+        already = notified.get(name, "")
+        if order_key(latest_version) > order_key(already):
+            _emit_app_update(state, u)
+            notified[name] = latest_version
+            changed = True
+    if changed:
+        try:
+            _save_notified(notified)
+        except Exception:
+            logger.warning("could not persist app-update notified state", exc_info=True)
+    return updates
+
+
+def _emit_app_update(state: Any, update: dict[str, Any]) -> None:
+    from personalclaw.inbox import ItemKind, emit_attention_item
+
+    name = update["name"]
+    display = update.get("displayName") or name
+    latest_version = update["latestVersion"]
+    installed_version = update.get("installedVersion", "")
+    try:
+        emit_attention_item(
+            state,
+            source="apps",
+            kind="update",
+            # A notice, not a message. Without a row kind the notification's own (`update`) is
+            # stored, which is no inbox kind, and a surface would read it as a message.
+            item_kind=ItemKind.SYSTEM.value,
+            title=f"Update available for {display}",
+            body=f"Version {latest_version} is available (you have {installed_version}).",
+            refs={"app": name, "latest_version": latest_version},
+            # Dedup within the inbox on the exact version too; the persisted high-water mark
+            # above is the durable "never re-nag" guarantee, this just avoids a duplicate row
+            # if the same version is surfaced twice before the mark is written.
+            dedup_key=f"app_update:{name}:{latest_version}",
+        )
+    except Exception:
+        logger.warning("app-update notification failed for %s", name, exc_info=True)
+
+
+def available_catalog() -> dict[str, Any]:
+    """The full Store catalog: available bundled apps + configured git sources +
+    local sources (with their scanned, one-click-installable apps).
+
+    Git sources are returned as-is (URL list) — resolving each to a manifest means
+    cloning, which we defer to install time (behind the scanner gate). Local sources
+    ARE scanned (cheap on-disk manifest read) so their apps surface as install cards,
+    like the bundled section. The UI lists sources as 'add by source' + offers direct
+    install (by URL for git, by discovered card for local).
+
+    Every app list below is filtered through :func:`resolve_catalog_entries`, so the
+    payload carries AT MOST ONE entry per app name across all four lists. That is the
+    contract the Store's card, its detail panel, its consent modal and the onboarding
+    step all depend on: with no name in two lists, no consumer can resolve a collision
+    differently from another (#2528).
+
+    The two network scanners share ONE wall-clock budget (``_CATALOG_BUDGET_SECS``, #408).
+    Per-git-process timeouts bounded a single clone and never the sum, so one blackholed
+    source cost 135s to open the Store; the budget bounds the whole build and the sources
+    it could not reach are named in ``unavailableSources`` rather than quietly dropped.
+    """
+    now = time.time()
+    deadline = time.monotonic() + _CATALOG_BUDGET_SECS
+    unavailable: list[dict[str, str]] = []
+    # Scanned in precedence order for readability; the resolver, not this order, is what
+    # decides a collision.
+    bundled_entries = available_bundled()
+    local_entries = _scan_local_sources()
+    registry_entries = _scan_registries(now=now, deadline=deadline, unavailable=unavailable)
+    git_entries = _scan_git_sources(now=now, deadline=deadline, unavailable=unavailable)
+    if unavailable:
+        logger.info(
+            "Store catalog: %d source(s) unavailable this build: %s",
+            len(unavailable),
+            ", ".join(f"{u['source']} ({u['reason']})" for u in unavailable),
+        )
+    winners = resolve_catalog_entries(
+        [*bundled_entries, *local_entries, *registry_entries, *git_entries]
+    )
+    # Identity, not name equality: `winner_for[name] is entry` keeps each surviving entry
+    # in the wire list its scanner produced, so the four keys keep their meanings.
+    winner_for = {e.name: e for e in winners}
+
+    def _kept(entries: list[CatalogEntry]) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in entries if winner_for.get(e.name) is e]
+
+    return {
+        "bundled": _kept(bundled_entries),
+        "gitSources": list_git_sources(),
+        # Which gitSources PersonalClaw shipped (label "Default") and which of those are
+        # bundled-and-unremovable (hide the remove control — see builtin_git_sources). The
+        # seeded registry appears in the first list and NOT the second: it is a shipped
+        # default the user may remove for good.
+        "defaultGitSources": default_git_sources(),
+        "builtinGitSources": builtin_git_sources(),
+        "localSources": list_local_sources(),
+        # Which localSources are first-party defaults (read-only, not removable) so
+        # the UI can label them + hide the remove control.
+        "firstPartySources": sorted(first_party_sources()),
+        "localApps": _kept(local_entries),
+        # Apps enumerated from a source's app-registry.json pointer index (git +
+        # local) WITHOUT cloning each — install cards that route through the normal
+        # scanner-gated install via their `pointer`. Empty when no source publishes an
+        # index (the git-URL list + localApps dir-scan remain the fallback).
+        "remoteApps": _kept(registry_entries),
+        # Multi-app git repos without a registry index: shallow-clone + subdir
+        # scan (mirrors _scan_local_sources for git). Cached per-URL, 5 min TTL.
+        "gitApps": _kept(git_entries),
+        # The REMOTE hosts a Store read contacts, so the surface that triggers the egress
+        # can disclose it (#2528 finding 1). Derived from the listed git sources — a
+        # `file://` source or a local dir contributes nothing, so this is empty exactly
+        # when opening the Store reaches nothing off-machine.
+        "networkSources": network_source_hosts(),
+        # Sources that contributed nothing THIS build because they were unreachable or the
+        # scan budget ran out (#408). The information used to be discarded, which is why a
+        # single typo'd source read as "the Store is broken" rather than "remove that one".
+        # ``reason`` is "unreachable" (git failed → backed off), "no-git" (this machine has
+        # no ``git``, so every git source fails and no retry can help — see
+        # :func:`_git_source_failure_reason`) or "budget" (cut off).
+        "unavailableSources": unavailable,
+    }

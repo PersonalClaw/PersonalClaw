@@ -1,0 +1,384 @@
+"""Agent routing — the deterministic classifier + suppression
+store + the api_chat suggestion hook. Suggest-first, LLM never in the hot path."""
+
+from __future__ import annotations
+
+import logging
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from personalclaw.agents import routing
+from personalclaw.agents.native.tool_vectors import Embedder, ToolVectors
+from personalclaw.providers import entity_routes
+
+
+def _profile(specialty="", route_hints=""):
+    return SimpleNamespace(specialty=specialty, route_hints=route_hints)
+
+
+def _cfg(
+    agents: dict, *, enabled=True, min_confidence=0.62, cooldown_hours=24.0, default="PersonalClaw"
+):
+    return SimpleNamespace(
+        agents=agents,
+        default_agent=default,
+        agents_routing=SimpleNamespace(
+            enabled=enabled, min_confidence=min_confidence, cooldown_hours=cooldown_hours
+        ),
+    )
+
+
+def _bind(monkeypatch, answer, *, asked: list[str] | None = None) -> ToolVectors:
+    """Bind an embedding model answering ``answer(text)``, and give routing an index of its own,
+    which it returns: a send reads the specialists' vectors there, and the index embeds them in
+    the background."""
+
+    def one(text: str):
+        if asked is not None:
+            asked.append(text)
+        return answer(text)
+
+    embedder = Embedder(model="test:model", one=one, many=None)
+    monkeypatch.setattr(routing, "bound_embedder", lambda: embedder)
+    index = ToolVectors(what="agent specialty", thread="test-agent-specialty-vectors")
+    monkeypatch.setattr(routing, "_SPECIALTY_VECTORS", index)
+    return index
+
+
+async def _noop_run(state, session, message):
+    """Stand-in for the turn runner: `api_chat` schedules it as a task, and the routing
+    hook fires beside that scheduling, not inside it."""
+    return None
+
+
+class TestEligibleCandidates:
+    def test_only_agents_with_metadata_and_not_reserved(self):
+        cfg = _cfg(
+            {
+                "researcher": _profile(specialty="deep web research", route_hints="research this"),
+                "bare": _profile(),  # no metadata → excluded
+                "personalclaw-lite": _profile(
+                    specialty="x", route_hints="y"
+                ),  # reserved → excluded
+            }
+        )
+        names = [c[0] for c in routing.eligible_candidates(cfg)]
+        assert names == ["researcher"]
+
+
+class TestClassify:
+    def test_an_example_request_routes_a_message_that_paraphrases_it(self):
+        cands = [
+            ("dba", "database expert", "optimize this slow sql query, fix the database index"),
+            ("writer", "prose editor", "edit my essay, improve the writing"),
+        ]
+        # embed_fn None → keyword-only path. Most of a longer hint's words are in the message.
+        r = routing.classify("please optimize this slow sql query for me", cands)
+        assert r is not None and r.agent == "dba" and r.method == "keyword"
+
+    def test_an_example_request_needs_most_of_its_words(self):
+        cands = [("dba", "database expert", "optimize this slow sql query")]
+        assert routing.classify("optimize my essay", cands) is None
+
+    def test_a_one_word_hint_routes_a_message_that_says_it(self):
+        # The Agents form invites hints like these, and the agent has no specialty line.
+        cands = [("oncall-triage", "", "pager, alert, incident, on call")]
+        r = routing.classify("the pager is going off for the checkout adapter again", cands)
+        assert r is not None and r.agent == "oncall-triage" and r.method == "keyword"
+
+    def test_a_one_word_hint_matches_a_whole_word_only(self):
+        cands = [("dba", "db", "sql")]
+        assert routing.classify("sql", cands) is not None
+        assert routing.classify("migrate the sqlite file", cands) is None
+
+    def test_a_two_word_hint_matches_as_that_phrase_only(self):
+        cands = [("oncall-triage", "", "on call")]
+        assert routing.classify("I'm on call this week, what's burning?", cands) is not None
+        assert routing.classify("call me on Monday", cands) is None
+
+    def test_a_keyword_two_agents_share_stays_silent(self):
+        cands = [("dba", "", "index"), ("librarian", "", "index")]
+        assert routing.classify("rebuild the index", cands) is None
+
+    def test_no_candidates_or_empty_message(self):
+        assert routing.classify("", [("a", "s", "h")]) is None
+        assert routing.classify("hello", []) is None
+
+    def test_embedding_hit_beats_keyword_when_bound(self, monkeypatch):
+        # Orthogonal vectors: query aligns with "dba".
+        vecs = {
+            "run the deployment pipeline": [0.0, 1.0],
+            "database expert optimize slow sql query": [1.0, 0.0],
+            "devops deploy releases pipelines": [0.0, 1.0],
+        }
+        index = _bind(monkeypatch, vecs.get)
+        cands = [
+            ("dba", "database expert", "optimize slow sql query"),
+            ("devops", "devops", "deploy releases pipelines"),
+        ]
+        # The first message is matched by hints while the specialties are embedded.
+        assert routing.classify("run the deployment pipeline", cands) is None
+        assert index.drain(timeout=10)
+        r = routing.classify("run the deployment pipeline", cands)
+        assert r is not None and r.agent == "devops" and r.method == "embedding"
+
+    def test_low_margin_stays_silent(self, monkeypatch):
+        # Two near-identical vectors → margin < 0.1 → no suggestion.
+        index = _bind(monkeypatch, lambda t: [1.0, 0.0])
+        cands = [("a", "sa", "ha"), ("b", "sb", "hb")]
+        routing.classify("anything", cands)
+        assert index.drain(timeout=10)
+        assert routing.classify("anything", cands) is None
+
+
+class TestSuppressionStore:
+    @pytest.fixture(autouse=True)
+    def _tmp_store(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.config_dir", lambda: tmp_path, raising=False
+        )
+        # entity settings path derives from config_dir; ensure a clean dir
+        yield
+
+    def test_dismiss_cooldown_then_mute(self):
+        now = time.time()
+        assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
+        routing.record_dismiss("dba", now=now)
+        # within cooldown → suppressed
+        assert routing.is_suppressed("dba", now=now + 3600, cooldown_hours=24.0)
+        # past cooldown → not suppressed (count 1, not muted)
+        assert not routing.is_suppressed("dba", now=now + 25 * 3600, cooldown_hours=24.0)
+        # three cumulative dismissals → muted regardless of cooldown
+        routing.record_dismiss("dba", now=now)
+        st = routing.record_dismiss("dba", now=now)
+        assert st["muted"] is True
+        assert routing.is_suppressed("dba", now=now + 999 * 3600, cooldown_hours=24.0)
+
+    def test_unmute_clears(self):
+        now = time.time()
+        for _ in range(3):
+            routing.record_dismiss("dba", now=now)
+        assert "dba" in routing.routing_status()["muted"]
+        routing.unmute("dba")
+        assert "dba" not in routing.routing_status()["muted"]
+        assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
+
+    def test_suppression_case_insensitive(self):
+        now = time.time()
+        assert not routing.is_suppressed("DBA", now=now, cooldown_hours=24.0)
+        routing.record_dismiss("DBA", now=now)
+        # Should be suppressed regardless of case
+        assert routing.is_suppressed("dba", now=now + 3600, cooldown_hours=24.0)
+        assert routing.is_suppressed("DbA", now=now + 3600, cooldown_hours=24.0)
+
+        # Unmuting should also be case-insensitive
+        for _ in range(2):
+            routing.record_dismiss("dBa", now=now)
+        assert "dba" in routing.routing_status()["muted"]
+        routing.unmute("DbA")
+        assert "dba" not in routing.routing_status()["muted"]
+        assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
+
+    def test_config_path_failure_fails_open_with_warning(self, monkeypatch, caplog):
+        def fail_config_dir():
+            raise RuntimeError("measured config-dir failure")
+
+        monkeypatch.setattr(entity_routes, "config_dir", fail_config_dir)
+        with caplog.at_level(logging.WARNING, logger=routing.__name__):
+            assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
+
+        warnings = [record for record in caplog.records if record.name == routing.__name__]
+        assert len(warnings) == 1
+        assert "agent_routing" in warnings[0].getMessage()
+
+
+class TestSuggestForSend:
+    @pytest.fixture(autouse=True)
+    def _tmp_store(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.config_dir", lambda: tmp_path, raising=False
+        )
+        yield
+
+    def _session(self, *, agent="", memory_mode="persistent", user_turns=1):
+        msgs = [{"role": "user", "content": f"q{i}"} for i in range(user_turns)]
+        return SimpleNamespace(key="s1", agent=agent, memory_mode=memory_mode, messages=msgs)
+
+    def _patch_cfg(self, monkeypatch, cfg):
+        monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", staticmethod(lambda: cfg))
+
+    def test_suggests_in_default_chat(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("database expert", "optimize slow sql query, fix db index")})
+        self._patch_cfg(monkeypatch, cfg)
+        state = SimpleNamespace()
+        r = routing.suggest_for_send(state, self._session(), "please optimize slow sql query now")
+        assert r is not None and r.agent == "dba"
+
+    def test_disabled_config_no_suggestion(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("db", "optimize slow sql query")}, enabled=False)
+        self._patch_cfg(monkeypatch, cfg)
+        assert (
+            routing.suggest_for_send(SimpleNamespace(), self._session(), "optimize slow sql query")
+            is None
+        )
+
+    def test_explicit_agent_session_no_suggestion(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("db", "optimize slow sql query")})
+        self._patch_cfg(monkeypatch, cfg)
+        sess = self._session(agent="some-other-agent")
+        assert routing.suggest_for_send(SimpleNamespace(), sess, "optimize slow sql query") is None
+
+    def test_incognito_no_suggestion(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("db", "optimize slow sql query")})
+        self._patch_cfg(monkeypatch, cfg)
+        sess = self._session(memory_mode="incognito")
+        assert routing.suggest_for_send(SimpleNamespace(), sess, "optimize slow sql query") is None
+
+    def test_frequency_cap(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("database expert", "optimize slow sql query, fix db index")})
+        self._patch_cfg(monkeypatch, cfg)
+        state = SimpleNamespace()
+        msg = "please optimize slow sql query now"
+        first = routing.suggest_for_send(state, self._session(user_turns=1), msg)
+        assert first is not None
+        # immediate next turn (turn 2) is inside the cap → no suggestion
+        assert routing.suggest_for_send(state, self._session(user_turns=2), msg) is None
+
+    def test_what_was_typed_routes_and_what_was_pasted_does_not(self, monkeypatch):
+        cfg = _cfg({"oncall-triage": _profile("", "pager, alert, incident, on call")})
+        self._patch_cfg(monkeypatch, cfg)
+        pasted = '{"level": "error", "tags": {"alert": "incident"}, "service": "checkout"}'
+        # The hints' words are only in the pasted export: nothing she asked names them.
+        assert (
+            routing.suggest_for_send(
+                SimpleNamespace(),
+                self._session(),
+                f"what does this mean? {pasted}",
+                pasted=[pasted],
+            )
+            is None
+        )
+        r = routing.suggest_for_send(
+            SimpleNamespace(),
+            self._session(),
+            f"the pager is going off again {pasted}",
+            pasted=[pasted],
+        )
+        assert r is not None and r.agent == "oncall-triage"
+
+    def test_the_embedding_compares_the_typed_words(self, monkeypatch):
+        cfg = _cfg({"oncall-triage": _profile("on-call triage", "pager, alert, incident, on call")})
+        self._patch_cfg(monkeypatch, cfg)
+        embedded: list[str] = []
+        index = _bind(monkeypatch, lambda t: [1.0, 0.0], asked=embedded)
+        pasted = "line one of a long export\n" * 40
+        for _ in range(2):  # the first send's specialty is embedded in the background
+            routing.suggest_for_send(
+                SimpleNamespace(), self._session(), f"summarize this {pasted}", pasted=[pasted]
+            )
+            assert index.drain(timeout=10)
+        assert "summarize this" in embedded
+        assert all("long export" not in t for t in embedded)
+
+    def test_suppressed_agent_no_suggestion(self, monkeypatch):
+        cfg = _cfg({"dba": _profile("database expert", "optimize slow sql query, fix db index")})
+        self._patch_cfg(monkeypatch, cfg)
+        routing.record_dismiss("dba", now=time.time())
+        assert (
+            routing.suggest_for_send(
+                SimpleNamespace(), self._session(), "optimize slow sql query now"
+            )
+            is None
+        )
+
+
+class TestSuggestionReachesTheFirstMessage:
+    """🔴 The suggestion must reach the send that CREATED the session (issue 569).
+
+    `api_chat` broadcasts `routing_suggestion` synchronously — before the run task's
+    first await — so it is the EARLIEST frame of a send. On a brand-new chat the
+    frontend creates the session and navigates, which re-keys its ChatSession; that
+    remount closes the socket that would have received the frame while its replacement
+    is still handshaking. The broadcast reached every
+    other socket on the page and NO chat socket, so the SEL audit recorded a suggestion
+    as surfaced while the chip never rendered — on the one message where routing is most
+    useful, because the user has not chosen a specialist yet.
+
+    The fix ships the SAME payload on the send response, which exists only because the
+    request did and therefore cannot be raced. Pinned here: the response carries it, and
+    it is the same object as the broadcast — a second dict would be a second chance to
+    name a different session, and a suggestion delivered to the WRONG chat is worse than
+    one that is dropped.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _routing_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.config_dir", lambda: tmp_path, raising=False
+        )
+        cfg = _cfg(
+            {"dba": _profile("database expert", "optimize slow sql query, fix db index")},
+            default="general",
+        )
+        monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", staticmethod(lambda: cfg))
+        # The turn itself is not what is under test; a real run would need a model.
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_handlers._run_chat_scoped",
+            _noop_run,
+            raising=True,
+        )
+        yield
+
+    @pytest.mark.asyncio
+    async def test_ws_send_response_carries_the_broadcast_payload(self, tmp_path, monkeypatch):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from tests.chat_test_helpers import _make_app, _make_state
+
+        state = _make_state(tmp_path)
+        # `api_chat` refuses a key it has never seen (`session_key_exists`, 404
+        # session_not_found) so that a stale tab or a retried send cannot resurrect a
+        # deleted chat. The real first message is create-THEN-send, so seed the key the
+        # way creation does — a log file is that predicate — rather than weakening it.
+        state.conversation_log.append("s-new", "user", "seed")
+        sent: list[tuple[str, object]] = []
+        monkeypatch.setattr(
+            state, "broadcast_ws", lambda t, d, **kw: sent.append((t, d)), raising=False
+        )
+        async with TestClient(TestServer(_make_app(state))) as c:
+            resp = await c.post(
+                "/api/chat?ws=1",
+                json={"message": "please optimize slow sql query now", "session": "s-new"},
+            )
+            assert resp.status == 200
+            body = await resp.json()
+
+        broadcast = [d for t, d in sent if t == "routing_suggestion"]
+        assert len(broadcast) == 1, "the live transport must still fire for other clients"
+        assert body.get("routing_suggestion") == broadcast[0], (
+            "the response and the broadcast must be the SAME payload — two dicts are two "
+            "chances to name a different session"
+        )
+        assert body["routing_suggestion"]["session"] == body["session"] == "s-new"
+        assert body["routing_suggestion"]["agent"] == "dba"
+
+    @pytest.mark.asyncio
+    async def test_no_suggestion_means_no_key_on_the_response(self, tmp_path, monkeypatch):
+        """A send with nothing to suggest must not ship an empty/placeholder suggestion —
+        the frontend keys the chip off the field's presence."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from tests.chat_test_helpers import _make_app, _make_state
+
+        state = _make_state(tmp_path)
+        state.conversation_log.append("s-plain", "user", "seed")  # see the sibling test
+        monkeypatch.setattr(state, "broadcast_ws", lambda *a, **kw: None, raising=False)
+        async with TestClient(TestServer(_make_app(state))) as c:
+            resp = await c.post(
+                "/api/chat?ws=1", json={"message": "hello there", "session": "s-plain"}
+            )
+            assert resp.status == 200
+            body = await resp.json()
+        assert "routing_suggestion" not in body

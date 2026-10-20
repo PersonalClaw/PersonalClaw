@@ -1,0 +1,1302 @@
+# Chat & Sessions
+
+How a message becomes a turn: the session model, the dashboard chat pipeline,
+persistence, and the memory-privacy modes. Paths are relative to
+`PersonalClaw/src/personalclaw/`.
+
+## Session model
+
+A session is one conversation thread, whatever surface it lives on (dashboard
+chat, channel thread, loop worker, webhook, subagent).
+
+- **`session.py` — `SessionManager`.** Owns live session state. Each session
+  has a FIFO message queue (`deque` of pending messages) guarded by a
+  semaphore, so messages arriving on the same channel thread are serialized —
+  a turn finishes before the next queued message starts.
+- **`session_map.py` — the persistent session↔thread map.** Stored at
+  `~/.personalclaw/session_map.json` (atomic tmp+rename writes). Each entry
+  carries `sid`, `thread_ts`, `channel_id` and, for a linked session,
+  `channel_provider` (the channel the thread is on) — generic keys, no
+  channel-vendor shape assumed. `set_channel_link` / `get_channel_link` /
+  `get_channel_provider` are the one API for linking a dashboard session to a
+  channel thread; a reverse index maps
+  `thread_ts` → session key (`get_session_for_thread`). It is the ONE place a
+  link is kept: nothing holds a copy of it in memory, so a restart loses none.
+  A changed entry is written last and the index is rebuilt in file order, so
+  the session that linked a thread most recently is the one it continues,
+  before a restart and after it.
+- **`session_restrictions.py` — memory modes.** Two restriction registries,
+  kept in core because any surface can request them:
+  - **temporary** — blank-slate thread: memory READS suppressed
+    (`blocks_reads`) *and* writes suppressed, and the chat is forgotten when its
+    session ends (below).
+  - **incognito** — ephemeral: memory WRITES suppressed, reads allowed. Its
+    transcript is kept, out of the chat list and search.
+  - **unreadable** — work handed on from a chat whose mode nothing can say:
+    reads and writes suppressed, as for a temporary session, and what it is
+    refused says that the chat's setting cannot be read.
+
+  `is_restricted()` (either mode) gates the after-turn learning path, session
+  listing/search, and memory recall (see
+  [knowledge-memory.md](knowledge-memory.md)). Restricted sessions never write
+  lessons (`after_turn_review.py` checks `session.is_restricted`).
+
+  Work for a restricted session takes its mode: a subagent's key is marked when
+  it is spawned (`memory_writes.hand_on`), Temporary when the chat it works for is
+  Temporary, unreadable when nothing can say what that chat is, and Incognito
+  otherwise, and a workflow run marks its origin's mode on its keys and records
+  it on the run, as do a subworkflow it starts and a fork of it
+  (`ownership.inherited_extra`). The mode handed on is read by the one reader of a
+  session's mode (`memory_writes.session_mode`), the live chat first, together
+  with the mode of the work that starts it (`ownership.inherit_mode`): a chat's
+  transcript is written when its first turn ends, so the live chat is all that
+  says what a chat is when that turn starts a run or a subagent. So a Temporary
+  chat's subagents, its subagents' subagents and the steps of a run it started
+  read no memory and write none, as the chat does, from its first turn on. It
+  takes the chat's model the same way (below). Whichever door its call reaches
+  the workflow engine through (the workflow routes, which an agent CLI's tool
+  server and a batch `subagent_run` call, or a native agent's workflow tools in
+  the gateway), such a chat's call starts a run or a batch and changes only a run
+  it started; anything else it asks is refused, saying why, by the one rule both
+  ask (`workflows/restricted_calls.py`). Such a chat changes nothing in the
+  artifact library, which outlives it: the library's routes refuse every change a
+  request made for it asks (`_is_restricted_session`), and the agent's artifact
+  tools, in the gateway and in an agent CLI's tool server, refuse every save,
+  new version and removal (`artifact_save`, `artifact_update`, `artifact_delete`,
+  the document, sheet and deck tools, `image_generate`, `video_generate`:
+  `mcp_artifacts._private_chat_refusal`) before anyone is asked, under the code
+  `restricted_session`, an artifact the chat's own agent made included. Both ask
+  one check, `memory_reads.keeps_nothing`, and so does the chat's turn, which
+  reads an artifact the person mentions in it without stamping the artifact with
+  the chat (`chat_runner._inject_artifact_content`, as the route that records a
+  mention refuses one for it). A run it starts writes nothing to the library
+  either, under the mode the run inherited (`memory_reads.why_work_keeps_nothing`):
+  a stage's `publish:` is a no-op whose result says why
+  (`publish_seam.apply_publish`), and an `artifact-update` or `render-report`
+  step fails saying why, while a `render_only` report still renders.
+- **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
+  key)` is the one answer every memory read asks, for the work a session key
+  names: it follows a subagent to the session it works for, an app's agent run to
+  its app and a workflow step to the chat that started its run, and reads each
+  one's mode as `memory_writes.session_mode` does: the live chat, the registry,
+  its transcript and the run, in that order. A mode nothing can say (a record
+  that cannot be read, a value this build does not know, a chat the gateway
+  does not hold that nothing records, as for a Temporary chat that has ended)
+  reads nothing, as a Temporary chat's work does, and says why. Two
+  kinds of work read none of your memory: a Temporary chat's, and an app's that
+  does not hold the `memory` permission (a conversation the app started, an agent
+  run it asked for, an agent its scheduled job started, every agent working for
+  any of them). An agent a job's fire started carries the job's id
+  (`SubagentInfo.trigger_id`), and so do the job's own session (`cron:<id>`) and a
+  run it started, so the app is found by it (`app_crons.app_of`). The context a
+  turn, a subagent's first prompt and a job's announce turn are assembled with,
+  active recall and the push reflex, `memory_recall`, `memory_list`,
+  `triage_rules_list`, `get_context`'s memory tier and the Learning page's facts
+  all ask it, and a refused read says why (`Reach.refusal`). A turn that read none
+  says so in its details: its context line is `context_without_memory`
+  (`memory_reads.fed`), kept on its answer for a reload. The memory documents
+  are files too, which the agent's file tools and shell reach with no session key
+  to hand, so they ask it for the work running now
+  (`memory_reads.memory_read_refusal`: the session the call is bound to and the
+  session the work derives from, the first refusal of either): for such work
+  `read_file`, `list_dir`, `glob`, `grep` and `repo_map` refuse a path in the
+  memory folders in those words, before anyone is asked, and leave the folders
+  out of every listing and search (`file_scope`, under the control
+  `memory_withheld`); the shell refuses a command that names a path there
+  (`file_scope.memory_named_in`); the OS sandbox keeps the folders unreadable to
+  every command started for it (`sandbox._memory_hidden`); and the tools that
+  read a file past the file tools read nothing there (`file_scope.held_from_reads`):
+  an artifact's `content_file`, the file `notify_attachment` sends, and an
+  artifact that shows a file (a file-backed artifact reads and writes its file at
+  every call, so `artifact_get` and `artifact_update` hold it as the file tools
+  hold the file, and change a memory document only for work that may change it:
+  `mcp_artifacts._live_view_refusal`). An Incognito chat reads them as any chat
+  does.
+
+  The same grant is what lets an app's work change your memory. The write scope
+  (`memory_writes.derived_from`) names the app whose work it is: the turn's
+  (`runs_as_its_session`), a request's (the memory-write middleware, asking
+  `reach_of` only when the request writes), a consolidation pass's (the app its
+  transcript records). Without the grant the memory store refuses the change
+  (`check_memory_statement`, and the markdown memory files through
+  `refuse_memory_write`), the lesson and triage-rule routes refuse first with the
+  app's reason, the learning gate denies every cadence (`app_without_memory`) and
+  the consolidator runs no pass. With it, what the work writes names the app
+  (`written_by`).
+
+  A change to memory that a subagent's or a workflow step's request makes is
+  judged the same way, as the work it does for the chat at the top. The routes'
+  guard of a memory change (`_is_restricted_session`, and the lesson route's own
+  check) refuses it when any session up the chain keeps nothing
+  (`memory_reads.keeps_nothing`, over `Reach.restricted_mode`), whatever the
+  caller's own key is marked, and what it
+  writes is filed under that chat (`memory_writes.filed_under`, found by the same
+  walk the middleware asks for the app). So a subagent's `memory_remember` saves
+  its lesson where its chat keeps memory, filed under the chat, and is refused in
+  the words every refused memory write uses (`memory_writes.REFUSAL`) where the
+  chat is Incognito or Temporary or nothing can say what it is.
+
+  The agent's own search of your chats (`chat_search`, served by
+  `GET /api/sessions/recall` over `chat_recall.py`) runs the same
+  `session_search.search`, so it never finds a restricted chat either. It also
+  leaves out the chat the call is made for (and that chat's older files, one
+  `tab_id`), and for a Temporary chat's work it searches nothing, by the same
+  `memory_reads.reach_of`: a subagent's or a step's call is judged by the chat it
+  works for, up its parents, and an app's work finds only that app's
+  conversations. It hands back a few chats, a few turns of each and a window of
+  each turn, masked, and quoted as data (`fence_untrusted`).
+
+  A channel's mark is recorded in the thread's transcript metadata
+  (`ConversationLog.append`), so a restricted thread is still restricted after
+  a restart, when the in-process registry is empty.
+- **`memory_writes.py` — a restricted session keeps nothing, by any path.**
+  An incognito or temporary session writes nothing to long-term memory
+  (working, episodic or semantic records, persona notes, commitments, lessons,
+  knowledge, vocabulary, the markdown memory files), and nothing from it is
+  embedded. Enforced at the stores, not by each caller:
+  - `blocks_memory_writes(key, memory_mode=)` is the one answer, keyed on the
+    mode `session_mode` reads: the one reader of a session's mode, which the
+    reads, a run's inheritance, a subagent's hand-off, the routes' restricted
+    session guard and the learning gate ask too. It reads every record of the
+    mode, the live chat first (what the caller or the current work holds, or the
+    chat the gateway holds), then the registry, the transcript and a step's run,
+    and the strictest record wins. It fails closed: only a mode known to be
+    `persistent` keeps memory. A record that cannot be read, an unknown mode, and
+    a dashboard chat the gateway does not hold that nothing records keep
+    nothing.
+  - `derived_from(key)` names the session work derives from. It is set by the
+    turn (`chat_runner.run_chat`) and by a side question asked beside the chat
+    (`dashboard/side.py`), both as the chat's own work (`as_its_session`), by
+    every consolidation pass
+    (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every
+    API request whose work its sign-in proves (`dashboard/memory_write_gate.py`,
+    `approval_answer.work_of_request`: an app's token is the app's own work, and
+    the session named in `X-Session-Key` is the work of your signed-in pages and
+    of PersonalClaw's own processes only), and it follows the work into the tasks
+    it spawns, `asyncio.to_thread`, and every worker pool, each of which is a
+    `ScopeCarryingExecutor` (the gateway's default executor too). A plain pool
+    drops it: a memory read bounded by a timeout once ran on one, and an
+    Incognito chat's message reached the embedding model from its worker.
+  - Inside a restricted scope the memory, knowledge and vocabulary databases
+    refuse every statement that changes them (`SharedConnection.statement_check`)
+    and `MemoryStore._persist` refuses the markdown files. Reads still work, by
+    keyword, and leave no mark (no recall counts, access stamps or volunteer
+    log). The API answers a refused write `403`.
+  - The learning log records no skill offer for work that may change none of
+    your memory (`learning/surfacing_events.py`): each row holds the turn's
+    message (`query`), so the store asks `memory_writes.changes_no_memory` where
+    every writer of the log writes, as the memory reflex's own offer log is
+    asked. What an earlier version recorded for a chat whose transcript records
+    it Incognito or Temporary goes when the gateway starts
+    (`surfacing_events.forget_what_restricted_sessions_left`), overwritten as it
+    goes so no copy of the database carries its words; a row that names no chat
+    is left. Kept as for any chat, whatever its mode, and the notices say so: the
+    Audit log's record of each tool call (`sel.log_tool_invocation`), and the
+    approvals, questions and notes its work raises in the Inbox and the bell
+    (`inbox.emit_attention_item`, `DashboardState.notify`), since an audit and a
+    consent record keep what ran and what was asked.
+  - The markdown memory files are also files in the folder every chat starts in
+    (`<home>/workspace`), so the agent's own tools reach them, and they hold the
+    same line. The memory folders (`memory.memory_folders`: the home's `memory`
+    folder, with preferences.md, projects.md and the daily history, and `_ext`,
+    every working folder's memory) are changed by no tool in work that may
+    change none of your memory (an Incognito or Temporary chat's, an app's not
+    given your memory, a turn someone other than you asked for). `write_file`
+    and `edit_file` refuse the change before anyone is asked to approve it
+    (`file_scope.memory_kept_from_work`, in the one check every file tool
+    makes), in the memory-write refusal's sentence and under its code
+    (`restricted_session_block`, `app_memory_not_granted`,
+    `asked_by_someone_else`), and tell the agent nothing was written. The shell refuses a command that
+    names a path there and does more than read it (`file_scope.memory_named_in`),
+    and the OS sandbox keeps the folders read-only to every command started for
+    such work (`sandbox._memory_fence`), whatever the command says; for work that
+    may read none of your memory either, nothing there is read (see
+    `memory_reads.py` above). An agent CLI's own file and shell tools are held
+    where the CLI asks before a call runs: the one screen every approval path
+    asks (`screen_tool_call`) refuses a call that names a path there, a change
+    in work that may change none of your memory and a read too in work that may
+    read none of it, in the same sentences and under the same codes, before a
+    chat's Trust or a standing grant could approve it or anyone be asked
+    (`file_scope.memory_named_by_call`, which reads the paths in the call's
+    title, its command and the keys its input names a file by, and asks the
+    shell's own screen, `file_scope.memory_screen`). An ordinary
+    chat's write of a memory document, and the owner's save of one in Files,
+    is the document's store's own write (`memory.write_document`), under the
+    documents' lock and indexed. What this does not hold is in
+    [limitations §19](../security/limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store).
+  - Nothing of a restricted session reaches a model but the one its turn runs
+    on. `model_may_read(ref)` is the one answer to "may this work hand what it
+    carries to that model": the turn names its model once its runtime is built
+    (`answered_by`, in `run_chat`), and inside such work every other model is
+    refused (`OtherModelRefused`, before anything is sent). Every seam that
+    reaches a model asks it: the embedding functions (`embed_fn_for` /
+    `embed_many_fn_for`, and `VectorMemoryStore._try_embed` for a function
+    pinned on a store), so such a session's memory is searched by keyword and
+    its tools are ranked by their words: a turn whose catalog must be ranked
+    (`agents/native/tool_retrieval.py`), a subagent's turn and a side question's
+    alike, as with no embedding model bound, and `tool_search` too;
+    `provider_bridge.metered`, the guard every model built for anything but a
+    person's own turn passes (a tool's model, a subagent's, a knowledge node's,
+    a loop's), and an agent CLI built for such work; the image reader
+    (`image_input.resolve_image_reader`); the image and video tools
+    (`mcp_artifacts`); and the models a turn falls back to
+    (`ModelFailover.admits`). A one-shot call such work makes
+    (`one_shot_completion`, e.g. `web_extract` or `visualize`) runs on the
+    chat's own model: the model-call log names that model as the one that
+    answered, and the call is stamped as serving in the bound model's place, so a
+    call log that captures it reads "ran on <chat model> instead of <Reasoning
+    model>: this chat is Incognito, …". A tool that needs another kind of model
+    says it cannot run in this chat. A restricted chat whose own model cannot run is not
+    sent to the chain's next one: the turn ends saying why
+    (`chat_runner.refused_on_a_substitute`). An agent CLI runs PersonalClaw's
+    tools in a process of its own (`personalclaw mcp-core`), which no context
+    variable reaches, so that server runs each call as the chat it serves
+    (`mcp_core._call_as_its_session`): it asks the gateway what the calling
+    session is (`GET /api/chat/sessions/model-reach`, answered under the same
+    scope the gateway's stores use), at each call, and runs the call as
+    deriving from it when it keeps nothing; a session the gateway cannot answer
+    for is taken to keep nothing. The same answer says whether the session's turn
+    was stopped, and a call made for a stopped turn is not made. What the person gives such a chat in a form
+    its model cannot read is the one exception, and the chat's notice says so: a
+    file they attach, read for its text, and a screen they share, described, are
+    read by the models set up for them (`reading_their_input`, which changes only
+    which model may read and nothing the work may write). Dictation and
+    read-aloud are the page's own requests, made as the dashboard rather than as
+    the chat. `tests/test_model_reach_census.py` holds the tree to all of it:
+    every pool carries the scope, every seam asks, the agent CLI's tool server
+    serves each call as its chat, the exception is taken only where it names, and
+    nothing builds a model provider or calls an embedding model around them.
+  - The work such a chat starts away from its own turn stays on that model too,
+    handed on with the mode. The turn records its model for its session
+    (`answered_by`, read by `model_of`; an agent CLI's chat names its runtime,
+    `acp:<cli>`, `provider_bridge.turn_model_ref`). A request its agent's tool
+    makes runs as the chat on it (`as_work_of`, in `memory_write_gate`), so a
+    subagent `subagent_run` starts is handed it when it is spawned (`hand_on`)
+    and its runtime is built on it rather than on the Orchestration chain
+    (`spawn_model`, `subagent_session.session_kwargs`), on the chat's own agent
+    CLI when the chat runs on one. Each subagent runs as its own work
+    (`work_context`): a queued one that starts when another agent ends stays on
+    its own chat's model, not the other's. A workflow run records the model
+    beside the mode it inherits (`ownership.run_model`) and its tick loop runs as
+    that work from the record (`run_start.run_context`), so a batch's or a
+    workflow's steps keep the mode and the model after a restart, when no request
+    or mark is left to say them. A start that cannot run on the chat's model is
+    refused before anything is built, in words: one naming another model "…:
+    <model> was not asked.", one whose chat's model is not known "…, and this work
+    was not told which model that is." A side question asked beside the chat
+    reads its conversation, so it is the chat's own work as a turn is
+    (`as_its_session`): it names the model it is answered on, the one the chat's
+    own choice of model builds, and nothing of the question or the conversation
+    reaches any other model.
+  - A consolidation pass over a restricted session is skipped before its
+    transcript is read or a model is called: the idle sweep's expiry, a
+    channel's end of session, `personalclaw consolidate`, the consolidate
+    request and the per-turn and idle passes all end in `_consolidate`.
+  - Every record the memory store writes is filed under the session it came
+    from (`source_session`, `memory_writes.filed_under`: what a subagent's or a
+    step's request writes names the chat it works for). A live record other work
+    writes again, or finds it already holds (a lesson said again, a fact the
+    formation pass judges already kept, an episode told twice), is filed under no
+    one session (`vector_memory.SHARED`), and so is one your own edit outside any
+    chat touches; the maintenance a consolidation runs after a chat's pass is
+    PersonalClaw's own work over every chat and files what it writes under none
+    (`memory_writes.as_maintenance`). At start the gateway removes every record a
+    restricted session left (`forget_what_restricted_sessions_left`), and deleting
+    a chat removes what is filed under it alone (see `chat_forget.py` below), both
+    through one purge (`memory_writes.forget_what_sessions_left`): by that stamp,
+    or for a record written before the stamp, an episodic row's
+    `conversation_id`, a `consolidation:<key>` source or a session-scoped row's
+    `scope_ref`, with its history events, links, vectors and proposed names, the
+    daily-history entries that repeat it and the day's digest that quoted it
+    (built again from the rest). A row it had replaced is live again. A record
+    that names no session (a persona note or a lesson an earlier version wrote)
+    cannot be traced and is left for the owner to review.
+  - Nothing of a restricted session is handed to a background model, a model
+    its own turn did not ask for. `blocks_background_models(key, *aliases,
+    memory_mode=)` is the same answer, and work inside a restricted scope hands
+    nothing on whichever session it names. The chat is titled by its mode
+    ("Incognito chat", "Temporary chat") on its first turn and when a title is
+    asked for again (`dashboard/chat_title.py`), and when it comes back with no
+    title of its own, as one saved before its title chore ran does, rather than
+    by the chat list's fallback, its first message
+    (`chat_persistence.continue_kept_chat`); it gets no model tags or
+    follow-ups (`dashboard/chat_followups.py`); a reopened chat whose history
+    does not fit is cut to fit rather than condensed
+    (`context.compress_thread_history`); the suggestions built from recent chats
+    leave it out (`suggestions.py`); no agent-routing suggestion is worked out
+    for a message sent to it, which would embed the message outside its turn
+    (`agents/routing.suggest_for_send`). The batch re-tag, organize proposals and
+    background compression already leave restricted chats out of what they list.
+    The one way a chore reaches a model (`chores.run_chore`) keeps the rule
+    itself, so a caller that did not ask first still hands the chat to no model:
+    a chore for such a chat (read by the key its spend is recorded under and the
+    mode its caller holds) or made in its work runs on the chat's own model only
+    in the chat's own turn, once the turn has named it, and is refused
+    (`OtherModelRefused`) anywhere else, before anything is sent.
+  - Nothing of a restricted session is left behind in work that lasts after it
+    (`lasting_work.py`). A loop or project, an automation or scheduled task (a
+    lifecycle trigger among them) and a callback are kept after the chat and run
+    later as a session of their own, on their own model, which keeps what it
+    does: nothing in the loop engine or the trigger store reads a chat's mode. So
+    work that derives from such a session (`writes_refused`) makes none of them,
+    hands none its words and sets no loop going. Each is refused at the one place
+    every door to it reaches, before anything is written: a new loop
+    (`loop.store.create`), a start, a resume or a steer (`loop.manager.start`,
+    `nudge`; a merge or conflict answer resumes its loop, so it is refused before
+    the answer is written), a new or changed automation (`triggers.tools.create`,
+    `update`, and `hooks.ScriptHookStore` for a lifecycle trigger) and a callback
+    (`webhook_callbacks.register`). The doors are the native agent's
+    `project_run_*`, automation and `hook_register` tools, the same tools in the
+    tool server an agent CLI runs, the tool route (`POST /api/tools/invoke`) and
+    the loop and trigger routes. A tool says so before anyone is asked to allow
+    the call and a route answers `403 restricted_session`, each in a sentence
+    that says why and to do it from an ordinary chat, with an audit row.
+    Reading such work, pausing, stopping or deleting it, switching an automation
+    off or back on, and running one now (a run held as the chat's own work) are
+    unchanged, and a workflow run the chat starts keeps its mode and its model as
+    above, a General loop started through the loop door included. Work a turn
+    someone other than the owner asked for makes through the same doors records
+    who asked instead, and is held to them for as long as it lasts (see
+    [knowledge-memory.md](knowledge-memory.md)); an automation is not made or
+    changed on their say-so, nor a loop steered with their words unless they asked
+    for it (`403 asked_by_someone_else`).
+  - Nor is anything of it left in a record that other work reads later, by the
+    same rule and in the same words (`lasting_work.py`): a skill draft, kept
+    after the chat and offered at its end as a skill the model of every chat
+    reads (`skills.ephemeral.remember`, `promote`); a proposal for review (a
+    skill, a workflow template, a change to a project's context, a knowledge
+    draft), which every chat's model reads once it is accepted
+    (`learning.proposals.enqueue`, and `learning.template_gate.evaluate`, which
+    records what it decided before it files); a task, a task list or a project
+    on the Tasks page, whose brief and instructions are put before every chat and
+    loop in the project (`tasks.registry`, `tasks.hierarchy.HierarchyStore`, and
+    `project_context`'s overview and ledgers; a run the chat started asks for
+    neither, putting none of its steps on the Tasks page and adding no line to
+    its project's overview as it ends); an Inbox item, which the agents of your other
+    chats read (`native_source.post_to_inbox`, a notification's Inbox fallback
+    included); and a loop's spec or plan, which its worker and its planner run
+    from (`loop.store.update_spec`, `rename`, `rebind_workspace`, and the
+    precondition every plan route asks first). The doors are the native agent's
+    `task_*`, `project_create`, `task_list_create` and `post_to_inbox` tools,
+    the core tools `skill_remember`, `skill_promote`,
+    `template_save_from_session`, `project_context_review` and
+    `propose_template_diff` in both runtimes, the tool route, and the Tasks,
+    skill-draft and loop routes. Each says so before anyone is asked to allow
+    the call, or answers `403 restricted_session`; a step of a run the chat
+    started that is refused fails as yours to change, never as a fault. Reading
+    any of it, and deleting a task or a comment, are unchanged.
+- **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
+  and forgetting it.** A chat leaves its transcript, its working folder
+  (`sessions/<key>/`), its turn checkpoints, the files attached to it
+  (`uploads/`, `screenshots/`) and the skills it was taught and not yet kept
+  (`skills/.ephemeral/`); `chat_traces` reads that and `chat_forget` deletes it.
+  `purge_chat` deletes them, and what the learning log kept of its turns, for a
+  deleted chat (which keeps a kept chat's uploads, since Files lists them) and
+  for a **temporary** chat's end, which takes its attachments too; a chat named
+  again after a deleted one is not
+  handed the deleted chat's skill drafts. A chat is deleted one way,
+  `delete_chats`, from the Delete button (`DELETE /api/chat/sessions/{session}`)
+  and both history routes (`DELETE /api/sessions/{key}`, `DELETE /api/sessions`):
+  it stops the chat's turn, runs `purge_chat` (the transcript first, so a
+  consolidation still waiting on a model keeps nothing more:
+  `HistoryConsolidator._was_deleted`), removes from every memory, the global one
+  and each folder's, what memory filed under the chat alone
+  (`forget_what_memory_drew_from`), destroys its runtime and writes one
+  `chat.deleted` audit row naming it. A chat whose transcript could not be
+  removed is not deleted: the rest of what it kept goes all the same, its audit
+  row says `failure`, and the routes answer that it is still kept
+  (`session_not_deleted`, or `failed` in the bulk route's count) rather than
+  that it is gone. What stays is what cannot be traced to the
+  chat alone: a record other work also stands behind (a lesson taught in another
+  chat too, a fact edited in Memory), what maintenance drew from every chat, and
+  what the owner kept elsewhere; the Delete dialog names both halves, and
+  `blastRadiusIsVerified.test.ts` reads them back from this code. A temporary
+  chat's session lives in the gateway
+  running it, so it ends when that gateway stops or restarts, when the chat is
+  deleted, and when cleanup evicts it as inactive: the last save before a stop
+  forgets each one instead of saving it, the next start forgets any a crash or
+  a restored backup left behind before it restores anything, and a read or a
+  send naming one that is not running here forgets it and answers 404. While
+  it runs its transcript is written like any chat's (a reload keeps it); no
+  snapshot or shard export copies it (`chat_traces.kept_by_temporary_chats`).
+  What a chat's work waits on in the Inbox is the chat's own too, as every
+  chat's is: its approvals, its batch's ask, a question its agent put to you and
+  what its own runs wait on are read by its own work and by you, and by no other
+  chat's agent or digest (`inbox_reach.py`).
+  The workflow runs a temporary or incognito chat started are its own work:
+  while it lives only its own work and you read them (`workflows/chat_runs.py`),
+  and they end with it, and so do the runs they started in turn, a subworkflow's
+  or a `run-workflow` step's, each one more run of the same tree (`root_run_id`)
+  (`workflows/private_runs.py`): on each poll the workflow supervisor stops a
+  run whose tree's chat has ended, through a controller so it closes what it
+  holds, then, once every run of the tree has ended, deletes each with what it
+  produced (`service.delete_run`), and ends a batch of the chat's still waiting
+  for its ask (`batch_start.end_records_of_ended_chats`). A temporary chat has
+  ended when its root run was started before this gateway was, or when the chat
+  at the top of the work the root was started for is a dashboard chat the
+  gateway no longer holds. An incognito chat's runs are kept, as its transcript
+  is, until it is deleted: a dashboard chat the gateway no longer holds whose
+  transcript is gone too (`private_runs._transcript_kept`).
+- **`session_workspace.py` / `session_pid.py`** — per-session working
+  directory resolution and process-id tracking.
+
+## History & persistence
+
+- **`history.py`** — one JSONL file per session at
+  `~/.personalclaw/sessions/{safe_key}.jsonl`. **The file is the user's
+  record and nothing shortens it**: there is no size cap, no rotation and no
+  background rewrite, at any size. What bounds cost is what a reader takes —
+  `recent()` and `history_for_model()` return a window.
+- **Background compression shortens what the model reads, never the file**
+  (`bg_compress.py`). An idle chat gets a derived record beside its
+  transcript, `{safe_key}.summary.json`, naming the span it covers — counted
+  in turns (`summarized`, `reduced`), so it applies to the file and to a
+  resident session's buffer alike — and a digest of that span. `model_view()`
+  is the one transform: while the digest still matches, the model reads the
+  summary in place of the oldest turns and the next ones capped; the moment a
+  turn in the span changes, it reads the turns as written. The dashboard applies
+  it to the turns a fresh runtime is handed (`prior_turns_transcript`); a reader
+  with no live session reads `history_for_model()`. `model_window()` is the one
+  message budget both use, and it keeps a summary first. Deleting a chat
+  deletes its record, and the pass drops any record whose transcript is gone.
+- **`sessions/archive/`** holds lines EARLIER versions trimmed out of chats
+  (2 MB rotation and the old background rewrite). Nothing writes it and nothing
+  prunes it — for those chats a batch can be the only copy — and neither the
+  startup/shutdown workspace sweep (`cleanup_stale_sessions`) nor any write
+  path touches it; a batch is removed when its chat is deleted. Archive *reads*
+  are redacted through `redact_credentials` / `redact_exfiltration_urls` before
+  anything leaves the store.
+- **`resolve_history_key()`** resolves whether a bare key is a channel-thread
+  key or lives in the `dashboard:` namespace *by asking the store* — core
+  assumes no key shape and names no provider.
+- **A new chat's name is one no chat has, and a save never replaces another
+  chat's transcript.** A new chat is named `chat-<number>-<second>` in
+  `dashboard/chat_names.py`, the one place a new chat is named: every surface
+  that opens one (the dashboard, a Temporary or Incognito chat, a channel's new
+  thread, a fork, an investigation, a delivered result) asks
+  `get_or_create_session` for it with no name. The number carries on past the
+  highest one a kept chat has, and a name that a chat open here or a transcript
+  kept on disk (an archived one included) holds is stepped past, so neither a
+  restart in the same second nor a clock set back across one names a new chat
+  after a kept one. Names already given stay as they are. A transcript records
+  the `tab_id` of the chat it is; a session minted for a kept chat takes it on
+  (`get_or_create_session`), and `save_session_to_history` refuses, and logs, any
+  save, `force` included, whose session's tab id is not the one the transcript
+  records: two gateways on one home that opened a chat in the same second before
+  either saved, or a save still on its way for a chat deleted and named again.
+  `POST /api/chat/sessions` given a kept chat's name opens that chat, so
+  `personalclaw run --session` continues its conversation.
+- **A chat opened again by its name continues it.** `get_or_create_session` is
+  the one place a session is made, and a name whose transcript is kept on disk
+  (the file the chat's saves rewrite, whatever its first line says) makes that
+  chat: `chat_persistence.continue_kept_chat`, the one loader, gives it every
+  field of its record a save writes back and its whole transcript before the
+  chat is open here. What the caller asks for (an agent, a model, a folder) shapes
+  a new chat only, as for a chat already open, and a memory mode other than the
+  kept chat's is refused. The ways a chat comes back (the start's restore, opening
+  a chat from the list, resume) and the callers that name their sessions all go
+  through it. Each way back used to restore its own part of the record, and the
+  callers that name their sessions none of it, so a session made blank for a kept
+  name was saved over the transcript: a loop worker the watchdog re-armed after a
+  restart lost every earlier turn at the stop. A Temporary chat that is not
+  running here has ended, so its name makes a new chat. A kept chat whose record
+  or transcript cannot be read is still opened (`open_kept_chat`), since a disk that misbehaves locks
+  nobody out of a chat that is there, but it holds none of what is kept, so
+  `save_session_to_history` refuses, and logs, every save from it (`force`
+  included) and what is kept stays as it is; it is not opened as a Temporary chat,
+  whose end would delete the transcript. Each named worker session
+  is one ongoing conversation by what its feature does, so after a restart each
+  continues, and its model is given its earlier turns through the history a fresh
+  runtime is handed (`prior_turns_transcript`; an agent CLI that can load its own
+  session by the kept id loads that instead):
+  - a loop's stage worker the watchdog re-arms (`loop/manager.start`): an
+    interrupted loop resumes. The cycle prompts are not among the turns handed
+    back, as for any chat (they are `nudge` rows); the cycle in flight carries the
+    current one.
+  - a loop's task worker the scheduler spawns again
+    (`loop/manager.spawn_task_worker`): it carries on with its one task, in its own
+    checkout.
+  - a loop's planner (`planning/runner.run_planner_pass`): one session across its
+    loop's passes, whose retry tells it to use what it found already.
+  - a client of the OpenAI-compatible endpoint registered to keep its
+    conversation (`inbound/openai_dialect`). A client that keeps none is let go of
+    its earlier requests before each turn (`_reset_session`), and its model is given
+    none of them.
+  - a schedule's chat (`dashboard/schedule_inject`): filled from the schedule's own
+    conversation only while it is new, and threaded each result after that, as
+    while it stays open, so its runs are not poured into it again as turns of
+    their own.
+- **`dashboard/chat_persistence.py`** — the dashboard-side persistence
+  contract over the JSONL store (message append, metadata, variants).
+  Model-to-provider matching is data-driven via
+  `catalog.model_family_provider_types(model)` — no vendor names at the call
+  site, and unknown model families are never restricted.
+- **The transcript buffer is the whole file.** `save_session_to_history`
+  rewrites a session's file from `_ChatSession.messages`, so the buffer holds
+  every message the file holds and nothing trims it. Every chat made for a kept
+  transcript is loaded through `_seed_transcript` (in `continue_kept_chat`), which
+  loads the whole file with each line's `cls` and
+  `meta`. The buffer holds transcript entries only: a streamed answer is ONE
+  `streaming` entry however many chunks it arrives in (`stream_chunk`), settled
+  in place into an `assistant` entry (`finish_stream`), and the end-of-turn
+  marker goes to live readers only (`signal_done`). An approval is written once
+  it is decided. A message sent into a running turn (a steer) is a `user` entry
+  once the turn takes it (`EVENT_STEER`, written by `running_turn.take_steer`):
+  the answer so far is settled first, so the entry sits between what the answer
+  said before it and after it, marked `meta.steered`; one the turn does not take
+  is written by the queue when it runs, once. However her message comes in (a
+  send, a steer, a queued send, an edit or a rewind), the page sends each block
+  she pasted in place of its `[Paste #N]` marker and the blocks beside it
+  (`asSent` in `web/src/pages/chat/pasteBlocks.ts`; `meta.pastes`,
+  `own_words.PASTES`): her entry keeps them, a
+  queued item carries them to the row it runs as (numbered again when queued
+  messages merge), and every frame that tells a page of her message carries them,
+  so her bubble shows each as its chip live and read back. A send that carries a
+  block and still holds its marker is refused (`paste_not_expanded`): the model
+  would read the marker and never what was pasted. The save records `message_count`
+  in the metadata line, which `ConversationLog.list_sessions` serves as the chat
+  list's count.
+- **Where each line came from is the line's own, and a save never writes one**
+  (`turn_source.py`). A line records the thread it arrived on, who sent it there
+  and, when a chat channel took it in, which channel (`source_thread`,
+  `source_user`, `source_channel`), the same fields in the buffer and the file,
+  written once by the code that takes the line in. The dashboard's own chat
+  records `dashboard` for the thread and the sender: what you type there, and the
+  rows the chat adds itself (its answers, a tool's card, a notice). The inbound
+  door records a channel message's thread, sender and channel
+  (`channel_inbound._route_to_session`), on its queued item too, so the row it
+  runs as records them. A channel that runs a conversation itself writes its
+  turns with theirs (`save_conversation_turn(…, source_channel=…)`), and the chat
+  open for that conversation takes each turn as written (`take_channel_turn`).
+  The OpenAI-compatible door records the conversation and the client that sent
+  the message. A copy carries the line's own: the chat loaded from its file
+  (`_seed_transcript`), a fork, a rewound tail; a row that several queued
+  messages run as records the source they share, or none when they came from
+  different places. `save_session_to_history` writes back what each line
+  records. It used to write `dashboard` on every line, so once the dashboard
+  saved a channel's chat, the channel's turns read as typed in the dashboard.
+  What memory takes as your own words reads these fields
+  (`turn_source.sent_by_owner`, see
+  [knowledge-memory.md](knowledge-memory.md)): a line is yours when the
+  dashboard took it in, or when its sender is the owner its channel keeps. So
+  does who asked for a turn (`turn_source.asked_by`), which a change to your
+  memory that turn makes waits on, and how every history a model is handed of
+  the conversation shows each line (`turn_source.turn_line`): yours as the
+  user's, anyone else's fenced as theirs, after a restart and a compression too. What
+  `web_fetch` may open, and a channel conversation's Trust and approvals, are
+  decided from how a message was taken in (in process), from its fence, or from
+  the chat's own link. The agent's `chat_search` names a channel turn's sender
+  from `source_user`, and `GET /api/sessions/{key}` serves the lines as written. A
+  line saved before lines recorded their source keeps the `dashboard` it was
+  given: nothing else recorded where it came from. A channel's line saved before
+  lines named their channel names a sender and no channel, and memory reads it as
+  nobody's.
+- **A reload shows the turn the live page showed.** The page builds a turn's
+  steps from the gateway's frames (`web/src/pages/chat/liveToolFrames.ts`) and a
+  reload rebuilds them from the persisted rows (`hydrateTurns`), so what one
+  shows the other must. A call's row carries its call's id; a `tool` row without
+  one, in a turn the gateway ran, is a line it wrote ABOUT a step, which neither
+  the live page nor a reload draws as a step (`foldStepLine`). A refused
+  approval's line puts the agent's option the refusal was sent as on the
+  approval's own line. A line about what happened to a call (a gate refused it
+  before it ran: the chat's task mode, the shell denylist, a hook, an unattended
+  run's bounds, a tool name that does not validate; or it keeps failing the same
+  way, the loop breaker) names the call in `meta.about_call` and carries its
+  sentence in `meta.note` (`dashboard/step_notes.py`), and the sentence is said on
+  that call's card, live from the row's frame and after a reload from the row; a
+  line about a call the turn shows no card for is said on the turn. An imported
+  conversation's call lines carry no ids at all and stay its calls. A call an
+  agent CLI ran without asking is said on its own card
+  (`docs/architecture/security.md`), never on a row of its own.
+- **Who started a conversation.** `_ChatSession.created_by_app` is the app whose
+  token started it, or empty for yours, and it is the one thing an app's reach
+  into a conversation is decided on (`apps/permissions.ROUTE_AUTHZ` rows that
+  carry `owns`, enforced by `dashboard/server.py::app_permission_middleware`).
+  It is set only from a verified app identity, written to the metadata line as
+  `created_by_app`, and read back in `DashboardState.get_or_create_session`, the
+  one place every restore path mints a session, so a restart keeps an app's
+  conversation the app's and never makes one of yours an app's. It is not
+  `_app`: that is an origin tag (`loop`, a channel's provider name, an app's
+  name) saying where a conversation came from, which the chat list groups by and
+  its turns are counted under, and an app can share its name. It does not say
+  where a chat answers: that is its channel link's (see *Channel-linked
+  sessions*). A turn in an app's conversation needs the app's
+  `agent` permission at the `tools` tier, and runs under it, never under your
+  approval switches, whoever sends the message: the app approves none of its
+  calls, so each one that needs approval asks you (`chat_runner.started_by_app`).
+  The same field decides what an app
+  READS: a detail, map, export or tool result of any other conversation is
+  refused before the handler loads it; the chat list, `/api/sessions` and the
+  content search leave out every conversation it did not start; and the
+  websocket drops a frame about one (`dashboard/ws_state.py::frame_subject`).
+  The chat list and the detail carry `created_by_app` and `created_by_app_name`,
+  so your history says "Started by <app>", and the composer says what a message
+  you send there runs under. A folder chosen for an app's conversation is not
+  added to your recent projects.
+
+## The dashboard chat pipeline
+
+`dashboard/chat_runner.py` is the turn engine. A turn flows:
+
+1. **Prompt-mention expansion** — a leading `@name key=value` expands a saved
+   prompt via `_expand_prompt_mention` (user prompts live at
+   `~/.personalclaw/prompts/`, snippets at `prompt_snippets/`; the composer's
+   @-menu suggests prompts only at message start). The rest of the message fills
+   the prompt's own inputs, the way the tool it was imported from passes them:
+   the whole text fills `{{arguments}}` (unless given as `arguments=…`), and its
+   words fill `{{arg1}}` to `{{arg9}}` in order. Text a prompt has no input for
+   follows the rendered prompt.
+2. **Context assembly** — `context.py` (`ContextBuilder`) builds the system
+   context: the runtime values `{{bot_name}}` and `{{user_name}}` (live-resolved
+   from `agent.bot_name` and `dashboard.user_name`, Settings → Account), memory
+   context, and — for channel-linked sessions — the `channel-thread-context`
+   snippet. A fresh runtime is restored ONLY from the session's own turns before
+   the one being sent (`chat_persistence.prior_turns_transcript`) — never the
+   in-flight message, never another session's transcript — with the chat's
+   background summary standing in for its oldest turns while it still describes
+   them (`history.model_view`). A session is new until a message is sent its
+   runtime, and that message carries the session's opening: the agent's
+   instructions, the safety rules, the standing context and memory, and the
+   restored history. The opening is the runtime's own: a turn told its runtime
+   is new that sends it nothing gives the opening back
+   (`SessionManager.hand_back_opening`, in `run_chat`'s finally), so the next
+   message carries it: after a slash command the runtime runs itself
+   (`/compact` on the native loop, an agent CLI's own commands:
+   `chat_utils.runs_as_command`), a refusal, a stop before the prompt. Any
+   other slash word is sent as a message, with all of it, and `/compact` on a
+   session that holds none of the chat yet is answered by the chat ("Nothing
+   to compact yet — …"), saying that the next message brings the conversation
+   back. `context_engine.py` and
+   `context_compaction.py` manage sizing and compaction. The native loop
+   compacts its own history at the Settings threshold
+   (`session.autocompact_pct`) and when a model rejects a prompt as too long,
+   and the chat says so where it happened, in `/compact`'s words
+   ("Conversation compacted: freed 42% of the conversation (…)"): a
+   `compaction_status` of `automatic` (`llm/events.COMPACTION_AUTOMATIC`),
+   which keeps the answer streamed before it. An agent CLI keeps its
+   conversation inside its own process, where PersonalClaw cannot compact it.
+   One whose app declares that the CLI compacts itself
+   (`register_acp_cli_entry(compacts_itself=True)`: Claude Code and Codex) is
+   left to do that at its own limit, and its session goes on with the results
+   of its earlier tool calls. Any other session over the threshold, and a
+   native one whose passes stopped freeing room, is restarted by the session
+   manager (`SessionManager.check_context_usage`): its runtime ends, the next
+   turn starts a fresh one from the chat's own history (the turns that were
+   said, without tool results), and the chat says so with the reason:
+   "Restarted the agent's session at 92% of its context window: PersonalClaw
+   cannot compact this agent's context. …". Every such notice (a `/compact`'s
+   result, the loop's own pass, and a restart at the threshold) is also said
+   on the channel thread the conversation is linked to, where its replies go
+   (`DashboardState.tell_linked_channel`): a chat that came from a channel on
+   that channel, and a channel's own thread on the channel that issued its id.
+   A compaction keeps the first messages and the latest ones verbatim and folds
+   the rest into a summary and an account of the calls it folded; the kept head
+   and tail hold whole exchanges, a call with every result it got
+   (`context_compaction._whole_exchanges`). Cut between them, a kept result was
+   dropped as an orphan and the account said its call had no result, so an agent
+   disowned a fact it had read from that result. It also keeps, word for word
+   wherever they sit, the request the running turn answers, every message the
+   user added after it (a steer) and the turn's runtime note (its tool catalog):
+   the tail is eight messages, so a long turn's own rounds used to push its
+   request out of it, and the summary then kept that request's first line or
+   nothing. The summary lists what the user asked in their own words, the newest
+   word for word and older ones by their first line within a fixed budget, and
+   counts the rest; a later pass carries an earlier summary forward instead of
+   cutting it to its first characters. A room member's fold keeps the human's
+   latest line the same way, and a workflow node's prompt, which the ladder splits
+   at its paragraphs, lists the paragraphs it folds as sections, by their first
+   line.
+3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
+   the default agent ships with none, so its prompt is the one bound in Settings →
+   Prompts for the turn's context (`chat`, or `background` for unattended runs).
+   An agent's own instructions and voice are read in one place,
+   `agents.instructions.agent_instructions`: its profile in `config.json`, else its
+   file under `<home>/agents` (never another agent's words for a name `config.json`
+   does not hold). Every path that runs a named agent hands its model those words: a
+   chat routed to it, a spawn, workflow step, automation or app run that names it
+   (`build_message` is told the agent), a webhook on it, a loop it works, a room it
+   sits in (its first message), and the heartbeat, which runs the default agent (as
+   `personalclaw chat` does: its turns are chats of the gateway's). A spawn that names no
+   agent is a helper of whatever started it,
+   on that one's runtime, framed as a sub-agent on the Background prompt and handed no
+   agent's own instructions: handed its parent's, a goal loop worker's helper would run
+   the loop's own cycle protocol, and handed the default agent's, a helper working for
+   another agent would be told it is the default one.
+   `tests/test_agent_safety_rules_census.py` fails for a new path that names the agent
+   it starts and hands its model none of its instructions.
+   The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
+   ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
+   So are the platform's safety rules, last and once: the `safety-rules` snippet the
+   Chat and Background prompts include, worded in that one place, which an agent's own
+   prompt adds to and cannot remove (`prompt_providers.runtime.with_safety_rules`). A
+   room member's first message carries them the same way, and
+   `tests/test_agent_safety_rules_census.py` fails for a new path that starts an agent
+   without them. The resolved prompt opens the session's first message, verbatim, ahead of
+   memory, history and the request, and a compaction keeps that message. A word
+   limit an agent's own instructions set for its answer ("Keep the answer under 200
+   words") is checked when the turn ends (`answer_rules`): an answer past it is
+   followed by a notice row that gives its word count and quotes the agent's
+   sentence. The answer is never cut, and an answer to a message that sets a word
+   limit of its own is not checked against the agent's.
+4. **Model resolution** — the chain of the use case the chat's turns resolve on
+   (`chat_runner.model_axis_for`, the `model_axis` it acquires its runtime with):
+   `loops` for a loop's worker and planner, `code_tools` for a chat working in a
+   folder of its own, and `chat` for any other. A chat works in a folder of its own
+   when its `workspace_dir` is one: the working directory set for it, its
+   project's folder or its agent's (`chat_handlers.api_chat_session_create`), the
+   same folder that keeps its own memory (`chat_utils.chat_model_axis` asks
+   `memory_locality.is_local_partition`); the workspace every chat starts in keeps
+   the chat binding. Code & tools with no model bound is the Chat chain
+   (`use_cases.chain_owner`). The axis is decided from the chat before its first
+   request, never from what the turn says or does, so with Code & tools on one
+   provider and Chat on another a turn over the chat's folder never reaches
+   Chat's. A runtime fixes the folder its tools work in when it is built (the native
+   loop's tool context, an agent CLI's process and session), so setting or clearing
+   the working directory changes what the chat runs on the way a change of its
+   agent or model does (`running_turn.rebind`, `running_turn.to_folder`): between
+   turns its runtime is let go and the next turn's is built in the new folder, and
+   a turn running when it lands ends as stopped and her message is answered again
+   there. A clear puts the chat back in the workspace a new chat starts in. A
+   cached runtime built on another axis (the same folder starting or ceasing to be
+   the workspace) is rebuilt at its next acquire (`session._axis_moved`,
+   `ResolutionBasis.serves`), and a side question asked
+   beside the chat acquires on the chat's axis too (`dashboard/side.py`). Both
+   axes are a person's own turns, which the spend guard leaves alone. A model the
+   composer picked for the session, then one the agent pins, come before the
+   chain (in that order; the `model` kwarg threads through
+   `llm/registry.py` `registry.build`; every factory honors it). A chosen
+   model runs on ITS provider, not on the chain head with a borrowed model id.
+   **A turn names the model that answered it and how that model was chosen**
+   (`provider_bridge.how_chosen`, read off its runtime's `ResolutionBasis.sources`: "from
+   your Code & tools chain", "from your Chat chain", "picked for this chat",
+   "<agent>'s own model"): in its "Turn complete" line, in `meta.turn_telemetry`
+   (`model`, `provider`, `chosen`) and on the live `stats` activity, which the
+   turn's details chip ("on <model>", and "Answered by …" opened) and the model
+   pill's Auto ("Auto · <model>") read. Session detail and the working-directory
+   route answer `auto_chain`, the chain a turn on Auto takes next, which the
+   pill's Auto row names.
+   One rule decides whether a chosen model can run
+   (`providers/provider_bridge.named_model_problem`): it must be one of the
+   chat models set up in Settings → Models, and its provider must be able to
+   serve it. A choice that cannot run is kept, never rewritten; the turn runs on
+   the chat binding and says so (`ModelSubstitution`: "Ran on X instead of
+   Researcher's model Y: …") — live as an `activity_event` of kind
+   `model_substitution`, and on the reply's `meta.model_substitution`, so a
+   reload says it too. A room member's turn says it as a room note, and the
+   Agents page and a room's members panel show the pin as unavailable
+   (`GET /api/agents` → `model_unavailable`). There is no strict setting that
+   would refuse the turn instead. Editing or deleting an agent marks its open
+   sessions (`SessionManager.mark_agent_stale`): a turn already running finishes
+   as it started, and each session's next turn rebuilds its runtime from the
+   agent as it now reads.
+   **A turn falls back down its chain** (`agents/native/failover.py`). When the
+   model a chat turn runs on fails before anything of the turn was shown (a
+   provider error or a timeout, after its one retry; its breaker is open, since a
+   runtime keeps the model it was built on; or, on this machine, it stays busy with
+   background work past the turn's short wait, `guardrails/local_queue.py`), the
+   native loop
+   moves the turn's inner model to the next model in the same order (the chat's
+   pick, the agent's pin, then the chain), once each, skipping one that cannot be
+   built, cannot use the turn's tools or cannot take its images. The one that
+   answers says so before its reply, as an `EVENT_MODEL_SUBSTITUTION` the chat
+   runner turns into the same `model_substitution` line and reply meta ("Ran on
+   Y instead of X: it failed before it replied (…).") and a room writes as a
+   note in the member's slot. The turn's terminal `EVENT_COMPLETE` names the
+   model that answered (`served_model_ref`), and the chat records and prices the
+   turn by that model's id: its `usage/turns.jsonl` row, its "Turn complete"
+   line and `meta.turn_telemetry` (every ledger write does,
+   `usage_ledger.answered_model`). The row's `provider` is that ref's entry, the
+   `Y` of `Y:gpt-4o` (`usage_ledger.answered_provider`); an ACP turn, which names
+   none, keeps its runtime (`acp:claude-code`). A room member's turn writes its
+   own row (`source: room`, under the member's session key and agent), so
+   Settings → Usage counts a room by source, by provider and by model. So does
+   the summary a member folds its context with (`source: room`, on the member's
+   own model), and a chat's history compression writes one too (`source:
+   background`, the lite agent, under the chat's key; the idle-chat pass in
+   `bg_compress` the same, with no agent): a one-shot call records itself with
+   `one_shot_completion(usage=Attribution(…))`. Every guarded call's
+   `EVENT_COMPLETE` names the call (`LLMEvent.audit_ids`, stamped by
+   `ModelCallGuard`, and summed over a turn's inferences by the native loop), and
+   the row keeps those ids, so the usage page's "Not included" census of
+   `model_calls.jsonl` leaves out a call a row already counts: it states only the
+   calls that wrote no row (a chat's title, a judge). `audit_ids` is an SDK
+   addition to `LLMEvent`, defaulted, which no app has to set. The guard prices
+   each call once, at the model the call asked for, and stamps that price beside
+   the id (`LLMEvent.charged`, the figure it charged the spend meter and wrote to
+   `model_calls.jsonl`); the native loop sums its turn's, and the row takes the
+   sum rather than pricing the turn's tokens again, so Usage, the budget meter and
+   the call log hold one figure per call. A turn that ends in an error (a dollar
+   cap refusing its next call) first sends `EVENT_SPENT`, the usage of the calls it
+   made, and the writer of the turn's row writes it from that. The next
+   turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
+   room's words on a room). Only a caller that says so asks for this
+   (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
+   `stream_and_collect(on_substitution=…)`): a loop keeps the failure rather than
+   another model's reply presented as the chosen one's. A background chore
+   (history consolidation, thread compression, the chat title, its organize
+   proposal, suggestions, follow-up chips and a folder's icon) is a call of its
+   own (`chores.run_chore`): it is sent its own prompt and nothing of any chore
+   before it, whichever chat that one was for, and it walks its chain as every
+   one-shot call does, each step said in the log (a census in
+   `tests/test_an_open_breaker_moves_the_chain_on.py`). A chore names what it
+   reads the answer as (`validate`), so an empty answer or one in the wrong shape
+   is that model failing and the next one answers, as a failure, a timeout and an
+   open breaker do. So is an answer its model stopped at its output cap, whatever
+   it wrote before the cap (`guardrails.failure.OutOfOutputRoom`, raised by every
+   one-shot call): the start of an answer is never read as one, since a cut JSON
+   answer still holds every object it closed. A title or a consolidation that no
+   model could answer, or none finished, is owed
+   (`owed_chores`): the heartbeat tries it again, at once after a provider whose
+   breaker opened answers again, and an ended chat is sealed only after its
+   consolidation ran. One owed because its model ran out of output room is said in
+   a notice ("Memory from a chat isn't saved yet"), naming the limit that gives it
+   room. A heartbeat task's result cut at the cap ends on a line that says so. A
+   one-shot call walks its chain the same way with a time budget per model
+   (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
+   slow first model hands over instead of spending the whole wait, and a chain that
+   only timed out is reported as a timeout (`llm_helpers.ChainExhausted`), not as
+   no model being available. The chores whose answer she sends as her own words, the
+   follow-up chips and the suggestions, may say for her only what they were written
+   from says. Each prompt has rules added after whatever template is bound (a seeded
+   prompt is never rewritten on an existing install); the chips' rules also say a chip
+   never answers what the reply asked her. The answer is then checked
+   (`given_details.keep_given`): one that states a time, number, name, path or file
+   its source does not give is left out. A prompt rewrite is checked the same way
+   (`given_details.ungiven`) and is not used when it adds such a detail;
+   `/api/optimizer/optimize` names it in `added`.
+5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
+   the finished turn is saved by rewriting the session JSONL from the buffer.
+   Every exit from a turn, an error included, first settles the answer
+   streamed so far (`_flush_segment`), so a partial answer is kept like a
+   finished one.
+6. **What the turn is doing** — the turn says each phase it is in, as the
+   runner measures it, in a `work_phase` frame (`dashboard/chat_phase.py`, see
+   [work-phases.md](work-phases.md)): waiting to start as soon as it is
+   accepted, thinking, searching, the tool it runs, writing, waiting on her OK
+   or her answer, handing off to helpers. A running turn says its phase again
+   every 15 s, and every way a turn ends sends one last frame that says how.
+   The chat list, a chat's detail and a project's chats serve the last frame
+   as the chat's `run_state`, idle once nothing runs, so a page that opens or
+   reconnects mid-turn reads what the frames said; whether a turn runs, is
+   stopping, takes a steer or waits on her OK, and how the last one ended, is
+   read there and nowhere else.
+
+Around the engine:
+
+- **`dashboard/chat_handlers.py`** — session listing/history. Channel-linked
+  rows carry `origin="channel"` (computed at list-time from the session map,
+  never persisted); the frontend `ChatPage.tsx` switches tabs on that literal.
+- **`dashboard/chat_title.py`** — auto-title plus optional auto-tagging in ONE
+  background LLM call (config `dashboard.auto_tag_sessions`); an Incognito or
+  Temporary chat is titled by its mode instead, with no model call;
+  `chat_retag.py` is the batch re-tag job (cancellable, board-triggered). A
+  name the chat is given while the model answers (a rename, a channel's name
+  for its conversation) is the later word: the auto-title is not applied over
+  it, and Generate title keeps it and answers with it.
+- **`dashboard/chat_folders.py` / `chat_tags.py`** — organization; persisted
+  in `folders.json` / `tags.json`.
+- **`dashboard/chat_channel.py`** — channel link/handoff routes
+  (`POST /api/chat/sessions/{session}/channel-link`,
+  `GET /api/channels/reply-targets`) — provider-blind, built on
+  `ChannelDelivery` only (see [inbox-channels.md](inbox-channels.md)).
+- **`dashboard/chat_voice.py`** — `POST /api/voice/synthesize`, sentence-
+  chunked TTS through `tts.registry.active_voice_params` (whatever TTS
+  provider is bound). Its `voice_chunk` frames go to every page with the chat
+  open and carry the asking page's name for the reading (`request`), so only
+  that page plays them.
+
+## Variant branching (regenerate)
+
+`dashboard/chat_regenerate.py`: regenerating an assistant message preserves
+the prior answer as a **variant**. The message's `variants[]` list (capped at
+`_MAX_VARIANTS`) plus `variant_idx` are persisted in the session JSONL, so the
+user can flip between alternative answers and the choice survives reload. The
+backend broadcasts variant switches; the frontend renders prev/next navigation
+on the message.
+
+Regenerate runs again the message that started the anchored turn: the user's,
+or the row an automation, a subagent's report or an auto-nudge dispatched it
+with. On a failed turn's error row it is a plain retry, and nothing is kept as
+a variant.
+
+**Running a turn again may repeat what the attempt did.** Five doors run a turn
+again: Retry on a failed turn and Regenerate on an answer (`regenerate`), Rewind
+to an earlier message and a resend of a message she did not change
+(`edit-resend`), and a move to another agent, model or folder while the turn
+answered (`running_turn.say_moved`). Each replaces the attempt the turn made, and none
+hands the turn asked again the calls that attempt finished: the first four
+delete them, and a runtime built for a turn (after a restart, a rewind or a
+move) is given the chat's messages, never its calls. So every door asks through
+one function, `repeated_steps.ask_first`, before it deletes or runs anything.
+When the attempt finished a call that may have changed something, a door she
+uses runs nothing and answers `409 retry_repeats_steps` with the question: its
+title, its sentence, each such call by its tool and target (a failed one says
+so), and the `confirm` the owner's yes sends back. The chat page shows it, each
+step in the words of its card, and sends the request again only on that yes; a
+No leaves the chat as it was. A move, which nobody is there to answer, does not
+send her message to the new agent on its own: the turn ends in the error that
+says so ("Moved to … This turn had finished 1 step that may have changed
+something, so your message was not sent again …"), and Retry on it asks. The
+edit door counts a message as sent again when the page says so (`again`, which
+Rewind and an unchanged resend send, since what the page shows of a message is
+not always the row's own words) or the body carries the row's own words; an
+edited message is a new one and is not asked about. Rewind asks only about the
+turn it runs again, not the later turns it rewinds past, which answered other
+messages. A call may have changed something unless its tool declares it only
+reads or its shell command screens read-only (`task_modes.reads_only`, the
+approval gate's reading). The declaration is the chat's runtime's while it is
+up, PersonalClaw's own tools' on an agent CLI (whose own tools declare nothing),
+and the agent's tool surface once the runtime is gone, as after a restart; an
+external MCP server's call counts as a change there, since listing its tools
+would start the server. A call its approval refused, or a gate refused before it
+ran, is not asked about; a failed call is, since the transcript does not keep
+whether it ran before it failed. A turn whose finished calls only read, or that
+finished none, runs again unasked as before. The yes is bound to the steps it
+was shown, so a turn that changed since is asked about again, and an app is
+refused and told to run it again from the dashboard. The rows each door deletes
+are the ones it always deleted. The turn's audit records the question
+(`needs_confirm`, naming the steps) and the yes (`allowed`, with `confirmed` and
+the steps), under the door's own operation: `chat.retry_failed_turn`,
+`chat.regenerate`, `chat.rewind` or `chat.edit_resend`. The gateway's own
+re-sends after a lost connection, an empty reply or a busy agent send only a
+turn that made no call; `tests/test_running_a_turn_again_census.py` keeps every
+door on the one function and every such re-send behind that check.
+
+**A turn with no answer.** A native turn that ran tools and then wrote nothing
+is asked once for its reply (`ANSWER_OWED_NOTE` in `agents/native/owed_reply.py`,
+a note on that one request that never enters the history). If it still writes
+nothing, the chat runner ends the turn in an error row ("The agent ran 3
+steps but did not write an answer. …"), the turn's outcome is `error`, a linked
+channel hears the same line, and the chat offers Retry on the notice, as on any
+notice a turn ends on. A turn that wrote nothing and ran nothing is resent
+once, silently. A loop's worker is left to its own re-prompt.
+
+A model can also stop at its output cap before it writes or calls anything
+(every provider the native loop drives carries its length stop on the terminal
+event, read by `llm.events.is_length_stop`). The loop then asks once more in
+another form, on every surface, a loop's worker included: a brief answer, and
+the request goes out without the turn's reasoning effort, which on the
+providers whose cap counts reasoning is what spent the room
+(`out_of_room_note` in `agents/native/owed_reply.py`). The cap itself is not
+raised: it is the model instance's own setting, and a hosted model's ceiling
+above it is not declared anywhere core can read. A model still out of room
+ends the turn at the cap, its terminal event naming the tokens it stopped at
+(`AgentEvent.output_cap`); the chat says so and never resends it, a subagent
+ends failed ("Couldn't do its task: the model ran out of output room before it
+answered (8,192 tokens)…"), and its workflow step fails with that cause. The
+model-call log records each such call as `output_cap`, failed when it produced
+no text and no tool call that can run.
+
+**An answer cut off.** A model's answer is finished only when its provider
+says so: an OpenAI-compatible choice's `finish_reason`, the Anthropic message's
+`stop_reason`, Ollama's `done` line, Bedrock's `messageStop`. A stream can end
+before that event with no error at all (a connection that closed cleanly part
+way, a body a proxy cut short, a server that stopped writing), and the client
+libraries then simply stop. Every adapter reads its provider's stream through
+one rule, `llm.stream_end.until_terminal`: a stream that ends before its
+terminal event raises `AnswerCutOff` (`guardrails/failure.py`). The adapter
+emits nothing it emits only once its answer has ended, so no tool call of a
+cut answer reaches the loop, none runs, and no terminal event says it finished;
+the log names the adapter and the event that never came. The spend guard reads
+a stream with no terminal `EVENT_COMPLETE` the same way, whoever built the
+provider, and records the call as failed. The native loop treats the cut as it
+treats a connection lost mid-reply: asked once more while nothing of it reached
+the user, otherwise the turn ends in the error that says so. The text that
+arrived stays where it streamed, marked as the part it is (`finish_reason:
+incomplete` on the reply's meta, "Partial: …" under it), the error row records
+whose stream it was and what never came (`cut_off` on its meta), and Retry on
+it asks first, as for any turn, when the turn had finished a step that may have
+changed something.
+
+A subagent started to read or change things on a model that can't use tools
+could only claim it had: it ends failed before any call is made for it
+("Couldn't do its task: “…” can't use tools, and it was started to work with
+them. Choose a model that uses tools for Orchestration in Settings → Models, or
+start it on one.", `subagent_tier.without_tools`), and one whose model refused
+the tools a call offered it ends the same way when its turn is over. Its
+workflow step fails with a fix about its model. A subagent of the `text` class
+asked for no tools and runs as before, and an agent CLI brings its own. A chat
+on such a model is answered without tools, as the chat says.
+
+**How a turn ended is said by its cause.** The chat runner names one ending per
+turn, and an agent CLI's endings map onto the same ones
+(`acp/session.py`, `AcpSession._dispatch_frames`):
+
+| What ended it | Outcome | What the chat says |
+|---|---|---|
+| The agent finished (`end_turn`) with an answer | `complete` | the answer |
+| It stopped itself (`cancelled`) when a refusal of one of its calls ended its turn | the carried-on turn's | "Codex ended its turn when you denied Run command, so PersonalClaw asked it to carry on without it." — the same session is told what was refused and asked to go on without it, and what it does next is this turn (`AcpSession._dispatch_frames`, at most four times a turn) |
+| It finished with no answer after you denied one of its calls, or stopped itself and could not be carried on again | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
+| It refused to continue (`refusal`) and wrote nothing | `error` | "Codex refused to continue and wrote no answer." — never resent |
+| Its model ran into its output cap (`max_tokens`) and wrote nothing | `error` | "The model ran out of output room before it answered (8,192 tokens). …" — never resent |
+| Its model's stream ended before its provider said the answer was finished (a connection closed cleanly, a body cut short, no stop reason) | `error` | "The model's answer was cut off: its stream ended before the model said it was finished. …" — what arrived stays, marked "Partial"; asked once more on its own only when nothing of it was shown |
+| It stopped itself (`cancelled`), and nobody denied or stopped anything | `stopped` | "The reply stopped before it finished. …" |
+| You pressed Stop | `stopped` | the stop card; never a timeout or an error |
+| Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) — unless the turn had made calls nobody refused: "The connection to Codex closed after 2 steps of this turn, so your message was not sent again: that could repeat them. Send it again to retry." |
+| A turn nobody is watching (a subagent's report, a loop's nudge, an automation's or a heartbeat's result, a message from the linked channel, or the retry of one) showed no work for its whole limit (15 minutes; a loop's nudge, 30) | `error` | "This turn was stopped after 15 minutes with no progress, 12 steps in. What it did is above, and the chat is free for your next message." — every streamed chunk, call, result and approval it asks for starts its clock again, and the clock stops while one of its calls runs or waits on your answer (`dashboard/turn_deadline.py`). A message you typed (in the dashboard, the terminal's chat or the Inbox), queued behind a running turn or not, and its retry, has no limit: it runs until it is done or you stop it |
+| It did not answer within the turn's time limit | `error` | "The agent did not finish within the turn's time limit, so the turn was stopped. …" — its late answer is dropped, never shown in the next turn |
+
+Silence is not one of these endings: while its prompt is unanswered and its
+connection is alive, an agent that is thinking after its last step is still
+working. A turn that ends before its answer — its time limit, a Stop it never
+acknowledged — tells the agent to stop, and the session settles that answer
+and drops what came with it before it takes another turn; an agent that never
+answers is restarted.
+
+An agent CLI's session sends one prompt at a time, and a turn gives the session
+back the moment it ends: as its terminal event is handed on, or as the error that
+ends it is raised (`AcpSession._turn`). Whatever reads a turn's stream and stops
+before the stream's end — the chat runner at the terminal event, a Stop, a reader
+whose own work fails part way — closes it, and every layer that passes a stream
+on reads it with `turn_streams.closing_stream`, so closing the outer stream closes
+the session's at once. A turn closed part way tells the agent to stop and owes its
+answer before the session is given back. Nothing waits for the interpreter to
+collect a stream: that came at once on one Python and not for seconds on another,
+and the next prompt on the session waited, unsent, all that time.
+
+A **Deny** answers the agent with its own refusal that declines the call and lets
+it continue — an agent can offer another refusal that ends its turn, under the same
+`reject_once` kind — and the refused step's row names the option that was sent.
+An agent can also offer only the refusal that ends its turn (an agent asking for an
+escalation, or for a file change, does), and then the card says before the Deny that
+it ends the agent's turn (`deny_effect` on the approval). Whatever the refusal, a turn
+it ends is carried on: the session tells the agent which step was refused and asks it
+to go on without it, and the chat says so. The audit row of every decision on an agent
+CLI's call names every answer the agent offered (`offered`), beside the one sent
+(`answered`).
+A **Stop** sends `session/cancel`, answers a pending approval `cancelled`, and
+waits for the agent's answer (`agent.soft_stop_budget_secs`). An agent that
+answers keeps its process for the chat's next turn; one that does not is killed,
+and nothing starts in its place until a turn needs one. The agent hears of the
+Stop before anything answers on its behalf, so the approval the Stop ends is never
+read as your Deny and the turn is not carried on. From the press until a turn next
+takes the session, nothing more runs for the stopped turn
+(`SessionManager.turn_stopped`): a call its agent CLI still makes of PersonalClaw's
+tools is answered as not made, and a `wait` under way ends. What the turn started
+ends with it (`started_work`) and hands its report to no turn
+(`SubagentInfo.starter_ended`), where a stopped helper's report used to start the
+chat's next turn and the agent took the work up again. A Stop that lands while the
+turn is being put together ends it before its prompt goes out. Each Stop's record
+in the transcript (`stop_event`) says how it ended: `stopped` when the agent
+answered it or nothing was in flight on the agent, `stop_failed_reset` when its
+process had to be ended. Between turns an agent
+CLI's process stays up for the chat's next turn until it has been idle for
+`session.timeout_secs`. What its commands start inherits the process's own run marker
+(`run_processes`), so what they leave running, a server that detached itself included, ends
+when that process is taken down; a loop worker's ends with its loop.
+
+**A helper's report starts a turn only for work that ran** (`subagent_endings`). The
+report of a helper starts the chat's next turn once the turn that asked for it has
+ended, so the agent carries the work on with what the helper found, or says why it
+failed. A helper that never ran (you declined its start, nobody allowed it in time,
+PersonalClaw refused it, or none of a batch's tasks started) and one you stopped
+yourself (in the background agents list, or with Stop fan-out) start no turn: a turn
+started with that ending told the agent only that its work was not done, and it took
+the work up again by itself. Its chat's agent is told how it ended instead, ahead of
+the next message the chat runs, or at once by a `wait` under way, whose check-in
+every few seconds hands it over (`POST /api/session-keepalive`), and the chat's
+Subagents list shows it as declined or not started. A scheduled job's helper, or any
+other session's, starts no turn there either, and its note says how it ended. A
+helper the run budget stopped did run: its report starts its turn, saying so. The
+report's turn starts on a row of its own (a `subagent` row, which the chat page does
+not draw as a message), whether the chat was idle or busy when it came, and the row
+records who asked for the helper's work when someone other than you did
+(`turn_source.ASKED_FOR_BY`): Regenerate runs that report's turn again, and memory
+reads the turn as theirs (`own_words.her_turns`).
+
+An agent's JSON-RPC error is said in its own words — its message and data,
+masked like any child's output (`acp/errors.py`, `AcpRequestError`) — and a
+process that exits is said with its exit code and its last output. A runtime's
+Test that fails says all three and what to check: "handshake failed:
+session/new was refused: … claude-agent-acp exited with code 64 (a usage error:
+…); its last output: …. Check that claude runs on its own and is a version
+claude-agent-acp supports, then Test again." The gateway log carries the same
+sentence.
+
+## Forking
+
+`dashboard/chat_fork.py` — `POST /api/chat/sessions/{session}/fork` copies a
+session into a new tab. An app may fork only a conversation it started (its
+`ROUTE_AUTHZ` row carries `owns`, checked against `created_by_app`), and the
+fork is the app's too; one of yours is refused to every app.
+
+## The session map (in-session index) + per-turn telemetry
+
+`dashboard/chat_session_map.py` — `GET /api/chat/sessions/{session}/map` answers a
+JSON array of **marks**: one per turn (`user` / `assistant`) plus one per indexable
+sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
+`{markIndex, kind, role, visibleIndex, ts, preview}` and an optional `telemetry`.
+
+- **`visibleIndex` is the jump coordinate** — the index of the turn's LAST message in
+  the backend's visible (`user`/`assistant`) list, i.e. the same inclusive
+  `at_message_index` that `POST .../fork` and edit-resend speak. It is derived from the
+  identical message list `GET /api/chat/sessions/{session}` serves
+  (`chat_utils.full_session_messages` → `_prepare_messages`), because an index into any
+  other list would address a different message than a fork does.
+- **The derivation mirrors the frontend's.** `web/src/pages/chat/sessionMap.ts`
+  (`sessionMapMarks`) derives the same shape from the hydrated turns; the endpoint is a
+  second SOURCE for one contract, not a second contract. Both reproduce
+  `hydrateTurns`'s two collapses — a native-loop prompt re-injection consumes a visible
+  slot without producing a turn, and consecutive assistant messages merge into one turn
+  keyed on the last message folded in. The map UI draws a coarser view of the same marks:
+  one entry per user message (`sessionMapEntries`, which groups the marks by exchange), so
+  the typed marks remain the contract even though the rail no longer draws every kind.
+- **Two kinds are live-only.** `subagent` and `activity` ride WS streams that are never
+  written to the conversation log, so the durable endpoint witnesses
+  `user`/`assistant`/`tool`/`error` after a restart, and `approval` once it is decided
+  (`_persistable` writes a resolved `permission` row and holds back a pending one).
+- **Per-turn telemetry** (cost, tokens, cache split, duration, context %, event and
+  tool-call counts, the model that answered) is stamped by `chat_runner` onto the
+  turn's LAST assistant message as `meta.turn_telemetry`, *before*
+  `save_session_to_history` — that function
+  rewrites the transcript file from the buffer, so a later stamp would be in-memory
+  only. It rides the same `meta` seam as `memory_citations` (and as `skills_used`, which
+  is on the message that started the turn — the user's, or a loop's nudge, an automation's
+  or a subagent report's row; the message each skill joined): no new file and no new
+  channel. Absent = the turn reported nothing; `priced: false` means the
+  model has no price row (never "free"); `context_pct: null` means the provider measured
+  nothing (never 0%). What fed the turn rides the same message as `meta.context_fed`: the
+  sentence its footer says ("Injected 1,204 chars of context …"), which a runtime's first
+  turn says live, so a reload's footer says it too. Absent = the turn said nothing about
+  its context. The footer ledger (`ContextLedger`) says what fed the turn, what it learned
+  and its telemetry, live from their activity lines and after a reload from these keys; its
+  lines are never drawn in the turn itself, and a turn's tool cards never keep them out
+  (`LEDGER_ACTIVITY_KINDS`, `insertActivity`).
+
+## Channel-linked sessions
+
+A dashboard session can be linked to a channel thread (and vice versa):
+
+- Linking goes through core `session_map.set_channel_link` — the channel app
+  never touches the map file directly. `dashboard/channel_links.py` is how the
+  dashboard reads and writes a chat's link: `DashboardState.link_channel` links
+  a chat (the inbound door, a link or a handoff from the dashboard, a channel
+  app's import), and a thread continues one chat, so the chat that had the
+  thread loses it, found in the store whether or not it is resident.
+- **The link survives a restart.** The inbound door asks the store which chat
+  a thread continues (`DashboardState.get_linked_session`), and a chat that is
+  not resident comes back from disk, so the next message on a channel thread
+  after a restart continues its chat with everything said before. A chat reads
+  its own link from the store too (`_ChatSession.channel_link`, which its frame
+  and its question cards read), never from a copy. A thread whose chat is gone
+  (deleted, archived, a Temporary chat that ended) starts a new chat.
+- **A link names the channel its thread is on, and that is where the chat
+  answers** (`channel_provider_for`, which reads `channel_links.chat_channel`):
+  its replies, its notices and its approval prompts go there, before a restart
+  and after it. Every link is made with its channel
+  (`link_channel(chat, thread, channel_id, provider=…)`): the door's for the
+  channel a message came on, a handoff's or a link's for the channel it opened
+  the thread on. The door continues only a chat whose link names one: a channel
+  thread's own conversation opened from the chat list (a Slack thread the Slack
+  app runs) has none, and its channel app answers it itself. The origin tag
+  (`_app`, the meta line's `app`) still says where a chat came from; it no
+  longer says where it answers, and a chat that came from Telegram and was
+  continued in a Slack thread answers in the Slack thread.
+- **A chat continues in one place.** Continuing it somewhere else (the chat's
+  "Continue on …", a link from the dashboard, a channel app's resume) moves its
+  link: the thread it was on no longer continues it, so a message there starts
+  a chat of its own. When that thread is the owner's own DM on its channel (the
+  one the channel opens for the owner's id), it is told, once, where the chat
+  went ("This chat continues on Slack now. Messages here no longer reach it.").
+  A group, a shared channel, someone else's DM or a correspondent's mail thread
+  hears nothing: the note would tell other people where the owner went on, and
+  on a channel that speaks as the owner it would go out in the owner's name.
+  Continued where it already is, nothing changes and nothing is said.
+- `sync_bridge.py` implements the dashboard↔channel handoff
+  (`handoff_to_channel` over `ChannelDelivery`): the conversation continues in
+  the channel with context intact.
+- `voice_reply.py` uploads TTS voice replies to the channel
+  (`upload_voice_to_channel`); markdown deep links are stripped generically
+  before synthesis.
+
+## The chat page's regions (web)
+
+`web/src/pages/ChatPage.tsx` routes a chat URL and composes the open chat
+(`ChatSession`) from region controllers, each a hook and its component, so a
+change to one region touches that region's files:
+
+- **The stream** — `web/src/pages/chat/useChatStream.ts`. Opens a session from
+  its detail (seeded from the `chat:detail:<key>` cache), folds the session's
+  `/api/ws` frames into the transcript through the pure folds
+  (`coalesceReducers.ts`, `liveToolFrames.ts`, `questionFrames.ts`), holds the
+  stream while a snapshot read is out and replays it on top
+  (`snapshotReplay.ts`), resyncs when the socket comes back, and settles a
+  streaming claim that outlived its turn (`streamStall.ts`). What other regions
+  own reaches them through its sinks: the routing suggestion, a reading's audio,
+  a finished reply that may be read out, and the composer's posture from the
+  first read.
+- **The transcript** — `web/src/pages/chat/transcript/`. `useTranscript.ts`
+  keeps the view (following a turn the owner sent, scrolled up, the turn nodes
+  the find bar and the Session Map jump to), the find bar and its `?find=` deep
+  link, the Session Map's `?map` state, and what a turn offers: answering a card,
+  approving, editing and resending, rewinding, regenerating, branching, switching
+  the answer, and switching to Agent to run a continuation. `Transcript.tsx`
+  draws the Session Map rail and the scrolling turns; an assistant turn is
+  `AssistantSegments.tsx`, with `UserEditor`, `RewindDivider`,
+  `SelectionQuote` and `MessagesSkeleton` beside it.
+- **Read-aloud** — `web/src/pages/chat/useChatVoice.ts`. Speak on a reply,
+  "Speak replies aloud" for a reply to a message this tab sent (counted per
+  chat in `repliesToSpeak`, so a chat open in two tabs is read out once), and
+  the audio a reading streams back as `voice_chunk` frames, which the stream
+  hands it. The transcript's Speak buttons, the composer's hands-free mode and
+  its sends use it.
+- **The composer** — `web/src/pages/chat/composer/`. `useChatComposer.ts` holds
+  the draft and the selection (agent, model, approval mode, task mode, reasoning
+  effort, memory mode, reply style) and writes each pick to the session,
+  saying so when the session refuses one. It sends: a new chat's first send
+  creates the session and hands its run across the remount, a send during a
+  turn steers it or waits in the queue, a slash command it runs itself, and a
+  widget action sends its label as the turn. It also attaches files, pastes,
+  knowledge, artifacts and screen captures, optimizes a prompt, transcribes
+  hands-free speech, applies a session template and stops a turn.
+  `ChatComposer.tsx` draws the notice line, the queue, the routing chip and
+  the composer, with `ContextPickers`, `KnowledgeChips`, `PasteCards`,
+  `QueueStack` and `AutoNudgeMenuItem` beside it.
+- **The history** — `web/src/pages/chat/history/`. `useChatHistory.ts` keeps
+  `#/chat/history`: the sessions, folders, tags and Agent Rooms (each its own
+  read, each failure its own), the scope, search, tag filter, view, peek and
+  archive that ride the URL, the search inside transcripts, the bulk selection,
+  the retag run, and every row action (pin, folder, tags, archive, export,
+  share, delete). `ChatHistoryPage.tsx` draws the list and the board
+  (`TagBoard.tsx`), with a row's folder and tag menu, and `SessionPeek.tsx` is
+  the peek panel a row opens. `ChatHistorySidePanel.tsx` is the recent-chats
+  panel a new chat opens.
+- **The panes** — `web/src/pages/chat/panes/`. `useChatPanes.ts` keeps the
+  panels docked beside the chat, each on the URL so Back closes it and a reload
+  reopens it: the Activity rail (`?activity`) with the files and links the
+  transcript touched, the cancel for a fan-out's subagents and the side chat;
+  the open file (`?file`); the new chat's history panel (`?history`); and a
+  tool's full result (`?result`), fetched from the session when its card asks.
+  `ChatPanes.tsx` draws the docked panels, the Session Map's drawer on the
+  mobile form among them, and `ToolResultModal` the full result.
+- **The header** — `web/src/pages/chat/header/`. `useChatHeader.ts` keeps what
+  the bar above an open chat does: the bound project's name for its context
+  line, renaming the chat inline and regenerating its title, and the actions in
+  its cluster (copy the link, continue on a chat channel, brief the agent, set
+  the working directory, save the setup as a starter). `ChatHeader.tsx` draws
+  the bar: the way back, the title, the context line, the task and permission
+  pills, and the openers of the Session Map, the Activity rail and the new
+  chat's history panel.
+- **The new chat's hero** — `web/src/pages/chat/hero/ChatHero.tsx`. The mark and
+  a greeting around the composer, and the owner's starters and suggestions
+  under it; picking one fills the composer. A route naming a chat that does not
+  exist opens `web/src/pages/chat/MissingChat.tsx` instead, which carries a
+  typed draft into a new chat.
+
+What `ChatPage.tsx` keeps is the routing (`ChatPage`, `RoomsRedirect`) and
+`ChatSession`'s composition: it calls the controllers in order, hands each the
+others' pieces it needs, and lays the regions out.
+
+## Prompt entities
+
+`prompt_providers/` is the prompt-catalog subsystem (bundled use-case prompts
+plus user prompts). Use-case prompts include e.g. `task-channel-title`
+(use case `channel_title`) for naming channel-originated tasks. All bundled
+prompts are provider-blind.
+
+## Related docs
+
+- Memory recall/write rules per session mode:
+  [knowledge-memory.md](knowledge-memory.md)
+- Channel delivery and thread linking: [inbox-channels.md](inbox-channels.md)
+- The agent/tool layer a turn can reach: [overview.md](overview.md#capability-seams)

@@ -1,0 +1,230 @@
+"""HTTP handlers for /api/lexicon/* — the user-facing Vocabulary surface.
+
+List terms (source-badged: graph / manual / learned), add a manual term (+aliases), prune
+(disable) / delete, rebuild from the knowledge graph, and view + toggle learned corrections'
+auto_apply. The Minutes app's transcript-edit UX also POSTs corrections here, gated
+by its ``/api/lexicon`` permission.
+
+The graph terms follow the knowledge graph by themselves (``current_lexicon``), so the list is
+read after that sync, Rebuild forces it, and a graph term is turned off rather than deleted:
+deleting one whose entity is still in the graph would only bring it back at the next sync.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from aiohttp import web
+
+from personalclaw.lexicon import current_lexicon, get_lexicon_service
+from personalclaw.request_validation import (
+    RequestValidationError,
+    bool_field,
+    json_object_body,
+    require_bool,
+    require_string,
+)
+from personalclaw.safety_flags import confirm_granted
+
+logger = logging.getLogger(__name__)
+
+
+def _term_dict(t) -> dict:
+    return {
+        "id": t.id,
+        "canonical": t.canonical,
+        "aliases": t.aliases,
+        "entity_type": t.entity_type,
+        "weight": t.weight,
+        "source": t.source,
+        "enabled": t.enabled,
+    }
+
+
+def _corr_dict(c) -> dict:
+    return {
+        "id": c.id,
+        "heard": c.heard,
+        "meant": c.meant,
+        "count": c.count,
+        "auto_apply": c.auto_apply,
+        "last_seen": c.last_seen,
+    }
+
+
+async def api_lexicon_terms(request: web.Request) -> web.Response:
+    """GET /api/lexicon/terms?source=&search= — list vocabulary terms, the graph's current."""
+    svc = current_lexicon()
+    source = request.query.get("source", "")
+    search = request.query.get("search", "")
+    terms = svc.list_terms(source=source, search=search)
+    return web.json_response(
+        {
+            "terms": [_term_dict(t) for t in terms],
+            "total": svc.store.count_terms(),
+        }
+    )
+
+
+async def api_lexicon_add_term(request: web.Request) -> web.Response:
+    """POST /api/lexicon/terms {canonical, aliases?} — add a manual term."""
+    # The shared validator decides WHAT is malformed; this door keeps its own envelope for
+    # SAYING so. Every sibling refusal in this module answers the flat `{"error": "<sentence>"}`
+    # (nine of them, and no `json_error` anywhere here), so letting `RequestValidationError`
+    # travel to `request_boundary` would make one field answer a different shape from its
+    # neighbours — two envelopes inside one endpoint. Catching it also means the refusal no
+    # longer depends on that middleware being installed, which is what made a wrong-typed field
+    # a bare 500 in an app that mounts these routes without it.
+    try:
+        body = await json_object_body(request)
+        canonical = require_string(body, "canonical")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
+    aliases = body.get("aliases") or []
+    if isinstance(aliases, str):
+        aliases = [a.strip() for a in aliases.split(",") if a.strip()]
+    svc = get_lexicon_service()
+    term_id = svc.add_manual_term(canonical, aliases=list(aliases))
+    return web.json_response({"ok": True, "id": term_id})
+
+
+async def api_lexicon_update_term(request: web.Request) -> web.Response:
+    """PATCH /api/lexicon/terms/{id} {enabled?} — enable/disable (prune) a term."""
+    term_id = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    svc = get_lexicon_service()
+    if "enabled" in body:
+        if not svc.store.set_enabled(term_id, require_bool(body, "enabled")):
+            return web.json_response({"error": "term not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_lexicon_delete_term(request: web.Request) -> web.Response:
+    """DELETE /api/lexicon/terms/{id} — remove a term you added, or one learned from a fix.
+
+    A term from the knowledge graph is refused (409): it follows its entity, so it would be
+    back at the next sync, and "deleted" would be untrue. Turning it off sticks."""
+    svc = get_lexicon_service()
+    term_id = request.match_info["id"]
+    term = svc.store.get_term(term_id)
+    if term is None:
+        return web.json_response({"error": "term not found"}, status=404)
+    if term.source == "graph":
+        return web.json_response(
+            {
+                "error": (
+                    f"{term.canonical} comes from your knowledge graph, so it would come back "
+                    "at the next sync. Turn it off instead."
+                )
+            },
+            status=409,
+        )
+    svc.store.delete_term(term_id)
+    return web.json_response({"ok": True})
+
+
+async def api_lexicon_rebuild(request: web.Request) -> web.Response:
+    """POST /api/lexicon/rebuild — resync graph-sourced terms from knowledge entities now
+    (upserts current ones, prunes graph terms whose entity left the graph). The same sync
+    runs by itself whenever the graph changed; this one runs even when it did not."""
+    svc = get_lexicon_service()
+    try:
+        n = svc.sync_from_graph(force=True) or 0
+    except Exception:
+        # Don't rebuild against a failed read — the resync PRUNES absent graph terms, so
+        # treating a read failure as "no entities" would wipe them all.
+        logger.warning("lexicon rebuild: could not read entities", exc_info=True)
+        return web.json_response({"error": "could not read knowledge entities"}, status=500)
+    return web.json_response({"ok": True, "synced": n, "total": svc.store.count_terms()})
+
+
+async def api_lexicon_corrections(request: web.Request) -> web.Response:
+    """GET /api/lexicon/corrections — list learned corrections (most-corrected first)."""
+    svc = get_lexicon_service()
+    return web.json_response({"corrections": [_corr_dict(c) for c in svc.list_corrections()]})
+
+
+async def api_lexicon_add_correction(request: web.Request) -> web.Response:
+    """POST /api/lexicon/corrections {heard, meant, always?} — record a learned fix.
+    Called by the Vocabulary UI's add-a-fix form."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    heard = (body.get("heard") or "").strip()
+    meant = (body.get("meant") or "").strip()
+    if not heard or not meant:
+        return web.json_response({"error": "heard and meant are required"}, status=400)
+    svc = get_lexicon_service()
+    always = bool_field(body, "always", default=False)
+    svc.learn_correction(heard, meant, always=always)
+    return web.json_response({"ok": True})
+
+
+async def api_lexicon_update_correction(request: web.Request) -> web.Response:
+    """PATCH /api/lexicon/corrections/{id} {auto_apply} — toggle 'always fix this'."""
+    corr_id = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    svc = get_lexicon_service()
+    if "auto_apply" in body:
+        if not svc.store.set_correction_auto_apply(corr_id, require_bool(body, "auto_apply")):
+            return web.json_response({"error": "correction not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_lexicon_delete_correction(request: web.Request) -> web.Response:
+    """DELETE /api/lexicon/corrections/{id} — forget one learned correction."""
+    svc = get_lexicon_service()
+    if not svc.store.delete_correction(request.match_info["id"]):
+        return web.json_response({"error": "correction not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_lexicon_reset(request: web.Request) -> web.Response:
+    """POST /api/lexicon/reset — drop all terms + corrections (the next sync repopulates the
+    graph terms).
+
+    ``confirm: true`` is required. "Rebuild repopulates" holds only for terms DERIVED from the
+    graph; the CORRECTIONS are user-authored — someone typed each one to teach the system a word
+    it kept getting wrong — and no rebuild brings those back. So this is an unrecoverable wipe of
+    hand-entered work, behind a verb ("reset") that does not read as one.
+    """
+    body: object = {}
+    if request.can_read_body:
+        body = await json_object_body(request)
+    if not confirm_granted(body):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "confirm_required",
+                    "message": (
+                        "reset drops every term and every user-authored correction "
+                        "— pass confirm: true"
+                    ),
+                }
+            },
+            status=400,
+        )
+    svc = get_lexicon_service()
+    svc.store.reset()
+    return web.json_response({"ok": True})
+
+
+def register_lexicon_routes(app: web.Application) -> None:
+    """Register /api/lexicon/* — the Vocabulary panel + Minutes correction seam."""
+    app.router.add_get("/api/lexicon/terms", api_lexicon_terms)
+    app.router.add_post("/api/lexicon/terms", api_lexicon_add_term)
+    app.router.add_patch("/api/lexicon/terms/{id}", api_lexicon_update_term)
+    app.router.add_delete("/api/lexicon/terms/{id}", api_lexicon_delete_term)
+    app.router.add_post("/api/lexicon/rebuild", api_lexicon_rebuild)
+    app.router.add_get("/api/lexicon/corrections", api_lexicon_corrections)
+    app.router.add_post("/api/lexicon/corrections", api_lexicon_add_correction)
+    app.router.add_patch("/api/lexicon/corrections/{id}", api_lexicon_update_correction)
+    app.router.add_delete("/api/lexicon/corrections/{id}", api_lexicon_delete_correction)
+    app.router.add_post("/api/lexicon/reset", api_lexicon_reset)

@@ -1,0 +1,600 @@
+"""Dashboard WebSocket state and delivery helpers."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from collections.abc import Callable, Iterable
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw import trace_recorder as _trace
+
+logger = logging.getLogger(__name__)
+
+#: The envelope type a `notify()` note arrives as. Named because `_broadcast` and the rail
+#: test that pins its vocabulary must agree on the one string.
+NOTE_TYPE_NOTIFICATION = "notification"
+
+#: Every internal `_type` `_broadcast` knows how to translate. A value outside this set is a
+#: producer bug: it used to be shipped as a raw `notification` blob, and is now dropped with an
+#: ERROR. `tests/test_ws_broadcast_gate.py` asserts every `_type` literal in `src/` is in here.
+BROADCAST_NOTE_TYPES = frozenset(
+    {
+        "sessions",
+        "session_title",
+        "refresh",
+        "update_progress",
+        "chat_message",
+        NOTE_TYPE_NOTIFICATION,
+    }
+)
+
+#: Where a frame names the conversation it is about, when that is not its ``session`` field — the
+#: key every chat frame, tool card, approval, subagent status and chat notification names it in.
+#: A frame about a conversation reaches an app's socket only when the app started that
+#: conversation (:meth:`DashboardWebSocketState._ws_may_receive`), so a frame naming it anywhere
+#: else must be listed here (``tests/test_apps_see_only_their_own_conversations.py`` censuses the
+#: producers).
+FRAME_CONVERSATION_FIELDS: dict[str, str] = {
+    "session_title": "key",
+    # The re-tag run names the chat it is reading.
+    "retag_progress": "current",
+    "retag_done": "current",
+}
+
+#: Frames that carry one inbox item. The inbox is what reached YOU, so its reads are yours
+#: (``apps/permissions.ROUTE_AUTHZ``), and an app's socket hears only an item it raised itself: a
+#: proposal, whose ``source`` names the app (``proposals_contract.app_source``).
+INBOX_ITEM_FRAMES: frozenset[str] = frozenset({"inbox_new_item", "inbox_item_updated"})
+
+#: Frames that carry a LIST of conversations, and the field each row names its conversation in.
+#: An app's socket gets the list with the rows of its own conversations only.
+CONVERSATION_LIST_FRAMES: dict[str, str] = {"sessions": "key"}
+
+#: Frames about the notifications in your log: the note itself (``notification``), and the frames
+#: that name notes by ``ts`` — one, a list, or ``"*"`` for every note. What reached you is yours,
+#: so an app's socket gets such a frame cut to the notes the app may read
+#: (``DashboardState.notification_reaches``: one it raised, or one about a conversation it
+#: started), or not at all. Their type was the whole filter, so an app that declared
+#: ``notification`` read the title and body of everything that reached you.
+NOTIFICATION_FRAMES: frozenset[str] = frozenset(
+    {
+        NOTE_TYPE_NOTIFICATION,
+        "notification_logged",
+        "notification_removed",
+        "notification_ack",
+        "notification_unack",
+    }
+)
+
+#: What :meth:`DashboardWebSocketState._app_view` answers when an app's socket carries nothing of
+#: a frame — distinct from every payload, an empty list included.
+_UNHEARD = object()
+
+
+def _has_app_view(event_type: str) -> bool:
+    """Whether an app's socket gets *event_type* in a view of its own rather than as sent."""
+    return event_type in CONVERSATION_LIST_FRAMES or event_type in NOTIFICATION_FRAMES
+
+
+#: The approval registry's frames. They say no more than ``GET /api/approvals`` answers, and the
+#: relay an app declares for your approvals (the menu-bar companion) reads that route in full and
+#: rings on these frames — so an app the permission middleware lets read it may hear an approval
+#: in any conversation. Every other app hears only its own conversations' (#3625's one declared
+#: exception, ``docs/security/limitations.md``).
+APPROVAL_RELAY_FRAMES: frozenset[str] = frozenset({"approval", "approval_resolved"})
+APPROVAL_REGISTRY_ROUTE = "/api/approvals"
+
+#: What a frame is about, when only some apps may hear of it: ``("conversation", name)`` or
+#: ``("inbox_item", source)``.
+FrameSubject = tuple[str, str]
+
+
+def frame_subject(event_type: str, data: object) -> FrameSubject | None:
+    """What a frame is about, or ``None`` for a frame about nothing an app could not see.
+
+    A value that is present but not a name answers as something no app owns, never as nothing,
+    so a malformed frame reaches owner sockets only. A notification frame answers ``None`` too,
+    and never reaches an app's socket as it is: ``broadcast_ws`` and ``send_ws_event`` send an app
+    its own view of it (:meth:`DashboardWebSocketState._app_view`), cut to the notes the app raised
+    or that are about a conversation it started. Read as a conversation subject, a note with no
+    ``session`` reached every app that declared the type, which is how an app read everything
+    that reached you."""
+    if not isinstance(data, dict) or event_type in NOTIFICATION_FRAMES:
+        return None
+    if event_type in INBOX_ITEM_FRAMES:
+        source = data.get("source")
+        return ("inbox_item", source if isinstance(source, str) else "")
+    named = data.get(FRAME_CONVERSATION_FIELDS.get(event_type, "session"))
+    if named is None or named == "":
+        return None
+    return ("conversation", named if isinstance(named, str) else repr(named))
+
+
+class DashboardWebSocketState:
+    """WebSocket delivery state mixed into :class:`DashboardState`."""
+
+    _flush_task: asyncio.Task | None  # type: ignore[type-arg]
+    _sessions: dict[str, Any]
+    _update_progress: dict[str, str] | None
+    _ws_app: dict[web.WebSocketResponse, str]
+    _ws_clients: list[web.WebSocketResponse]
+    _ws_log_subscribers: set[web.WebSocketResponse]
+    _ws_loop: asyncio.AbstractEventLoop | None
+    _ws_subagent_subscribers: set[web.WebSocketResponse]
+    _stream_seq: int
+    # DashboardState's: the app that started a conversation, or "" (``session_creating_app``).
+    session_creating_app: Callable[[str], str]
+    # DashboardState's: the notification log, and whether an app may read one of its notes.
+    _notification_log: list[dict[str, Any]]
+    notification_reaches: Callable[[str, dict[str, Any]], bool]
+
+    def next_stream_seq(self) -> int:
+        """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
+
+        The stamp is the resume point for a client that rebuilds a live answer from a
+        session-detail snapshot (a reload mid-answer, the session-create remount, a
+        reconnect). The chat runner stamps, appends the chunk to the session's messages and
+        broadcasts it in one synchronous step on the loop, and the detail handler reads its
+        messages and :attr:`stream_seq` in one synchronous step too — so a snapshot reporting
+        ``stream_seq = W`` reflects exactly the chunks stamped ``<= W``. The client drops a
+        chunk stamped at or below the watermark it resumed from (already on screen) and
+        keeps the rest, which is what makes the resumed answer whole and single.
+
+        Process-wide rather than per session, so a session evicted from memory and
+        rehydrated can never restart its numbering under a tab that still has it open. Nor
+        does a gateway restart restart it: the count starts from the boot time in
+        microseconds (``DashboardState.__init__``), above every stamp an earlier process
+        handed out unless that one averaged a chunk per microsecond since its own boot. A
+        tab outlives the process and keeps its watermark; a count restarting at zero would
+        make it refuse the new process's chunks as already shown until a snapshot re-based
+        it — and the reconnect's re-snapshot is a read that can fail."""
+        self._stream_seq += 1
+        return self._stream_seq
+
+    @property
+    def stream_seq(self) -> int:
+        """The newest chunk stamp handed out (see :meth:`next_stream_seq`)."""
+        return self._stream_seq
+
+    def _broadcast(self, note: dict[str, Any]) -> None:
+        """Fan a dashboard state note out to the WebSocket clients.
+
+        The interactive dashboard surface runs on a single multiplexed
+        WebSocket (see ``web/src/hooks/useWebSocket.ts``), so the dashboard's
+        always-on concerns — status, session list/titles, notifications, and
+        refresh hints — ride that one connection. This is the single-transport-
+        per-concern doctrine: always-on state on the WS, page-scoped
+        feeds (loops/logs/file-watch) on their own per-resource SSE.
+        """
+        # Dev-only event-trace tap: capture the multiplexed WS
+        # envelope keyed by its internal note type, before the live-client gate so a
+        # headless recording sees every broadcast. No-op unless PERSONALCLAW_TRACE_DIR set.
+        if _trace.is_recording():
+            _trace.record("ws", str(note.get("_type", "notification")), "note", note)
+        # Translate the internal `_type` into the WS envelope, then hand it to the gated
+        # producer. This used to end in a raw fan-out helper that wrote to every socket
+        # directly — so every always-on frame reached app-scoped sockets whatever their
+        # manifest declared, while `broadcast_ws` right below it enforced exactly that.
+        # That helper is gone (see `_dispatch_ws`): a producer cannot write without
+        # naming an event type, and naming one means passing the gate.
+        if not self._ws_clients:
+            return
+        msg_type = note.get("_type") or NOTE_TYPE_NOTIFICATION
+        if msg_type == "sessions":
+            # The rows and nothing beside them. This frame used to carry `yolo` and
+            # `channelTrusted` as top-level envelope keys, and an app's socket that declared
+            # `sessions` read `yolo` with its own rows: whether YOUR tool calls run without
+            # asking. No client read either (the web reads YOLO from `GET /api/status`), and no
+            # producer ever set `channelTrusted`.
+            data: object = note.get("_sessions_list") or json.loads(note["sessions"])
+        elif msg_type == "session_title":
+            data = {"key": note["key"], "title": note["title"]}
+        elif msg_type == "refresh":
+            data = {"kinds": note["kinds"].split(",")}
+        elif msg_type == "update_progress":
+            data = {"step": note["step"], "detail": note.get("detail", "")}
+        elif msg_type == "chat_message":
+            chat_data: dict[str, Any] = {
+                "session": note["session"],
+                "role": note["role"],
+                "content": note["content"],
+                "ts": note.get("ts", ""),
+            }
+            # Include cls for messages with metadata (e.g. permission with tool_input)
+            if note.get("cls"):
+                chat_data["cls"] = note["cls"]
+            if note.get("meta"):
+                chat_data["meta"] = note["meta"]
+            data = chat_data
+        elif msg_type == NOTE_TYPE_NOTIFICATION:
+            # A note with no `_type` IS a notification — the notify() path. Explicit now,
+            # because it used to share a `else:` branch with every unmapped value.
+            data = note
+        else:
+            # 🔴 Dropped, not shipped. The old `else:` sent the raw internal note out as a
+            # `notification`, so a typo'd or retired `_type` reached every client as an
+            # untyped blob the frontend renders as a toast. An unmapped type is a producer
+            # bug; `test_ws_note_types_are_all_mapped` turns it into a failing build rather
+            # than a mystery frame, and this branch keeps the note off the wire meanwhile.
+            logger.error(
+                "dashboard note has an unmapped _type %r — dropped rather than broadcast as a "
+                "raw notification; add it to _broadcast's translation",
+                msg_type,
+            )
+            return
+        self.broadcast_ws(msg_type, data)
+
+    def _dispatch_ws(
+        self,
+        sockets: Iterable[web.WebSocketResponse],
+        event_type: str,
+        msg: str,
+        *,
+        subject: FrameSubject | None = None,
+    ) -> None:
+        """Fan a pre-serialized envelope out to ``sockets`` — THE WS write path.
+
+        ``subject`` is what the frame is about (:func:`frame_subject`), which an app's socket
+        carries only when the app owns it.
+
+        Every gateway→client frame goes through here or through its awaited
+        single-socket twin :meth:`send_ws_event`, and both open with
+        :meth:`_ws_may_receive`. That is the entire point of the shape: this used to be
+        ``_send_ws_all``, a raw "write to every registered client" helper with no
+        permission check in it, and each producer that reached for a raw write — the
+        always-on note translator, then the log-subscriber set and the subagent-
+        subscriber set — became another place the app-event gate was simply absent
+        (issue 2963: an app that declared one private event received the full backend
+        log stream and the on-connect session list). There is no ungated primitive left
+        to reach for, so a new producer cannot forget the gate; it has to pass an event
+        type to get a frame on the wire.
+
+        Safe to call from ANY thread: each send is scheduled by
+        :meth:`_schedule_ws_send` (ensure_future on the gateway loop,
+        run_coroutine_threadsafe off it), which the ring log handler and the
+        subagent/cron threads depend on. Closed or unwritable sockets are reaped in the
+        same call."""
+        dead: list[web.WebSocketResponse] = []
+        for ws in list(sockets):
+            if ws.closed:
+                dead.append(ws)
+                continue
+            if not self._ws_may_receive(ws, event_type, subject):
+                continue
+            try:
+                if not self._schedule_ws_send(ws.send_str(msg), ws):
+                    dead.append(ws)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._remove_ws(ws)
+
+    async def send_ws_event(self, ws: web.WebSocketResponse, event_type: str, data: object) -> None:
+        """Send ONE event to ONE socket, through the same gate as :meth:`_dispatch_ws`.
+
+        The connect-time replays — the ``sessions`` push, the log ring, the subagent
+        snapshot — run on that socket's own handler task and await their writes so a
+        thousand-entry replay applies backpressure instead of scheduling a thousand
+        tasks. Awaiting is the ONLY thing that differs from the fan-out path; the
+        permission check is the same call. Each of those three replays used to call
+        ``ws.send_json`` itself, which is how an app-scoped socket received the session
+        list and the whole log ring it never declared (issue 2963). An app's socket gets a
+        conversation list with its own rows only, a frame about one conversation only when
+        the app started it, and a notification frame cut to its own notes (:meth:`_app_view`).
+        The envelope is ``type`` and ``data`` and nothing else, for every socket."""
+        if not self._ws_may_receive(ws, event_type, frame_subject(event_type, data)):
+            return
+        app = self._ws_app.get(ws, "")
+        if app and _has_app_view(event_type):
+            data = self._app_view(app, event_type, data)
+            if data is _UNHEARD:
+                return
+        try:
+            await ws.send_str(json.dumps({"type": event_type, "data": data}))
+        except Exception as exc:
+            logger.debug("WS send failed (client gone?): %s", exc)
+            self._remove_ws(ws)
+
+    def _ws_may_receive(
+        self, ws: web.WebSocketResponse, event_type: str, subject: FrameSubject | None = None
+    ) -> bool:
+        """THE app-event gate: may THIS socket receive ``event_type`` about ``subject``?
+
+        An owner/dashboard socket — no app identity in ``_ws_app`` — receives
+        everything, exactly as before. An app-scoped socket (the app sandbox) receives an
+        event ONLY if the app's manifest declares it in ``permissions.events``: deny by
+        default, including when the manifest cannot be read at all. Server-side
+        enforcement, because the SDK's client-side filter is advisory and the Store
+        shows that declared list as the install-consent surface.
+
+        A declared event about something (:func:`frame_subject`) reaches it only when the app owns
+        that thing: a conversation it started — the rule every read of one follows
+        (``apps/permissions.ROUTE_AUTHZ``'s ``owns``) — or an inbox item it raised. The type was
+        the whole filter, so an app that declared ``chat_chunk`` read every answer your agent
+        streamed you, and one that declared ``inbox_new_item`` read everything that reached you."""
+        app = self._ws_app.get(ws, "")
+        if not app:
+            return True
+        if not self._app_may_see_event(app, event_type):
+            return False
+        return subject is None or self._app_may_hear_about(app, event_type, subject)
+
+    def _app_may_hear_about(self, app: str, event_type: str, subject: FrameSubject) -> bool:
+        """Whether *app*'s socket may carry a frame about *subject*: an inbox item it raised, a
+        conversation it started, or an approval frame when it holds the approval relay
+        (:data:`APPROVAL_RELAY_FRAMES`)."""
+        kind, key = subject
+        if kind == "inbox_item":
+            from personalclaw.proposals_contract import app_source
+
+            return key == app_source(app)
+        if self.session_creating_app(key) == app:
+            return True
+        if event_type not in APPROVAL_RELAY_FRAMES:
+            return False
+        try:
+            from personalclaw.apps.permissions import app_request_denial
+
+            return not app_request_denial(
+                app, APPROVAL_REGISTRY_ROUTE, method="GET", route=APPROVAL_REGISTRY_ROUTE
+            )
+        except Exception:  # noqa: BLE001 — an undecidable relay hears nothing it did not start
+            logger.debug("approval relay check failed for %s", app, exc_info=True)
+            return False
+
+    def _app_view(self, app: str, event_type: str, data: object) -> object:
+        """*data* as *app*'s socket may carry it, or :data:`_UNHEARD` when it carries none of it:
+        a conversation list with the app's own rows, a notification frame cut to its own notes."""
+        if event_type in CONVERSATION_LIST_FRAMES:
+            return self._own_rows(app, event_type, data)
+        return self._own_notifications(app, event_type, data)
+
+    def _own_rows(self, app: str, event_type: str, data: object) -> object:
+        """A conversation list frame's *data* with only *app*'s own conversations in it."""
+        field = CONVERSATION_LIST_FRAMES[event_type]
+        if not isinstance(data, list):
+            return []
+        return [
+            row
+            for row in data
+            if isinstance(row, dict)
+            and isinstance(row.get(field), str)
+            and self.session_creating_app(row[field]) == app
+        ]
+
+    def _own_notifications(self, app: str, event_type: str, data: object) -> object:
+        """A notification frame's *data* cut to the notes *app* may read, or :data:`_UNHEARD`.
+
+        ``notification`` carries the note itself. The others name notes by ``ts`` — one, a list,
+        or ``"*"`` for every note — and are read against the log as it is when the frame is sent,
+        which is why a removal is announced before its note leaves the log. A ``ts`` naming no
+        note in it names nothing an app may hear. ``"*"`` (read all, clear all) reaches an app
+        while the log holds a note of its, because then it is about that note; told to an app
+        with none, it would say what you did with notifications the app cannot read."""
+        if event_type == NOTE_TYPE_NOTIFICATION:
+            reaches = isinstance(data, dict) and self.notification_reaches(app, data)
+            return data if reaches else _UNHEARD
+        if not isinstance(data, dict):
+            return _UNHEARD
+        named = data.get("ts")
+        if named == "*":
+            held = any(self.notification_reaches(app, n) for n in self._notification_log)
+            return data if held else _UNHEARD
+        notes = {n.get("ts"): n for n in self._notification_log}
+
+        def own(ts: object) -> bool:
+            note = notes.get(ts) if isinstance(ts, str) else None
+            return note is not None and self.notification_reaches(app, note)
+
+        if isinstance(named, list):
+            kept = [ts for ts in named if own(ts)]
+            return {**data, "ts": kept} if kept else _UNHEARD
+        return data if own(named) else _UNHEARD
+
+    def _schedule_ws_send(  # type: ignore[no-untyped-def]
+        self, coro, ws: "web.WebSocketResponse | None" = None
+    ) -> bool:
+        """Schedule a WS send coroutine on the right loop from any thread.
+
+        Returns False (so the caller can drop the client) only on an actual
+        scheduling error. On the gateway loop → ensure_future; off-loop → submit to
+        the captured loop with run_coroutine_threadsafe; no loop anywhere (sync
+        startup/tests) → close the coroutine cleanly so it isn't reported unawaited.
+
+        The send is wrapped in :meth:`_send_guarded` on BOTH scheduling branches:
+        a fire-and-forget task's exception is never retrieved, so a client that
+        disconnects mid-broadcast (navigating away from a streaming response — a
+        completely routine event) used to surface as asyncio's unretrieved-task
+        ERROR traceback. The guard turns it into a DEBUG line and reaps the client
+        immediately instead of on the NEXT broadcast's ``ws.closed`` check."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        try:
+            if running is not None:
+                asyncio.ensure_future(self._send_guarded(coro, ws))
+            elif self._ws_loop is not None and not self._ws_loop.is_closed():
+                asyncio.run_coroutine_threadsafe(self._send_guarded(coro, ws), self._ws_loop)
+            else:
+                coro.close()  # no loop available — can't deliver; avoid unawaited warning
+            return True
+        except Exception:
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return False
+
+    async def _send_guarded(  # type: ignore[no-untyped-def]
+        self, coro, ws: "web.WebSocketResponse | None"
+    ) -> None:
+        """Await one WS send, absorbing delivery failures.
+
+        Nothing above this can act on a failed send — the correct response to ANY
+        send error is to log quietly and drop the client, so a disconnect during an
+        active broadcast never escalates past DEBUG."""
+        try:
+            await coro
+        except Exception as exc:
+            logger.debug("WS send failed (client gone?): %s", exc)
+            if ws is not None:
+                self._remove_ws(ws)
+
+    def broadcast_ws(self, msg_type: str, data: object) -> None:
+        """Send a typed message to all WS clients (not SSE). THE one WS producer.
+
+        Owner/dashboard connections get every event. An app-scoped connection
+        (the app sandbox) gets an event ONLY if the app's manifest declares it in
+        ``permissions.events`` — server-side enforcement so an untrusted app can't
+        observe events it didn't ask for (the SDK's client-side filter is advisory).
+
+        The dashboard-state translator (`_broadcast`) routes through here instead of writing to
+        the sockets itself. It had its own raw fan-out call, so every always-on frame —
+        sessions, titles, refresh hints, chat messages, notifications — reached app-scoped
+        sockets regardless of what the app declared. One gate for every producer; a second
+        write path is a second place for it to be missing from.
+
+        A frame about one conversation reaches an app's socket only when the app started it.
+        A conversation list and a notification frame are serialized per app socket in that
+        app's own view (:meth:`_app_view`): its own rows (an empty list when it has none), or
+        its own notes (no frame when it has none). The envelope is ``type`` and ``data`` and
+        nothing else: it had an ``extra`` of top-level keys, which is how your YOLO state rode
+        the session list to every app socket that declared it."""
+        if not self._ws_clients:
+            return
+        envelope = json.dumps({"type": msg_type, "data": data})
+        if not _has_app_view(msg_type):
+            self._dispatch_ws(
+                self._ws_clients, msg_type, envelope, subject=frame_subject(msg_type, data)
+            )
+            return
+        self._dispatch_ws(
+            [ws for ws in self._ws_clients if not self._ws_app.get(ws)], msg_type, envelope
+        )
+        for ws in [ws for ws in self._ws_clients if self._ws_app.get(ws)]:
+            app = self._ws_app[ws]
+            # The manifest first: a view is a read of your log or your conversations, and an app
+            # that did not declare the frame is sent none of it anyway.
+            if not self._app_may_see_event(app, msg_type):
+                continue
+            view = self._app_view(app, msg_type, data)
+            if view is not _UNHEARD:
+                self._dispatch_ws([ws], msg_type, json.dumps({"type": msg_type, "data": view}))
+
+    def _app_may_see_event(self, app: str, event_type: str) -> bool:
+        """Whether an app-scoped WS may receive ``event_type`` per its manifest."""
+        try:
+            from personalclaw.apps.permissions import checker_for
+
+            checker = checker_for(app)
+            return checker is not None and checker.can_use_event(event_type)
+        except Exception:
+            return False
+
+    def register_ws(self, ws: web.WebSocketResponse, *, app: str = "") -> None:
+        """Register a new WebSocket client.
+
+        ``app`` scopes the connection to an installed app (the app sandbox): its events
+        are filtered to the app's declared ``permissions.events`` in broadcast_ws.
+        Empty (the owner/dashboard) receives the full stream."""
+        # Capture the gateway loop so off-loop broadcast_ws callers (MCP tool
+        # subprocess callbacks, subagent/cron threads) can schedule sends onto it.
+        if self._ws_loop is None:
+            try:
+                self._ws_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+        self._ws_clients.append(ws)
+        if app:
+            self._ws_app[ws] = app
+
+    def unregister_ws(self, ws: web.WebSocketResponse) -> None:
+        """Remove a WebSocket client on disconnect."""
+        self._remove_ws(ws)
+
+    def _remove_ws(self, ws: web.WebSocketResponse) -> None:
+        """Remove a WS client from all subscriber lists."""
+        try:
+            self._ws_clients.remove(ws)
+        except ValueError:
+            pass
+        self._ws_app.pop(ws, None)
+        self._ws_log_subscribers.discard(ws)
+        self._ws_subagent_subscribers.discard(ws)
+
+    def subscribe_logs(self, ws: web.WebSocketResponse) -> bool:
+        """Subscribe a WS client to ``log`` events; False if it may not receive them.
+
+        An app-scoped socket that did not declare ``log`` is not added at all. The send
+        gate would drop every frame anyway, so this is not the authorization — it keeps
+        the server from formatting, and re-refusing, one frame per log record for a
+        subscriber that can never be delivered to. The caller uses the answer to skip
+        the ring replay for the same reason."""
+        if not self._ws_may_receive(ws, "log"):
+            return False
+        self._ws_log_subscribers.add(ws)
+        return True
+
+    def unsubscribe_logs(self, ws: web.WebSocketResponse) -> None:
+        """Unsubscribe a WS client from log events."""
+        self._ws_log_subscribers.discard(ws)
+
+    def subscribe_subagents(self, ws: web.WebSocketResponse) -> bool:
+        """Subscribe a WS client to the subagent chunk stream; False if not permitted.
+
+        ``subagent_chunk`` is the only event this set delivers (the snapshot/done replay
+        is sent per-socket), so it is the one type the subscription can be judged on —
+        and, as with :meth:`subscribe_logs`, the send gate remains the authority."""
+        if not self._ws_may_receive(ws, "subagent_chunk"):
+            return False
+        self._ws_subagent_subscribers.add(ws)
+        return True
+
+    def unsubscribe_subagents(self, ws: web.WebSocketResponse) -> None:
+        self._ws_subagent_subscribers.discard(ws)
+
+    def broadcast_ws_subagent_subscribers(self, msg_type: str, data: object) -> None:
+        """Send to subagent-subscribed clients only (for heavy chunk data).
+
+        Thread-safe: subagent chunk events originate off the gateway loop, so each send
+        is scheduled onto the captured loop when needed."""
+        if not self._ws_subagent_subscribers:
+            return
+        self._dispatch_ws(
+            self._ws_subagent_subscribers,
+            msg_type,
+            json.dumps({"type": msg_type, "data": data}),
+            subject=frame_subject(msg_type, data),
+        )
+
+    def broadcast_ws_log_subscribers(self, data: object) -> None:
+        """Send one ``log`` frame to the log-subscribed sockets.
+
+        The ring log handler's producer. It used to walk ``_ws_log_subscribers`` and
+        write to each socket itself, so nothing on that path ever consulted the app's
+        declared events and an app-scoped subscriber got the owner's whole log stream
+        (issue 2963). Callable from any thread, like the subagent fan-out."""
+        if not self._ws_log_subscribers:
+            return
+        self._dispatch_ws(
+            self._ws_log_subscribers, "log", json.dumps({"type": "log", "data": data})
+        )
+
+    async def close_all_ws(self) -> None:
+        """Close all WebSocket connections (called on shutdown)."""
+        if self._flush_task:
+            self._flush_task.cancel()
+            self._flush_task = None
+        for ws in list(self._ws_clients):
+            try:
+                await ws.close()
+            except Exception:
+                pass
+        self._ws_clients.clear()
+        self._ws_log_subscribers.clear()
+        self._ws_subagent_subscribers.clear()

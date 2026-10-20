@@ -1,0 +1,937 @@
+"""The notification kind registry.
+
+Every notification this system delivers is a ``(source, kind)`` pair, registered here
+once. Before this module, ``kind`` was a bare string invented at each of 25 call sites —
+so nothing could enumerate what the system is *able* to tell you, and the rules UI had
+nothing to draw a row for. A registry turns "what notifications exist?" from a grep into
+a function call.
+
+**Source vs kind.** ``source`` is the emitter domain (who is speaking: ``cron``,
+``loop``, ``inbox``, ``system``…); ``kind`` is what kind of thing is being said
+(``needs_input``, ``proposal``, ``failed``…). They are separate because the rules layer
+wants both axes: "never notify me about anything from ``heartbeat``" and "always
+interrupt me for a ``needs_input``, whoever raised it" are both natural rules, and a
+single flat string can express neither.
+
+**Registration is frozen at import.** Registering the same ``(source, kind)`` twice
+raises — a duplicate means two emitters disagree about what they're emitting, which is a
+bug worth failing the import over rather than resolving by last-write-wins.
+
+**Resolution is fail-OPEN.** An unregistered pair resolves to a synthetic
+``(system, generic)`` kind and logs a warning instead of raising. This mirrors the
+existing delivery gate's philosophy (`providers/entity_routes.notification_allowed`
+delivers when its own settings file is unreadable): a notification the system could not
+classify is still a notification the user should see, in the bell, as a badge. Losing a
+message because a plugin forgot to register is worse than showing one with a generic label.
+
+**Severity means the same thing it already did.** 1=info, 2=warning, 3=error, matching
+`_MIN_SEVERITY_RANK` in `providers/entity_routes.py` — 3 is the rank that bypasses quiet
+hours. This module does not re-implement the global gate; it supplies the severity the gate
+reads, and **since #341 that is literal**: the gate resolves `kind_for_legacy(kind)
+.default_severity` rather than carrying its own wire-string table. It carried one for a
+while, and the two disagreed — every kind outside `{error, warning, inbox_alert}` ranked as
+info there however this file declared it, so `loop/needs_input` showed severity 2 in the
+rules matrix and was filtered as severity 1 at delivery. One declaration, one answer.
+
+**Only a decision or an error interrupts by default.** With no rule of the owner's, a kind
+defaults to ``immediate`` only when it is a decision (``decision=True``: work is parked until
+the owner answers — an approval, a question, a paused room) or an error (``SEV_ERROR``:
+something broke). Every other kind defaults to ``badge``: listed and counted in the bell, with
+no toast, desktop banner, phone push or channel message. A ping about something that neither
+waits on the owner nor failed teaches them to mute the channel that also carries a loop's
+question, so the quiet delivery is the default; a rule of the owner's always wins, and Notify is
+one click on the kind's row in the rules matrix. The rule rides on two properties every
+registration already declares, so there is no list to keep beside them, and :func:`register`
+holds it: an ``immediate`` default on any other kind raises, and a kind that names no mode (an
+app's proposal kind) is a badge. A default quieter still is the kind's own call, with its reason
+at its registration: ``system/usage_recap`` and ``loop/progress`` wait for the digest.
+`tests/test_notification_kinds.py` pins the rule and every population.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Literal
+
+logger = logging.getLogger(__name__)
+
+#: Delivery modes a rule may select. ``badge`` persists without a toast — the
+#: "I want it in the list but don't interrupt me" mode the old global gate had no way to
+#: express (it could only deliver or drop entirely).
+Mode = Literal["never", "badge", "immediate", "digest"]
+
+MODES: tuple[str, ...] = ("never", "badge", "immediate", "digest")
+
+#: Severity ranks, identical to the existing delivery gate's vocabulary.
+SEV_INFO = 1
+SEV_WARNING = 2
+SEV_ERROR = 3
+
+#: The fallback pair for an unregistered kind (fail-open).
+GENERIC_SOURCE = "system"
+GENERIC_KIND = "generic"
+
+
+@dataclass(frozen=True)
+class NotificationKind:
+    """One registered kind of notification.
+
+    ``default_mode``/``default_severity`` are the behavior when the user has no rule for
+    this pair, which is the common case. ``default_mode`` is ``badge`` when a registration names
+    none, and only a decision or an error may be ``immediate`` (:func:`register` refuses it on
+    any other kind).
+    """
+
+    source: str
+    kind: str
+    label: str
+    default_mode: Mode = "badge"
+    default_severity: int = SEV_INFO
+    #: True when this kind carries a durable record rather than only a transient delivery: an
+    #: inbox item (the attention kinds), or the card the Triggers
+    #: page's restart review keeps (`cron/run_review`).
+    attention: bool = False
+    #: True when this kind's payload asserts a checkable claim, so a rule MAY opt into a
+    #: second-opinion verification pass before delivery. Parallel to ``attention``:
+    #: ``attention`` is "does this persist a row", ``verifiable`` is "may a rule ask a model
+    #: whether the row's claim holds". Setting this alone changes nothing — verification runs
+    #: only when a rule sets ``verify:true``, which the rules PUT rejects for a
+    #: non-verifiable kind. Never set on a ``decision`` kind: :func:`register` refuses the pair.
+    verifiable: bool = False
+    #: True when an item of this kind is a DECISION the user owes: work is parked until they
+    #: answer (a tool call awaiting Allow/Deny, a workflow gate, a folder awaiting Trust, a room
+    #: stopped until they reply). It is listed and notified the moment it is raised, and only the
+    #: user may close it — so it is never ``verifiable``. A REFUTED verdict files a verified row
+    #: as filtered and withholds its notification, and a verified row's notification waits for
+    #: the verdict: a verdict could hide a pending approval and would delay every one. Nor is
+    #: there a claim to check: that an approval is pending is a fact the registry holds, not
+    #: something a model can know better.
+    decision: bool = False
+    #: Dotted module that owns a production emission path for this kind. ``None`` means
+    #: resolution-only: old persisted wire values still resolve, but the kind is not a
+    #: configurable row because no current producer can consult that policy.
+    owner: str | None = None
+
+    @property
+    def key(self) -> str:
+        """The ``<source>/<kind>`` string used as the rules-store key."""
+        return f"{self.source}/{self.kind}"
+
+
+_REGISTRY: dict[tuple[str, str], NotificationKind] = {}
+
+
+def register(k: NotificationKind) -> None:
+    """Register a kind. Raises ``ValueError`` on a duplicate ``(source, kind)``, an unknown mode
+    or severity, a verifiable decision, and an ``immediate`` default on a kind that is neither a
+    decision nor an error."""
+    ident = (k.source, k.kind)
+    if ident in _REGISTRY:
+        raise ValueError(f"duplicate notification kind registration: {k.key}")
+    if k.default_mode not in MODES:
+        raise ValueError(f"{k.key}: unknown mode {k.default_mode!r}")
+    if k.default_severity not in (SEV_INFO, SEV_WARNING, SEV_ERROR):
+        raise ValueError(f"{k.key}: severity must be 1, 2 or 3 (got {k.default_severity})")
+    if k.decision and k.verifiable:
+        raise ValueError(
+            f"{k.key}: a decision cannot be verifiable — no model's verdict may hide a decision "
+            "the user owes"
+        )
+    if k.default_mode == "immediate" and not (k.decision or k.default_severity == SEV_ERROR):
+        raise ValueError(
+            f"{k.key}: only a decision or an error may default to immediate — anything else "
+            "waits in the bell until the owner's rule makes it a ping"
+        )
+    _REGISTRY[ident] = k
+
+
+def unregister(source: str, kind: str) -> bool:
+    """Drop a dynamically registered kind. Returns True when one was removed.
+
+    Only the app-contributed kinds use this: an app's proposal kind must not
+    outlive the app that declared it, or a disabled app leaves a phantom kind in the rules
+    UI and in ``resolve_kind`` — the same phantom-source failure ``deregister()`` exists to
+    prevent on the provider seam. The built-in kinds are registered once at import and
+    never removed.
+    """
+    return _REGISTRY.pop((source, kind), None) is not None
+
+
+def all_kinds() -> list[NotificationKind]:
+    """Every registered kind, ordered by source then kind."""
+    return sorted(_REGISTRY.values(), key=lambda k: (k.source, k.kind))
+
+
+def configurable_kinds() -> list[NotificationKind]:
+    """Registered kinds with a declared production owner, in stable matrix order."""
+    return [kind for kind in all_kinds() if kind.owner is not None]
+
+
+def resolve_kind(source: str, kind: str) -> NotificationKind:
+    """The registered kind, or a synthetic generic one (fail-open + warn)."""
+    found = _REGISTRY.get((source, kind))
+    if found is not None:
+        return found
+    logger.warning(
+        "unregistered notification kind %s/%s — delivering as %s/%s",
+        source,
+        kind,
+        GENERIC_SOURCE,
+        GENERIC_KIND,
+    )
+    return NotificationKind(
+        source=GENERIC_SOURCE,
+        kind=GENERIC_KIND,
+        label=f"{source}/{kind}" if source or kind else "Notification",
+        default_mode="badge",
+        default_severity=SEV_INFO,
+    )
+
+
+def kind_for_legacy_pair(source: str, kind: str) -> str:
+    """The flat wire string for a registered ``(source, kind)``.
+
+    Emitters that know their typed pair (the attention kinds, which never had a legacy flat
+    string) still have to hand ``notify()`` a wire value, since the flat string is what the
+    persisted log and the SPA's display map key on. This is the one place that mapping
+    lives, so a new attention kind cannot invent a second convention.
+
+    Prefers an existing legacy string when one maps to this pair — so ``inbox/alert`` keeps
+    emitting ``inbox_alert`` and its persisted history stays one kind. A pair registered at run
+    time has no string in the tables below — an app's proposal kind, registered when the app is
+    enabled — and its wire string is its key, ``app:<name>/proposal:<suffix>``, which
+    :func:`kind_for_legacy` reads back to it: the bare ``proposal:<suffix>`` resolved to
+    system/generic, so the rule the owner set for the kind governed nothing, and two apps that
+    declared one suffix shared a wire string. Anything else falls back to the bare ``kind``.
+    """
+    for flat, ident in _WIRE_TO_PAIR.items():
+        if ident == (source, kind):
+            return flat
+    if (source, kind) in _REGISTRY:
+        return f"{source}/{kind}"
+    return kind
+
+
+def kind_for_legacy(kind: str) -> NotificationKind:
+    """Resolve a bare pre-registry ``kind`` string to a registered kind.
+
+    The persisted notification log and the SSE wire both carry a flat ``kind`` string,
+    and 25 call sites passed one. Rather than rewrite history or break the frontend's
+    display map, the flat string stays the wire format and this function maps it back to
+    its registration. Unknown → generic, fail-open.
+    """
+    flat = (kind or "").strip().lower()
+    ident = _WIRE_TO_PAIR.get(flat) or _pair_of_key(flat)
+    if ident is None:
+        return resolve_kind(GENERIC_SOURCE, flat or GENERIC_KIND)
+    return resolve_kind(*ident)
+
+
+def _pair_of_key(flat: str) -> tuple[str, str] | None:
+    """The registered pair whose key *flat* is — the wire string of a pair registered at run
+    time (:func:`kind_for_legacy_pair`) — or ``None``."""
+    source, sep, kind = flat.partition("/")
+    return (source, kind) if sep and (source, kind) in _REGISTRY else None
+
+
+def label_for_wire(flat: str) -> str:
+    """The label its registration declares for the kind the wire string *flat* names, or ``""``
+    when no registration names it.
+
+    Carried on each note (``kind_label``), so a surface that shows the note can say what it is
+    in the registry's words — the Notifications page's own map has no row for a kind an app
+    registered — and a note from an app since removed still says it.
+    """
+    key = (flat or "").strip().lower()
+    ident = _WIRE_TO_PAIR.get(key) or _pair_of_key(key)
+    found = _REGISTRY.get(ident) if ident is not None else None
+    return found.label if found is not None else ""
+
+
+# ── Registrations ───────────────────────────────────────────────────────────
+# Built from an AST inventory of every `.notify(...)` call site in src/.
+# The flat `kind` string each site
+# passes today is preserved as the wire value via _LEGACY_FLAT below, so the persisted
+# log and the frontend's display map keep working unchanged.
+
+_KINDS: tuple[NotificationKind, ...] = (
+    # cron / schedule — emitted by the trigger substrate for a CLOCK trigger's outcome
+    # (`triggers/delivery.build_delivery`, routed by `delivery.report_run`).
+    #
+    # 🪤 THE COMMENT THAT USED TO BE HERE WAS STALE, AND IT ARGUED FOR THE WRONG SEVERITY (issue
+    # #415). It claimed "5 sites in gateway.py" and justified ranking BOTH rows INFO because
+    # "gateway.py:1299 emits a job FAILURE through the same flat `cron` kind" — one flat kind for
+    # both outcomes, so promoting failures would have promoted successes too. That constraint is
+    # gone: `cron/result` and `cron/failed` are separate pairs with separate wire strings, and the
+    # failure path had meanwhile been re-routed through `system/error` (SEV_ERROR) by the
+    # ScheduleService removal, which silently made exactly the change the old comment existed to
+    # prevent. So `cron/failed` ranks SEV_ERROR, the delivery a broken job already had, under a
+    # row the user can actually configure: it rides through a raised min_severity and quiet hours,
+    # and, as an error, it interrupts by default while a job's result waits in the bell.
+    NotificationKind(
+        "cron",
+        "result",
+        "Scheduled job result",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.triggers.delivery",
+    ),
+    NotificationKind(
+        "cron",
+        "failed",
+        "Scheduled job failed",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.triggers.delivery",
+    ),
+    # The triggers a legacy import brought over and switched off (`triggers/legacy_import.py`).
+    # A decision: they stay off until the owner switches each on, so no verdict may hide the row,
+    # and only the owner closes it. WARNING, like `guardrails/autonomy_revocation`: automations the
+    # owner made in an older version have already stopped running, and only they can start them.
+    NotificationKind(
+        "cron",
+        "trigger_import",
+        "Triggers brought over for review",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.inbox",
+    ),
+    # What a restart, a stop or a sleep left undone: the slots a stopped or sleeping gateway missed
+    # and the runs a stop cut off. A decision: none is run on its own, and each waits on the
+    # Triggers page's review until the owner runs or dismisses it, so its record is that card
+    # (`triggers/review.py`). WARNING
+    # with `attention`, like `cron/trigger_import`, so quiet hours record it silently rather than
+    # drop it: a restart at 01:00 inside them used to leave the card and no notice at all.
+    NotificationKind(
+        "cron",
+        "run_review",
+        "Missed or interrupted runs to review",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.gateway",
+    ),
+    # heartbeat — 5 sites in gateway.py. A badge, not the digest `loop/progress` waits for: each
+    # note is the result of a HEARTBEAT.md task the owner wrote, sent once when the task finishes
+    # (one still unfinished sends nothing), so the owner's own list bounds how many arrive.
+    NotificationKind(
+        "heartbeat",
+        "status",
+        "Heartbeat",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.gateway",
+    ),
+    # loop watchdog — dynamic kind via _NOTIFY_EVENTS (8 events → 4 flat kinds)
+    NotificationKind(
+        "loop",
+        "complete",
+        "Loop complete",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.loop.watchdog",
+    ),
+    NotificationKind(
+        "loop",
+        "failed",
+        "Loop failed",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.loop.watchdog",
+    ),
+    # A decision: every emitter of this pair parks work on the user's answer — a loop that is
+    # blocked or needs input, a workflow gate, a browse run's sign-in handoff, a control-bridge
+    # action awaiting Confirm.
+    NotificationKind(
+        "loop",
+        "needs_input",
+        "Loop needs your input",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.loop.watchdog",
+    ),
+    # `digest` by DEFAULT: the one frequent kind, a heads-up after every cycle of every loop, about
+    # 30 an hour for a loop at the default 2-minute cycle. Measured over a simulated night of three
+    # loops on the default budget, as a badge it was 87 of the bell's 98 notes, and 387 of 398 with
+    # an ongoing loop beside them. Past 400 the log keeps its newest 200, so on a log that already
+    # held notes that night also trimmed the evening's failed job and error out of the bell. A
+    # loop's progress shows live on its own page, on the Loops list and in Home's Active work; the
+    # digest counts the cycles each morning, and Badge or Notify is one click on this row.
+    NotificationKind(
+        "loop",
+        "progress",
+        "Loop progress",
+        "digest",
+        SEV_INFO,
+        owner="personalclaw.loop.watchdog",
+    ),
+    # inbox — the user-configured keyword/name alert (inbox.py:301)
+    NotificationKind(
+        "inbox",
+        "alert",
+        "Inbox alert",
+        "badge",
+        SEV_WARNING,
+        owner="personalclaw.inbox",
+    ),
+    # agent / subagent / hooks
+    NotificationKind(
+        "agent",
+        "message",
+        "Agent message",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.dashboard.handlers.messaging",
+    ),
+    NotificationKind(
+        "agent",
+        "subagent",
+        "Subagent update",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.gateway",
+    ),
+    NotificationKind(
+        "hook",
+        "fired",
+        "Trigger fired",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.dashboard.handlers.hooks",
+    ),
+    # An Agent Room that hit its round budget. `attention=True` because a
+    # paused room is a STANDING request — the deliberation is stopped until the human reads it
+    # — so a toast that scrolls past would leave the room silently halted. INFO rather than
+    # WARNING: nothing failed and nothing is at risk; the agents simply reached the bound the
+    # user configured, and the room resumes the moment they reply. A `decision`: the room stays
+    # stopped until they reply or archive it, so no verdict may hide it — and the payload is a
+    # count of turns this module took, not an AI claim a second model could check.
+    NotificationKind(
+        "agent",
+        "room_paused",
+        "Room paused",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        decision=True,
+        owner="personalclaw.rooms.arbiter",
+    ),
+    # system-level warnings and drift
+    NotificationKind(
+        "system",
+        "warning",
+        "System warning",
+        "badge",
+        SEV_WARNING,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "error",
+        "System error",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "info",
+        "Notice",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "success",
+        "Success",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    # INFO, not warning: the flat "app.route.drift" string was unlisted in the old severity
+    # map (⇒ info). Promoting it would start delivering it under a raised min_severity.
+    NotificationKind(
+        "system",
+        "route_drift",
+        "App route drift",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.tool_providers.app_routes",
+    ),
+    # Resolution-only: old persisted `session` notifications keep their label and severity,
+    # but no production emitter owns the row, so Settings must not offer inert policy for it.
+    NotificationKind("system", "session", "Session notice", "badge", SEV_INFO, owner=None),
+    # tasks — a task's due date is coming. INFO: a reminder, not a warning — nothing has
+    # failed and nothing is at risk yet. Not an attention kind: the task itself is the durable
+    # record, so the notice persists no row of its own. A badge, so the reminder waits in the bell
+    # until the owner makes its row Notify. Quiet hours are honoured by DEFERRING it
+    # (`tasks/due_notices.py`) rather than by this registration: inside the window a ping is
+    # suppressed, and a reminder the owner asked to be pinged for at 02:00 would never ring.
+    NotificationKind(
+        "tasks",
+        "due",
+        "Task due",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.tasks.due_notices",
+    ),
+    # learning / feedback
+    NotificationKind(
+        "learning",
+        "retire",
+        "Retired a learned signal",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.feedback",
+    ),
+    # ── Attention kinds ──────────────────────────────────────────────────
+    # These carry a durable inbox item, so `attention=True`. They have NO legacy flat
+    # string — nothing emitted them before `emit_attention_item` existed — which is why
+    # they may carry their honest severity rather than inheriting a historical rank
+    # (see test_new_attention_pairs_are_unreachable_from_legacy_strings).
+    NotificationKind(
+        "skills",
+        "proposal",
+        "Skill proposal",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+        owner="personalclaw.inbox",
+    ),
+    # Mechanical revocation tells the user that earned autonomy was taken back and
+    # that re-granting is theirs to do. WARNING, not INFO: the floor has already dropped
+    # and nothing runs above it until they act, which is the same "you must decide" shape
+    # as `loop/needs_input` and `system/agent_request` rather than a passing notice.
+    #
+    # `guardrails/autonomy_revocation`, NOT `skills/notification`: the wire string is what the
+    # digest groups by and what the SPA's display map keys on, so a kind literally named
+    # "notification" would have collected every future unnamed emitter into one undifferentiated
+    # row. Its bare kind IS its wire string, so it needs no `_ATTENTION_FLAT` entry.
+    NotificationKind(
+        "guardrails",
+        "autonomy_revocation",
+        "Earned autonomy revoked",
+        "badge",
+        SEV_WARNING,
+        attention=True,
+        owner="personalclaw.inbox",
+    ),
+    # 🪤 REGISTERED LATE, AND THE COST WAS VISIBLE. `learning/proposals.py` and
+    # `planning/scratchpad.py` both emit `kind="proposal"` and neither was registered, so
+    # `resolve_kind` fell open to system/generic on every emission: they carried GENERIC's
+    # severity and mode instead of their own, never appeared as a row in Settings →
+    # Notifications (`rules_document()` iterates the registry), and — because a pair with no
+    # wire string collapses onto the bare kind — the daily digest grouped them UNDER "Skill
+    # proposal", counting a jotted-line plan and a learning proposal as skill proposals.
+    NotificationKind(
+        "learning",
+        "proposal",
+        "Learning proposal",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+        owner="personalclaw.inbox",
+    ),
+    NotificationKind(
+        "planning",
+        "proposal",
+        "Planning proposal",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+        owner="personalclaw.inbox",
+    ),
+    # A decision: every emitter of this pair parks work on the user's answer — the approval
+    # registry (a tool call awaiting Allow/Deny, `DashboardState._hold_approval`), the project-
+    # trust prompt (a folder whose scripts stay in Preview until Trusted) and the autonomy
+    # ladder's one-tap hold (an action withheld until decided). It WAS `verifiable`, so a rule's
+    # `verify:true` put a model call in front of every pending approval, and a REFUTED answer
+    # filed the approval's Inbox row as filtered and withheld its notification.
+    NotificationKind(
+        "system",
+        "agent_request",
+        "Agent request",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.inbox",
+    ),
+    NotificationKind(
+        "system",
+        "digest",
+        "Daily digest",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.notification_rules",
+    ),
+    # A tool call denied with no answer: an approval nobody answered in time, or one an unattended
+    # run could not ask about (`auto_denials.py`). Its durable row is what the
+    # morning reads — the approval's own row closes when it ends. WARNING: work the user asked for
+    # did not happen. Not a decision: nothing is waiting on an answer any more.
+    NotificationKind(
+        "system",
+        "auto_denied",
+        "Denied without an answer",
+        "badge",
+        SEV_WARNING,
+        attention=True,
+        owner="personalclaw.auto_denials",
+    ),
+    # The monthly spend recap. `digest` by DEFAULT, the one kind here that waits for the digest
+    # rather than the bell: a recap of a month that already closed is the least urgent thing the
+    # system emits, so it is folded into the summary instead of being counted as news.
+    # `attention=False` — the recap persists no row of its own; the digest it rides into is the
+    # durable item.
+    NotificationKind(
+        "system",
+        "usage_recap",
+        "Monthly usage recap",
+        "digest",
+        SEV_INFO,
+        owner="personalclaw.action_providers.usage_recap_provider",
+    ),
+    # apps — an installed app's source offers a newer version. Attention-bearing
+    # (a durable inbox row deep-links to the app), emitted once per (name, latest_version)
+    # via emit_attention_item on the existing /api/apps read path — no polling loop.
+    NotificationKind(
+        "apps",
+        "update",
+        "App update available",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.inbox",
+    ),
+    # knowledge — one finding written by a scheduled research report.
+    # Attention-bearing: the report runs while nobody is watching, so a transient toast is
+    # the one delivery shape that can lose the whole point of the feature. Emitted through
+    # `inbox.emit_attention_item`, so the durable row and the notification are the same
+    # event by construction; the report runner invokes that shared path rather than adding
+    # a second sender.
+    #
+    # A `badge`, like every kind that is neither a decision nor an error: the finding is listed
+    # and counted in the bell beside its durable row, and nothing interrupts for it. It has its
+    # own registry row precisely so `digest`, or Notify, is one click in the rules matrix.
+    NotificationKind(
+        "knowledge",
+        "research_finding",
+        "Research report finding",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.action_providers.knowledge_report_provider",
+    ),
+    # learning — the periodic identity report. Attention-bearing: the report is
+    # composed while nobody is watching and the durable row is what links the artifact, so
+    # a transient toast would be the one delivery shape that loses the whole feature.
+    #
+    # A `badge`, like `knowledge/research_finding`: the report waits in the bell, inside quiet
+    # hours too, and nothing pings for it unless the owner makes its row Notify. SEV_INFO, so such
+    # a ping never rings through quiet hours: inside the window it is suppressed while the
+    # artifact stays durable, because `deliver_identity_report` writes the artifact first.
+    NotificationKind(
+        "learning",
+        "report",
+        "Identity report",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.inbox",
+    ),
+    # approval — what phone push exists for. Registered so the rules
+    # matrix carries a row for "a run is blocked waiting on me", which is the one
+    # notification whose latency directly caps how autonomous the system can be, and so a
+    # user can send THAT to the phone without sending everything else.
+    #
+    # NOT `attention=True`, deliberately: this pair routes the PING, not the row. A pending
+    # approval's durable Inbox row rides `system/agent_request` below — raised by the pending-
+    # approval registry (`DashboardState._hold_approval`) the moment the approval is, closed the
+    # moment it is answered or expires, and swept at boot, because the approval itself is an
+    # in-memory future that no restart survives. A `decision` for the same reason as that row.
+    NotificationKind(
+        "approval",
+        "requested",
+        "Approval needed",
+        "immediate",
+        SEV_WARNING,
+        decision=True,
+        # The ping is sent by `_push_approval`, which moved here with the registry (#3594).
+        owner="personalclaw.dashboard.approval_state",
+    ),
+    # user — a note the user captured themselves. The FIRST kind whose emitter is a
+    # person rather than a subsystem, and the whole registration exists so it is not a
+    # phantom: `emit_attention_item` calls `state.notify` unconditionally, so this pair WOULD
+    # be delivered whether or not it were registered — unregistered it would simply fall open
+    # to system/generic, carry GENERIC's severity and mode, and show no row in Settings →
+    # Notifications. That is the 🪤 above, one level down.
+    #
+    # `badge` by DEFAULT, like every kind that is neither a decision nor an error, and here the
+    # reason is plainest. A toast exists to tell you something you did not know; you
+    # cannot be informed of your own keystrokes. Capturing three notes from the tray would
+    # raise three toasts about text the user had just typed, which teaches them to mute the
+    # channel that also carries a loop's question. `badge` is exactly the mode for this: the
+    # row persists and the unread badge counts it (`unread_count` counts open INBOX items,
+    # so the note is still visibly waiting), and nothing interrupts. Delivery is real, not
+    # declined — a user who wants the toast flips this one row to Notify.
+    #
+    # `verifiable=False` deliberately: the second-opinion pass files a REFUTED claim
+    # as FILTERED and withholds it. A note is not a claim about the world, it is what the
+    # user said; a skeptic model that "refuted" it would hide the user's own words from them.
+    NotificationKind(
+        "user",
+        "note",
+        "Note you captured",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        verifiable=False,
+        owner="personalclaw.inbox",
+    ),
+    # mcp — a server whose read-only labels the owner does not trust changed what one of its tools
+    # says (`mcp_read_only_trust.observe`). A description is text the model reads, so she is told,
+    # once per change. `badge` by DEFAULT, like every kind that is neither a decision nor an error:
+    # nothing is waiting on her and nothing ran (the server's tools ask whatever they say), and a
+    # server that rewrites its descriptions with each release would otherwise toast at every
+    # update, which teaches her to mute the channel that also carries a loop's question. The note
+    # persists and is counted unread; one click in the rules matrix makes it a toast.
+    NotificationKind(
+        "mcp",
+        "description_changed",
+        "MCP tool description changed",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.dashboard.lifecycle_hooks",
+    ),
+    # The synthetic fallback, registered so the rules UI can show a row for it.
+    NotificationKind(
+        GENERIC_SOURCE,
+        GENERIC_KIND,
+        "Uncategorized",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.inbox",
+    ),
+)
+
+#: Flat legacy `kind` string → registered `(source, kind)`.
+#:
+#: Two entries have NO backend emitter and are here deliberately: the frontend's display
+#: map (`web/src/pages/notifications/notificationMeta.ts`) has rows for `schedule` and
+#: `loop`, which no `.notify()` call ever passes — pre-existing drift found by the call-site
+#: inventory. They map to their nearest real registration so a notification persisted by
+#: an older build still resolves.
+_LEGACY_FLAT: dict[str, tuple[str, str]] = {
+    "cron": ("cron", "result"),
+    "schedule": ("cron", "result"),
+    "heartbeat": ("heartbeat", "status"),
+    "loop": ("loop", "progress"),
+    "inbox_alert": ("inbox", "alert"),
+    "agent": ("agent", "message"),
+    "subagent": ("agent", "subagent"),
+    "hook": ("hook", "fired"),
+    "warning": ("system", "warning"),
+    "error": ("system", "error"),
+    "info": ("system", "info"),
+    "success": ("system", "success"),
+    "app.route.drift": ("system", "route_drift"),
+    "session": ("system", "session"),
+    "feedback_retire": ("learning", "retire"),
+    GENERIC_KIND: (GENERIC_SOURCE, GENERIC_KIND),
+}
+
+#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds,
+#: `usage_recap`/`approval`, and (issue #341/#415) the TYPED kinds whose emitter
+#: used to pass a generic severity string. Kept separate from the legacy map above because the two
+#: answer different questions.
+#:
+#: `_LEGACY_FLAT` is a historical record: "what did an emitter already in the tree pass?"
+#: Its entries carry a severity obligation — re-ranking one changes min-severity filtering
+#: for a user who never touched a setting, which is why a test walks it against the
+#: pre-registry gate's severity map. These kinds have no such history, so they are free to carry
+#: their honest severity. That — not attention-ness — is the property this map actually encodes;
+#: `usage_recap`, `approval` and the `loop_*`/`cron_failed` entries are not attention kinds.
+#:
+#: They still need a wire string: it is what `notify()` resolves a rule from and what the
+#: SPA's display map keys on. Without one they resolve to system/generic and lose their own
+#: rule — a user's "always interrupt me for needs_input" would silently do nothing.
+_ATTENTION_FLAT: dict[str, tuple[str, str]] = {
+    "needs_input": ("loop", "needs_input"),
+    "proposal": ("skills", "proposal"),
+    # Distinct strings, because the wire value is what the digest groups by and what the SPA's
+    # display map keys on. Registering alone would not have been enough: `kind_for_legacy_pair`
+    # falls back to the bare `kind`, so both would still have emitted "proposal" and still been
+    # grouped as skill proposals.
+    "learning_proposal": ("learning", "proposal"),
+    "planning_proposal": ("planning", "proposal"),
+    "agent_request": ("system", "agent_request"),
+    "digest": ("system", "digest"),
+    "app_update": ("apps", "update"),
+    # Its OWN wire string, not "finding": the wire value is what the digest groups by, and a
+    # generic "finding" would collapse research output into whatever else ever writes one.
+    "research_finding": ("knowledge", "research_finding"),
+    # Not an attention kind (it persists no row of its own), but it shares the property this
+    # map actually encodes: no pre-registry emitter ever passed it, so it carries no historical
+    # severity obligation and is free to rank as the info it is.
+    "usage_recap": ("system", "usage_recap"),
+    # The identity report. Registering the PAIR was not enough on its own: the wire string
+    # is what `resolve_rule_for_legacy` and the persisted log resolve BACK through, so without
+    # a row here the emission resolved to system/generic and logged "unregistered notification
+    # kind system/report" on every delivery — the registry's own 🪤 case, one level down.
+    # The bare `report` is safe as its own wire string: no other registered kind spells it.
+    "report": ("learning", "report"),
+    # Same story as `usage_recap`: not an attention kind, but no pre-registry emitter ever
+    # passed "approval" either, so it ranks as the warning a blocked run actually is. It needs
+    # a wire string because that is what `resolve_rule_for_legacy` keys on — without one the
+    # push target's rule row would resolve to system/generic and a user's "push me approvals"
+    # would silently push everything else instead.
+    "approval": ("approval", "requested"),
+    # `user_note`, not the bare `note`, and the string is deliberately identical to
+    # `ItemKind.USER_NOTE.value`: one vocabulary spans the row and its delivery, the way
+    # `agent_request` already does. The bare `note` would also have been unique, but it drops
+    # the provenance that is the entire point of the kind.
+    "user_note": ("user", "note"),
+    # ── The typed rows the matrix advertised but nothing could address (#341 / #415) ──
+    #
+    # 🔴 A REGISTERED PAIR WITH NO WIRE STRING IS AN INERT CONTROL. `notify()` takes a flat
+    # string, so a pair is reachable only if some entry here (or in `_LEGACY_FLAT`) points at
+    # it. These four had a row in Settings → Notifications, a mode pill, a condition editor and
+    # a target list — and no way to be delivered: their emitters passed a generic SEVERITY string
+    # (`error`/`success`/`info`), so the note landed on `system/*` and the typed row was never
+    # consulted. Setting "Loop failed → Never" did nothing; the control that governed loop
+    # failures was "System error", so quietening unrelated noise silently stopped reporting them.
+    #
+    # `loop_failed`, not the bare `failed`: the bare kind is registered under TWO sources
+    # (`loop/failed` and `cron/failed`), so it could not name either unambiguously — and the
+    # digest groups by the wire string, which would have counted a broken cron as a loop failure.
+    # `kind_for_legacy_pair` falls back to the bare kind, which is exactly how these pairs ended
+    # up resolving to system/generic.
+    "loop_complete": ("loop", "complete"),
+    "loop_failed": ("loop", "failed"),
+    "cron_failed": ("cron", "failed"),
+    # The mechanical revocation. Its registration comment asserted "its bare kind IS its wire
+    # string, so it needs no `_ATTENTION_FLAT` entry" — measurably false: nothing mapped
+    # `autonomy_revocation`, so `kind_for_legacy` fell open to system/generic on every emission.
+    # The row rendered with the right LABEL (the SPA keys its display map on the wire string) while
+    # carrying GENERIC's severity and mode, which is the trap the registry's own 🪤 above describes.
+    "autonomy_revocation": ("guardrails", "autonomy_revocation"),
+    # `task_due`, not the bare `due`: the wire string is what the digest groups by and the
+    # SPA keys its label on, and a bare `due` would read as belonging to whatever next registers it.
+    "task_due": ("tasks", "due"),
+    # The legacy-import review item. Its bare kind IS its wire string, and it still needs this row:
+    # `kind_for_legacy` resolves the wire value back through here, and without it the item's rule
+    # would be system/generic's — the registry's 🪤 one level down, exactly as `autonomy_revocation`
+    # above found.
+    "trigger_import": ("cron", "trigger_import"),
+    # The restart review's notices. Its bare kind is unique and IS its wire string; the row is
+    # here for the reason `trigger_import`'s is.
+    "run_review": ("cron", "run_review"),
+    # The bare kind is unique, so it is its own wire string — and it needs this row for the
+    # same reason `autonomy_revocation` does: without one `kind_for_legacy` falls open to generic.
+    "auto_denied": ("system", "auto_denied"),
+    # A paused Agent Room. Its bare kind is its wire string, and without this row the rule for it
+    # was system/generic's.
+    "room_paused": ("agent", "room_paused"),
+    # Its own wire string, not the bare `description_changed`: the digest groups by it and the SPA
+    # keys its label on it, and the bare kind says nothing of whose description it was.
+    "mcp_description_changed": ("mcp", "description_changed"),
+}
+
+#: Every wire string this build understands, for resolution. Legacy entries win a collision:
+#: an existing persisted kind must never be re-pointed by a newly added attention kind.
+_WIRE_TO_PAIR: dict[str, tuple[str, str]] = {**_ATTENTION_FLAT, **_LEGACY_FLAT}
+
+for _k in _KINDS:
+    register(_k)
+
+
+# ── Wire constants for emitters ─────────────────────────────────────────
+# The flat string remains the WIRE format — it is what the persisted notification log
+# stores, what the SSE payload carries, and what the SPA's display map keys on. So a
+# "typed constant" here is that flat string, named and greppable, rather than a new
+# vocabulary that would need translating at the boundary. The point is that a call site
+# can no longer invent a kind by typo: `notify("warnign", …)` used to deliver a generic
+# notification forever, silently.
+
+CRON = "cron"
+#: A clock trigger's FAILURE, distinct from `CRON` (its result). Separate constants because the
+#: registry ranks them differently — a broken scheduled job rides through a raised min_severity
+#: and a successful one does not, which one shared kind could not express (#415).
+CRON_FAILED = "cron_failed"
+HEARTBEAT = "heartbeat"
+#: The loop watchdog's own rows. It used to pass `SUCCESS`/`ERROR`/`INFO` — generic severity
+#: strings — so every loop outcome was governed by a `system/*` rule and the four `loop/*` rows in
+#: the matrix were inert (#341).
+LOOP = "loop"
+LOOP_COMPLETE = "loop_complete"
+LOOP_FAILED = "loop_failed"
+INBOX_ALERT = "inbox_alert"
+AGENT = "agent"
+SUBAGENT = "subagent"
+HOOK = "hook"
+WARNING = "warning"
+ERROR = "error"
+INFO = "info"
+SUCCESS = "success"
+APP_ROUTE_DRIFT = "app.route.drift"
+SESSION = "session"
+FEEDBACK_RETIRE = "feedback_retire"
+USAGE_RECAP = "usage_recap"
+RESEARCH_FINDING = "research_finding"
+APPROVAL = "approval"
+#: A task's due date is coming (`tasks/due_notices.py`).
+TASK_DUE = "task_due"
+#: A tool call denied with no answer (`auto_denials.py`).
+AUTO_DENIED = "auto_denied"
+#: The runs a restart or a stop left undone, waiting on the Triggers page's review.
+RUN_REVIEW = "run_review"
+#: A server whose read-only labels the owner does not trust changed a tool's description.
+MCP_DESCRIPTION_CHANGED = "mcp_description_changed"
+GENERIC = GENERIC_KIND
+
+#: Every constant above, for the import-time consistency check and the drift test.
+WIRE_CONSTANTS: tuple[str, ...] = (
+    CRON,
+    CRON_FAILED,
+    HEARTBEAT,
+    LOOP,
+    LOOP_COMPLETE,
+    LOOP_FAILED,
+    INBOX_ALERT,
+    AGENT,
+    SUBAGENT,
+    HOOK,
+    WARNING,
+    ERROR,
+    INFO,
+    SUCCESS,
+    APP_ROUTE_DRIFT,
+    SESSION,
+    FEEDBACK_RETIRE,
+    USAGE_RECAP,
+    RESEARCH_FINDING,
+    APPROVAL,
+    TASK_DUE,
+    AUTO_DENIED,
+    RUN_REVIEW,
+    MCP_DESCRIPTION_CHANGED,
+    GENERIC,
+)
+
+# A constant that no longer maps to a registration is a silent downgrade to the generic
+# fallback at every site that imports it — so fail the import instead. Not an `assert`:
+# `python -O` strips those, and this is a correctness invariant, not a debug aid.
+_unmapped = [c for c in WIRE_CONSTANTS if c not in _WIRE_TO_PAIR]
+if _unmapped:  # pragma: no cover - import-time guard
+    raise RuntimeError(f"notification wire constants missing a registration: {_unmapped}")

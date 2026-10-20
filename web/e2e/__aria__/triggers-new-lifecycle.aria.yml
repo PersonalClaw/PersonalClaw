@@ -1,0 +1,71 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back"
+  - heading "New trigger" [level=#]
+  - group "Start from a preset":
+    - text: Start from a preset
+    - button "Morning briefing"
+    - button "Weekly digest"
+    - button "Nightly check"
+    - button "Standup reminder"
+  - text: Name
+  - textbox "Name":
+    - /placeholder: Morning briefing
+  - paragraph: A short label for this trigger.
+  - text: Trigger · When this fires Trigger type
+  - radiogroup "Trigger type":
+    - radio "Schedule"
+    - radio "Lifecycle event" [checked]
+    - radio "Data event"
+    - radio "Run finishes"
+  - paragraph: Fires on an agent-loop event — a tool call, a prompt, session end, …
+  - text: Fires on
+  - button "User prompt submit"
+  - button "Clear selection"
+  - note:
+    - text: "User prompt submit is agent-scoped: it fires only for agents whose"
+    - code: triggers
+    - text: list references this trigger. Until one does, it will not run.
+  - paragraph: The user submits a turn — before the agent runs.
+  - text: Context matcher
+  - textbox "Context matcher":
+    - /placeholder: "*"
+  - paragraph: Glob on the event context. Empty = always.
+  - text: Action · What runs when it fires Action
+  - button "Pick an action…"
+  - paragraph: What runs when this trigger fires. Provided by a registered action provider.
+  - paragraph: Name the trigger first
+  - button "Cancel"
+  - button "Create trigger" [disabled]

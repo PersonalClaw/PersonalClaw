@@ -1,0 +1,814 @@
+// @module-tag tree-scan
+/**
+ * A STATUS CHIP PAINTS ITS TONE TWICE — AS THE INK **AND** AS THE BACKGROUND — AND NOTHING SWEPT
+ * THE SECOND ONE.
+ *
+ * The idiom, 88 sites across 50 files (census below):
+ *
+ *     style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone }}
+ *
+ * So the ground is a translucent wash of the ink itself. Every percent of tint drags the ground
+ * TOWARD the ink and spends contrast, and because the wash is translucent the ratio also depends on
+ * whichever surface tier the chip happens to land on. Neither is knowable at the call site, and
+ * `schemeContrast.test.ts` asserted the tone against the BARE tier — the one ground the chip never
+ * actually has. Measured live on `#/tasks?view=cards`, the 12px "In progress" chip:
+ *
+ *     --color-info → bare --color-surface-container    5.82     ← all the old rail checked. Passed.
+ *     --color-info → its own 16% tint on that ground   4.4992   ← axe `color-contrast`, serious
+ *
+ * One hundredth under 4.5. Swept over 12 schemes × 2 modes that single chip was under AA in
+ * **13 of 24** combos (worst 3.4165, slate/light on the canvas) and the 18% chip in
+ * `tasks/TaskDetail.tsx` in **16 of 24** (worst 3.3253, the same cell). `--color-info` is the ONLY
+ * semantic tone a scheme retints, and that is the whole shape of the defect: `ok`/`warn`/`danger`
+ * are global values in `tokens.css`, so they are scheme-invariant and pass everywhere the tree uses
+ * them at ≤16% (worst 4.5200), while `info` was supplied twelve times over by `schemes.ts` and
+ * swept on a tinted ground zero times.
+ *
+ * THE FIX WAS THE INK, PER SCHEME — hue angle held, chroma held (0.88–1.00 of the original; given up
+ * only where sRGB cannot hold the lightness), lightness nudged AWAY from the mid-tone: brighter in
+ * dark, darker in light. It is deliberately NOT a call-site override and NOT a new token: the
+ * semantic tones have no `-emphasis` or `-container` sibling to reach for the way `primary` does
+ * (`--color-on-primary-tint` → `--color-primary-emphasis`, and `#1257`'s accent chip → the
+ * container pair), and minting one per tone × 12 schemes to solve a lightness problem would be a
+ * new vocabulary instead of a corrected value. The derivation lives in `tokens.css` beside
+ * `--color-info`.
+ *
+ * ── WHY NEITHER EXISTING GATE COULD SEE THIS ────────────────────────────────────────────────────
+ *
+ *   · axe only ever drives the DEFAULT scheme, so 11 of 12 were invisible to it by construction.
+ *   · `#/tasks?view=cards` is not in `e2e/routes.ts` at all, and the plain `tasks` route that IS
+ *     there is `needsData: true` against a webServer started on a FRESH temp home with no `--seed`
+ *     — so the list renders empty and the chip axe would have judged does not exist. A chip with no
+ *     data is a chip no mechanical pass can measure.
+ *   · `schemeContrast.test.ts` already sweeps `info` per scheme, but against
+ *     `--color-surface-container` bare. That assertion passes at 5.82 while the painted chip is
+ *     4.4992 — a rail can be green on the right token, the right scheme and the wrong ground.
+ *
+ * ── TRAPS THIS FILE ENCODES, EACH ONE MEASURED ──────────────────────────────────────────────────
+ *
+ * 🪤 THE COMPOSITE MUST BE QUANTIZED TO 8 BITS. Blending #5e99f9 at 16% over #1e1f20 gives
+ *    (40.24, 50.52, 66.72). Carried as floats that reads **4.5214** and the chip looks compliant;
+ *    rounded to `#283343`, which is what the framebuffer paints and what axe-core's `flattenColors`
+ *    computes (`Math.round(r / αo)`), it is **4.4992**. The un-rounded number is how you conclude
+ *    there is no bug.
+ *
+ * 🪤 A `color-mix(…, transparent)` DOES NOT COMPUTE TO `rgba()`. `getComputedStyle` returns
+ *    `color(srgb 0.368627 0.6 0.976471 / 0.16)`, so a probe whose parser only knows `rgb()/rgba()`
+ *    reports ZERO tinted chips on a page full of them. (#1257 recorded the sibling of this: an
+ *    `/80` alpha ink parsed as an rgb triple yielded 1.46 dark / 18.51 light — nonsense.)
+ *
+ * 🪤 `--color-surface-high` IS NOT A REFERENCE GROUND HERE, and excluding it is a measurement, not
+ *    a convenience — but NOT for the reason a first draft of this comment gave. It claimed "the BARE
+ *    ink on that tier is already 4.42, so no ink value fixes it". That number is `surface-highest`
+ *    (bare 4.3399), not `surface-high`; re-measured, the bare ink on `surface-high` (`#282a2c`) is
+ *    **5.0764** and perfectly fine, so the tint IS what breaks it and an ink value COULD in
+ *    principle fix it. The real reason to exclude it is the size of that ink move: `TaskCard` lifts
+ *    to `hover:bg-surface-high`, where the chip reads **3.9278** before this change and **4.1094**
+ *    after, and clearing 4.5 there needs roughly `#7aaeff` — which is not a nudge, and which on
+ *    `surface-container` (the RESTING ground, where thirty cards sit) would read 5.41 and visibly
+ *    wash the tone pale. A hover tier that lifts ten sRGB steps toward the ink is a GROUND problem,
+ *    and the fix is for the chip's ground to stop moving under it, which is a different change.
+ *    `schemeContrast.test.ts` refuses `surface-highest` on the neighbouring reasoning ("testing it
+ *    would invent a failure the default itself doesn't meet") and there the bare-ink figure really
+ *    does hold. The hovered reading is filed as an open finding, not smuggled into the ink budget.
+ *
+ * 🪤 THE PARSER DEPTH-TRACKS BRACES AND IS ANCHORED ON THE TINT, NOT ON `style={`. Two reasons.
+ *    A JSX opening tag does not end at the first `>` (nor the first that is not `=>`) — an
+ *    `action={<X …>label</X>}` attribute contains several — so no line- or tag-window scan is
+ *    sound. And 6 of the 88 sites reach `style` through a ternary (`? { background: …, color: … }`),
+ *    where anchoring on `style={` misses them outright: an earlier draft of this census read 81.
+ *
+ * 🪤 AN ICON TILE IS NOT A CHIP AND MUST NOT BE COUNTED. Six sites
+ *    (`agents/AgentsListPage:264`, `skills/SkillsPage:156`, `knowledge/KnowledgeListPage:721`,
+ *    `prompts/PromptsListPage:197`, `triggers/TriggersListPage:250`, `knowledge/KnowledgeCreatePage:38`)
+ *    put the tint on a `size-10` wrapper and the tone on an `<Icon>` CHILD — a different object, so
+ *    the same-object test below excludes them, correctly: a glyph carries the 3:1 non-text floor,
+ *    and `design/accent.ts` records that family as left alone on measurement. An earlier census that matched "the rest of the line" swept them in and
+ *    inflated the population by six.
+ *
+ * 🪤 A BORDER IS NOT A BACKGROUND. Four sites tint at 35–40% — `ChatPage:2967`, `FileTree:249`,
+ *    `WorkspacePicker:186`, `ArtifactViewer:291` — and every one is a `border` / `borderColor`
+ *    hairline, so the text still sits on the parent's opaque tier and 1.4.3 is satisfied there.
+ *    Counting them (an earlier draft did) manufactures four failures at 2.9–3.2 that no reader can
+ *    see, and would have argued for an ink nudge four times larger than the real defect needs.
+ */
+
+import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
+import { SCHEMES } from './schemes'
+import { tokenValue } from './tokenSheet'
+import { filesUnder, readSource } from '../test/sourceTree'
+
+const WEB = process.cwd()
+const SRC = join(WEB, 'src')
+
+// ── WCAG 2.1 relative luminance + contrast ratio (sRGB) ─────────────────────────────────────────
+// Kept local, per this directory's convention (`schemeContrast`, `errorTreatments`, `onDangerInk`
+// each carry their own copy so a shared helper cannot drift one rail while fixing another).
+function luminance(hex: string): number {
+  const h = hex.replace('#', '')
+  const chan = (i: number) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * chan(0) + 0.7152 * chan(2) + 0.0722 * chan(4)
+}
+function contrast(a: string, b: string): number {
+  const la = luminance(a), lb = luminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+const rgb = (hex: string): [number, number, number] => {
+  const h = hex.replace('#', '')
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number]
+}
+const hex = (c: number[]) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+
+/** `contrast(tone, color-mix(in srgb, tone <pct>%, transparent) over <ground>)`.
+ *
+ *  The `Math.round` is load-bearing and matches axe-core's `flattenColors`, which ends
+ *  `Math.round(r / αo)` — and matches the 8-bit framebuffer, which is what a reader's eye receives.
+ *  Without it the flagship failure reads 4.5214 instead of 4.4992 and this whole rail is green on a
+ *  defect axe reports. */
+function tintedChipRatio(tone: string, ground: string, pct: number): number {
+  const a = pct / 100, I = rgb(tone), G = rgb(ground)
+  return contrast(tone, hex(I.map((v, i) => Math.round(a * v + (1 - a) * G[i]))))
+}
+
+/** THE SIZE THRESHOLD, SPELLED OUT, because "large text" is the one way a 4.5 finding gets talked
+ *  down to 3:1. WCAG 2.1 SC 1.4.3: large text is ≥18.66px BOLD or ≥24px at any weight; everything
+ *  else carries 4.5:1. A 12px chip is not large at any weight, so it never gets the 3:1 relief. */
+export function aaFloor(px: number, bold: boolean): 3 | 4.5 {
+  const large = px >= 24 || (px >= 18.66 && bold)
+  return large ? 3 : 4.5
+}
+
+/** `tokens.css` split at the `.light` RULE BLOCK — not at the first occurrence of the string
+ *  ".light", which appears in prose earlier in the file and made a sibling rail read the DARK
+ *  canvas as the light one (the trap `schemeContrast.test.ts` records). */
+function blocks(): { dark: string; light: string } {
+  const src = readSource(join(SRC, 'design/tokens.css'))
+  const at = src.search(/\.light\s*\{/)
+  if (at < 0) throw new Error('could not find the .light rule block in tokens.css')
+  return { dark: src.slice(0, at), light: src.slice(at) }
+}
+const BLOCKS = blocks()
+type Mode = 'dark' | 'light'
+/** A token's value in `mode` as the sheets resolve it — the `.light` rule block's `var()` followed
+ *  to the palette, by `tokenSheet.ts`, rather than a hex matched in the source text. */
+function token(name: string, mode: Mode): string {
+  return tokenValue(`--color-${name}`, mode)
+}
+
+// ── The population, derived from the tree ───────────────────────────────────────────────────────
+
+type Site = { file: string; line: number; tone: string; pct: number; literal: boolean }
+
+const TINT =
+  /\b(?:background|backgroundColor)\s*:\s*[`'"]?\s*color-mix\(in srgb,\s*(\$\{[^}]+\}|[^,]+?)\s+([\d.]+)%,\s*transparent\)/g
+
+/** The brace-balanced object literal enclosing `idx`, found by DEPTH-TRACKING `{`/`}` outward in
+ *  both directions. See the header's parser trap: anchoring on `style={` misses the ternary form,
+ *  and no `>`-terminated window is sound inside JSX. */
+function enclosingObject(src: string, idx: number): string | null {
+  let depth = 0, start = -1
+  for (let i = idx; i >= 0; i--) {
+    const c = src[i]
+    if (c === '}') depth++
+    else if (c === '{') { if (depth === 0) { start = i; break } depth-- }
+  }
+  if (start < 0) return null
+  depth = 0
+  for (let i = start; i < src.length; i++) {
+    const c = src[i]
+    if (c === '{') depth++
+    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, i + 1) }
+  }
+  return null
+}
+
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name))
+}
+
+/** Every element whose `style` object puts ONE tone in both `color` and a
+ *  `color-mix(…, transparent)` BACKGROUND — the tone-as-ink-and-tint family. */
+function chipSites(): Site[] {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const sites: Site[] = []
+  for (const abs of walk(SRC)) {
+    const src = readSource(abs)
+    for (const m of src.matchAll(TINT)) {
+      const tone = m[1].replace(/^\$\{/, '').replace(/\}$/, '').replace(/^['"`]|['"`]$/g, '').trim()
+      const obj = enclosingObject(src, m.index!)
+      if (!obj) continue
+      const ink = new RegExp(`(?:^|[{,\\s])color:\\s*['"\`]?(?:\\$\\{)?${esc(tone)}(?:\\})?['"\`]?\\s*[,}]`)
+      if (!ink.test(obj)) continue
+      sites.push({
+        file: abs.slice(SRC.length + 1), line: src.slice(0, m.index!).split('\n').length,
+        tone, pct: Number(m[2]), literal: /^var\(--color-[a-z-]+\)$/.test(tone),
+      })
+    }
+  }
+  return sites
+}
+
+const SITES = chipSites()
+
+// ── The reference grounds ───────────────────────────────────────────────────────────────────────
+//
+// The four tiers a chip RESTS on, read per mode from source so a retint cannot drift the guard.
+// `surface-high`/`-highest` are excluded on measurement — see the header's third trap.
+const RESTING = ['canvas', 'surface', 'surface-low', 'surface-container'] as const
+
+// ── The tone vocabulary, READ OUT OF THE PRIMITIVE ──────────────────────────────────────────────
+//
+// 🔴 A HAND-WRITTEN TONE LIST CANNOT NOTICE A TONE IT DOES NOT MENTION (#3493). This was
+// `const GLOBAL_TONES = ['ok', 'warn', 'danger']` plus `info` swept per scheme — four of the SIX
+// tones `ui/StatusPill` vends. The two it never named, `neutral` and `primary`, are exactly where the
+// next defect was: `neutral` drew its text in `--color-outline-variant`, a hairline/border value, and
+// read **1.6346 dark** / **1.1381 light** over its own 16% tint — all 8 resting cells under AA, on ten
+// call sites. The old list was not wrong about the tones it swept; it was silent about the ones it
+// did not, and silence is indistinguishable from a pass.
+//
+// So the list is DERIVED. Every tone in `TONE_VAR` is either swept below or named in `UNSWEPT_TONES`
+// with its measurement, and the assertion further down closes the set both ways: a SEVENTH tone reds
+// this file until someone sweeps it or argues for it, and a tone that stops being vended reds the
+// exclusion pin. The old prose said "`on-surface-low`/`-var` … are the ink RAMP rather than semantic
+// tones and … are covered by the ceiling ratchet, not swept here" — that is no longer true of
+// `on-surface-low`, which is now `neutral`'s ink and is swept like any other.
+
+/** `tone → '--color-…'`, parsed out of `ui/StatusPill.tsx`'s `TONE_VAR`.
+ *
+ *  🪤 THE PARSE IS THE VACUITY HOLE, so it is controlled rather than trusted: a tone whose ink stops
+ *  being a plain `var(--color-x)` literal (an imported constant, a `color-mix`, a ternary) simply
+ *  would not match, and the sweep would silently shrink by one — the same failure this file exists to
+ *  end. `tone_vocabulary` below cross-checks these keys against the `StatusPillTone` UNION parsed
+ *  from the same file, so a skipped entry reds instead of vanishing. */
+function pillToneInks(): Record<string, string> {
+  const src = readSource(join(SRC, 'ui/StatusPill.tsx'))
+  const block = src.match(/const TONE_VAR:[^=]*=\s*\{([\s\S]*?)\n\}/)
+  if (!block) throw new Error('could not find the TONE_VAR map in ui/StatusPill.tsx')
+  const out: Record<string, string> = {}
+  for (const m of block[1].matchAll(/^\s*([a-z]+):\s*'var\((--color-[a-z-]+)\)',/gm)) out[m[1]] = m[2]
+  return out
+}
+const PILL_TONES = pillToneInks()
+
+/** The `StatusPillTone` union's members, from the same file — the control on the parse above. */
+function pillToneUnion(): string[] {
+  const src = readSource(join(SRC, 'ui/StatusPill.tsx'))
+  const m = src.match(/export type StatusPillTone\s*=\s*([^\n]+)/)
+  if (!m) throw new Error('could not find the StatusPillTone union in ui/StatusPill.tsx')
+  return [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1])
+}
+
+/** Which `--color-*` tokens a scheme supplies, read off a scheme rather than listed. A tone whose
+ *  ink is one of these is swept once PER SCHEME; anything else is a global value in `tokens.css`. */
+const SCHEME_SUPPLIED = new Set(Object.keys(SCHEMES[0].colors))
+
+/** THE BORDER/HAIRLINE TOKENS, BY NAME — the class of value that must never be a text ink.
+ *
+ *  This is a denylist rather than a threshold because the property is structural, not numeric: a
+ *  hairline exists to be *barely* separable from its surface, so being close to the ground is the
+ *  token's job. `no_hairline_ink` asserts no tone uses one, and `hairline_unreadable` asserts these
+ *  values really are unreadable on every tier — so the denylist carries its own justification and
+ *  cannot rot into a superstition. `--color-outline` is listed for the same reason plus a structural
+ *  tell: it is `#8e918f` in BOTH modes, and an ink that does not invert with the mode cannot be
+ *  readable in both.
+ *
+ *  ✅ SCOPE WIDENED FROM ONE FILE TO THE TREE (#3504). This used to read `ui/StatusPill.tsx` only,
+ *  and recorded that limit honestly: "a tree-wide version of `no_hairline_ink` fails on `DAY_TONE`
+ *  today". It did — `pages/learning/learningMeta.ts`'s `DAY_TONE.not_started` (then named
+ *  `out_of_scope`) was `--color-outline` at 3.1833 on the light `surface-container`. That site is
+ *  fixed (`--color-on-surface-var`, worst
+ *  5.4738 across all four tiers in both modes), so the assertion now runs over EVERY tone map in
+ *  `web/src` and every literal ink position — see `toneMaps()` and `literalInkSites()`. A
+ *  component-scoped guard for a class-shaped defect is a guard that finds the class exactly once. */
+const HAIRLINE_TOKENS = new Set(['--color-outline', '--color-outline-variant'])
+
+// ── The TREE-WIDE population for `no_hairline_ink` (#3504) ──────────────────────────────────────
+//
+// Two complementary scans, because the defect class takes two shapes and each is sound in a
+// different domain. Both #3493 and #3504 were the SECOND shape — a tone map — which is why a scan
+// that only understood literals would have found neither.
+//
+// 🪤 A THIRD SHAPE EXISTS AND IS DELIBERATELY OUT OF SCOPE, WITH ITS MEASUREMENT: a tone FUNCTION
+// (`lib/residency.ts`'s `pressureTone` → `var(--color-outline-variant)` for an unreadable host) and
+// an inline ternary (`pages/tasks/DagView.tsx:200`, `pages/knowledge/KnowledgeDetail.tsx:814`,
+// `pages/settings/MemoryGraph.tsx:114`). Every one of those was traced and every one feeds a
+// NON-text property — `Meter`'s `background`, an SVG `stroke`, an SVG `fill`, a dot — so none is a
+// live defect. They are excluded because **a regex over function bodies is not sound here, measured**:
+// a body-window scan reported 27 "tone functions returning a hairline", of which 24 were React
+// components whose JSX merely contained a `border` or `stroke` hairline somewhere inside. A selector
+// with a 24/27 false-positive rate cannot be a rail, and widening to it would have been the
+// "broader coverage while asserting less" trade this file's `UNSWEPT_TONES` note already refuses.
+// `no_hairline_fn_ink` below closes the half of that shape that IS soundly checkable: a named tone
+// function reached from a `color:` position.
+
+/** Every `.ts`/`.tsx` module under `src`, comments stripped.
+ *
+ *  🪤 STRIPPING COMMENTS IS LOAD-BEARING, and this file's siblings record why four separate times: a
+ *  rail that greps raw source matches the PROSE EXPLAINING the fix, so the commit that fixes the
+ *  defect is the commit the rail reds. `ui/StatusPill.tsx`'s `neutral` comment and
+ *  `learningMeta.ts`'s `DAY_TONE` comment BOTH name `--color-outline*` in exactly the sentence that
+ *  records it was removed. Unstripped, this scan reds on both fixes. */
+function modules(): Array<[string, string]> {
+  return walk(SRC).map((abs) => [
+    abs.slice(SRC.length + 1),
+    readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''),
+  ])
+}
+const MODULES = modules()
+
+/** SHAPE 1 — a LITERAL ink position: `color: 'var(--color-x)'` in a style object, or the Tailwind
+ *  `text-<token>` / `text-[var(--color-x)]` utility. The ground is not knowable here either, but the
+ *  token is, which is all this scan needs. */
+function literalInkSites(): Array<{ file: string; token: string; form: string }> {
+  const out: Array<{ file: string; token: string; form: string }> = []
+  for (const [file, src] of MODULES) {
+    for (const m of src.matchAll(/(?:^|[{,\s])color:\s*['"`]var\((--color-[a-z-]+)\)['"`]/g)) {
+      out.push({ file, token: m[1], form: 'color:' })
+    }
+    for (const m of src.matchAll(/\btext-\[var\((--color-[a-z-]+)\)\]/g)) {
+      out.push({ file, token: m[1], form: 'text-[var()]' })
+    }
+    // The bare Tailwind utility: `text-outline`, `text-outline-variant`. Keyed on the denylist's own
+    // suffixes rather than on every token name, because Tailwind's `text-*` namespace also carries
+    // sizes (`text-sm`) and the two cannot be told apart by shape.
+    for (const m of src.matchAll(/\btext-(outline(?:-variant)?)\b/g)) {
+      out.push({ file, token: `--color-${m[1]}`, form: 'text-* utility' })
+    }
+  }
+  return out
+}
+const LITERAL_INK = literalInkSites()
+
+/** SHAPE 2 — a TONE MAP: a module-level object literal whose values are `var(--color-*)` string
+ *  literals. This is the shape of BOTH filed defects, and it is the shape a literal scan cannot see,
+ *  because the `color:` that consumes it is in another file and names only the map.
+ *
+ *  🔑 EVERY VALUE IS CHECKED REGARDLESS OF CONSUMPTION, and that is the stricter reading on purpose.
+ *  A tone map is a semantic INK vocabulary handed to callers who each pick their own ground — the
+ *  premise this whole file rests on is that the ground is not knowable at the call site, so a map
+ *  holding an inadmissible ink is a defect waiting for its second consumer even if today's only
+ *  consumer happens to paint a border with it. 15 such maps exist and after #3504 exactly
+ *  ZERO hold a hairline token, so the strict reading costs nothing and needs no allowlist. */
+function toneMaps(): Array<{ file: string; name: string; tokens: string[] }> {
+  const out: Array<{ file: string; name: string; tokens: string[] }> = []
+  for (const [file, src] of MODULES) {
+    for (const m of src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*?)?=\s*\{([^{}]*?)\}/g)) {
+      const body = m[2]
+      const vals = [...body.matchAll(/['"`]var\((--color-[a-z-]+)\)['"`]/g)].map((x) => x[1])
+      const entries = body.match(/^\s*[\w'"[\]]+\s*:/gm)?.length ?? 0
+      // ≥2 token values AND a clear majority of the entries: enough to be a tone VOCABULARY rather
+      // than a one-off style object that happens to name a token.
+      if (vals.length >= 2 && entries > 0 && vals.length / entries >= 0.6) {
+        out.push({ file, name: m[1], tokens: [...new Set(vals)] })
+      }
+    }
+  }
+  return out
+}
+const TONE_MAPS = toneMaps()
+
+/** SHAPE 3, the soundly-checkable half — a named function whose body returns a hairline literal AND
+ *  which is reached from a `color:` position. `pressureTone` is the live example and it is reached
+ *  from `Meter`'s `tone` prop (a `background`), never from an ink position, so this reads zero. */
+function hairlineToneFns(): string[] {
+  const names: string[] = []
+  for (const [, src] of MODULES) {
+    for (const m of src.matchAll(
+      /(?:export\s+)?function\s+([a-z][\w$]*)\s*\([^)]*\)[^{]*\{([\s\S]{0,700}?)\n\}/g,
+    )) {
+      if (/['"`]var\((--color-outline(?:-variant)?)\)['"`]/.test(m[2])) names.push(m[1])
+    }
+  }
+  return [...new Set(names)]
+}
+const HAIRLINE_TONE_FNS = hairlineToneFns()
+
+/** Tones this rail does NOT sweep. ✅ **EMPTY SINCE #3503 — the whole vocabulary is measured.**
+ *
+ *  It held exactly one entry, `primary`, and the entry was honest: swept as a chip ink it was under
+ *  4.5 in **42 of 96** cells (12 schemes × 2 modes × 4 resting tiers at 16%), worst 3.4870
+ *  (`rose`/light/canvas, `#d22b6f`), and **every one of the 42 was LIGHT mode** — dark passed 48/48.
+ *  `--color-primary-emphasis`, the substitute this file's header used to point at, only reached
+ *  20/96, so no token swap fixed it. The fix was a retune of `--color-primary`'s LIGHT value across
+ *  all 12 schemes — because `schemes.ts` had chosen those values to be "≥4.5:1 as white-text button
+ *  fill AND as text on white", i.e. against the BARE ground, which is the same mistake the
+ *  `--color-info` retune corrected one token over. It landed, with the per-scheme table and the
+ *  measured collateral in `schemes.ts`'s header, and the entry is gone rather than kept: an exclusion
+ *  that no longer excludes anything is a rail guarding nothing.
+ *
+ *  🔴 THE FLOOR WAS NEVER TOUCHED, IN EITHER RETUNE. It is 4.5 for all six tones now. The exclusion
+ *  existed so that "unswept" was legible instead of invisible, never to accommodate 3.4870 — widening
+ *  the sweep to six tones against a lowered threshold would have read as broader coverage while
+ *  asserting less. The mechanism stays in place for the next tone that needs it: `tone_coverage`
+ *  requires swept ∪ unswept to be the whole vocabulary and pins the exclusion count, so an entry can
+ *  only arrive with its measurement and a review conversation. It is now pinned at ZERO. */
+const UNSWEPT_TONES = new Map<string, string>()
+
+function inks(mode: Mode): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  for (const [tone, tok] of Object.entries(PILL_TONES)) {
+    if (UNSWEPT_TONES.has(tone)) continue
+    if (SCHEME_SUPPLIED.has(tok)) {
+      for (const s of SCHEMES) out.push([`${tone}:${s.id}`, s.colors[tok][mode]])
+    } else {
+      out.push([tone, token(tok.replace('--color-', ''), mode)])
+    }
+  }
+  return out
+}
+
+// ═══ Tone COVERAGE — the half of #3493 that was not the ink ══════════════════════════════════════
+//
+// Closed both ways, because each direction fails differently: an unswept tone ships a defect (what
+// happened), and a stale exclusion claims a gap that is no longer there (how the fix rots).
+describe('the tone vocabulary is closed: every StatusPill tone is swept or named, and no ink in the tree is a hairline', () => {
+  it('tone_vocabulary: the parsed TONE_VAR keys are exactly the StatusPillTone union', () => {
+    // The control on `pillToneInks`'s regex. Without it, an ink that stopped being a plain
+    // `var(--color-x)` literal would drop out of the sweep and nothing would say so.
+    const union = pillToneUnion()
+    expect(union.length, 'members of the StatusPillTone union').toBe(6)
+    expect(Object.keys(PILL_TONES).sort(), 'TONE_VAR entries the parser could read').toEqual(union.slice().sort())
+    for (const [tone, tok] of Object.entries(PILL_TONES)) {
+      expect(tok, `tone \`${tone}\``).toMatch(/^--color-[a-z-]+$/)
+    }
+  })
+
+  it('tone_coverage: swept ∪ unswept is the whole vocabulary, and unswept is now EMPTY', () => {
+    const swept = Object.keys(PILL_TONES).filter((t) => !UNSWEPT_TONES.has(t))
+    expect(swept.sort(), 'tones this file measures against 4.5').toEqual(
+      ['danger', 'info', 'neutral', 'ok', 'primary', 'warn'],
+    )
+    // Cardinality pinned separately from identity: an exclusion is a review conversation, and
+    // absorbing it into the set comparison above would let one arrive silently. #3503 emptied this,
+    // so the pin is ZERO — a tone cannot be quietly dropped out of the sweep again.
+    expect([...UNSWEPT_TONES.keys()], 'no tone may be excluded from the 4.5 sweep — see UNSWEPT_TONES').toEqual([])
+    for (const t of UNSWEPT_TONES.keys()) {
+      expect(PILL_TONES[t], `\`${t}\` is excluded but is no longer a StatusPill tone — drop the entry`).toBeTruthy()
+      expect(UNSWEPT_TONES.get(t)!.length, `\`${t}\`'s exclusion must carry its measurement`).toBeGreaterThan(40)
+    }
+  })
+
+  const WHY = (where: string, tok: string) =>
+    `${where} draws TEXT in ${tok}, a border/hairline token. A hairline is designed to be barely ` +
+    `separable from its surface, so no choice of ground and no pinned compositing base can make it ` +
+    `readable — pick an ink-ramp value (\`--color-on-surface-low\` or \`--color-on-surface-var\`; ` +
+    `they are \`StatusPill.neutral\`'s and \`DAY_TONE.not_started\`'s respectively).`
+
+  it('scan_population: both tree-wide scans found a real population (a scan over nothing passes forever)', () => {
+    // 🔴 THE VACUITY FLOOR FOR EVERYTHING BELOW. `modules()`, `literalInkSites()`, `toneMaps()` and
+    // `hairlineToneFns()` are all DERIVED by regex over the tree, and every one of them can come back
+    // empty — a renamed directory, a tightened `walk` filter, a `color:` idiom that stops matching —
+    // at which case `no_hairline_ink` iterates NOTHING and reports green over a tree full of defects.
+    // That is the precise failure this file was widened to end, so the counts are pinned first.
+    expect(MODULES.length, 'src modules scanned').toBeGreaterThanOrEqual(500)
+    expect(LITERAL_INK.length, 'literal ink positions found').toBeGreaterThanOrEqual(250)
+    expect(TONE_MAPS.length, 'tone maps found').toBeGreaterThanOrEqual(12)
+    // Named members of each population, so a parse that reads a smaller-but-nonzero set still reds.
+    // These two are the exact maps the two filed defects lived in, which makes them the right pins.
+    const named = TONE_MAPS.map((m) => `${m.file}::${m.name}`)
+    expect(named, "#3493's map must be in the population").toContain('ui/StatusPill.tsx::TONE_VAR')
+    expect(named, "#3504's map must be in the population").toContain('pages/learning/learningMeta.ts::DAY_TONE')
+    // And the scans really do reach beyond `design/` — a walk that collapsed to one directory would
+    // still satisfy the counts above if that directory were big enough.
+    expect(new Set(TONE_MAPS.map((m) => m.file.split('/')[0])).size,
+      'tone maps span more than one top-level directory').toBeGreaterThanOrEqual(3)
+  })
+
+  it('no_hairline_ink: no tone map value and no literal ink position is a border/hairline token', () => {
+    // The generalization of #3493 AND #3504, and the reason it is a denylist: this is the property the
+    // ratio sweep below would also catch, asserted by NAME so the failure message says *why* rather
+    // than just how far under. Positive control first — a denylist that matches nothing reads
+    // identical to a clean tree (see this file's "write the control that makes the selector fire"
+    // siblings).
+    expect(HAIRLINE_TOKENS.has('--color-outline-variant'), 'the guard must fire on the #3493 value').toBe(true)
+    expect(HAIRLINE_TOKENS.has('--color-outline'), 'the guard must fire on the #3504 value').toBe(true)
+
+    // The pill's own map, still named explicitly: it is in `TONE_MAPS` below, but the union parse
+    // above is what makes the SWEEP honest, and this keeps the two halves of #3493 side by side.
+    for (const [tone, tok] of Object.entries(PILL_TONES)) {
+      expect(HAIRLINE_TOKENS.has(tok), WHY(`StatusPill tone \`${tone}\``, tok)).toBe(false)
+    }
+
+    const offenders = [
+      ...TONE_MAPS.flatMap((m) =>
+        m.tokens.filter((t) => HAIRLINE_TOKENS.has(t)).map((t) => `${m.file} :: ${m.name} → ${t}`)),
+      ...LITERAL_INK.filter((s) => HAIRLINE_TOKENS.has(s.token))
+        .map((s) => `${s.file} :: ${s.form} ${s.token}`),
+    ]
+    expect(offenders, WHY(`${offenders.length} site(s)`, 'a hairline token') +
+      `\n\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('no_hairline_fn_ink: no tone FUNCTION returning a hairline is reached from a color: position', () => {
+    // Shape 3's checkable half — see the scope note above `modules()` for why the general function
+    // form is not soundly greppable and what was measured when it was tried.
+    //
+    // Control: the census must actually find the known function, or this assertion is a scan over an
+    // empty list. `pressureTone` returns `var(--color-outline-variant)` for an unreadable host and is
+    // consumed as `Meter`'s `tone` prop, i.e. a `background` — legitimate, and the reason this reads
+    // zero rather than being absent.
+    expect(HAIRLINE_TONE_FNS, 'the known hairline-returning tone function').toContain('pressureTone')
+    const reached: string[] = []
+    for (const [file, src] of MODULES) {
+      for (const fn of HAIRLINE_TONE_FNS) {
+        const re = new RegExp(`(?:^|[{,\\s])color:\\s*[^,;}\\n]*\\b${fn}\\s*\\(`, 'g')
+        for (const m of src.matchAll(re)) reached.push(`${file} :: color: … ${fn}(…)  [${m[0].trim()}]`)
+      }
+    }
+    expect(reached, `a tone function that can return a hairline token is painted as TEXT:\n${
+      reached.join('\n')}\nEither give the function an ink-ramp fallback or route this site to a ` +
+      `non-text property.`).toEqual([])
+  })
+
+  it('hairline_unreadable: the denylisted values are inadmissible as ink, and outline-variant on every tier', () => {
+    // The denylist's own justification, so it cannot rot into a superstition — and the in-test
+    // vacuity floor for `no_hairline_ink`, which would pass just as happily if these tokens were
+    // fine. Inverted on purpose: these cells must FAIL.
+    //
+    // 🪤 THE FIRST DRAFT ASSERTED "every cell under 4.5" AND ITS OWN CONTROL DISPROVED IT:
+    // `--color-outline` (`#8e918f`, the SAME value in both modes) reads **4.8936** on the dark canvas
+    // and clears AA there, while failing the other six cells (2.4891 worst, light canvas). That is
+    // worth more than the tidier claim, because it is the exact trap the sweep exists for — a token
+    // checked against one ground looks admissible, and the ground a chip lands on is not knowable at
+    // the call site. So the predicate is admissibility: a pill ink must clear 4.5 on ALL eight cells,
+    // and a token with even one failing cell cannot be one.
+    const failing = new Map<string, number>()
+    for (const tok of HAIRLINE_TOKENS) {
+      let under = 0
+      for (const mode of ['dark', 'light'] as Mode[]) {
+        for (const ground of RESTING) {
+          const ink = token(tok.replace('--color-', ''), mode)
+          if (tintedChipRatio(ink, token(ground, mode), 16) < aaFloor(12, false)) under++
+        }
+      }
+      failing.set(tok, under)
+    }
+    const detail = [...failing].map(([t, n]) => `${t} ${n}/8`).join(', ')
+    for (const [tok, under] of failing) {
+      expect(under, `${tok} now clears AA on all 8 resting cells (${detail}), so it is admissible as a ` +
+        `pill ink — either it stopped being a hairline (drop it from HAIRLINE_TOKENS and sweep it as a ` +
+        `tone) or a ground moved`).toBeGreaterThan(0)
+    }
+    // The load-bearing half of #3493's claim, asserted separately: for `--color-outline-variant` it is
+    // not "some grounds are bad", it is that NO ground rescues it — every tier, both modes, 1.14–1.89.
+    expect(failing.get('--color-outline-variant'),
+      `#3493's "no choice of ground fixes it" — every resting cell must be under AA (${detail})`).toBe(8)
+  })
+})
+
+// ═══ Tier 1 — every strength up to 16%, on every resting tier, in every scheme, in both modes ════
+//
+// 1120 cells — 4 global tones + 12 `info:*` + 12 `primary:*` inks, × 4 tiers × 5 strengths × 2 modes.
+// It was 600 before `neutral` joined (#3493) and 640 before `primary` did (#3503). Worst: 4.5007
+// (`primary:coral` light, canvas, 16%); `neutral`'s worst is 4.5472 and `danger` dark's is 4.5200.
+//
+// Three findings of the SAME SHAPE, one token each, and the cell counts are the evidence that each
+// diagnosis was the same size as its defect:
+//
+//   · `info`     171 of the then-600 under 4.5, EVERY ONE an `info:*` cell — only the scheme-retinted
+//                tone had drifted.
+//   · `neutral`  8 of its 8 sixteen-percent cells under AA, both modes — a hairline used as ink, so no
+//                ground and no compositing base could fix it (#3493).
+//   · `primary`  42 of its 96 resting cells under AA, **every one LIGHT** — dark passed 48/48. Worst
+//                3.4870 (`rose`/light/canvas). No token substitution fixed it, so the 12 light values
+//                were retuned in OKLCH with hue and chroma held (#3503); all 96 now clear, worst
+//                4.5007. `schemes.ts`'s header carries the per-scheme table and the collateral.
+//
+// All three were tones this file did not measure at the time. That is the actual lesson, and it is why
+// `UNSWEPT_TONES` is now pinned at zero rather than merely emptied.
+describe('status-chip tone over its own ≤16% tint clears AA on every resting tier, every scheme', () => {
+  it('has the full curated scheme set (a sweep over an empty list passes forever)', () => {
+    expect(SCHEMES.length, 'curated schemes').toBeGreaterThanOrEqual(12)
+    expect(SCHEMES.every((s) => /^#[0-9a-f]{6}$/i.test(s.colors['--color-info'].dark))).toBe(true)
+    expect(SCHEMES.every((s) => /^#[0-9a-f]{6}$/i.test(s.colors['--color-info'].light))).toBe(true)
+  })
+
+  it('sweeps every ink the derived vocabulary yields (the cell count, not the tone count)', () => {
+    // The tone list is parsed rather than written (see `pillToneInks`), so the population floor lives
+    // here: four global tones (`ok`/`warn`/`danger`/`neutral`) + TWO scheme-supplied inks per scheme,
+    // `info:*` and — since #3503 — `primary:*`. A parse that silently read five tones instead of six
+    // would leave `tone_vocabulary` red AND this count short, and the pair names which half broke.
+    for (const mode of ['dark', 'light'] as Mode[]) {
+      const list = inks(mode)
+      expect(list.length, `${mode} inks swept`).toBe(4 + 2 * SCHEMES.length)
+      expect(list.map(([n]) => n), `${mode} must include the tone #3493 added`).toContain('neutral')
+      expect(list.map(([n]) => n), `${mode} must include the tone #3503 added`).toContain('primary:coral')
+      expect(list.every(([, ink]) => /^#[0-9a-f]{6}$/i.test(ink)), `${mode} inks are all hex`).toBe(true)
+    }
+  })
+
+  it('reads real, per-mode ground values out of tokens.css', () => {
+    for (const g of RESTING) {
+      expect(token(g, 'dark'), `${g} dark`).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(token(g, 'dark'), `${g} must differ per mode`).not.toBe(token(g, 'light'))
+    }
+  })
+
+  it('the three global tones are the same values their aliases resolve to', () => {
+    // So sweeping `ok`/`warn`/`danger` genuinely covers the `success`/`warning`/`error` spellings
+    // that 15 of the literal-tone sites use. Asserted on the DARK block only, and that is the
+    // point: the aliases are declared ONCE as `var()` references, so they follow whichever mode's
+    // value is live and there is nothing per-mode to check. A `.light` redeclaration would be the
+    // bug — it would let one spelling of one tone diverge from the other in exactly one mode.
+    for (const [alias, canon] of [['success', 'ok'], ['warning', 'warn'], ['error', 'danger']]) {
+      expect(BLOCKS.dark, `--color-${alias}`).toMatch(
+        new RegExp(`--color-${alias}:\\s*var\\(--color-${canon}\\)`),
+      )
+      expect(BLOCKS.light, `--color-${alias} must not be redeclared in .light`).not.toMatch(
+        new RegExp(`--color-${alias}:`),
+      )
+    }
+  })
+
+  for (const mode of ['dark', 'light'] as Mode[]) {
+    for (const ground of RESTING) {
+      for (const pct of [8, 10, 12, 14, 16]) {
+        it(`${mode}: ≥AA on ${ground} at ${pct}%`, () => {
+          for (const [name, ink] of inks(mode)) {
+            const r = tintedChipRatio(ink, token(ground, mode), pct)
+            // 12px and 13px chips only — never the 3:1 large-text relief. `aaFloor` is asserted
+            // against the real rendered sizes further down.
+            expect(r, `${name} (${ink}) on its own ${pct}% tint over ${ground} ${mode} = ${r.toFixed(4)}`)
+              .toBeGreaterThanOrEqual(aaFloor(12, false))
+          }
+        })
+      }
+    }
+  }
+})
+
+// ═══ Tier 2 — 18%, the strongest strength in the tree, for the token this change retuned ═════════
+//
+// 96 cells (12 schemes × 2 modes × 4 tiers). Worst after the fix: 4.5528 (rose/light on the canvas).
+// Before it, **48 of the 96** were under AA — the 13px `sm.tone` chip in `tasks/TaskDetail.tsx`,
+// worst 3.3253 (slate/light on the canvas). Counted the other way, by scheme × mode rather than by
+// cell, 16 of the 24 combos failed on at least one resting tier. `info` is swept on ALL FOUR tiers at
+// this strength because the retune targeted the worst tier of each mode, so it holds on every tier by
+// construction.
+//
+// 🔴 `ok`/`warn`/`danger` ARE DELIBERATELY NOT SWEPT AT 18%, AND THAT IS AN UNFIXED FINDING, NOT AN
+// OVERSIGHT. Measured, they miss AA at that strength on three of the four tiers:
+//
+//     danger  dark  surface-container  4.3543      ok      light canvas       4.4313
+//     danger  light canvas             4.4029      warn    light surface-low  4.4823
+//     warn    light canvas             4.4198      danger  light surface-low  4.4767
+//
+// Four 12px text sites are at 18% with one of those tones — `artifacts/ArtifactViewer.tsx:253`
+// ("source changed"), `prompts/VariableRow.tsx:40` (the required toggle),
+// `skills/MarketplaceDetail.tsx:80` (a scan-severity badge) and `ChatPage.tsx:4338` (which uses
+// `--color-secondary`, unswept: `tokens.css` once declared no `.light` value for it, though the registry's
+// `#cf7a23` was what painted, and the base sheet now says so). Whether
+// each is a live violation depends on the tier it rests on, and none of the four was reachable with
+// data on the seeded home, so the honest position is: the cells are recorded, the sweep does
+// not claim them, and the ceiling ratchet below stops a FIFTH appearing. Moving `ok`/`warn`/`danger`
+// is also a far wider blast radius than moving `info`: they are global values, so a nudge lands on
+// every error surface, every progress bar and every icon in the product at once, and
+// `errorTreatments.test.ts` holds `--color-danger` to its own bar.
+describe('the 18% chip clears AA on every resting tier, every scheme (the retuned token)', () => {
+  for (const mode of ['dark', 'light'] as Mode[]) {
+    for (const ground of RESTING) {
+      it(`${mode}: info ≥AA on ${ground} at 18%`, () => {
+        for (const s of SCHEMES) {
+          const ink = s.colors['--color-info'][mode]
+          const r = tintedChipRatio(ink, token(ground, mode), 18)
+          expect(r, `info:${s.id} (${ink}) on its own 18% tint over ${ground} ${mode} = ${r.toFixed(4)}`)
+            .toBeGreaterThanOrEqual(aaFloor(13, false))
+        }
+      })
+    }
+  }
+})
+
+// ═══ The size threshold is explicit, and no chip in this family can claim large-text relief ══════
+describe('the applicable floor is 4.5, derived from the size, not assumed', () => {
+  it('aaFloor implements SC 1.4.3 large text exactly', () => {
+    expect(aaFloor(12, false)).toBe(4.5)
+    expect(aaFloor(13, false)).toBe(4.5)
+    expect(aaFloor(12, true), 'bold does not make 12px large').toBe(4.5)
+    expect(aaFloor(18.65, true), 'just under the bold threshold').toBe(4.5)
+    expect(aaFloor(18.66, true), '≥18.66px BOLD is large').toBe(3)
+    expect(aaFloor(18.66, false), '≥18.66px at normal weight is NOT large').toBe(4.5)
+    expect(aaFloor(23.9, false)).toBe(4.5)
+    expect(aaFloor(24, false), '≥24px at any weight is large').toBe(3)
+  })
+
+  it('every type size declared on a chip in this family is under the large-text threshold', () => {
+    // Read the size off the site rather than pinning it: a chip that grows past 18.66px would be
+    // allowed 3:1 and this rail must notice rather than keep asserting 4.5 by assumption.
+    const sizes: Array<{ site: string; px: number }> = []
+    for (const s of SITES) {
+      const src = readSource(join(SRC, s.file)).split('\n')
+      const window = [src[s.line - 2] ?? '', src[s.line - 1] ?? ''].join(' ')
+      for (const m of window.matchAll(/text-\[([\d.]+)(rem|px)\]/g)) {
+        sizes.push({ site: `${s.file}:${s.line}`, px: Number(m[1]) * (m[2] === 'rem' ? 16 : 1) })
+      }
+    }
+    expect(sizes.length, 'chip sites that declare an explicit type size').toBeGreaterThanOrEqual(15)
+    const large = sizes.filter((s) => s.px >= 18.66)
+    expect(large, `these could claim large-text relief and the sweep above assumes they cannot:\n${
+      large.map((s) => `${s.site} — ${s.px}px`).join('\n')}`).toEqual([])
+  })
+})
+
+// ═══ The ratchet, written from the other side ════════════════════════════════════════════════════
+describe('the tone-as-ink-and-tint family stays inside the swept envelope', () => {
+  it('the census is not vacuously empty', () => {
+    // Pinned near the measured 88 so a parser regression (or a call site rewritten past the regex)
+    // cannot turn this whole file into a sweep over nothing.
+    expect(SITES.length, 'tone-as-ink-and-background-tint sites').toBeGreaterThanOrEqual(80)
+    expect(SITES.filter((s) => s.literal).length, 'literal-tone sites').toBeGreaterThanOrEqual(60)
+    expect(SITES.filter((s) => !s.literal).length, 'registry-tone sites').toBeGreaterThanOrEqual(20)
+    // The flagship, by file and line, so a move that silently drops it from the family is caught.
+    expect(SITES.some((s) => s.file === 'pages/tasks/TasksListPage.tsx' && s.pct === 16)).toBe(true)
+    expect(SITES.some((s) => s.file === 'pages/tasks/TaskDetail.tsx' && s.pct === 18)).toBe(true)
+  })
+
+  /** The identity of a site, for the two pins below: FILE + TONE EXPRESSION + STRENGTH, and
+   *  deliberately NOT the line number.
+   *
+   *  🪤 A LINE-NUMBER PIN IN A RATCHET IS A RAIL THAT REDS ON SOMEBODY ELSE'S DIFF. This file was
+   *  first written pinning `file:line`, and rebasing it onto a `main` that had merely SHORTENED
+   *  `ChatPage.tsx` reddened both pins below — 4338→4266, 4361→4289, 4496→4424 — with the chips
+   *  themselves untouched. That is the failure mode where the next contributor deletes the
+   *  assertion instead of reading it. Keying on the tone expression is strictly no weaker in the
+   *  dimension that matters: it still distinguishes the TWO 18% chips inside `ChatPage.tsx` from
+   *  each other (`--color-secondary` vs the tag colour), and the cardinality pin below closes the
+   *  case where a new chip copies an existing file+tone pair exactly. */
+  const key = (s: Site) => `${s.file} @${s.pct}% ${s.tone.replace(/\s+/g, ' ').trim()}`
+
+  // The two sites above 18% are named, with the reason each is out of the ink budget rather than
+  // simply unfixed. A THIRD one reds this test and has to be argued for.
+  const ABOVE_CEILING = new Set([
+    // A knowledge-TYPE hue on a selected filter chip. `KnowledgeListPage.tsx` already carries the
+    // reasoning beside it: no `<tone>-container` sibling exists, the coral container would be visually
+    // wrong, and "if one ever fails, it needs its own container value, not a guess made from this
+    // one". Respected, not re-litigated.
+    'pages/knowledge/KnowledgeListPage.tsx @20% tone',
+    // A user-chosen chat-tag colour (`t.color`). The tone is USER DATA, so no token value can
+    // constrain it — this one needs a contrast-aware ink picked at render time, which is a
+    // different change from a scheme retune. (Moved with the chat history page.)
+    "pages/chat/history/ChatHistoryPage.tsx @22% t.color || 'var(--color-primary)",
+  ])
+
+  it('no chip tints above the 18% ceiling these tiers were swept at', () => {
+    const over = SITES.filter((s) => s.pct > 18).map(key)
+    const unexpected = over.filter((s) => !ABOVE_CEILING.has(s))
+    expect(unexpected, `above the swept ceiling with no recorded reason:\n${unexpected.join('\n')}\n` +
+      `Sweep that strength in this file first, or use one that is already swept (≤16% on any resting ` +
+      `tier, 18% on --color-surface).`).toEqual([])
+    expect(over.length, 'the two recorded exceptions still exist (or this allowance is stale)').toBe(ABOVE_CEILING.size)
+  })
+
+  it('the 18% population is exactly the eight sites whose tones were reasoned about', () => {
+    // The pin is the point. `info` clears 18% on every tier; `ok`/`warn`/`danger` do NOT (see the
+    // tier-2 header for the six failing cells), and `--color-secondary` is not swept at all.
+    // So a NINTH 18% chip is not a cosmetic addition — it is a contrast question, and it reds here
+    // until someone measures the tier it rests on and either sweeps that cell or drops to ≤16%.
+    const at18 = SITES.filter((s) => s.pct === 18)
+    expect(at18.map(key).sort(), 'a new 18% chip needs its resting tier measured before it can be added here')
+      .toEqual([
+        // --color-secondary — unswept at any strength (see tier 2). This and the next moved with the
+        // chat history page.
+        'pages/chat/history/ChatHistoryPage.tsx @18% var(--color-secondary)',
+        // a user-chosen tag colour, else --color-primary
+        "pages/chat/history/ChatHistoryPage.tsx @18% tagById[tid].color || 'var(--color-primary)",
+        'pages/artifacts/ArtifactViewer.tsx @18% var(--color-warning)',   // 12px text
+        "pages/loops/LoopCockpitPage.tsx @18% verdict.done ? 'var(--color-ok)' : 'var(--color-primary)",
+        'pages/prompts/VariableRow.tsx @18% var(--color-danger)',          // 12px text
+        // --color-danger / --color-warning, 12px text
+        "pages/skills/MarketplaceDetail.tsx @18% var(--color-${f.severity === 'dangerous' ? 'danger' : 'warning'})",
+        'pages/tasks/TaskDetail.tsx @18% sm.tone',   // the status chip — `info` here, 13px, swept above
+        'ui/UpdateProgressOverlay.tsx @18% var(--color-success)', // a size-6 GLYPH badge: 3:1, 4.91
+      ].sort())
+    // Cardinality, separately: a ninth chip that duplicated an existing file+tone+strength triple
+    // exactly would be absorbed by the set comparison above and must not be.
+    expect(at18.length, '18% chip sites').toBe(8)
+  })
+})
+
+// ═══ The three declarations of --color-info agree ════════════════════════════════════════════════
+//
+// `schemes.ts` says "Light primary/emphasis/info mirror tokenRegistry's AA-verified shades — keep in
+// sync", and nothing enforced it. The value now exists three times: the `tokens.css` fallback, the
+// `coral` scheme (the default), and `tokenRegistry`'s Appearance-panel default. A fix applied to two
+// of the three ships a chip whose contrast depends on which one the user's stored overrides came
+// from — which is precisely the failure mode `--color-on-primary-tint` was written to end.
+describe('--color-info is declared once, in three places that must agree', () => {
+  const coral = SCHEMES.find((s) => s.id === 'coral')!
+  it('tokens.css matches the coral scheme', () => {
+    expect(token('info', 'dark')).toBe(coral.colors['--color-info'].dark)
+    expect(token('info', 'light')).toBe(coral.colors['--color-info'].light)
+  })
+  it('tokenRegistry matches the coral scheme', () => {
+    const reg = readSource(join(SRC, 'design/tokenRegistry.ts'))
+    const m = reg.match(/c\('--color-info',[^)]*'(#[0-9a-fA-F]{6})',\s*'(#[0-9a-fA-F]{6})'\)/)
+    expect(m, "tokenRegistry declares --color-info with two hex values").toBeTruthy()
+    expect(m![1]).toBe(coral.colors['--color-info'].dark)
+    expect(m![2]).toBe(coral.colors['--color-info'].light)
+  })
+})

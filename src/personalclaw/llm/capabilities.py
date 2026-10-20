@@ -1,0 +1,90 @@
+"""Capability descriptors for provider types.
+
+This module is loaded as a side effect of importing ``personalclaw.llm``
+and MUST NOT import any provider SDKs (``anthropic``, ``openai``,
+``httpx``). Property 11 (Provider SDK Lazy Import) depends on this guarantee.
+"""
+
+from dataclasses import dataclass
+from enum import Enum
+
+from personalclaw.llm.prompt_cache import PromptCache
+
+
+class Capability(str, Enum):
+    """Static capability flags advertised by a provider type."""
+
+    CHAT = "chat"
+    CODE_TOOLS = "code_tools"
+    SUMMARIZATION = "summarization"
+    PLANNING = "planning"
+    EMBEDDING = "embedding"
+    VISION = "vision"
+    STREAMING = "streaming"
+    TOOL_APPROVAL = "tool_approval"
+
+
+class StructuredOutput(str, Enum):
+    """Graded native structured-output support.
+
+    A GRADED capability, not a boolean flag — so it rides on
+    :class:`ProviderCapability` as its own field rather than joining the
+    :class:`Capability` flag set. (``regex`` / ``cfg`` are reserved for a future
+    local-logits path.)
+
+    * ``NONE`` — no native enforcement; the guard parses with a targeted retry.
+    * ``JSON_MODE`` — the provider can be asked to emit syntactically valid JSON
+      (OpenAI-wire ``response_format={"type": "json_object"}``), but not to a
+      specific schema.
+    * ``JSON_SCHEMA`` — the provider enforces a supplied JSON Schema natively
+      (ollama ``format=<schema>``; OpenAI-wire ``response_format`` json_schema).
+    """
+
+    NONE = "none"
+    JSON_MODE = "json_mode"
+    JSON_SCHEMA = "json_schema"
+
+
+@dataclass(frozen=True)
+class ProviderCapability:
+    """Static descriptor of what a provider type can do."""
+
+    type: str  # "openai", "anthropic", ...
+    capabilities: frozenset[Capability]
+    supports_streaming: bool
+    supports_tools: bool
+    supports_embeddings: bool
+    supports_vision: bool
+    max_context_tokens: int  # 0 == unknown / model-dependent
+    notes: str = ""
+    # Graded native structured-output support. Defaults to NONE so a provider that
+    # doesn't declare it gets the universal parse-with-targeted-retry path — the
+    # correct, safe behavior for every provider until it opts into native
+    # enforcement. Branded/ollama apps that support it declare it via
+    # ``BrandedProviderSpec.structured_output`` (a coordinated apps-repo change).
+    structured_output: StructuredOutput = StructuredOutput.NONE
+    # Graded prompt-cache support. Defaults NONE so a provider that doesn't declare it
+    # gets the safe no-marker path — the message list reaches the wire untouched, which
+    # is correct for every provider until it opts into caching. Branded apps that support
+    # it declare it via ``BrandedProviderSpec.prompt_cache`` (a coordinated apps-repo
+    # change); the native loop reads the same grade off the provider instance.
+    prompt_cache: PromptCache = PromptCache.NONE
+    # Where an entry of this type sends its requests when it names no endpoint of its own: the
+    # URL its factory falls back to (a branded app's ``BrandedProviderSpec.default_base_url``, a
+    # model server's own default port). ``llm.registry.served_on_this_machine`` reads it, so a
+    # hand-written entry that names none is on this machine exactly when this URL is: priced at
+    # a known $0, ordered first by local-first routing and scanned as the prompt never leaves
+    # the machine. ``""`` when the type has no default and an entry must name its endpoint.
+    default_endpoint: str = ""
+    # The type runs its model inside the gateway's own process and sends its requests nowhere,
+    # so an entry of it is on this machine whatever its options say.
+    in_process: bool = False
+    # The type is a model server that runs the models it serves on the machine its endpoint is on
+    # (Ollama, vLLM), rather than passing each request on to a service that may be anywhere (an
+    # OpenAI-compatible endpoint, which a proxy on this machine can answer for a paid cloud API).
+    # Only for such a type does an endpoint on this machine mean the model runs here
+    # (``llm.registry.served_on_this_machine``): priced at a known $0, ordered first by local-first
+    # routing and scanned as a prompt that never leaves the machine. A model such a server
+    # answers from somewhere else is not, which its type says one model at a time with the
+    # pass-on probe it registers (``ProviderRegistry.register_type(passes_on=...)``).
+    hosts_model: bool = False

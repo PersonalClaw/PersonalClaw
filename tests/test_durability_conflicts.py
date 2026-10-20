@@ -1,0 +1,665 @@
+"""Sync conflict records, the review queue, and the propose-only merge pass.
+
+Covers the three rules conflict handling turns on:
+  * both-sides-edited is the trigger (a one-sided divergence is a fast-forward, not noise);
+  * the local version stays authoritative (byte-identical after a conflicting pull);
+  * a missing/failing model loses the PROPOSAL, never the CONFLICT (fail-open),
+plus a source-level rail that the dangerous direction — applying a proposal — is unreachable.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import pathlib
+
+import pytest
+
+from personalclaw.durability import (
+    conflict_merge,
+    conflicts,
+)
+from personalclaw.durability import inventory as inv
+from personalclaw.durability import (
+    reconcile,
+    writeback,
+)
+from personalclaw.durability.ancestors import DELETE_HORIZON_SECS, Ancestors, Deletion
+from personalclaw.durability.registry import Registry
+
+_ENTRY = inv.StateEntry(
+    id="tasks_test",
+    kind=inv.KIND_JSON_ENTITY_DIR,
+    path="tasks",
+    domain=inv.DOMAIN_WORK,
+    merge=inv.MERGE_LWW,
+    help="test entity dir",
+)
+
+
+def _row(rid: str, text: str, updated: str = "2026-01-01T00:00:00Z") -> dict:
+    """An entity-dir exporter row: {"id": stem, "data": the file's JSON}."""
+    return {"id": rid, "data": {"id": rid, "text": text, "updated_at": updated}}
+
+
+def _write_local(home: pathlib.Path, rows: list[dict]) -> None:
+    """Seed the local store through the SAME writer the reconcile uses, so a later
+    byte-comparison measures content and not formatting drift."""
+    dest = home / _ENTRY.path
+    writeback.apply_rows(_ENTRY, dest, rows, read=reconcile.read_local(_ENTRY, dest))
+
+
+# ── detection: the both-sides-edited rule ────────────────────────────────────
+
+
+class TestDetection:
+    def test_both_sides_edited_since_ancestor_is_a_conflict(self):
+        base = _row("t1", "base")
+        local = _row("t1", "local edit", "2026-02-01T00:00:00Z")
+        remote = _row("t1", "remote edit", "2026-02-02T00:00:00Z")
+        ancestors = {"t1": conflicts.row_sha(base)}
+        found = conflicts.detect_conflicts(_ENTRY, [local], [remote], ancestors, now="NOW")
+        assert [c.entity_id for c in found] == ["t1"]
+        rec = found[0]
+        assert rec.ancestor_sha == ancestors["t1"]
+        assert rec.local_sha == conflicts.row_sha(local)
+        assert rec.remote_sha == conflicts.row_sha(remote)
+        # Both versions are IN the record — neither is destroyed by detection.
+        assert rec.local_row == local and rec.remote_row == remote
+        assert rec.status == conflicts.STATUS_NEEDS_REVIEW and rec.proposal is None
+
+    def test_one_sided_divergence_is_a_fast_forward_not_a_conflict(self):
+        """Only the remote moved since the ancestor → the deterministic merge owns it.
+        Otherwise every ordinary sync would manufacture review noise."""
+        base = _row("t1", "base")
+        remote = _row("t1", "remote edit", "2026-02-02T00:00:00Z")
+        ancestors = {"t1": conflicts.row_sha(base)}
+        assert conflicts.detect_conflicts(_ENTRY, [base], [remote], ancestors) == []
+        # …and symmetrically when only the local side moved.
+        local = _row("t1", "local edit", "2026-02-01T00:00:00Z")
+        assert conflicts.detect_conflicts(_ENTRY, [local], [base], ancestors) == []
+
+    def test_no_ancestor_or_converged_rows_are_not_conflicts(self):
+        local = _row("t1", "a")
+        remote = _row("t1", "b")
+        assert conflicts.detect_conflicts(_ENTRY, [local], [remote], {}) == []
+        anc = {"t1": conflicts.row_sha(_row("t1", "base"))}
+        assert conflicts.detect_conflicts(_ENTRY, [local], [local], anc) == []
+
+    def test_append_dedup_streams_never_conflict(self):
+        """A stable event id means "the same append" — a re-import is a no-op, not a
+        divergence, so an append stream can't produce a conflict record."""
+        entry = inv.StateEntry(
+            id="events_test",
+            kind=inv.KIND_JSONL_APPEND,
+            path="events.jsonl",
+            domain=inv.DOMAIN_PLATFORM,
+            merge=inv.MERGE_APPEND_DEDUP,
+            help="test stream",
+        )
+        anc = {"e1": conflicts.row_sha({"id": "e1", "v": 0})}
+        found = conflicts.detect_conflicts(
+            entry, [{"id": "e1", "v": 1}], [{"id": "e1", "v": 2}], anc
+        )
+        assert found == []
+
+    def test_record_id_is_deterministic_per_divergence(self):
+        base, local, remote = _row("t1", "b"), _row("t1", "l"), _row("t1", "r")
+        anc = {"t1": conflicts.row_sha(base)}
+        a = conflicts.detect_conflicts(_ENTRY, [local], [remote], anc)[0]
+        b = conflicts.detect_conflicts(_ENTRY, [local], [remote], anc)[0]
+        assert a.id == b.id  # re-detection dedups instead of piling up
+
+    def test_domain_routes_to_the_review_surface(self):
+        assert conflicts.surface_for_domain(inv.DOMAIN_MEMORY) == conflicts.SURFACE_MEMORY
+        assert conflicts.surface_for_domain(inv.DOMAIN_KNOWLEDGE) == conflicts.SURFACE_KNOWLEDGE
+        assert conflicts.surface_for_domain(inv.DOMAIN_WORK) == conflicts.SURFACE_DURABILITY
+
+
+# ── the queue ────────────────────────────────────────────────────────────────
+
+
+class TestQueue:
+    def _conflict(self, entry_id="tasks_test", entity_id="t1", surface="durability"):
+        return conflicts.ConflictRecord(
+            entry_id=entry_id,
+            entity_id=entity_id,
+            domain=inv.DOMAIN_WORK,
+            surface=surface,
+            ancestor_sha="a",
+            local_sha="l",
+            remote_sha="r",
+            local_row={"id": entity_id},
+            remote_row={"id": entity_id},
+            detected_at="NOW",
+        )
+
+    def test_record_dedups_and_round_trips(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        rec = self._conflict()
+        assert q.record(rec) is True
+        assert q.record(rec) is False  # same divergence → one row
+        items = q.items()
+        assert len(items) == 1 and items[0].id == rec.id
+        assert items[0].local_row == rec.local_row
+
+    def test_surface_filter_separates_memory_from_knowledge(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        q.record(self._conflict(entity_id="m1", surface=conflicts.SURFACE_MEMORY))
+        q.record(self._conflict(entity_id="k1", surface=conflicts.SURFACE_KNOWLEDGE))
+        mem = q.items(surface=conflicts.SURFACE_MEMORY)
+        kno = q.items(surface=conflicts.SURFACE_KNOWLEDGE)
+        assert [r.entity_id for r in mem] == ["m1"]
+        assert [r.entity_id for r in kno] == ["k1"]
+
+    def test_update_never_creates_a_record(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        rec = self._conflict()
+        assert q.update(rec) is False and q.items() == []
+
+    def test_held_ids_are_the_unresolved_ones(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        q.record(self._conflict(entity_id="t1"))
+        assert q.held_ids("tasks_test") == {"t1"}
+        assert q.held_ids("other_entry") == set()
+
+    def test_a_corrupt_line_does_not_hide_the_queue(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        q.record(self._conflict())
+        with q.path.open("a", encoding="utf-8") as fh:
+            fh.write("{not json\n")
+        assert len(q.items()) == 1
+
+
+# ── what this home agreed on with each peer ─────────────────────────────────
+
+
+class TestAncestors:
+    def test_agreements_round_trip_per_peer(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.record("peerA", "tasks_test", {"t1": "sha1"})
+        mine.record("peerB", "tasks_test", {"t1": "sha2"})
+        mine.save()
+        reloaded = Ancestors(tmp_path)
+        assert reloaded.of("peerA", "tasks_test") == {"t1": "sha1"}
+        assert reloaded.of("peerB", "tasks_test") == {"t1": "sha2"}
+        assert reloaded.of("peerC", "tasks_test") == {}
+
+    def test_a_corrupt_file_or_family_degrades_to_no_agreement(self, tmp_path):
+        (tmp_path / "ancestors.json").write_text("{not json")
+        assert Ancestors(tmp_path).of("peerA", "tasks_test") == {}
+        (tmp_path / "ancestors.json").write_text(
+            json.dumps({"peers": {"peerA": {"tasks_test": "nope", "other": {"t1": "sha1"}}}})
+        )
+        assert Ancestors(tmp_path).of("peerA", "tasks_test") == {}
+        assert Ancestors(tmp_path).of("peerA", "other") == {"t1": "sha1"}
+
+    def test_an_unchanged_agreement_writes_nothing(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.save()
+        assert not mine.path.exists()
+
+    def test_published_versions_are_kept_newest_last_bounded_and_pruned(self, tmp_path):
+        from personalclaw.durability.ancestors import PUBLISHED_VERSIONS
+
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v0", "t2": "w0"})
+        for n in range(1, PUBLISHED_VERSIONS + 3):
+            mine.publish("tasks_test", {"t1": f"v{n}", "t2": "w0"})
+        mine.save()
+        again = Ancestors(tmp_path).published("tasks_test")
+        last = PUBLISHED_VERSIONS + 2
+        assert again["t1"] == [f"v{n}" for n in range(last - PUBLISHED_VERSIONS + 1, last + 1)]
+        assert again["t2"] == ["w0"], "an unchanged record is one version, not one per export"
+        mine.publish("tasks_test", {"t2": "w0"})
+        assert "t1" not in mine.published("tasks_test"), "a record this home no longer holds"
+
+    def test_a_record_no_longer_held_is_a_delete_that_keeps_every_version_held(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1", "t2": "w1"}, now="2026-09-01T00:00:00+00:00")
+        mine.publish("tasks_test", {"t1": "v2", "t2": "w1"}, now="2026-09-02T00:00:00+00:00")
+        mine.record("peerA", "tasks_test", {"t1": "v-agreed"})
+
+        mine.publish("tasks_test", {"t2": "w1"}, now="2026-09-03T00:00:00+00:00")
+        mine.save()
+
+        again = Ancestors(tmp_path)
+        assert again.deleted("tasks_test") == {
+            "t1": Deletion(at="2026-09-03T00:00:00+00:00", held=("v-agreed", "v1", "v2"))
+        }
+        assert again.of("peerA", "tasks_test") == {}, "its agreements went into the delete"
+        assert again.deletions() == {"tasks_test": again.deleted("tasks_test")}
+        assert again.held("tasks_test") == {"t1": ["v-agreed", "v1", "v2"], "t2": ["w1"]}
+
+    def test_a_record_held_again_is_not_deleted_and_an_unread_one_never_was(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1", "t2": "w1"}, now="2026-09-01T00:00:00+00:00")
+        mine.publish("tasks_test", {}, now="2026-09-02T00:00:00+00:00", unread={"t2"})
+        assert set(mine.deleted("tasks_test")) == {"t1"}
+        assert mine.published("tasks_test") == {"t2": ["w1"]}, "an unread record stays as known"
+
+        mine.publish("tasks_test", {"t1": "v9", "t2": "w1"}, now="2026-09-03T00:00:00+00:00")
+        assert mine.deleted("tasks_test") == {} and mine.deletions() == {}
+
+    def test_a_delete_taken_from_another_machine_is_not_sent_on(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1"}, now="2026-09-01T00:00:00+00:00")
+        mine.took_deletion("tasks_test", {"t1": Deletion(at="now", held=("v1",), by="peerA")})
+        mine.publish("tasks_test", {}, now="2026-09-02T00:00:00+00:00")
+        mine.save()
+
+        again = Ancestors(tmp_path)
+        assert again.deleted("tasks_test")["t1"].by == "peerA"
+        assert again.deletions() == {}, "another machine's delete is that machine's to send"
+
+    def test_a_delete_is_forgotten_past_the_horizon_and_only_then(self, tmp_path):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        horizon = timedelta(seconds=DELETE_HORIZON_SECS)
+        mine = Ancestors(tmp_path)
+        for rid, age in (("past", horizon + timedelta(days=1)), ("within", horizon - timedelta(1))):
+            mine.publish("tasks_test", {rid: "v1"}, now=(now - age).isoformat())
+            mine.publish("tasks_test", {}, now=(now - age).isoformat())
+        mine.forget_old_deletes("not a time")
+        assert set(mine.deleted("tasks_test")) == {"past", "within"}
+
+        mine.forget_old_deletes(now.isoformat())
+        assert set(mine.deleted("tasks_test")) == {"within"}
+        assert DELETE_HORIZON_SECS >= 30 * 24 * 60 * 60
+
+    def test_a_malformed_delete_degrades_to_none(self, tmp_path):
+        (tmp_path / "ancestors.json").write_text(
+            json.dumps({"deleted": {"tasks_test": {"t1": "nope", "t2": {"at": "x", "held": 3}}}})
+        )
+        assert Ancestors(tmp_path).deleted("tasks_test") == {"t2": Deletion(at="x")}
+
+    def test_the_shared_registry_carries_no_agreement(self):
+        """A registry an older build wrote carries one; it is not read, and the next write
+        leaves it out of the one object an encrypted sync leaves readable."""
+        raw = json.dumps(
+            {"machines": {"A": {"seq": 1}}, "ancestors": {"tasks": {"t1": "sha1"}}}
+        ).encode()
+        written = Registry.loads(raw).to_bytes().decode("utf-8")
+        assert "ancestors" not in written and "t1" not in written
+
+
+# ── a delete, weighed against what it saw ────────────────────────────────────
+
+
+def _tomb(rid: str, *held: str) -> dict:
+    return {"id": rid, "deleted_at": "2026-09-02T00:00:00+00:00", "held": list(held)}
+
+
+class TestWeighDeletions:
+    """``conflicts.weigh_deletions``: a delete stands against every version the deleting home
+    held, and against any other version it is a conflict, in either direction."""
+
+    def _sha(self, row: dict) -> str:
+        return conflicts.row_sha(conflicts.compared(_ENTRY, row))
+
+    def test_the_peers_copy_of_a_record_deleted_here_as_the_delete_saw_it_is_declined(self):
+        theirs = _row("t1", "as both held it")
+        gone = {"t1": Deletion(at="2026-09-02", held=(self._sha(theirs),))}
+        out = conflicts.weigh_deletions(_ENTRY, {}, [theirs], gone)
+        assert (out.declined, out.conflicts, out.applied) == ({"t1"}, [], {})
+
+    def test_the_peers_edit_of_a_record_deleted_here_is_a_conflict(self):
+        gone = {"t1": Deletion(at="2026-09-02", held=(self._sha(_row("t1", "as held")),))}
+        out = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited there")], gone, now="n")
+        [rec] = out.conflicts
+        assert (rec.entity_id, rec.deleted, rec.detected_at) == ("t1", conflicts.DELETED_HERE, "n")
+        assert rec.local_row == {"id": "t1", "deleted_at": "2026-09-02"}
+        assert rec.remote_row["data"]["text"] == "edited there" and not out.declined
+
+    def test_the_peers_delete_of_a_record_here_as_it_saw_it_is_applied(self):
+        mine = _row("t1", "as both held it")
+        delete = _tomb("t1", "older", self._sha(mine))
+        out = conflicts.weigh_deletions(_ENTRY, {"t1": mine}, [delete], {})
+        assert out.applied == {"t1": delete} and out.conflicts == []
+
+    def test_the_peers_delete_of_a_record_edited_here_is_a_conflict(self):
+        mine = _row("t1", "edited here")
+        out = conflicts.weigh_deletions(_ENTRY, {"t1": mine}, [_tomb("t1", "as held")], {})
+        [rec] = out.conflicts
+        assert (rec.deleted, rec.local_row, out.applied) == (conflicts.DELETED_THERE, mine, {})
+        assert rec.remote_row == {"id": "t1", "deleted_at": "2026-09-02T00:00:00+00:00"}
+
+    def test_a_delete_that_names_no_version_saw_none(self):
+        mine = _row("t1", "here")
+        out = conflicts.weigh_deletions(
+            _ENTRY, {"t1": mine}, [{"id": "t1", "deleted_at": "x", "held": "nope"}], {}
+        )
+        assert [r.deleted for r in out.conflicts] == [conflicts.DELETED_THERE]
+
+    def test_a_delete_of_what_is_not_here_is_moot_and_a_new_record_is_untouched(self):
+        out = conflicts.weigh_deletions(_ENTRY, {}, [_tomb("gone", "x"), _row("new", "hi")], {})
+        assert (out.moot, out.declined, out.applied, out.conflicts) == ({"gone"}, set(), {}, [])
+
+    def test_the_same_divergence_is_the_same_record(self):
+        gone = {"t1": Deletion(at="2026-09-02", held=("v1",))}
+        first = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited")], gone)
+        again = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited")], gone)
+        assert first.conflicts[0].id == again.conflicts[0].id
+
+    def test_an_append_stream_has_no_delete_to_weigh(self):
+        stream = inv.StateEntry(
+            id="s", kind=inv.KIND_JSONL_APPEND, path="s.jsonl", domain="x", merge="append_dedup"
+        )
+        out = conflicts.weigh_deletions(stream, {}, [_tomb("t1")], {"t1": Deletion(at="x")})
+        assert (out.moot, out.conflicts) == (set(), [])
+
+    def test_no_merge_is_drafted_for_a_delete(self, tmp_path):
+        queue = conflicts.ConflictQueue(tmp_path)
+        out = conflicts.weigh_deletions(
+            _ENTRY, {}, [_row("t1", "edited")], {"t1": Deletion(at="x", held=("v1",))}
+        )
+        assert queue.record(out.conflicts[0])
+        assert conflict_merge.pending(queue) == []
+
+
+# ── reconcile: local stays authoritative ─────────────────────────────────────
+
+
+class TestReconcileHoldsLocal:
+    def _setup(self, tmp_path):
+        base = _row("t1", "base")
+        local = _row("t1", "LOCAL EDIT", "2026-02-01T00:00:00Z")
+        # The remote's updated_at is NEWER, so plain LWW would overwrite the local row —
+        # which is exactly what the conflict hold must prevent.
+        remote = _row("t1", "REMOTE EDIT", "2026-09-09T00:00:00Z")
+        _write_local(tmp_path, [local])
+        return base, local, remote
+
+    def test_conflict_leaves_local_bytes_identical(self, tmp_path):
+        base, local, remote = self._setup(tmp_path)
+        path = tmp_path / _ENTRY.path / "t1.json"
+        before = path.read_bytes()
+        q = conflicts.ConflictQueue(tmp_path)
+        res = reconcile.reconcile_entry(
+            tmp_path,
+            _ENTRY,
+            [remote],
+            ancestors={"t1": conflicts.row_sha(base)},
+            queue=q,
+            now="NOW",
+        )
+        assert res.conflicts == 1
+        assert res.verdict == "consumed"  # recorded, so re-pulling forever would add nothing
+        assert path.read_bytes() == before, "the local version must stay authoritative"
+        assert json.loads(path.read_text())["text"] == "LOCAL EDIT"
+        queued = q.items()
+        assert len(queued) == 1 and queued[0].remote_row == remote
+        # A held id keeps its OLD ancestor, so the conflict re-detects next cycle.
+        assert "t1" not in res.new_ancestors
+
+    def test_a_conflict_stays_held_on_a_later_cycle(self, tmp_path):
+        base, local, remote = self._setup(tmp_path)
+        q = conflicts.ConflictQueue(tmp_path)
+        anc = {"t1": conflicts.row_sha(base)}
+        reconcile.reconcile_entry(tmp_path, _ENTRY, [remote], ancestors=anc, queue=q, now="NOW")
+        path = tmp_path / _ENTRY.path / "t1.json"
+        before = path.read_bytes()
+        # Second cycle, same divergence: nothing new recorded, local still authoritative.
+        res = reconcile.reconcile_entry(
+            tmp_path, _ENTRY, [remote], ancestors=anc, queue=q, now="N2"
+        )
+        assert res.conflicts == 0 and len(q.items()) == 1
+        assert path.read_bytes() == before
+
+    def test_fast_forward_still_merges_and_records_an_ancestor(self, tmp_path):
+        """The non-conflict path must be untouched: a one-sided remote edit applies."""
+        base = _row("t1", "base")
+        remote = _row("t1", "remote edit", "2026-09-09T00:00:00Z")
+        _write_local(tmp_path, [base])
+        q = conflicts.ConflictQueue(tmp_path)
+        res = reconcile.reconcile_entry(
+            tmp_path,
+            _ENTRY,
+            [remote],
+            ancestors={"t1": conflicts.row_sha(base)},
+            queue=q,
+            now="NOW",
+        )
+        assert res.conflicts == 0 and q.items() == []
+        text = json.loads((tmp_path / _ENTRY.path / "t1.json").read_text())["text"]
+        assert text == "remote edit"
+        assert res.new_ancestors["t1"] == conflicts.row_sha(remote)
+
+    def test_new_remote_rows_still_arrive_during_a_conflict(self, tmp_path):
+        """A conflict on one id must not hold the whole entry hostage."""
+        base, local, remote = self._setup(tmp_path)
+        fresh = _row("t2", "brand new")
+        res = reconcile.reconcile_entry(
+            tmp_path,
+            _ENTRY,
+            [remote, fresh],
+            ancestors={"t1": conflicts.row_sha(base)},
+            queue=conflicts.ConflictQueue(tmp_path),
+            now="NOW",
+        )
+        assert res.conflicts == 1 and res.added == 1
+        assert (tmp_path / _ENTRY.path / "t2.json").is_file()
+
+
+# ── the propose-only pass ────────────────────────────────────────────────────
+
+
+class TestProposeOnly:
+    def _queued(self, tmp_path):
+        q = conflicts.ConflictQueue(tmp_path)
+        q.record(
+            conflicts.ConflictRecord(
+                entry_id="tasks_test",
+                entity_id="t1",
+                domain=inv.DOMAIN_WORK,
+                surface=conflicts.SURFACE_DURABILITY,
+                ancestor_sha="a",
+                local_sha="l",
+                remote_sha="r",
+                local_row={"id": "t1", "text": "LOCAL EDIT"},
+                remote_row={"id": "t1", "text": "REMOTE EDIT"},
+                detected_at="NOW",
+            )
+        )
+        return q
+
+    @pytest.mark.asyncio
+    async def test_draft_is_a_proposal_never_an_application(self, tmp_path, monkeypatch):
+        q = self._queued(tmp_path)
+        _write_local(tmp_path, [_row("t1", "LOCAL EDIT")])
+        before = (tmp_path / _ENTRY.path / "t1.json").read_bytes()
+        seen: dict = {}
+
+        async def fake(prompt, **kw):
+            seen["use_case"] = kw.get("use_case")
+            return json.dumps({"merged": {"id": "t1", "text": "MERGED"}, "rationale": "why"})
+
+        monkeypatch.setattr(conflict_merge, "one_shot_completion", fake)
+        report = await conflict_merge.draft_proposals(tmp_path, now="T1")
+        assert report.drafted == 1 and report.failed == 0
+        assert seen["use_case"] == "background"  # the reasoning axis
+        rec = q.items()[0]
+        assert rec.proposal == {"id": "t1", "text": "MERGED"}
+        assert rec.rationale == "why" and rec.proposed_at == "T1"
+        assert rec.status == conflicts.STATUS_NEEDS_REVIEW  # never auto-applied
+        assert (tmp_path / _ENTRY.path / "t1.json").read_bytes() == before
+
+    @pytest.mark.asyncio
+    async def test_no_model_keeps_the_conflict_without_a_proposal(self, tmp_path, monkeypatch):
+        """Fail-open: a missing model must never lose the conflict and never resolve it."""
+        q = self._queued(tmp_path)
+
+        async def boom(prompt, **kw):
+            raise RuntimeError("no model configured")
+
+        monkeypatch.setattr(conflict_merge, "one_shot_completion", boom)
+        report = await conflict_merge.draft_proposals(tmp_path, now="T1")
+        assert report.failed == 1 and report.drafted == 0
+        rec = q.items()[0]
+        assert rec.status == conflicts.STATUS_NEEDS_REVIEW
+        assert rec.proposal is None
+        assert "no model configured" in rec.proposal_error
+        assert len(q.items()) == 1  # the conflict survived
+
+    @pytest.mark.asyncio
+    async def test_unparseable_answer_is_also_fail_open(self, tmp_path, monkeypatch):
+        q = self._queued(tmp_path)
+
+        async def junk(prompt, *, validate=None, **kw):
+            # Mirror the one-shot contract: an answer the caller's check refuses is raised as a
+            # contract miss once every model of the chain gave one.
+            from personalclaw.guardrails.failure import OutputContractError
+
+            answer = "sure! here's a merge, roughly"
+            if validate is not None and validate(answer):
+                raise OutputContractError("the shape asked for", answer, why=validate(answer))
+            return answer
+
+        monkeypatch.setattr(conflict_merge, "one_shot_completion", junk)
+        report = await conflict_merge.draft_proposals(tmp_path, now="T1")
+        assert report.failed == 1
+        rec = q.items()[0]
+        assert rec.proposal is None and rec.status == conflicts.STATUS_NEEDS_REVIEW
+        assert rec.proposal_error
+
+    @pytest.mark.asyncio
+    async def test_a_failed_draft_is_not_retried_every_pass(self, tmp_path, monkeypatch):
+        self._queued(tmp_path)
+        calls = {"n": 0}
+
+        async def boom(prompt, **kw):
+            calls["n"] += 1
+            raise RuntimeError("down")
+
+        monkeypatch.setattr(conflict_merge, "one_shot_completion", boom)
+        await conflict_merge.draft_proposals(tmp_path)
+        second = await conflict_merge.draft_proposals(tmp_path)
+        assert calls["n"] == 1 and second.considered == 0
+
+    @pytest.mark.asyncio
+    async def test_fenced_json_still_parses(self, tmp_path, monkeypatch):
+        q = self._queued(tmp_path)
+
+        async def fenced(prompt, **kw):
+            body = json.dumps({"merged": {"id": "t1"}, "rationale": "r"})
+            return f"```json\n{body}\n```"
+
+        monkeypatch.setattr(conflict_merge, "one_shot_completion", fenced)
+        assert (await conflict_merge.draft_proposals(tmp_path)).drafted == 1
+        assert q.items()[0].proposal == {"id": "t1"}
+
+
+# ── source-level rail: the dangerous direction is unreachable ────────────────
+
+
+def test_conflict_modules_cannot_write_the_live_store():
+    """A propose-only surface must be structurally unable to apply. Not "doesn't today" —
+    unreachable: neither conflict module may import the writeback/reconcile path or call any
+    store-writing helper. A later edit that wires one up trips this."""
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "durability"
+    banned_modules = {"personalclaw.durability.writeback", "personalclaw.durability.reconcile"}
+    banned_calls = {"apply_rows", "reconcile_entry", "atomic_write", "atomic_write_bytes"}
+    checked = 0
+    for name in ("conflict_merge.py", "conflicts.py"):
+        path = src / name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert node.module not in banned_modules, f"{name} imports {node.module}"
+                for alias in node.names:
+                    full = f"{node.module}.{alias.name}"
+                    assert full not in banned_modules, f"{name} imports {full}"
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name not in banned_modules, f"{name} imports {alias.name}"
+            if isinstance(node, ast.Call):
+                fn = node.func
+                fname = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                if name == "conflict_merge.py":
+                    assert fname not in banned_calls, f"{name} calls {fname}()"
+        checked += 1
+    assert checked == 2, "the rail must actually have scanned both modules (vacuity floor)"
+
+
+def test_the_queue_never_lands_in_an_entrys_store_path():
+    """The queue's own path must not collide with any inventory entry — a conflict record
+    can never be mistaken for state the sync cycle rewrites."""
+    assert conflicts.CONFLICTS_PATH.startswith("sync/")
+    assert inv.is_ignored("sync"), "the sync root must be an ignored machine-local dir"
+    assert not any(
+        e.path == conflicts.CONFLICTS_PATH or e.path.startswith("sync/") for e in inv.INVENTORY
+    )
+
+
+# ── offline edits on two machines, end to end through the real cycle ─────────
+
+
+class TestOfflineEditsOnTwoMachines:
+    """Two machines, one shared store: the same task edited on both while offline yields a
+    conflict-review item and applies NOTHING.
+
+    Also the wiring proof for this change's new seams: what each machine agreed on with the
+    other is written by its pull, and the queue is fed by the cycle — a call site that merely
+    exists would not produce any of this.
+    """
+
+    def _write_task(self, home, tid, title, updated):
+        # Written through the cycle's own writer, so a later byte-comparison measures content
+        # rather than JSON formatting the reconcile normalizes.
+        entry = inv.by_id("tasks")
+        writeback.apply_rows(
+            entry,
+            home / "tasks",
+            [{"id": tid, "data": {"id": tid, "title": title, "updated_at": updated}}],
+            read=reconcile.read_local(entry, home / "tasks"),
+        )
+
+    def test_offline_same_task_edit_yields_a_review_item_and_applies_nothing(self, tmp_path):
+        from personalclaw.durability.sync_cycle import run_sync_cycle
+        from tests.test_durability_sync_cycle import SharedStore
+
+        store = SharedStore()
+        a, b = tmp_path / "A", tmp_path / "B"
+        # 1. A creates the task and publishes; B pulls it; A pulls B's echo. Both agree now,
+        #    so each records a common ancestor sha for t1 with the other.
+        self._write_task(a, "t1", "base", "2026-01-01T00:00:00Z")
+        assert run_sync_cycle(store, a, self_id="A", now="t1").ok
+        assert run_sync_cycle(store, b, self_id="B", now="t2").ok
+        assert run_sync_cycle(store, a, self_id="A", now="t3").ok
+        ancestor = Ancestors(b / "sync").of("A", "tasks").get("t1")
+        assert ancestor, "the pull must record the agreed ancestor sha"
+        assert Ancestors(a / "sync").of("B", "tasks").get("t1") == ancestor
+
+        # 2. Both edit the same task offline. B's timestamp is NEWER, so plain LWW would
+        #    overwrite A's edit — the conflict hold is what prevents that.
+        self._write_task(a, "t1", "A edit", "2026-02-01T00:00:00Z")
+        self._write_task(b, "t1", "B edit", "2026-03-01T00:00:00Z")
+        assert run_sync_cycle(store, a, self_id="A", now="t4").ok
+
+        # 3. B syncs and sees A's divergent version.
+        before = (b / "tasks" / "t1.json").read_bytes()
+        report = run_sync_cycle(store, b, self_id="B", now="t5")
+        assert report.ok and report.conflicts == 1
+        assert "conflict" in report.detail
+
+        # Applies nothing: B's local version is byte-identical and still authoritative.
+        assert (b / "tasks" / "t1.json").read_bytes() == before
+        assert json.loads((b / "tasks" / "t1.json").read_text())["title"] == "B edit"
+
+        # And it is a review item carrying BOTH versions and all three shas.
+        queued = conflicts.ConflictQueue(b).items(status=conflicts.STATUS_NEEDS_REVIEW)
+        assert len(queued) == 1
+        rec = queued[0]
+        assert rec.entry_id == "tasks" and rec.entity_id == "t1"
+        assert rec.ancestor_sha == ancestor
+        assert rec.local_row["data"]["title"] == "B edit"
+        assert rec.remote_row["data"]["title"] == "A edit"
+        assert rec.proposal is None  # no model in this test → needs-review without a draft
+
+        # The ancestor is NOT advanced for a held id, so the conflict re-detects rather than
+        # self-resolving on the next cycle.
+        assert Ancestors(b / "sync").of("A", "tasks").get("t1") == ancestor
+        assert run_sync_cycle(store, b, self_id="B", now="t6").ok
+        assert len(conflicts.ConflictQueue(b).items()) == 1
+        assert (b / "tasks" / "t1.json").read_bytes() == before

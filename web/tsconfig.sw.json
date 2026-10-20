@@ -1,0 +1,27 @@
+{
+  // The service worker gets its OWN TypeScript program. `lib.webworker.d.ts` and
+  // `lib.dom.d.ts` cannot coexist in one program — they redeclare `self`,
+  // `location`, `fetch` and dozens of shared types — so `src/sw.ts` is excluded
+  // from tsconfig.json's `include` (which is `src`, minus this file) and checked
+  // here instead. `npm run typecheck` runs both programs.
+  //
+  // `src/app/swPolicy.ts` is pulled in as an import and is deliberately free of
+  // every DOM- and worker-specific global, so it typechecks identically under
+  // both programs.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src/sw.ts"]
+}

@@ -1,0 +1,469 @@
+import { useEffect, useMemo, useState } from 'react'
+import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type ProviderHealth } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { ConsentDeclined } from '../../lib/securityConsent'
+import { PanelHeader, Section, RowGroup, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
+import { NumberField } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { RungChip } from '../../ui/RungChip'
+import { rungMeta } from '../../lib/rungs'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+
+/** Guardrails — the personal safety floor. Five groups:
+ *  the incident kill switch, daily spend budgets, the outbound secret/PII scan mode,
+ *  the per-provider circuit-breaker tuning, and the tool-loop breaker's abort ceiling
+ *  — plus a derived provider-health view. Budget/scan/breaker controls PATCH allowlisted
+ *  guardrails.* config paths; incident is its own endpoint (not config).
+ *
+ *  🪤 TWO THINGS ARE CALLED A BREAKER HERE and they break different things: `breaker`
+ *  fails a model PROVIDER fast during an outage, `loop_breaker` aborts one RUN that is
+ *  drowning in tool failures. They are separate sections with separate titles because
+ *  one section called "Circuit breaker" holding both would make the provider knobs read
+ *  as if they governed tool retries. */
+type GuardrailsCfg = {
+  budgets?: { max_tokens_per_run?: number; max_tokens_per_day?: number; max_dollars_per_day?: number }
+  breaker?: { failure_threshold?: number; recovery_secs?: number }
+  loop_breaker?: { circuit_threshold?: number }
+  scan_mode?: string
+}
+type Budget = keyof NonNullable<GuardrailsCfg['budgets']>
+type Breaker = keyof NonNullable<GuardrailsCfg['breaker']>
+
+export function GuardrailsPanel() {
+  const [cfg, setCfg] = useState<GuardrailsCfg | null>(null)
+
+  const { data, error: loadErr, refresh } = useQuery('settings:guardrails', () =>
+    api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // 🔴 A settings panel must not present FABRICATED values as saved state. `.catch(() => ({}))` made a
+  // failed config read resolve with an empty section, so every control below rendered at its fallback —
+  // indistinguishable from "this is what you saved" — and the panel offered to edit values it had never
+  // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
+  // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={3} what="settings" />
+
+  // 🔴 A ROW SHOWS WHAT IS STORED. Each value used to be painted into `cfg` BEFORE its PATCH, and
+  // nothing put it back: decline the gateway's "Loosen a security setting?" question, or have the
+  // save refused, and Max dollars / day kept the unsaved 10033.5 while the cap in effect stayed 33.5
+  // — under a "Saved ✓" that flashed either way. Now a value is painted once the gateway has stored
+  // it, a row flashes only then, and a number field puts the stored value back in its box when this
+  // resolves `false` (`NumberField`). The label is the row's own, so a refusal names the control
+  // ("Max dollars / day"), never its config key.
+  const save = (path: string, value: number | string, apply: (c: GuardrailsCfg) => GuardrailsCfg, label?: string) =>
+    api.patchConfig(`guardrails.${path}`, value).then(() => {
+      setCfg((c) => apply(c ?? {}))
+      return true
+    }, (e) => {
+      // Declining the question is the owner's choice, not a failure: it reads as the note it is.
+      if (e instanceof ConsentDeclined) notify(e.message)
+      else notify(`Couldn't save ${label ?? path}: ${String((e as Error)?.message || e)}`, 'error')
+      return false
+    })
+  const budget = (key: Budget) => (v: number, label: string) =>
+    save(`budgets.${key}`, v, (c) => ({ ...c, budgets: { ...c.budgets, [key]: v } }), label)
+  const breaker = (key: Breaker) => (v: number, label: string) =>
+    save(`breaker.${key}`, v, (c) => ({ ...c, breaker: { ...c.breaker, [key]: v } }), label)
+
+  return (
+    <div>
+      {/* 🪤 The blanket "interactive chat is never affected" was true of budgets, the scan and
+          the kill switch — and is NOT true of the tool-loop breaker, which counts tool failures
+          in every run including the one you are typing into. Scoping the claim to the controls
+          it actually holds for beats a reassurance that a new section quietly falsified. */}
+      <PanelHeader title="Guardrails" hint="The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat." />
+
+      <IncidentSection />
+
+      <Section title="Daily budget" hint="Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. 0 = unlimited.">
+        <RowGroup>
+          <NumberRow label="Max tokens / day" hint="Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets."
+            value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000} onSave={budget('max_tokens_per_day')} />
+          {/* Cents: the gateway takes a cap in dollars and cents, and at a step of 1 the browser
+              marked a saved $33.50 invalid. */}
+          <NumberRow label="Max dollars / day" hint="A call that costs money starts only when what it may cost fits in what is left beside what the calls already running have set aside, so calls running together stay within it; one can still cost more than it set aside. A model with no price is refused, and one that costs nothing keeps running. Prices are estimates, set in Settings → Usage → Model prices."
+            value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={0.01} dollars onSave={budget('max_dollars_per_day')} />
+          <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."
+            value={cfg.budgets?.max_tokens_per_run ?? 0} min={0} step={1000} onSave={budget('max_tokens_per_run')} />
+        </RowGroup>
+      </Section>
+
+      <Section title="Outbound scan" hint="How a prompt bound for a model that runs off this machine is handled when it contains secrets or PII. A model that runs on this machine always warns (its prompt never leaves your machine); a model your Ollama answers from its cloud runs off it.">
+        <RowGroup>
+          <Field label="Scan mode" hint="warn = log & send · redact = substitute & send · block = refuse the call.">
+            <SegPills ariaLabel="Scan mode" value={String(cfg.scan_mode ?? 'redact')}
+              onChange={(v) => { void save('scan_mode', v, (c) => ({ ...c, scan_mode: v }), 'scan mode') }}
+              options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />
+          </Field>
+        </RowGroup>
+      </Section>
+
+      <Section title="Provider circuit breaker" hint="Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts.">
+        <RowGroup>
+          <NumberRow label="Failure threshold" hint="Consecutive failures before the breaker opens."
+            value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1} onSave={breaker('failure_threshold')} />
+          <NumberRow label="Recovery seconds" hint="How long an open breaker waits before a half-open probe."
+            value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5} onSave={breaker('recovery_secs')} />
+        </RowGroup>
+      </Section>
+
+      <Section title="Tool-loop breaker" hint="A run that keeps failing the same tool is told to change approach, then refused, and finally stopped outright. This is that last step — the point where the whole run is abandoned rather than allowed to spend the rest of its budget repeating a failure.">
+        <RowGroup>
+          <NumberRow label="Abort after tool failures" hint="Counts every failing tool call in one run, not just repeats of the same one. Applies to built-in tools and to an external CLI agent's alike."
+            value={cfg.loop_breaker?.circuit_threshold ?? 30} min={1} step={1}
+            onSave={(v, label) => save('loop_breaker.circuit_threshold', v, (c) => ({ ...c, loop_breaker: { ...c.loop_breaker, circuit_threshold: v } }), label)} />
+        </RowGroup>
+      </Section>
+
+      <AutonomyLadderSection />
+
+      <ProviderHealthSection />
+    </div>
+  )
+}
+
+// ── Earned autonomy: the rung ladder ──────────
+/** The ladder panel: what each automated action may do on its own, what it has earned, and
+ *  the two things a user can do about it — promote (a click, never automatic) or hand the
+ *  autonomy back. Plus the undo list for actions that already ran at the with-undo rung.
+ *
+ *  This is the surface that OWNS the ladder read, so it is the one that must state a failed
+ *  read out loud: a chip elsewhere can go quiet, but a panel that silently rendered an empty
+ *  ladder would say "no automation has any autonomy" — a reassuring claim about a safety
+ *  control, produced by a failed request. */
+function AutonomyLadderSection() {
+  const { data: ladder, error: loadErr, refresh } = useQuery('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
+  const [busy, setBusy] = useState('')
+  const reload = () => { invalidateKeys('autonomy:ladder'); refresh() }
+
+  // Eligible first (the only rows with a decision to make), then least autonomy first — a
+  // type that drafts or asks is one the user may want to promote, while a row that already
+  // runs on its own needs no attention. Alphabetical inside each tier so the list is stable.
+  const types = useMemo(() => {
+    const order = ladder?.rungs ?? []
+    return [...(ladder?.types ?? [])].sort((a, b) =>
+      Number(b.eligible) - Number(a.eligible) ||
+      order.indexOf(a.resolved_rung) - order.indexOf(b.resolved_rung) ||
+      a.key.localeCompare(b.key),
+    )
+  }, [ladder])
+
+  const promote = async (t: AutonomyType) => {
+    setBusy(t.key)
+    try {
+      const r = await api.autonomyGrant(t.key, t.next_rung)
+      notify(`${t.key} now ${rungMeta(r.rung, ladder ?? null).label}.`, 'success')
+      reload()
+    } catch (e) {
+      notify(`Couldn't promote ${t.key}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy('') }
+  }
+  const handBack = async (t: AutonomyType) => {
+    setBusy(t.key)
+    try {
+      await api.autonomyDemote(t.key)
+      notify(`${t.key} is back at ${rungMeta(t.floor, ladder ?? null).label}.`, 'success')
+      reload()
+    } catch (e) {
+      notify(`Couldn't change ${t.key}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy('') }
+  }
+
+  return (
+    <Section title="Earned autonomy" hint="Every automated action starts at the rung it was declared with and can only climb when you say so. A single rejection, thumbs-down or undo drops it back immediately and starts a cooldown.">
+      {!ladder && loadErr ? (
+        <LoadError what="autonomy ladder" error={loadErr} onRetry={reload} />
+      ) : !ladder ? (
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">Loading…</div>
+      ) : (
+        <div className="flex flex-col gap-l">
+          {ladder.incident_active && (
+            <div role="alert" data-type="body-s" className="rounded-lg px-4 py-3 bg-error/10 ring-1 ring-error/40 text-on-surface-var">
+              Incident mode is active, so nothing runs above “asks first” — a granted rung shows as held until you resume.
+            </div>
+          )}
+          <RowGroup>
+            {types.map((t) => (
+              <div key={t.key} className="flex items-start justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span data-type="body-s" className="text-on-surface">{t.key}</span>
+                    <RungChip type={t} ladder={ladder} />
+                    {t.leaves_machine && (
+                      <span data-type="caption" className="text-on-surface-low" title="Its effect is visible outside this machine, so a track record can never propose full autonomy for it.">leaves this machine</span>
+                    )}
+                  </div>
+                  {/* WHY it runs at this rung, then WHAT it has earned. Both, always: the first
+                      is the answer to "why is this allowed to run by itself", the second is the
+                      only thing that decides whether a promote button appears — and when it does
+                      not appear, the record says what is missing rather than leaving a user to
+                      guess why a row is inert. */}
+                  <div data-type="body-s" className="mt-0.5 text-on-surface-low">{t.authority}</div>
+                  <div data-type="caption" className="mt-0.5 text-on-surface-low">{t.record}</div>
+                  {t.demotions.length > 0 && (
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">
+                      Last demoted {t.demotions[t.demotions.length - 1].at.slice(0, 10)} — {t.demotions[t.demotions.length - 1].cause}
+                      {t.demotions.length > 1 && ` (${t.demotions.length} demotions on record)`}
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                  {/* "Promote to runs on its own" is what this read: a rung label is a PREDICATE
+                      ("drafts only", "runs on its own"), declared in terms of behaviour, so a noun
+                      slot mangles it. Give it a subject — the same form this file's own success
+                      toasts already use (`${t.key} now ${label}.`). */}
+                  {t.eligible && t.next_rung && (
+                    <Button size="xs" variant="secondary" loading={busy === t.key} onClick={() => promote(t)}>
+                      Promote so it {rungMeta(t.next_rung, ladder).label}
+                    </Button>
+                  )}
+                  {t.granted_at && (
+                    <Button size="xs" variant="ghost" loading={busy === t.key} onClick={() => handBack(t)}
+                      title={`Drop ${t.key} back to ${rungMeta(t.floor, ladder).label} and start its cooldown.`}>
+                      Hand back
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </RowGroup>
+          <UndoList ladder={ladder} onChange={reload} />
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/** Actions that ran at the with-undo rung and can still be taken back.
+ *
+ *  The undo is offered from a PERSISTED record, so this list is the same source the
+ *  notification's undo button uses — one place decides whether an undo is still available,
+ *  rather than a page holding a handle it hopes is still good.
+ *
+ *  An undo also demotes the action's type to its floor (`ladder.reverse_action`), and the list
+ *  says what that changes only where it changes something: the core actions that keep an undo
+ *  already sit at their floor, so "it will ask again from now on" was false for every one of
+ *  them. Exported for its render test. */
+export function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () => void }) {
+  const [busy, setBusy] = useState('')
+  const pending = ladder.reversals.filter((r) => !r.reversed_at)
+  /** The rung the undo's demotion puts this action back at, or '' when it already runs there. */
+  const backTo = (r: AutonomyReversal): string => {
+    const t = ladder.types.find((x) => x.key === r.action_type)
+    return t && ladder.rungs.indexOf(t.floor) < ladder.rungs.indexOf(t.granted_rung) ? t.floor : ''
+  }
+
+  const undo = async (r: AutonomyReversal) => {
+    setBusy(r.id)
+    const floor = backTo(r)
+    try {
+      // A refused undo comes back as a non-2xx and lands in `catch` carrying the server's
+      // named reason, so there is no in-band failure branch to write here — and the list
+      // reloads either way, because the record's state is what decides whether the button
+      // should still be offered.
+      await api.autonomyUndo(r.id)
+      notify(floor ? `Undone. ${r.action_type} is back at ${rungMeta(floor, ladder).label}.` : 'Undone.', 'success')
+    } catch (e) {
+      notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(''); onChange() }
+  }
+
+  return (
+    <div>
+      <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">Automatic actions you can still undo</div>
+      <RowGroup>
+        {pending.length === 0 ? (
+          <div data-type="body-s" className="py-3 text-on-surface-low">Nothing is waiting to be undone.</div>
+        ) : pending.map((r) => {
+          const floor = backTo(r)
+          return (
+            <Row key={r.id} label={r.label || r.action_type}
+              hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}.${floor ? ` Undoing it also puts ${r.action_type} back so it ${rungMeta(floor, ladder).label}.` : ''}`}>
+              <Button size="xs" variant="secondary" loading={busy === r.id} onClick={() => undo(r)}>Undo</Button>
+            </Row>
+          )
+        })}
+      </RowGroup>
+    </div>
+  )
+}
+
+// ── Incident kill switch ────────────────────────────────────────────────────
+function IncidentSection() {
+  const [state, setState] = useState<{ active: boolean; reason: string; started_at: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  // 🔴 A failed read used to substitute `{ active: false }`, i.e. it FABRICATED "no incident is
+  // active" — a claim about a safety control. Measured with `/api/incident` at 500: this row rendered
+  // "Incident mode · Off — automation runs normally", with the toggle ENABLED and pointing the wrong
+  // way, and nothing said anywhere. Now the state stays `null` (unknown), which already disables the
+  // toggle via `!state`, and the hint says what happened instead of guessing.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const load = () => api.incident().then((s) => { setState(s); setLoadErr(null) }).catch(setLoadErr)
+  useEffect(() => { load() }, [])
+
+  const toggle = async (on: boolean) => {
+    setBusy(true)
+    try {
+      if (on) setState(await api.incidentOn('Activated from Settings'))
+      else { await api.incidentResume(); setState({ active: false, reason: '', started_at: '' }) }
+    } catch (e) {
+      notify(`Couldn't ${on ? 'activate' : 'resume'} incident mode: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="Incident kill switch" hint="Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.">
+      <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
+        <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
+          hint={loadErr
+            ? `Couldn't check whether incident mode is active: ${String((loadErr as Error)?.message || loadErr)}`
+            : state?.active ? `Unattended work suspended${state.reason ? ` — ${state.reason}` : ''}. Turn off to resume.`
+            : state ? 'Off — automation runs normally.'
+            : 'Checking…'}>
+          <Toggle on={Boolean(state?.active)} disabled={busy || !state} onChange={toggle} label="Incident mode" />
+        </Row>
+      </div>
+    </Section>
+  )
+}
+
+// ── Provider health (derived) ───────────────────────────────────────────────
+function ProviderHealthSection() {
+  const [rows, setRows] = useState<ProviderHealth[] | null>(null)
+  // The same audit regrouped by the SUBSYSTEM that asked. A provider row averages four
+  // unattended callers together, so a learning pass that fails every time reads as a small dent
+  // in a healthy provider — measured on a skill-ladder pass dying at 60,010 ms every turn.
+  const [callers, setCallers] = useState<CallerHealth[]>([])
+  // Same shape as the incident read above: `.catch(() => setRows([]))` turned "we could not check" into
+  // "no background model calls recorded yet" — a reassuring sentence about a health surface, produced by
+  // a failed request. The rows stay `null` and the failure is stated.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const refresh = () => api.modelsHealth().then((r) => { setRows(r.providers); setCallers(r.callers ?? []); setLoadErr(null) }).catch(setLoadErr)
+  useEffect(() => { refresh() }, [])
+
+  return (
+    <Section title="Provider health" hint="Derived from the model-call audit — breaker state, latency, and recent failures per provider. No data leaves your machine.">
+      <div className="rounded-lg bg-surface-container px-4 py-3">
+        {loadErr ? (
+          <div role="alert" data-type="body-s" className="text-on-surface-low">
+            Couldn't check provider health: {String((loadErr as Error)?.message || loadErr)}
+          </div>
+        ) : rows === null ? (
+          <div data-type="body-s" className="text-on-surface-low">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div data-type="body-s" className="text-on-surface-low">No background model calls recorded yet.</div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {rows.map((p) => <HealthRow key={p.name} p={p} />)}
+          </div>
+        )}
+        {callers.length > 0 && (
+          <div className="mt-3 border-t border-outline-variant/30 pt-3">
+            <div data-type="caption" className="text-on-surface-low">By background caller</div>
+            <div className="mt-1 flex flex-col gap-1">
+              {callers.map((c) => <CallerRow key={c.name} c={c} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  )
+}
+
+/** Exported for test: one line per SUBSYSTEM that asked for a model call.
+ *  Answers the question the provider rows cannot — "is my expensive background pass alive?" */
+export function CallerRow({ c }: { c: CallerHealth }) {
+  const dead = c.calls > 0 && c.passed === 0
+  // The dominant failure mode only. This is a summary line under the provider rows, not a second
+  // failure table: naming why it is dead is what makes it actionable, listing every mode is not.
+  const worstMode = Object.entries(c.failure_modes ?? {}).sort((a, b) => b[1] - a[1])[0]
+  return (
+    <div data-type="caption" className="flex items-baseline justify-between gap-l">
+      <span className="min-w-0 truncate text-on-surface">{c.name.replace(/_/g, ' ')}</span>
+      <span className="text-on-surface-low tabular-nums">
+        {c.calls} calls · <span style={dead ? { color: 'var(--color-error)' } : undefined}>
+          {c.pass_rate === null ? '—' : `${Math.round(c.pass_rate * 100)}% ok`}
+        </span>
+        {c.p90_ms > 0 && ` · p90 ${Math.round(c.p90_ms)}ms`}
+        {/* The mode, only when the pass is producing nothing at all. A caller with a few
+            scattered failures is noise; one at 0% is a subsystem that is dead in production,
+            and that is the case this row exists to make visible. */}
+        {dead && worstMode && ` · ${worstMode[0].replace(/_/g, ' ')}`}
+      </span>
+    </div>
+  )
+}
+
+/** Exported for test: jsdom reports every box as 0, so the only way to pin this row's derived
+ *  values (mode ordering, the p99 threshold) is to render the component directly. */
+export function HealthRow({ p }: { p: ProviderHealth }) {
+  // Dominant mode first — with a handful of modes the ordering is what makes the row scannable.
+  const failureModes = Object.entries(p.failure_modes ?? {}).sort((a, b) => b[1] - a[1])
+  const stateColor = p.breaker_state === 'open' ? 'var(--color-error)'
+    : p.breaker_state === 'half_open' ? 'var(--color-warning)' : 'var(--color-success)'
+  const stateLabel = p.breaker_state === 'open' ? 'Open' : p.breaker_state === 'half_open' ? 'Half-open' : 'Closed'
+  return (
+    <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-2 last:border-0">
+      <div className="min-w-0">
+        <div data-type="body-s" className="flex items-center gap-2 text-on-surface">
+          <span className="inline-block h-2 w-2 rounded-full" style={{ background: stateColor }} />
+          <span className="truncate">{p.name}</span>
+          <span className="text-on-surface-low">· {stateLabel}</span>
+          {p.degraded && <span style={{ color: 'var(--color-warning)' }}>· degraded</span>}
+        </div>
+        <div data-type="caption" className="mt-0.5 text-on-surface-low">
+          {p.calls} calls · {p.pass_rate === null ? '—' : `${Math.round(p.pass_rate * 100)}% ok`}
+          {p.p90_ms > 0 && ` · p90 ${Math.round(p.p90_ms)}ms`}
+          {/* The tail, only when it diverges from p90. `provider_health` computes p50/p90/p99 and
+              this row rendered p90 alone, so a provider that is usually fast but occasionally
+              stalls looked identical to one that is uniformly fast — the exact case a circuit
+              breaker exists for. Shown only when p99 is materially worse, so a healthy provider
+              keeps a one-line summary instead of two numbers that always agree. */}
+          {p.p99_ms > 0 && p.p99_ms >= p.p90_ms * 1.5 && ` (p99 ${Math.round(p.p99_ms)}ms)`}
+          {p.failed > 0 && ` · ${p.failed} failed`}
+        </div>
+        {/* WHY it failed, not just how often. `failure_modes` is the per-mode tally behind the
+            `failed` count above; without it "12 failed" gives no way to tell a rate limit from a
+            bad key from a timeout, which are three different user actions. Ordered by frequency
+            so the dominant mode reads first. */}
+        {failureModes.length > 0 && (
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {failureModes.map(([mode, n]) => (
+              <span key={mode}
+                data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">
+                {mode.replace(/_/g, ' ')} ×{n}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── number field renderer (built on the shared NumberField stepper) ─────────
+function NumberRow({ label, hint, value, min, step, dollars, onSave }: {
+  label: string; hint?: string; value: number; min: number; step: number; dollars?: boolean
+  /** Store `v`, named by this row's label; resolves whether it was stored. */
+  onSave: (v: number, label: string) => Promise<boolean>
+}) {
+  const [saved, setSaved] = useState(false)
+  // The outcome goes back to the field, which shows the stored value again when it was not stored.
+  const commit = (n: number) => onSave(n, label).then((stored) => {
+    if (stored) { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+    return stored
+  })
+  return (
+    <Row label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <SavedToast show={saved} />
+        {dollars && <span data-type="body-s" className="text-on-surface-low">$</span>}
+        <NumberField value={value} min={min} step={step} onChange={commit} ariaLabel={label} />
+      </div>
+    </Row>
+  )
+}

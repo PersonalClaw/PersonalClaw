@@ -1,0 +1,450 @@
+"""Regenerate, variant switch, and edit-resend endpoints."""
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from aiohttp import web
+
+from personalclaw.artifacts import retakes
+from personalclaw.dashboard import repeated_steps
+from personalclaw.dashboard.chat_persistence import _redact_meta, save_session_to_history
+from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.http_errors import json_error
+from personalclaw.mcp_artifacts import images_made_in
+from personalclaw.own_words import PASTES, left_as_marker, pastes_of
+from personalclaw.request_validation import bool_field, json_object_body, string_field
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.sel import sel
+from personalclaw.turn_source import TURN_STARTS
+
+logger = logging.getLogger(__name__)
+
+_MAX_VARIANTS = 20
+# Rewind tail snapshots retained per edited user message. Mirrors _MAX_VARIANTS'
+# spirit (bound the persisted growth); owner tunes against real sessions.
+_MAX_REWIND_SNAPSHOTS = 5
+
+
+async def _persist_history_off_thread(
+    state: DashboardState, session: _ChatSession, label: str
+) -> None:
+    """Rewrite the session's persisted history off the event loop.
+
+    Snapshots the current message list and writes it on a worker thread so a
+    slow disk write never blocks the event loop. Failures are logged but not
+    raised — the in-memory session stays authoritative until the next save.
+    """
+    try:
+        msgs_snapshot = list(session.messages)
+        # force=True: every caller here has DELIBERATELY shortened or rewritten the buffer
+        # (regenerate truncates, edit-resend rewinds, switch-variant swaps content at the
+        # same length), so this snapshot is authoritative even though it holds no more
+        # than the file does. They used to obtain the same effect by setting
+        # `session._resumed_count = 0` — lying to a predicate that no longer exists, and
+        # corrupting the seeded-message count `chat_fork` reads off the same field.
+        await asyncio.to_thread(save_session_to_history, state, session, msgs_snapshot, force=True)
+    except Exception:
+        logger.warning("%s: failed to persist session history", label, exc_info=True)
+
+
+async def api_chat_session_regenerate(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/regenerate — regenerate the last assistant reply.
+
+    On a turn that ended without its answer this is its Retry. Either way, when the attempt it
+    replaces finished steps that may have changed something it runs nothing until the owner says
+    yes (``repeated_steps.ask_first``): it answers ``409 retry_repeats_steps`` with what may
+    repeat, and runs once the request comes back with that question's ``confirm``. An app is told
+    to run it again from the dashboard: it cannot ask her.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    confirmed = string_field(await json_object_body(request), "confirm")
+
+    async with session._lock:
+        if session.running:
+            return web.json_response({"error": "session is running"}, status=409)
+
+        msgs = session.messages
+        # The LAST answer-shaped turn anchors the operation — an "assistant"
+        # message (classic regenerate) or an "error" message (a failed turn,
+        # #254): there the user never got an answer, so Regenerate acts as a
+        # clean RETRY of the failed turn's own message. Scanning for
+        # "assistant" alone did two wrong things on a failed turn: with no
+        # prior assistant it 400'd ("no assistant message to regenerate" — the
+        # orphaned-bubble bug), and WITH one it anchored on the previous
+        # exchange and silently truncated away the failed turn's user message,
+        # replaying an already-answered question.
+        anchor_idx = -1
+        for i in range(len(msgs) - 1, -1, -1):
+            if msgs[i].get("role") in ("assistant", "error"):
+                anchor_idx = i
+                break
+        if anchor_idx < 0:
+            return web.json_response({"error": "no assistant message to regenerate"}, status=400)
+        retrying_failed_turn = msgs[anchor_idx].get("role") == "error"
+        # The message that started the anchored turn, which is run again: the user's, or the
+        # row an automation, a subagent's report or an auto-nudge dispatched it with. Walking
+        # back to the latest USER row instead crossed such a turn's start, so regenerating an
+        # automation's reply deleted that reply and the turn before it, and asked the earlier,
+        # already-answered question again.
+        u_idx = -1
+        for i in range(anchor_idx - 1, -1, -1):
+            if msgs[i].get("role") in TURN_STARTS:
+                u_idx = i
+                break
+        if u_idx < 0:
+            return web.json_response({"error": "no message started this turn"}, status=400)
+
+        user_msg = msgs[u_idx].get("content", "")
+        if not user_msg:
+            return web.json_response(
+                {"error": "the message that started this turn is empty"}, status=400
+            )
+
+        # Retry and Regenerate both delete the attempt they replace, the calls it finished
+        # included, and the turn asked again may make them again: one that may have changed
+        # something runs again only on her yes to exactly these steps.
+        asked = await repeated_steps.ask_first(
+            state,
+            session,
+            msgs[u_idx],
+            msgs[u_idx + 1 :],
+            request=request,
+            operation="chat.retry_failed_turn" if retrying_failed_turn else "chat.regenerate",
+            confirm=confirmed,
+        )
+        if asked.answer is not None:
+            return asked.answer
+
+        variants: list[dict] = []
+        if not retrying_failed_turn:
+            # Only a REAL answer is variant-worthy — an error bubble is not an
+            # alternative response, so a retry stashes nothing.
+            ai_msg = msgs[anchor_idx]
+            _rv = ai_msg.get("variants")
+            variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
+            current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
+            if not any(v.get("content") == current_entry["content"] for v in variants):
+                variants.append(current_entry)
+            if len(variants) > _MAX_VARIANTS:
+                variants = variants[-_MAX_VARIANTS:]
+
+        # The images the replaced attempt made are what the replay RETAKES: a generation in
+        # the new turn lands as each one's next version instead of a second image beside it.
+        # Recorded under the key the turn hands its runtime, which is the one its tools
+        # resolve; the chat's own name is not it.
+        retake_key = _history_key_for(session.key)
+        retakes.open_retakes(retake_key, images_made_in(msgs[u_idx + 1 :]))
+        del session.messages[u_idx + 1 :]
+        session._dirty = True
+        session._pending_variants = variants
+
+        await _persist_history_off_thread(state, session, "regenerate")
+
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.retry_failed_turn" if retrying_failed_turn else "chat.regenerate",
+            outcome="allowed",
+            source="dashboard",
+            resources=session.key,
+            # Her yes, and to what: the steps she was told this run may repeat.
+            metadata=asked.audit,
+        )
+
+        if retrying_failed_turn:
+            # The prior turn FAILED — there is no earlier answer to vary, and a
+            # "you already answered" framing would gaslight the model. Plain
+            # re-run of the user's message.
+            hint = ""
+        else:
+            hint = (
+                "The user regenerated the previous response. Produce a fresh answer — "
+                "vary phrasing, structure, or angle. Do not say you already answered or "
+                "reference the prior reply."
+            )
+        task = asyncio.create_task(run_chat(state, session, user_msg, regenerate_hint=hint))
+        session.task = task
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+
+        def _clear_pending_on_done(t: asyncio.Task) -> None:
+            if session._pending_variants:
+                if not t.cancelled() and t.exception() is None:
+                    logger.warning("Regenerate: pending variants not consumed by flush, discarding")
+                session._pending_variants = []
+
+        task.add_done_callback(_clear_pending_on_done)
+        # However the replayed turn ends, nothing is left for a later turn to retake.
+        task.add_done_callback(lambda _t: retakes.close_retakes(retake_key))
+    state.push_sessions_update()
+    return web.json_response({"ok": True})
+
+
+async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/switch-variant — switch which regenerated variant is active."""  # noqa: E501
+
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        idx = int(body.get("index"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid index"}, status=400)
+
+    async with session._lock:
+        if session.running:
+            return web.json_response({"error": "session is running"}, status=409)
+
+        target = None
+        for m in reversed(session.messages):
+            if m.get("role") == "assistant" and m.get("variants"):
+                target = m
+                break
+        if target is None:
+            return web.json_response({"error": "no variants"}, status=400)
+        raw_target_variants = target.get("variants")
+        variants: list[dict] = (
+            list(raw_target_variants)  # type: ignore[arg-type]
+            if isinstance(raw_target_variants, list)
+            else []
+        )
+        if idx < 0 or idx >= len(variants):
+            return web.json_response({"error": "index out of range"}, status=400)
+
+        chosen = variants[idx]
+        if not isinstance(chosen, dict):
+            return web.json_response({"error": "corrupt variant entry"}, status=400)
+        target_dict: dict = target
+        target_dict["content"] = chosen.get("content", "")
+        target_dict["ts"] = chosen.get("ts", target_dict.get("ts", ""))
+        target_dict["variant_idx"] = idx
+        session._dirty = True
+        await _persist_history_off_thread(state, session, "switch-variant")
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.switch_variant",
+            outcome="allowed",
+            source="dashboard",
+            resources=session.key,
+        )
+        _bc, _ = redact_exfiltration_urls(target_dict["content"])
+        _bc, _ = redact_credentials(_bc)
+        state.broadcast_ws(
+            "chat_variant_switch",
+            {"session": session.key, "index": idx, "count": len(variants), "content": _bc},
+        )
+        return web.json_response({"ok": True, "index": idx})
+
+
+def _turn_rows(msgs: list[dict], start: int) -> list[dict]:
+    """The rows of the turn ``msgs[start]`` started: every row after it, up to the next row that
+    starts a turn."""
+    end = next(
+        (i for i in range(start + 1, len(msgs)) if msgs[i].get("role") in TURN_STARTS),
+        len(msgs),
+    )
+    return msgs[start + 1 : end]
+
+
+async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/edit-resend — edit a user message and resend.
+
+    Sent again as it is (Rewind to here, or a resend she did not change), her message runs its
+    turn again, and when the attempt that turn made finished steps that may have changed something
+    nothing runs until the owner says yes (``repeated_steps.ask_first``), as Retry asks. The page
+    says it is sending the message again (``again``), since what it shows of a message is not
+    always the row's own words; a body that carries the row's own words is that too. An edited
+    message is a new one, and is sent as it is asked.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    index = body.get("index")
+    ts = body.get("ts")
+    client_ts = body.get("client_ts")
+    rewind = bool_field(body, "rewind", default=False)
+    again = bool_field(body, "again", default=False)
+    confirmed = string_field(body, "confirm")
+    content = (body.get("content") or "").strip()
+    if not content:
+        return web.json_response({"error": "content is required"}, status=400)
+    # The blocks she pasted into it (`own_words.PASTES`), which the page sends in their markers'
+    # place and beside it, as every send does: her row keeps them, so her bubble shows each as its
+    # chip. One whose marker the message still holds is refused, as a send's is
+    # (`chat_handlers.api_chat`): the agent would read the marker and never what she pasted.
+    pastes = pastes_of(body)
+    if (unsent := left_as_marker(content, pastes)) is not None:
+        return json_error("paste_not_expanded", status=400, error_extra={"paste": unsent})
+
+    async with session._lock:
+        if session.running:
+            return web.json_response({"error": "session is running"}, status=409)
+
+        msgs = session.messages
+
+        # Locate the user message to edit, as a graceful cascade so the edit never
+        # dead-ends: (1) by ts, (2) by a valid user-message index, (3) the LAST user
+        # message. "Edit & resend" always targets the most recent user turn from the
+        # composer, so the final fallback is the right target — and it makes the
+        # endpoint robust to a client whose optimistic turn had no ts yet.
+        target = -1
+        if ts:
+            target = next(
+                (i for i, m in enumerate(msgs) if m.get("ts") == ts and m.get("role") == "user"), -1
+            )
+        if (
+            target < 0
+            and isinstance(index, int)
+            and 0 <= index < len(msgs)
+            and msgs[index].get("role") == "user"
+        ):
+            target = index
+        if target < 0:
+            target = next(
+                (i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("role") == "user"), -1
+            )
+        if target < 0:
+            return web.json_response({"error": "no user message to edit"}, status=400)
+        index = target
+
+        # 🔴 AN EDIT OF AN EARLIER TURN ALWAYS REWINDS — the flag cannot opt out of it. Without
+        # the retention below, `del messages[index:]` removes every later exchange with no trail,
+        # and without the provider reset the agent goes on answering from a history that still
+        # holds them. The inline editor sent no `rewind`, this answered
+        # `{"rewound": 0}`, and the later turn was gone from disk. So `rewind` from the body can
+        # only ADD a rewind (a last-turn edit may ask to keep its old answer); whether a later
+        # user turn exists is decided here, where the transcript is.
+        rewind = rewind or any(m.get("role") == "user" for m in msgs[index + 1 :])
+
+        _bc, _ = redact_exfiltration_urls(content)
+        _bc, _ = redact_credentials(_bc)
+        # Her message sent again as it is runs the turn it started again, and the attempt that turn
+        # made goes with the rows below: what it did that may have changed something runs again
+        # only on her yes to exactly those steps. An edited message is a new one.
+        same = again or str(msgs[index].get("content") or "").strip() in (content, _bc)
+        asked = (
+            await repeated_steps.ask_first(
+                state,
+                session,
+                msgs[index],
+                _turn_rows(msgs, index),
+                request=request,
+                operation="chat.rewind" if rewind else "chat.edit_resend",
+                confirm=confirmed,
+            )
+            if same
+            else repeated_steps.RunAgain([])
+        )
+        if asked.answer is not None:
+            return asked.answer
+
+        # True rewind (fork-and-swap under the same slot): snapshot the discarded
+        # tail — the edited turn's old content + every message AFTER it — as a
+        # `rewound` chain (the variants pattern at message level, capped like
+        # `_MAX_VARIANTS`), then re-attach it to the freshly-appended edited message
+        # below. edit-resend deletes `messages[index:]` and re-appends, so the chain
+        # (which may already exist on the edited turn from a prior rewind) has to be
+        # carried across the delete. Resetting the provider below makes the next turn
+        # rebuild context from the truncated transcript, so the agent never
+        # references the undone answers. A plain edit of the LAST user turn takes
+        # neither step: its old answer is replaced and the provider absorbs the resend.
+        retained = 0
+        carried_rewound: list[dict] = []
+        if rewind:
+            edited_old = msgs[index]
+            _rw = edited_old.get("rewound")
+            carried_rewound = list(_rw) if isinstance(_rw, list) else []
+            tail = [dict(m) for m in msgs[index:] if m.get("role") in ("user", "assistant")]
+            # count = messages after the edited user turn (the tail the user loses)
+            retained = max(0, len(tail) - 1)
+            if tail:
+                carried_rewound.append(
+                    {"messages": tail, "ts": datetime.now(tz=timezone.utc).isoformat()}
+                )
+                if len(carried_rewound) > _MAX_REWIND_SNAPSHOTS:
+                    carried_rewound = carried_rewound[-_MAX_REWIND_SNAPSHOTS:]
+
+        del session.messages[index:]
+        session._dirty = True
+
+        # Store the FE's fresh client ts (if valid ISO-8601) on the re-appended
+        # message so a subsequent edit-resend still matches by ts; else server-stamp.
+        _resend_ts = ""
+        if isinstance(client_ts, str) and client_ts:
+            try:
+                datetime.fromisoformat(client_ts)
+                _resend_ts = client_ts
+            except (ValueError, TypeError):
+                _resend_ts = ""
+        session.append(
+            "user",
+            _bc,
+            "msg msg-u",
+            ts=_resend_ts,
+            meta=_redact_meta({PASTES: pastes}) if pastes else None,
+        )
+        take_in_the_users_links(request.get("app", ""), session.key, _bc)
+        if rewind and carried_rewound:
+            session.messages[-1]["rewound"] = carried_rewound
+
+        await _persist_history_off_thread(state, session, "edit-resend")
+
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.rewind" if rewind else "chat.edit_resend",
+            outcome="allowed",
+            source="dashboard",
+            resources=session.key,
+            # Her yes, and to what: the steps she was told this run may repeat.
+            metadata=asked.audit,
+        )
+
+        # Fork-and-swap: reset the provider so the next run_chat's `is_new` path
+        # rebuilds context from the truncated transcript (the running provider owns
+        # its own history and doesn't know we truncated the dashboard list). Only on
+        # rewind — the last-turn path relies on the provider absorbing the resend.
+        if rewind:
+            await state.sessions.reset(_history_key_for(session.key))
+            state.broadcast_ws(
+                "chat_rewound",
+                {"session": session.key, "index": index, "retained": retained},
+            )
+
+        task = asyncio.create_task(run_chat(state, session, _bc))
+        session.task = task
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+
+        def _on_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and t.exception() is not None:
+                logger.error(
+                    "edit-resend run_chat failed for %s", session.key, exc_info=t.exception()
+                )
+
+        task.add_done_callback(_on_done)
+
+    state.push_sessions_update()
+    return web.json_response({"ok": True, "rewound": retained})

@@ -1,0 +1,778 @@
+"""Session lifecycle, usage, search, approvals, and reset handlers."""
+
+import asyncio
+import json
+import logging
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.llm.base import ModelProvider  # noqa: F811
+
+from aiohttp import web
+
+from personalclaw import approval_answer, session_keys, subagent_endings
+from personalclaw.cancellation import cancel_and_wait
+from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.state import DashboardState
+from personalclaw.history import SEARCH_MIN_CHARS
+from personalclaw.http_errors import json_error
+from personalclaw.mcp_discovery import discover_servers_to_sync, sync_to_agent_config
+from personalclaw.validation import sanitize_string
+
+logger = logging.getLogger(__name__)
+
+_SHUTDOWN_TIMEOUT_SECS = 10
+
+
+def _sel():
+    """Late-binding _sel() for test monkeypatch compatibility."""
+    import personalclaw.dashboard.handlers as _pkg  # noqa: F811 — circular import
+
+    return _pkg.sel()
+
+
+async def api_sessions_context(request: web.Request) -> web.Response:
+    """GET /api/sessions/context — context usage for all active sessions."""
+    state: DashboardState = request.app["state"]
+    return web.json_response({"sessions": state.sessions.context_info()})
+
+
+_health_cache: dict[str, dict] = {}
+_health_cache_ts: float = 0.0
+_health_lock: asyncio.Lock | None = None
+_HEALTH_REFRESH_SECS = 15
+
+
+async def api_sessions_health(request: web.Request) -> web.Response:
+    """GET /api/sessions/health — sessions flagged as stalled from log scan."""
+    global _health_cache, _health_cache_ts, _health_lock
+    if _health_lock is None:
+        _health_lock = asyncio.Lock()
+    now = time.monotonic()
+    if now - _health_cache_ts > _HEALTH_REFRESH_SECS:
+        async with _health_lock:
+            # Re-check after acquiring lock (another request may have refreshed)
+            if time.monotonic() - _health_cache_ts > _HEALTH_REFRESH_SECS:
+                try:
+                    from personalclaw.dashboard import session_health
+
+                    _health_cache = await asyncio.to_thread(session_health.compute_session_health)
+                    _health_cache_ts = time.monotonic()
+                except Exception:
+                    logger.warning("session_health scan failed", exc_info=True)
+                    _health_cache_ts = time.monotonic()
+    return web.json_response({"stalled": _health_cache})
+
+
+def _listed(log) -> list[dict]:
+    """The sessions, with the search indexer held off while they are listed."""
+    from personalclaw import session_search
+
+    with session_search.INDEXER.foreground():
+        return log.list_sessions()
+
+
+async def api_sessions(request: web.Request) -> web.Response:
+    """GET /api/sessions — list conversation session files.
+
+    Query params:
+      - ``limit``: max sessions to return (default 50, max 200)
+      - ``offset``: skip first N sessions (default 0)
+
+    Returns ``{sessions, total, has_more}`` for pagination. An app caller's page and total count
+    only the conversations it started (``DashboardState.session_creating_app``).
+    """
+    state: DashboardState = request.app["state"]
+    if not state.conversation_log:
+        return web.json_response({"sessions": [], "total": 0, "has_more": False})
+    try:
+        limit = min(int(request.query.get("limit", "50")), 200)
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        offset = int(request.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        offset = 0
+    request_app = request.get("app", "")
+    # Off the event loop: a history of thousands of chats is a stat of each transcript.
+    listed = await asyncio.to_thread(_listed, state.conversation_log)
+    all_sessions = [
+        s
+        for s in listed
+        # Restricted (incognito/temporary) sessions stay out of every
+        # discovery surface, not just the chat-history list.
+        if s.get("memory_mode") not in ("incognito", "temporary")
+        and (not request_app or state.session_creating_app(s.get("key", "")) == request_app)
+    ]
+    total = len(all_sessions)
+    page = all_sessions[offset : offset + limit]
+    return web.json_response(
+        {
+            "sessions": page,
+            "total": total,
+            "has_more": offset + limit < total,
+        }
+    )
+
+
+async def api_sessions_search(request: web.Request) -> web.Response:
+    """GET /api/sessions/search — content search across session transcripts.
+
+    Served from the FTS5 index, which also yields a highlighted
+    ``snippet`` showing why each session matched, and read directly from the transcripts for
+    what the index cannot answer (:func:`personalclaw.session_search.search`).
+
+    Query params:
+      - ``q``: search string (min 2 chars; empty returns no results)
+      - ``limit``: max results (default 50, max 200)
+      - ``rest``: ``1`` to also read directly every chat the index does not answer for whole
+
+    Returns ``{sessions, source, searched, complete, index, matched}``: session metadata as in
+    :func:`api_sessions`, which path answered (``index``, ``scan`` or ``index+scan``), how many
+    chats the answer looked in whole of how many there are (``searched: {chats, of}``), whether
+    that is all of them (``complete``), the index's own count (``index: {indexed, of, building,
+    long}``, ``long`` being the chats it holds only the beginning of; ``null`` when there is no
+    index), and how many chats matched (``matched``, which is more than ``sessions`` holds when
+    there were more matches than ``limit``). **A partial answer says so**: while the index is
+    being built, when a chat is longer than it keeps, or with no index, an answer that did not
+    look in every chat whole is ``complete: false``, and the same search with ``rest=1`` reads
+    the others. Titles may be LLM-generated and are redacted.
+
+    An app caller's matches are in the conversations it started and nowhere else
+    (``DashboardState.session_creating_app``), and its counts are of those conversations only:
+    an answer that can be narrower than the app's whole history, and never one that names,
+    quotes or counts a conversation of yours.
+    """
+    state: DashboardState = request.app["state"]
+    if not state.conversation_log:
+        return web.json_response({"sessions": []})
+    q = sanitize_string(request.query.get("q", "")).strip()
+    if len(q) < SEARCH_MIN_CHARS:
+        return web.json_response({"sessions": []})
+    try:
+        limit = max(1, min(int(request.query.get("limit", "50")), 200))
+    except (TypeError, ValueError):
+        limit = 50
+    rest = request.query.get("rest", "") in ("1", "true", "yes")
+    request_app = request.get("app", "")
+    fetch = 200 if request_app else limit
+    log = state.conversation_log
+
+    def _visible(key: str) -> bool:
+        return state.session_creating_app(key) == request_app
+
+    def _search() -> dict:
+        from personalclaw import session_search
+
+        # The indexer gives way while a search is answered, as it does for the chat list.
+        with session_search.INDEXER.foreground():
+            return session_search.search(
+                q, log=log, limit=fetch, rest=rest, visible=_visible if request_app else None
+            ).to_dict()
+
+    payload = await asyncio.get_running_loop().run_in_executor(None, _search)
+    sessions = payload["sessions"][:limit]
+    payload["sessions"] = sessions
+    for s in sessions:
+        title = s.get("title")
+        if title:
+            import personalclaw.dashboard.handlers as _h  # noqa: F811
+
+            title, _ = _h.redact_exfiltration_urls(title)
+            title, _ = _h.redact_credentials(title)
+            s["title"] = title
+        # A snippet is transcript text, so it gets the same redaction the title does.
+        snippet = s.get("snippet")
+        if snippet:
+            import personalclaw.dashboard.handlers as _h  # noqa: F811
+
+            snippet, _ = _h.redact_exfiltration_urls(snippet)
+            snippet, _ = _h.redact_credentials(snippet)
+            s["snippet"] = snippet
+    return web.json_response(payload)
+
+
+async def api_sessions_recall(request: web.Request) -> web.Response:
+    """GET /api/sessions/recall — what your earlier chats said, searched for your agent.
+
+    The search behind the agent's ``chat_search`` tool (:mod:`personalclaw.chat_recall`).
+
+    Query params:
+      - ``q``: what to look for (at least 2 characters)
+      - ``limit``: the most chats to return (1-10, default 5)
+
+    The chat the call is made for (the work its sign-in proves, ``work_of_request``; for a subagent
+    or a workflow step, each session it works for, up to its chat) is not searched, and neither is
+    an Incognito or a Temporary chat. From a Temporary chat's work nothing is: it starts blank. For
+    an app's work, only the conversations that app started are searched, as the app's own content
+    search is (:func:`api_sessions_search`). Whose work the call is, is
+    :func:`memory_reads.reach_of`'s answer, the one every memory read asks. For work someone other
+    than the owner asked for (a colleague's turn in a shared thread, and what such a turn starts:
+    ``memory_writes.asker``, read for that work) nothing is searched either, and ``result`` says
+    who asked (``chat_recall.not_searched_for``).
+
+    Returns ``{result, query, chats, matched, searched, complete, index}``. ``result`` is what the
+    tool hands the agent. ``chats`` holds each chat found, best first: its ``key``, ``title``,
+    ``created``, ``modified``, ``route`` (``#/chat/<key>?find=<q>``), ``link`` (that route on the
+    dashboard's address when one is known, else ``""``), the ``turns`` that say it (``role``,
+    ``at``, ``text``), how many ``more`` of its turns use the words, and the ``snippet`` the search
+    found. Titles, turns and snippets are masked.
+    """
+    from personalclaw import chat_recall, memory_reads, memory_writes
+
+    state: DashboardState = request.app["state"]
+    q = " ".join(sanitize_string(request.query.get("q", "")).split())[:500]
+    if len(q) < SEARCH_MIN_CHARS:
+        return json_error(
+            "text_required",
+            message="Give at least two characters to search your chats for.",
+            status=400,
+        )
+    try:
+        limit = int(request.query.get("limit", ""))
+    except (TypeError, ValueError):
+        limit = chat_recall.DEFAULT_CHATS
+    reach = memory_reads.reach_of(state, approval_answer.work_of_request(request))
+    asking, app = reach.keys, reach.app
+    if reach.blank:
+        _sel().log_api_access(
+            caller=asking[0],
+            operation="sessions.recall",
+            outcome="denied",
+            source="dashboard",
+            resources=asking[-1],
+        )
+        said = chat_recall.TEMPORARY if reach.temporary else reach.blank
+        return web.json_response({"result": said, "query": q, "chats": []})
+    someone = memory_writes.asker()
+    if someone:
+        _sel().log_api_access(
+            caller=asking[0] if asking else "dashboard",
+            operation="sessions.recall",
+            outcome="denied",
+            source="dashboard",
+            resources=f"{asking[-1] if asking else ''},asked_by_someone_else",
+        )
+        said = chat_recall.not_searched_for(someone)
+        return web.json_response({"result": said, "query": q, "chats": []})
+    log = state.conversation_log
+    if not log:
+        return web.json_response(
+            {"result": f'No earlier chat says "{q}".', "query": q, "chats": []}
+        )
+
+    def _visible(key: str) -> bool:
+        return state.session_creating_app(key) == app
+
+    def _recall() -> tuple[str, dict]:
+        import functools
+
+        from personalclaw import session_search
+        from personalclaw.dashboard.channel_messages import dashboard_link
+        from personalclaw.timezones import resolve_zone
+
+        # The indexer gives way while a search is answered, as it does for the chat list.
+        with session_search.INDEXER.foreground():
+            exclude = frozenset().union(*(chat_recall.chats_of(log, key) for key in asking))
+            recall = chat_recall.search(
+                q, log=log, limit=limit, exclude=exclude, visible=_visible if app else None
+            )
+        link = functools.cache(dashboard_link)
+        text = chat_recall.render(recall, zone=resolve_zone(), link=link)
+        return text, chat_recall.to_dict(recall, link=link)
+
+    text, found = await asyncio.get_running_loop().run_in_executor(None, _recall)
+    return web.json_response({"result": text, **found})
+
+
+async def api_session_detail(request: web.Request) -> web.Response:
+    """GET /api/sessions/{key} — return messages for a session."""
+    state: DashboardState = request.app["state"]
+    key = request.match_info["key"]
+    if not state.conversation_log:
+        return web.json_response([])
+    messages = state.conversation_log.read_messages(key)
+    if not messages and not _session_exists(state, key):
+        # A missing session must be distinguishable from a real session with no
+        # messages yet: a polling client would otherwise read a mistyped or
+        # deleted key's emptiness as truth. A LIVE session whose file has not
+        # been written yet (a just-opened tab) still answers [].
+        return json_error("session_not_found", status=404)
+    return web.json_response(messages)
+
+
+async def api_session_delete(request: web.Request) -> web.Response:
+    """DELETE /api/sessions/{key} — permanently delete a history session, as Delete does.
+
+    The one way a chat is deleted (``chat_forget.delete_chats``), what memory drew from it alone
+    included. A chat whose transcript could not be removed answers 500 (``session_not_deleted``):
+    it is still kept."""
+    state: DashboardState = request.app["state"]
+    key = request.match_info["key"]
+    if not state.conversation_log:
+        return web.json_response({"error": "no conversation log"}, status=400)
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    done = await delete_chats(state, [key], by=str(request.get("user") or "dashboard"))
+    if done.deleted:
+        return web.json_response({"ok": True})
+    if done.failed:
+        return json_error("session_not_deleted", status=500)
+    # A delete that deleted nothing must not answer 200 (#2941): the status would be
+    # indistinguishable from a real delete to a status-code-only client (including the
+    # `agent_callable` LLM path). Match the GET sibling twenty lines up, which 404s the
+    # same id on purpose for the same reason.
+    return json_error("session_not_found", status=404)
+
+
+def _session_exists(state: DashboardState, key: str) -> bool:
+    """Whether *key* resolves to a persisted or currently-live dashboard session.
+
+    The existence half of ``api_session_detail``'s invariant, extracted so the sub-resource reads
+    under ``/api/sessions/{id}`` can ask the SAME question (#2940). It was written down once, in
+    one handler's comment, and the routes underneath that handler never got it — which is exactly
+    how ten sub-resource reads shipped answering a well-formed empty body for a parent that does
+    not exist. A predicate two callers share cannot drift the way two copies of it would.
+
+    Read-only by construction: it consults the already-loaded ``DashboardState`` and the
+    conversation log, and never touches ``config_dir()`` — a validation check on a READ path must
+    not create the home it is validating against.
+    """
+    conversation_log = getattr(state, "conversation_log", None)
+    return bool(conversation_log and conversation_log.has_session(key)) or (
+        _live_session_key(state, key) is not None
+    )
+
+
+def _live_session_key(state: DashboardState, key: str) -> str | None:
+    """The stored key of the ACTIVE session matching a history key, or ``None``.
+
+    Session keys may be the raw history key (``dashboard_chat-X-TS`` when
+    resumed from history) or the stripped form (``chat-X-TS`` for sessions
+    that were never closed and resumed); the reverse also occurs (history key
+    unprefixed, session stored with a prefix). One resolver, so the detail
+    endpoint's existence check and the delete path's removal can never drift.
+    """
+    if key in state._sessions:
+        return key
+    stripped = key.removeprefix(session_keys.DASHBOARD.prefix)
+    while session_keys.CHAT_FILE.names(stripped):
+        stripped = stripped[len(session_keys.CHAT_FILE.prefix) :]
+    if stripped in state._sessions:
+        return stripped
+    if session_keys.CHAT_FILE.key(key) in state._sessions:
+        return session_keys.CHAT_FILE.key(key)
+    return None
+
+
+async def _remove_session_for_history_key(state: DashboardState, key: str) -> None:
+    """Remove the active chat session corresponding to a history key.
+
+    Key-form resolution lives in :func:`_live_session_key`. Also kills the
+    ACP agent session to prevent orphaned processes.
+    """
+    from personalclaw.dashboard.chat import _history_key_for  # circular import  # noqa: F811
+
+    live_key = _live_session_key(state, key)
+    session = state._sessions.pop(live_key, None) if live_key is not None else None
+    if session and session.running and session.task is not None:
+        # `wait_for` on a task it cancelled is no bound: at its timeout it cancels the task again
+        # and waits for THAT, and a turn starting an agent's process may not leave for either.
+        await cancel_and_wait([session.task], what=f"chat {live_key}", grace=2.0)
+    # Kill the ACP agent subprocess to free resources
+    if session:
+        try:
+            await state.sessions.destroy(_history_key_for(key))
+        except Exception:
+            pass
+
+
+async def api_sessions_clear(request: web.Request) -> web.Response:
+    """DELETE /api/sessions — permanently delete closed history sessions only, as Delete does.
+
+    Each goes the one way a chat is deleted (``chat_forget.delete_chats``), what memory drew from
+    it alone included. Skips sessions currently open in the sidebar (any session in
+    ``state._sessions``) and sessions with ``pinned=True`` on disk.
+    """
+    state: DashboardState = request.app["state"]
+    if not state.conversation_log:
+        return web.json_response({"error": "no conversation log"}, status=400)
+
+    from personalclaw.dashboard.chat import _history_key_for  # noqa: F811
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    protected: set[str] = set()
+    for session in state._sessions.values():
+        hk = _history_key_for(session.key)
+        protected.add(hk)
+        protected.add(hk.replace(":", "_", 1))
+
+    sessions = state.conversation_log.list_sessions()
+    closed: list[str] = []
+    skipped = 0
+    for s in sessions:
+        key = s["key"]
+        if key in protected:
+            skipped += 1
+            continue
+        try:
+            meta = state.conversation_log.get_metadata(key)
+        except Exception:
+            logger.warning(
+                "api_sessions_clear: unreadable metadata for %s, skipping", key, exc_info=True
+            )
+            skipped += 1
+            continue
+        if not isinstance(meta, dict):
+            skipped += 1
+            continue
+        if meta.get("pinned"):
+            skipped += 1
+            continue
+        closed.append(key)
+    done = await delete_chats(state, closed, by=str(request.get("user") or "dashboard"))
+    # One listed but neither deleted nor found by then (removed meanwhile) is not cleared either.
+    count = len(done.deleted)
+    failed = len(closed) - count
+    logger.info("api_sessions_clear: cleared=%d skipped=%d failed=%d", count, skipped, failed)
+    return web.json_response(
+        {"ok": failed == 0, "cleared": count, "skipped": skipped, "failed": failed}
+    )
+
+
+# ── Approvals ──
+
+
+async def api_approvals(request: web.Request) -> web.Response:
+    """GET /api/approvals — list pending tool approvals."""
+    state: DashboardState = request.app["state"]
+    return web.json_response(list(state._pending_approvals.values()))
+
+
+async def api_approval_resolve(request: web.Request) -> web.Response:
+    """POST /api/approvals/{id}/{action} — approve or reject."""
+    state: DashboardState = request.app["state"]
+    approval_id = request.match_info["id"]
+    action = request.match_info["action"]
+    if action not in ("approve", "reject"):
+        return web.json_response({"error": "invalid action"}, status=400)
+    # Only you answer, never an app — not even one relaying your answer — nor an agent's tool, nor
+    # the party that asked (`approval_answer`). Asked here as well as inside `resolve_approval`
+    # only to NAME the refusal, like the ended-owner check below: the decision path refuses on its
+    # own for every door, and this door is the one that can tell the caller why.
+    by = approval_answer.of_request(request)
+    refused = state.answer_refusal(approval_id, by)
+    if refused:
+        return json_error("approval_owner_only", message=refused, status=403)
+    ended = state.refuse_ended_owner(approval_id)
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
+    ok = state.resolve_approval(approval_id, action == "approve", by=by)
+    if not ok:
+        return web.json_response({"error": "not found or expired"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_session_keepalive(request: web.Request) -> web.Response:
+    """POST /api/session-keepalive — a waiting tool's check-in, which keeps its session alive.
+
+    Sent by the `wait` tool every few seconds. It refreshes the activity timestamp on the session's
+    provider so idle-detection/stale-checks don't SIGTERM a session that's intentionally blocking
+    in a long-running MCP tool, and it hands the waiting turn how the chat's helpers ended since,
+    when its agent is owed that (``{"endings": [...]}``, ``subagent_endings``): a helper whose start
+    she declined is told at once, and the wait ends with it, rather than running out its time on a
+    report that will not come.
+
+    Authenticated via X-Internal-Secret; session is selected via the
+    X-Session-Key header that all MCP subprocesses already send, as the work the internal
+    credential names (``approval_answer.work_of_request``): a request an app's token makes is the
+    app's own work, which keeps no chat alive.
+    """
+    state: DashboardState = request.app["state"]
+    session_key = approval_answer.work_of_request(request)
+    if not session_key:
+        return web.json_response({"error": "X-Session-Key required"}, status=400)
+    provider = state.sessions.get_provider(session_key)
+    if provider is None:
+        return web.json_response({"error": "session not found"}, status=404)
+    try:
+        provider.touch_activity()
+    except Exception as exc:
+        logger.debug("touch_activity failed for %s: %s", session_key, exc)
+        return web.json_response({"error": "touch failed"}, status=500)
+    return web.json_response({"ok": True, "endings": subagent_endings.take_for(state, session_key)})
+
+
+async def api_session_tool_policy(request: web.Request) -> web.Response:
+    """GET /api/session-tool-policy — return managedToolPolicy for the
+    calling session's agent.
+
+    Used by the managed MCP server (personalclaw-core) to filter
+    their tool lists per-agent.  Returns {"exclude": [...]} on success,
+    or 400/404 when the session cannot be identified (deny-by-default:
+    callers that cannot prove identity get an error, not an empty policy).
+    Authenticated via X-Internal-Secret + X-Session-Key.
+    """
+    state: DashboardState = request.app["state"]
+    session_key = approval_answer.work_of_request(request)
+    if not session_key:
+        _sel().log_api_access(
+            caller="unknown",
+            operation="session_tool_policy",
+            outcome="denied",
+            source="dashboard",
+            resources="missing X-Session-Key",
+        )
+        return web.json_response({"error": "X-Session-Key required"}, status=400)
+
+    # Resolve agent name from session
+    agent_name = ""
+
+    # Dashboard session
+    if session_key.startswith("dashboard:"):
+        session_name = session_key[len("dashboard:") :]
+        session = state.get_session(session_name)
+        if session:
+            agent_name = session.agent
+    # Subagent — look up in SubagentManager
+    elif session_key.startswith("subagent:"):
+        if state.subagents:
+            subagent_id = session_key[len("subagent:") :]
+            info = state.subagents.get(subagent_id)
+            if info:
+                agent_name = info.agent
+    # Cron — fall through to session manager lookup below
+    elif session_key.startswith("cron:"):
+        pass
+
+    # Also check session manager for agent name
+    if not agent_name and state.sessions:
+        agent_name = state.sessions.get_agent(session_key)
+
+    if not agent_name:
+        _sel().log_api_access(
+            caller=session_key,
+            operation="session_tool_policy",
+            outcome="denied",
+            source="dashboard",
+            resources="agent not resolved",
+        )
+        return web.json_response({"error": "agent not resolved"}, status=404)
+
+    # Sanitize agent_name to prevent path traversal
+    if "/" in agent_name or "\\" in agent_name or ".." in agent_name:
+        _sel().log_api_access(
+            caller=session_key,
+            operation="session_tool_policy",
+            outcome="denied",
+            source="dashboard",
+            resources=f"invalid agent_name={agent_name!r}",
+        )
+        return web.json_response({"error": "invalid agent name"}, status=400)
+
+    # Read agent config from disk
+    agent_path = config_loader.config_dir() / "agents" / f"{agent_name}.json"
+    if not agent_path.is_file():
+        return web.json_response({})
+
+    try:
+        config = json.loads(agent_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return web.json_response({})
+
+    policy = config.get("managedToolPolicy", {})
+    if not isinstance(policy, dict):
+        return web.json_response({})
+
+    _sel().log_api_access(
+        caller=session_key,
+        operation="session_tool_policy",
+        outcome="ok",
+        source="dashboard",
+        resources=f"agent={agent_name}",
+    )
+    return web.json_response(policy)
+
+
+async def _reset_all_sessions(request: web.Request) -> int:
+    """Reset all active sessions so they pick up config changes.
+
+    Reloads provider factory (handles provider switch between ACP backends, e.g.
+    native↔claude-code), shuts down all active sessions AND drains the warm pool
+    (pre-spawned processes loaded the old MCP config at spawn time).
+    New sessions cold-start on next message.
+    Returns the number of sessions reset.
+    """
+    state: DashboardState = request.app["state"]
+    sessions = state.sessions
+
+    # Reload factory so provider switch takes effect immediately
+    await sessions.reload_provider_factory()
+
+    # Pop all active sessions
+    providers: "list[ModelProvider]" = []
+    count = sessions.count
+    if count > 0:
+        providers = await sessions.drain_all_providers()
+
+    # Drain warm pool — pre-spawned processes have stale MCP config
+    pool_providers = await sessions.drain_warm_pool()
+    providers.extend(pool_providers)
+
+    if count > 0 or pool_providers:
+        logger.info(
+            "Reset %d session(s) + %d pool process(es) after config change",
+            count,
+            len(pool_providers),
+        )
+
+    state.broadcast_ws("sessions_restarting", {"status": "restarting"})
+
+    async def _background_restart() -> None:
+        if providers:
+
+            async def _safe_shutdown(p: "ModelProvider") -> None:
+                import personalclaw.dashboard.handlers as _h  # noqa: F811
+
+                _timeout = _SHUTDOWN_TIMEOUT_SECS
+                try:
+                    await asyncio.wait_for(p.shutdown(), timeout=_timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Session shutdown hung past %.1fs; forcing kill",
+                        _timeout,
+                    )
+                    try:
+                        _h._sync_kill_provider(p)
+                    except Exception:
+                        logger.exception("Force-kill fallback also failed for %r", p)
+                except Exception:
+                    pass
+
+            await asyncio.gather(*[_safe_shutdown(p) for p in providers])
+
+        sessions._pool_started = False
+        await sessions.start_pool()
+        logger.info("Session pool restarted")
+        state.push_refresh("agents")
+        state.push_sessions_update()
+        state.broadcast_ws("sessions_restarting", {"status": "ready"})
+
+    task = asyncio.create_task(_background_restart())
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+    return count
+
+
+async def api_sessions_restart(request: web.Request) -> web.Response:
+    """POST /api/sessions/restart — reset all ACP agent sessions.
+
+    Forces fresh context injection on the next message. Use after editing
+    memory, lessons, or skills to pick up changes immediately.
+
+    Also syncs MCP servers from mcp.json → personalclaw.json so newly
+    installed servers (e.g. via marketplace) are picked up on restart.
+    """
+    # Sync MCP servers before restarting so new installs take effect.
+    # Run in thread — discover/sync do blocking file I/O and subprocess calls.
+    # Cap at 30s so a hung ACP agent subprocess doesn't stall the restart.
+    synced = 0
+    try:
+
+        async def _sync() -> int:
+            to_sync = await asyncio.to_thread(discover_servers_to_sync)
+            if to_sync:
+                ok: bool = await asyncio.to_thread(sync_to_agent_config, to_sync)
+                if ok:
+                    return len(to_sync)
+            return 0
+
+        synced = await asyncio.wait_for(_sync(), timeout=30)
+    except Exception:
+        logger.warning("MCP server sync failed before restart", exc_info=True)
+    count = await _reset_all_sessions(request)
+    return web.json_response({"ok": True, "sessions_reset": count, "mcp_synced": synced})
+
+
+async def api_session_archive_list(request: web.Request) -> web.Response:
+    """GET /api/session/archive?key=... — list archive files for a session key."""
+    from typing import Any
+
+    from personalclaw.history import _archive_dir, _safe_key
+
+    key = request.query.get("key", "").strip()
+    adir = _archive_dir()
+    if not adir.exists():
+        return web.json_response({"archives": []})
+    prefix = f"{_safe_key(key)}__" if key else ""
+
+    def _collect() -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for p in adir.glob(f"{prefix}*.jsonl"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            stem = p.stem
+            # Archive filenames use '__' delimiter: {safekey}__{stamp}.jsonl
+            sep = stem.find("__")
+            safekey = stem[:sep] if sep >= 0 else stem
+            stamp = stem[sep + 2 :] if sep >= 0 else ""
+            items.append(
+                {
+                    "name": p.name,
+                    "key": safekey,
+                    "stamp": stamp,
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+            )
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+        return items
+
+    items = await asyncio.to_thread(_collect)
+    return web.json_response({"archives": items})
+
+
+async def api_session_archive_read(request: web.Request) -> web.Response:
+    """GET /api/session/archive/{name} — read a single archive file as JSONL text."""
+    from personalclaw.history import _archive_dir
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    name = request.match_info.get("name", "")
+    if not name.endswith(".jsonl"):
+        return web.json_response({"error": "invalid archive name"}, status=400)
+    adir = _archive_dir().resolve()
+    try:
+        resolved = (adir / name).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return web.json_response({"error": "invalid archive name"}, status=400)
+    # Canonical path check: file must be a direct child of the archive dir.
+    if resolved.parent != adir:
+        return web.json_response({"error": "invalid archive name"}, status=400)
+
+    def _read_capped(p: Path, limit: int = 250_000) -> str:
+        with p.open(encoding="utf-8") as f:
+            data = f.read(limit)
+        # Truncate at last newline to keep NDJSON valid.
+        if len(data) == limit:
+            nl = data.rfind("\n")
+            if nl > 0:
+                data = data[: nl + 1]
+        return data
+
+    try:
+        raw = await asyncio.to_thread(_read_capped, resolved)
+    except FileNotFoundError:
+        return web.json_response({"error": "not found"}, status=404)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Failed to read archive %s: %s", name, exc)
+        return web.json_response({"error": "unreadable archive"}, status=422)
+    # Archives contain LLM output; redact credentials and exfiltration URLs before serving.
+    redacted = await asyncio.to_thread(
+        lambda: redact_exfiltration_urls(redact_credentials(raw)[0])[0]
+    )
+    return web.Response(text=redacted, content_type="application/x-ndjson")

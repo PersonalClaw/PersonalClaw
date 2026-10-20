@@ -1,0 +1,54 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Tool output
+  - heading "Tool-output projection" [level=#]
+  - paragraph: Teach PersonalClaw how to keep the salient slice of a large tool output — so a verbose result costs a preview, not the whole context window, while the full raw stays recoverable on demand.
+  - heading "Custom rules" [level=#]
+  - paragraph: A rule maps a content marker (regex, matched against the start of the output) to a projection strategy. Use it for a tool whose big output the builtin sniffer treats as generic (a blunt head/tail cut) — e.g. a domain-specific log or dump. Rules are checked before the builtin sniff.
+  - text: No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
+  - textbox "New rule name":
+    - /placeholder: new rule name
+  - combobox "Strategy for the new rule":
+    - option "Log — keep head + error/warning lines + tail" [selected]
+    - option "Test — keep failures + the summary line"
+    - option "Diff — keep changed hunks + a +N/−M stat"
+    - option "JSON — keep field schema + first/last items"
+    - option "CSV — keep the header + first/last rows"
+    - option "Code — keep signatures + docstrings + line map"
+  - textbox "Match regex for the new rule":
+    - /placeholder: match regex, e.g. ^\[MYAPP\]
+  - button "Add rule" [disabled]

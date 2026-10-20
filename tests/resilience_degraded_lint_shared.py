@@ -1,0 +1,157 @@
+"""What a behaviour module and its source-tree checks share.
+
+The behaviour module:
+``tests/test_resilience_degraded_lint.py``
+
+Its checks:
+``tests/rails/test_resilience_degraded_lint_tree.py``
+
+This module sits beside the suite so that no rail imports a behaviour test
+module.
+"""
+
+from __future__ import annotations
+
+# Each file that calls one_shot_completion → the degraded surface that owns its
+# no-model floor. Adding a new one_shot_completion call-site WITHOUT adding its file
+# here fails ``test_every_one_shot_call_site_is_mapped`` — the honesty ratchet. Every
+# value here must be a registered contract surface (asserted below).
+_CALL_SITE_SURFACES = {
+    "inbox_service.py": "inbox_enrichment",
+    # Inbox sorting (auto-classify). The same floor as the rest of the Inbox's model work: with
+    # no background model bound or callable, nothing is sent and the messages wait for the next
+    # tick with the reason held for the panel, while ingestion, alerts and mute keep working.
+    "inbox_sorting.py": "inbox_enrichment",
+    # The check that a drafted reply gives no answer she never gave. It is part of the draft, so
+    # it has the draft's floor: with no model the draft pauses with the rest of the Inbox's model
+    # work, and a check that cannot be made marks the draft unchecked rather than guessing.
+    "reply_answers.py": "inbox_enrichment",
+    "after_turn_review.py": "memory_extraction",
+    "knowledge/llm_pool.py": "knowledge_ingest",
+    # The morning digest. Its own surface, not `knowledge_ingest` and not `research_report`:
+    # the floor is a digest that still ARRIVES with an honest plain-text body (the items are
+    # already durable), which is neither "documents still captured, insights missing" nor "the
+    # run is deferred". `_synthesise` routes an EMPTY completion — the actual no-model shape,
+    # which does not raise — through the same fallback as a raised one.
+    "knowledge/source_digest.py": "source_digest",
+    # The regenerate action's recompute (`updates.regenerate_synthesis`). The SAME surface as
+    # the watchers' drain, because it is the same promise: a recompile is PROPOSED, never
+    # applied in place. With no model nothing is filed and the reader is told so (503) rather
+    # than shown a cheerful 200 over an empty proposal. `one_shot_completion` returns a FALSY
+    # value rather than raising, so the check is `if not text: raise SynthesisUnavailable` —
+    # an `except` would never fire.
+    "knowledge/updates.py": "synthesis_watchers",
+    # The triage pipeline. Its own surface for the reason the digest has one: the manifest
+    # is collected without a model, so a missing model costs the PROPOSALS, not the digest —
+    # neither a deferred run nor an unreasoned answer.
+    "proactive/pipeline.py": "triage_digest",
+    # The browse loop. Its own surface, NOT `assistant_reasoning`, because there is no
+    # reduced tier to degrade to: every step is a model decision, so losing the model ends the
+    # run rather than thinning it. What the floor promises is the preservation — notes and
+    # visited URLs survive on an `ok=False` result — and that no navigation is guessed.
+    "action_providers/browse_provider.py": "browse",
+    "nl_to_cron.py": "assistant_reasoning",
+    # The identity report. Reasoning-axis, and its no-model floor is BUILT IN and NAMED:
+    # `one_shot_completion` returns a FALSY value rather than raising when nothing resolves,
+    # so both that and a raised provider error land on `narrative_status="unavailable"`, and
+    # `render_markdown` says so in the document ("No model was available to summarise this
+    # period. The figures below are complete and unaffected."). The deterministic sections
+    # are gathered BEFORE the call and are returned byte-identical either way — the numbers
+    # never round-trip through the model, so a provider outage costs the report its prose
+    # and nothing else.
+    "learning_report.py": "assistant_reasoning",
+    "context.py": "assistant_reasoning",
+    # Every background chore (`chores.run_chore`): a chat's title and tags, its organize
+    # proposal, its follow-up chips, history compression, memory consolidation, the home
+    # suggestions, a folder's icon, a channel thread's title. Its no-model floor is each chore's
+    # own and BUILT IN: a title keeps the chat's first line and a consolidation keeps its turns,
+    # each owed until a model answers (`owed_chores`); no follow-ups or organize proposal is
+    # offered; a history is cut to fit rather than condensed; the suggestions are the fallback
+    # list.
+    "chores.py": "assistant_reasoning",
+    # visualize(data, hint) — the agency-free data→genui primitive.
+    # Reasoning-axis one-shot; no-model floor: no visualization produced and
+    # the caller keeps the raw data (the MCP tool + WF2 node both say so honestly).
+    "visualize.py": "assistant_reasoning",
+    # The workflow matcher's T5: summarize-then-rematch. Its no-model
+    # floor is BUILT IN — a missing/failing summarizer degrades to the deterministic
+    # matcher tiers (T1-T3) and the keyword scorer stays authoritative, so the caller
+    # always gets a bounded match result rather than an error.
+    "mcp_workflows.py": "assistant_reasoning",
+    "web/fetch.py": "assistant_reasoning",
+    # The scheduled-report runner. Its own surface rather than the reasoning axis: the
+    # honest floor is a DEFERRED run (no stamp, no watermark advance, retried next window), which
+    # is a different promise from "you get an unreasoned answer".
+    "action_providers/knowledge_report_provider.py": "research_report",
+    # The judge benchmark (`live_judge_caller`): the one function in that module that
+    # spends money, routed through `one_shot_completion` on the tier's use case so
+    # resolution walks the same active-models chain a live gate does. Reasoning-axis, and
+    # its no-model floor is BUILT IN at the sampling loop (`judge_bench.py:703`): a
+    # provider fault — including nothing resolving — is recorded as an ABSENT SAMPLE with
+    # its reason in `call_errors`, so the benchmark reports fewer samples and why, rather
+    # than fabricating a score for a model it never reached.
+    "evals/judge_bench.py": "assistant_reasoning",
+    # The template-arm runner (`TemplateArmRunner`): the one function in that module that
+    # spends money, one `one_shot_completion` per arm run on the arm's rendered prompt.
+    # Reasoning-axis, and its no-model floor is BUILT IN twice over: a provider fault becomes
+    # `ArmOutput(ok=False, output="")` with its reason in `detail`, and `run_study` then
+    # records that pair UNJUDGEABLE without calling the judge at all — so a provider outage
+    # costs a study its statistical power and says so, instead of feeding the judge an empty
+    # answer and letting the other arm win on infrastructure failure.
+    "evals/study_arms.py": "assistant_reasoning",
+    # The bake-off runner (`live_bakeoff_caller`): the one function in that module that
+    # spends money, one `one_shot_completion` per cell with the candidate ref as an explicit
+    # override so the matrix compares the models named on the axis. Reasoning-axis, and its
+    # no-model floor is BUILT IN at the run loop: a provider fault — including nothing
+    # resolving — records the cell `VERIFIER_ABSENT` rather than a fabricated zero, so an
+    # outage costs the matrix its samples and says so, instead of letting one candidate win
+    # on infrastructure failure.
+    "evals/bakeoff.py": "assistant_reasoning",
+    "dashboard/chat_retag.py": "assistant_reasoning",
+    "dashboard/chat_handlers.py": "assistant_reasoning",
+    "dashboard/handlers/loop_routes.py": "assistant_reasoning",
+    # Prose-model compressor: background-only; its no-model
+    # floor is BUILT IN — any failure degrades to the deterministic log projector,
+    # so callers always get a bounded result (guard-the-guard).
+    "tool_providers/prose_compress.py": "assistant_reasoning",
+    # The room context cursor (`rooms/turn._summarize_slice`): folds the part of a room a
+    # member has not seen into a summary on the member's OWN pinned model. Its no-model floor is
+    # BUILT IN like the compressor's above: a raise or an empty answer returns "", and `compact`
+    # then folds the same region with its deterministic digest, so the member's turn still runs.
+    "rooms/turn.py": "assistant_reasoning",
+    # Second-opinion verification (verify_attention_item). Background reasoning
+    # one-shot whose no-model floor is BUILT IN: no model / timeout / budget / parse-fail →
+    # verdict "skipped", so the attention notification is DELIVERED unverified rather than
+    # blocked (fail-open). Same shape as the built-in-floor reasoning call sites above.
+    "notification_verify.py": "assistant_reasoning",
+    # Propose-only sync conflict merge. Background reasoning one-shot whose no-model
+    # floor is BUILT IN: no model / open breaker / timeout / budget / unparseable answer →
+    # the conflict record STAYS needs-review with no proposal and a recorded
+    # proposal_error. A missing model costs the suggestion, never the conflict — and it can
+    # never resolve one, because this surface only ever proposes.
+    "durability/conflict_merge.py": "assistant_reasoning",
+    # Best-of-N sampling: N temperature-varied background
+    # one-shots + an LLMJudge pass. Its no-model floor is BUILT IN and two-tiered —
+    # a failed sample loses that candidate only, and if EVERY sample fails the caller
+    # gets an explicit no-candidate envelope (winner=None + note) rather than an error
+    # or a fabricated answer; a dead judge returns the slate judged=False with the
+    # lowest-temperature survivor. Fail-open, never a raise.
+    "sampling.py": "assistant_reasoning",
+    # Prompt-card importer. Background reasoning one-shot, and the
+    # ONLY call site here whose no-model floor is deliberately a LOUD REFUSAL rather than a
+    # built-in degradation: mapping a prose card onto a typed PromptTemplate/WorkflowDef/
+    # AgentDefinition has no deterministic fallback, and a heuristic one would fabricate an
+    # entity from a card nothing understood. With no model the import raises, the route answers
+    # `prompt_card_failed` with the provider's own reason, and NOTHING is written — the user
+    # still has their pasted text. Fail-closed is the honest floor for a typed converter.
+    "packs/prompt_cards.py": "assistant_reasoning",
+    # The relevance-reranker stage, after `_rrf_fuse`. Reasoning-axis, OFF unless
+    # `knowledge.rerank_enabled` is set, and its no-model floor is BUILT IN: no model, an
+    # open breaker, a timeout, an empty response, or JSON naming no real candidate id all
+    # return the un-reranked RRF order (`_rerank_score` → None). Reranking is a relevance
+    # stage, never a security control, so the floor is deliberately fail-OPEN — a provider
+    # outage costs the reordering, never the search itself. The retrieval bench keeps the
+    # two apart: `last_rerank_executed` false publishes the `rerank` row as "not measured"
+    # rather than the fallback's own P@k pretending to be a measurement of the reranker.
+    "knowledge/retrieval.py": "assistant_reasoning",
+}

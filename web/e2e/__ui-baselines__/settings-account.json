@@ -1,0 +1,182 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Run setup\"",
+        "button \"Save: Assistant name\"",
+        "button \"Save: Username\"",
+        "button \"Save: Your name\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"Use at least # characters\"",
+        "button[role=switch] \"Offer password sign-in\"",
+        "button[role=switch] \"Require a #FA code\"",
+        "input",
+        "input \"Confirm password\"",
+        "input \"New password\"",
+        "input \"Sign-in username\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

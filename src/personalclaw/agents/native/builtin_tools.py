@@ -1,0 +1,2684 @@
+"""Built-in file/code/shell tools for the native runtime.
+
+In the ACP architecture the file/edit/shell tools were the external CLI's own
+built-ins (claude-code provides Read/Write/Bash); ``personalclaw-core`` only
+layered orchestration (spawn/memory/artifact) on top. The native in-process
+runtime has no such CLI, so this provider supplies the essential workspace
+tools — read, write, edit, ls, glob, grep, and bash — scoped to the session's
+``cwd`` and gated by the same :mod:`personalclaw.security` checks (deny-list,
+sensitive-path) plus :func:`personalclaw.sandbox.wrap_argv` for shell.
+
+All paths are resolved relative to ``cwd`` and confined to it (no escaping the
+workspace via ``..`` or absolute paths outside it), through the check the Files
+view makes (``file_roots.admit``: symlinks resolved, no credential or secret
+file); a listing or a search leaves out what that check refuses. Tool execution
+itself is also gated by the runtime's approval gate (``requires_approval`` per
+tool).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import logging
+import os
+from pathlib import Path
+from typing import Any, cast
+
+from personalclaw import cancellation, run_bounds, run_processes
+from personalclaw.agents.native import lasting_tools, read_gate
+from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
+from personalclaw.agents.native.inbox_tool_defs import (
+    INBOX_LIST_DEFAULT,
+    INBOX_LIST_MAX,
+    inbox_list_text,
+    inbox_tool_definitions,
+)
+from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
+from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
+from personalclaw.agents.native.smart_case import LineQuery, glob_case_sensitive
+from personalclaw.agents.native.task_tool_defs import task_tool_definitions, task_write_fields
+from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text, text_for_model
+from personalclaw.file_scope import FileScope, OutOfScope, memory_named_in, pattern_refusal
+from personalclaw.file_scope import refusal as scope_refusal
+from personalclaw.file_scope import store_named_in
+from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
+from personalclaw.guardrails.denylist import check_command
+from personalclaw.knowledge_providers.dir_source import note_path
+from personalclaw.safety_flags import yes_or_no
+from personalclaw.security import (
+    MASK_CONFLICT,
+    MaskConflict,
+    keep_masked_lines,
+    keep_masked_spans,
+    keep_masked_values,
+    mask_markers,
+    masked_edit,
+)
+from personalclaw.tool_providers import result_store
+from personalclaw.tool_providers.base import (
+    RiskLevel,
+    ToolDefinition,
+    ToolProvider,
+    ToolResult,
+)
+from personalclaw.tool_providers.projection import project_and_retain, project_output
+from personalclaw.write_locks import write_locked, write_text
+
+logger = logging.getLogger(__name__)
+
+# ── the write seam's registry ─────────────────────────────────────────────────
+# Native tools that MODIFY a file, and how each names the region it changes.
+# ``invoke`` consults :mod:`personalclaw.agents.native.read_gate` for every entry, so a
+# tool inherits the pre-edit read gate by being LISTED here — it never implements the
+# gate itself. That is the point: one expression at the seam, so a new write path cannot
+# quietly ship without it. ``tests/test_pre_edit_read_gate.py`` scans this module for
+# filesystem writes and fails if a handler performs one without appearing here.
+#   value = (operation, arg naming the text being REPLACED or None, arg naming the new text)
+_READ_GATED_WRITE_TOOLS: dict[str, tuple[str, str | None, str]] = {
+    "write_file": ("overwrite", None, "content"),
+    "edit_file": ("edit", "old_str", "new_str"),
+}
+
+# Per-invoke workspace context for the native tools. The category providers
+# (Filesystem/Shell/Knowledge/…) are now REGISTRY SINGLETONS (one instance,
+# shared across sessions) rather than per-session constructions, so the cwd /
+# extra-roots / inbox-sender that used to come from the constructor now flow via
+# these contextvars — the native runtime binds them in ``_invoke`` (alongside the
+# session key in mcp_core) just before dispatching a tool, so each turn's tool
+# call resolves THIS turn's workspace. Resolution is contextvar-first with an
+# instance fallback (so a directly-constructed provider — e.g. in a test or the
+# /api/tools catalog probe — still works). The path-confinement resolve runs in
+# the async context where the var is bound (before any executor hop), so the
+# binding is always visible to the security check.
+_CURRENT_CWD: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "personalclaw_native_cwd", default=""
+)
+_CURRENT_EXTRA_ROOTS: contextvars.ContextVar[tuple] = contextvars.ContextVar(
+    "personalclaw_native_extra_roots", default=()
+)
+_CURRENT_AGENT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "personalclaw_native_agent", default=""
+)
+# The Project this turn's work scopes under ("" = none). Bound alongside cwd/agent so
+# a tool that produces a durable artifact (artifact_save) can stamp its project_id —
+# tying work created during a project's session/loop back to that Project.
+_CURRENT_PROJECT_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "personalclaw_native_project_id", default=""
+)
+
+
+def bind_tool_context(
+    *,
+    cwd: Path | str | None,
+    agent: str = "",
+    extra_roots: list | None = None,
+    project_id: str = "",
+    scratch: str = "",
+):
+    """Bind the per-turn workspace context for native tool dispatch; returns a
+    list of reset tokens the caller restores after the call. Called by the native
+    runtime in ``_invoke`` so the registry-singleton category providers resolve
+    this turn's cwd/agent/extra-roots/project, and the shell its temporary folder."""
+    from personalclaw.tool_providers import projection as _projection
+
+    tokens = [
+        _CURRENT_CWD.set(str(cwd) if cwd else ""),
+        _CURRENT_AGENT.set(agent or ""),
+        _CURRENT_EXTRA_ROOTS.set(tuple(str(r) for r in (extra_roots or []))),
+        _CURRENT_PROJECT_ID.set(project_id or ""),
+        run_bounds.CURRENT_SCRATCH.set(scratch or ""),
+        # Also bind the projection PROJECT rule layer to this turn's cwd, so a
+        # repo's `.personalclaw/projection_rules.json` shapes ITS tools' output only.
+        _projection.bind_project_dir(cwd),
+    ]
+    return tokens
+
+
+def current_tool_roots() -> list[str]:
+    """Where this turn's file tools reach, for a tool served outside the platform provider
+    (``code_map``): the session's folder and the extra roots the runtime bound, else the default
+    workspace. Real paths; the first is the one a relative path starts from."""
+    import os
+
+    cwd = _CURRENT_CWD.get()
+    if cwd:
+        return [os.path.realpath(cwd), *(os.path.realpath(r) for r in _CURRENT_EXTRA_ROOTS.get())]
+    from personalclaw.config.loader import default_workspace_dir
+
+    workspace = default_workspace_dir() or ""
+    return [os.path.realpath(workspace)] if workspace else []
+
+
+def reset_tool_context(tokens) -> None:
+    from personalclaw.tool_providers import projection as _projection
+
+    _vars: tuple[contextvars.ContextVar, ...] = (
+        _CURRENT_CWD,
+        _CURRENT_AGENT,
+        _CURRENT_EXTRA_ROOTS,
+        _CURRENT_PROJECT_ID,
+        run_bounds.CURRENT_SCRATCH,
+    )
+    for var, tok in zip(_vars, tokens or []):
+        try:
+            var.reset(tok)
+        except (ValueError, LookupError):
+            pass
+    if tokens and len(tokens) > len(_vars):
+        _projection.reset_project_dir(tokens[len(_vars)])
+
+
+def current_project_id() -> str:
+    """The Project id bound for this turn's tool dispatch ("" if none) — used by
+    artifact_save to tie a created artifact to the active Project."""
+    return _CURRENT_PROJECT_ID.get()
+
+
+# Tool name → conceptual CATEGORY. Each category is surfaced by its own provider:
+# the platform bundle owns filesystem/shell/core (always-on, cwd-
+# coupled); the rest are pre-installed-but-uninstallable app providers, one per
+# entity. A provider built with categories={...} surfaces only its slice; the
+# default (categories=None) surfaces everything (tests, direct construction).
+_CATEGORY_OF: dict[str, str] = {
+    # filesystem (platform, always-on, cwd-coupled)
+    "read_file": "filesystem",
+    "write_file": "filesystem",
+    "edit_file": "filesystem",
+    "list_dir": "filesystem",
+    "glob": "filesystem",
+    "grep": "filesystem",
+    "repo_map": "filesystem",
+    # shell (platform, always-on, cwd-coupled)
+    "bash": "shell",
+    # core/runtime affordance (platform, always-on) — the projection retrieval tool
+    "tool_result_get": "core",
+    # knowledge (installable app)
+    "knowledge_search": "knowledge",
+    "knowledge_structural": "knowledge",
+    "knowledge_create": "knowledge",
+    "knowledge_get": "knowledge",
+    "knowledge_update": "knowledge",
+    "knowledge_stats": "knowledge",
+    # decision journal — same category as the knowledge tools:
+    # a decision IS a knowledge item, so the journal cannot be installed or removed
+    # independently of the library its entries live in.
+    "log_decision": "knowledge",
+    "decision_list": "knowledge",
+    "decision_resolve": "knowledge",
+    # tasks (installable app) — the Project→TaskList→Task CONTAINER hierarchy.
+    "task_create": "tasks",
+    "task_list": "tasks",
+    "task_get": "tasks",
+    "task_update": "tasks",
+    "task_ready": "tasks",
+    "task_search": "tasks",
+    "project_create": "tasks",
+    "project_list": "tasks",
+    "task_list_create": "tasks",
+    # projects (installable app) — autonomous project RUNS (loops: code/goal/general/
+    # design/research). Loops were absorbed into the uber Project feature; the agent
+    # operates them through one cohesive project_run_* set.
+    "project_run_create": "projects",
+    "project_run_start": "projects",
+    "project_run_status": "projects",
+    "project_run_list": "projects",
+    # inbox (installable app)
+    "post_to_inbox": "inbox",
+    "inbox_list": "inbox",
+}
+
+# The platform (always-on) categories — surfaced by the core platform provider,
+# never user-removable. The rest are installable app providers.
+PLATFORM_CATEGORIES: frozenset[str] = frozenset({"filesystem", "shell", "core"})
+# The tool NAMES the platform bundle owns, derived from the category map rather than
+# listed again — a second hand-written list would drift the moment a category gains a
+# tool. `/api/tools/invoke` reads it to tell "no such tool" apart from "this tool is the
+# platform's and the platform has no workspace to run in" (#3310).
+PLATFORM_TOOL_NAMES: frozenset[str] = frozenset(
+    name for name, category in _CATEGORY_OF.items() if category in PLATFORM_CATEGORIES
+)
+# The platform bundle's provider name and title. It is built per session and never registered, so
+# the tool registry holds these for it: no registered provider may take the name, or any tool
+# name in PLATFORM_TOOL_NAMES (`tool_providers.registry`).
+PLATFORM_PROVIDER_NAME = "personalclaw-filesystem"
+PLATFORM_DISPLAY_NAME = "Filesystem & Shell Tools"
+# category → (provider_name, display) for the installable app providers.
+APP_CATEGORY_PROVIDERS: dict[str, tuple[str, str]] = {
+    "knowledge": ("personalclaw-knowledge-tools", "Knowledge Tools"),
+    "tasks": ("personalclaw-tasks-tools", "Tasks Tools"),
+    "projects": ("personalclaw-project-tools", "Projects Tools"),
+    "inbox": ("personalclaw-inbox-tools", "Inbox Tools"),
+}
+
+_MAX_READ_BYTES = 256 * 1024  # cap a single read to keep context bounded
+# Shared with the MCP tool adapter (the app) via projection.DEFAULT_TOOL_OUTPUT_CAP so
+# every tool surface projects at the same threshold — one source of truth.
+from personalclaw.tool_providers.projection import (  # noqa: E402
+    DEFAULT_TOOL_OUTPUT_CAP as _MAX_OUTPUT_CHARS,
+)
+
+_BASH_TIMEOUT = 120.0  # default bash timeout when the agent doesn't set one
+# Agent-settable bash timeout ceiling. The agent runs its own tests/builds via bash
+# (no dedicated run_tests/diagnostics tools), so a slow suite needs headroom beyond
+# the 120s default — but a hard cap keeps a background turn from wedging forever.
+# Matches the supervisor's verify budget (watchdog._run_check) so a worker can
+# reproduce a green gate on a slow suite.
+_BASH_TIMEOUT_MAX = 600.0
+
+# Background ingestion tasks for agent-authored knowledge — held so they aren't GC'd
+# mid-flight, mirroring the create-fast/enrich-async lifecycle (the tool returns the
+# item id immediately; enrichment runs in the background, not blocking the agent turn).
+_bg_ingest_tasks: set = set()
+
+
+def _kn_redact(text: str | None) -> str:
+    """Scrub credentials + exfiltration URLs from knowledge text before it reaches the
+    model — the same guard the HTTP context-injection path applies. The library can
+    hold scraped pages or pasted notes carrying secrets; an agent reading it via tools
+    must not see what the chat-injection card would have redacted."""
+    if not text:
+        return text or ""
+    # `redact_for_display`, the mask `knowledge_update` puts back, so an item the agent read here
+    # and edits keeps every value it was shown as a marker.
+    from personalclaw.security import redact_for_display
+
+    return redact_for_display(text)
+
+
+def _kn_title(item: dict) -> str:
+    """Best display title for a knowledge item. Items are searchable before
+    enrichment (create-fast/enrich-async), so the raw ``title`` may still be empty
+    (unscraped bookmark) — fall back through the AI/link/url titles."""
+    for key in ("title", "ai_title", "url_title", "url"):
+        val = (item.get(key) or "").strip()
+        if val:
+            return val
+    return "(untitled)"
+
+
+def _kn_snippet(item: dict, limit: int = 160) -> str:
+    """Best one-line snippet: prefer a summary, then the link/description, then body."""
+    insights = item.get("insights") or {}
+    for cand in (
+        item.get("summary"),
+        item.get("ai_summary"),
+        insights.get("summary") if isinstance(insights, dict) else None,
+        item.get("url_description"),
+        item.get("content"),
+    ):
+        text = (cand or "").strip()
+        if text:
+            return text[:limit].replace("\n", " ")
+    return ""
+
+
+def _enrich_in_background(item_id: str) -> None:
+    """Fire-and-forget the ingestion node-graph for an agent-created/updated item."""
+    from personalclaw.knowledge import (
+        get_knowledge_embedder,
+        get_knowledge_llm_pool,
+        get_knowledge_store,
+    )
+    from personalclaw.knowledge.pipeline.runner import ingest_item
+
+    async def _run() -> None:
+        try:
+            # Pass the embedder so an agent-created item is vector-searchable like one
+            # created via the UI (the gateway's ingest queue embeds; this direct path
+            # must too, else agent-authored knowledge is keyword-only forever).
+            await ingest_item(
+                get_knowledge_store(),
+                item_id,
+                embedder=get_knowledge_embedder(),
+                insights_pool=get_knowledge_llm_pool(),
+            )
+        except Exception:
+            logger.debug("background knowledge enrich failed for %s", item_id, exc_info=True)
+
+    task = asyncio.create_task(_run())
+    _bg_ingest_tasks.add(task)
+    task.add_done_callback(_bg_ingest_tasks.discard)
+
+
+async def _knowledge_refusal(*parts: str):
+    """The content scan's refusal of text the agent writes into the knowledge library, or ``None``
+    when it may be kept (``knowledge.text_items``): what an agent saves there is often what it read
+    on the web, and the library is recalled into prompts. Nothing is written when it is refused."""
+    from personalclaw.knowledge.text_items import refusal
+
+    return await refusal(*parts, surface="knowledge")
+
+
+def _environment_credentials() -> list[str]:
+    """The credential values the gateway's environment holds, to mask out of what a command prints.
+
+    Every variable named like a stored credential (Settings → Secrets mirrors those into the
+    gateway's environment) or read as one by the one hint list (``matches_secret_hint``), so the
+    store's values are never read for this. The command itself gets only the child allowlist
+    (``sandbox.build_child_env``): a credential reaches its environment only when the owner passes
+    it through by name (``sandbox.env_passthrough``). Masking every one the gateway holds, not
+    only those, also covers a value the command reached another way. A stored one is a secret
+    whatever its length; one only the hint list names is a guess, held to the guess's floor
+    (``security.GUESSED_VALUE_MIN_LEN``).
+    """
+    from personalclaw.config.credentials import credential_names
+    from personalclaw.security import GUESSED_VALUE_MIN_LEN
+    from personalclaw.workflows.secrets import matches_secret_hint
+
+    try:
+        stored = set(credential_names())
+    except Exception:  # noqa: BLE001 - the name hints still apply
+        stored = set()
+    return [
+        value
+        for name, value in os.environ.items()
+        if value
+        and (name in stored or (len(value) >= GUESSED_VALUE_MIN_LEN and matches_secret_hint(name)))
+    ]
+
+
+def _marker_note(sent: str, written: str, before: str) -> str:
+    """What a file write says about the ``[REDACTED: …]`` markers it was sent: kept as the values
+    they stand for, or written as plain text because they stood for nothing the file held."""
+    as_text = len(mask_markers(written)) - len(mask_markers(before))
+    kept = len(mask_markers(sent)) - max(as_text, 0)
+    note = ""
+    if kept > 0:
+        note += (
+            f". The {kept} [REDACTED: …] marker(s) it was sent stand for values the file already "
+            "held, and those stay as they were"
+        )
+    if as_text > 0:
+        note += (
+            f". {as_text} [REDACTED: …] marker(s) were written as plain text: a value you were "
+            "shown masked cannot be copied into a file"
+        )
+    return note
+
+
+def _ok_capped(
+    text: str,
+    limit: int = _MAX_OUTPUT_CHARS,
+    *,
+    content_type: str | None = None,
+    session_key: str = "",
+) -> ToolResult:
+    """Success result whose ``output`` is a type-aware **projection** within ``limit``.
+
+    Routes large output through :func:`project_output` — keeping the salient
+    slice for its content type (log error lines, diff hunks, json shape, test
+    failures, csv head/tail) instead of a blind middle-cut — and, when projected,
+    retains the **full raw** in the per-session tool-result store so the
+    model can pull the dropped part via ``tool_result_get``.
+
+    Stays fail-soft + backward-compatible: a small result, or one of an
+    unknown/declared-generic type, passes through exactly as the old head/tail
+    :func:`maybe_truncate` did. ``content_type`` is the tool's declared type (wins
+    over inference); ``session_key`` enables the raw store (omitted → no raw_ref,
+    projection still applies). The result's ``metadata`` carries ``content_type``
+    + ``raw_ref`` so the event/render layers can consume them.
+    """
+    # One shared dispatch-time discipline (project + retain raw + name the recovery
+    # affordance) — the same helper the MCP adapter uses, so no surface diverges.
+    # project_and_retain returns the projection outcome (truncated/original_length)
+    # in meta, so we project exactly once.
+    proj_text, meta = project_and_retain(
+        text,
+        session_key=session_key,
+        content_type=content_type,
+        cap=limit,
+    )
+    return ToolResult(
+        success=True,
+        output=proj_text,
+        truncated=bool(meta.get("truncated")),
+        original_length=meta.get("original_length"),
+        metadata=meta,
+    )
+
+
+def _refused_by(
+    tool_name: str, control: str, error: str, rule: str, hints: list[str] | None = None
+) -> ToolResult:
+    """A call one of the tool's own controls refused: its sentence, and the *control* and the
+    *rule* it applied for the call's one audit row (``llm.events.TOOL_META_REFUSED_RULE``),
+    with one WARNING line. A tool refuses a call once, before it runs or as it starts: the
+    runtime's pre-flight and the handler never both refuse the same call. *rule* is masked as
+    any text a person reads is."""
+    from personalclaw.llm.events import TOOL_META_REFUSED_BY, TOOL_META_REFUSED_RULE
+    from personalclaw.security import redact_for_display
+
+    shown = redact_for_display(rule)[:300]
+    logger.warning("%s: refused by %s before it ran: %s", tool_name, control, shown)
+    return ToolResult(
+        success=False,
+        error=error,
+        recovery_hints=list(hints or []),
+        metadata={TOOL_META_REFUSED_BY: control, TOOL_META_REFUSED_RULE: shown},
+    )
+
+
+class NativeBuiltinToolProvider(ToolProvider):
+    """Workspace file/code/shell tools for the native agent loop."""
+
+    # VCS / vendored / build dirs that grep + repo_map skip — searching them is
+    # slow and floods results with deps, lockfiles, and build output.
+    _SKIP_DIRS = frozenset(
+        {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "env",
+            "dist",
+            "build",
+            ".next",
+            "target",
+            ".mypy_cache",
+            ".pytest_cache",
+            "vendor",
+            ".idea",
+            ".tox",
+            ".cache",
+            "coverage",
+            ".gradle",
+        }
+    )
+
+    def __init__(
+        self,
+        cwd: Path | None = None,
+        *,
+        sandbox_mode: str = "auto",
+        agent: str = "",
+        session_key: str = "",
+        extra_roots: list[Path] | None = None,
+        read_roots: list[Path] | None = None,
+        categories: "frozenset[str] | set[str] | None" = None,
+        provider_name: str = "builtin",
+        display: str = "Workspace Tools",
+    ) -> None:
+        # Instance-held workspace state. For a REGISTRY-SINGLETON category provider
+        # these are the construction-time fallbacks; the live per-turn values come
+        # from the contextvars (bound by the runtime in _invoke). For a directly-
+        # constructed provider (tests, the /api/tools catalog probe) these ARE the
+        # values. The properties below resolve contextvar-first, instance-fallback.
+        self._cwd_inst = Path(cwd) if cwd else Path.cwd()
+        # Additional directories the file tools may read/write outside cwd. Needed by
+        # the Code/Goal-Loop workers: a BROWNFIELD project's worker cwd is the user's
+        # workspace, but its engine files (status.json/brief.md/guidance.txt/findings/
+        # questions.json) live in the project files dir UNDER ~/.personalclaw — outside
+        # the workspace. Without this, _resolve would reject every engine-file path as
+        # "escapes the workspace root", so the worker couldn't read its brief or write
+        # findings. Empty for normal chat sessions.
+        self._extra_roots_inst = [Path(r).resolve() for r in (extra_roots or [])]
+        # Folders this session's work reads and never changes (`file_scope.READS`): a workflow
+        # step's project tree and the folder its batch was started in.
+        self._read_roots = [Path(r).resolve() for r in (read_roots or [])]
+        self._sandbox_mode = sandbox_mode
+        # Identity for post_to_inbox: the agent role (sender) + its session
+        # (reply_target so a needs_reply item routes back to this agent).
+        self._agent_inst = agent or ""
+        self._session_key_inst = session_key or ""
+        # Which tool CATEGORIES this provider surfaces. None = ALL (the monolithic
+        # form, kept for tests + direct construction). A category provider passes
+        # its own subset (e.g. {"filesystem","shell","core"} for the platform
+        # bundle, {"knowledge"} for the Knowledge app) so each conceptual entity is
+        # its own provider while all handler bodies stay shared here.
+        self._categories = frozenset(categories) if categories is not None else None
+        self._provider_name = provider_name
+        self._display = display
+
+    # ── per-turn workspace state (contextvar-first, instance fallback) ──
+    @property
+    def _cwd(self) -> Path:
+        v = _CURRENT_CWD.get()
+        return Path(v) if v else self._cwd_inst
+
+    @property
+    def _extra_roots(self) -> list[Path]:
+        v = _CURRENT_EXTRA_ROOTS.get()
+        return [Path(r).resolve() for r in v] if v else self._extra_roots_inst
+
+    @property
+    def _agent(self) -> str:
+        return _CURRENT_AGENT.get() or self._agent_inst
+
+    @property
+    def _session_key(self) -> str:
+        from personalclaw import mcp_core
+
+        return mcp_core.get_current_session_key() or self._session_key_inst
+
+    @property
+    def name(self) -> str:
+        return self._provider_name
+
+    @property
+    def display_name(self) -> str:
+        return self._display
+
+    # ── path confinement ──
+    def _roots(self) -> list[Path]:
+        """Where this turn's file tools reach: the session's folder, then its extra roots."""
+        return [self._cwd.resolve(), *self._extra_roots]
+
+    def file_scope(self) -> FileScope:
+        """Where this call's file tools reach (:mod:`personalclaw.file_scope`): the session's
+        folders and the folders its work reads, the allowed working directories and the knowledge
+        sources' folders, read now, so a folder taken out of either is out of reach at the next
+        call."""
+        return FileScope(self._roots(), reads=self._read_roots)
+
+    def _resolve(self, rel: str, scope: FileScope | None = None, *, change: bool = False) -> Path:
+        """``rel`` as a real path the tools may read (with *change*, change), or ``OutOfScope``
+        with the reason: :meth:`FileScope.resolve`, the check a caller can also make before any
+        approval is asked for (``file_scope.refusal``)."""
+        return Path((scope or self.file_scope()).resolve(rel, change=change))
+
+    def _folder(self, a: dict, scope: FileScope) -> Path:
+        """The folder ``glob``/``grep`` search: the call's ``path``, else the session's folder."""
+        if not a.get("path"):
+            return self._cwd.resolve()
+        folder = self._resolve(str(a["path"]), scope)
+        if not folder.is_dir():
+            raise ValueError(f"not a directory: {a['path']}")
+        return folder
+
+    async def list_tools(self) -> list[ToolDefinition]:
+        s = {"type": "object"}
+        _all = self._all_tool_defs(s)
+        if self._categories is None:
+            return _all
+        # A category provider surfaces only its slice (+ stamps its own provider
+        # name so /api/tools + the registry group it correctly).
+        out = [t for t in _all if _CATEGORY_OF.get(t.name) in self._categories]
+        for t in out:
+            t.provider = self._provider_name
+        return out
+
+    @staticmethod
+    def _structural_verbs() -> list[str]:
+        """The structural-retrieval verb vocabulary, read from the module that OWNS it.
+
+        Copying the five strings into this schema would let the tool advertise a verb the
+        retriever no longer accepts (or hide one it gained). Imported lazily because the
+        registry is built on every session start and the knowledge package need not be
+        touched until a knowledge tool is actually described.
+        """
+        from personalclaw.knowledge.structural import STRUCTURAL_VERBS
+
+        return list(STRUCTURAL_VERBS)
+
+    def _all_tool_defs(self, s: dict) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name="read_file",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description="Read a UTF-8 text file, or the text of a PDF, Word or PowerPoint document, with no approval: in the workspace, the user's allowed working directories, a folder the user added as a knowledge source, or an installed skill's own folder, such as a template its instructions name (those two read-only). Args: path (str: relative to the workspace, absolute, or from ~), optional max_bytes (int).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}},
+                    "required": ["path"],
+                },
+            ),
+            ToolDefinition(
+                name="write_file",
+                provider=self.name,
+                requires_approval=True,
+                risk_level=RiskLevel.CAUTION,
+                description="Create or overwrite a text file in the workspace or one of the user's allowed working directories (a knowledge-source folder is read-only). Args: path (str), content (str).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
+            ),
+            ToolDefinition(
+                name="edit_file",
+                provider=self.name,
+                requires_approval=True,
+                risk_level=RiskLevel.CAUTION,
+                description="Replace old_str with new_str in a file in the workspace or one of the user's allowed working directories. old_str must match EXACTLY ONCE (include surrounding context to make it unique) — if it matches multiple times the edit is rejected unless replace_all is true. Args: path, old_str, new_str, replace_all (optional, default false).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old_str": {"type": "string"},
+                        "new_str": {"type": "string"},
+                        "replace_all": {"type": "boolean"},
+                    },
+                    "required": ["path", "old_str", "new_str"],
+                },
+            ),
+            ToolDefinition(
+                name="list_dir",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description="List a directory's entries, with no approval: in the workspace, an allowed working directory, a knowledge-source folder or an installed skill's folder. Args: path (str, default '.').",  # noqa: E501
+                parameters={**s, "properties": {"path": {"type": "string"}}},
+            ),
+            ToolDefinition(
+                name="glob",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder, an installed skill's folder or a folder in one). Case is smart: the pattern matches any case unless it contains a capital letter, and ignore_case=true or false overrides that. Args: pattern (str, e.g. '**/*.md'), optional path (str), optional ignore_case (bool).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                        "ignore_case": {"type": "boolean"},
+                    },
+                    "required": ["pattern"],
+                },
+            ),
+            ToolDefinition(
+                name="grep",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder, an installed skill's folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Case is smart: the query and the glob each match any case unless they contain a capital letter (a regex escape such as \\W is not one), and ignore_case=true or false overrides both. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional ignore_case (bool), optional max_results (int).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {
+                        "query": {"type": "string"},
+                        "path": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "regex": {"type": "boolean"},
+                        "ignore_case": {"type": "boolean"},
+                        "max_results": {"type": "integer"},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            ToolDefinition(
+                name="repo_map",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description=(
+                    "Structural map of the workspace codebase — the directory tree plus the "
+                    "top-level definitions (functions, classes, exports) of each source file, "
+                    "so you can orient WITHOUT reading every file. Args: optional path (str, the "
+                    "folder to map: default the whole workspace, or a folder in an allowed "
+                    "working directory), optional max_files (int)."
+                ),
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "max_files": {"type": "integer"}},
+                },
+            ),
+            ToolDefinition(
+                name="bash",
+                provider=self.name,
+                requires_approval=True,
+                risk_level=RiskLevel.DESTRUCTIVE,
+                description=(
+                    "Run a shell command in the workspace — your PRIMARY way to interact with the "
+                    "environment. Use it for git (status/diff/branch/commit — push is blocked), "
+                    "running tests (pytest, npm test, go test, cargo test, make test), linters/"
+                    "type-checkers (ruff, eslint, tsc, go vet), builds, package managers, and any "
+                    "standard CLI. To read, list or search files, use read_file, list_dir, glob "
+                    "and grep instead: they need no approval, and reach the user's allowed "
+                    "working directories, knowledge sources and skill folders too. Runs in a "
+                    "login shell at the workspace root; stdout+stderr are merged and the exit code "
+                    "is reported. Sandboxed + credential/exfiltration deny-list enforced. To use a "
+                    "credential the user stored in Settings → Secrets, write {{secret:NAME}} where "
+                    "its value goes: the value is filled in when the command runs and is masked in "
+                    "the output, so you never see it. What a command leaves running in the "
+                    "background is stopped when this turn ends (in a loop, when the loop ends). "
+                    "Args: command (str), optional timeout (int seconds, default 120, max 600 — "
+                    "raise it for a slow test suite or build)."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Seconds before the command is killed (default 120, max 600).",  # noqa: E501
+                        },
+                    },
+                    "required": ["command"],
+                },
+            ),
+            # ── Inbox: post to it, and read what is waiting ──
+            # Schemas in ``inbox_tool_defs``; the dispatch methods stay below.
+            *inbox_tool_definitions(self.name, s),
+            # ── Knowledge library ──
+            # Schemas in ``knowledge_tool_defs``; the dispatch methods stay below.
+            *knowledge_tool_definitions(self.name, s),
+            # ── Decision journal ──
+            # Beside the knowledge tools and in the SAME category, because a decision IS a
+            # knowledge item. The schemas live in ``decision_tool_defs`` so this file stays
+            # clear of the 2800-line watch band; the dispatch methods stay below.
+            *decision_tool_definitions(self.name, s),
+            # ── Tasks (Project → TaskList → Task) ──
+            # Schemas in ``task_tool_defs``; the dispatch methods stay below.
+            *task_tool_definitions(self.name, s),
+            # ── Projects: create + launch + watch an autonomous run (any kind) ──
+            # Schemas in ``project_run_tool_defs``; the dispatch methods stay below.
+            *project_run_tool_definitions(self.name, s),
+            ToolDefinition(
+                name="tool_result_get",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description=(
+                    "Retrieve the FULL raw output of an earlier tool call that was projected/"
+                    "truncated. When a tool result shows '[projected … full result: "
+                    'tool_result_get(result_id="r_…")]\', call this with that result_id to pull the '  # noqa: E501
+                    "part the preview dropped. Args: result_id (str, required); optional grep (str, "  # noqa: E501
+                    "return only matching lines), line_start/line_end (int, 1-indexed inclusive "  # noqa: E501
+                    "line range — the natural way to pull 'lines 40-80'), start/end (int, char "  # noqa: E501
+                    "range), max_chars (int). Access modes are checked grep → lines → char range."  # noqa: E501
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "result_id": {"type": "string"},
+                        "grep": {"type": "string"},
+                        "line_start": {"type": "integer"},
+                        "line_end": {"type": "integer"},
+                        "start": {"type": "integer"},
+                        "end": {"type": "integer"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    "required": ["result_id"],
+                },
+            ),
+        ]
+
+    def _read_gate_refusal(self, tool_name: str, a: dict[str, Any]) -> ToolResult | None:
+        """The ONE expression of the pre-edit read gate; None admits the call.
+
+        Lives at the dispatch seam rather than inside each handler so every write path
+        inherits it: adding a row to ``_READ_GATED_WRITE_TOOLS`` is the whole wiring, and
+        a write handler that forgets to register is what the rail test catches. Runs
+        AFTER ``_resolve`` so path confinement still speaks first (its ``ValueError``
+        propagates to :meth:`invoke`'s handler, unchanged).
+        """
+        spec = _READ_GATED_WRITE_TOOLS.get(tool_name)
+        if spec is None:
+            return None
+        operation, region_arg, _new_arg = spec
+        display = str(a["path"])
+        path = self._resolve(display, change=True)
+        required = str(a.get(region_arg) or "") if region_arg else None
+        refusal = read_gate.admit_write(
+            self._session_key,
+            path,
+            operation=operation,
+            display_path=display,
+            required_text=required,
+        )
+        if refusal is None:
+            return None
+        logger.debug("read gate refused %s on %s (%s)", tool_name, path, refusal.reason)
+        return ToolResult(
+            success=False,
+            error=refusal.error,
+            recovery_hints=[refusal.hint],
+            metadata={"read_gate": refusal.reason},
+        )
+
+    def _read_gate_observe_write(
+        self, tool_name: str, a: dict[str, Any], result: ToolResult
+    ) -> None:
+        """Second half of the same one expression: a landed write IS an observation.
+
+        Also at the seam, not in the handlers — otherwise each write path would have to
+        remember to update the ledger, which is the duplication the gate exists to avoid.
+        Never raises: bookkeeping must not fail a write that already succeeded.
+        """
+        spec = _READ_GATED_WRITE_TOOLS.get(tool_name)
+        if spec is None or not result.success:
+            return
+        operation, old_arg, new_arg = spec
+        try:
+            path = self._resolve(str(a["path"]), change=True)
+            if operation == "overwrite":
+                read_gate.record_overwrite(self._session_key, path, content=str(a.get(new_arg, "")))
+            elif operation == "edit" and old_arg:
+                read_gate.record_edit(
+                    self._session_key,
+                    path,
+                    old=str(a.get(old_arg) or ""),
+                    new=str(a.get(new_arg) or ""),
+                    replace_all=yes_or_no(a.get("replace_all")) is True,
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("read gate: post-write observation skipped", exc_info=True)
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        try:
+            handler = getattr(self, f"_t_{tool_name}", None)
+            if handler is None:
+                return ToolResult(success=False, error=f"unknown builtin tool {tool_name!r}")
+            gated = self._read_gate_refusal(tool_name, arguments)
+            if gated is None:
+                gated = lasting_tools.refusal(tool_name)
+            if gated is not None:
+                return gated
+            result = await handler(arguments)
+            self._read_gate_observe_write(tool_name, arguments, result)
+            return result
+        except Exception as exc:  # noqa: BLE001 - every failure is an answer the model reads
+            return self._failure(tool_name, exc)
+
+    async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """What :meth:`invoke` refuses before anything is touched, in its order: where a path
+        reaches (``file_scope.refusal``, the check every file tool makes), the read gate, lasting
+        work or a lasting record left for an Incognito or Temporary chat (``lasting_tools``), then
+        the tool's own check (``_p_<tool>``, which its handler runs first too). A path refused gets
+        the tool's sentence and hint, an argument left out invoke's answer; else no verdict."""
+        check = getattr(self, f"_p_{tool_name}", None)
+        if getattr(self, f"_t_{tool_name}", None) is None:
+            return None
+        try:
+            outside = scope_refusal(
+                tool_name,
+                arguments,
+                cwd=self._cwd,
+                extra_roots=self._extra_roots,
+                reads=self._read_roots,
+            )
+            if outside is not None:
+                return self._failure(tool_name, outside)
+            gated = self._read_gate_refusal(tool_name, arguments)
+            if gated is None:
+                gated = lasting_tools.refusal(tool_name)
+            return gated if gated is not None or check is None else check(arguments)
+        except (ValueError, KeyError) as exc:
+            return self._failure(tool_name, exc)
+
+    @staticmethod
+    def _failure(tool_name: str, exc: Exception) -> ToolResult:
+        """The answer to a call whose check or handler raised: what was wrong, and what to do. A
+        path the file tools do not reach is their scope's refusal, audited as one (`_refused_by`).
+        """
+        if isinstance(exc, OutOfScope):
+            return _refused_by(
+                tool_name, exc.control, str(exc), str(exc), [exc.hint] if exc.hint else []
+            )
+        error, hints = f"{type(exc).__name__}: {exc}", []
+        if isinstance(exc, ValueError):  # an argument error → surface to model
+            error = str(exc)
+        elif isinstance(exc, KeyError):  # a required argument was omitted
+            error = f"missing required argument: {exc}"
+            hints = [
+                f"Provide the {exc} argument; see the tool's parameter schema for required fields."
+            ]
+        else:
+            logger.debug("builtin tool %s failed", tool_name, exc_info=exc)
+            hints = ["Check the arguments against the tool's parameter schema and retry."]
+        return ToolResult(success=False, error=error, recovery_hints=hints)
+
+    # ── tool-output retrieval: pull the full raw of a projected result ────────
+    async def _t_tool_result_get(self, a: dict) -> ToolResult:
+        rid = str(a.get("result_id", "")).strip()
+        if not rid:
+            return ToolResult(
+                success=False,
+                error="result_id is required",
+                recovery_hints=["Pass the result_id named in the projection note, e.g. r_001ab."],
+            )
+        if not self._session_key:
+            return ToolResult(success=False, error="no session context for tool-result retrieval")
+        grep = a.get("grep")
+        start = int(a.get("start") or 0)
+        end = a.get("end")
+        end = int(end) if end is not None else None
+        line_start = a.get("line_start")
+        line_start = int(line_start) if line_start is not None else None
+        line_end = a.get("line_end")
+        line_end = int(line_end) if line_end is not None else None
+        max_chars = int(a.get("max_chars") or _MAX_OUTPUT_CHARS)
+        res = result_store.fetch_slice(
+            self._session_key,
+            rid,
+            start=start,
+            end=end,
+            line_start=line_start,
+            line_end=line_end,
+            grep=str(grep) if grep else None,
+            max_chars=max_chars,
+        )
+        if not res.get("ok"):
+            return ToolResult(
+                success=False,
+                error=res.get("error", "not found"),
+                recovery_hints=[
+                    "The raw result may have been evicted (bounded store) — re-run the original tool."  # noqa: E501
+                ],
+            )
+        note = (
+            f"[{res['mode']}: showing {res['shown']} of {res['length']} chars"
+            + (f", {res.get('matches', 0)} match(es)" if res["mode"] == "grep" else "")
+            + (
+                f", lines {res.get('line_start')}-{res.get('line_end')} of "
+                f"{res.get('total_lines')}"
+                if res["mode"] == "lines"
+                else ""
+            )
+            + (f"; more from start_index={res['next_index']}" if res.get("next_index") else "")
+            + "]"
+        )
+        # Carry the ORIGINAL stored content_type back so a retrieved diff/log/json
+        # renders rich (not flattened to generic). A grep slice loses structure, so
+        # only a full char/line range keeps the type; grep falls back to generic.
+        ctype = (
+            res.get("content_type", "generic")
+            if res.get("mode") in ("range", "lines")
+            else "generic"
+        )
+        # A projected read names tool_result_get as the way to pull the dropped slice, so
+        # a slice pulled that way HAS been observed — credit it to the file's observation.
+        # Without this the read gate's refusal for a truncated read would name a
+        # next action that cannot succeed on a file larger than the output cap.
+        read_gate.record_retrieval(self._session_key, rid, observed_text=str(res["content"]))
+        return ToolResult(
+            success=True, output=f"{note}\n{res['content']}", metadata={"content_type": ctype}
+        )
+
+    # ── SDLC: create/launch a Code project or Goal Loop from chat (sdlc_tools.py) ──
+    async def _t_project_run_create(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native import sdlc_tools
+
+        return await sdlc_tools.project_create(a)
+
+    async def _t_project_run_start(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native import sdlc_tools
+
+        return await sdlc_tools.project_start(a)
+
+    async def _t_project_run_status(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native import sdlc_tools
+
+        return await sdlc_tools.project_status(a)
+
+    async def _t_project_run_list(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native import sdlc_tools
+
+        return await sdlc_tools.project_list(a)
+
+    # ── tool impls (run blocking fs/proc work off the loop) ──
+    async def _t_read_file(self, a: dict) -> ToolResult:
+        path = self._resolve(str(a["path"]))
+        cap = int(a.get("max_bytes") or _MAX_READ_BYTES)
+
+        # Sentinel distinguishes "not a file" (None) from "binary file" (a marker the
+        # _read closure returns) so the caller maps each to its own message.
+        _BINARY = object()
+        _DOCUMENT = object()
+
+        def _read() -> object:
+            if not path.is_file():
+                return None
+            full = path.read_bytes()
+            # A PDF, Word or PowerPoint file is its pages' text, read by the document reader —
+            # named so AND shaped so, since a name alone is anyone's to write.
+            magic = b"%PDF-" if path.suffix.lower() == ".pdf" else b"PK\x03\x04"
+            if path.suffix.lower() in DOC_EXTENSIONS and full.startswith(magic):
+                return (_DOCUMENT, extract_text(str(path), filename=path.name))
+            raw = full[:cap]
+            # A NUL byte in the head means binary (image/compiled artifact/etc.) —
+            # decoding it with errors='replace' would hand the model a wall of mojibake
+            # it can't use and might act on as if it were source. Flag it honestly.
+            # The Files view and grep ask the same question (`file_view.is_binary`).
+            if is_binary(raw):
+                return _BINARY
+            # The digest is over the FULL bytes, not the capped slice, so the read gate
+            # invalidates the observation when ANY part of the file changes — including a
+            # part this read never showed. (No extra I/O: the whole file was already
+            # read; the cap only bounds what is decoded and returned.)
+            return (
+                raw.decode("utf-8", "replace"),
+                read_gate.sha256_bytes(full),
+                len(full) <= cap,
+            )
+
+        data = await asyncio.get_event_loop().run_in_executor(None, _read)
+        if data is None:
+            return ToolResult(
+                success=False,
+                error=f"not a file: {a['path']}",
+                recovery_hints=[
+                    "Use glob to locate the file, or list_dir on its parent directory."
+                ],
+            )
+        if data is _BINARY:
+            return ToolResult(
+                success=False,
+                error=f"binary file (not UTF-8 text): {a['path']}",
+                recovery_hints=[
+                    "This is a binary file — read_file only handles text. Use list_dir/glob to inspect it, or a bash tool if you need its bytes."  # noqa: E501
+                ],
+            )
+        if isinstance(data, tuple) and data[0] is _DOCUMENT:
+            # Not recorded as an observation of the file: what was read is its text, and an
+            # edit or overwrite of the document itself stays refused until its bytes are seen.
+            said, refused = await text_for_model(data[1], shown=str(a["path"]), name=path.name)
+            if refused:
+                return ToolResult(success=False, error=refused)
+            return _ok_capped(said, session_key=self._session_key)
+        # (decoded text, digest of the FULL bytes, whether the byte cap left it whole) —
+        # the sentinel-vs-tuple return keeps `_read`'s signature `object`, so name the
+        # shape here rather than leaving it inferred.
+        text, sha, byte_complete = cast(tuple[str, str, bool], data)
+        res = _ok_capped(text, session_key=self._session_key)
+        # Record what the model is ACTUALLY shown (``res.output`` — the PROJECTED text),
+        # not the file's bytes. A gate keyed on "read_file was called" admits an edit to
+        # byte 5000 of a file whose bytes 1-2000 were shown; keyed on the observed text,
+        # it cannot. ``complete`` is False if EITHER truncation axis fired (the byte cap
+        # or the output projection), so an overwrite of a partly-seen file is refused.
+        read_gate.record_read(
+            self._session_key,
+            path,
+            observed_text=res.output,
+            content_sha256=sha,
+            complete=bool(byte_complete) and not res.truncated,
+            raw_ref=str((res.metadata or {}).get("raw_ref") or ""),
+        )
+        return res
+
+    def _checkpoint_pre_edit(self, path: Path, scope: FileScope) -> None:
+        """Phase 2 of the turn checkpoint: back up *path*'s current
+        bytes before this turn's first mutation of it.
+
+        Here, in the handler, rather than at the chat runner's TOOL_CALL event: this runs
+        synchronously with the write (no ordering race against an event stream), and it covers
+        every caller of the native file tools — chat, loops, subagents — not just the
+        dashboard. Never raises; the store degrades rather than failing the agent's tool call.
+        The folder the write was admitted through is recorded, so a rewind restores a file in an
+        allowed working directory as it does one in the workspace.
+        """
+        try:
+            from personalclaw import turn_checkpoints
+
+            root = scope.root_of(str(path))
+            turn_checkpoints.capture_pre_edit(self._session_key, path, cwd=self._cwd, root=root)
+        except Exception:  # noqa: BLE001
+            logger.debug("checkpoint pre-edit skipped for %s", path, exc_info=True)
+
+    def _p_write_file(self, a: dict) -> ToolResult | None:
+        """What ``write_file`` refuses first (:meth:`preflight`), once its path is in reach: no
+        content."""
+        if a.get("content") is not None:
+            return None
+        # Absent (or null) is not an empty file. This tool replaces the WHOLE file, and a call
+        # that carried no text used to write "" (or "None") over it.
+        return ToolResult(
+            success=False,
+            error=(
+                "write_file needs content: the complete new text of the file. "
+                f"Nothing was written to {a['path']}."
+            ),
+            recovery_hints=[
+                "Pass content with the file's whole text, or use edit_file to change part of it."
+            ],
+        )
+
+    async def _t_write_file(self, a: dict) -> ToolResult:
+        scope = self.file_scope()
+        path = self._resolve(str(a["path"]), scope, change=True)
+        if (refused := self._p_write_file(a)) is not None:
+            return refused
+        content = str(a["content"])
+        self._checkpoint_pre_edit(path, scope)
+        written = content
+        before = ""
+
+        def _write() -> str | None:
+            nonlocal written, before
+            # Returns an error string on a known-failure, else None on success. Guard
+            # the cases that would otherwise raise a raw OSError caught by the generic
+            # invoke() handler — which leaks the absolute server path + gives a
+            # misleading "check the arguments" hint (the args are fine; the target is).
+            if path.is_dir():
+                return "is a directory"
+            # A parent segment that's a FILE (not a dir) makes mkdir raise NotADirectory
+            # — report it cleanly instead of leaking the OSError.
+            parent = path.parent
+            if parent.exists() and not parent.is_dir():
+                return "parent is not a directory"
+            # The agent was shown this file masked (`format_tool_result`), so a line it kept holds
+            # a marker where the file holds a value: each such line keeps its stored bytes.
+            if path.is_file():
+                try:
+                    before = path.read_text(encoding="utf-8")
+                    written = keep_masked_lines(content, before)
+                except UnicodeDecodeError:
+                    written = content  # not text, so nothing in it was shown masked
+                except MaskConflict as refused:
+                    return f"mask: {refused}"
+            parent.mkdir(parents=True, exist_ok=True)
+            write_text(path, written)
+            return None
+
+        # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
+        # a consolidation): every writer holds their lock, and a document is its store's write.
+        err = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _write))
+        if err and err.startswith("mask: "):
+            return ToolResult(success=False, error=err.removeprefix("mask: "))
+        if err == "is a directory":
+            return ToolResult(
+                success=False,
+                error=f"path is a directory, not a file: {a['path']}",
+                recovery_hints=[
+                    "Pass a file path, not a directory. Add a filename segment (e.g. dir/file.py)."
+                ],
+            )
+        if err == "parent is not a directory":
+            return ToolResult(
+                success=False,
+                error=f"a parent path segment is a file, not a directory: {a['path']}",
+                recovery_hints=[
+                    "A directory in the path is actually a file — pick a different location or remove the conflicting file first."  # noqa: E501
+                ],
+            )
+        return ToolResult(
+            success=True,
+            output=f"Wrote {len(content)} chars to {a['path']}"
+            + _marker_note(content, written, before),
+        )
+
+    def _p_edit_file(self, a: dict) -> ToolResult | None:
+        """What ``edit_file`` refuses first (:meth:`preflight`), once its path is in reach: an edit
+        that cannot change the file as asked: an EMPTY old_str (replace("", new) inserts `new`
+        between every char) or old==new (an "Edited" that changed nothing, so the worker would
+        believe it made an edit it didn't)."""
+        old, new = str(a["old_str"]), str(a["new_str"])
+        if old == "":
+            error = "old_str is empty"
+            hint = "old_str must be the exact existing text to replace. To create a file or append, use write_file."  # noqa: E501
+        elif old == new:
+            error = "old_str and new_str are identical (no change)"
+            hint = "The file already contains new_str — no edit needed. If you meant a different change, set old_str to the current text."  # noqa: E501
+        else:
+            return None
+        return ToolResult(success=False, error=error, recovery_hints=[hint])
+
+    async def _t_edit_file(self, a: dict) -> ToolResult:
+        scope = self.file_scope()
+        path = self._resolve(str(a["path"]), scope, change=True)
+        if (refused := self._p_edit_file(a)) is not None:
+            return refused
+        old, new = str(a["old_str"]), str(a["new_str"])
+        replace_all = yes_or_no(a.get("replace_all")) is True
+        self._checkpoint_pre_edit(path, scope)
+
+        def _edit() -> tuple[bool, str]:
+            # Returns (ok, message). ok=False carries a stable error string the
+            # caller maps to a recovery hint without re-deriving the failure mode.
+            if not path.is_file():
+                return False, f"not a file: {a['path']}"
+            text = path.read_text(encoding="utf-8")
+            # Found and replaced in the file as the agent was shown it, masked
+            # (`format_tool_result`), and mapped back onto the stored bytes, so a value hidden
+            # behind a marker stays exactly where it is.
+            try:
+                edited, count = masked_edit(text, old, new, replace_all=replace_all)
+            except MaskConflict as refused:
+                return False, f"mask: {refused}"
+            if count == 0:
+                return False, "old_str not found in file"
+            # Ambiguous edit guard (matches the Claude Code Edit contract): a
+            # non-unique old_str would silently patch the wrong occurrence, so
+            # reject it unless the caller explicitly opts into replace_all.
+            if count > 1 and not replace_all:
+                return False, f"old_str matched {count} times (not unique)"
+            n = count if replace_all else 1
+            write_text(path, edited)
+            return True, (
+                f"Edited {a['path']} ({n} replacement{'s' if n != 1 else ''})"
+                + _marker_note(new, edited, text)
+            )
+
+        # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
+        # a consolidation): every writer holds their lock, and a document is its store's write.
+        ok, msg = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _edit))
+        if ok:
+            return ToolResult(success=True, output=msg)
+        if msg.startswith("mask: "):
+            return ToolResult(success=False, error=msg.removeprefix("mask: "))
+        if msg.startswith("not a file"):
+            hint = "Use glob or list_dir to confirm the path, or write_file to create it first."
+        elif "not unique" in msg:
+            hint = "Add surrounding lines to old_str so it matches exactly once, or pass replace_all=true to change every occurrence."  # noqa: E501
+        else:  # old_str not found
+            hint = "Read the file first to copy the exact text (including whitespace) you want to replace."  # noqa: E501
+        return ToolResult(success=False, error=msg, recovery_hints=[hint])
+
+    async def _t_list_dir(self, a: dict) -> ToolResult:
+        scope = self.file_scope()
+        path = self._resolve(str(a.get("path") or "."), scope)
+
+        def _ls() -> str | None:
+            if not path.is_dir():
+                return None
+            # An entry the tools could not open is not named either: a secret file, a link that
+            # leads out of every place, and what a knowledge source does not share.
+            entries = sorted(
+                p.name + ("/" if p.is_dir() else "")
+                for p in path.iterdir()
+                if scope.admits(str(p)) is not None
+            )
+            return "\n".join(entries) or "(empty)"
+
+        listing = await asyncio.get_event_loop().run_in_executor(None, _ls)
+        if listing is None:
+            return ToolResult(
+                success=False,
+                error=f"not a directory: {a.get('path', '.')}",
+                recovery_hints=[
+                    "Use list_dir on the parent directory, or read_file if this path is a file."
+                ],
+            )
+        return _ok_capped(listing, session_key=self._session_key)
+
+    async def _t_glob(self, a: dict) -> ToolResult:
+        pattern = str(a["pattern"])
+        if refused := pattern_refusal("pattern", pattern):
+            return self._failure("glob", refused)
+        scope = self.file_scope()
+        base = self._folder(a, scope)
+        names = glob_case_sensitive(pattern, a.get("ignore_case"))
+
+        def _glob() -> str:
+            # A match the tools could not open is not listed: a secret file, a link out of every
+            # place, or what a knowledge source does not share.
+            matches = sorted(
+                scope.shown(p)
+                for p in base.glob(pattern, case_sensitive=names)
+                if p.is_file() and scope.admits(str(p)) is not None
+            )
+            if len(matches) > 500:
+                # Signal the cap rather than silently showing 500 of N (no-silent-truncation).
+                shown = matches[:500]
+                shown.append(
+                    f"…[showing 500 of {len(matches)} matches — narrow the pattern to see the rest]"
+                )
+                return "\n".join(shown)
+            return "\n".join(matches) or "(no matches)"
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _glob),
+            session_key=self._session_key,
+        )
+
+    async def _t_grep(self, a: dict) -> ToolResult:
+        import re as _re
+
+        query = str(a["query"])
+        glob_pat = str(a.get("glob") or "**/*")
+        if refused := pattern_refusal("glob", glob_pat):
+            return self._failure("grep", refused)
+        scope = self.file_scope()
+        base = self._folder(a, scope)
+        max_results = int(a.get("max_results") or 200)
+        names = glob_case_sensitive(glob_pat, a.get("ignore_case"))
+        # Compiled once; a bad pattern is a usable error, not a crash.
+        try:
+            match = LineQuery(query, regex=a.get("regex"), ignore_case=a.get("ignore_case"))
+        except _re.error as e:
+            return ToolResult(
+                success=False,
+                error=f"invalid regex: {e}",
+                recovery_hints=[
+                    "Fix the pattern, or drop regex=true to search for the literal text."
+                ],
+            )
+
+        def _grep() -> str:
+            hits: list[str] = []
+            for p in base.glob(glob_pat, case_sensitive=names):
+                if not p.is_file():
+                    continue
+                # Skip VCS/vendored/build dirs — searching them is slow + noisy.
+                if any(part in self._SKIP_DIRS for part in p.relative_to(base).parts):
+                    continue
+                # Never read a file the tools could not open (``FileScope.admits``).
+                if scope.admits(str(p)) is None:
+                    continue
+                try:
+                    with p.open("rb") as fh:
+                        head = fh.read(BINARY_SNIFF_BYTES)
+                        # A binary file has no lines to match, as for `grep -I`.
+                        if is_binary(head):
+                            continue
+                        text = (head + fh.read()).decode("utf-8", errors="ignore")
+                    if not match.in_file(text):
+                        continue
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if match.in_line(line):
+                            hits.append(f"{scope.shown(p)}:{i}: {line.strip()[:200]}")
+                            if len(hits) >= max_results:
+                                # Signal the cap: the worker must know more matches may
+                                # exist (no-silent-truncation) so it can narrow `glob`
+                                # or raise `max_results` rather than assume these are all.
+                                hits.append(
+                                    f"…[stopped at max_results={max_results} — more matches may exist; narrow `glob` or raise `max_results`]"  # noqa: E501
+                                )
+                                return "\n".join(hits)
+                except (OSError, UnicodeDecodeError):
+                    continue
+            return "\n".join(hits) or "(no matches)"
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _grep),
+            session_key=self._session_key,
+        )
+
+    async def _t_repo_map(self, a: dict) -> ToolResult:
+        """A structural overview of the workspace: the source tree + each file's
+        top-level definitions, so the agent orients without reading everything.
+        Dependency-free: Python via the stdlib ``ast``, other languages via a
+        couple of cheap top-level regexes (def/class/func/export/type)."""
+        scope = self.file_scope()
+        base = (self._resolve(str(a["path"]), scope) if a.get("path") else self._cwd).resolve()
+        max_files = int(a.get("max_files") or 200)
+
+        def _build() -> str:
+            import ast
+            import re
+
+            # Source extensions worth mapping (skip data/asset files).
+            exts = {
+                ".py",
+                ".js",
+                ".jsx",
+                ".ts",
+                ".tsx",
+                ".go",
+                ".rs",
+                ".rb",
+                ".java",
+                ".kt",
+                ".c",
+                ".cc",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".cs",
+                ".php",
+                ".swift",
+                ".scala",
+                ".sh",
+            }
+            skip_dirs = self._SKIP_DIRS
+            # cheap top-level symbol regexes for non-Python files
+            sym_re = re.compile(
+                r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+                r"(?:(?:function|class|interface|type|enum|struct|trait|impl|func|fn|def)\s+([A-Za-z_][\w]*)"  # noqa: E501
+                r"|(?:const|let|var)\s+([A-Za-z_][\w]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_][\w]*)\s*=>)"  # noqa: E501
+            )
+            # Path.walk (py3.12+) with in-place dir pruning so the traversal never
+            # DESCENDS into node_modules/.git/etc — rglob('*') would walk every ignored
+            # file (slow on a real brownfield repo with a big node_modules) only to skip
+            # it after. Sort dirs + files for deterministic, stable output.
+            files: list[Path] = []
+            truncated = False
+            for root_path, dirnames, filenames in base.walk():
+                dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)
+                for fn in sorted(filenames):
+                    # Mapped only when the tools could open it: never a secret file, or one a
+                    # link inside the workspace leads to outside it.
+                    if Path(fn).suffix in exts and scope.admits(str(root_path / fn)) is not None:
+                        files.append(root_path / fn)
+                        if len(files) >= max_files:
+                            truncated = True
+                            break
+                if truncated:
+                    break
+            if not files:
+                return "(no source files found under this path)"
+            # Be honest when the cap truncated the map — otherwise the worker reads
+            # the capped count as the WHOLE repo and may miss files (no-silent-caps).
+            header = (
+                f"# Repo map — {base.name}/  ({len(files)} source files"
+                + (
+                    f", capped at max_files={max_files} — map is PARTIAL; pass a "
+                    f"subdir `path` or a higher `max_files` to see the rest"
+                    if truncated
+                    else ""
+                )
+                + ")"
+            )
+            lines: list[str] = [header, ""]
+            for p in files:
+                rel = p.relative_to(base)
+                try:
+                    src = p.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                syms: list[str] = []
+                if p.suffix == ".py":
+                    try:
+                        tree = ast.parse(src)
+                        for node in tree.body:
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                syms.append(f"def {node.name}()")
+                            elif isinstance(node, ast.ClassDef):
+                                methods = [
+                                    n.name
+                                    for n in node.body
+                                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                ][:8]
+                                syms.append(
+                                    f"class {node.name}"
+                                    + (f" ({', '.join(methods)})" if methods else "")
+                                )
+                    except SyntaxError:
+                        pass
+                else:
+                    for line in src.splitlines():
+                        m = sym_re.match(line)
+                        if m:
+                            name = m.group(1) or m.group(2)
+                            if name:
+                                syms.append(name)
+                        if len(syms) >= 30:
+                            break
+                lines.append(f"{rel}" + (f"\n    {' · '.join(syms[:30])}" if syms else ""))
+            return "\n".join(lines)
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _build),
+            session_key=self._session_key,
+        )
+
+    def _bash_command(self, a: dict) -> tuple[str, list[str]] | ToolResult:
+        """The command a ``bash`` call runs and every value it is handed (masked out of what the
+        model sees), or the refusal of a reference that names nothing stored."""
+        # A credential is named, never written: `{{secret:NAME}}` is filled in here, as the command
+        # runs, from what the owner stored in Settings → Secrets (`triggers.secrets.resolve`, the
+        # resolution a trigger's action gets at dispatch). The approval card shows the command as
+        # the agent wrote it, reference and all; every value handed to the command is masked out
+        # of what it prints, and out of any refusal below, before either reaches the model.
+        from personalclaw.agents.native.command_secrets import stored_secret, unfilled_reference
+        from personalclaw.triggers.secrets import UnresolvedSecret
+        from personalclaw.triggers.secrets import resolve as resolve_references
+
+        handed: list[str] = []
+
+        def _filled(key: str) -> str:
+            value = stored_secret(key)
+            if value:
+                handed.append(value)
+            return value
+
+        try:
+            command = str(resolve_references(str(a["command"]), resolver=_filled))
+        except UnresolvedSecret as missing:
+            return ToolResult(
+                success=False,
+                error=unfilled_reference(missing),
+                recovery_hints=[
+                    "Use a name the user has stored in Settings → Secrets, or ask them to store it."
+                ],
+            )
+        handed.extend(_environment_credentials())
+        return command, handed
+
+    def _bash_refusal(self, command: str, handed: list[str], written: str) -> ToolResult | None:
+        """What the shell refuses to run, judged on the command that would RUN (*written* is the
+        command as the agent wrote it, its references unfilled); None to run it."""
+        from personalclaw import security, shell_denylist
+
+        # App-level guards before any execution, judged on the command that will RUN, so a value a
+        # reference fills in cannot carry a sensitive path or a denied pattern past them:
+        # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
+        #    read from the folder the command runs in — the workspace, inside the home;
+        # 2. the action denylist, under this session (one nobody is in is held to it), then the
+        #    shell denylist (`shell_denylist.denied_command`, the check every command path asks).
+        # Each refusal names its control and rule for the call's audit row (`_refused_by`).
+        sens = security.is_sensitive_bash_command(command, cwd=self._cwd)
+        if sens:
+            said = security.redact_known_values(sens, handed)
+            return _refused_by(
+                "bash",
+                "sensitive_path",
+                said,
+                said,
+                [
+                    "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
+                ],
+            )
+        # PersonalClaw's own stores are read through their own tools (`file_scope.store_named_in`).
+        if stored := store_named_in(command, cwd=self._cwd):
+            said = security.redact_known_values(stored, handed)
+            return _refused_by("bash", "own_store", said, said)
+        held = check_command(
+            command, session_key=self._session_key, cwd=str(self._cwd), written=written
+        )
+        if held.blocked:
+            said = security.redact_known_values(held.refusal(), handed)
+            return _refused_by("bash", "action_denylist", said, held.matched)
+        # Long-term memory, which work that may change none of it does not (`memory_named_in`).
+        if (kept := memory_named_in(command, cwd=self._cwd)) is not None:
+            said = security.redact_known_values(str(kept), handed)
+            return _refused_by("bash", kept.control, said, said, [kept.hint])
+        if (denied := shell_denylist.denied_command(command)) is not None:
+            return _refused_by(
+                "bash",
+                "shell_denylist",
+                security.redact_known_values(denied.refusal(), handed),
+                denied.pattern or denied.why(),
+                [
+                    (
+                        "The owner chose this rule. Do not rephrase the command to get around it: "
+                        "take a different approach, or tell them what you need to run and why."
+                        if denied.added
+                        else "This pattern guards credentials and destructive operations. Take a "
+                        "different approach that does not need this command."
+                    )
+                ],
+            )
+        # What runs as the owner, and what they allowed (`owner_only`): refused here in words. The
+        # sandbox `_t_bash` runs it in fences the home's as well, and on macOS the owner's own git
+        # settings and shell startup files, whatever this reading misses; a repository's git
+        # settings and hooks are held by this reading alone, since git writes them itself in a
+        # shell's ordinary work.
+        from personalclaw import owner_only, sandbox
+        from personalclaw.task_modes import is_read_only_bash
+
+        named = owner_only.named_in(command, cwd=self._cwd)
+        if named is not None and not is_read_only_bash(command):
+            return _refused_by(
+                "bash",
+                "owner_only",
+                security.redact_known_values(owner_only.refusal(named), handed),
+                security.redact_known_values(named.word, handed),
+                [owner_only.hint(named.kind)],
+            )
+
+        # 3. a SYSTEM-SCHEDULER write — offer the automation engine instead.
+        #
+        # 🔴 Measured before writing: `is_sensitive_bash_command("crontab -e")` and
+        # `denied_command("crontab -e")` both returned None, as did the `| crontab -` idiom,
+        # `launchctl load` and `systemctl --user enable …timer`. So an agent could install a cron in
+        # the user's real crontab and nothing said a word — and such a job is invisible to every
+        # surface this program built: no ledger row, no autopause, no quiet window, no capability
+        # fence, no kill switch, and it survives uninstall.
+        #
+        # Declined-with-an-offer, not silently blocked, so the user is OFFERED the automation
+        # engine: the observation names `automation_create` so the model takes the supported
+        # path rather than working around the refusal with `at` or a hand-written plist.
+        # READS (`crontab -l`) pass, deliberately — that is how you migrate existing jobs IN.
+        from personalclaw.triggers import handoff as trigger_handoff
+
+        offer = trigger_handoff.detect(command)
+        if offer is not None:
+            said = security.redact_known_values(offer.reason, handed)
+            return _refused_by("bash", "scheduler", said, said, [trigger_handoff.HANDOFF_HINT])
+        # It never runs outside the sandbox, nor with a network its run's egress tier takes away.
+        if said := sandbox.wrap_refusal(self._sandbox_mode):
+            return _refused_by("bash", "sandbox", said, said)
+        return None
+
+    def _p_bash(self, a: dict) -> ToolResult | None:
+        """What ``bash`` refuses first (:meth:`preflight`), judged as :meth:`_t_bash` judges it."""
+        resolved = self._bash_command(a)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        return self._bash_refusal(*resolved, written=str(a["command"]))
+
+    async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
+        from personalclaw import security
+        from personalclaw.sandbox import no_network_note, wrap_argv
+
+        # Read the module global at CALL time (not as a default arg, which binds at
+        # def-time) so a test monkeypatching _BASH_TIMEOUT still takes effect.
+        if timeout is None:
+            # Agent-settable timeout (bash is the primary env interface — a slow test
+            # suite/build needs more than the default). Capped so it can't wedge a
+            # background turn indefinitely. Invalid/:absent → the default.
+            try:
+                requested = float(a.get("timeout") or _BASH_TIMEOUT)
+            except (TypeError, ValueError):
+                requested = _BASH_TIMEOUT
+            timeout = max(1.0, min(requested, _BASH_TIMEOUT_MAX))
+        if isinstance(resolved := self._bash_command(a), ToolResult):
+            return resolved
+        command, handed = resolved
+        if (refused := self._bash_refusal(command, handed, written=str(a["command"]))) is not None:
+            return refused
+        argv = ["bash", "-lc", command]
+        wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)
+        run, proc = run_processes.command(), None
+        try:
+            # Resource ceiling: the native bash tool is the most direct
+            # agent-influenced spawn — deliver the ``tool`` ceiling via the post-exec
+            # shim (full caps + OOM bias so a runaway command is killed before the
+            # gateway). No preexec_fn: delivery is after exec, off the event-loop fork.
+            from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+
+            proc = await create_subprocess_limited(
+                *wrapped,
+                profile=PROFILE_TOOL,
+                cwd=str(self._cwd),
+                # The agent's command runs with the child allowlist (`build_child_env`), like a
+                # hook or a cron script, never with a copy of the gateway's environment: the
+                # gateway holds every secret saved in PersonalClaw. `bash -l` still reads the
+                # owner's login profile. What it starts inherits its run's marker, so what it
+                # leaves running ends with the turn, or its loop (`run_processes`).
+                env=run_bounds.shell_env(site="native-bash", run=run.mark),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                # Its own process group. Two reasons, both load-bearing: a stop (or a timeout) can
+                # then kill the WHOLE tree — `bash -lc` is a shell, and killing only the shell
+                # leaves its children running, holding the lock or the file handle the user pressed
+                # stop to release; and `os.killpg` is only SAFE on a child that leads its own group,
+                # since a child sharing our group would mean signalling the gateway. Implemented in
+                # C between fork and exec, so it is not the preexec_fn-in-a-threaded-process hazard.
+                start_new_session=True,
+            )
+            # Track the child for the duration of the call, so a stop arriving mid-command
+            # reaps it. Unregistered on the way out (including on error), so a stop that
+            # arrives after the command finished finds nothing to kill.
+            with cancellation.track_child(proc):
+                try:
+                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # Same terminate-AND-reap path a stop uses — one kill mechanism, so
+                    # the timeout path cannot drift from the cancel path (and it now
+                    # reaps the shell's children too, which `proc.kill()` never did).
+                    await cancellation.terminate_and_reap(proc)
+                    return ToolResult(
+                        success=False,
+                        error=f"command timed out after {timeout:.0f}s",
+                        recovery_hints=[
+                            "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
+                        ],
+                    )
+                except asyncio.CancelledError:
+                    # The awaiting TASK was cancelled (a hard kill, a shutdown). The
+                    # child is not the task's to abandon: reap it before propagating,
+                    # or the command outlives the turn that started it.
+                    await cancellation.terminate_and_reap(proc)
+                    raise
+        finally:
+            if cleanup:
+                try:
+                    Path(cleanup).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if proc is not None:
+                await run.ended(proc.pid)
+        # Masked before it is projected or retained: the values this tool handed the command, which
+        # no pattern can recognise, and then what the patterns do (`project_and_retain`'s reason).
+        raw = security.redact_for_model(
+            security.redact_known_values((out or b"").decode("utf-8", "replace"), handed)
+        )
+        rc = proc.returncode
+        if rc == 0:
+            # Shell output is log-shaped → project (keep error/warn lines + tail)
+            # and retain the raw for tool_result_get.
+            return _ok_capped(raw, content_type="log", session_key=self._session_key)
+        # Failure: project the error body the same way (the failing lines are the
+        # signal), keep the raw retrievable, and carry recovery hints.
+        proj = project_output(raw, cap=_MAX_OUTPUT_CHARS, content_type="log")
+        meta: dict[str, Any] = {"content_type": proj.content_type}
+        if proj.truncated and self._session_key:
+            rid = result_store.store_result(self._session_key, raw, content_type="log")
+            if rid:
+                meta["raw_ref"] = rid
+        hints = [
+            f"The command exited non-zero ({rc}). Read the error output above, "
+            "fix the cause, and retry — or try a different approach."
+        ]
+        # With its network taken away, a command can only say it could not connect: the agent is
+        # told why, so it does not take the host for down or try another program to reach it.
+        if note := no_network_note():
+            hints.insert(0, f"{note} No command in this run can reach a host.")
+        return ToolResult(
+            success=False,
+            error=f"exit {rc}:\n{proj.text}",
+            recovery_hints=hints,
+            truncated=proj.truncated,
+            original_length=proj.original_length,
+            metadata=meta,
+        )
+
+    async def _t_post_to_inbox(self, a: dict) -> ToolResult:
+        message = str(a.get("message", "")).strip()
+        if not message:
+            return ToolResult(success=False, error="post_to_inbox requires a non-empty 'message'")
+        kind = str(a.get("kind", "notification")).strip().lower()
+        if kind not in ("notification", "question", "fyi"):
+            kind = "notification"
+        from personalclaw.inbox_providers.native_source import post_to_inbox
+
+        # Push runs synchronously (store write + WS broadcast); off the loop to be safe.
+        item = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: post_to_inbox(
+                message,
+                kind=kind,
+                sender_name=self._agent or "agent",
+                context=str(a.get("context", "")) or None,
+                reply_target=self._session_key,
+            ),
+        )
+        if item is None:
+            return ToolResult(success=False, error="inbox sink unavailable")
+        return ToolResult(success=True, output=f"posted to inbox ({kind}) — item {item.id}")
+
+    async def _t_inbox_list(self, a: dict) -> ToolResult:
+        try:
+            limit = int(a.get("limit", INBOX_LIST_DEFAULT) or INBOX_LIST_DEFAULT)
+        except (ValueError, TypeError):
+            limit = INBOX_LIST_DEFAULT
+        limit = max(1, min(limit, INBOX_LIST_MAX))
+        kind = str(a.get("kind", "") or "").strip().lower()
+        from personalclaw.inbox_providers.native_source import get_dashboard_state, open_inbox_items
+        from personalclaw.subagent_reach import reader_of_work
+
+        # As the work the call is for (`inbox_reach`): its own chat's items and those about no
+        # chat; a tool you run from your own pages reads every one.
+        reader = reader_of_work(get_dashboard_state(), self._session_key)
+        # On the loop, not in an executor: taking in another writer's rows changes the store.
+        items = await open_inbox_items(reader, kind=kind)
+        if items is None:
+            return ToolResult(success=False, error="the Inbox cannot be read from this run")
+        text = inbox_list_text(items, limit, everyone=reader.everyone)
+        return _ok_capped(text, session_key=self._session_key)
+
+    async def _t_knowledge_search(self, a: dict) -> ToolResult:
+        query = str(a.get("query", "")).strip()
+        if not query:
+            return ToolResult(success=False, error="knowledge_search requires 'query'")
+        try:
+            limit = int(a.get("limit", 8) or 8)
+        except (ValueError, TypeError):
+            limit = 8
+
+        def _search() -> str:
+            from personalclaw.knowledge import get_knowledge_embedder, get_knowledge_store
+            from personalclaw.knowledge.retrieval import HybridRetriever
+
+            store = get_knowledge_store()
+            # Use the same embedder the gateway uses → full hybrid (keyword+graph+vector)
+            # retrieval, not a keyword-only degrade. None (embeddings off) falls back cleanly.
+            emb = get_knowledge_embedder()
+            embed_fn = emb.embed if emb and emb.is_available() else None
+            outcome = HybridRetriever(store, embedder=embed_fn).search_with_diagnostics(
+                query, limit=limit
+            )
+            results = outcome.results
+            # Never answer with a bare empty result set while part of search cannot
+            # see some of the library. "(no matching knowledge items)" is a claim about the
+            # library's CONTENT; an item semantic search cannot reach can make that claim
+            # false, and an agent that believes it will tell the user their document isn't
+            # there. The typed reason rides along with hits too — a keyword hit on an item
+            # with no vector is still a library whose semantic half is missing.
+            #
+            # The sentence is `Degradation.summary`, the SAME one Doctor's searchability row
+            # prints. This note used to compose its own — "N items cannot be found by
+            # search" — and then list the very item it had just called unfindable.
+            notes = [
+                f"({d.reason}: {d.summary}." + (f" {d.remedy})" if d.remedy else ")")
+                for d in outcome.degradations
+            ]
+            if not results:
+                return "\n".join(["(no matching knowledge items)"] + notes)
+            lines = list(notes)
+            for r in results[:limit]:
+                item = store.get_item(r["id"])
+                if not item:
+                    continue
+                snippet = _kn_redact(_kn_snippet(item))
+                tail = f" — {snippet}" if snippet else ""
+                # Surface the per-item citation locator so the agent can cite WHERE in
+                # the source the match sits (section / line range), not just name the item.
+                # A note from a watched folder names its file, which read_file opens as written.
+                loc_bits = [_kn_redact(where)] if (where := note_path(store, item)) else []
+                if r.get("section"):
+                    loc_bits.append(str(r["section"]))
+                if r.get("line_range"):
+                    lr = r["line_range"]
+                    loc_bits.append(f"lines {lr[0]}-{lr[1]}")
+                loc = f" [{' · '.join(loc_bits)}]" if loc_bits else ""
+                lines.append(
+                    f"- [{item.get('type', 'note')}] {_kn_redact(_kn_title(item))} (id={r['id']}){loc}{tail}"  # noqa: E501
+                )
+            return "\n".join(lines) or "(no matching knowledge items)"
+
+        # Output is markdown-ish bullet lines ("- [type] title (id=…)"), NOT JSON —
+        # leave the type to inference (the native search-results override parses the
+        # rare JSON case; otherwise it renders as clean text, never a failed JSON tree).
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _search),
+            session_key=self._session_key,
+        )
+
+    async def _t_knowledge_create(self, a: dict) -> ToolResult:
+        item_type = str(a.get("type", "note")).strip() or "note"
+        if item_type not in ("note", "fleeting", "journal", "gist", "bookmark"):
+            return ToolResult(
+                success=False,
+                error=f"knowledge_create: unsupported type {item_type!r} (agents author text/bookmark types)",  # noqa: E501
+                recovery_hints=["Use one of: note, fleeting, journal, gist, bookmark."],
+            )
+        title = str(a.get("title", "")).strip()
+        content = str(a.get("content", ""))
+        url = str(a.get("url", "")).strip()
+        if item_type == "bookmark":
+            if not url:
+                return ToolResult(success=False, error="knowledge_create: bookmark requires a url")
+            from urllib.parse import urlsplit
+
+            try:
+                scheme = urlsplit(url).scheme.lower()
+            except ValueError:
+                scheme = ""
+            if scheme not in ("http", "https"):
+                return ToolResult(
+                    success=False, error="knowledge_create: bookmark url must be http(s)"
+                )
+        if not title and not content.strip() and not url:
+            return ToolResult(
+                success=False, error="knowledge_create: title, content, or url required"
+            )
+        if not title and item_type == "journal":
+            # Journals are date-driven records — enrichment never AI-titles them, so a
+            # blank title becomes the entry's date (mirrors the HTTP create handler);
+            # otherwise an agent's untitled journal would keep a content-slug title forever.
+            from datetime import datetime
+
+            title = datetime.now().strftime("%B %-d, %Y")
+        if (refused := await _knowledge_refusal(title, content)) is not None:
+            return ToolResult(success=False, error=f"knowledge_create: {refused.nothing_made}")
+        tags = _t if isinstance((_t := a.get("tags")), list) else []
+        extra: dict[str, Any] = {"processing_status": "queued"}
+        if item_type == "gist":
+            lang = str(a.get("gist_language", "")).strip()
+            if lang:
+                extra["gist_language"] = lang
+
+        from personalclaw.knowledge import get_knowledge_store
+
+        store = get_knowledge_store()
+        # Bookmark dedup: re-saving a URL already in the library (modulo trailing slash /
+        # tracking params) returns the existing item rather than a duplicate — the same
+        # guard the HTTP create path applies.
+        if item_type == "bookmark" and url:
+            existing = store.find_active_by_url(url)
+            if existing:
+                return ToolResult(
+                    success=True, output=f"knowledge bookmark already saved — id {existing['id']}"
+                )
+        item_id = store.create_typed_item(
+            item_type=item_type,
+            title=title or (url or content[:60]) or "Untitled",
+            content=content,
+            tags=[str(t) for t in tags],
+            url=url,
+            provider="native",
+            extra=extra,
+        )
+        # create_typed_item returns None only on the source-poll dedup path (source_id +
+        # guid supplied); a native create never dedups, so the id is always present.
+        assert item_id is not None
+        # Enrich in the background (node-graph: extraction → insights → entities →
+        # embed) so the tool returns the id immediately — create-fast/enrich-async,
+        # not a 30-60s block on the agent's turn.
+        _enrich_in_background(item_id)
+        return ToolResult(
+            success=True,
+            output=f"created knowledge {item_type} (enriching in background) — id {item_id}",
+        )
+
+    async def _t_knowledge_get(self, a: dict) -> ToolResult:
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="knowledge_get requires 'id'")
+
+        def _get() -> str:
+            from personalclaw.knowledge import get_knowledge_store
+
+            store = get_knowledge_store()
+            item = store.get_item(item_id)
+            if not item:
+                return ""
+            tags = ", ".join(item.get("tags", []) or [])
+            insights = item.get("insights") or {}
+            summary = (
+                item.get("summary")
+                or item.get("ai_summary")
+                or insights.get("summary")
+                or item.get("url_description")
+                or ""
+            ).strip()
+            itype = item.get("type", "note")
+            # A gist's language is a meaningful attribute — surface it in the type tag
+            # (e.g. "[gist · python]") so the agent knows what language the code is.
+            type_tag = itype
+            if itype == "gist" and (item.get("gist_language") or "").strip():
+                type_tag = f"{itype} · {item['gist_language'].strip()}"
+            lines = [f"# {_kn_title(item)} [{type_tag}]"]
+            # Signal when enrichment is still pending so the agent doesn't mistake
+            # not-yet-ready insights/tags for an item that has none (create-fast).
+            pstatus = item.get("processing_status") or ""
+            if pstatus in ("queued", "processing"):
+                lines.append("(still enriching — summary, tags, and insights may not be ready yet)")
+            # Archived items are hidden from search/lists — an agent reaching one by id
+            # should know it was deliberately put away, so it can caveat rather than
+            # present stale/retired content as current.
+            if item.get("is_archived"):
+                lines.append(
+                    "(archived — the user has put this item away; treat as retired unless they ask about it)"  # noqa: E501
+                )
+            # An unreachable bookmark's page couldn't be fetched, so the body is just the
+            # URL — tell the agent why the content is missing (vs. a not-yet-scraped item),
+            # and that a re-fetch may succeed later. A hard 'failed' is flagged likewise.
+            if pstatus == "unreachable":
+                lines.append(
+                    "(unreachable — the page couldn't be fetched, so only the URL is saved; the content may be retrievable on a later retry)"  # noqa: E501
+                )
+            elif pstatus == "failed":
+                reason = (item.get("processing_error") or "").strip()
+                lines.append(
+                    f"(processing failed{': ' + reason if reason else ''} — content may be incomplete)"  # noqa: E501
+                )
+            if tags:
+                lines.append(f"tags: {tags}")
+            if item.get("url"):
+                lines.append(f"url: {item.get('url')}")
+            if where := note_path(store, item):
+                lines.append(f"path: {where} (the note's file, which read_file opens)")
+            # File-backed items: give the agent the file's shape (it can't open the
+            # bytes inline) — dimensions/pages/size — so it knows what it's dealing with.
+            if item.get("file_path"):
+                meta = item.get("file_metadata") or {}
+                bits = []
+                if meta.get("width") and meta.get("height"):
+                    bits.append(f"{meta['width']}x{meta['height']}")
+                if meta.get("page_count"):
+                    bits.append(f"{meta['page_count']} pages")
+                if meta.get("sheet_count"):
+                    bits.append(f"{meta['sheet_count']} sheets")
+                if meta.get("slide_count"):
+                    bits.append(f"{meta['slide_count']} slides")
+                if meta.get("row_count"):
+                    bits.append(f"{meta['row_count']} rows")
+                if item.get("file_size"):
+                    kb = item["file_size"] / 1024
+                    bits.append(f"{kb:.0f} KB" if kb < 1024 else f"{kb / 1024:.1f} MB")
+                if item.get("mime_type"):
+                    bits.append(item["mime_type"])
+                if bits:
+                    lines.append("file: " + ", ".join(bits))
+            if summary:
+                lines.append(f"\nsummary: {summary}")
+            # Surface the distilled enrichment so the agent can use it without
+            # re-reading the whole document.
+            kps = insights.get("key_points")
+            if isinstance(kps, list) and kps:
+                lines.append("key points:\n" + "\n".join(f"- {p}" for p in kps))
+            acts = insights.get("action_items")
+            if isinstance(acts, list) and acts:
+                lines.append("action items:\n" + "\n".join(f"- {a}" for a in acts))
+            if item.get("content"):
+                lines.append(f"\n{item.get('content')}")
+            # Scrub credentials + exfiltration URLs before the item reaches the model,
+            # matching the HTTP context-injection guard.
+            return _kn_redact("\n".join(lines))
+
+        out = await asyncio.get_event_loop().run_in_executor(None, _get)
+        if not out:
+            return ToolResult(
+                success=False,
+                error=f"knowledge item {item_id!r} not found",
+                recovery_hints=[
+                    "Use knowledge_search to find the correct item id, then retry knowledge_get."
+                ],
+            )
+        return _ok_capped(out, session_key=self._session_key)
+
+    async def _t_knowledge_update(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native.knowledge_tool_defs import knowledge_flags
+
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="knowledge_update requires 'id'")
+        # Only the agent-editable fields; ignore anything else the model passes.
+        fields: dict[str, Any] = {}
+        for key in ("title", "content", "url"):
+            if key in a:
+                fields[key] = str(a[key])
+        # A url edit must stay http(s) (same guard as create) — no javascript:/data:.
+        if str(fields.get("url", "")).strip():
+            from urllib.parse import urlsplit
+
+            try:
+                scheme = urlsplit(fields["url"].strip()).scheme.lower()
+            except ValueError:
+                scheme = ""
+            if scheme not in ("http", "https"):
+                return ToolResult(success=False, error="knowledge_update: url must be http(s)")
+        if "tags" in a and isinstance(a["tags"], list):
+            fields["tags"] = [str(t) for t in a["tags"]]
+        fields.update(knowledge_flags(a))
+        # gist_language only applies to gist items — applied conditionally in _update
+        # once the item type is known (mirrors the create-tool guard).
+        want_lang = str(a["gist_language"]).strip() if "gist_language" in a else None
+        if not fields and want_lang is None:
+            return ToolResult(
+                success=False,
+                error="knowledge_update: no updatable fields given",
+                recovery_hints=[
+                    "Pass at least one of: title, content, tags, url, gist_language, is_pinned, is_archived."  # noqa: E501
+                ],
+            )
+        # Editing the text re-runs extraction/insights/entities so enrichment stays
+        # consistent with the new content (the create/update → enrich contract).
+        reenrich = "content" in fields or "url" in fields
+
+        applied = dict(fields)
+
+        def _update() -> str:
+            from datetime import date
+
+            from personalclaw.instants import local_day
+            from personalclaw.knowledge import get_knowledge_store
+
+            store = get_knowledge_store()
+            item = store.get_item(item_id)
+            if not item:
+                return "not_found"
+            # Journal immutability (same rule the HTTP PATCH enforces): a journal's body is
+            # append-only — editable on its creation day, frozen after. Block a content/
+            # title edit to a past-day journal so an agent can't mutate a record the UI +
+            # HTTP path forbid. Curation (tags/pin/archive) stays allowed.
+            if (item.get("item_type") or item.get("type")) == "journal" and (
+                "content" in applied or "title" in applied
+            ):
+                created = local_day(item.get("created_at"))
+                if created and created != date.today().isoformat():
+                    return "journal_locked"
+            # A language only makes sense on a gist; silently ignore it on other types
+            # rather than stamping a meaningless column (the FE only reads it for gists).
+            if want_lang is not None and (item.get("type") or item.get("item_type")) == "gist":
+                applied["gist_language"] = want_lang
+            if not applied:
+                return "noop"  # nothing to change (e.g. gist_language given for a non-gist)
+            # knowledge_get showed the agent this item through `_kn_redact`, so an edit it sends
+            # back carries a marker for every hidden value. Put each back from the stored item.
+            try:
+                for key in ("title", "content"):
+                    if key in applied:
+                        applied[key] = keep_masked_spans(applied[key], str(item.get(key) or ""))
+            except MaskConflict:
+                return "mask_conflict"
+            store.update_item(item_id, **applied)
+            store.db.commit()
+            return "ok"
+
+        said = (str(fields.get(key) or "") for key in ("title", "content"))
+        if (refused := await _knowledge_refusal(*said)) is not None:
+            return ToolResult(success=False, error=f"knowledge_update: {refused.not_changed}")
+        result = await asyncio.get_event_loop().run_in_executor(None, _update)
+        if result == "not_found":
+            return ToolResult(
+                success=False,
+                error=f"knowledge item {item_id!r} not found",
+                recovery_hints=["Use knowledge_search to find the correct item id."],
+            )
+        if result == "mask_conflict":
+            return ToolResult(success=False, error=f"knowledge_update: {MASK_CONFLICT}")
+        if result == "journal_locked":
+            return ToolResult(
+                success=False,
+                error="knowledge_update: this journal entry is immutable — its creation day has passed",  # noqa: E501
+                recovery_hints=[
+                    "A journal's body can't be edited after its creation day. You can still update tags, is_pinned, or is_archived."  # noqa: E501
+                ],
+            )
+        if reenrich:
+            _enrich_in_background(item_id)
+        if not applied:
+            return ToolResult(
+                success=True,
+                output=f"no change to {item_id} — gist_language only applies to gist items",
+            )
+        return ToolResult(
+            success=True, output=f"updated knowledge item {item_id} ({', '.join(applied)})"
+        )
+
+    async def _t_knowledge_structural(self, a: dict) -> ToolResult:
+        """Answer a structural question by traversal. Never falls back to a similarity guess.
+
+        The output is the traversal, one hit per two lines: the item, then the exact link
+        chain that reached it. That second line is the point — the model can quote *why* an
+        item is in the answer instead of asserting a relation it inferred from proximity.
+        """
+        verb = str(a.get("verb", "")).strip()
+        if not verb:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural requires 'verb'",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        if verb not in self._structural_verbs():
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: unknown verb {verb!r}",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        origin = str(a.get("origin", "") or "").strip()
+        since = str(a.get("since", "") or "").strip()
+        rank_query = str(a.get("rank_query", "") or "").strip()
+        try:
+            depth = int(a.get("depth", 1) or 1)
+        except (ValueError, TypeError):
+            depth = 1
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+
+        # Refuse the request the verb cannot answer rather than running it against an empty
+        # origin and reporting "no such relation" — an unanswerable request and a genuinely
+        # absent relation are different facts, and conflating them is the same defect as
+        # falling back to similarity.
+        needs_origin = {"links_to", "depends_on", "tag_subtree"}
+        if verb in needs_origin and not origin:
+            what = "a tag name" if verb == "tag_subtree" else "an item id"
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: verb {verb!r} requires 'origin' ({what})",
+                recovery_hints=["Use knowledge_search to find the item id, then retry."],
+            )
+        if verb == "changed_since" and not since:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural: verb 'changed_since' requires 'since' (ISO timestamp)",
+            )
+
+        def _run() -> str:
+            from personalclaw.knowledge import get_knowledge_embedder, get_knowledge_store
+            from personalclaw.knowledge.structural import StructuralRetriever, render_answer
+
+            emb = get_knowledge_embedder()
+            embed_fn = emb.embed if emb and emb.is_available() else None
+            answer = StructuralRetriever(get_knowledge_store(), embedder=embed_fn).query(
+                verb,
+                origin=origin,
+                since=since,
+                depth=depth,
+                limit=limit,
+                rank_query=rank_query,
+            )
+            return _kn_redact(render_answer(answer, limit=limit))
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _run),
+            session_key=self._session_key,
+        )
+
+    async def _t_knowledge_stats(self, a: dict) -> ToolResult:
+        def _overview() -> dict:
+            from personalclaw.knowledge import get_knowledge_store
+
+            return get_knowledge_store().corpus_overview()
+
+        ov = await asyncio.get_event_loop().run_in_executor(None, _overview)
+        if not ov.get("total"):
+            return ToolResult(success=True, output="Knowledge library is empty.")
+        by_type = ", ".join(f"{t}: {c}" for t, c in ov["by_type"].items())
+        top_tags = ", ".join(f"{r['tag']} ({r['count']})" for r in ov["top_tags"]) or "(none)"
+        return ToolResult(
+            success=True,
+            output=(
+                f"Knowledge library: {ov['total']} items, {ov['entities']} entities.\n"
+                f"By type: {by_type}\n"
+                f"Top tags: {top_tags}"
+            ),
+        )
+
+    # ── Decision journal ──
+
+    async def _t_log_decision(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, log_decision
+
+        def _log() -> dict:
+            # `enqueue=_enrich_in_background` is the wiring that makes a logged decision
+            # vector-searchable: `decisions.log_decision` deliberately does not reach for the
+            # gateway's ingest queue itself, so the caller supplies the ingestion path. Passing
+            # nothing here would leave every logged decision keyword-only forever — the same
+            # defect the comment on `_enrich_in_background` records for agent-authored notes.
+            return log_decision(
+                summary=str(a.get("summary", "")),
+                content=str(a.get("content", "")),
+                expectation=str(a.get("expectation", "")),
+                confidence=a.get("confidence"),
+                domain=str(a.get("domain", "other") or "other"),
+                review_horizon=str(a.get("review_horizon", "") or ""),
+                tags=[str(t) for t in a["tags"]] if isinstance(a.get("tags"), list) else None,
+                enqueue=_enrich_in_background,
+            )
+
+        said = (str(a.get(key, "") or "") for key in ("summary", "content", "expectation"))
+        if (refused := await _knowledge_refusal(*said)) is not None:
+            return ToolResult(success=False, error=f"log_decision: {refused.nothing_made}")
+        try:
+            row = await asyncio.get_event_loop().run_in_executor(None, _log)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"log_decision: {exc}")
+        return ToolResult(
+            success=True,
+            output=(
+                f"Logged decision '{row['summary']}' (id={row['id']}, {row['domain']}).\n"
+                f"Expecting: {row['expectation']} at {row['confidence']:.0%} confidence.\n"
+                f"One review scheduled for {row['review_horizon']} "
+                f"(trigger {row['reminder_trigger_id']})."
+            ),
+        )
+
+    async def _t_decision_list(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, list_decisions
+
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+
+        def _list() -> list[dict]:
+            return list_decisions(
+                status=str(a.get("status", "") or ""),
+                domain=str(a.get("domain", "") or ""),
+                limit=limit,
+            )
+
+        try:
+            rows = await asyncio.get_event_loop().run_in_executor(None, _list)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"decision_list: {exc}")
+        if not rows:
+            return ToolResult(success=True, output="(no matching decisions)")
+        lines = []
+        for r in rows:
+            bits = [f"[{r['status']}]", str(r["summary"]), f"(id={r['id']})", f"@{r['domain']}"]
+            if r["status"] == "pending":
+                bits.append(f"review {r['review_horizon']}")
+                if r.get("overdue"):
+                    bits.append("OVERDUE")
+                if r.get("stale_pending"):
+                    bits.append("stale (deferred twice)")
+            elif r["outcome_grade"]:
+                bits.append(f"→ {r['outcome_grade']}")
+            lines.append("- " + " ".join(bits))
+        return _ok_capped("\n".join(lines), session_key=self._session_key)
+
+    async def _t_decision_resolve(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, resolve_decision
+
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="decision_resolve requires 'id'")
+
+        def _resolve() -> dict:
+            return resolve_decision(
+                item_id,
+                outcome=str(a.get("outcome", "")),
+                grade=str(a.get("grade", "")),
+                enqueue=_enrich_in_background,
+            )
+
+        try:
+            row = await asyncio.get_event_loop().run_in_executor(None, _resolve)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"decision_resolve: {exc}")
+        if row["status"] == "pending":
+            if row.get("stale_pending"):
+                return ToolResult(
+                    success=True,
+                    output=(
+                        f"Decision {row['id']} has been deferred twice already — leaving it "
+                        f"pending with no further reminders. It shows as stale in the journal."
+                    ),
+                )
+            return ToolResult(
+                success=True,
+                output=(
+                    f"Too early — review rescheduled for {row['review_horizon']} "
+                    f"(deferral {row['deferrals']} of 2)."
+                ),
+            )
+        lesson = row["lesson_memory_key"]
+        tail = f"Lesson written to memory as {lesson}." if lesson else "No lesson was written."
+        if not lesson and row.get("lesson_not_kept"):  # memory refused it, and says why
+            tail += f" {row['lesson_not_kept']}"
+        return ToolResult(
+            success=True,
+            output=(
+                f"Resolved '{row['summary']}' as {row['outcome_grade']} "
+                f"(expected: {row['expectation']}).\n{tail}"
+            ),
+        )
+
+    # ── Tasks (Project → TaskList → Task) ──
+
+    @staticmethod
+    def _task_line(t) -> str:
+        bits = [f"[{t.status.value}]", t.title, f"(id={t.id})"]
+        if t.priority.value != "medium":
+            bits.append(f"!{t.priority.value}")
+        if t.project:
+            bits.append(f"@{t.project}")
+        if t.exit_criteria:
+            met = len(t.exit_criteria) - len(t.incomplete_exit_criteria())
+            bits.append(f"{met}/{len(t.exit_criteria)} criteria")
+        return " ".join(bits)
+
+    async def _t_task_create(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import reconcile, registry
+
+        title = str(a.get("title", "")).strip()
+        if not title:
+            return ToolResult(success=False, error="task_create requires 'title'")
+        fields = task_write_fields("task_create", a)
+        try:
+            task = await registry.create_task(title=title, **fields)
+        except reconcile.DependencyCycleError as e:
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Remove the dependency that closes the loop."],
+            )
+        return ToolResult(success=True, output=f"created task {task.id}: {self._task_line(task)}")
+
+    async def _t_task_list(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import registry
+
+        # `int(a.get("limit", 25) or 25)` turned an explicit 0 into 25, so `limit: 0` meant
+        # "all" here and "none" over HTTP — one value, two meanings (#2984). The default now
+        # applies only when the argument is ABSENT, and the value is clamped to the same
+        # window the HTTP route uses, so `limit: -1` (the common "give me everything" idiom)
+        # can no longer hand a model a silently short list reported as a full `total`.
+        raw = a.get("limit")
+        try:
+            limit = 25 if raw is None else int(raw)
+        except (ValueError, TypeError):
+            limit = 25
+        limit = max(1, min(limit, registry.MAX_TASK_PAGE))
+        tasks, total = await registry.list_all_tasks(
+            status=a.get("status") or None,
+            project=a.get("project") or None,
+            task_list_id=a.get("task_list_id") or None,
+            limit=limit,
+        )
+        if not tasks:
+            return ToolResult(success=True, output="(no matching tasks)")
+        body = "\n".join(f"- {self._task_line(t)}" for t in tasks)
+        head = f"{total} task(s)" + (f", showing {len(tasks)}" if total > len(tasks) else "")
+        return _ok_capped(f"{head}:\n{body}", session_key=self._session_key)
+
+    async def _t_task_get(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import registry
+
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="task_get requires 'id'")
+        task = await registry.get_task(item_id)
+        if not task:
+            return ToolResult(success=False, error=f"no task with id {item_id!r}")
+        d = task.to_dict()
+        lines = [self._task_line(task)]
+        if task.description:
+            lines.append(f"\n{task.description}")
+        ec = d.get("exit_criteria") or []
+        if ec:
+            lines.append("\nExit criteria:")
+            lines += [f"  [{'x' if e.get('met') else ' '}] {e.get('description', '')}" for e in ec]
+        ap = d.get("action_plan") or []
+        if ap:
+            lines.append("\nAction plan:")
+            lines += [f"  {e.get('sequence', i)}. {e.get('content', '')}" for i, e in enumerate(ap)]
+        prereqs = task.prerequisite_ids()
+        if prereqs:
+            lines.append("\nDepends on: " + ", ".join(prereqs))
+        return _ok_capped("\n".join(lines), session_key=self._session_key)
+
+    async def _t_task_update(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import models, reconcile, registry
+
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="task_update requires 'id'")
+        fields = task_write_fields("task_update", a)
+        if not fields:
+            return ToolResult(success=False, error="task_update: nothing to change")
+        # Normalize the status BEFORE update_task — an LLM commonly emits a synonym
+        # (complete/completed/finished/todo/…) which TaskStatus() rejects with a bare
+        # ValueError that the catch below then mis-labels as an exit-criteria failure,
+        # confusing the worker into a loop that never marks the task done (the cockpit
+        # rail then lies). Coerce the obvious synonyms; reject anything else with the
+        # valid set named explicitly.
+        if "status" in fields:
+            _VALID = {"open", "in_progress", "done", "cancelled", "blocked"}
+            _SYNONYM = {
+                "complete": "done",
+                "completed": "done",
+                "finished": "done",
+                "todo": "open",
+                "to_do": "open",
+                "pending": "open",
+                "in-progress": "in_progress",
+                "inprogress": "in_progress",
+                "doing": "in_progress",
+                "wip": "in_progress",
+                "canceled": "cancelled",
+                "won't_do": "cancelled",
+            }
+            raw = str(fields["status"]).strip().lower().replace(" ", "_")
+            norm = raw if raw in _VALID else _SYNONYM.get(raw)
+            if norm is None:
+                return ToolResult(
+                    success=False,
+                    error=f"task_update: {fields['status']!r} is not a valid status",
+                    recovery_hints=["Use one of: open, in_progress, done, cancelled, blocked."],
+                )
+            fields["status"] = norm
+        # The single-writer contract on a workflow-managed task (#390). The allowlist above happens
+        # to exclude most engine-owned fields, but not `status` — the one that matters most: an
+        # agent could mark a managed task done while its workflow node was still running, and then
+        # the board and the run ledger disagreed with nothing to reconcile them. The refusal names
+        # the alternative, so it reads as a recovery hint rather than a wall.
+        refusal = await registry.engine_owned_refusal(item_id, fields)
+        if refusal:
+            return ToolResult(
+                success=False,
+                error=refusal,
+                recovery_hints=[
+                    "Use workflow_skip or workflow_rewind to change what the run does; "
+                    "the task follows.",
+                ],
+            )
+        # task_get and task_list showed this task masked (`format_tool_result`), so a text field
+        # sent back can carry a marker where the task holds a value: each keeps what it stands for.
+        stored = await registry.get_task(item_id)
+        if stored is not None:
+            current = stored.to_dict()
+            try:
+                for key in ("title", "description", "labels", "exit_criteria", "action_plan"):
+                    if key in fields:
+                        fields[key] = keep_masked_values(fields[key], current.get(key))
+            except MaskConflict:
+                return ToolResult(success=False, error=f"task_update: {MASK_CONFLICT}")
+        try:
+            task = await registry.update_task(item_id, **fields)
+        except reconcile.DependencyCycleError as e:
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Remove the dependency that closes the loop."],
+            )
+        except models.UnfinishedExitCriteria as e:
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Complete the exit criteria before marking the task done."],
+            )
+        if not task:
+            return ToolResult(success=False, error=f"no task with id {item_id!r}")
+        return ToolResult(success=True, output=f"updated {task.id}: {self._task_line(task)}")
+
+    async def _t_task_ready(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import registry
+
+        tasks = await registry.ready_tasks(
+            project=a.get("project") or None, task_list_id=a.get("task_list_id") or None
+        )
+        if not tasks:
+            return ToolResult(success=True, output="(no ready tasks — all blocked or done)")
+        return _ok_capped(
+            "Ready to start:\n" + "\n".join(f"- {self._task_line(t)}" for t in tasks),
+            session_key=self._session_key,
+        )
+
+    async def _t_task_search(self, a: dict) -> ToolResult:
+        from personalclaw.tasks import models, registry
+
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+        tasks, total = await registry.search_tasks(
+            query=str(a.get("query", "")),
+            # A filter sent as one value, or as the text of a JSON list, was dropped whole: the
+            # search then answered as if unfiltered. Each is read as a stored task's labels are.
+            statuses=models.text_list(a.get("status")),
+            priorities=models.text_list(a.get("priority")),
+            tags=models.text_list(a.get("tags")),
+            project=a.get("project") or None,
+            sort_by=str(a.get("sort_by", "relevance")),
+            limit=limit,
+        )
+        if not tasks:
+            return ToolResult(success=True, output="(no matching tasks)")
+        body = "\n".join(f"- {self._task_line(t)}" for t in tasks)
+        return _ok_capped(f"{total} match(es):\n{body}", session_key=self._session_key)
+
+    async def _t_project_create(self, a: dict) -> ToolResult:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        name = str(a.get("name", "")).strip()
+        if not name:
+            return ToolResult(success=False, error="project_create requires 'name'")
+
+        def _create():
+            return HierarchyStore().create_project(
+                name=name, agent_instructions_template=str(a.get("agent_instructions_template", ""))
+            )
+
+        try:
+            project = await asyncio.get_event_loop().run_in_executor(None, _create)
+        except ValueError as e:
+            return ToolResult(success=False, error=str(e))
+        return ToolResult(
+            success=True, output=f"created project '{project.name}' (id={project.id})"
+        )
+
+    async def _t_project_list(self, a: dict) -> ToolResult:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        def _list() -> str:
+            store = HierarchyStore()
+            projects = store.list_projects()
+            lines = []
+            for p in projects:
+                lists = store.list_task_lists(project_id=p.id)
+                tail = f" — lists: {', '.join(tl.name for tl in lists)}" if lists else ""
+                lines.append(
+                    f"- {p.name} (id={p.id}){' [default]' if p.is_builtin_project() else ''}{tail}"
+                )
+            return "\n".join(lines)
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _list),
+            session_key=self._session_key,
+        )
+
+    async def _t_task_list_create(self, a: dict) -> ToolResult:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        name = str(a.get("name", "")).strip()
+        if not name:
+            return ToolResult(success=False, error="task_list_create requires 'name'")
+
+        def _create():
+            return HierarchyStore().create_task_list(
+                name=name,
+                project_id=str(a.get("project_id", "")),
+                project_name=str(a.get("project_name", "")),
+                repeatable=yes_or_no(a.get("repeatable")) is True,
+            )
+
+        try:
+            tl = await asyncio.get_event_loop().run_in_executor(None, _create)
+        except ValueError as e:
+            return ToolResult(success=False, error=str(e))
+        return ToolResult(
+            success=True,
+            output=f"created task list '{tl.name}' (id={tl.id}, project_id={tl.project_id})",
+        )
+
+
+# ── Category providers ──────────────────────────────────────────────────────
+# One provider per conceptual entity. All share the handler bodies above; each
+# surfaces only its category's tools (list_tools filters by self._categories).
+# These are registry singletons — they resolve the per-turn workspace via the
+# contextvars the runtime binds, NOT a per-session constructor. The platform
+# bundle (filesystem/shell/core) is always-on; the rest are installable apps.
+
+
+def create_platform_tools_provider(
+    config: dict | None = None, *, cwd: "Path | str | None" = None
+) -> "NativeBuiltinToolProvider":
+    """The always-on platform tool surface: filesystem + shell + the tool_result_get
+    affordance. The native agent's foundation — never user-removable.
+
+    ``cwd`` is the workspace these tools are CONFINED to (``_resolve`` refuses any path
+    that escapes it). A consumer that only ENUMERATES the surface can leave it unset —
+    ``list_tools`` never touches cwd, which is why ``GET /api/tools`` and the group
+    partition construct without one. A consumer that EXECUTES must pass it, because the
+    instance fallback is ``Path.cwd()``: the directory the gateway process happens to be
+    running in, which is a repo checkout or whatever a service manager set. Confining
+    the file and shell tools to *that* is the same containment-decision-falls-through-to-
+    an-ambient-value shape ``session._resolve_acp_spawn_cwd`` refuses (#3310).
+    """
+    return NativeBuiltinToolProvider(
+        cwd=Path(cwd) if cwd else None,
+        categories=PLATFORM_CATEGORIES,
+        provider_name=PLATFORM_PROVIDER_NAME,
+        display=PLATFORM_DISPLAY_NAME,
+    )
+
+
+def _make_app_category_provider(category: str):
+    name, display = APP_CATEGORY_PROVIDERS[category]
+
+    def _factory(config: dict | None = None) -> "NativeBuiltinToolProvider":
+        return NativeBuiltinToolProvider(
+            categories={category},
+            provider_name=name,
+            display=display,
+        )
+
+    return _factory
+
+
+create_knowledge_tools_provider = _make_app_category_provider("knowledge")
+create_tasks_tools_provider = _make_app_category_provider("tasks")
+create_project_tools_provider = _make_app_category_provider("projects")
+create_inbox_tools_provider = _make_app_category_provider("inbox")

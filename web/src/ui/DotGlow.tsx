@@ -1,0 +1,687 @@
+import { useEffect, useRef } from 'react'
+import { prefersReducedMotion } from '../design/motion'
+import { runtime, type DotShape } from '../design/runtime'
+import { useAppearance } from '../app/appearance'
+import { TOKENS, type BgStyle } from '../design/tokenRegistry'
+import { CLAW_MARK_BOX, CLAW_MARK_PATH } from './ClawMark'
+
+// The master backdrop switch (design/tokenRegistry '--bg-style', web/DESIGN.md §7):
+//   'none'  — off, the default: a transparent, empty layer that asks for no frame
+//   'still' — the dot field painted once and left still, with no halo (Retro Terminal's)
+//   'waves' — the animated 3D dot-wave surface and its halo (Claw Arcade's)
+//   'glow'  — only the halo hugging the composer, no dot lattice
+// Resolved LIVE from the appearance store below so a change re-keys the render
+// loop (a runtime-bridge read couldn't restart a loop that 'still'/'none' stops).
+const BG_STYLE_TOKEN = TOKENS.find((t) => t.kind === 'select' && t.varName === '--bg-style')
+
+/** "dot glow" — a 3D halftone WAVE surface that
+ *  reads as light cast by the composer onto a rippling surface behind it.
+ *
+ *  Off by default: an identity brings it (`--bg-style`, above). The animated field
+ *  pauses whenever nobody can see it — in a hidden tab, and while its stage is
+ *  offscreen — and paints at 30 fps while another app has the focus. A field that does
+ *  not animate (`still`, or any field under reduced motion) asks for a frame only when
+ *  what it is lit from has changed.
+ *
+ *  This is a REAL 3D height field, not a 2D plane with fake perspective:
+ *   - a grid of points lives in world space (x across, z into the screen) on a
+ *     ground plane that recedes from the viewer,
+ *   - each point is displaced in the HEIGHT (y) axis by two traveling waves,
+ *   - points are projected through a pitched pinhole camera, so depth affects
+ *     both screen position AND dot scale (far = higher on screen, smaller,
+ *     tighter; near = lower, larger) — genuine 3D undulation toward a horizon,
+ *   - brightness = wave crest × radial falloff from the light origin (the
+ *     composer) × distance fade, lavender→pink.
+ *
+ *  Canvas + requestAnimationFrame. Respects prefers-reduced-motion (static
+ *  frame). Decorative; fills its stage (the box it is mounted in) and lights it
+ *  from the composer (see ComposerStage). The halo — the bloom around the composer
+ *  and the aura it gathers while it has the caret — belongs to `waves` and `glow`;
+ *  a `still` field has none.
+ *
+ *  ONE light, and it never meets an edge. Both halves are measured decisions:
+ *
+ *   · There used to be a SECOND light that split off the composer on send and
+ *     parked behind the streaming turn. It had no surface to come from — a 1px
+ *     anchor in the transcript — so it rendered as a ~180px smudge behind the
+ *     text that climbed the page with the auto-scroll and jumped when turns
+ *     appeared (measured: 638px → 192px in 20s of one reply). On a light canvas a
+ *     tinted glow LOWERS luminance, so there it was literally a grey shadow
+ *     ((240,244,248) → (239,239,242) at its core). It is gone, not tuned: light
+ *     with no emitter reads as a stain at any strength that is visible at all.
+ *   · The bloom reaches `HALO_REACH` past the composer, but a docked composer sits
+ *     one page gutter (16px) from the stage's bottom and, at the shipped `full`
+ *     width, from its sides. The layer's own `overflow-hidden` then cut the halo
+ *     at ~94% strength into a straight line at the rail and the page bottom. So
+ *     the layer now fades its light to zero before each edge, over exactly the
+ *     room there is (`haloFades`), and the clip underneath is never reached. */
+export interface GlowRect { cx: number; cy: number; halfW: number; halfH: number; radius?: number }
+
+/** The bloom's box-shadow geometry. Declared once so the paint and the reach the
+ *  edge fades clamp to can never disagree. */
+const BLOOM_SPREAD = 60
+const BLOOM_BLUR = 120
+/** The coral aura a FOCUSED composer gathers close around it. It used to be painted by
+ *  the composer itself (the cards' `--shadow-lift`), where the page gutter clipped it
+ *  into a line; here it lives inside the edge-faded layer, so it keeps its ~40px reach
+ *  and still never meets an edge. Well inside `HALO_REACH`, so the fades cover it. */
+const FOCUS_BLOOM = '0 0 48px -6px color-mix(in srgb, var(--glow-a) 50%, transparent)'
+/** How far past the light source's edge the bloom is still visible: its spread plus
+ *  its blur radius (a blur radius is ~2σ of the Gaussian, out from the spread edge). */
+export const HALO_REACH = BLOOM_SPREAD + BLOOM_BLUR
+/** How much brighter the halo burns while the composer has the caret. The halo's answer
+ *  to focus, so a `still` field, which has no halo, does not answer the caret at all. */
+const FOCUS_INTENSITY = 1.6
+
+/** The most fill colours one frame of the field sets. Every dot's light falls in one of
+ *  this many brightness steps (finer at the dim end, where steps show on a dark canvas);
+ *  the dots of a step are drawn together, in that step's mean tint and mean alpha, so the
+ *  canvas parses one colour per step rather than a fresh `rgba()` string per dot. */
+export const FIELD_BUCKETS = 16
+/** The brightest a dot is drawn. */
+const MAX_ALPHA = 0.95
+/** The step a dot's alpha falls in: even steps of its square root. */
+const bucketOf = (alpha: number) => Math.min(FIELD_BUCKETS - 1, Math.floor(Math.sqrt(alpha / MAX_ALPHA) * FIELD_BUCKETS))
+/** A field that does not animate keeps looking at what it is lit from, frame by frame, until
+ *  this many looks in a row find nothing changed: a composer in flight moves every frame, so
+ *  two still frames mean it has landed. */
+const SETTLE_FRAMES = 2
+/** The most frames a second the animated field paints while another app has the focus. Its
+ *  window is still on screen, so it keeps moving there, but nobody is working in it. */
+const UNFOCUSED_FPS = 30
+/** The least time between two paints at `UNFOCUSED_FPS`. A frame's timestamp jitters around the
+ *  display's own clock, so a tick may land a hair early and still be due: without the 2ms of
+ *  slack, a 60 Hz display would paint every third tick (20 fps) whenever two ticks came in just
+ *  under 1000/30 ms apart. */
+const UNFOCUSED_GAP_MS = 1000 / UNFOCUSED_FPS - 2
+
+/** Per-edge fade widths, in the stage's layout px. */
+export interface HaloFades { l: number; r: number; t: number; b: number }
+
+/** How wide the halo's fade to nothing must be at each edge of its stage.
+ *
+ *  The room between the light and that edge, capped at the light's reach: where the
+ *  halo has its full reach it falls off on its own and the fade is a no-op; where it
+ *  does not, the fade spends exactly the room there is, so the light is at full
+ *  strength where it leaves the composer and at zero where the stage ends — never
+ *  cut. No source (nothing measured yet) fades every edge by the full reach, so the
+ *  unanchored fallback field is contained too. */
+export function haloFades(src: GlowRect | null, w: number, h: number, reach = HALO_REACH): HaloFades {
+  if (!src) return { l: reach, r: reach, t: reach, b: reach }
+  const room = (px: number) => Math.round(Math.max(0, Math.min(reach, px)))
+  return {
+    l: room(src.cx - src.halfW),
+    r: room(w - (src.cx + src.halfW)),
+    t: room(src.cy - src.halfH),
+    b: room(h - (src.cy + src.halfH)),
+  }
+}
+
+/** The CSS custom properties `haloFades` is written to, on the layer itself. */
+export const HALO_FADE_VARS = { l: '--halo-fade-l', r: '--halo-fade-r', t: '--halo-fade-t', b: '--halo-fade-b' } as const
+
+/** One edge-to-edge axis of the mask: transparent AT each edge, opaque once its fade
+ *  width is spent. The ramp is smoothstep-shaped (0 · .16 · .5 · .84 · 1 at quarter
+ *  steps) so it has zero slope at both ends — neither the stage edge nor the point
+ *  where the fade begins shows as a crease. */
+function maskAxis(dir: 'right' | 'bottom', start: string, end: string): string {
+  const a = `var(${start}, 0px)`
+  const b = `var(${end}, 0px)`
+  return `linear-gradient(to ${dir}, `
+    + `rgb(0 0 0 / 0) 0, rgb(0 0 0 / .16) calc(${a} * .25), rgb(0 0 0 / .5) calc(${a} * .5), rgb(0 0 0 / .84) calc(${a} * .75), #000 ${a}, `
+    + `#000 calc(100% - ${b}), rgb(0 0 0 / .84) calc(100% - ${b} * .75), rgb(0 0 0 / .5) calc(100% - ${b} * .5), rgb(0 0 0 / .16) calc(100% - ${b} * .25), rgb(0 0 0 / 0) 100%)`
+}
+
+/** The layer's mask: the two axes INTERSECTED, so a corner fades on both. (The default
+ *  composite is `add` — a union — which would leave every edge unfaded wherever the
+ *  other axis is opaque.) */
+export const HALO_MASK = `${maskAxis('right', HALO_FADE_VARS.l, HALO_FADE_VARS.r)}, ${maskAxis('bottom', HALO_FADE_VARS.t, HALO_FADE_VARS.b)}`
+
+/** Paints one dot's glyph centred on (x, y), for a dot of radius r, in the context's current fill. */
+type Glyph = (g: CanvasRenderingContext2D, x: number, y: number, r: number) => void
+
+/** How far the claw glyph reaches from its centre, in dot radii. The mark is two slim talons and
+ *  mostly air: drawn at the dot's own radius it lays down under half the light of a solid dot (0.42
+ *  of a circle, measured over the default field in both themes), the dimmest glyph in the set. At
+ *  1.3 radii it lays down about 0.7, between the diamond and the burst, so the field keeps its
+ *  presence. */
+export const CLAW_GLYPH_REACH = 1.3
+
+/** The claw outline, built on first use: a `Path2D` is how a canvas fills an SVG path, and building
+ *  it once keeps the per-dot cost to one fill. */
+let clawOutline: Path2D | null = null
+
+/** Every dot shape the backdrop paints, by name. A total record over `DotShape`, so a shape without
+ *  a glyph, or a glyph for a shape that no longer exists, does not compile; the Settings picker's
+ *  options are held to the same set by `DotGlow.glyphs.test.tsx`. */
+export const DOT_GLYPHS: Record<DotShape, Glyph> = {
+  circle: (g, x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill() },
+  square: (g, x, y, r) => { g.fillRect(x - r, y - r, r * 2, r * 2) },
+  diamond: (g, x, y, r) => {
+    g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); g.fill()
+  },
+  // A five-point star.
+  star: (g, x, y, r) => {
+    g.beginPath()
+    for (let k = 0; k < 10; k++) {
+      const rad = k % 2 === 0 ? r : r * 0.45
+      const a = -Math.PI / 2 + (k * Math.PI) / 5
+      const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad
+      k === 0 ? g.moveTo(px, py) : g.lineTo(px, py)
+    }
+    g.closePath(); g.fill()
+  },
+  // A four-point star with concave sides.
+  sparkle: (g, x, y, r) => {
+    const o = r, iN = r * 0.32
+    g.beginPath()
+    g.moveTo(x, y - o)
+    g.quadraticCurveTo(x + iN, y - iN, x + o, y)
+    g.quadraticCurveTo(x + iN, y + iN, x, y + o)
+    g.quadraticCurveTo(x - iN, y + iN, x - o, y)
+    g.quadraticCurveTo(x - iN, y - iN, x, y - o)
+    g.closePath(); g.fill()
+  },
+  // A six-point asterisk of thin rays.
+  burst: (g, x, y, r) => {
+    const lw = Math.max(0.6, r * 0.5)
+    for (let k = 0; k < 3; k++) {
+      const a = (k * Math.PI) / 3
+      g.save(); g.translate(x, y); g.rotate(a)
+      g.fillRect(-lw / 2, -r, lw, r * 2)
+      g.restore()
+    }
+  },
+  // PersonalClaw's own mark (`ClawMark`), upright, its box centred on the dot.
+  claw: (g, x, y, r) => {
+    clawOutline ??= new Path2D(CLAW_MARK_PATH)
+    const s = (r * CLAW_GLYPH_REACH) / (CLAW_MARK_BOX.height / 2)
+    g.save()
+    g.translate(x, y); g.scale(s, s)
+    g.translate(-(CLAW_MARK_BOX.x + CLAW_MARK_BOX.width / 2), -(CLAW_MARK_BOX.y + CLAW_MARK_BOX.height / 2))
+    g.fill(clawOutline)
+    g.restore()
+  },
+}
+
+export function DotGlow({
+  className, intensity = 1, focused = false, composerRef,
+}: {
+  className?: string
+  /** The light's strength at rest (1 = the default). */
+  intensity?: number
+  /** The composer has the caret: the halo burns brighter and gathers a coral aura close
+   *  around it (`FOCUS_BLOOM`), cross-fading in and out over 200ms. A `still` field has no
+   *  halo, so it ignores this. */
+  focused?: boolean
+  /** ref to the composer element; the glow measures it LIVE each frame so it
+   *  tracks the composer exactly in sync (the composer itself spring-animates
+   *  its position), with no separate easing. Glow falls off a uniform distance
+   *  from the composer's rounded-rect edges. */
+  composerRef?: React.RefObject<HTMLElement | null>
+}) {
+  // Master backdrop mode, resolved live from the appearance store so a change
+  // re-keys the render effect below (tear down + rebuild the loop cleanly). A token
+  // that could not be found reads as its default: no backdrop at all.
+  const { selectValue } = useAppearance()
+  const bgStyle = (BG_STYLE_TOKEN ? selectValue(BG_STYLE_TOKEN) : 'none') as BgStyle
+  const halo = bgStyle === 'waves' || bgStyle === 'glow'
+  // Reduced motion through `design/motion`'s ONE accessor, read in RENDER rather than
+  // inside the effect. Two reasons, and the second is the reason it moved:
+  //   • it re-keys the effect exactly like `bgStyle` does (tear down + rebuild the loop),
+  //     so a mid-session OS change stops the loop instead of leaving it running forever;
+  //   • it can be stated on the element, which is what lets the family's rail assert the
+  //     decision from the DOM instead of counting frames through a canvas stub.
+  // Still CALL-TIME, not a cached hook: `DotGlow.reducedMotion.test.tsx` swaps the
+  // `matchMedia` stub between its two describes and depends on the second one seeing the
+  // new answer, which framer's module-cached `useReducedMotion` would not give it.
+  const reduce = prefersReducedMotion()
+  const ref = useRef<HTMLCanvasElement>(null)
+  const bloomRef = useRef<HTMLDivElement>(null)
+  const focusBloomRef = useRef<HTMLDivElement>(null)
+  // target glow intensity: the rest strength, raised while the composer has the caret
+  // under a backdrop with a halo; lerped while animating, taken as it is otherwise.
+  const targetI = useRef(intensity)
+  targetI.current = intensity * (focused && halo ? FOCUS_INTENSITY : 1)
+  // A field that does not animate is told after every render to look at its inputs again
+  // (a moved composer, new glow colours), since nothing else would make it repaint.
+  const lookAgain = useRef<() => void>(() => {})
+
+  useEffect(() => {
+    const canvas: HTMLCanvasElement | null = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const cv = canvas
+    const g = ctx
+
+    // Backdrop mode → what the loop does:
+    //   drawDots — render the dot lattice ('waves' + 'still').
+    //   animate  — keep a live rAF loop ('waves' + 'glow', unless reduced-motion).
+    //              Otherwise the field is painted once, and again only when what it is
+    //              lit from changes (`look`).
+    const drawDots = bgStyle === 'waves' || bgStyle === 'still'
+    const animate = (bgStyle === 'waves' || bgStyle === 'glow') && !reduce
+    // 'none' → a transparent, empty layer: clear the canvas, hide the blooms,
+    // never start the loop or observe resizes.
+    if (bgStyle === 'none') {
+      g.setTransform(1, 0, 0, 1, 0, 0)
+      g.clearRect(0, 0, cv.width, cv.height)
+      if (bloomRef.current) bloomRef.current.style.opacity = '0'
+      return
+    }
+    /** The one frame this layer may have asked for (0 = none). Never more than one, so no
+     *  pause, resume or repaint request can leave two loops running. */
+    let pending = 0
+    let w = 0, h = 0, dpr = 1, zoom = 1
+
+    // The layer itself: its box is the STAGE the light is contained in, and it
+    // carries the edge fades the mask reads.
+    const layer = cv.parentElement!
+    let fades: HaloFades | null = null
+    const writeFades = (next: HaloFades) => {
+      // Only on change: a style write per frame would re-resolve the mask 60×/s
+      // for a value that moves only while the composer does.
+      if (fades && next.l === fades.l && next.r === fades.r && next.t === fades.t && next.b === fades.b) return
+      fades = next
+      for (const k of ['l', 'r', 't', 'b'] as const) layer.style.setProperty(HALO_FADE_VARS[k], `${next[k]}px`)
+    }
+
+    // ── a field that does not animate: painted once, then kept true to what lights it ──
+    let painted = ''        // what the last paint was made from
+    let dirty = true        // the canvas is blank (first paint, or resized): paint regardless
+    let watching = false    // something may have moved: keep looking each frame until it holds still
+    let quiet = 0           // looks in a row that found nothing to repaint
+    const look = () => {
+      // A paint of a blank canvas is already on its way, and it reads every input as it is.
+      if (pending && dirty) return
+      watching = true
+      quiet = 0
+      if (!pending) pending = requestAnimationFrame(frame)
+    }
+
+    /** Size the canvas to its layer. Reassigning a canvas's size CLEARS it, so that happens
+     *  only when the size really changed, and then the next frame must repaint. The UI zoom
+     *  is read here, not per frame: a zoom change resizes the layer, so this runs again. */
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2)
+      w = layer.clientWidth
+      h = layer.clientHeight
+      zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1
+      const width = Math.floor(w * dpr), height = Math.floor(h * dpr)
+      if (cv.width !== width || cv.height !== height) {
+        cv.width = width
+        cv.height = height
+        dirty = true
+      }
+      cv.style.width = w + 'px'
+      cv.style.height = h + 'px'
+      g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resize()
+    const ro = new ResizeObserver(() => {
+      resize()
+      if (dirty && !animate) look()
+    })
+    ro.observe(layer)
+
+    // A layout shift in the stage can move the composer with no render of this component:
+    // the new chat's chips arriving, the composer flying to the dock, a draft growing it.
+    // Each is a node arriving or leaving somewhere in the stage, or a style written on the
+    // composer, on what holds it or inside it, so a field that is not animating looks again
+    // after one. A neighbour restyling itself in place (the new chat's spinning mark) cannot
+    // move the composer and is not looked at, and writes inside this layer are its own paint.
+    const stage = layer.parentElement
+    const mayMoveComposer = (r: MutationRecord) => {
+      if (layer.contains(r.target)) return false
+      if (r.type === 'childList') return true
+      const el = composerRef?.current
+      return !!el && (r.target === el || r.target.contains(el) || el.contains(r.target))
+    }
+    const mo = !animate && stage && typeof MutationObserver !== 'undefined'
+      ? new MutationObserver((records) => { if (records.some(mayMoveComposer)) look() })
+      : null
+    mo?.observe(stage!, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] })
+
+    // ── an animated field runs only while somebody can see it ──
+    // In a hidden tab, and while its stage is offscreen, the loop asks for no frame at all.
+    // A window behind another app is still on screen, so it keeps running there, at
+    // `UNFOCUSED_FPS` (see `frame`).
+    let onScreen = true
+    const running = () => !document.hidden && onScreen
+    const start = () => { if (!pending && running()) pending = requestAnimationFrame(frame) }
+    const stop = () => { if (pending) { cancelAnimationFrame(pending); pending = 0 } }
+    const follow = () => { if (running()) start(); else stop() }
+    const io = animate && typeof IntersectionObserver !== 'undefined'
+      ? new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1]
+          if (last) onScreen = last.isIntersecting
+          follow()
+        })
+      : null
+    io?.observe(layer)
+    if (animate) document.addEventListener('visibilitychange', follow)
+
+    let inten = targetI.current                // lerped glow intensity
+
+    // Scratch for one frame's dots, grown on demand and kept between frames, so the
+    // field allocates nothing per frame: each dot's position, size and brightness step,
+    // and per step the count and the sums its mean tint and alpha come from.
+    let room = 0
+    let dotX = new Float32Array(0), dotY = new Float32Array(0), dotR = new Float32Array(0)
+    let dotStep = new Uint8Array(0), order = new Uint32Array(0)
+    const stepCount = new Uint32Array(FIELD_BUCKETS)
+    const stepStart = new Uint32Array(FIELD_BUCKETS)
+    const stepNext = new Uint32Array(FIELD_BUCKETS)
+    const stepMix = new Float64Array(FIELD_BUCKETS)
+    const stepAlpha = new Float64Array(FIELD_BUCKETS)
+
+    // ── 3D ground-plane scene (perspective floor, steep ~45° tilt) ──
+    // Camera at height CAM_H above a floor (y=0), pitched toward it. A floor
+    // point at forward distance z, lateral x projects to:
+    //   sx = cx + (x / z)·f ,  sy = horizon + ((CAM_H - waveHeight)/z)·f
+    // A LOW camera + long depth makes the plane recede steeply (≈45° to the
+    // screen) rather than reading flat. The wave lifts the floor in y.
+    // Steep tilt comes from the CAMERA geometry (low height + long depth), NOT
+    // from violent waves — keep the dot lattice ORDERLY with gentle swells.
+    // Big, dense, deep plane so its near/far/side EDGES always fall outside the
+    // visible (glow-lit) region — you never see where the field ends. High focal
+    // zooms the near ground down past the screen bottom (fills the view); a small
+    // near distance + far horizon make a continuous "field" at any pitch.
+    const COLS_BASE = 150    // grid columns (lateral) at density 1
+    const ROWS_BASE = 130    // grid rows (depth) at density 1
+    const PLANE_W = 30       // NARROW world → tight column spacing = dense FIELD
+    const NEAR_Z = 0.02      // essentially at the camera → near rows run far OFF the bottom (no near edge)
+    const FAR_Z_BASE = 40    // bounded depth → no hard converging "ray" tip
+    const AMP = 1.0          // rolling-hill relief
+    const CAM_H = 3.4        // camera height → looking down from the sky
+    const FOCAL = 1.15       // perspective focal length
+
+    // The light: the composer, measured LIVE (it spring-animates its own position), in
+    // UNZOOMED layout px. The canvas draws + the CSS bloom position in layout px, but
+    // getBoundingClientRect returns ZOOMED visual px when the UI-zoom design control is
+    // active (`html { zoom }`) — divide back into layout space so the glow stays locked
+    // at any zoom.
+    function composerRect(): GlowRect | null {
+      const el = composerRef?.current
+      if (!el) return null
+      const pr = cv.getBoundingClientRect()
+      const cr = el.getBoundingClientRect()
+      // Match the bloom's rounding to the SOURCE's actual corner radius so the
+      // soft-light halo hugs the composer's real shape. The composer morphs its
+      // radius (mobile rest = soft capsule 2xl; focus/desktop = xli) — a hardcoded
+      // bloom radius left the halo's tighter corners poking past the composer's
+      // rounder ones (the mobile corner artifact). Read the rounded SURFACE (the
+      // outer ref may be an unrounded wrapper, so prefer the largest rounded
+      // descendant), zoom-corrected into layout px.
+      const rounded = el.querySelector<HTMLElement>('[style*="border-radius"]') ?? el
+      const brRaw = parseFloat(getComputedStyle(rounded).borderTopLeftRadius) || 0
+      const z = zoom
+      return { cx: (cr.left - pr.left + cr.width / 2) / z, cy: (cr.top - pr.top + cr.height / 2) / z, halfW: (cr.width / 2) / z, halfH: (cr.height / 2) / z, radius: brRaw / z }
+    }
+
+    /** Everything a paint is made from, so a field that does not animate can tell whether
+     *  it would draw anything different. */
+    const inputsOf = (rc: GlowRect | null) => [
+      w, h, dpr, zoom, targetI.current,
+      rc ? `${rc.cx},${rc.cy},${rc.halfW},${rc.halfH},${rc.radius}` : '-',
+      runtime.glow, runtime.waveAmount, runtime.surfaceAngle, runtime.surfaceDistance,
+      runtime.dotSize, runtime.dotDensity, runtime.dotShape, runtime.dotPattern,
+      runtime.glowA.join(), runtime.glowB.join(),
+    ].join('|')
+
+    let lastPaint = -Infinity
+    function frame(tms: number) {
+      pending = 0
+      if (animate) {
+        // Behind another app the field keeps moving at `UNFOCUSED_FPS`: a tick that comes sooner
+        // than that after the last paint draws nothing and only asks for the next. The document
+        // is asked on every tick rather than told by `blur`, which also fires when the focus
+        // moves into an embedded page (an iframe) while the window still has it.
+        if (document.hasFocus() || tms - lastPaint >= UNFOCUSED_GAP_MS) {
+          lastPaint = tms
+          paint(composerRect(), (tms / 1000) * runtime.animSpeed)
+        }
+        if (running()) pending = requestAnimationFrame(frame)
+        return
+      }
+      const rc = composerRect()
+      const inputs = inputsOf(rc)
+      if (dirty || inputs !== painted) {
+        // A field at rest is one fixed moment of the wave, so every repaint draws the same
+        // field and only its light moves.
+        paint(rc, 0)
+        painted = inputs
+        dirty = false
+        quiet = 0
+      } else {
+        quiet += 1
+      }
+      if (watching && quiet < SETTLE_FRAMES) pending = requestAnimationFrame(frame)
+      else watching = false
+    }
+
+    function paint(rc: GlowRect | null, t: number) {
+      // customizable params (read live from the appearance runtime bridge)
+      const amp = AMP * runtime.waveAmount
+      // point-of-view:
+      //  • angle → TRUE camera pitch in degrees (0 = edge-on/steep recession,
+      //    90 = top-down flat; up to 180 keeps turning past top-down).
+      //  • distance → how far the horizon recedes; near edge fixed (no cut-off).
+      //  • density → dot count / spacing.
+      const pitch = (runtime.surfaceAngle * Math.PI) / 180   // radians
+      const sinP = Math.sin(pitch)
+      const cosP = Math.cos(pitch)
+      const FAR_Z = FAR_Z_BASE * runtime.surfaceDistance
+      const density = runtime.dotDensity
+      const COLS = Math.round(COLS_BASE * density)
+      const ROWS = Math.round(ROWS_BASE * density)
+      const dotSizeMul = runtime.dotSize
+      const glyph = DOT_GLYPHS[runtime.dotShape]
+      const pattern = runtime.dotPattern
+      const colStep = (2 * PLANE_W) / COLS
+      const glowMul = runtime.glow
+      const COLOR = { r: runtime.glowA[0], g: runtime.glowA[1], b: runtime.glowA[2] }
+      const COLOR2 = { r: runtime.glowB[0], g: runtime.glowB[1], b: runtime.glowB[2] }
+      g.clearRect(0, 0, w, h)
+      inten = animate ? inten + (targetI.current - inten) * 0.12 : targetI.current
+
+      // The light ALWAYS stays on the composer's live rect (it never leaves the composer)…
+      // …and never reaches the stage's edges: the fades follow the same live rect,
+      // so a composer that moves (hero → dock) or grows keeps its halo whole.
+      writeFades(haloFades(rc, w, h))
+      // drive the soft CSS bloom from the same live rect (in sync). A `still` field
+      // has no halo, so its bloom stays dark.
+      const bloom = bloomRef.current
+      if (bloom && halo && rc) {
+        const b = bloom.style
+        b.left = rc.cx - rc.halfW + 'px'; b.top = rc.cy - rc.halfH + 'px'
+        b.width = rc.halfW * 2 + 'px'; b.height = rc.halfH * 2 + 'px'
+        if (rc.radius != null) b.borderRadius = rc.radius + 'px'  // hug the composer's live corner radius
+        b.opacity = '1'
+      } else if (bloom) {
+        bloom.style.opacity = '0'
+      }
+      // The focus aura rides the same rect. Its OPACITY is React's (the `focused`
+      // prop, on the effects curve), so only placement is written here.
+      if (halo && focusBloomRef.current) {
+        const f = focusBloomRef.current.style
+        f.visibility = rc ? '' : 'hidden'
+        if (rc) {
+          f.left = rc.cx - rc.halfW + 'px'; f.top = rc.cy - rc.halfH + 'px'
+          f.width = rc.halfW * 2 + 'px'; f.height = rc.halfH * 2 + 'px'
+          if (rc.radius != null) f.borderRadius = rc.radius + 'px'
+        }
+      }
+      // 'glow' mode keeps the composer's soft light (the CSS bloom above) but
+      // skips the dot lattice entirely — the canvas stays clear behind it.
+      if (!drawDots) return
+
+      // The surface geometry is WORLD-FIXED to the canvas — it never moves with
+      // the composer. Horizon + centre are pinned; only the illumination
+      // (`prox`, below, from the composer rect) travels.
+      const horizonPx = h * 0.32
+      const focalPx = FOCAL * h * 0.5
+      const cxPx = w / 2
+
+      const most = (COLS + 1) * ROWS
+      if (most > room) {
+        room = most
+        dotX = new Float32Array(room); dotY = new Float32Array(room); dotR = new Float32Array(room)
+        dotStep = new Uint8Array(room); order = new Uint32Array(room)
+      }
+      stepCount.fill(0); stepMix.fill(0); stepAlpha.fill(0)
+      let n = 0
+
+      for (let j = ROWS - 1; j >= 0; j--) {
+        const dz = j / (ROWS - 1)
+        const wz = NEAR_Z + (FAR_Z - NEAR_Z) * (dz * dz)   // ease → dense horizon
+        // arrangement pattern → per-row lateral offset / skipping of the lattice
+        const odd = j % 2 === 1
+        let rowOffset = 0
+        if (pattern === 'diamond' || pattern === 'hex') rowOffset = odd ? colStep * 0.5 : 0
+        else if (pattern === 'brick') rowOffset = odd ? colStep * 0.5 : 0
+        for (let i = 0; i <= COLS; i++) {
+          // hex drops every other dot on offset rows for a true honeycomb feel
+          if (pattern === 'hex' && odd && i % 2 === 0) continue
+          // lateral position + arrangement offset + a depth-varying meander so
+          // columns DON'T trace straight radial lines (which read as rays).
+          const wx = (i / COLS - 0.5) * 2 * PLANE_W + rowOffset + Math.sin(wz * 0.4 + t * 0.2) * 1.6
+
+          // height field: smooth rolling HILLS — long-wavelength swells in both
+          // x and z that drift over time (a gentle wave across a hilly field).
+          const wave =
+            Math.sin(wx * 0.22 + wz * 0.18 + t * 0.5) * 0.5 +
+            Math.sin(wx * 0.12 - wz * 0.26 - t * 0.32) * 0.5
+          const wy = wave * amp                              // hill height
+
+          // Camera pitched DOWN toward a floor (y = -CAM_H below the eye). Pitch
+          // 0° = edge-on (steep recession to a horizon); 90° = straight down
+          // (top-down, no recession). Rotate the point (wz forward, depth0 down)
+          // by the pitch into camera space; project. cz stays positive for the
+          // floor across 0–90°, then the surface tips past top-down up to 180°.
+          const depth0 = CAM_H - wy                   // how far the floor sits below the eye
+          const cz = wz * cosP + depth0 * sinP        // forward distance in view
+          if (cz <= 0.12) continue                    // at/behind camera → skip
+          const cv2 = depth0 * cosP - wz * sinP       // vertical offset in view (down = +)
+          const sx = cxPx + (wx / cz) * focalPx
+          const sy = horizonPx + (cv2 / cz) * focalPx
+          if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue
+
+          const crest = (wave + 1) / 2
+          // Falloff = uniform distance OUTWARD from a rounded-rect's edges (not a
+          // centre oval): brightest near the edges, decaying with distance, tight
+          // reach so it hugs the source.
+          const REACH = Math.min(w, h) * 0.18
+          let prox: number
+          if (rc) {
+            const dx = Math.max(Math.abs(sx - rc.cx) - rc.halfW, 0)
+            const dy = Math.max(Math.abs(sy - rc.cy) - rc.halfH, 0)
+            prox = Math.max(0, 1 - Math.hypot(dx, dy) / REACH) ** 3.4
+          } else {
+            const dxn = (sx - cxPx) / (Math.min(w, 1100) * 0.6)
+            const dyn = (sy - h * 0.5) / (h * 0.34)
+            prox = Math.max(0, 1 - Math.hypot(dxn, dyn)) ** 1.7
+          }
+          if (prox <= 0.01) continue
+          const alpha = Math.min(MAX_ALPHA, (0.08 + crest * 0.7) * prox * inten * glowMul)
+          if (alpha <= 0.012) continue
+
+          // perspective dot size: nearer (small cz) = larger → depth cue ×size.
+          // Size is independent of density, so the user can spread large dots
+          // apart by LOWERING density (more space between).
+          const r = Math.max(0.4, Math.min(9, (focalPx / cz) * 0.022)) * (0.75 + crest * 0.5) * dotSizeMul
+
+          // Kept for its brightness step's batch, with what the step's colour is made from.
+          const step = bucketOf(alpha)
+          dotX[n] = sx
+          dotY[n] = sy
+          dotR[n] = r
+          dotStep[n] = step
+          n += 1
+          stepCount[step] += 1
+          stepMix[step] += crest
+          stepAlpha[step] += alpha
+        }
+      }
+
+      // Lay the dots out step by step (a counting sort), then draw each step in one colour:
+      // its dots' mean mix of the two glow colours (crest → glow B), at their mean alpha.
+      let at = 0
+      for (let s = 0; s < FIELD_BUCKETS; s++) { stepStart[s] = at; stepNext[s] = at; at += stepCount[s] }
+      for (let k = 0; k < n; k++) order[stepNext[dotStep[k]]++] = k
+      for (let s = 0; s < FIELD_BUCKETS; s++) {
+        const count = stepCount[s]
+        if (!count) continue
+        const mix = stepMix[s] / count
+        const cr = Math.round(COLOR.r * (1 - mix) + COLOR2.r * mix)
+        const cg = Math.round(COLOR.g * (1 - mix) + COLOR2.g * mix)
+        const cb = Math.round(COLOR.b * (1 - mix) + COLOR2.b * mix)
+        g.fillStyle = `rgba(${cr},${cg},${cb},${(stepAlpha[s] / count).toFixed(3)})`
+        for (let o = stepStart[s], end = stepStart[s] + count; o < end; o++) {
+          const k = order[o]
+          glyph(g, dotX[k], dotY[k], dotR[k])
+        }
+      }
+    }
+
+    if (animate) {
+      lookAgain.current = () => {}
+      start()
+    } else {
+      lookAgain.current = look
+      pending = requestAnimationFrame(frame)
+    }
+
+    return () => {
+      stop()
+      ro.disconnect()
+      mo?.disconnect()
+      io?.disconnect()
+      if (animate) document.removeEventListener('visibilitychange', follow)
+      lookAgain.current = () => {}
+    }
+  }, [composerRef, bgStyle, reduce, halo])
+
+  // After every render, a field that is not animating looks at its inputs once more: a
+  // render is how a new glow colour (a scheme or light/dark switch) or a newly mounted
+  // composer reaches it. Declared after the effect above so a re-keyed field is the one
+  // that looks.
+  useEffect(() => { lookAgain.current() })
+
+  return (
+    <div
+      className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`}
+      aria-hidden
+      data-dot-glow={reduce ? 'instant' : 'animated'}
+      // The edge fades (see `haloFades`). `overflow-hidden` above still keeps the light
+      // off the stage's neighbours; this is what keeps it from ever being CUT there.
+      style={{ maskImage: HALO_MASK, WebkitMaskImage: HALO_MASK, maskComposite: 'intersect', WebkitMaskComposite: 'source-in' }}
+    >
+      {/* soft light bloom hugging the composer rect — positioned live each frame
+          by the canvas loop (in perfect sync with the composer). */}
+      <div
+        ref={bloomRef}
+        className="absolute"
+        style={{
+          borderRadius: 'var(--radius-xli)',
+          boxShadow: `0 0 ${BLOOM_BLUR}px ${BLOOM_SPREAD}px color-mix(in srgb, var(--glow-a) 18%, transparent)`,
+          opacity: 0,
+        }}
+      />
+      {/* the focus aura — close around the composer while it has the caret, under a
+          backdrop with a halo. */}
+      <div
+        ref={focusBloomRef}
+        data-dot-glow-focus
+        className="absolute transition-opacity duration-(--duration-effects)"
+        style={{
+          borderRadius: 'var(--radius-xli)',
+          boxShadow: FOCUS_BLOOM,
+          opacity: focused && halo ? 1 : 0,
+        }}
+      />
+      <canvas ref={ref} className="absolute inset-0" />
+    </div>
+  )
+}

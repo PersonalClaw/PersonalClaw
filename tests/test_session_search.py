@@ -1,0 +1,564 @@
+"""Tests for cross-session FTS5 search.
+
+Two properties carry this feature, so most tests assert one of them:
+
+* **A restricted session is never findable.** Temporary/incognito exclusion is
+  enforced when indexing, when re-indexing, and again when reading — a session
+  reclassified after its rows were written must disappear from results immediately.
+* **The index is disposable.** It derives entirely from the transcripts, so any
+  failure degrades to the linear scan rather than losing data or raising.
+"""
+
+import pytest
+
+from personalclaw import session_restrictions
+from personalclaw import session_search as ss
+from personalclaw.history import ConversationLog
+
+
+@pytest.fixture(autouse=True)
+def _isolate(tmp_path, monkeypatch):
+    """Own home + a fresh connection and indexer, since the module keeps one process-wide."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+    ss.reset_for_tests()
+    ss.INDEXER.reset()
+    yield
+    ss.INDEXER.reset()
+    ss.reset_for_tests()
+
+
+@pytest.fixture
+def log(tmp_path):
+    """The home's conversation log, with three findable sessions."""
+    log = ConversationLog()
+    assert log.is_home_log()
+    log.append("chat-1", "user", "How do I configure the Bedrock provider for Claude?")
+    log.append("chat-1", "assistant", "Bind a model under Settings and set the region.")
+    log.append("chat-2", "user", "Remind me about the quarterly planning document")
+    log.append("chat-3", "user", "Bedrock throttling errors keep appearing in the logs")
+    return log
+
+
+# ── Indexing ──
+
+
+class TestIndexing:
+    def test_reindex_all_indexes_every_session(self, log):
+        assert ss.reindex_all(log) == 3
+        assert ss.stats()["sessions"] == 3
+
+    def test_second_pass_is_incremental(self, log):
+        ss.reindex_all(log)
+        assert ss.reindex_all(log) == 0
+
+    def test_changed_session_is_reindexed_and_findable(self, log):
+        ss.reindex_all(log)
+        log.append("chat-1", "user", "also compare Anthropic pricing tiers")
+        assert ss.reindex_all(log) == 1
+        assert [r["key"] for r in ss.search_sessions("pricing")] == ["chat-1"]
+
+    def test_force_reindexes_everything(self, log):
+        ss.reindex_all(log)
+        assert ss.reindex_all(log, force=True) == 3
+
+    def test_deleted_session_is_pruned_on_a_full_pass(self, log):
+        ss.reindex_all(log)
+        assert ss.search_sessions("quarterly")
+        for path in log._dir.glob("chat-2*"):
+            path.unlink()
+        log._invalidate_cache("chat-2")
+        ss.reindex_all(log)
+        assert ss.search_sessions("quarterly") == []
+
+    def test_index_session_directly(self):
+        assert ss.index_session("k1", "Title", "some searchable body text") is True
+        assert [r["key"] for r in ss.search_sessions("searchable")] == ["k1"]
+
+    def test_reindexing_the_same_session_does_not_duplicate(self):
+        for _ in range(4):
+            ss.index_session("k1", "Title", "unique body text")
+        assert len([r for r in ss.search_sessions("unique")]) == 1
+
+    def test_empty_key_is_refused(self):
+        assert ss.index_session("", "t", "b") is False
+        assert ss.index_session("   ", "t", "b") is False
+
+    def test_system_messages_are_not_indexed(self, tmp_path):
+        """System prompts are scaffolding — matching them would surface every chat."""
+        log = ConversationLog(base_dir=tmp_path / "h2")
+        log.append("s1", "system", "you are a helpful assistant named zebra")
+        log.append("s1", "user", "hello there")
+        ss.reindex_all(log)
+        assert ss.search_sessions("zebra") == []
+        assert [r["key"] for r in ss.search_sessions("hello")] == ["s1"]
+
+    def test_oversized_session_is_truncated_not_refused(self):
+        assert ss.index_session("big", "t", "word " * 100_000) is True
+        assert ss.stats()["indexed_chars"] <= 200_000
+
+
+# ── Restrictions ──
+
+
+class TestRestrictions:
+    def test_incognito_session_is_never_indexed(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path / "h")
+        session_restrictions.mark_incognito("secret")
+        log.append("secret", "user", "my confidential surprise party plan")
+        try:
+            ss.reindex_all(log)
+            assert ss.search_sessions("surprise") == []
+        finally:
+            session_restrictions.clear("secret")
+
+    def test_temporary_session_is_never_indexed(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path / "h")
+        session_restrictions.mark_temporary("ephemeral")
+        log.append("ephemeral", "user", "throwaway pineapple question")
+        try:
+            ss.reindex_all(log)
+            assert ss.search_sessions("pineapple") == []
+        finally:
+            session_restrictions.clear("ephemeral")
+
+    def test_memory_mode_argument_blocks_indexing(self):
+        for mode in ("incognito", "temporary", "INCOGNITO"):
+            assert ss.index_session("k", "t", "sensitive body", memory_mode=mode) is False
+        assert ss.search_sessions("sensitive") == []
+
+    def test_persistent_mode_indexes_normally(self):
+        assert ss.index_session("k", "t", "ordinary body", memory_mode="persistent") is True
+
+    def test_reclassifying_purges_an_already_indexed_session(self):
+        ss.index_session("k1", "Title", "previously indexed content")
+        assert ss.search_sessions("previously")
+        session_restrictions.mark_incognito("k1")
+        try:
+            # Hidden at READ time, before any reindex — the mode is honored as it is
+            # NOW, not as it was when the rows were written.
+            assert ss.search_sessions("previously") == []
+            # And the rows are dropped on the next indexing attempt.
+            assert ss.index_session("k1", "Title", "previously indexed content") is False
+        finally:
+            session_restrictions.clear("k1")
+
+    def test_index_turn_refuses_a_restricted_session(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path / "h")
+        log.append("t1", "user", "watermelon notes")
+        ss.reindex_all(log)
+        assert ss.search_sessions("watermelon")
+        session_restrictions.mark_incognito("t1")
+        try:
+            ss.index_turn("t1", "user", "more text")
+            session_restrictions.clear("t1")
+            # The purge happened while restricted, so it's gone even after clearing.
+            assert ss.search_sessions("watermelon") == []
+        finally:
+            session_restrictions.clear("t1")
+
+    def test_is_restricted_helper(self):
+        assert ss.is_restricted("x", memory_mode="incognito") is True
+        assert ss.is_restricted("x", memory_mode="temporary") is True
+        assert ss.is_restricted("x", memory_mode="persistent") is False
+        assert ss.is_restricted("x", memory_mode="") is False
+
+
+# ── Querying ──
+
+
+class TestSearch:
+    def test_finds_by_content(self, log):
+        ss.reindex_all(log)
+        keys = {r["key"] for r in ss.search_sessions("bedrock")}
+        assert keys == {"chat-1", "chat-3"}
+
+    def test_snippet_marks_the_match(self, log):
+        ss.reindex_all(log)
+        row = next(r for r in ss.search_sessions("throttling"))
+        assert "<<throttling>>" in row["snippet"]
+
+    def test_prefix_match_on_the_last_token(self, log):
+        """Search must feel live while the user is still typing."""
+        ss.reindex_all(log)
+        assert {r["key"] for r in ss.search_sessions("quarter")} == {"chat-2"}
+
+    def test_multi_token_query_requires_all_terms(self, log):
+        ss.reindex_all(log)
+        assert {r["key"] for r in ss.search_sessions("bedrock throttling")} == {"chat-3"}
+
+    def test_case_insensitive(self, log):
+        ss.reindex_all(log)
+        assert ss.search_sessions("BEDROCK")
+
+    def test_short_query_returns_nothing(self, log):
+        ss.reindex_all(log)
+        assert ss.search_sessions("a") == []
+        assert ss.search_sessions("") == []
+        assert ss.search_sessions("   ") == []
+
+    def test_no_match_returns_empty(self, log):
+        ss.reindex_all(log)
+        assert ss.search_sessions("zzzzznotpresent") == []
+
+    def test_limit_is_respected(self, log):
+        ss.reindex_all(log)
+        assert len(ss.search_sessions("bedrock", limit=1)) == 1
+
+    def test_results_carry_both_key_shapes(self, log):
+        """`key` keeps the existing endpoint contract; `session_key` is the plan's."""
+        ss.reindex_all(log)
+        row = ss.search_sessions("bedrock")[0]
+        assert row["key"] == row["session_key"]
+        assert "title" in row and "rank" in row
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            'foo" OR "bar',
+            "AND OR NOT",
+            "foo*",
+            "((((",
+            'NEAR("a" "b")',
+            "a:b",
+            "^start",
+            "-minus",
+            'unbalanced"quote',
+        ],
+    )
+    def test_fts_syntax_in_user_input_cannot_break_the_query(self, log, hostile):
+        """Every token is quoted, so operators arrive as literals, not syntax."""
+        ss.reindex_all(log)
+        ss.search_sessions(hostile)  # must not raise
+
+    def test_query_with_no_indexable_tokens(self, log):
+        ss.reindex_all(log)
+        assert ss.search_sessions("!!!!") == []
+
+
+# ── Degradation ──
+
+
+class TestDegradation:
+    def test_search_without_an_index_returns_empty(self):
+        assert ss.search_sessions("anything") == []
+
+    def test_stats_without_an_index(self):
+        assert ss.stats()["sessions"] == 0
+
+    def test_no_fts5_degrades_to_empty(self, monkeypatch):
+        """An FTS5-less SQLite build must fall back, not crash.
+
+        Simulated at the capability PROBE (the detection layer): ``_connect`` decides
+        the FTS5 question once via ``probe().fts5`` before it ever opens a connection, so a
+        no-FTS5 build is detected up front rather than by a mid-CREATE OperationalError.
+        Patch the name ``session_search`` imported so the guard sees ``fts5=False``."""
+        from personalclaw.sqlite_compat import SqliteCapabilities
+
+        ss.reset_for_tests()
+        monkeypatch.setattr(
+            ss,
+            "probe",
+            lambda: SqliteCapabilities(driver="sqlite3", version="3", fts5=False, json1=True),
+        )
+        assert ss.search_sessions("anything") == []
+        assert ss.index_session("k", "t", "b") is False
+        assert ss.stats()["available"] is False
+
+    def test_index_turn_never_raises(self, monkeypatch):
+        monkeypatch.setattr(
+            ss, "reindex_session", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        ss.index_turn("k", "user", "text")  # must not raise
+
+    def test_reindex_all_survives_an_unreadable_log(self):
+        class _Broken:
+            def list_sessions(self):
+                raise OSError("disk gone")
+
+        assert ss.reindex_all(_Broken()) == 0
+
+    def test_reindex_session_survives_an_unreadable_transcript(self, log):
+        path = log._path("chat-1")
+        path.unlink()
+        path.mkdir()  # a transcript that cannot be opened for reading
+        assert ss.reindex_session("chat-1", log=log) is False
+
+    def test_forget_is_safe_on_an_unknown_key(self):
+        ss.forget_session("never-existed")
+        ss.forget_session("")
+
+
+# ── The endpoint ──
+
+
+class TestEndpoint:
+    def _app(self, log):
+        from types import SimpleNamespace
+
+        from aiohttp import web
+
+        from personalclaw.dashboard.handlers.sessions import api_sessions_search
+
+        app = web.Application()
+        app["state"] = SimpleNamespace(conversation_log=log)
+        app.router.add_get("/api/sessions/search", api_sessions_search)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_index_answers_with_a_snippet(self, log):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        ss.reindex_all(log)
+        async with TestClient(TestServer(self._app(log))) as client:
+            body = await (await client.get("/api/sessions/search?q=throttling")).json()
+        assert body["source"] == "index"
+        assert body["sessions"][0]["snippet"]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_the_scan_when_the_index_is_empty(self, log):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        # No reindex — the index has nothing, so the scan must answer.
+        async with TestClient(TestServer(self._app(log))) as client:
+            body = await (await client.get("/api/sessions/search?q=throttling")).json()
+        assert body["source"] == "scan"
+        assert body["sessions"]
+
+    @pytest.mark.asyncio
+    async def test_short_query_returns_empty(self, log):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async with TestClient(TestServer(self._app(log))) as client:
+            body = await (await client.get("/api/sessions/search?q=a")).json()
+        assert body["sessions"] == []
+
+    @pytest.mark.asyncio
+    async def test_limit_is_clamped(self, log):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        ss.reindex_all(log)
+        async with TestClient(TestServer(self._app(log))) as client:
+            resp = await client.get("/api/sessions/search?q=bedrock&limit=99999")
+            assert resp.status == 200
+            resp = await client.get("/api/sessions/search?q=bedrock&limit=notanumber")
+            assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_no_conversation_log(self):
+        from types import SimpleNamespace
+
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from personalclaw.dashboard.handlers.sessions import api_sessions_search
+
+        app = web.Application()
+        app["state"] = SimpleNamespace(conversation_log=None)
+        app.router.add_get("/api/sessions/search", api_sessions_search)
+        async with TestClient(TestServer(app)) as client:
+            body = await (await client.get("/api/sessions/search?q=hello")).json()
+        assert body["sessions"] == []
+
+
+# ── The indexer: the index caught up in the background ──
+
+
+def _wait_until_caught_up(timeout: float = 20.0) -> dict:
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        progress = ss.INDEXER.progress()
+        if progress is not None and not progress["building"]:
+            return progress
+        _time.sleep(0.02)
+    raise AssertionError(f"the indexer did not catch up: {ss.INDEXER.progress()}")
+
+
+class TestTheIndexer:
+    def test_it_indexes_every_chat_when_it_starts(self, log):
+        """What the heartbeat did 200 chats every five minutes, the indexer does until none is
+        left: here every chat, as soon as it starts."""
+        for n in range(40):
+            log.append(f"bulk-{n}", "user", f"the kiwi harvest, batch {n}")
+        assert ss.stats()["sessions"] == 0
+        assert ss.INDEXER.start()
+        assert _wait_until_caught_up() == {"indexed": 43, "of": 43, "building": False}
+        assert ss.stats()["sessions"] == 43
+        assert len(ss.search_sessions("kiwi", limit=200)) == 40
+
+    def test_a_chat_written_after_it_started_is_read_in_soon(self, log):
+        ss.INDEXER.start()
+        _wait_until_caught_up()
+        log.append("late", "user", "the tamarind shipment arrived")
+        _wait_until_caught_up()
+        assert [r["key"] for r in ss.search_sessions("tamarind")] == ["late"]
+
+    def test_one_chat_it_cannot_index_does_not_stop_the_rest(self, log, monkeypatch):
+        real = ss.reindex_session
+
+        def failing(key, log=None):
+            if key == "chat-2":
+                raise RuntimeError("index exploded")
+            return real(key, log=log)
+
+        monkeypatch.setattr(ss, "reindex_session", failing)
+        ss.INDEXER.start()
+        assert _wait_until_caught_up()["building"] is False
+        assert {r["key"] for r in ss.search_sessions("bedrock")} == {"chat-1", "chat-3"}
+
+    def test_it_waits_while_a_foreground_request_holds_it(self, log):
+        """The pause a search and the chat list take: nothing is indexed while it is held."""
+        for n in range(20):
+            log.append(f"held-{n}", "user", f"lychee notes {n}")
+        with ss.INDEXER.foreground():
+            ss.INDEXER.start()
+            import time as _time
+
+            _time.sleep(0.5)
+            assert ss.stats()["sessions"] == 0
+        assert _wait_until_caught_up()["indexed"] == 23
+
+    def test_the_heartbeat_no_longer_indexes(self):
+        """One mechanism: the heartbeat's capped pass is gone, not kept beside the indexer."""
+        from personalclaw import heartbeat
+
+        assert not hasattr(heartbeat, "_SESSION_INDEX_TICKS")
+        assert not hasattr(heartbeat, "_SESSION_INDEX_MAX_PER_PASS")
+
+
+# ── The index describes the transcript store it was handed ───────────────────
+
+
+class TestTheIndexFollowsTheTranscript:
+    """``save_session_to_history`` hands ``index_turn`` the store it just wrote.
+
+    Measured in a developer's REAL ``~/.personalclaw/session_search.db``: three rows
+    (``dashboard:chat-9-9``, ``dashboard:chat-p-1``, ``dashboard:s23``), every one with
+    ``chars=0``. Each came from a scratch script that built a ``DashboardState`` over a
+    ``ConversationLog(base_dir=<temp dir>)`` — isolating the transcript — but never set
+    ``PERSONALCLAW_HOME``. The save wrote the transcript to the temp dir; the index then
+    re-read the session through the HOME's store, which had never held it, and wrote the
+    empty result into the home's index. The index alone escaped the isolation the caller chose.
+    """
+
+    @staticmethod
+    def _state(log):
+        from unittest.mock import MagicMock
+
+        from personalclaw.dashboard.state import DashboardState
+
+        return DashboardState(sessions=MagicMock(count=0), start_time=0.0, conversation_log=log)
+
+    @staticmethod
+    def _save(state, name: str) -> None:
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
+
+        session = state.get_or_create_session(name)
+        session.append("user", "watermelon pricing for the quarterly plan")
+        session.append("assistant", "Two tiers, both seasonal.")
+        save_session_to_history(state, session)
+
+    def test_a_transcript_kept_outside_the_home_never_enters_its_index(self, tmp_path):
+        scratch = ConversationLog(base_dir=tmp_path / "scratch")
+        self._save(self._state(scratch), "chat-p-1")
+
+        assert scratch.read_messages("dashboard:chat-p-1"), "premise: the transcript was saved"
+        assert ss.stats()["sessions"] == 0, "a row for a transcript this home does not have"
+
+    def test_the_home_s_own_transcript_is_indexed_with_its_content(self, tmp_path):
+        """The other direction: the refusal must not cost the home its own search."""
+        home_log = ConversationLog()  # the active home's store (PERSONALCLAW_HOME, above)
+        assert home_log.is_home_log()
+        self._save(self._state(home_log), "chat-9-9")
+
+        # Under its transcript's name, the key the chat list uses (test_the_chat_index_keys_…).
+        assert [r["key"] for r in ss.search_sessions("watermelon")] == ["dashboard_chat-9-9"]
+        assert ss.stats()["indexed_chars"] > 0
+
+    def test_a_log_rooted_elsewhere_is_not_the_home_s(self, tmp_path):
+        assert not ConversationLog(base_dir=tmp_path / "room").is_home_log()
+        assert ConversationLog(base_dir=ConversationLog()._dir).is_home_log()
+
+
+# ── Regressions found by driving the real gateway ────────────────────────────
+
+
+class TestValidationRegressions:
+    def test_scan_fallback_also_honors_the_live_registry(self, tmp_path):
+        """The leak: a session marked restricted AFTER its lines were written still
+        reads memory_mode="persistent" on disk, so the scan surfaced it."""
+        log = ConversationLog(base_dir=tmp_path / "leak")
+        log.append("leaky", "user", "pomegranate confidential salary discussion")
+        assert [s["key"] for s in log.search_sessions("pomegranate")] == ["leaky"]
+        session_restrictions.mark_incognito("leaky")
+        try:
+            assert log.search_sessions("pomegranate") == []
+        finally:
+            session_restrictions.clear("leaky")
+
+    def test_scan_still_honors_the_persisted_mode(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path / "persisted")
+        log.append("m1", "user", "watermelon notes here")
+        # Directly stamp the persisted mode, as an incognito session would carry.
+        path = next((tmp_path / "persisted").glob("m1*"))
+        lines = path.read_text().splitlines()
+        import json as _json
+
+        meta = _json.loads(lines[0])
+        meta["memory_mode"] = "incognito"
+        lines[0] = _json.dumps(meta)
+        path.write_text("\n".join(lines) + "\n")
+        log._invalidate_cache("m1")
+        assert log.search_sessions("watermelon") == []
+
+
+class TestCoarseMtimeFilesystems:
+    """An append inside one mtime tick must still be re-indexed.
+
+    Caught only by CI: it stores mtimes at second granularity, so a test that
+    appends and immediately re-indexes leaves the timestamp unchanged. The index had
+    been storing `time.time()` (always newer than any file mtime), so the skip check
+    compared an index time against a file time and skipped forever. macOS's
+    sub-second timestamps hid it entirely.
+    """
+
+    def test_same_tick_append_is_still_indexed(self, tmp_path):
+        import os
+
+        log = ConversationLog(base_dir=tmp_path / "coarse")
+        log.append("chat-1", "user", "first message about apples")
+        ss.reindex_all(log)
+
+        log.append("chat-1", "user", "second message about zebras")
+        # Force the timestamps EQUAL, the condition CI produces naturally.
+        path = log._path("chat-1")
+        stat = path.stat()
+        os.utime(path, (stat.st_atime, stat.st_mtime))
+        log._invalidate_cache("chat-1")
+
+        assert ss.reindex_all(log) == 1, "a same-tick append must be re-indexed"
+        assert [r["key"] for r in ss.search_sessions("zebras")] == ["chat-1"]
+
+    def test_the_stored_mtime_is_the_files_not_the_clock(self, tmp_path):
+        """If it were the wall clock, it would always exceed the file mtime and the
+        incremental check could never fire."""
+        import time as _time
+
+        log = ConversationLog(base_dir=tmp_path / "stamp")
+        log.append("chat-1", "user", "hello")
+        ss.reindex_all(log)
+        conn = ss._connect()
+        stored = conn.execute("SELECT mtime FROM indexed WHERE session_key = 'chat-1'").fetchone()[
+            0
+        ]
+        file_mtime = log._path("chat-1").stat().st_mtime
+        assert abs(float(stored) - file_mtime) < 0.001
+        assert float(stored) <= _time.time()
+
+    def test_an_untouched_session_is_still_skipped(self, tmp_path):
+        """The fix must not turn every pass into a full re-index."""
+        log = ConversationLog(base_dir=tmp_path / "quiet")
+        log.append("chat-1", "user", "unchanged content")
+        ss.reindex_all(log)
+        assert ss.reindex_all(log) == 0

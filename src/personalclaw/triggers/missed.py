@@ -1,0 +1,565 @@
+"""Missed fires: review, don't lie, don't storm.
+
+Local-first means a closed lid stops the loop. So the honest question after a restart, or when the
+process wakes after the computer slept, is not "what should have run" but "what do I tell the user
+about what didn't". Both are the same question and get the same answer: a slot is missed when the
+wall clock is past it by more than `scheduling.LATE_THRESHOLD_SECS` (`scheduling.slot_missed`),
+whether the gateway was stopped (`service.boot`) or alive and asleep (`service.tick`). Three answers
+this module makes different, because collapsing any two of them produces a specific bad outcome:
+
+* **Enumerate, bounded.** A machine down for a week with a minutely trigger missed 10,080 slots.
+  Enumerating them all is an unusable page and a slow boot; enumerating
+  none is the system lying about
+  what happened. So: the newest N per trigger become reviewable rows, and everything older collapses
+  into ONE summary per trigger that still says how many.
+* **Review, don't auto-run.** A missed fire is a decision the user should make — "run the 3am backup
+  now, at 9am" is sometimes right and sometimes exactly wrong. Run-now records `ran_late`; dismiss
+  records `skipped_missed`. Both are ledger rows, because the history allows no
+  silent drops and a dismissed card
+  that left no trace is a silent drop with a UI.
+* **`catch_up` fires ONCE, staggered.** launchd's RunAtLoad semantics. The storm guard is the
+  once-per-trigger cap plus the same deterministic per-id stagger the
+  scheduler already uses — without
+  both, a laptop opening after a weekend runs every automation it owns simultaneously.
+
+`next_fire_at` rolls forward as part of enumeration, so re-opening the
+page does not re-enumerate the
+same misses. Pure functions over records; the boot sequence that calls them is the service.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from personalclaw.triggers.models import Outcome
+from personalclaw.triggers.scheduling import (
+    BOOT_STAGGER_BASE_SECS,
+    BOOT_STAGGER_WINDOW_SECS,
+    jitter_offset,
+    slot_missed,
+)
+
+#: Total missed slots enumerated across ALL triggers at one boot. A hard
+#: ceiling on the work a restart
+#: does before the gateway is usable: past this the summary rows carry the count and nobody waits.
+ENUMERATION_CAP = 480
+
+#: Reviewable rows kept per trigger. Twenty is what a person will
+#: actually scan; past that the value is
+#: in the aggregate, which is what the summary row carries.
+REVIEW_ROWS_PER_TRIGGER = 20
+
+#: Ledger origin for an automatic catch-up fire. A DISTINCT origin, not a normal fire: "why did this
+#: run at 09:02 when it is scheduled for 03:00" is answerable only if the
+#: row says it was a catch-up.
+CATCHUP_ORIGIN = "catchup"
+
+
+@dataclass
+class MissedSlot:
+    """One fire that should have happened while the gateway was down."""
+
+    trigger_id: str
+    scheduled_for: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"trigger_id": self.trigger_id, "scheduled_for": self.scheduled_for}
+
+
+@dataclass
+class MissedSummary:
+    """The collapse of everything older than the review window, for ONE trigger.
+
+    Carries `count` and the oldest/newest bounds rather than the slots themselves. The number is the
+    information — "47 missed since Friday" is actionable, and 47 rows of it are not.
+    """
+
+    trigger_id: str
+    count: int
+    oldest: float
+    newest: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trigger_id": self.trigger_id,
+            "count": self.count,
+            "oldest": self.oldest,
+            "newest": self.newest,
+        }
+
+
+@dataclass
+class MissedReview:
+    """What one boot produced: reviewable rows, per-trigger summaries, and honesty about truncation.
+
+    `truncated` is separate from the summaries because they answer
+    different questions. A summary says
+    "this trigger missed more than we listed"; `truncated` says "the
+    ENUMERATION itself stopped early,
+    so even the counts are a floor". Reporting a floor as a total would break the "don't lie" rule.
+    """
+
+    rows: list[MissedSlot] = field(default_factory=list)
+    summaries: list[MissedSummary] = field(default_factory=list)
+    truncated: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rows": [r.to_dict() for r in self.rows],
+            "summaries": [s.to_dict() for s in self.summaries],
+            "truncated": self.truncated,
+        }
+
+
+def enumerate_missed(
+    *,
+    trigger_id: str,
+    last_fire_at: float,
+    interval_secs: float,
+    now: float,
+    budget: int = ENUMERATION_CAP,
+    review_rows: int = REVIEW_ROWS_PER_TRIGGER,
+) -> tuple[list[MissedSlot], MissedSummary | None, int]:
+    """Missed slots for one trigger. Returns `(review_rows, summary_or_None, budget_spent)`.
+
+    Walks the grid from the last fire. Two guards that matter:
+
+    * The budget bounds the ROWS BUILT, never the count. A minutely
+    trigger down for a week has 10,080
+      missed slots; counting them is one division, allocating them is
+      what makes boot slow. Budgeting
+      the count instead starves every other trigger — measured, and the
+      comment in the body says how.
+    * The NEWEST slots become the review rows. Older ones are the ones a person is least likely to
+      want to run now — a 3am backup missed six days ago is history, last night's is a decision.
+
+    The slots are the ones AFTER the last fire, through `now`: `last_fire_at + k * interval` for
+    k = 1..count. The last fire ran, so it is never a row; and the slot at `now` is missed too,
+    because recovery re-arms the schedule past it. These rows used to start at the last fire
+    itself, one interval early, so a card's latest slot and a catch-up's lateness were an interval
+    off — an hourly catch-up ten minutes late read as seventy.
+
+    A trigger with no interval (a one-shot, an event trigger) has no grid
+    to walk and returns nothing:
+    "missed" is only meaningful for a recurrence.
+    """
+    if interval_secs <= 0 or last_fire_at <= 0 or now <= last_fire_at:
+        return [], None, 0
+
+    # Count first, build second — and the BUDGET BOUNDS THE ROWS, not the count.
+    #
+    # Budgeting the count starved every other trigger. Thirty triggers each down a
+    # week, shared budget 480: the alphabetically-first minutely trigger spent all 480 counting its
+    # own 10,080 missed slots, and the other twenty-nine got NO review card — the page showed one
+    # trigger and silently omitted the rest. Counting is arithmetic and costs nothing; allocating
+    # `MissedSlot` objects is what makes boot slow. So the count is
+    # always exact (which is what makes
+    # the summary honest) and the budget is spent on rows.
+    elapsed = now - last_fire_at
+    total = int(elapsed // interval_secs)
+    if total <= 0:
+        return [], None, 0
+
+    shown = min(total, max(0, review_rows), max(0, budget))
+    rows = [
+        MissedSlot(
+            trigger_id=trigger_id, scheduled_for=last_fire_at + (total - i + 1) * interval_secs
+        )
+        for i in range(shown, 0, -1)
+    ]
+    older = total - shown
+    summary = (
+        MissedSummary(
+            trigger_id=trigger_id,
+            count=older,
+            oldest=last_fire_at + interval_secs,
+            newest=last_fire_at + (total - shown) * interval_secs,
+        )
+        if older > 0
+        else None
+    )
+    return rows, summary, shown
+
+
+#: Slots one stepped walk visits before its count stops being exact. A cron has no fixed
+#: interval, so its slots are counted by stepping the schedule rather than by one division; a
+#: minutely cron down for a week is 10,080 steps, and past that the review says the count is a
+#: floor (`MissedReview.truncated`) rather than spend the boot walking a year of minutes.
+CRON_WALK_CAP = 10_080
+
+#: The schedule kinds whose missed slots are found by stepping the schedule (`stepped_slots`)
+#: rather than by dividing an interval (`enumerate_missed`): a cron, which has no fixed interval,
+#: and a one-time `at`, whose one slot is its armed fire.
+STEPPED_KINDS: frozenset[str] = frozenset({"cron", "at"})
+
+
+def stepped_slots(
+    entry: dict[str, Any], *, now: float, cap: int = CRON_WALK_CAP
+) -> tuple[list[float], bool]:
+    """Every slot a cron's or a one-shot's schedule owned from its armed fire through `now`.
+
+    Returns `(slots, capped)`, oldest first. The armed fire (`next_fire_at`) is the first slot that
+    did not run, and each next one is `arm.next_fire` from the slot before it — the same
+    computation that armed the trigger, so the trigger's time zone, skip dates and jitter all hold.
+    Neither kind has an `interval_secs`, which is why `enumerate_missed` saw nothing to walk: a cron
+    schedule's missed runs were never reported, and a one-shot missed while PersonalClaw was stopped
+    was run late instead of reviewed. A one-shot has no next slot, so its walk is its armed fire.
+
+    Stepped with the row enabled: the question is which slots the schedule owned, and
+    `review_at_boot` has already decided whether this trigger is one whose misses count.
+    """
+    from types import SimpleNamespace
+
+    from personalclaw.triggers.arm import next_fire
+    from personalclaw.triggers.service import to_epoch
+
+    armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+    if armed <= 0 or armed > now:
+        return [], False
+    view = SimpleNamespace(**{**entry, "enabled": True})
+    slots: list[float] = []
+    slot = armed
+    while slot <= now:
+        if len(slots) >= max(0, cap):
+            return slots, True
+        slots.append(slot)
+        following = next_fire(view, now=slot)
+        if following <= slot:
+            break
+        slot = following
+    return slots, False
+
+
+def enumerate_slots(
+    *,
+    trigger_id: str,
+    slots: list[float],
+    budget: int = ENUMERATION_CAP,
+    review_rows: int = REVIEW_ROWS_PER_TRIGGER,
+) -> tuple[list[MissedSlot], MissedSummary | None, int]:
+    """`enumerate_missed`'s answer for slots already listed (a stepped walk's). Same shape, rules.
+
+    The newest slots become the review rows and the rest collapse into one summary, and the budget
+    bounds the rows built, never the count.
+    """
+    total = len(slots)
+    if total <= 0:
+        return [], None, 0
+    shown = min(total, max(0, review_rows), max(0, budget))
+    rows = [MissedSlot(trigger_id=trigger_id, scheduled_for=s) for s in slots[total - shown :]]
+    older = total - shown
+    summary = (
+        MissedSummary(trigger_id=trigger_id, count=older, oldest=slots[0], newest=slots[older - 1])
+        if older > 0
+        else None
+    )
+    return rows, summary, shown
+
+
+def missed_inputs(entry: dict[str, Any], *, now: float = 0.0) -> dict[str, Any]:
+    """Derive this module's four inputs from a row `Trigger.to_dict()` actually emits.
+
+    🔴 THE KEY CONTRACT, and why it needed writing down. This module reads `last_fire_at`,
+    `interval_secs`, `missed_last_slot` and `fires_automatically` off the dicts it is handed.
+    `Trigger.to_dict()` emits **NONE OF THE FOUR** — measured, all four `in d` are False. So the
+    guard `if interval_secs <= 0 or last_fire_at <= 0` saw `0.0` and `0.0` for every trigger on
+    every machine, and `review_at_boot` returned an EMPTY review no matter how long the lid was
+    shut. `catch_up_plan` failed the same way one clause further on: `missed_last_slot` was absent,
+    so every trigger got `"nothing was missed"` including ones overdue by hours.
+
+    A prose spec read by nothing is inert; a spec read with the WRONG KEYS is worse, because it
+    reports a confident, wrong answer. Same shape as the gate-direction classifier disagreeing
+    with the gate names the engine walks — the logic was right and the vocabulary was not.
+
+    Derived rather than added as four persisted fields, deliberately:
+
+    * `interval_secs` lives in `spec` (the store's shape for an interval clock) — copying it to a
+      top-level column would give one value two homes and one of them would go stale.
+    * `last_fire_at` has NO persisted equivalent, and inventing one would be a second write on the
+      fire path. `next_fire_at - interval_secs` is the last slot the schedule OWNS, which is exactly
+      the grid anchor `enumerate_missed` walks from. `last_success_at` would be wrong: a trigger
+      that failed at 03:00 still missed the 04:00 slot.
+    * `missed_last_slot` is a QUESTION about the row (was the armed fire missed, by
+      `scheduling.slot_missed`?), not a state to persist and keep in sync.
+    * `fires_automatically` is already a `Trigger` property, so it is read, not recomputed.
+    """
+    spec = entry.get("spec") or {}
+    interval_secs = 0.0
+    for source in (entry, spec):
+        try:
+            interval_secs = float(source.get("interval_secs") or 0.0)
+        except (TypeError, ValueError):
+            interval_secs = 0.0
+        if interval_secs > 0:
+            break
+
+    last_fire_at = 0.0
+    if "last_fire_at" in entry:
+        try:
+            last_fire_at = float(entry.get("last_fire_at") or 0.0)
+        except (TypeError, ValueError):
+            last_fire_at = 0.0
+    if last_fire_at <= 0 and interval_secs > 0:
+        from personalclaw.triggers.service import to_epoch
+
+        armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+        if armed > 0:
+            last_fire_at = armed - interval_secs
+
+    if "missed_last_slot" in entry:
+        missed_last_slot = bool(entry.get("missed_last_slot"))
+    else:
+        from personalclaw.triggers.service import to_epoch
+
+        armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+        # `now <= 0` means the caller did not supply an instant, so the question is unanswerable —
+        # answer FALSE (no catch-up) rather than guessing from wall-clock. A catch-up fired on a
+        # wrong premise runs unattended work the user did not ask for; a missed one is reviewable.
+        missed_last_slot = now > 0 and slot_missed(armed, now)
+
+    if "fires_automatically" in entry:
+        fires_automatically = bool(entry.get("fires_automatically"))
+    else:
+        fires_automatically = bool(entry.get("enabled")) and str(
+            entry.get("state", "active") or "active"
+        ) in ("active", "")
+
+    return {
+        "interval_secs": interval_secs,
+        "last_fire_at": last_fire_at,
+        "missed_last_slot": missed_last_slot,
+        "fires_automatically": fires_automatically,
+    }
+
+
+def review_at_boot(
+    triggers: list[dict[str, Any]],
+    *,
+    now: float,
+    budget: int = ENUMERATION_CAP,
+) -> MissedReview:
+    """Enumerate misses across every trigger, under ONE shared budget.
+
+    Shared rather than per-trigger, because the thing being protected is boot time and that is a
+    property of the whole pass. A per-trigger cap with fifty triggers is fifty times the ceiling.
+
+    The budget buys ROWS, so a trigger with thousands of missed slots
+    takes its ~20 and leaves the rest
+    of the budget for everyone else — its remaining slots still show up,
+    in its summary. Budgeting the
+    COUNT instead let one noisy trigger consume the whole pass (measured:
+    1 of 30 triggers got a card).
+
+    Triggers are walked in id order so a boot is reproducible: an
+    unstable order would give different
+    triggers the remaining budget on different restarts, and "why did my backup get a review card
+    yesterday but not today" is unanswerable.
+
+    Inputs come through `missed_inputs`, which is what makes this read the keys the store actually
+    writes — see that function for the measured mismatch it closes.
+
+    An interval walks its grid by division; a cron and a one-shot walk their own schedule
+    (`stepped_slots`), because neither has an interval: a cron used to be reported as missing
+    nothing however long the lid was shut, and a one-shot was run late instead of reviewed.
+    A trigger that is switched off or paused missed nothing: it would not have run. Nor did one
+    whose next fire does the missed one's work (`models.missed_fire_superseded`). Nor did one whose
+    first unrun slot is late by less than `scheduling.LATE_THRESHOLD_SECS` (`slot_missed`): it runs
+    as normal, and once a trigger's first slot is missed, every slot it owned up to now is counted.
+    """
+    from personalclaw.triggers.models import missed_fire_superseded
+    from personalclaw.triggers.service import to_epoch
+
+    review = MissedReview()
+    remaining = max(0, budget)
+    for entry in sorted(triggers, key=lambda t: str(t.get("id", ""))):
+        if remaining <= 0:
+            review.truncated = True
+            break
+        if entry.get("enabled") is False or str(entry.get("state") or "active") != "active":
+            continue
+        if missed_fire_superseded(entry.get("workflow")):
+            continue
+        trigger_id = str(entry.get("id", "") or "")
+        spec = entry.get("spec") or {}
+        if str(spec.get("kind") or "").strip().lower() in STEPPED_KINDS:
+            if not slot_missed(to_epoch(str(entry.get("next_fire_at", "") or "")), now):
+                continue
+            slots, capped = stepped_slots(entry, now=now)
+            review.truncated = review.truncated or capped
+            rows, summary, spent = enumerate_slots(
+                trigger_id=trigger_id, slots=slots, budget=remaining
+            )
+        else:
+            derived = missed_inputs(entry, now=now)
+            if not slot_missed(derived["last_fire_at"] + derived["interval_secs"], now):
+                continue
+            rows, summary, spent = enumerate_missed(
+                trigger_id=trigger_id,
+                last_fire_at=derived["last_fire_at"],
+                interval_secs=derived["interval_secs"],
+                now=now,
+                budget=remaining,
+            )
+        review.rows.extend(rows)
+        if summary is not None:
+            review.summaries.append(summary)
+        remaining -= spent
+    return review
+
+
+def late_outcome(outcome: str, *, scheduled_for: float, started_at: float) -> tuple[str, str]:
+    """Refine a granted fire's outcome to `ran_late` when it missed its slot.
+
+    Returns `(outcome, reason)`, unchanged for anything that is not an on-time `ran`.
+
+    🔴 WHY THIS EXISTS. `ran_late` and `scheduled_for` were added together, because a run
+    that started 40 minutes after its slot is a different story from one that started on
+    time and took 40 minutes. `FireRecord` carries both stamps and `validate_record` even
+    refuses a `ran_late` row without a `scheduled_for` — yet only the MANUAL missed-fire
+    card (`resolve_missed`) ever wrote the value. Measured: a minutely trigger fired 40
+    minutes past its slot recorded a plain `ran`, with the lateness computable on that very
+    row.
+
+    The threshold is `scheduling.LATE_THRESHOLD_SECS`, DERIVED from the scheduler's own
+    designed delays rather than picked: a wake can be a poll ceiling behind, and a boot
+    deliberately pushes overdue fires by the stagger base and spreads them across the
+    stagger window. Labelling those as lateness would mark the substrate's own correct
+    behaviour as a fault — how a signal becomes noise and then gets ignored.
+
+    Only refines `ran`. A suppressed or failed fire keeps its own outcome: "it was late" is
+    not the interesting thing about a fire that never ran, and overwriting `failed` with
+    `ran_late` would lose the failure entirely.
+
+    A missing or zero `scheduled_for` returns unchanged. With no slot to compare against
+    lateness is not a fact, and guessing one produces the very false impression `ran_late` avoids.
+
+    The threshold is the same line `slot_missed` draws, so the tick never runs a slot this would
+    call late unless it catches up: a slot that late is missed, and only a `catch_up` trigger runs
+    one, once (or the review's Run now, which records its own `ran_late`).
+    """
+    from personalclaw.triggers.models import Outcome
+
+    if outcome != Outcome.RAN.value:
+        return outcome, ""
+    try:
+        slot = float(scheduled_for or 0.0)
+        began = float(started_at or 0.0)
+    except (TypeError, ValueError):
+        return outcome, ""
+    if slot <= 0 or began <= 0:
+        return outcome, ""
+    behind = began - slot
+    if not slot_missed(slot, began):
+        return outcome, ""
+    return (
+        Outcome.RAN_LATE.value,
+        f"ran {int(behind // 60)} min after its scheduled slot",
+    )
+
+
+def resolve_missed(action: str, *, kind: str = "missed") -> tuple[str, str]:
+    """What a user's decision on a review card records. Returns `(outcome, reason)`.
+
+    Both branches write a ledger row. A dismissed card that left no trace
+    would be a silent drop with a
+    UI on it — the rule is not about the mechanism, it is about whether the history is honest.
+
+    `kind` is what the card is about: a slot that never ran (`missed`), or a run a restart cut off
+    (`interrupted`, which is reviewed the same way rather than retried on its own — it may already
+    have done part of its work, and running it again is the user's call).
+    """
+    interrupted = kind == "interrupted"
+    if action == "run_now":
+        return (
+            Outcome.RAN_LATE.value,
+            (
+                "ran again from the review card after a restart interrupted it"
+                if interrupted
+                else "ran from a missed-fire review card, after its scheduled slot"
+            ),
+        )
+    if action == "dismiss":
+        return Outcome.SKIPPED_MISSED.value, (
+            "the user dismissed the interrupted-run card"
+            if interrupted
+            else "the user dismissed the missed-fire card"
+        )
+    return (
+        Outcome.REFUSED.value,
+        f"unknown review action {action!r}; expected run_now or dismiss",
+    )
+
+
+def catch_up_plan(triggers: list[dict[str, Any]], *, now: float) -> list[tuple[str, float, str]]:
+    """Which triggers get an automatic catch-up fire, when, and why not for the rest.
+
+    Returns `(trigger_id, fire_at, reason)` for every candidate —
+    including the refused ones, because a
+    trigger with `catch_up: true` that did NOT fire needs an explanation as much as one that did.
+
+    Three guards, and each has a distinct failure:
+
+    * **Opt-in.** Only `catch_up: true`. RunAtLoad semantics are a deliberate choice, not a default.
+    * **Once per trigger.** At most one catch-up regardless of how many
+    slots were missed — a weekend
+      down would otherwise fire Monday's automation forty times.
+    * **Staggered.** The same deterministic per-id offset the scheduler
+    uses, so a laptop opening after
+      a weekend does not run every automation it owns in the same second.
+    """
+    plan: list[tuple[str, float, str]] = []
+    for entry in sorted(triggers, key=lambda t: str(t.get("id", ""))):
+        tid = str(entry.get("id", "") or "")
+        # Through `missed_inputs` for the same reason `review_at_boot` is: `missed_last_slot` and
+        # `fires_automatically` are not keys `Trigger.to_dict()` emits, so reading them raw made
+        # EVERY trigger answer "nothing was missed" — including one overdue by hours. Measured.
+        derived = missed_inputs(entry, now=now)
+        if not entry.get("catch_up"):
+            plan.append((tid, 0.0, "catch_up is off: a missed slot is reviewed, not re-run"))
+            continue
+        if not derived["missed_last_slot"]:
+            plan.append((tid, 0.0, "nothing was missed"))
+            continue
+        if not derived["fires_automatically"]:
+            plan.append((tid, 0.0, "disabled or paused: a catch-up must not restart it"))
+            continue
+        fire_at = now + BOOT_STAGGER_BASE_SECS + jitter_offset(tid, BOOT_STAGGER_WINDOW_SECS)
+        plan.append((tid, fire_at, CATCHUP_ORIGIN))
+    return plan
+
+
+def within_rate_window(*, fires_in_window: int, max_per_hour: int) -> tuple[bool, str]:
+    """Whether another fire is allowed by the sliding hourly window.
+
+    The backstop under catch-up: even a correctly staggered,
+    once-per-trigger catch-up must not push a
+    trigger past the cap its author set.
+
+    Only a fire is asked. Your own run (Run now) never is, and its rows are left out of
+    *fires_in_window* (`ScheduleRunStore.count_since`): the cap exists to stop the machine from
+    running away on its own, and you running it is not the machine running away. Every other run,
+    one an agent, an app or a program asked for included, is a fire and is asked.
+    """
+    if max_per_hour <= 0:
+        return True, "no hourly cap configured"
+    if fires_in_window >= max_per_hour:
+        return False, f"{fires_in_window} fires in the last hour reaches the cap of {max_per_hour}"
+    return True, ""
+
+
+def roll_forward(*, next_fire_at: float, interval_secs: float, now: float) -> float:
+    """Where `next_fire_at` lands after enumeration, so a re-open does not re-enumerate.
+
+    Rolls to the first grid slot strictly after `now`, preserving phase — the same rule as the
+    scheduler's grid anchoring, for the same reason: rolling to `now + interval` would re-phase a
+    schedule that was correct before the machine went to sleep.
+    """
+    if interval_secs <= 0:
+        return next_fire_at
+    if next_fire_at <= 0:
+        return 0.0
+    if next_fire_at > now:
+        return next_fire_at
+    missed = int((now - next_fire_at) // interval_secs) + 1
+    return next_fire_at + missed * interval_secs

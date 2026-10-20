@@ -1,0 +1,639 @@
+# Contributing to PersonalClaw
+
+Thanks for contributing. This document covers the project's engineering
+doctrine, how to set up a dev environment, and what we expect from a PR.
+
+Agents (Claude Code and other coding agents) should read
+[AGENTS.md](AGENTS.md) — the same rules, compressed to a build/test/lint +
+doctrine + rejection-list brief.
+
+## The model
+
+PersonalClaw is a **solo-maintained** project growing its first contributors. The
+governance is sized to match — no committees, no RFC process, no CLA — but the
+engineering bar is not lowered.
+
+- **This repo (core) is a high-doctrine working tree.** PRs are welcome, held to
+  the full validation bar below. It is the source of product truth.
+- **The roadmap is maintainer-owned, with a written intake path** — not a closed
+  door. To propose or reshape roadmap work: open an **issue** describing the
+  problem → discuss in **[Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)**
+  → the maintainer files or updates the roadmap item. The roadmap is kept outside this
+  repository and curated so the execution order stays coherent, so a PR cannot change it:
+  start with the issue.
+- **The newcomer ramp is the [apps repo](https://github.com/PersonalClaw/PersonalClawApps)**,
+  not a softened core. First-party and community apps meet the SDK-contract bar
+  (import core only via `personalclaw.sdk.*`), ship per-app tests, and get a
+  faster review turnaround. If you're looking for a first contribution, start
+  there or with a [good first issue](https://github.com/PersonalClaw/PersonalClaw/labels/good-first-issue).
+
+## Developer Certificate of Origin (DCO)
+
+Contributions are accepted under the [DCO](https://developercertificate.org/) —
+a lightweight alternative to a CLA that keeps MIT provenance clean without
+paperwork. Every commit must carry a `Signed-off-by` trailer, which you add by
+committing with `-s`:
+
+```bash
+git commit -s -m "fix(memory): correct recall ordering"
+```
+
+This appends `Signed-off-by: Your Name <your@email>` (using your git
+`user.name`/`user.email`), certifying you wrote the change or have the right to
+submit it under the project's license. A CI check enforces it on every PR; an
+unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
+--signoff`) fixes it.
+
+The same check (`scripts/check_commit_provenance.py`) holds more rules, so every commit on
+`main` can say where it came from:
+
+- **Rule 1, a sign-off that matches the author:** `Signed-off-by: <author name> <author email>`,
+  as a line of its own, exactly as git records the author. Commit with the email your GitHub
+  account uses: when your pull request is squashed, GitHub records that email as the author, and
+  a sign-off with another email then fails on `main`. Dependabot's own commits, by its exact
+  author address, are exempt.
+- **Rule 2, a committer listed in [`MAINTAINERS`](MAINTAINERS),** name and email both, checked
+  on `main` only: GitHub, for a squash merge, and the maintainer. On a pull request you commit
+  your own work.
+- **Rule 3, no co-author or tool marks on a maintainer's commit:** no `Co-authored-by`,
+  `Generated-by`, `Assisted-by` or session trailer, no "Generated with" footer and no link to a
+  tool's session. An author counts as a maintainer when their name or their email matches one
+  `MAINTAINERS` lists. A contributor's own `Co-authored-by` is fine.
+- **Rule 5, no marker that tells GitHub to start no run:** no `[skip ci]`, `[ci skip]`,
+  `[no ci]`, `[skip actions]`, `[actions skip]` or `skip-checks: true`, in any commit message or
+  in the pull request's title. A push whose head carries one starts no run, so its commits would
+  land unchecked.
+
+Rule 4, which ties a pushed commit to the tree its merge verdict checked, is not checked yet: it
+needs the record the merge controller will write.
+
+Every pull request runs rules 1, 3 and 5, and the comment on a failing one names the commit and
+the rule. Every push to `main` runs rules 1, 2, 3 and 5 over the commits it landed. Once the
+check is a required status, a pull request that breaks a rule cannot merge.
+
+**So you never forget:** `npm install` in your clone installs the git hooks for
+you (its `postinstall` runs `hooks:install`; run that directly if you skipped
+it). One of them is a `prepare-commit-msg` hook that appends the
+`Signed-off-by` trailer automatically at commit time, so you won't need `-s`.
+The sign-off must match your commit author, so set a real
+`git config user.name`/`user.email` first (not the git default placeholder).
+
+## Doctrine for all new work
+
+These principles have governed every feature in the codebase; new work is held
+to them.
+
+- **Clean break** — no backward-compat shims, dual paths, or dual
+  implementations. When you replace a mechanism, remove the old one in the same
+  change. Vendor-specific logic lives only in removable provider apps (the
+  `apps/` bundles) — the core stays provider-agnostic. Port features from other
+  tools as end-behavior native to PersonalClaw's entity/provider model, not as
+  translations. The `web/` app is the only frontend for new UI.
+  **Who breaks what** — clean break is a *maintainer* license, not a contributor
+  expectation. See [Breaking changes](#breaking-changes) below: during 0.x the
+  maintainer will land breaking, backward-incompatible architectural changes
+  without migrations; a contributor PR is not expected to, and shouldn't need to.
+- **Implementation owns product too** — user flows, UX, and look-and-feel are
+  in scope for every change, not just function. A feature isn't done when the
+  endpoint works; it's done when a user can find it, use it, and understand it.
+- **As-built authority** — [docs/vision.md](docs/vision.md) records the
+  intended design; the code is the as-built truth. When they disagree, that's
+  a bug to reconcile deliberately, not silently.
+- **Validation bar** — implement fully, then validate *as a user*: drive the
+  system from the frontend, inspecting every surface (UI, console, network,
+  backend logs, persisted state). Any gap, issue, or UX rough edge found during
+  validation is in scope to fix. Only call a change complete after it is both
+  implemented and validated end to end.
+- **Judge by code truth, not banners** — status text in plans and docs goes
+  stale; verify against the actual code before deciding something is or isn't
+  done.
+- **Nothing published names what is private** — this repository is public, and
+  so is everything that reaches it: code, comments, tests, fixtures, docs, the
+  CHANGELOG, commit messages and PR text. Never write an employer's or any
+  organisation's internal names, hosts, tools, documents, people or ticket ids
+  into any of it, nor a reference to private planning (a plan's name, a work-item
+  id, a ledger row, a ruling). A reader can open none of them, and each says
+  where the work came from, which the code never needs to say. Describe the
+  behaviour and its reason in product terms instead: "never trust an upload's
+  declared type; cap what it can make us decode", not the title of the document
+  that taught it. Fixtures use invented names and the domains RFC 2606 reserves
+  (`example.com`, `.test`, `.invalid`), never a real person, account, workspace
+  or id, and a binary fixture carries no identity metadata (no author, company or
+  account in a document's or an image's properties). This is a practice, not a
+  check: a list of names to catch, even as digests, would publish every name on
+  it and still never be complete, so none exists and none should be added.
+  Re-read your diff for it before you commit.
+
+## <a name="breaking-changes"></a>Breaking changes: who makes them, and what you should do
+
+PersonalClaw is pre-1.0 and deliberately still moving its architecture. Two
+different standards apply depending on who is making the change — this is the
+one place in the doctrine where maintainer and contributor expectations differ,
+so it's worth stating plainly.
+
+**The maintainer will make breaking changes.** While the project works through
+the roadmap's architectural program, the maintainer lands backward-incompatible
+clean breaks where a better design requires one: state shapes change, stores get
+rewritten, endpoints and config fields are replaced outright, and there is **no
+automatic migration** of existing `~/.personalclaw` data. The upgrade notes in
+[Updating](docs/guides/getting-started.md#updating) advise `personalclaw snapshot`, and the
+README carries the standing pre-1.0 warning.
+This is a decision, not an oversight: carrying compatibility shims through a
+half-built architecture is how projects calcify around designs they meant to
+replace. The migration-backed regime — the **lifecycle mental model** below —
+is **deliberately deferred until the architecture stops moving**, on the way to
+1.0. Until then, assume no gate/migration machinery exists yet: there is no
+`lifecycle/` package, and a plan file that asks for one is describing the
+contributor methodology, not a maintainer dependency.
+
+### The lifecycle mental model
+
+This is how to *think* about a change that touches persisted state or a stable
+surface — the posture a contribution should adopt even while the maintainer is
+still clean-breaking. It is a mental model, not shipped machinery.
+
+- **Name the change class.** **R** (refactor) — nothing observable outside the
+  module changes; clean break, replace + delete in one commit. **B** (behavior/
+  state) — changes runtime behavior or anything persisted under
+  `~/.personalclaw`. **S** (stable surface) — touches a surface other code
+  depends on (the `personalclaw.sdk.*` exports, the app manifest schema, inbound
+  wire contracts, on-disk formats, the `personalclaw-client` package). R needs
+  nothing special; B and S are the governed cases.
+- **Govern a B/S change as gate → dual-path → migrate → cleanup.** Introduce a
+  boolean **gate** defaulting off; build the new path behind it so the old path
+  stays byte-identical when the gate is off (**dual-path**); ship an idempotent,
+  snapshot-backed **migration** that moves old state to the new shape and
+  verifies a concrete post-condition; then **cleanup** — flip the default on,
+  delete the old path, and retire the gate. One user per install means a gate is
+  just a boolean with a lifecycle, never a flag service or percentage rollout.
+- **A stable-surface (S) change adds a deprecation window** — the old surface
+  keeps working for two minor releases (or 90 days, whichever is longer) with a
+  runtime warning, plus a CHANGELOG entry.
+
+Until this regime lands, contributors get the *shape* of it for free by staying
+additive (below); the maintainer gets it by clean-breaking under the pre-1.0
+banner. Nobody hand-rolls the gate/migration runner early — it would only have
+to be removed when the real one arrives.
+
+**You are not expected to make breaking changes.** Nothing about the above asks
+a contributor to break compatibility, and a PR that does will usually be asked
+to change course. Write your contribution as though the lifecycle mental model
+above were already in force:
+
+- **Additive by default.** New config fields get defaults; new endpoints sit
+  beside existing ones; a missing persisted field reads as today's behavior.
+- **Assume someone is already running the thing you're changing.** Existing
+  users have live state in `~/.personalclaw` — chats, memory, knowledge,
+  credentials, config — and an upgrade must not lose it or require hand-editing
+  files. Before you change anything persisted, ask what happens to a home
+  directory written by the *previous* release. If the answer is "it breaks" or
+  "they'd have to start over," the change isn't ready as written.
+- **A breaking change needs a migration path, and the path is part of the PR.**
+  If your change alters a persisted shape, a stored format, or a public route
+  contract, it needs a route from old state to new that runs without user
+  intervention: read the old shape and write the new one on first load
+  (idempotently, so re-running is a no-op), keep the old field readable until the
+  data has moved, and only then remove it. A PR that changes a format and leaves
+  existing data stranded will be asked for the migration before anything else.
+  State plainly in the PR what old state you tested against and what happened to
+  it — a fixture home written by the previous release is the cheapest proof.
+- **Don't invent gate or migration machinery.** There is no `lifecycle/` package
+  yet, and hand-rolled versioning frameworks or migration *runners* will be
+  rejected — they'd have to be removed when the real mechanism lands. Prefer the
+  patterns already in the tree: a store's own additive column ladder
+  (`knowledge/store.py`'s `_NEW_ITEM_COLUMNS`, `vector_memory.py`'s
+  `_MIGRATIONS`), `CREATE TABLE IF NOT EXISTS`, tolerant `from_dict` reads, and
+  backfills keyed on inspecting the data rather than on a version number. If your
+  change seems to need machinery none of those cover, stop and ask.
+- **Flag it instead of doing it.** If the clean fix genuinely requires changing
+  a persisted shape, a public route contract, or a stored credential/state
+  format, say so in an issue (or in the PR description under a clear
+  "breaking change" heading) and let the maintainer decide whether to take it as
+  a clean break, reshape it additively, or schedule it. Surfacing the tension is
+  the contribution; you don't need to resolve it alone.
+- **A rejected breaking change is not a rejected idea.** The usual outcome is
+  that the maintainer lands the breaking part on their side and your PR keeps
+  the rest.
+
+If you're unsure which side of the line a change falls on, open an issue first —
+that costs one round trip and saves a rewrite.
+
+## Development setup
+
+This is the **build-from-source / contributor** path (a git checkout with a
+local venv and a Vite build). End users install a release instead — see
+[docs/guides/getting-started.md](docs/guides/getting-started.md) (uv tool, pipx,
+pip, or Docker), which never requires Node or a manual SPA build.
+
+**Check your Python first — a bare `python3` is the most common way this goes wrong.**
+`pyproject.toml` requires `>=3.12,<3.14`, and the `python3` on `PATH` is older than that on
+stock macOS and on several LTS distros, and newer than that wherever 3.14 is the default. It
+fails at the *install* step, after the venv has already been created, with a message that does
+not mention the venv:
+
+```
+ERROR: Package 'personalclaw' requires a different Python: 3.9.6 not in '<3.14,>=3.12'
+```
+
+If `python3 --version` is not 3.12.x or 3.13.x, create the venv with an explicit interpreter
+(`python3.13 -m venv .venv`) or let `uv` supply one (`uv sync --python 3.13 --extra dev`, the
+version the one-line installer installs on). An update installs with the tool that made the
+environment: `uv sync --locked --inexact` in one uv made, `pip install -e .` in one pip made.
+
+**The versions to develop on are the ones CI runs.** `.python-version` names the exact Python
+(the 3.13 patch; CI's 3.12 legs run the patch its workflows name), `.nvmrc` the exact Node, and
+`package.json`'s `packageManager` the npm that Node ships. `uv` reads `.python-version` itself,
+and `nvm use` or `fnm use` reads `.nvmrc`. uv must be 0.13.1 or newer (`[tool.uv]
+required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. Every workflow that runs uv
+sets `UV_PYTHON_PREFERENCE: only-managed`, so CI runs on a Python uv downloads, never on one the
+runner image ships, even when the image's is the same patch. `tests/rails/test_ci_contract.py` holds the
+workflows and the image to these files. CI pins every action, image and tool its workflows and
+Dockerfiles fetch, apart from OS packages and the dated exceptions in
+`tools/ci/supply-chain.toml`, and every job holds only the token permissions it uses: see
+"Supply chain" in [docs/maintainers/ci.md](docs/maintainers/ci.md) for how to pin, what the
+check does not read, and how a refresh arrives.
+
+**git 2.12 or newer.** PersonalClaw's own git refuses an older one
+(`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own
+configuration from running a program, so the time-travel, worktree and updater tests need it
+too. `git version` says which you have.
+
+```bash
+# from the repo root
+python3 --version            # must be 3.12.x or 3.13.x
+python3 -m venv .venv        # …or: uv sync --extra dev (uv makes .venv from uv.lock)
+source .venv/bin/activate
+
+pip install -e ".[dev]"      # with uv, skip this: uv sync installed the checkout already
+
+# build the dashboard SPA once (rebuilds are picked up live)
+make web-build
+
+# run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
+make serve
+
+# git hooks (DCO sign-off, pre-commit lint, pre-push gates) install with npm install;
+# this re-runs it explicitly. Then the browser the render smoke needs.
+npm run hooks:install
+npx playwright install chromium
+```
+
+**`uv.lock` decides the tool versions, not your resolver.** CI installs with `uv sync --locked --extra
+dev`, so the lockfile is what actually judges a PR; the `pip install` above ignores it and resolves
+freely. To keep the two from disagreeing, the formatter/linter majors in `pyproject.toml` are bounded to
+the major the lock resolves — widening a bound means bumping the lock in the same change.
+
+If `make lint` flags **files you did not touch**, suspect a tool-version skew before you read the code.
+`isort 9` reports eight incorrectly-sorted files on a byte-clean tree where the locked `8.0.1`
+reports none. Check the tool's version first; that is a one-command answer to what otherwise looks like
+a mysterious repo-wide red.
+
+Useful Makefile targets (see `make help` for the full list):
+
+| Target | What it does |
+|---|---|
+| `make test` | Run the Python test suite (pytest). |
+| `make check` / `make gate` | Run the change / merge tier's CI jobs from `tools/ci/catalogue.toml` on this machine, as CI runs them: `make check` before a commit, `make gate` before opening or updating a pull request. `make check` runs on the working tree as it stands, uncommitted changes included, and writes no record; `make gate` runs on the committed tree and records each job. Exit 0: every planned job ran here and passed; 1: one failed; 2: one cannot run on this machine (the summary names it; CI runs it), or, for `make gate`, the tree was not committed so no record was left. GitHub CI on the pull request is the gate: a local run never stands in for it. |
+| `make lint` / `make format` | black + isort + flake8 + mypy / auto-format. |
+| `make web-build` | Build the React SPA and link `static/dist -> web/dist` (a symlink by design — never copy). |
+| `make build` | Build a distribution: the sdist and wheel, inspected and proved reproducible (below). |
+| `make serve` / `make serve-fresh` | Dev gateway on `127.0.0.1:10000` with an isolated `PERSONALCLAW_HOME`, reachable from this machine only / same, after a fresh SPA build. |
+| `make serve-lan` | The same gateway opened to the local network on purpose: any device there reaches it with no token. |
+| `make serve-web` | Vite dev server with HMR on `:3100` (`server.port` in `web/vite.config.ts`), proxying `/api` — the `/api/ws` socket included — and `/apps` to a running gateway. |
+
+Frontend tests run from the repo root: `npm run test:web` (vitest).
+
+**The pre-commit lint hook.** Once `npm run hooks:install` has run, a
+repository-owned `pre-commit` hook formats the staged Python files with black
+and isort — writing the fixes back into the commit — and then runs flake8,
+blocking the commit only on issues that can't be auto-fixed (an unused import,
+an undefined name). It mirrors CI's `lint` job so the mechanical reformatting
+that otherwise fails a PR after the fact is handled before the commit is made.
+It runs only when a commit stages a `.py` file, so frontend-only and docs
+commits are unaffected. mypy is not run here (a per-file type check without the
+full module graph is noisy and slow) — run `make lint` for the complete gate,
+and `git commit --no-verify` to bypass the hook for a deliberate WIP commit.
+
+**The render-smoke gate.** Static checks are not enough for the frontend:
+typecheck, vitest (jsdom), and `vite build` all passed while the v0.1.0
+release shipped a blank dashboard — a dependency skew split the installed tree
+across React 18 and React-DOM 19, and the bundle crashed at first render in a
+way only a real browser exposes. So every frontend-affecting push must also
+prove the **built artifact mounts**. The render smoke is the Playwright `smoke`
+project (`web/e2e/smoke.spec.ts`): it loads the key routes of the built `web/dist`
+in headless Chromium with every `/api` call answered in the page, so no gateway is
+involved, and asserts `#root` renders real content with no uncaught errors, no
+ErrorBoundary fallback and no widget's "Couldn't show …" notice. Run it on its own
+with `make web-build` (which stamps the build) and then
+`cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`. The
+preview refuses a dist whose stamp does not match the sources, so an unstamped or
+stale build fails before any test. The
+repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
+whole chain — clean `npm ci` (this is what catches declared-vs-resolved
+lockfile skew), typecheck, vitest, build, stamp, render smoke — automatically whenever
+outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and needs the
+repo's `.venv` to stamp the build. In CI the smoke runs in whichever `e2e-shard` leg
+Playwright's split gives it, against the build the `web` job stamped and uploaded, and the
+`e2e` job judges the report merged from every leg.
+
+"Outgoing commits" means **what your branch adds on top of `main`**, measured
+from the merge-base with `origin/main` — not the range between your branch and
+whatever the remote still points at. Those differ the moment you rebase: the old
+remote tip stops being an ancestor, and the naive range then spans every `main`
+commit in between, so a backend-only branch would pay the whole frontend chain
+for somebody else's `web/` work. Fetch `main` occasionally and the scoping stays
+tight; on a clone with no `origin/main` (a fork tracking `upstream`) the hook
+falls back to the wider range, which over-gates rather than under-gates.
+
+The same pre-push hook also checks **Python lint** (black, isort, flake8 over
+`src/personalclaw`, `tests`, `harness`, `scripts`, the same scope as CI) whenever
+outgoing commits touch those paths. pre-commit only formats what a commit
+*stages*, so commits made before the hooks were installed, or with `--no-verify`,
+would otherwise reach CI unformatted. If it fails, run `make format` then `make
+lint` and commit the result.
+
+It also runs the **asset licence check** (`python3 scripts/check_asset_licenses.py`, under a
+second) whenever the outgoing commits add or rename a tracked file outside `src/`. A new
+fixture, screenshot, font or binary must be recorded in `ASSET_LICENSES.json` (see the
+licence-record rule under [Pull requests](#pull-requests)); the gate fails with the check's
+own message, naming each file it found unrecorded, before CI or a release build does.
+
+`scripts/` is in that list because the pre-commit hook formats it and nothing
+used to check it: `make lint`, CI and pre-push all skipped the tree while
+pre-commit rewrote staged `scripts/*.py` with black and isort, so the gate a
+contributor ran and the hook that edited their files disagreed. **mypy is the one
+tool the list omits** — `scripts/` does not pass it yet, and the Makefile's
+`lint:` comment records the measured count, so the gap is a known scope rather
+than another blind spot.
+
+**Both halves check the working tree, so the push must come from the worktree
+that owns the branch.** The outgoing commits decide *which* halves run; what
+they then check is `git rev-parse --show-toplevel`. Those agree only when the
+ref you are pushing is what this worktree has `HEAD` on, so the hook refuses any
+outgoing ref that is not — naming both commits and pointing at `git worktree
+list`. Pushing `some-branch` from a checkout sitting on `main` would otherwise
+scope the gate by `some-branch`'s diff and then validate `main`'s tree: green,
+and proof of nothing about what shipped. Push one ref per worktree rather than
+batching several into one `git push` to pay the chain's cost once. A branch
+deletion carries no commits and is not affected.
+
+The same bar applies to dependency updates: a Dependabot or manual bump of
+React or the build toolchain merges only after this gate is green — reviewing
+the diff is not sufficient for changes whose failure mode is invisible to
+static checks.
+
+**Frontend builds run from the repo root**, never from inside `web/`. The root
+`package.json` owns an npm **workspace** (`web`, `desktop`) with a single
+root `package-lock.json` — workspace members carry no lockfile of their own
+(they're gitignored). Running `npm ci`/`npm install` inside a member trips npm's
+optional-dependency bug ([npm/cli#4828](https://github.com/npm/cli/issues/4828))
+and silently skips the platform-native binaries (rollup/esbuild/lightningcss),
+producing a broken build. Use `make web-build` (or `npm ci && npm run build
+--workspace web`). If a build ever fails with `Cannot find module
+@rollup/rollup-<platform>` or a missing `*.node` binary, the escape hatch is
+`rm -rf node_modules package-lock.json && npm install` from the root, then
+re-commit the regenerated lockfile. (End users never hit this — `pip`/`uv`/Docker
+installs ship a prebuilt `web/dist`.)
+
+**Build a distribution with `make build`.** It removes every generated tree a build could
+re-use (`build/`, `dist/`, `*.egg-info`, `web/dist` and the `static/dist` link), installs the
+root npm workspace from `package-lock.json`, builds and stamps the SPA, and builds the sdist
+and the wheel with `uv build`. Both are inspected against the checkout: every package,
+dashboard and bundled-app file the source declares and nothing else, metadata that matches
+`pyproject.toml`, and a wheel `RECORD` whose digests are true. Then a second wheel is built
+from the sdist and must be byte-identical to the first, and the wheel is installed into a
+scratch venv and served. That rebuild holds because the build backend is pinned
+(`build-system.requires`) and every archive timestamp is a fixed `SOURCE_DATE_EPOCH`. A bare
+`uv build` still works, and a wheel without a built dashboard is still a valid build: the
+apps repo's CI installs core that way, and the gateway answers `/` with its "Build the
+dashboard" page. `make build` never produces one: it builds the dashboard first and fails a
+wheel that lacks it.
+
+Two runtime facts that save debugging time:
+
+- **Backend `.py` changes need a gateway restart** to take effect; frontend
+  rebuilds are served live from `web/dist`.
+- **The gateway loads installed app copies** from `~/.personalclaw/apps/<name>/`,
+  not the workspace `apps/` tree — push app edits to a running gateway via
+  `POST /api/apps/{name}/update`.
+
+## Testing expectations
+
+- Every behavior change comes with tests. The suite is large; run the shards
+  relevant to your change locally, and the full suite before a PR.
+- Prove a behaviour once. When a variation earns its own test, and when it is a row in a
+  table test instead: [docs/maintainers/testing.md](docs/maintainers/testing.md).
+- Destructive tests must be isolated: monkeypatch `config_dir`/`tmp_path` so a
+  test can never touch a real `~/.personalclaw` (this has bitten before).
+- A fake key looks like no key. A test that only passes an API key or a token through uses a
+  neutral fake (`fake-anthropic-test`); the repository is public and secret scanners read it.
+  A test of shape-based detection (a redactor, a masker, the secret lint) may keep a provider's
+  prefix, never a real token's format: use the AWS documentation's `…EXAMPLE` key id, or split a
+  PEM header or JWT in the source (`"-----" "BEGIN …"`). `tests/test_test_values_have_no_real_token_format.py`
+  holds the test code to that.
+- The config system has a round-trip contract: a new config field must appear in
+  the dataclass (+ `_meta`), `load()`, `to_dict()`, and a write path —
+  `test_config_roundtrip.py` enforces most of this generically.
+
+### <a name="sdk-changes"></a>SDK changes: a reviewed diff, with the apps named
+
+`personalclaw.sdk.*` is what the first-party apps (the PersonalClawApps repository) and
+third-party apps build against, and they ship separately from core. So a change there is a
+change to someone else's program, and it is handled as one:
+
+- **Every published signature is checked in**, in `src/personalclaw/sdk/signatures.json`.
+  `tests/test_sdk_signature_snapshot.py` fails until it matches the code — including when
+  what changed is a core function the SDK only RE-EXPORTS (#3599 edited `context.py` alone).
+  Regenerate it with `make sdk-snapshot` and read the diff it prints.
+- **A type change must break old callers loudly.** A parameter that keeps its place and
+  changes its type — or a new parameter inserted before others — still binds for an old
+  caller, which then fails or misbehaves inside the function, where an app can swallow the
+  error. Rename the parameter AND make it keyword-only (or add the new one at the end,
+  keyword-only). `make sdk-snapshot` refuses the silent shape unless you pass
+  `--allow-silent-break` for a genuine widening.
+- **The CHANGELOG headline names the apps the change affects.** Every SDK change needs an
+  entry under `## [Unreleased]`; one that removes or changes something (not only adds)
+  names each app that uses it in its headline, by bundle name in backticks or by a family
+  glob ([the CHANGELOG](#changelog)). CI's `apps-contract` job computes that list from the
+  apps' own imports and calls, and fails a headline that leaves one out.
+- **CI runs the apps' contract on it.** On any change under `src/personalclaw/sdk/`, the
+  `apps-contract` job checks out PersonalClawApps and runs, against your core, its SDK
+  contract rails over every bundle and each bundle's `tests/test_sdk_contract.py`. Run it
+  locally with `make apps-contract APPS_DIR=../PersonalClawApps`. A problem on a symbol your
+  change did not touch is reported as the app's own and does not fail your PR.
+
+### Mutation testing: never edit the source by hand
+
+If you are checking whether a test can actually FAIL — deliberately breaking a line
+to see a rail fire — apply the change through the harness, not by hand:
+
+```bash
+python scripts/mutation_harness.py run  --spec mutations.json --command "pytest -q tests/test_x.py"
+python scripts/mutation_harness.py apply --spec mutations.json   # mutate and leave it mutated
+python scripts/mutation_harness.py restore                       # put it back, byte-exactly
+python scripts/mutation_harness.py check                         # did a run die mid-mutation?
+```
+
+A spec file is a JSON list of `{"path", "old", "new", "label"?}`; `old` must occur
+exactly once in the file. `run` applies one mutation at a time and reports each as
+`caught` (your command failed — good) or `SURVIVED` (your command passed against
+mutated code — a hole in the tests).
+
+**Why the harness rather than an editor.** A hand-driven run that dies partway
+through — a `pkill`, a closed laptop, an OOM — leaves the mutation **in the
+source**. Every later suite then honestly passes against mutated code, and if the
+mutated line is uncovered, everything is green and a later commit carries the
+mutation to `main`. This happened (#2710). A `finally:` does not fix it: `SIGKILL`
+runs no `finally:`, no `atexit` handler and no signal handler.
+
+So the harness copies each file's pristine bytes into `.mutation-session/` and
+fsyncs a journal naming that copy **before the first edit**. Two consequences:
+`restore` works from any later process, and the session directory's mere existence
+proves a run did not finish — which is why `pre-commit` refuses a commit while one
+is outstanding. `restore` refuses to overwrite a file you edited after the mutation
+(it records both digests), so it cannot eat real work; pass `--force` to discard.
+
+## Pull requests
+
+- **One concern per PR.** Keep refactors separate from behavior changes.
+- **Describe what you validated**, not just what you wrote — which flows you
+  drove in the UI, what you checked in persistence.
+- **No dead code, no commented-out blocks, no "phase 2" stubs.** Ship the whole
+  slice or don't ship it (clean break, above).
+- **Docs are part of the change.** If you alter config fields, routes, or CLI
+  flags, update [docs/reference/](docs/reference/) in the same PR.
+- **A new font, image, binary or fixture needs a licence record.** List its path
+  in a group in [`ASSET_LICENSES.json`](ASSET_LICENSES.json): a project-owned group
+  if the project made it, or a third-party group with its source, version, copyright
+  lines and sha256 if it did not, plus its notice in
+  `web/public/THIRD_PARTY_NOTICES.txt`. A font is always third-party, and
+  `web/src/design/fonts.css` serves only a font recorded that way.
+  `make asset-licenses` checks the tree and `make asset-licenses-built` checks
+  what the web build emits.
+- **A new npm dependency brings its own notice.** `npm run build` writes
+  `THIRD_PARTY_NOTICES_NPM.txt` into `web/dist` from what it bundled, so there is
+  nothing to add by hand. The build fails when a bundled package declares no licence
+  or ships no licence file. Then add a record for that exact version to
+  [`web/npm-license-records.json`](web/npm-license-records.json), with the fact
+  sourced upstream and a note saying where from.
+- Match the existing style; `make lint` must pass.
+
+### <a name="changelog"></a>The CHANGELOG: one headline per change
+
+Every entry is ONE line under `## [Unreleased]`, in its section (`### Added`, `### Changed`,
+`### Removed`, `### Fixed` or `### Security`):
+
+```markdown
+- **Settings → Security sets how long a sign-in lasts.**
+```
+
+- **The headline is the whole entry.** No body, no continuation line, no text after the
+  closing `**` and no prose between entries. Say what changed as a user meets it; how it
+  was built belongs in the commit message. `tests/test_changelog_headline_only.py`
+  enforces the form, and the in-app Updates panel renders the file as it is.
+- **A release's introduction is the one place for prose.** When a release is cut, a
+  short paragraph right under its `## [X.Y.Z]` heading, before its first `###` section,
+  says what the release is about. The website's release summary and the release notes
+  are built from it, and Settings → Updates shows it under the release's heading. It is
+  plain paragraphs (a quoted note is fine), never indented, and nowhere else.
+- **Upgrade steps, config keys and SDK notes go in the docs**, where a reader looks for
+  them: what a user must do to upgrade (`personalclaw snapshot`, a renamed field, a token
+  to re-mint) in [Updating](docs/guides/getting-started.md#updating), a config field in
+  [docs/reference/](docs/reference/), and an SDK change in the `signatures.json` diff and
+  the guide for the kind of app it touches.
+- **An SDK change's headline names the apps it affects**, each by its bundle name in
+  backticks: `` `slack-channel` ``. For a family of apps, a backticked glob over bundle
+  names is the short form: `` `*-channel` `` names every channel app. A glob is an exact
+  list written short, so it must match only apps the change affects: CI's
+  `apps-contract` job refuses one that also matches an app the change leaves alone, or
+  that matches no app at all. See [SDK changes](#sdk-changes).
+
+### What each step validates
+
+A branch is checked with `make check` before a commit: the change tier, on your working tree as
+it stands. A pull request is checked with `make gate` before you open or update it (the merge
+tier, on the committed tree), and then by GitHub CI on the pull request, which is the gate: no
+local run, yours or anyone's, stands in for it. A `merge-verdict` check that sums up the pull
+request's run comes later (#3910). A release is cut from a `main` commit whose own main-push run
+is green ([release runbook](docs/maintainers/release-runbook.md#tagging)); a release gate that
+enforces this and reads the nightly breadth comes later (#3911). There is no batch step and no
+push to `main`: each change lands as the squash merge of its own up-to-date pull request. You
+need no tool beyond this repository's commands. "Local tooling and evidence" in
+[docs/maintainers/ci.md](docs/maintainers/ci.md) says what any faster local tooling may decide,
+and that a missing or unreadable input always falls back to these commands.
+
+### What CI will and won't tell you on your first PR
+
+If you open a PR from a fork and your GitHub account is only a few days old,
+GitHub holds the `CI` workflow until a maintainer releases it. Until then the
+only check you see is `dco`, and **nothing has compiled or tested your code
+yet** — a green-looking PR with one check on it has not been verified. This has
+bitten real PRs here: two sat for a day with a TypeScript file that did not
+parse, and the only red mark on them was an unrelated sign-off failure.
+
+So run the gate locally before you push, rather than waiting to hear:
+
+```bash
+make lint                                   # black · isort · flake8 · mypy
+pytest -n 4 --dist worksteal                # the Python suite
+npm run typecheck:web && npm run test:web   # only if you touched web/
+```
+
+A bare `pytest` runs in one process with no coverage, which suits a file or two and takes hours
+for the whole suite, so the suite names its workers. Coverage is opt-in: add `--cov=personalclaw`.
+
+When `lint` does fail in CI, a bot posts the exact fix as a PR comment — that
+works on fork PRs too, via a relay workflow, because CI itself is given a
+read-only token on a fork and cannot comment.
+
+### Reading a red `test` without reading the log
+
+A failing test job annotates only `Process completed with exit code 1`, which
+does not name the case — and the suite's log is long enough that the summary is
+sometimes truncated away. So every pytest step in CI writes a JUnit XML and
+uploads it as a run artifact even when the job fails. Download the small XML
+instead of the log:
+
+```bash
+gh run list --branch <your-branch> --limit 1            # get the run id
+gh run download <run-id> --name junit-test-shard-2      # 1…4, one per shard
+```
+
+`<testcase>` elements with a `<failure>` child are the failures, with the node
+id and the assertion message. The other jobs publish theirs under
+`junit-browse-live` (the `e2e` job's browse proof), `junit-rails-1` and `junit-rails-2` (the
+two halves of the rails), `junit-npm-floors`, `junit-client` and
+`junit-lint-installer`, and the `e2e` job uploads its browser run's JSON, blob and HTML
+reports as `e2e-reports`;
+the nightly `full` workflow adds one per matrix leg. This is how you tell a
+known flake from a genuine break without a blind re-run.
+
+**A flaky failure stays red.** A test that fails and then passes on a re-run is
+still a failure: the first result is the result, and a green re-run does not
+make it a pass. It stays red until it is fixed, or until it is quarantined in
+`tests/quarantine.toml`. An entry there names an issue that tracks the fix, the
+person who owns it, and an expiry at most 30 days out, and the list holds at
+most 10. A rail (`tests/rails/`) or a `security`-marked test is never
+quarantined. An open issue alone waives nothing, and neither does an `xfail`
+mark or `pytest.xfail()`: an expected failure the list does not name is red.
+The rules are in "The quarantine" in
+[docs/maintainers/ci.md](docs/maintainers/ci.md).
+
+## Architecture orientation
+
+- Core package: `src/personalclaw/` — gateway (`gateway.py`), dashboard API
+  (`dashboard/`), agents, memory, knowledge, loops, tasks, skills, app platform
+  (`apps/`, `providers/`, `sdk/`).
+- Extension apps: the workspace `apps/` directory (siblings of this repo) —
+  every vendor integration lives there.
+- Frontend: `web/` (Vite + React SPA).
+- Reference docs: [docs/reference/](docs/reference/); user guides:
+  [docs/guides/](docs/guides/); forward-looking plans:
+  the maintainer's roadmap, which is not in this repository (it is maintained by the
+  project owner — open an issue to discuss it rather than editing it in a PR).
+
+## License
+
+By contributing you agree that your contributions are licensed under the
+project's [MIT License](LICENSE). The third-party fonts the dashboard ships keep
+their own licences, reproduced in `web/public/THIRD_PARTY_NOTICES.txt`.

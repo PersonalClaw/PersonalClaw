@@ -1,0 +1,886 @@
+# The catalogue of CI's validation jobs, read by tools/ci/catalogue.py.
+#
+# One [[job]] per job. Nothing runs from this file yet: ci.yml still runs its own run: lines,
+# and the CI contract table's row "every catalogue command is the workflow's" holds the two to
+# each other: each step below is a run: line of the ci.yml job it maps to, token for token and in
+# order, and each run: line of that job that validates something is one entry's step. Change a
+# command in both places, in the same commit. docs/maintainers/ci.md ("The catalogue") says what
+# each field means and how to add a job.
+#
+# A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
+# workflow step's own env) set on top of its job's. A value only the runner knows is a
+# placeholder: {runner_temp}, {shard}, {base}, {python} or {run_number}. An install (`uv sync`,
+# `npm ci`, the Playwright browser install) is never a step: it is the job's toolchain, which
+# whatever runs the job installs first, and each job names every install it needs.
+#
+# `inputs` are git pathspecs, and tools/ci/plan.py plans each run from them: a changed path a
+# job's inputs reach, or a path one of its steps runs, schedules that job. A path no input but
+# the whole tree names plans the whole tier. e2e, apps-contract and python-suite name their
+# inputs; every other job still declares the whole tree, and each is narrowed in a change of its
+# own, with its reason and a planted path. tools/ci/areas.toml holds the explicit overrides,
+# which add jobs for named paths and only add.
+
+# The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
+# those, so dropping one from the merge tier takes two edits.
+[tier.merge]
+jobs = [
+  "static",
+  "rails",
+  "rails-checks",
+  "python-suite",
+  "python-suite-macos",
+  "client",
+  "web-unit",
+  "web-build",
+  "package",
+  "e2e",
+  "e2e-shard",
+  "e2e-stateful",
+  "browse-live",
+  "security",
+  "apps-contract",
+  "audit",
+]
+
+[[job]]
+id = "static"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "shellcheck", "dash"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 10
+junit = ["reports/junit-lint-installer.xml"]
+command = [
+  { argv = ["uv", "run", "black", "--check", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "isort", "--check-only", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "flake8", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "mypy", "src/personalclaw", "harness", "tools/ci"] },
+  { argv = ["uv", "run", "python", "scripts/lint_bundled_apps.py"] },
+  { argv = ["sh", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["dash", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["shellcheck", "-s", "sh", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["uv", "run", "pytest", "tests/test_website_installer.py", "--junitxml=reports/junit-lint-installer.xml"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },
+]
+
+[[job]]
+id = "rails"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "node"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 10
+workers = 4
+shards = 2
+needs_node = true
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-rails-{shard}.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-half-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"] },
+]
+
+# The checks that ran beside the rails before they were halved: the census's own verdict (which
+# also holds every rail to exactly one half), the asset licences, the gate aggregate and the npm
+# advisory floors over the installed tree. Every plan holds it, as it holds the rails, whatever
+# its inputs (catalogue.RAILS_CHECKS_JOB), and a merge tier whose rails run in halves without it
+# is refused.
+[[job]]
+id = "rails-checks"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "node", "npm-ci"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 10
+needs_node = true
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-npm-floors.xml"]
+command = [
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] },
+  { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
+  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },
+  { argv = ["uv", "run", "pytest", "tests/test_npm_advisory_floors.py", "--junitxml=reports/junit-npm-floors.xml"], env = { PERSONALCLAW_REQUIRE_NPM_TREE = "1" } },
+]
+
+# The suite, its security-marked modules included: the merge tier's security evidence is this
+# run of them, so the job is security posture and never reused, and every plan holds it.
+#
+# So its inputs do not decide whether it runs; they decide which paths are known. They are what
+# the suite reads, held to a census by tests/rails/test_ci_python_suite_inputs_tree.py: every
+# tracked path, since the suite's publication-hygiene tests list the tracked tree and open each
+# file in it, and every path a suite module names. The list is every top-level entry but
+# flake.nix and flake.lock, which the suite reads too and the list leaves out on purpose: the
+# flake is what the Nix workflow builds and checks, a workflow of its own and no catalogue job,
+# so a change to it alone is named by no input and plans the whole tier. A path in the list is
+# known, so a src/ diff plans the jobs it reaches, not the whole tier, and leaves apps-contract
+# out unless it reaches the SDK. A new top-level path no input names plans the whole tier; a new
+# root *.md is named by e2e's exclusion, so it is known. An entry leaves this list only when no
+# suite test reads it, which waits on the publication-hygiene tests' real-tree runs moving to
+# tests/rails.
+[[job]]
+id = "python-suite"
+tiers = ["merge"]
+inputs = [
+".dockerignore",
+".env.example",
+".githooks/",
+".github/",
+".gitignore",
+".nvmrc",
+".python-version",
+"AGENTS.md",
+"ASSET_LICENSES.json",
+"CHANGELOG.md",
+"CLAUDE.md",
+"CODE_OF_CONDUCT.md",
+"CONTRIBUTING.md",
+"LICENSE",
+"MAINTAINERS",
+"MANIFEST.in",
+"Makefile",
+"README.md",
+"SECURITY.md",
+"SHOWCASE.md",
+"config-baseline.json",
+"deploy/",
+"desktop/",
+"docs-lint-baseline.json",
+"docs/",
+"harness/",
+"inert-surface-baseline.json",
+"mobile/",
+"nix/",
+"package-lock.json",
+"package.json",
+"packages/",
+"personalclaw-backend.spec",
+"publication-hygiene-baseline.json",
+"pyproject.toml",
+"scripts/",
+"setup.cfg",
+"setup.py",
+"src/",
+"structural-baseline.json",
+"tests/",
+"tools/",
+"uv.lock",
+"web/",
+]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+python = "3.12.15"
+timeout_min = 55
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-test-shard-{shard}.xml"]
+command = [
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-shard", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"] },
+]
+
+[[job]]
+id = "python-suite-macos"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.13.16"
+timeout_min = 50
+workers = 2
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-test-macos-{shard}.xml"]
+command = [
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
+]
+
+# The adversarial scanner corpus and the supply-chain scanner's tests: on every run, the merge
+# tier's third security job, and nightly. No suite shard collects these files (JOB_OWNED).
+[[job]]
+id = "security"
+tiers = ["change", "merge", "breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+python = "3.12.15"
+timeout_min = 25
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-security-corpus.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
+]
+
+# The same files on macOS, nightly only: no suite shard collects them (JOB_OWNED), so this leg is
+# their one macOS run. It runs 3.13 and `security` runs 3.12, so the corpus runs on each Python
+# requires-python allows. Security posture, never reused.
+[[job]]
+id = "security-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.13.16"
+timeout_min = 25
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-security-corpus-macos.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus-macos.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
+]
+
+# breadth.yml's legs (#3909). Each suite leg runs the suite, so the security-marked modules: it
+# is security posture, never reused, and breadth runs it every night, carrying nothing.
+[[job]]
+id = "suite-ubuntu"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-ubuntu.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "ubuntu", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-ubuntu.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"] },
+]
+
+[[job]]
+id = "suite-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.12.15"
+timeout_min = 45
+workers = 2
+shards = 6
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-macos.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "macos", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-macos.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-macos-{shard}.txt"] },
+]
+
+[[job]]
+id = "suite-arm"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04-arm"
+python = "3.13.16"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-arm.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "arm", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-arm.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-arm-{shard}.txt"] },
+]
+
+[[job]]
+id = "suite-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-26.04"
+python = "3.12.15"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-canary.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "canary", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-canary.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-canary-{shard}.txt"] },
+]
+
+# The suite in two seeded orders every night (#3949; tests/random_order.py): each shard runs its
+# share twice, seeded the run's number times 10 plus 1 and plus 2, so a rerun of the run repeats
+# the orders. It runs the suite, so the security-marked modules: security posture, and never
+# reused, as its seeds change every run ({run_number}). Both orders write the shard's ids, which
+# shard-union holds to planned-ids-random-order.
+[[job]]
+id = "random-order"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 60
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-random-order-1.xml", "reports/junit-random-order-2.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "random-order", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}1", "--junitxml=reports/junit-random-order-1.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+]
+
+[[job]]
+id = "coverage-shard"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.12.15"
+timeout_min = 60
+workers = "auto"
+shards = 6
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1", COVERAGE_FILE = ".coverage.shard{shard}" }
+junit = ["reports/junit-coverage-shard.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "coverage-shard", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "--cov=personalclaw", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-coverage-shard-{shard}.txt"] },
+]
+
+# The coverage shards' data combined into one report: all six shards' data or none.
+[[job]]
+id = "coverage"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+after = ["coverage-shard"]
+command = [
+  { argv = ["sh", "tools/ci/coverage_combine.sh"] },
+]
+
+# The rails on macOS, and breadth's one whole-tree harness scan: breadth runs no static. No rail
+# is security-marked, so this leg alone may carry an earlier result on identical inputs.
+[[job]]
+id = "rails-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "macos-26"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 30
+workers = 2
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-rails-macos.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },
+]
+
+# One whole-suite collection in one process with the parse guard loaded (#3927): red on a parse
+# of the source tree while pytest collects. It collects and runs no test (--collect-only), so it
+# is no security evidence, and it may carry an earlier result on identical inputs.
+[[job]]
+id = "collection-parses"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+reuse = "tree"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-collection-parses.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "-p", "collection_parse_guard", "tests", "--junitxml=reports/junit-collection-parses.xml"], env = { PYTHONPATH = "tests" } },
+]
+
+# The installer smoke, in a bare container: the checkout's wheel, the staged installer and the
+# served one-liner, each a script under tools/ci/ run as `sh <script>`, in turn. It reads PyPI and
+# the installer the website serves as they are the night it runs, so it is live, as the nightly
+# audit is, and its evidence is never reused, by TTL or by tree.
+[[job]]
+id = "install-smoke"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["package-index"]
+toolchain = ["uv"]
+cache = []
+security = "ordinary"
+live = true
+python = "3.13.16"
+timeout_min = 20
+script = [
+  "tools/ci/install_smoke_current.sh",
+  "tools/ci/install_smoke_staged.sh",
+  "tools/ci/install_smoke_served.sh",
+]
+container = "ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794"
+
+# #3923: each suite leg's planned suite, collected on that leg's own runner and Python, and the
+# union check that holds the leg's shards to it. They collect and run no test, so they are no
+# security evidence; they run every night, since the union reads tonight's collections.
+[[job]]
+id = "planned-ids-ubuntu"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-ubuntu.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-ubuntu.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-ubuntu.txt"] },
+]
+
+[[job]]
+id = "planned-ids-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "macos-26"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-macos.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-macos.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-macos.txt"] },
+]
+
+[[job]]
+id = "planned-ids-arm"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04-arm"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-arm.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-arm.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-arm.txt"] },
+]
+
+[[job]]
+id = "planned-ids-coverage-shard"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-coverage-shard.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-coverage-shard.txt"] },
+]
+
+[[job]]
+id = "planned-ids-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-26.04"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-canary.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-canary.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-canary.txt"] },
+]
+
+[[job]]
+id = "planned-ids-random-order"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-random-order.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-random-order.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-random-order.txt"] },
+]
+
+# The union of the five legs whose red is the run's. The canary's is its own job, advisory as
+# the canary is, so the next image's red never reds this one.
+[[job]]
+id = "shard-union"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+timeout_min = 10
+after = ["suite-ubuntu", "suite-macos", "suite-arm", "coverage-shard", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "planned-ids-coverage-shard", "random-order", "planned-ids-random-order"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "coverage-shard:6", "--leg", "random-order:4"] },
+]
+
+[[job]]
+id = "shard-union-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+timeout_min = 10
+after = ["suite-canary", "planned-ids-canary"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "canary:4"] },
+]
+
+# The dependency audit every night on main, where a new advisory lands without a commit. The
+# same command as `audit`, under breadth's cap.
+[[job]]
+id = "audit-nightly"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["advisory-feed", "package-index"]
+toolchain = ["uv", "node"]
+cache = ["uv"]
+security = "ordinary"
+live = true
+python = "3.12.15"
+timeout_min = 20
+needs_node = true
+install_exemptions = [
+  { install = "uv pip install --python {runner_temp}/audit-venv/bin/python pip-audit==2.10.1", reason = "the auditor runs in a venv of its own, apart from the graphs it audits; its version is pinned" },
+]
+command = [
+  { argv = ["uv", "venv", "{runner_temp}/audit-venv"] },
+  { argv = ["uv", "pip", "install", "--python", "{runner_temp}/audit-venv/bin/python", "pip-audit==2.10.1"] },
+  { argv = ["{runner_temp}/audit-venv/bin/python", "-m", "tools.ci", "audit", "run", "--pip-audit", "{runner_temp}/audit-venv/bin/python", "--work", "{runner_temp}/audit"] },
+]
+
+[[job]]
+id = "client"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = ["package-index"]
+toolchain = ["uv"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 5
+junit = ["reports/junit-client.xml"]
+install_exemptions = [
+  { install = "uv pip install --python .venv-client packages/personalclaw-client-py[dev]", reason = "the client is not part of core's uv workspace and has no lock of its own" },
+]
+command = [
+  { argv = ["uv", "build", "packages/personalclaw-client-py", "--out-dir", "dist-client"] },
+  { argv = ["uv", "venv", ".venv-client"] },
+  { argv = ["uv", "pip", "install", "--python", ".venv-client", "packages/personalclaw-client-py[dev]"] },
+  { argv = [".venv-client/bin/python", "-m", "pytest", "packages/personalclaw-client-py/tests", "--junitxml=reports/junit-client.xml"] },
+]
+
+# The web job's tests, its build, and the wheel built with that build: three entries, one job.
+# ci.yml sets VITEST_MAX_WORKERS to the runner's core count, through GITHUB_ENV, before the
+# vitest steps: workers = "auto", and workers_env names the variable the runner sets to it.
+[[job]]
+id = "web-unit"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 45
+workers = "auto"
+workers_env = "VITEST_MAX_WORKERS"
+needs_node = true
+# Vitest writes it under CI (web/vitest.config.ts), and run-job reruns its failed tests from it.
+junit = ["reports/junit-web-unit.xml"]
+command = [
+  { argv = ["npm", "run", "typecheck:web"] },
+  { argv = ["npm", "run", "test:web"] },
+  { argv = ["npm", "run", "test:desktop"] },
+  { argv = ["npm", "run", "test:mobile"] },
+]
+
+[[job]]
+id = "web-build"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 45
+needs_node = true
+command = [
+  { argv = ["npm", "run", "build"] },
+  { argv = ["python3", "scripts/check_asset_licenses.py", "--built-web"] },
+  { argv = ["python3", "scripts/spa_dist_freshness.py", "stamp"] },
+]
+
+[[job]]
+id = "package"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 45
+after = ["web-build"]
+command = [
+  { argv = ["uv", "build", "--wheel", "--out-dir", "dist"] },
+  { argv = ["uv", "run", "--no-project", "python", "scripts/verify_wheel.py", "--wheel", "dist/*.whl"] },
+]
+
+# The browser run boots the gateway and drives a real Chromium. Its inputs are the whole tree
+# less what provably cannot reach a rendered pixel or the harness boot; each exclusion below
+# carries the reason the ignore-list it replaced gave, word for word. src/personalclaw/** is
+# never excluded: a backend diff can change the DOM the browser run scans.
+# - docs/**: prose only. Nothing under docs/ is served by the gateway or packaged into the wheel at
+#   runtime — pyproject.toml references it only as a Documentation URL.
+# - *.md at the repo root: README / CHANGELOG / CONTRIBUTING / AGENTS / SECURITY. Deliberately NOT
+#   '*.md anywhere': src/personalclaw/config/prompt_snippets/*.md is model input, not prose.
+# - tests/**: the pytest suite does not run inside the Playwright harness — the harness boots the
+#   gateway, not pytest — so a test-only change cannot alter scanned DOM.
+# - harness/**: repo-inner self-verification infra. src/personalclaw/ imports no `harness` module
+#   (grepped), so it is absent from the gateway the harness boots.
+# - packages/personalclaw-client-py/**: independently versioned/published client, NOT part of the
+#   core uv workspace (ci.yml's `client` job builds it in its own venv) and not imported by
+#   src/personalclaw/.
+# - .github/** except workflows/ci.yml and actions/**: issue templates, dependabot config and the
+#   other workflows cannot change a rendered pixel. ci.yml and the local actions under
+#   .github/actions/ are EXCLUDED from this exemption because they define the `e2e` job itself:
+#   ci.yml writes its steps, and a local action runs its own steps inside the job wherever the job
+#   calls it. Editing either must re-validate the job, or a broken job definition would be waved
+#   through by the very gate it broke.
+# Those exceptions are tools/ci/areas.toml's overrides of every workflow and every local action,
+# which plan the whole tier.
+[[job]]
+id = "e2e"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+timeout_min = 10
+needs_node = true
+after = ["e2e-shard", "e2e-stateful"]
+command = [
+  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "stateful"], workdir = "web" },
+  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
+  { argv = ["node", "e2e/assert-one-run.mjs", "e2e-report.json"], workdir = "web" },
+]
+
+# The browser run itself, in the legs `e2e` merges (#3939): two shards of the specs that share a
+# gateway, and the stateful set on a gateway of its own. Their inputs are e2e's, so one plan
+# schedules all three. Each writes its blob report under web/blob-report/<leg>/, so a run of the
+# legs one after another in one checkout keeps every blob for the merge.
+[[job]]
+id = "e2e-shard"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 30
+shards = 2
+needs_node = true
+needs_browser = true
+after = ["web-build"]
+command = [
+  { argv = ["npx", "playwright", "test", "--project=smoke", "--project=chromium", "--shard={shard}/2", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/shard-{shard}", PW_STATEFUL_CHAIN = "0" } },
+]
+
+[[job]]
+id = "e2e-stateful"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+needs_node = true
+needs_browser = true
+after = ["web-build"]
+command = [
+  { argv = ["npx", "playwright", "test", "e2e/staleWrite.spec.ts", "e2e/deployedArtifacts.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" } },
+]
+
+# A real browser driven by the browse tool. Its steps run two security-marked modules (the
+# browsed page's safety script, and a denied navigation that never reaches the network), so its
+# result is security evidence; and it is live. Either way it is never reused, and no plan leaves
+# it out: ci.yml runs it as a job of its own that waits on nothing, on every pull request and
+# every push to main.
+[[job]]
+id = "browse-live"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "security"
+live = true
+python = "3.12.15"
+timeout_min = 20
+needs_node = true
+needs_browser = true
+junit = ["reports/junit-browse-live.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "tests/test_browse_safety_script.py", "tests/test_browse_cdp_live.py", "tests/test_browse_behavioural_proof_is_reachable.py", "--junitxml=reports/junit-browse-live.xml"], env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS = "1" } },
+]
+
+# What the apps build against. A signature change anywhere in core must regenerate the snapshot
+# under src/personalclaw/sdk/, so a trigger list is sound here where e2e needs default-deny.
+# These are the triggers of the SDK classifier ci.yml ran the job by before the plan, less that
+# classifier's own file. python-suite names every tracked path but the flake, so on any of them
+# no unknown-path fallback stands behind these inputs, and they alone decide a plan's
+# apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and plans every
+# tracked path the classifier ran the job on.
+[[job]]
+id = "apps-contract"
+tiers = ["merge"]
+inputs = [
+  "src/personalclaw/sdk/",
+  "scripts/apps_sdk_contract.py",
+  "scripts/sdk_signature_snapshot.py",
+  ".github/workflows/ci.yml",
+  ".github/actions/",
+]
+external_inputs = ["apps-partner", "package-index"]
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+command = [
+  { argv = ["uv", "run", "python", "scripts/apps_sdk_contract.py", "--apps-dir", ".ci-apps", "--base-ref", "{base}", "--install-deps"] },
+]
+
+# The dependency audit reads the advisories published at the time of the run: live, never reused.
+[[job]]
+id = "audit"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["advisory-feed", "package-index"]
+toolchain = ["uv", "node"]
+cache = ["uv"]
+security = "ordinary"
+live = true
+python = "3.12.15"
+timeout_min = 15
+needs_node = true
+install_exemptions = [
+  { install = "uv pip install --python {runner_temp}/audit-venv/bin/python pip-audit==2.10.1", reason = "the auditor runs in a venv of its own, apart from the graphs it audits; its version is pinned" },
+]
+command = [
+  { argv = ["uv", "venv", "{runner_temp}/audit-venv"] },
+  { argv = ["uv", "pip", "install", "--python", "{runner_temp}/audit-venv/bin/python", "pip-audit==2.10.1"] },
+  { argv = ["{runner_temp}/audit-venv/bin/python", "-m", "tools.ci", "audit", "run", "--pip-audit", "{runner_temp}/audit-venv/bin/python", "--work", "{runner_temp}/audit"] },
+]

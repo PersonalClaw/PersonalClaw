@@ -1,0 +1,238 @@
+import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Bell, Check, CheckCheck, X } from 'lucide-react'
+import { spring, overlayEnter, fadeEnter } from '../design/motion'
+import { api, type NotificationItem } from '../lib/api'
+import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
+import { useVisiblePoll } from '../lib/useVisiblePoll'
+import { noteMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
+import { RowHitTarget } from './RowHitTarget'
+import { UnreadRail } from '../pages/notifications/UnreadRail'
+import { rowSubject } from '../lib/rowSubject'
+import { fvs, withWeight } from '../design/fontWeight'
+import { accentChip } from '../design/accent'
+import { notify } from '../app/appSdk'
+import { confirmDelete } from './dialog'
+import { reportingWrite } from '../app/reportingWrite'
+import { InlineError } from './InlineError'
+
+const MAX_SHADE = 5
+
+/** Shell-corner notification control: a bell with an unread counter that opens a
+ *  shade of the few most-recent notifications. Each can be marked read or DELETED
+ *  in place (deleted, not "dismissed" — see the row's own note; the entry leaves
+ *  disk), opened (jumps to the full feed, deep-linked to the item), and the footer
+ *  navigates to the all-notifications page. */
+export function NotificationBell({ navigate }: { navigate: (path: string) => void }) {
+  const [items, setItems] = useState<NotificationItem[] | null>(null)
+  const [open, setOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const ref = useRef<HTMLDivElement>(null)
+
+  const [readErr, setReadErr] = useState<unknown>(null)
+
+  // The READ never toasts: it polls (and re-reads on every notification WS frame), so
+  // reporting a failed poll would toast every tick. It keeps the failure as STATE instead, and does
+  // not fabricate: a later failure leaves the previous items in place, the honest fallback for a badge.
+  // The MUTATIONS below are user-initiated, one toast each, and were the silent ones.
+  //
+  // 🔴 A COUNT IS A CLAIM. With the failure swallowed, a failed FIRST read left `items` null, the
+  // count fell back to 0, and the bell looked exactly like a day with nothing unread, while the
+  // shade said "Loading…" forever. Since Home stopped badging unread notifications, this is the one
+  // unread count on screen, so an unknown count must say it is unknown (see `unknown` below).
+  //
+  // The frames are what keep the badge current — every notify, ack, unack and removal sends one —
+  // so the poll is a once-a-minute safety net (and the tick that refreshes relative times), not
+  // the 15s re-read it was on every page.
+  const load = () => api.notifications()
+    .then((d) => { setItems(d.notifications); setReadErr(null) })
+    .catch((e) => setReadErr(e))
+  useVisiblePoll(() => { setNow(Date.now()); load() }, 60_000)
+  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() }, load)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onEsc)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc) }
+  }, [open])
+
+  // Unknown only while nothing has ever been read: once a read has landed, a failed poll keeps
+  // showing the last count it read rather than going dark.
+  const unknown = items === null && !!readErr
+  const unread = items?.filter((n) => !n.acked).length ?? 0
+  // The header pills' wording for a count that failed to load (`dashboard/widgets/HeroPulse`).
+  const UNKNOWN_READING = 'unread — couldn’t be read'
+  // The log comes newest first (`api.notifications`), so the shade is its head.
+  const recent = items ? items.slice(0, MAX_SHADE) : []
+
+  async function ack(n: NotificationItem) {
+    await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  // 🔴 THE SAME DELETE, THE SAME THREE DEFECTS — the twin #628 fixed on the full feed and this one
+  // was missed. `pages/notifications/NotificationsPage.remove()` carries the finding in its own words:
+  // *"one row's delete is as irreversible as Clear all four lines down — the entry leaves disk and
+  // `messaging.py` has no restore. Every per-row delete in the app gates on confirmDelete; this was
+  // the one that did not."* That sweep found one instance and stopped; this is the other one.
+  //
+  // Three things, all borrowed from that sibling rather than designed here:
+  //
+  //   1. `confirmDelete`, with the SUBJECT — rows in a five-item shade look alike, and the dialog has
+  //      to say which notification is about to leave disk.
+  //   2. `reportingWrite`, so the sentence comes from the one module that owns it instead of a
+  //      fourth hand-rolled copy of the same wording.
+  //   3. the tail is GATED. `load()` ran unconditionally after a swallowed failure, so a refused
+  //      delete re-rendered the identical row — "nothing happened, twice", which is exactly the
+  //      shape `reportingWrite` returns a boolean to prevent.
+  async function remove(n: NotificationItem) {
+    if (!(await confirmDelete('notification', n.title || undefined))) return
+    if (!(await reportingWrite('delete this notification', () => api.deleteNotification(n.ts)))) return
+    load()
+  }
+  async function ackAll() {
+    await api.ackAllNotifications().catch((e) => notify(`Couldn't mark all notifications read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  function openItem(n: NotificationItem) {
+    setOpen(false)
+    navigate(`notifications?open=${encodeURIComponent(n.ts)}`)
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        // 🪤 NO `aria-haspopup="menu"` — measured with the shade open: **0** `role="menu"` and **0**
+        // menuitems. What opens is a panel of notification ROWS (each with its own hit target and two
+        // actions), which is not a menu and should not claim to be; a screen-reader
+        // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
+        // honestly describes the disclosure.
+        aria-expanded={open}
+        aria-label={unknown ? `Notifications, ${UNKNOWN_READING}` : unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+        title={unknown ? UNKNOWN_READING : unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
+        className="relative grid size-7 place-items-center rounded-pill transition-colors"
+        style={open
+          ? accentChip
+          : { color: 'var(--color-on-surface-low)' }}>
+        <Bell size={16} />
+        {/* The unknown mark: a muted dash where the count would sit. Neutral and still, not coral
+            and not danger: nothing is known to be unread, only that the read failed. */}
+        {unknown && (
+          <span data-type="caption" aria-hidden
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
+            —
+          </span>
+        )}
+        {/* The unread badge. It swaps its number in place: it used to re-mount and pop on a playful
+            bounce at every change, and an unread count ticks too often for each tick to be an event. */}
+        {unread > 0 && (
+          <span data-type="caption"
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
+            style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            variants={overlayEnter} initial="initial" animate="animate" exit="exit"
+            style={{ transformOrigin: 'top right', boxShadow: 'var(--shadow-menu)' }}
+            className="absolute right-0 top-full z-40 mt-2 w-[340px] overflow-hidden rounded-lgi bg-surface-container">
+            <div className="flex items-center justify-between border-b border-outline-variant/40 px-m py-2.5">
+              <span data-type="title-s" className="text-on-surface flex items-center gap-s">
+                Notifications
+                {unread > 0 && <span data-type="caption" className="rounded-pill px-1.5 h-5 inline-flex items-center" style={accentChip}>{unread}</span>}
+              </span>
+              {unread > 0 && (
+                <button type="button" onClick={ackAll} data-type="caption"
+                  className="inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface transition-colors">
+                  <CheckCheck size={13} /> Mark all read
+                </button>
+              )}
+            </div>
+            <div className="max-h-[min(60vh,420px)] overflow-y-auto p-1">
+              {unknown ? (
+                <div className="p-s">
+                  <InlineError icon onRetry={load}>Couldn&rsquo;t load your notifications.</InlineError>
+                </div>
+              ) : items === null ? (
+                <div data-type="body-s" className="px-m py-l text-center text-on-surface-low">Loading…</div>
+              ) : recent.length === 0 ? (
+                <div className="grid place-items-center px-m py-2xl text-center">
+                  <Bell size={22} className="mb-s text-on-surface-low" />
+                  <div data-type="label-s" className="text-on-surface" style={fvs(500)}>You're all caught up</div>
+                </div>
+              ) : (
+                <motion.div initial="initial" animate="animate">
+                  <AnimatePresence initial={false}>
+                    {recent.map((n) => <ShadeRow key={n.ts} n={n} now={now} onOpen={() => openItem(n)} onAck={() => ack(n)} onDelete={() => remove(n)} />)}
+                  </AnimatePresence>
+                </motion.div>
+              )}
+            </div>
+            <button type="button" onClick={() => { setOpen(false); navigate('notifications') }}
+              data-type="label-s"
+              className="block w-full border-t border-outline-variant/40 px-m py-2.5 text-center text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors"
+              style={fvs(500)}>
+              View all notifications
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; now: number; onOpen: () => void; onAck: () => void; onDelete: () => void }) {
+  const km = noteMeta(n)
+  // 🔴 THE ACTIONS WERE BARE VERBS, and the row beside them already knew better. Measured in the open
+  // shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the whole
+  // dropdown — while the dashboard's Action Center rows a few pixels away announce
+  // "Reply: <subject>" / "Dismiss: <subject>". Exactly this was fixed on `#/notifications`
+  // (83 rows sharing three names) and THIS row was given a named hit target, which left its two
+  // actions as the last unnamed controls on the surface. WCAG 4.1.2.
+  //
+  // Bound once, like `#/notifications` does: the row and both of its actions must announce the same
+  // subject, or "Dismiss: X" sits next to a row that calls itself Y.
+  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
+  return (
+    <motion.div layout variants={fadeEnter}
+      exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
+      // The bell's dropdown carries the SAME row as `#/notifications`, so it had the same defect:
+      // click-to-open on a bare div, no tab stop, no name. Fixed the same way, in the same change —
+      // a notification row should not behave differently depending on which surface shows it.
+      tabIndex={-1}
+      className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
+      onClick={onOpen}>
+      <UnreadRail tone={km.tone} acked={n.acked} radius="md" />
+      <RowHitTarget label={subject} />
+      <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-s">
+          <span data-type="label-s" className={`truncate ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span data-type="caption" className="shrink-0 text-on-surface-low">{relTime(n.ts, now)}</span>
+        </div>
+        <p data-type="caption" className="mt-0.5 truncate text-on-surface-low">{firstLine(n.body)}</p>
+      </div>
+      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        {!n.acked && (
+          <button type="button" onClick={onAck} aria-label={`Mark read: ${subject}`} title="Mark read"
+            className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><Check size={14} /></button>
+        )}
+        {/* 🔴 "DISMISS" IS THE WRONG WORD, AND IN THIS CODEBASE IT IS LOAD-BEARING. This button calls
+            `api.deleteNotification` — the entry leaves disk and `messaging.py` has no restore — but
+            "dismiss" is the app's word for a REVERSIBLE hide, pinned as such in
+            `ui/dialog/destructiveConfirmSaysWhatGoes.test.ts`, which asserts the inbox's dismiss must
+            NOT say "cannot be undone" precisely because *"a dismissed inbox item can be restored"*.
+            So this control borrowed the one verb that promises the opposite of what it does.
+            `pages/notifications` already names the identical call "Delete"; two surfaces, one action,
+            and the full feed had it right. */}
+        <button type="button" onClick={onDelete} aria-label={`Delete: ${subject}`} title="Delete"
+          className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><X size={14} /></button>
+      </div>
+    </motion.div>
+  )
+}

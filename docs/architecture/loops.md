@@ -1,0 +1,782 @@
+# Loops — the Autonomous Work Engine
+
+A **loop** is a long-running autonomous work unit: a worker agent iterates in
+cycles toward a goal while a supervisor judges progress against ground truth.
+The engine lives in `PersonalClaw/src/personalclaw/loop/`; this doc covers the
+five kinds, stage progression, directory resolution, deliverable gates, and how
+the UI dispatches to per-kind cockpits.
+
+## Engine layout
+
+`loop/` — `manager.py` (lifecycle + orchestration), `tick.py` (the cycle
+engine), `judge.py` (supervisor judgment), `gates.py` (verify-command +
+verdict helpers), `lifecycle.py`, `watchdog.py` (stall detection),
+`worktree.py` (parallel task isolation), `store.py` (persistence),
+`classify.py` (goal classification), plus per-kind planning-brief modules
+(`code_plan_briefs.py`, `goal_plan_briefs.py`, `research_plan_briefs.py`,
+`design_plan_briefs.py`).
+
+## The five kinds
+
+`loop/loop.py` defines `LoopKind`:
+
+| Kind | What it is |
+|---|---|
+| `general` | generic iterative goal — runs as a **workflow run**, see below |
+| `goal` | open-ended / verifiable / monitor research + action |
+| `code` | SDLC stage-gated work in a workspace (mini-IDE cockpit) |
+| `design` | design-system creation (live canvas, tokens, components) |
+| `research` | deep iterative web research → synthesized report |
+
+Kind behavior is pluggable: `loop/kinds/__init__.py` defines the
+`LoopKindStrategy` protocol and a registry — **a new kind is a new strategy
+module plus one `register()` call; no engine edits**. A strategy declares its
+kind id, whether it needs a bound workspace, its default worker agent, whether
+it provisions per-phase TaskLists at launch, its classifier, phase keys, the
+deliverable document it maintains (e.g. an open-ended goal keeps `REPORT.md`,
+a monitor keeps `MONITOR_LOG.md`; code has no document — the code itself is
+the deliverable), and readiness prerequisites (a brownfield code loop with no
+bound workspace cannot start).
+
+**The supervisor is NOT part of that plugin seam.** How a loop
+converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
+`ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
+(`orchestrated` | `never` | `verify_command` | `judge_assessment`) and the
+`KIND_CONVERGENCE` table with one row per kind — or per `kind:goal_type`
+variant, because goal-type is the axis convergence actually varies on.
+`policy_for_kind(kind, kind_config)` resolves a kind to the one
+`SupervisorPolicy` that carries it, and `loop/supervisor.py` is the single
+kind-agnostic evaluator that reads it (`done_signal`, `has_done_check`,
+`budget_stop_is_genuine`, `stagnation_enabled`). The watchdog calls only those.
+A kind may not supply a convergence mechanism in Python — adding a fifth
+mechanism means extending the closed vocabulary and the one evaluator, in one
+place, for every kind at once.
+
+| Kind (variant) | marked done-signal |
+|---|---|
+| `code`, `design` | `orchestrated` — the per-cycle `on_new_cycle` hook owns done-ness |
+| `general` | `verify_command` (optional: no command ⇒ defers to budget by design) |
+| `goal:verifiable`, `research:verifiable` | `verify_command`, plus a sub-goal judge when >1 sub-goal is declared |
+| `goal:open_ended`, `research:open_ended` | `judge_assessment` (ground truth: `REPORT.md` / `RESEARCH.md`) |
+| `goal:monitor`, `research:monitor` | `never` — only a user Stop (or the budget, counted as a clean stop) ends it |
+
+## What a loop runs on
+
+A loops-table loop's planner and workers run on PersonalClaw, its kind's own worker agent, unless
+it is put on an agent CLI. Two spine fields say which: `provider` (the CLI's runtime id,
+`acp:<cli>`) and `provider_agent` (the agent that CLI offered, its ACP mode id; empty for a CLI
+that offers one). `loop/manager.py` binds them onto the stage worker and every per-task worker the
+way the chat's agent picker binds a chat, and `loop/plan_walkthrough.py` onto the planner. The
+supervisor's judge still runs on the model its use case binds (`loops.judge_use_case`).
+
+- **Choosing.** The loop composer's **Runs on** pill sends both fields with the create. Plan Review
+  changes them until launch, and so does the Runs on chip on the page of a loop that
+  has not started. The picker lists every agent CLI set up here (`GET /api/agent-providers`), by
+  the name its row carries (`label`, its app's name in the Store), each
+  ready one with the agents its last Test listed; one that is not ready is shown with why and
+  cannot be picked, and a page names a loop's runtime as unavailable when it is no longer set up,
+  no longer ready, or no longer lists the chosen agent (`web/src/pages/loop/loopRuntime.ts`).
+- **Refused, not stored.** `POST /api/loops`, `POST /api/loops/validate` and a pre-launch
+  `PUT /api/loops/{id}` refuse a `provider` that is not an `acp:<cli>` runtime registered here, a
+  malformed `provider_agent`, and a `provider_agent` with no `provider`
+  (`loop/validation.runtime_errors`). A `general` loop runs as a workflow, which cannot be put on
+  one agent CLI, so it refuses a runtime too rather than dropping it.
+- **Starting.** `PATCH /api/loops/{id} {action: start}` (and the agent's start tools) refuse a loop
+  whose CLI is not ready as the user's last Test of it found, with the CLI's own reason
+  (`loop/validation.runtime_blocker`, which starts nothing). The loop stays `ready`. A resume is not
+  re-checked, as with the kind's own launch blockers.
+- **Not the chat default.** Settings → Agent defaults' Default agent is a chat's default and never
+  reaches a loop: a loop moves onto another program only when it is chosen for that loop.
+- **On a model that uses tools.** A loop's planner and workers do all their work with tools: a
+  worker writes each cycle's finding into the loop's folder, and only what is written there is
+  credited. A loop on PersonalClaw whose model can't use tools is therefore refused before any of it
+  runs, for every kind (none can make progress without them: a goal's or a research loop's finding
+  is a file, a code or design loop's work is files and commands), rather than warned about and let
+  run to claim its work. `POST /api/loops`, `POST /api/loops/validate`, a pre-launch
+  `PUT /api/loops/{id}` that moves its model, a start, a resume, a steer that would start a waiting
+  loop again, a plan's start and retry, and the agent's create and start tools answer
+  `422 loop_model_cannot_use_tools`, naming the model and where to choose another ("This loop
+  can't do its work: “…” can't use tools, and its worker does everything with them (a cycle counts
+  only for the finding it writes). Choose a model that uses tools for Loops in Settings → Models.";
+  the loop itself, or its agent's page, when the model is the loop's own or its agent's pin;
+  `loop/validation.worker_tools_blocker`). The model asked is the one the worker would run on,
+  built the way its runtime builds it with no call made
+  (`providers/provider_bridge.model_without_tools`), and asked through the one reader of what a
+  provider declares (`llm/tool_use.uses_tools`). Settings → Models refuses to bind Loops to such a
+  model (`400 model_cannot_use_tools`); Chat may still be bound to one. A loop on an agent CLI is
+  not asked: the CLI brings its own tools. A `general` loop runs as a workflow whose steps run on
+  Orchestration, so it is refused for that model, as its run's start would be
+  ([workflows.md](workflows.md)).
+
+## One listing, two homes
+
+A kind in `workflows/service.py:PORTED_LOOP_KINDS` (today `general`) no longer writes a
+loops-table row: `POST /api/loops` starts a `WorkflowRun` on the kind's bundled template
+(`general-project`: a root `loop` over `sequence[work, judge]`), stamping the run with the loop's
+`loop_kind` and `title` and carrying the composer's knobs as the run's sparse `policy_overrides`.
+Every other kind stays a loops-table row driven by `loop/watchdog.py` + autonudge.
+
+The loop surfaces do not care which home a loop has:
+
+- **Listing.** `GET /api/loops` returns both — loops-table rows and every run started as a loop,
+  projected into the loop wire shape by `workflows/loop_view.py` — newest first, filtered alike.
+  A projected row carries **`run_id`**; that field, never the kind, is how a surface tells the two
+  apart (`web/src/lib/loopKind.ts:loopRoute`, `lib/loopStatus.ts:loopActionSources`). The Loops
+  list, Home (hero + Active Work) and Mission Control's Working lane all read this one listing.
+  The Working lane also reads `GET /api/workflows/runs?status=running`, because a run started
+  from Workflows, by a trigger or by a project is neither a chat session nor a loop. It leaves a
+  run that backs a loop to the loop's card, and a sub-run to the run that spawned it
+  (`lib/attentionLanes.ts:toLanes`). Both lists are re-read when a run starts, moves or ends: the
+  watchdog sends the listing hint `refresh` naming `workflow_runs` on every `workflow_run_update`
+  (`workflows/watchdog._raw_publish`), and Mission Control, Home and the Workflows list's Runs tab
+  re-read on it, so a card moves lanes or leaves without a reload.
+- **Status.** A run status is projected onto the nearest truthful loop status (`loop_view._STATUS`):
+  `cancelled` → `stopped`; `escalated` → `complete` with a non-`done` stop reason, which renders
+  "Ended early" (`cycle_budget` when the loop spent its iterations, `worker_failed` otherwise).
+- **Actions.** `GET/PATCH/DELETE /api/loops/{id}` and `/nudge` answer for a run-backed id through
+  the RUN's own verbs and guards (pause/resume/cancel/delete/steer). Its action table is narrower
+  (`loop_view.RUN_ACTION_SOURCE_STATES`, mirrored in `RUN_LOOP_ACTION_SOURCE_STATUSES`): a run has
+  one attempt, so no resume from `failed`, and a gate is answered on the run page.
+- **Unattended.** `attended: false` in the overlay is the explicit grant that lets the run's stages
+  spawn without a per-stage approval (`approval_mode: auto`), still inside the operator's safety
+  ceiling; anything else asks per stage. `max_cycles` bounds the root loop's iterations; without
+  it the loop stops at the tighter of its `max_iterations` and the cycle budget its `supervisor`
+  declares (`budget.max_cycles`), and an overlay that raises the cap past that asks the owner first
+  (`supervisor_policy.loop_cycle_cap`, read by the engine and the consent check alike). The grant
+  reaches the worker's own tool calls because `SessionManager.get_or_create` hands a session's
+  approval policy to its provider (a native runtime gates tools itself), and a native session
+  spawned with no cwd works in the validated workspace root — never the gateway process's cwd.
+- **Budget.** A General loop's dollar limit (`max_cost_usd`) is its run's dollar budget
+  (`RunBudget.max_cost`, written at create by the loop door): the run pauses once its steps have
+  spent it, and Resume asks for a higher one ([workflows.md](workflows.md#a-runs-budget)). A time
+  limit (`deadline_secs`) is refused at the door (`loop/validation.py`), since a run is held to
+  tokens and dollars but not to a time.
+- **Pause** stops the step in flight: the controller reads a sticky `PAUSE` intent in the run dir,
+  cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
+  not re-adopted after a restart. Resume clears the intent and wakes the controller.
+- **Steer** queues an instruction as a sticky intent in the run dir too (`store.queue_steering`),
+  taken at the next iteration boundary into the next cycle's prompt
+  (`iteration_context.consume_steering`). It was a key on the run's row, which the live
+  controller's next save wrote over, so a steer never reached a running loop.
+- **A cycle you declined.** A cycle's stage whose call you answered with Deny carries your Deny
+  (`SubagentInfo.declined_calls`, kept on the step as `NodeInstance.declined`), and the cycle ends
+  at it (`workflows/declines.py`): the rest of the cycle is not run ("not run: you declined
+  write_file (notes/plan.md) in “work”"), so no judge rules on work you declined, and the cycle is
+  journaled `declined` with "Cycle 2 ended at “work”: you declined write_file (notes/plan.md)."
+  Neither the dry streak nor the breaker reads it. The loop then waits for you instead of running
+  its next cycle into the same ask: the run pauses with that sentence and "The loop waits for you:
+  tell it what to do instead, or resume or stop it.", one Inbox item ("Loop waiting — you declined
+  one of its steps"), and Resume runs the next cycle with what you steered it with while it
+  waited. A loop with no cycle left ends instead: at its cycle budget it stops at the budget,
+  saying the last cycle ended at your Deny, and a counted loop that ran its count is done. The run
+  page lists every step you declined something in under "Declined by you"; the cycle its loop
+  waits on is said once, by the line that says why it waits, and listed there once the wait is
+  over. A Deny only counts as one when you gave it: an ask nobody answered, or one with nowhere
+  to put to you, is a refusal as before, and a cycle you declined nothing in goes on with the
+  judge's critique.
+- **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
+  `continue` and `declined` iteration rows (`iteration_context.rehydrate_loop_progress`) and
+  re-queues a dispatched stage whose subagent this process does not know
+  (`stage_settlement.requeue_orphaned_stages`) — without both, a run past its first iteration
+  failed "run deadlocked" after a restart.
+- **Ending.** A loop's own exit test is asked before its cycle budget
+  (`workflows/tick.py:loop_should_continue`), and the budget stops it only when it would otherwise
+  go on: on the cycle the budget ends on, a judge stage that accepted the work is the loop's done
+  (`workflows/loop_iteration.py:advance_loop`). A cycle in which a step failed never counts as dry,
+  so a loop whose steps keep failing goes on to its budget or its breaker instead of finishing.
+  Why a loop that stops is handed to a person is decided once
+  (`workflows/ending_sentence.py:loop_stop`) and carried on its escalation record as a cause, a
+  sentence and a remedy (`workflows/resilience.py:escalation_artifact`), in the order of what is
+  most true: a cycle that FAILED, by its first failed step and that step's own cause ("“judge”
+  stopped: its time limit of 30 minutes ran out while its bash call had been waiting 12 minutes for
+  your answer."); then the judge's own ruling on the cycle the loop ended on — a judge that could
+  not decide ends the loop in its own quoted words, even where the budget ran out beside it, and so
+  does one that would not decide on the cycle a loop met its own exit; then the budget ("It used
+  its budget of 6 cycles, and the judge did not accept the last one.", or, for a PASS the run's
+  judge contract set aside, "The judge passed the last one, but its pass was set aside:" and the
+  contract's reason). That sentence is the run's
+  ending, naming no step when the loop is the run's root, and every run surface (the run page, the
+  Workflows list, the chat card, the Inbox row) reads the record: a budget stop says "Stopped at
+  its budget", and the way forward is the record's remedy — fork with more cycles, answer the asks
+  on the next run, decide what the judge could not (with Allowed working directories named for a
+  folder it could not reach), lift the spend cap that refused a step's call — with "Change the
+  workflow" offered only when a step is the cause or a token budget, which the workflow sets. A
+  run with a `loop_kind` announces its end as a loops-table loop does
+  (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification,
+  and an inbox item when it escalates, titled by its cause ("Loop stopped at its budget", "Loop
+  stopped: the judge could not decide", "Loop stopped: an ask ran out of time", "Loop stopped: a
+  spend cap refused its next call", or "Loop stopped before it finished"); a cancel says nothing. The loop list reads a
+  run-backed loop's status, stop reason and error from one mapping
+  (`workflows/loop_view.py:loop_ending`): a budget stop is `complete` with the budget it reached
+  (`cycle_budget`, `cost_budget` for a token budget), any other escalation `failed` with
+  `worker_failed`, and its error is the run's ending.
+- **Its document.** A General loop's template states no document — a general task may produce a
+  diff or a passing check — so a loop whose task asks for a file names it when it is started
+  (`document` on `POST /api/loops`, one plain `.md`/`.markdown`/`.txt` name): the run keeps a copy
+  of what its step wrote there and shows it as its document (`workflows/deliverable.py:
+  run_document`). The onboarding "Start a loop" card's loop saves its note this way, in the folder
+  it works in — the workspace, which the file tools reach on a fresh install.
+
+For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
+(`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle
+driver checks the loop is still armed before each re-prompt. A worker whose turn ended without its
+finding is re-prompted at most three times, and only while it owes one: a worker's session key is
+read by one parser (`manager.worker_ids`, the loop id then the task id), its new finding is counted
+the moment the turn ends (`manager.worker_finding_count` ingests it first), a task worker whose task
+is done is not asked again, the re-prompt names the file the worker's own prompt names, in the
+loop's folder (`files.finding_file`), and each re-prompt is told to the loop's page (a `reprompt`
+event: which worker, the file it owes, how many asks are left).
+
+A turn its owner ended with a Deny is never re-prompted (`manager.reprompt_due`): her answer stands
+for the cycle. The chat runner keeps what she declined in the turn, her Deny and the requests it
+refused with it, as the record a workflow cycle's Deny leaves (`_ChatSession._last_turn_declined`,
+each a `declined_calls.declined_step`; an approval that expired or was cancelled is not hers).
+Asked again, the worker would be told to write what she declined, or, on a fresh agent session, run
+the cycle over and ask her the same thing, and so would its next cycle. So a cycle that ended after
+her Deny without its finding ends saying so (`LoopWatchdog.hold_after_decline`), naming what she
+declined as a workflow cycle's sentence does (`declined_calls.said`), a file in the loop's folder
+by its place there: "Cycle 1 ended without its finding: you declined write_file
+(findings/cycle_001.json)." (a task worker's names its task). The sentence goes on the loop's ledger
+as a `step_skipped` by the `user` (neither a completed cycle nor a failure), and the loop waits for
+her (`needs_input`) with it and the wait every Deny's work says ("The loop waits for you: tell it
+what to do instead, or resume or stop it.", `declined_calls.waits_for_you`) as its question, one
+Inbox item ("Loop waiting — you declined one of its steps") and a `declined` event, and every
+worker's nudge loop is switched off, kept, so nothing runs until she steers, resumes or stops it.
+The loop's page lists every such cycle under "Declined by you" (`declined` on the loop's view),
+after the wait is over too. A cycle that wrote its finding despite a Deny (she declined only its
+log, say) is credited as any other.
+
+A question the loop waits on is answered by her Resume: the watchdog drops a question asked before
+the loop's current running stretch began (its `ts`, else its file's time), so a resumed loop does
+not stop again on the question it was resumed from, whether its pause was her Deny's, a spend
+cap's or a restore's. A question its worker asks while it runs still pauses it.
+
+Every ending also ends what the loop STARTED (`manager.end_run` calls `loop/children.py`'s
+`end_children`, after the status and before the turns). A worker's `subagent_run` of two or more
+tasks runs as a workflow run, and one task as a background subagent; each records the
+worker session it came from (the run's `origin.session_key`, the subagent's `parent_session_key`,
+`dashboard:loop-<id>[-<task>]`), which is the exact link. `end_children` cancels each run with the
+reason "its loop “…” was stopped" (`store.request_cancel(reason=…)`, which the controller ends the run
+with: "Stopped because its loop “…” was stopped.") and stops each subagent with it, so an approval
+either was waiting on expires naming the loop, and the decision path refuses an Allow for it in the
+meantime (`approval_owner`: "the loop that started its run was stopped"). What its worker asked her
+to allow and still waits (a batch's start, a workflow's save) has that ask ended the same way
+(`owner_allow.end_asks`), and neither it nor a cancelled batch run is handed to the worker
+afterwards: it has nobody left to report to. A loop that fails or finishes
+ends them the same way ("its loop “…” failed", "has finished"): a failed loop keeps its task
+workers' worktrees for a Resume, but a batch run is no worker's, and nothing would read what it
+found. The workflow supervisor asks the same question of every live run on each poll, boot included
+(`parent_ended`), so a run whose loop has ended (or was deleted, or was stopped while the gateway was
+down) is cancelled before it is driven again — never resumed, re-provisioned or asked about. A paused
+loop has not ended, and its children go on, except what the cycle its pause stopped had started:
+that ends with the cycle's turn, saying "its loop “…” was paused" (`started_work.end_turn`, the one
+rule a loop's ending, a chat turn's Stop and a workflow run's ending share).
+Every ending also ends the processes its workers' commands left running, wherever they went
+(`run_processes`). Each command a worker's turn runs carries `PERSONALCLAW_RUN`, which names the
+worker it ran for (`loop-<id>`, `loop-<id>-<task>`) and which a server that detached itself (it
+left the command's process group and session, as a test fixture's database does) still carries;
+`end_run` ends every process carrying one of the loop's, SIGTERM then SIGKILL after a grace. A
+cycle's turn ending leaves them running (a server the next cycle tests), a task worker's teardown
+ends its own, and a pause or a Stop of the turn in flight ends what that turn's commands started.
+A process whose environment the system does not show (on macOS, its own programs: a shell,
+`sleep`) is found through the process group its command led, while it is still in it. A loop's
+agent CLI process carries the loop's marker too, so it ends with the loop, and so does what its
+commands detached.
+A restart re-arm keeps the running
+stretch's `started_at` (the trust window and deadline are measured from it), and the watchdog's
+credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
+re-credits a cycle.
+
+Incident mode (`personalclaw incident on`, or Settings → Guardrails) **holds** a running loops-table
+loop, the way it suspends cron, hooks, triggers and app workers. The idle runtime fires no nudge row
+while the switch is on (`triggers/idle_poll.py`, skip reason `incident_active`), so no cycle starts;
+the watchdog stops the turn in flight on every worker through the same stop a pause uses and does no
+cycle bookkeeping — no crediting, no done-ness check, no stage hook — until the switch is off
+(`watchdog.LoopWatchdog._hold_for_incident`); and the cycle driver abandons the cycle's re-prompts.
+A loop's planner passes are held the same way (`planning/runner.py`), without spending their time
+budget. The status stays `running`: a hold is not a pause, and the loop carries on by itself once the
+switch is off. Both redacted views carry the sentence that says why (`held`, `loop.held_reason`),
+which the loop surfaces show as **Held**. The time held is not worker silence (the unresponsive
+deadline restarts at the release), and a turn the hold stopped is not counted as a worker failure.
+The gateway watches the switch (`guardrails/incident.watch`) and sends the `refresh` hint naming
+`incident` and `loops` when it moves, the CLI's flips included, so open pages re-read at once.
+
+A spend ceiling (Settings → Guardrails → Daily budget) that refuses a loop's call **pauses** the loop
+rather than failing it. The refused session's nudge loop is switched off at once
+(`AutoNudgeService.notify_turn_complete(refused=True)`), so the same refused call is not sent again.
+A running loop waits as `needs_input`, its question being the refusal's own sentence (which ceiling,
+what was spent of it, what the call needed, and where it is lifted) with `spend_cap: true`
+(`watchdog.LoopWatchdog.hold_for_spend_cap`); a refusal does not count toward failing the loop. A
+loop still planning keeps its status: its walkthrough is paused (`PlanSession.paused`), the pass is
+not retried, and nothing runs it again (not a poll, not a restart) until its owner presses Resume
+(`plan_walkthrough.clear_design_error`). Either way the pause raises ONE Inbox item and its ONE
+notification (`loop/spend_cap.py`), and the loop's page shows it in place of "Drafting…" or a
+question, with a link to the Settings page and Resume. Chat, a workflow step and a subagent say the
+same sentence (`guardrails.failure.budget_refusal`).
+
+A loop let start on a model that uses tools can still come to run without them: Settings → Models
+moved Loops (or Chat, which an unbound Loops borrows) onto a model that can't, a later model of the
+chain served in place of the head, or a model refused the tools a call offered it (a local server
+answers a model that can't use them so, and its provider retries without them). Such a cycle
+**pauses** the loop rather than running on. The runtime names the model it runs on without tools
+(`tool_less_model`, `agents/native/catalog_refresh.py`, and a warning in the gateway log); the
+loop's live activity says it once for the turn ("“…” can't use tools, so it runs without them: it
+can't read or write a file, run a command or look anything up.", `chat_utils.tools_said`); the
+cycle driver asks the worker nothing more (it reads the same runtime, `manager.ran_without_tools`);
+and the loop waits as `needs_input` (`watchdog.LoopWatchdog.hold_without_tools`) with the sentence
+naming the model and where to choose another as its question (`no_tools: true`), ONE Inbox item
+and its notification ("Loop paused — its model can't use tools"), and a `no_tools` event, every
+worker's nudge loop switched off, kept. The workers that ran without tools are reset, so a Resume
+builds them from Settings → Models as it reads then, and a Resume is let through only once that
+model uses tools. The loop's page shows the pause, with a link to Settings → Models and Resume, in
+place of a question.
+
+A workflow run, and so a general loop, is held the same way (`workflows/incident_hold.py`). On its
+first step with the switch on, the run's controller withdraws the work in flight as a pause does: a
+stage's subagent is stopped ("Stopped: incident mode is on") and the stage goes back in the queue at
+the same epoch, its attempt not counted. It starts nothing more, looking again each tick, until the
+switch is off, when it carries on by itself. A stage the switch meets at dispatch, or one the subagent
+manager refuses for it, waits rather than failing. The status stays `running`; the run's status, its
+row in the run list and its loop view carry the sentence (`held`). The run page shows it under a
+**Held** status, as the run list and the chat's run card read Held rather than Running
+(`workflowMeta.runLook`), and Mission Control's Working lane leaves a held run out, as it leaves out a
+held loop.
+
+### Mode: Attended and Unattended
+
+A loops-table loop's Mode (`loop.attended`) decides how every session the loop runs is answered
+and paid for: its planner (the walkthrough's design pass and each step pass), its stage worker,
+each per-task worker, and the merges of their work. One module decides it (`loop/posture.py`):
+`posture.of(loop)` reads the Mode, `posture.arm` sets it on a session each time the loop arms one
+(the planner at every pass, a worker at every start, resume and task spawn), and `posture.frame`
+frames the session's cycle message. So no session of a loop runs looser than its Mode, and a resume
+never carries one run's posture into the next. A Mode that is not exactly `true` or `false` (a loop
+created without one, a row the store cannot read) is the cautious reading of both halves: its
+sessions ask a person, and their spend still counts against the cap. A loop created with no Mode
+(`POST /api/loops` without `attended`, an agent's `code_project_create`) is Attended.
+
+Every check of whether anybody watches a piece of work reads the Mode too, by the key the work runs
+under (`posture.unattended_by_key`, which `session_keys.is_unattended` asks for a loop's session in
+either form: `loop-<id>`, and `dashboard:loop-<id>`, which its tools run under). An Unattended loop's
+sessions are refused a command that would stop or restart PersonalClaw, resolve the headless safety
+profile and are held to the autonomy ladder's ceiling for work nobody watches, and a subagent one
+started reports back under the rules for a parent nobody watches, as a scheduled job's does. An
+Attended loop's sessions are judged watched. A key whose loop is gone, or whose Mode cannot be read,
+is judged unattended: for these checks that is the cautious reading.
+
+- **Attended.** A session's call that needs approval goes through the same path a chat's does
+  (`approval_state._hold_approval`): the card on the loop's page (`LoopApprovals`, in the loop, code
+  and design cockpits and in the planning walkthrough), the bell and Inbox row, a phone push and the
+  channel approvals go to. The grants that stand for chats stand here too (an agent's "Always allow"
+  or "Trust reads", YOLO, the operator's hook patterns), and the card's "This loop" scope lets every
+  worker of this run, and the planner for the rest of the planning, act without asking until the run
+  ends: a launch, a pause, a stop or a restart ends it (`manager.grant_every_worker`). A worker may
+  also write one question and pause the loop. The time a turn spends waiting on your answer does not
+  count against it: the watchdog does not read the wait as a wedged worker, the cycle's own time
+  bound stops while it waits (`cancellation.wait_for_unpaused`), and so does a planner pass's
+  (`planning/runner.py`). No session is told it runs as an autonomous run. An Attended loop holds no
+  standing grant, so nothing of it expires. Its planner's and workers' model spend is the owner's,
+  as a chat's is: the daily cap for unattended work does not count it (`chat_runner` passes
+  `unmetered` from `posture.spend_metered`, and the runtime's model guard is built uncounted). The
+  supervisor's own checks of the loop's work (its stage judge, its verify and test commands) are
+  automation's and are metered as before.
+- **Unattended.** Nobody is there to ask, so the sessions run on a standing grant: their calls go
+  ahead without asking, inside the deny-list, your hooks and the operator ceiling, and a call the
+  grant cannot cover is declined at once rather than left waiting. An agent CLI is told its asking
+  mode, as under the other Mode, so each call it asks about meets those rules before the grant
+  answers it. It is told the mode that stops it asking only where you let this loop's CLI approve
+  its own calls (`agent_cli_self_approval`: the switch beside "Runs on" on the loop's page,
+  `PUT /api/loops/{id}/agent-cli-self-approval`, off by default, turned on only with your consent,
+  audited either way, read at each turn, and offered only for a CLI whose unasked calls
+  PersonalClaw declares), and only while the run's grant stands. Each cycle message is framed as an
+  autonomous run (`autonomous_framing`).
+  A running loop's grant lasts `loops.trust_ttl_secs` from the start of the running stretch; then
+  every worker loses it (`manager.end_unattended_grant`) and the loop waits for you (`needs_input`)
+  to resume it. A stray question is discarded. Its spend counts against the daily cap.
+
+A cached runtime is rebuilt when who answers its session, whose spend it is, or whether its agent
+CLI may approve its own calls changes (`session._posture_moved`), since a runtime keeps all three
+from when it was built.
+
+A loop session's model call rides the guard every automated call does (`ModelCallGuard`: the
+breaker, the clock, the attempt audit and the outbound scan), whatever the loop's Mode; only an
+Unattended loop's is counted against the day's and the run's spend ceilings (`counted`). The guard
+puts no clock of its own on a call whose provider instance keeps one (`ModelProvider.request_timeout_secs`:
+an Ollama instance's Request Timeout, the wait for the first word and then between the parts of the
+answer); for a provider that keeps none it stops the call at 300 s. A call stopped either way says
+which model on which instance, how long it waited, and that a faster model can be bound to Loops in
+Settings → Models (`guardrails.failure.ModelCallTimeout`). On a local model the call first waits for
+its turn ([overview.md](overview.md#a-local-model-takes-one-call-at-a-time-yours-first)), and that
+wait counts against the same limit.
+
+A loop stays on the machine that ran it. The watchdog's first poll re-arms every loop it finds
+running with no worker (`watchdog._boot_sweep`), so `loop/loops.db` and each loop's folder under
+`loop/` are `machine_local` and not `merged_in` (`durability/inventory.py`): no sync carries them,
+and a merge restore or an archive import leaves the archive's out. Another machine's running loop
+used to arrive and be re-armed here, with the workspace and trust its owner gave it there. A backup
+carries them, and a replace restore brings them back with the whole home, holding each loop that was
+running or planning (`store.hold_restored`): it waits for you (`needs_input`), asking to be resumed,
+since the snapshot is a moment it has gone on from since. A run-backed loop is a workflow run, which
+stays where it ran and is held by the same rules ([workflows.md](workflows.md)).
+
+## Stage progression
+
+- **Code loops** walk the canonical SDLC ladder (`loop/sdlc_meta.py`):
+  `ideation → requirements → design → decomposition → implementation →
+  verification → review`. Lateral entries (`bugfix`, `cr_comments`,
+  `refactor`, `investigation`) start mid-ladder with a tailored shorter plan.
+  The code strategy (`loop/kinds/sdlc.py`, kind id `"code"`) advances stages
+  and provisions tasks each cycle.
+- **Design loops** advance design steps (token system → components → …) on a
+  live canvas.
+- **Goal/general loops** are done when their declared done-signal says so (the table
+  above) — no stage machinery.
+- Classification (`loop/classify.py` + per-kind classifiers) picks kind, stop
+  logic, and entry stage up front; classifiers never raise — they return safe
+  defaults flagged `classified=False`.
+
+## `effective_dir` — where a loop's work actually lives
+
+`loop/loop.py::effective_dir` is the **single resolver** every ground-truth
+check uses, so the supervisor reads exactly where the worker writes. Its
+precedence:
+
+1. `workspace_dir` — an explicitly bound codebase;
+2. a **greenfield code loop's own `loop_dir`** — a code loop with no bound
+   workspace operates *from* its files dir (code-kind only; goal/general keep
+   only engine files there and write deliverables to the project/workspace).
+   This tier exists because its absence hard-failed the deliverable gate
+   forever: the supervisor looked in the workspace root while the worker wrote
+   to the loop dir, so a genuinely-complete stage was "held" across cycles;
+3. the containing project's shared context dir;
+4. `workspace_root()` — the default session workspace.
+
+## Deliverable gates & the independent judge
+
+The supervisor does not take the worker's word for it:
+
+- **`loop/gates.py`** — `run_verify_command` re-runs a stage's verify command
+  itself (with a cwd from `effective_dir`); `judge_verdict` renders an LLM
+  verdict; `verdict_is_pass` parses it strictly. A caller that passes a
+  `CheckReport` gets what the run did as well: the exit code, the end of what it
+  printed (masked), why it could not run when it could not, and every line that
+  names a file it `watch`es (the files a stage changed), wherever it came. With
+  `per_test`, a test runner the check starts is asked through its environment to
+  name each test it ran and how it ended (pytest's per-test summary, go's `-v`); the
+  command itself is never rewritten. Every judge-facing check asks for it.
+- A **Verifiable goal's** check (and a General loop's, when it has one) runs in
+  `effective_dir` after every cycle, and the worker's brief names that folder, since
+  a relative path in the check is a path in it. Each cycle's check is a
+  `judge_verdict` row carrying a `check` record (command, folder, outcome, exit
+  code, output) and the sentence its page shows; a goal with several sub-goals
+  asks its judge once the check passes, shown the check's output beside the
+  cycles' reports, and the answer is on the same row. A check that cannot run, or
+  a judge that gives no answer, puts `cannot_judge` on the row: why, in words, and
+  that the loop asks again after its next cycle. An open-ended judge that gives no
+  verdict leaves the same kind of row, so no cycle is left blank. None of these
+  rows carries a score.
+- The **reproduce** pass at completion re-checks a genuine finish before its
+  document deliverable graduates to an artifact, and runs only when there is one
+  to graduate (a verifiable goal's check is its output).
+- The **SDLC gate** reads what the stage did (below), and the **goal judge**
+  re-runs its command and reads every file a deliverable names — ground truth over
+  worker self-report. The goal judges are shown the end of what the command printed
+  (each test named), through the same door, and the evidence refs they cite are read
+  from the supervisor's own lines only, never from a line a check printed.
+- A Code stage's **exit criteria are judged one by one** (`kinds/sdlc._stage_gate_passed`), on
+  what the stage did as the supervisor observed it (`loop/stage_evidence.py`): the stage's tasks
+  with their status; in a workspace git tracks, every file that differs from where the loop's run
+  started (`worktree.start_point`, recorded in `kind_config.base_commit` at the run's first poll),
+  with git's diff and each changed file as it is now; in a folder git does not track (or a run
+  that started before a start point was recorded), the files the stage's findings name, read from
+  disk; every file the stage's deliverable names; and the checks it ran, with the end of what they
+  printed and every line naming a changed file, each test named. A stage that changed a test file
+  runs the test command too, as evidence (it decides the gate only at the verification stage). A
+  file is read only from inside the work folder (`files.file_inside`), and the workspace's text,
+  the checks' output and the workers' words reach the judge through the door every text from
+  outside takes (`gates.for_a_judge` → `outside_text.admit`): masked, read by the injection screen
+  and fenced as data, and what the screen refuses is said withheld, never shown. The judge
+  is also shown what the loop's owner told it (their steers), whose word can settle a criterion,
+  and last the workers' findings, their own account and never proof on its own, cut to a budget
+  per finding and in all, which keeps the newest; what was cut or left out is said in the prompt,
+  and a criterion the shown record cannot answer is `cant_tell`. Its answer is read by
+  `gates.criteria_verdicts`: pass, fail or can't tell for each criterion, with a reason, and a fail
+  marked `outside` when what stands in its way was there before the loop and the stage's changes
+  did not cause it. Every evaluation is a `judge_verdict` row with `gate: "stage"`, what it
+  looked at (`observed`) and whether its judge answered (`judged`) (and
+  a `gate_check` event labelled "exit criteria"), so the Code loop's page shows the last one for
+  the stage at work, and a stall that blocks the loop quotes its unmet criteria. The stall counter
+  counts cycles of work toward the stage: a done task's findings count once, so re-checks of
+  finished work never read as a stuck stage, and a steered loop is escalated again after five more
+  cycles of work rather than never. A stage is judged the moment its last task worker is reaped
+  (`schedule` → `_judge_on_drain`), not at the stage worker's next finding, and when a stage
+  passes the next is judged in the same cycle if its own work is already there (a worker that ran
+  ahead), so a loop whose tasks are all done ends complete instead of spending turns re-checking
+  them. A gate held only by what no worker can change pauses the loop for its owner at once
+  (`_asks_its_owner`): its judge answered, every criterion it did not pass is `cant_tell` or a fail
+  held from `outside`, and every task of the stage is done (or every one of those criteria is held
+  from outside). The Blocked message names each criterion with its reason and what the gate looked
+  at, the stage worker's cycles are switched off, and a steer reaches the gate as the owner's word.
+  Workers are told the same: one that finds a done-condition held by something outside its task
+  asks at once (Attended), or says so in its finding and finishes the rest (Unattended), rather
+  than re-checking it (`kinds.outside_blocker_line`).
+- **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
+  RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
+  zombifying (`LoopWatchdog._boot_sweep`). A turn running on ANY of a loop's workers — its stage
+  worker or a task worker — counts as the loop working, so a long model call is not a stall. A
+  loop's time limit (`deadline_secs`, active time) and dollar limit (`max_cost_usd`, what the usage
+  ledger booked to its worker sessions) are asked on every poll, a cycle still running or a worker
+  that writes no finding included (`LoopWatchdog._stop_at_a_ceiling`).
+  **Every ending goes through one function**, `manager.end_run`, once the loop's status says how it
+  ended: a completion (a spent cycle, cost or time budget included), a failure (two failed turns in
+  a row, an exhausted budget with nothing to show, a stall), a Stop, and a delete. It switches off
+  every nudge loop the loop has (its stage worker's, its task workers' and its planner's), stops the
+  turns in flight, and puts a task a worker held back to open. A failed loop can be resumed, so its
+  workers' nudge loops are kept, switched off, and every task worktree with them; Resume switches
+  them back on where they were, and its queue is still what Resume runs. A finished or stopped loop
+  runs nothing again, so its queue is emptied (the boot sweep empties one an ending before this left
+  full), and its page reads a task it left unfinished as not done. It removes the task worktrees whose work was
+  merged (or that made none) and keeps the rest (`worktree.sweep_finished`): work nobody merged is
+  never thrown away by an ending. What a kept worktree holds and has not committed is committed on
+  its own branch, as git is configured to commit there (left uncommitted when git has no identity),
+  and the loop's page puts it to its owner the way an Attended loop puts a waiting merge, with the
+  same review (`loop/kept_work.py`, `GET /api/loops/{id}/kept-work`, read by `worktree.merge_review`:
+  each task's branch, the commit it is at, its commits and its diff; the page's `TaskChanges`).
+  She merges each task at exactly the commit she reviewed (`POST …/kept-work/{task_id}/merge` with
+  `tip` and `{"confirm": true}`), by the same rules: git's configured identity, nothing committed
+  under another name, a branch that moved is read again (`loop_merge_moved`), and the merge is
+  recorded on the page (`files.record_merge`). Or she discards it. Stopping a loop whose finished
+  work waits for her merge keeps that work the same way and clears the merge question. Only a delete
+  discards it unasked, and its dialog names it. Each of
+  these touches only the loop's own tasks' worktrees, so two loops under one Project (which share a
+  worktree root) never settle each other's. The boot sweep switches off the nudge loops of every
+  loop that has ended, in case its ending was cut short. That sweep runs through
+  `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
+  `workflows/watchdog.py`. There is deliberately **no gateway boot hook**: a
+  hook cannot be retried when it raises, and awaiting it delays startup by however long
+  N stranded planner passes take.
+
+## Planning walkthrough & grill
+
+- **`planning/`** (`session.py` data model + `runner.py` state machine) is the
+  shared stepwise **gated planning walkthrough** used before launching Code
+  and Goal loops: the plan is presented step by step with approve/comment
+  gates; a comment triggers a redraft of that step. A pass reports how it ended
+  (`runner.PlannerPass`): a file the kind cannot read is named for what is wrong with it (where
+  its JSON breaks), and a pass that ran out of time or ended without writing says that. The one
+  automatic retry tells the planner which, and a step that still has no draft keeps the reason
+  (`PlanStep.error`), which the walkthrough shows with its Retry. A pass its owner ended with a
+  Deny (`runner.DECLINED`: a planner turn ended after she declined one of its calls, with no file)
+  ends at once, so its nudge row does not send the brief again; it is not retried, it says what
+  she declined ("The planner did not write step_artifact.json: you declined write_file
+  (step_artifact.json)."), and neither a
+  poll nor a restart runs it again, only her Retry: a step pass pauses the walkthrough
+  (`PlanSession.paused`, `by: declined`), and a design pass keeps the sentence as its design error,
+  which never re-runs by itself. "Cancel and edit the task"
+  deletes the draft and opens the composer with the task, project, codebase and Mode it had; Stop
+  ends the loop with its plan kept. Both end the planner for good: the walkthrough pass in flight
+  is cancelled, the planner's nudge row is removed and its turn stopped (`manager.end_run`),
+  and no pass starts for a loop that is no longer planning. A planner's nudge row is kept on disk,
+  so at boot, when no pass can be in flight, every one is removed before the loops still planning
+  are driven again. Every surface that shows a loop at work offers its Stop — its page, the
+  walkthrough, the Code list and a project's Work board (whose rows also open their work) — and
+  the Loops list says how many code loops are at work and links to the Code list.
+- **`grill.py`** is the memory-checked goal-scoping pipeline:
+  `assess_goal → check_memory → decompose(shape) → save_decisions`. It pulls
+  prior decisions/lessons so a decomposition doesn't re-litigate settled
+  choices, and persists new decisions as lessons. Reused by goal loops,
+  Projects, and the chat skill.
+
+## Projects & worktrees
+
+- **`projects.py`** is the small service layer that resolves which project a
+  work unit binds to (`resolve_project_id` auto-creates one when none chosen;
+  `ensure_task_list` finds/creates the unit's TaskList under that project).
+  The entity itself is the Tasks `hierarchy.Project`
+  (`tasks/hierarchy.py`): each project owns
+  `~/.personalclaw/projects/<id>/` with `project.json` + `context/` (the
+  cross-feature consolidation dir, and the working area when no external
+  workspace is bound).
+- **`loop/worktree.py`** — parallel task execution: workers run several tasks
+  of a phase at once, each in its own git worktree under
+  `projects/<project_id>/worktrees/<task_id>` (never the user's workspace);
+  a finished task's branch merges back into the workspace's checked-out branch, and one not merged
+  when the run ends is kept for its owner (see `manager.end_run` above). A non-git workspace falls
+  back to sequential execution.
+- **Where a task's work lands, and under whose name.** Every commit a loop makes (a task's
+  leftover edits on its branch, a merge commit, the first commit of an empty repository) is made
+  as git is configured to commit in that workspace, `user.name` and `user.email` from the
+  repository's, the owner's or the machine's settings, with `user.useConfigOnly` so git never
+  guesses one (`worktree.commit_identity`, `_CONFIGURED_IDENTITY_ONLY`). The name PersonalClaw
+  knows its owner by (Settings → Account) carries no email, so it is not one. With none
+  configured in a repository, a code loop there does not start (`CodeKind.launch_blocker` says
+  how to set one), and a running one pauses before any worker's next cycle (`CodeKind.schedule`
+  asks first, every poll), so no worker is left to commit as a name it made up; its brief says to
+  commit as git is configured and to stop and say so when git has none. A task whose branch holds
+  a commit made as anyone else (`worktree.commits_not_by`) is neither merged nor put up for
+  merging: the loop pauses and names the commits and the name they carry. An
+  **Unattended** loop merges each task's branch into the workspace's checked-out branch as the task
+  finishes. An **Attended** loop puts nothing on that branch unasked: a finished task's work stays
+  committed on its own branch, nothing new starts on top of it, and once the stage's running
+  workers finish the loop pauses with a merge review (`GET /api/loops/{id}/merge`: each task's
+  branch, the commit it is at, its commits and its diff against the branch). **Merge** approves it
+  at exactly those commits (`POST /api/loops/{id}/merge` with the commits and `{"confirm": true}`, owner-only, audited as
+  `loop_merge_approved`); the approval is held by the scheduler alone (`CodeKind.approve_merge`,
+  in memory: the loop's folder is its workers' to write, so nothing there stands for it, and after
+  a restart the loop asks again), the loop resumes, and the scheduler merges each task at that
+  commit, or asks again if its branch moved. **A merge that conflicts** is undone and keeps the
+  task's work as it is, on its own branch at the commit it reached and in its worktree, whatever the
+  Mode or the drive: the loop pauses and asks its owner, and nothing of the work is discarded until
+  she chooses (`loop/conflicts.py`; `GET /api/loops/{id}/conflict` reads the files it conflicts on
+  from git, `merge-tree --write-tree`, and the work as a merge review shows it). **Redo** runs the
+  task again from the branch as it is now, its worktree reset onto it, the attempt set aside;
+  **Drop** deletes the task's branch and worktree and cancels the task; either names the commit she
+  read (`POST …/conflict` with `choice`, `task_id`, `tip` and `{"confirm": true}`; a branch that
+  moved answers `loop_conflict_moved`), and only for a task the loop has queued. Or she resolves it
+  herself, in her workspace or on the task's branch, and Resumes: the scheduler merges it again,
+  and asks again while it still conflicts. A merge git refuses for another reason keeps the work the
+  same way and asks her to check the workspace's git state. A task whose worker is gone (a redo she
+  chose, kept work she discarded) is started afresh, never marked done on a finding the attempt set
+  aside wrote. Its questions (a merge to approve, a conflict to resolve, an identity to set)
+  are asked again while they hold, so a Resume never stops on one already settled
+  (`files.SCHEDULER_QUESTION`). An Attended loop
+  never makes the first commit of an empty repository either: its tasks then stay the stage
+  worker's, in the tree. Every merge is recorded with who made it (`files.record_merge`,
+  `merges.jsonl`), and the cockpit's Changes tab lists them, since a merge leaves the tree clean.
+  A workflow run's own branch is committed the same way (`workflows/provisioning._commit_outstanding`),
+  and with no identity its folder is kept rather than deleted with the work in it.
+- **One writer at a time.** The code kind's scheduler (`CodeKind.schedule`, asked on every
+  watchdog poll) never lets the stage worker and task workers write at once. A worktree is cut
+  from HEAD, so a phase fans out only from a tree with no uncommitted changes to tracked files and
+  only while the stage worker is between cycles; otherwise its tasks stay the stage worker's. A task
+  worker that spent its cycle budget, or whose turns kept failing, asks its owner
+  (`nudge.why_it_ended`); one whose nudge loop is gone was torn down by something else, and the
+  scheduler starts it afresh, so a steer and Resume give the task a turn. While
+  task workers run, the stage worker's cycles stand down, and it stands back up when they drain. A
+  loop whose model's entry sends to this machine (`llm.registry.sends_to_this_machine`, which counts
+  an OpenAI-compatible endpoint here too) runs one task worker at a time, since calls sent to one
+  machine's model at once only queue behind each other.
+- **One change lands once.** A task is started only once the work of each prerequisite marked done
+  is merged (`CodeKind._merged_prerequisites`): a done task is merged when its worker's turn is
+  over, and a dependent cut from HEAD before that would redo its work. A task branch that brings
+  nothing the workspace lacks (every commit already there as the same patch, `git cherry`, or a
+  merge whose result is the tree it has, `merge-tree --write-tree`) merges nothing: no commit, no
+  merge commit, its worktree and branch removed (`MergeResult.already`). The same count says what an
+  ended run kept, so a copy of merged work is not kept as unmerged.
+- **The planner's files.** The planner works in the bound workspace, but the files it writes for the
+  walkthrough (`plan_steps.json`, `step_artifact.json`) go to the loop's own folder: its brief names
+  the absolute path, and the runner (`planning/runner.py`) reads and clears only there. A file of
+  that name the planner wrote into the workspace during the pass is moved out; one that was there
+  before is the user's own and is never read or touched. Its scratch work (a throwaway copy of the
+  workspace, a test run's output) goes in `scratch/` in the loop's own folder, which its brief names
+  and the pass removes when it ends; a worker's brief sends its scratch to a `mktemp -d` folder
+  (the user's temporary folder), never to a path under `/tmp` by name or into the checkout.
+
+## Cockpit dispatch (frontend)
+
+`web/src/pages/loops/LoopsSection.tsx` dispatches on the loop's kind — after first
+redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>`, so every
+`#/loops/<id>` link lands:
+
+- `kind === 'design'` → `DesignCockpitPage.tsx` (live canvas, token views,
+  and an "agentic build" path that seeds a project-bound chat with the loop id
+  so react artifacts tagged `loop:<id>` render on the canvas);
+- everything else → `LoopCockpitPage.tsx` (the generic loop cockpit: cycle
+  trail, findings, sub-goal prompt bar, artifact/task/project links). It names
+  the loop's `work_dir` — `loop.effective_dir`, where the worker's own files land,
+  which for a goal/general loop is not `files_dir` — with a link into Files, and a
+  failed outputs read renders as an error, never as "No outputs saved yet". Each
+  cycle in the trail marks its check (passed, failed, could not run), its detail
+  shows the command, the folder, the exit code and the end of what it printed as
+  plain text, and the latest cycle's `cannot_judge` is said at the top while the
+  loop runs;
+- code loops additionally get the mini-IDE at
+  `web/src/pages/code/CodeCockpitPage.tsx` — Monaco-based edit/save,
+  PTY-backed build/test commands, and the SDLC stage trail.
+
+### The code cockpit's regions (web)
+
+`CodeCockpitPage.tsx` is a composition of region controllers under
+`web/src/pages/code/cockpit/`, each a hook and its component:
+
+- **The terminal** — `useBottomTerminal.ts` opens a PTY in the workspace,
+  follows a Restart to the new one, closes whichever is live when the drawer
+  goes, says why one could not start and tries again, and runs a build or test
+  command on its own session once that session takes input.
+  `BottomTerminal.tsx` draws the drawer under the editor, hidden rather than
+  unmounted so the shell and its scrollback survive a toggle.
+- **The editor** — `useCenterEditor.ts` keeps the workspace's file tabs and
+  their unsaved drafts, saves on ⌘S and closes a dirty tab only once asked,
+  follows a renamed or deleted file, shows a re-open chip for a collapsed side
+  panel, and holds what takes the editor's place: a diff, a commit, or a file
+  the worker is writing, played as it lands. `CenterEditor.tsx` draws the tab
+  strip and that surface, with the terminal beneath, and `CommitView.tsx` draws
+  one commit's diff.
+- **The files rail** — `files/useFilesRail.ts` keeps which of the left rail's
+  tabs is up, the Changes count shown on the Files tab (read only while that
+  tab is up), and ⌘P landing on the Files tab so the finder can take focus.
+  `files/FilesRail.tsx` draws the tabs over `files/FileFinder.tsx` and
+  `files/WorkspaceTree.tsx`, or over `files/ChangesPanel.tsx`: the workspace's
+  changes, its recent commits and the run's merged work.
+- **The tasks** — `tasks/useStageTasks.ts` keeps what the Tasks rail's list
+  knows about the run's tasks (done, queued, queueable, running, or left undone
+  by a finished run) and queues tasks or switches between autopilot and
+  one-by-one. `tasks/useTaskDetail.ts` keeps one task's state and queues,
+  un-queues or steers that task alone. `tasks/StageTasks.tsx` and
+  `tasks/TaskDetailView.tsx` draw them, with `tasks/TaskRow.tsx`,
+  `tasks/FindingCard.tsx` and the task states in `tasks/taskState.ts`.
+- **The footer** — `footer/useProjectFooter.ts` keeps the project-level steer
+  box (one send at a time, the latest steer shown until the run confirms it, a
+  failed one said and its text kept), takes the cursor when the toast's Respond
+  asks for it, knows whether the worker itself is asking, and resumes a loop a
+  spend cap paused. `footer/ProjectFooter.tsx` draws the run's approvals, a merge
+  or a conflict waiting on you, a paused loop, the worker's question, a failed
+  gate or a stall, and the steer box, with `footer/OutcomeBanner.tsx` for a
+  finished run.
+- **The Tasks panel** — `useRightPanel.ts` keeps which task is open, every
+  stage's tasks (only the newest read applied, a failed list kept as it was)
+  and each finding under the task it belongs to, or under its stage's running
+  or last task when it names only a stage. `RightPanel.tsx` draws the task list
+  over the footer, or one task's detail. `CollapsiblePanel.tsx` is the frame of
+  both side panels: a title, a collapse button, a resize handle, and the
+  collapsed state the editor's re-open chips follow.
+- **The meta strip** — `meta/useCockpitMeta.ts` keeps what the strip under the
+  title says: the run's status in the registry's words, its elapsed time
+  (ticking while it runs), its cycles against the budget, its workspace and the
+  Project that contains it. `meta/CockpitMeta.tsx` draws it around
+  `meta/StageTrail.tsx`, the plan's stages in a row.
+- **The header** — `header/useTitleRename.ts` renames the project from its
+  title: Escape cancels, the Enter and the blur after it save once, and a
+  failed rename is said. `header/CockpitHeader.tsx` draws the title bar: back
+  to the containing Project, the name, whether the feed is live, and the run's
+  actions. `header/CockpitNotices.tsx` draws the strips that say why the
+  cockpit cannot do something: a command not on PATH, a runtime that cannot run
+  the project, a worker asked again for its finding, a brownfield draft with no
+  workspace, a workspace folder that is gone.
+- **The cockpit's state** — `useCodeCockpit.ts` keeps the project for one code
+  loop: read on mount and from a cached snapshot for the first paint, kept
+  current from the run stream and a poll while it runs, `missing` once the loop
+  is gone, and a failed read said and polled until it recovers. It also keeps
+  the run's flags, the worker's live activity per session from the chat socket,
+  and the terminal, toast and answer-panel state the regions share.
+  `cockpitActions.ts` is what the page derives from a project it has and does
+  to it: run controls behind one guard, a runtime move, the build or test
+  command in the terminal, a brownfield draft's workspace, and delete. It is a
+  plain function, called once the page knows it has a project.
+
+The page itself calls `useCodeCockpit`, shows the loading, missing or
+load-error shell until there is a project, and then lays the regions out:
+header, meta strip, prompt bar, notices, the files rail, the editor and the
+Tasks panel, with the workspace picker and the toast over them.
+
+What more than one region reads lives in `cockpitShared.ts` (the statuses a
+steer still reaches and the ones that end a run, a stage's key, a worker path
+resolved against the workspace), `FilesTouched.tsx` (the file chips) and
+`cockpitCommands.ts` (a build or test command whose program is not on PATH),
+and `codeProject.ts` turns the unified Loop into the shape they all draw.
+
+## Related docs
+
+- Tasks that loops provision: [tasks-triggers.md](tasks-triggers.md)
+- The memory the grill consults: [knowledge-memory.md](knowledge-memory.md)
+- Trust/YOLO state a loop worker runs under: [security.md](security.md)

@@ -1,0 +1,17 @@
+{
+  "id": "archive/absolute-path-escape",
+  "class": "archive",
+  "summary": "Absolute-path escape: the entry ignores the target dir entirely and names an absolute destination.",
+  "expect": "unsafe_path_refused",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "contents": "---\nname: helper\ndescription: a harmless helper skill\n---\nBe helpful.\n"
+    },
+    {
+      "path": "/pclaw-abs-pwned.md",
+      "contents": "owned\n"
+    }
+  ],
+  "escape_probe": "pclaw-abs-pwned.md"
+}

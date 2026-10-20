@@ -1,0 +1,415 @@
+"""`Trigger` → the schedule wire shape, for the API re-point.
+
+**The existing `/api/triggers` facade becomes the single API by re-pointing its three
+backends at
+one store** — its `kind:<raw>` id namespace is the migration map. This module is the
+projection that
+makes that possible for the SCHEDULE backend: it renders a clock `Trigger` in exactly the shape
+`_serialize_schedule` produced from a `ScheduleJob`, so the API contract and the frontend
+consuming it
+are unchanged while the backend underneath becomes the unified store.
+
+**Measured before writing — the data is all carried, at different ADDRESSES.**
+`_serialize_schedule` reads 21 fields off `ScheduleJob`. A migrated `Trigger` has none of them by
+that name, but `models.LEGACY_FIELD_MAP["ScheduleJob"]` declares where each one went, and every
+destination was verified against a real migration:
+
+    spec.timezone / spec.skip_dates / spec.strict   ← timezone / skip_dates / strict_schedule
+    workflow.inline                                 ← action
+    delivery ("channel:<name>[:<id>]", "none")      ← channel / silent
+    session  ("pinned:cron:j")                      ← session_key / persistent_session
+    capabilities.env                                ← env
+    health_status / last_error_summary              ← last_status / last_error
+    last_success_at / last_failure_at               ← last_run_ts
+
+Three fields map to `None` — **deliberate drops**, not gaps this module
+should paper over: `created_ts` (a display-only timestamp), `last_result` (the run record owns the
+output — a copy on the trigger was a second truth), and `acked_items`. The last was verified dead
+before dropping it: the `/api/triggers/{id}/ack` route has **zero callers** (no frontend client
+method, no MCP tool) and the owner's real store carries **zero acked entries**, so the field is
+already-dead weight rather than a live behaviour. `LEGACY_FIELD_MAP` assigns its future owner
+(the inbox owns it).
+
+The projection is one-way on purpose. Writes go through `tools.py` / the store, which already own
+validation and the honesty contracts (a broken row refuses to enable, a patch allowlist protects the
+health fields). A second write path here would be the dual path the clean break forbids.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from personalclaw.security import redact_values_for_display
+
+logger = logging.getLogger(__name__)
+
+#: The fields of a schedule row that hold text someone wrote: its name, its prompt and command,
+#: the action carrying both, its script, what its cadence reads as, and its last error.
+MASKED_FIELDS: frozenset[str] = frozenset(
+    {"name", "message", "action", "command", "script", "schedule", "last_error"}
+)
+
+#: The delivery string prefix a channel route uses (`channel:<name>` or `channel:<name>:<id>`).
+#: Matched rather than split blind: `delivery` also carries `none` (a silent job) and `inbox`, and
+#: treating those as a channel would render "none" as a destination in the UI.
+_CHANNEL_PREFIX = "channel:"
+
+#: The session string prefix a pinned (persistent) session uses (`pinned:cron:j`). A `fresh` session
+#: is the default and carries no key.
+_PINNED_PREFIX = "pinned:"
+
+
+def counts(store: Any, *, legacy: Any = None) -> dict[str, int]:
+    """`{total, enabled, broken}` across the unified store — the numbers a status surface reports.
+
+    🔴 THE DEFECT. Two separate surfaces counted automations by asking the legacy service,
+    which after the cutover to the store holds nothing: `GET /api/status` reported
+    `cron: {"running": false, "jobs": 0, "enabled": 0}` and the dashboard's SystemHealth widget
+    rendered `triggers 0` — driven against a home with three valid store triggers, two enabled and
+    firing. Both were honest readings of the wrong source, and `running: false` was doubly
+    misleading: `load_without_timer` leaves `_running` False BY DESIGN, so the field said "the
+    scheduler is down" on a perfectly healthy machine.
+
+    `broken` is reported because the store knows it and the legacy service could not: a row that
+    fails validation refuses to enable, and a user whose trigger silently stopped counting deserves
+    to see the reason on the status surface rather than wonder where it went.
+
+    `legacy` is an optional `ScheduleService` whose jobs are FOLDED IN by id, so a home
+    mid-migration counts each automation exactly once rather than double-counting the imported
+    ones. It retires with the class.
+    """
+    total: dict[str, bool] = {}
+    broken: set[str] = set()
+    for row in store.load():
+        total[row.trigger.id] = bool(row.trigger.enabled)
+        if not row.ok:
+            broken.add(row.trigger.id)
+    if legacy is not None:
+        try:
+            for job in legacy.list_jobs(include_disabled=True):
+                total.setdefault(job.id, bool(job.enabled))
+        except Exception:  # noqa: BLE001 - a status read must never fail on the legacy half
+            logger.debug("legacy job counts unavailable", exc_info=True)
+    return {
+        "total": len(total),
+        "enabled": sum(1 for on in total.values() if on),
+        "broken": len(broken),
+    }
+
+
+def _inline_action(trigger: Any) -> dict[str, Any]:
+    """The trigger's action as `{provider, config}`.
+
+    `workflow` is `{"inline": {...}}` for a migrated cron and `{"provider": ..., "config": ...}` for
+    one the chat tools created. Both are accepted because both
+    exist in a
+    real store — reading only one would render an empty action for half the rows.
+    """
+    workflow = trigger.workflow if isinstance(getattr(trigger, "workflow", None), dict) else {}
+    inline = workflow.get("inline")
+    if isinstance(inline, dict):
+        return inline
+    if workflow.get("provider"):
+        return {"provider": workflow.get("provider"), "config": workflow.get("config") or {}}
+    return {}
+
+
+def _action_config(trigger: Any) -> dict[str, Any]:
+    config = _inline_action(trigger).get("config")
+    return config if isinstance(config, dict) else {}
+
+
+def channel_of(trigger: Any) -> str:
+    """Where a trigger's results go on a chat channel, or "". Read from `delivery`, not the action.
+
+    ``<name>`` for the owner's DM on that channel, ``<name>:<id>`` for a chat on it: the route
+    without its prefix, which is also what the schedule API takes back.
+    """
+    delivery = str(getattr(trigger, "delivery", "") or "")
+    return delivery[len(_CHANNEL_PREFIX) :] if delivery.startswith(_CHANNEL_PREFIX) else ""
+
+
+def _channel_problem(trigger: Any) -> str:
+    from personalclaw.triggers.delivery import channel_route_problem
+
+    return channel_route_problem(getattr(trigger, "delivery", ""))
+
+
+def is_silent(trigger: Any) -> bool:
+    """Whether the trigger suppresses automatic delivery. `delivery == "none"` IS silent."""
+    return str(getattr(trigger, "delivery", "") or "") == "none"
+
+
+def _failure_policy(trigger: Any) -> dict[str, Any]:
+    """`Trigger.failure_policy` as a dict, whatever the row actually holds.
+
+    The store's load is lenient, so a hand-edited `triggers.json` can put a string here and
+    still list; a projection that assumed a dict would 500 the whole schedule list over one bad row.
+    """
+    policy = getattr(trigger, "failure_policy", None)
+    return policy if isinstance(policy, dict) else {}
+
+
+def session_key_of(trigger: Any) -> str:
+    """The pinned session key, or "" for a fresh session."""
+    session = str(getattr(trigger, "session", "") or "")
+    return session[len(_PINNED_PREFIX) :] if session.startswith(_PINNED_PREFIX) else ""
+
+
+def cadence_kind(trigger: Any) -> str:
+    """The clock spec's kind (`cron` / `interval` / `at` / `sequence` / `adaptive`), or ""."""
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    return str(spec.get("kind") or "")
+
+
+def to_schedule_row(
+    trigger: Any,
+    *,
+    now: float = 0.0,
+    base_dir: Any = None,
+    last_run_status: str = "",
+    last_run_source: str = "",
+) -> dict[str, Any]:
+    """A clock `Trigger` in the schedule wire shape the API already publishes.
+
+    Field-for-field compatible with what `_serialize_schedule` produced from a `ScheduleJob`, so the
+    frontend's `ScheduleJob` type and every consumer keep working while the backend becomes
+    the store.
+
+    Masked for display (:data:`MASKED_FIELDS`), because every reader shows it: the Automations page,
+    an app allowed to read automations, a channel app's `/cron list`, the CLI and the investigate
+    chat. The prompt reached them twice, as ``message`` and inside ``action``, and masking one copy
+    showed the other. A save that sends the row back gets each marker restored from the stored
+    trigger (`dashboard/handlers/triggers._keep_masked_trigger`).
+
+    `is_running` / `running_since` come from the CLAIM store, not a process-local dict — which
+    is why they are answerable at all from an API process that does not own the scheduler loop.
+    """
+    from personalclaw.knowledge import report_schedules
+    from personalclaw.triggers import claims
+
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    action = _inline_action(trigger)
+    config = _action_config(trigger)
+    kind = cadence_kind(trigger)
+
+    row = {
+        "kind": "schedule",
+        "id": f"schedule:{trigger.id}",
+        "raw_id": trigger.id,
+        "name": trigger.name,
+        "enabled": bool(trigger.enabled),
+        "action": action,
+        # The report this automation is the schedule of, or None. Its time and its switch are the
+        # report's (an edit of either moves both), its name is the report's, and deleting it leaves
+        # the report unscheduled, so the panel says so; read from the same predicate the edits use.
+        "report_id": (
+            report_schedules.report_id_for(trigger.id) if report_schedules.owns(trigger) else None
+        ),
+        # The schedule mechanism. `expr`/`interval_secs`/`at` are the store's spellings of
+        # the legacy
+        # `cron_expr`/`every_secs`/`at_ts`; the wire keeps the legacy names so the FE is unchanged.
+        "message": str(config.get("task_template") or config.get("message") or ""),
+        "schedule": describe_cadence(trigger),
+        "cron_expr": str(spec.get("expr") or "") if kind == "cron" else None,
+        "every_secs": _int_or_none(spec.get("interval_secs")) if kind == "interval" else None,
+        # A one-shot's own time, epoch seconds: what the edit form opens on, as it opens a cron on
+        # `cron_expr`. Without it the form showed the time blank.
+        "at_ts": _float_or_none(spec.get("at")) if kind == "at" else None,
+        # A deliberate LEGACY_FIELD_MAP drop: `created_ts` was display-only. None rather than a
+        # fabricated value — inventing a creation date would be a lie the UI renders as fact.
+        "created_ts": None,
+        "last_status": str(getattr(trigger, "health_status", "") or ""),
+        "last_run_status": last_run_status or None,
+        # What started its newest run (`triggers.run_source`), as that run's row says.
+        "last_run_source": last_run_source or None,
+        # 🔴 THE LIFECYCLE STATE, which this projection alone omitted (issue 496). The store
+        # projection sends it (`handlers/triggers.py::_serialize_store`, which a data-event row
+        # takes too) and the frontend renders it through the shared `triggerHealthMeta`,
+        # so the CLOCK kind was the one kind whose lifecycle was invisible. Measured on a live
+        # gateway: an AUTOPAUSED and a QUARANTINED clock trigger both arrived as `state: null`
+        # with `last_status: 'failing'` and rendered as the identical "failing" dot — and
+        # quarantine is the one state a toggle cannot undo (`resume_state` refuses it), so
+        # "failing" sends the user to a button that will not work.
+        #
+        # Additive, so the "the shape `_serialize_schedule` produced" contract holds for every
+        # existing reader: nothing that ignores the key changes behaviour.
+        "state": str(getattr(trigger, "state", "") or ""),
+        # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
+        "restore_hold": str(getattr(trigger, "restore_hold", "") or ""),
+        "agent": str(config.get("agent") or "") or None,
+        "model": str(config.get("model") or "") or None,
+        # The folder the agent works in, as the owner wrote it. Published so the trigger's panel
+        # shows it and its editor sends it back: the editor rebuilds the agent action from the
+        # fields it has, and a field it lacked was dropped by every save.
+        "cwd": str(config.get("cwd") or "") or None,
+        "channel": channel_of(trigger) or None,
+        # Why the results can't go to that channel, when they can't: a channel that isn't set up
+        # here, or an id it refuses. A route stored before routes named their channel
+        # (`channel:C0123`) reads as a channel called `C0123`, and the row says so rather than
+        # showing a destination nothing will deliver to.
+        "channel_problem": _channel_problem(trigger),
+        "approval_mode": str(config.get("approval_mode") or "") or None,
+        "silent": is_silent(trigger),
+        # 🔴 FAILURE ROUTING, published. Both were declared, persisted, round-tripped and
+        # READ BY THE FIRE PATH — `delivery.route_for` picks the route per outcome and
+        # `delivery.repeats_last_failure` gates on the policy key — and neither appeared on this
+        # wire row, so no surface could show a user what their automation was set to, let alone
+        # change it. `failure_delivery` is published RAW (not `or None`, unlike `channel`/`timezone`
+        # above): '' means "inherit `delivery`", so collapsing it to null would erase the difference
+        # between that choice and an unset field.
+        "failure_delivery": str(getattr(trigger, "failure_delivery", "") or ""),
+        # The one key of `failure_policy` a user can set, FLATTENED. The dict also holds
+        # `autopause_after`, so publishing it whole would invite a form to send the whole dict back
+        # and clobber a threshold it never edited.
+        "failure_dedupe": bool(_failure_policy(trigger).get("dedupe_hash", False)),
+        # What a missed slot does (`missed.catch_up_plan`): off, it waits on the review; on, it
+        # runs once, late. Published so the panel says which and the editor sends it back.
+        "catch_up": getattr(trigger, "catch_up", False) is True,
+        "strict_schedule": bool(spec.get("strict", False)),
+        "timezone": str(spec.get("timezone") or "") or None,
+        "skip_dates": list(spec.get("skip_dates") or []),
+        "script": str(config.get("script") or "") or None,
+        "command": str(config.get("command") or "") or None,
+        "last_run_ts": _last_run_ts(trigger),
+        # `last_result` is a deliberate drop too — the RUN RECORD owns a run's output, and a copy on
+        # the trigger was a second truth that could disagree with it. `has_result` therefore reports
+        # whether a run exists to open, which is what the UI actually branches on.
+        "has_result": bool(getattr(trigger, "last_run_id", "")),
+        "last_result": None,
+        "last_error": str(getattr(trigger, "last_error_summary", "") or "") or None,
+        "next_run_ts": _next_run_ts(trigger, now=now),
+        "is_running": claims.is_running(trigger.id, now=now, base_dir=base_dir),
+        "running_since": claims.running_since(trigger.id, now=now, base_dir=base_dir),
+        "has_session": bool(session_key_of(trigger)),
+        "run_count": int(getattr(trigger, "run_count", 0) or 0),
+        # The store's own armed timestamp, so a caller can see what the tick will act on without
+        # re-deriving it. `next_run_ts` is the same instant as an epoch for the existing UI.
+        "next_fire_at": str(getattr(trigger, "next_fire_at", "") or ""),
+    }
+    return {
+        key: redact_values_for_display(value) if key in MASKED_FIELDS else value
+        for key, value in row.items()
+    }
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _last_run_ts(trigger: Any) -> float | None:
+    """The newest of the trigger's success/failure/waiting stamps, as an epoch, or None.
+
+    `LEGACY_FIELD_MAP` splits `last_run_ts` into `last_success_at` / `last_failure_at`, which is the
+    better model (a failure is not a success), but the wire field means "when did it last RUN" — so
+    the newest stamp is the honest answer rather than only the successful one. A run that stopped
+    for a person (`last_waiting_at`) ran too, and this field moving is what tells a Run button its
+    run is over.
+    """
+    from personalclaw.triggers.service import to_epoch
+
+    stamps = [
+        to_epoch(getattr(trigger, "last_success_at", "")),
+        to_epoch(getattr(trigger, "last_failure_at", "")),
+        to_epoch(getattr(trigger, "last_waiting_at", "")),
+    ]
+    newest = max(stamps)
+    return newest if newest > 0 else None
+
+
+def _next_run_ts(trigger: Any, *, now: float) -> float | None:
+    """The persisted next fire, or a freshly computed one when the row is not armed yet.
+
+    Reads `next_fire_at` FIRST — that is what the tick will actually act on, and a UI that
+    recomputed its own answer could disagree with the scheduler (the drift the one-engine rule
+    exists to prevent). Falls back to `arm.next_fire` only for an unarmed row, so a just-created
+    trigger still shows when it will run instead of a blank.
+    """
+    from personalclaw.triggers.arm import next_fire
+    from personalclaw.triggers.service import to_epoch
+
+    persisted = to_epoch(getattr(trigger, "next_fire_at", ""))
+    if persisted > 0:
+        return persisted
+    computed = next_fire(trigger, now=now)
+    return computed if computed > 0 else None
+
+
+def describe_cadence(trigger: Any) -> str:
+    """The human cadence string for a list row ("At 9:00 AM EDT", "every 300s", "at 01:00 AM …").
+
+    🔴 DELEGATES to the shipped `schedule.format_schedule` rather than formatting here.
+    Measured: a hand-rolled version produced `0 9 * * * (America/New_York)` where the live API
+    produces `At 9:00 AM EDT` — worse prose, and a SECOND formatter that would drift from the
+    one the rest of the UI reads. The store's spellings (`expr`/`interval_secs`/`at`) are
+    translated back into a `ScheduleDefinition` to call it: a projection, not a second truth.
+    """
+    from personalclaw.schedule import ScheduleDefinition, format_schedule
+
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    kind = cadence_kind(trigger)
+    tz = str(spec.get("timezone") or "")
+    try:
+        if kind == "cron":
+            definition = ScheduleDefinition(kind="cron", cron_expr=str(spec.get("expr") or ""))
+        elif kind in ("interval", "sequence"):
+            definition = ScheduleDefinition(
+                kind="every", every_secs=_int_or_none(spec.get("interval_secs"))
+            )
+        elif kind == "at":
+            definition = ScheduleDefinition(kind="at", at_ts=_float_or_none(spec.get("at")))
+        elif kind == "adaptive":
+            # An adaptive clock has TWO cadences and a live state, so `format_schedule` has
+            # nothing to say about it — a `ScheduleDefinition` cannot express "either of these".
+            # Rendered here rather than falling through to the bare kind name, because "adaptive"
+            # alone tells a user nothing about when the row will next run, which is the one question
+            # this column answers.
+            return _describe_adaptive(spec)
+        else:
+            return kind or "unknown"
+        return format_schedule(definition, tz_name=tz)
+    except Exception:  # noqa: BLE001 - a describable row must never fail a whole list render
+        logger.debug(
+            "could not describe cadence for %s", getattr(trigger, "id", "?"), exc_info=True
+        )
+        return kind or "unknown"
+
+
+def _describe_adaptive(spec: dict[str, Any]) -> str:
+    """The cadence sentence for an `adaptive` clock.
+
+    Names BOTH cadences and which one is live, because that is what an adaptive row's reader needs:
+    "every 5m" alone would look like a misconfigured 5-minute poll rather than a system that is
+    currently working harder because something is wrong.
+
+    Worded by what switches the clock — whether maintenance has work it can do — and not as
+    "healthy": the health score also counts failures only a person can clear, and
+    those leave the clock on its long sleep, so "(now: healthy)" would contradict the Doctor.
+    """
+    healthy = _int_or_none(spec.get("interval_secs_healthy"))
+    degraded = _int_or_none(spec.get("interval_secs_degraded"))
+    if not healthy or not degraded:
+        return "adaptive"
+    live = (
+        degraded if str(spec.get("health_state") or "").strip().lower() == "degraded" else healthy
+    )
+    return (
+        f"adaptive — every {_mins(healthy)} with nothing to repair, {_mins(degraded)} while "
+        f"repairing (now: every {_mins(live)})"
+    )
+
+
+def _mins(secs: int) -> str:
+    """`600` → `10m`. Minutes because both adaptive cadences are configured in minutes."""
+    return f"{max(1, round(secs / 60))}m"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

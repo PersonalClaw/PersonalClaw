@@ -1,0 +1,395 @@
+"""App storage helpers — the path + installed-metadata primitives the provider/
+extension system reads.
+
+Each provider/extension lives under ``~/.personalclaw/apps/{name}/`` with an
+``installed.json`` describing version + enabled state and an ``app.json`` manifest.
+The third-party app-platform lifecycle (install/update/enable/disable/uninstall)
+was retired; what remains is reading what's present so the provider loader can
+discover installed extensions.
+"""
+
+import errno
+import hashlib
+import json
+import logging
+import os
+import stat
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from personalclaw.apps.manifest import KEBAB_RE, AppManifest
+from personalclaw.atomic_write import atomic_write, ensure_home_for
+from personalclaw.config import loader as config_loader
+from personalclaw.safety_flags import strict_bool
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call and never made here: every path of the app platform
+    is worked out from this, the reads that list the apps included, and each writer makes the
+    folder it writes into (the home first, ``atomic_write.ensure_home_for``). See
+    :func:`personalclaw.config.loader.resolve_config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.resolve_config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+APP_MANIFEST_FILENAME = "app.json"
+INSTALLED_META_FILENAME = "installed.json"
+#: The folder inside an installed app's folder that holds the Python environment its sidecar
+#: child runs in (``local_models.sidecar.sidecar_venv_dir``) — and so the engine installed there.
+#: Built on this machine, never shipped: staging leaves any ``venv`` out of a bundle
+#: (``supply_chain.NEVER_INSTALLED_NAMES``).
+APP_VENV_DIRNAME = "venv"
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+
+def apps_dir() -> Path:
+    """Return the root directory for installed apps: ``~/.personalclaw/apps/``."""
+    return config_dir() / "apps"
+
+
+def _validate_app_name(name: str) -> str:
+    """Reject a name that isn't a valid app id before it can name a directory.
+
+    App names are kebab-case (the same ``KEBAB_RE`` the manifest enforces). This
+    guard exists because ``app_data_dir`` *creates* the directory: without it,
+    any caller (or stray test) handing in a fuzzed/invalid name silently mkdir's
+    a junk dir under ``apps/`` — which once accumulated 16k empty dirs and made
+    ``list_apps`` stat-storm on every request. Fail loud instead of polluting.
+    """
+    if not name or not KEBAB_RE.match(name):
+        raise ValueError(f"invalid app name {name!r} (must be kebab-case)")
+    return name
+
+
+def _reject_path_escape(name: str) -> str:
+    """Reject a name that could escape the apps/ sandbox as a path segment.
+
+    Defense-in-depth at the single chokepoint every app-scoped path flows through
+    (config read/write, backend entry resolution, onEnable/onDisable hooks with
+    ``cwd=app_dir(name)``, and ``shutil.rmtree(app_dir(name))`` on uninstall). A
+    traversal name (``../``, ``/etc``, an absolute path, …) reaching any of those
+    would escape the sandbox — worst case an rmtree OUTSIDE apps/. This is a
+    NARROW escape check (not full kebab-strictness): ``list_apps`` iterates real
+    on-disk dir names and legitimately hands back special dirs like ``.quarantine``
+    (skill supply-chain) — those can't escape, so they pass; only genuine
+    traversal is blocked. ``_validate_app_name`` (full KEBAB_RE) still gates the
+    INSTALL path where a fresh name is minted."""
+    if (
+        not name
+        or name in (".", "..")
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+        or name.startswith("..")
+        or ".." in (name.replace("\\", "/").split("/"))  # any '..' segment
+    ):
+        raise ValueError(f"invalid app name {name!r} (path escape rejected)")
+    return name
+
+
+def app_dir(name: str) -> Path:
+    """Return the directory for a specific installed app.
+
+    Rejects a path-escaping ``name`` FIRST (see :func:`_reject_path_escape`): this
+    is the single chokepoint every app-scoped path flows through (config, backend
+    entry, lifecycle hooks, uninstall rmtree), so a traversal name can't escape the
+    apps/ sandbox from ANY caller — not just the API routes (which already 404 an
+    unknown name via the manifest check)."""
+    return apps_dir() / _reject_path_escape(name)
+
+
+SHARED_DIR_ENV_PREFIX = "PERSONALCLAW_APP_SHARED_DIR_"
+
+
+def shared_dir_env_name(app_name: str) -> str:
+    """Env var name mounting ``app_name``'s data dir into a CONSUMER granted read-only
+    shared-storage on it.
+
+    Kebab app names are upper-snaked so the result is a valid POSIX env identifier
+    (``note-keeper`` → ``PERSONALCLAW_APP_SHARED_DIR_NOTE_KEEPER``). Kebab names never
+    contain ``_``, so the mapping is injective — no two sharers collide. The SDK reader
+    (``sdk.util.shared_app_data_dir``) applies the SAME transform, so writer and reader
+    agree on the name."""
+    return SHARED_DIR_ENV_PREFIX + app_name.upper().replace("-", "_")
+
+
+#: A UI bundle's path → ``(size, mtime_ns, sha256)`` of the bytes last read from it, so a listing
+#: reads each bundle once per change rather than on every request.
+_bundle_digests: dict[str, tuple[int, int, str]] = {}
+
+
+def ui_revision(name: str, ui: dict[str, Any]) -> str:
+    """A short digest of the UI bundles an installed app serves — what the SPA versions URLs with.
+
+    The dashboard imports an app's page and components module by URL, and a page that already
+    imported a URL gets the same module back; an update that kept the URL could go on showing
+    the old version. So every URL carries this, and it changes exactly when a bundle's bytes do:
+    an update, a reinstall, a rebuild by the app's own setup hook. Only the declared entry files
+    are read (an app's ``ui/`` may also hold its build tree, ``node_modules`` and all), and only
+    inside ``ui/``, the containment the asset route applies. ``""`` for an app with no UI.
+    """
+    declared = {
+        str(p.get("entryPoint") or "") for p in ui.get("pages") or [] if isinstance(p, dict)
+    }
+    declared |= {str(ui.get("components") or ""), str(ui.get("entry") or "")}
+    entries = sorted(e for e in declared if e)
+    if not entries:
+        return ""
+    root = (app_dir(name) / "ui").resolve()
+    digest = hashlib.sha256()
+    for rel in entries:
+        digest.update(f"{rel}\0{_bundle_digest(root, rel)}\0".encode())
+    return digest.hexdigest()[:12]
+
+
+def _bundle_digest(root: Path, rel: str) -> str:
+    target = (root / rel).resolve()
+    if not target.is_relative_to(root):
+        return "outside"
+    try:
+        st = target.stat()
+        known = _bundle_digests.get(str(target))
+        if known is not None and known[:2] == (st.st_size, st.st_mtime_ns):
+            return known[2]
+        value = hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"
+    _bundle_digests[str(target)] = (st.st_size, st.st_mtime_ns, value)
+    return value
+
+
+def app_data_dir(name: str) -> Path:
+    """Return the app-scoped data directory: ``~/.personalclaw/apps/{name}/data/``.
+
+    This helper *creates* the directory, so it uses the STRICTER kebab guard
+    (``_validate_app_name``, not just the traversal check in ``app_dir``): a fresh
+    name being minted must be a valid app id, else a fuzzed/junk name silently
+    mkdir-pollutes apps/ (once accumulated 16k empty dirs → list_apps stat-storm).
+    """
+    d = app_dir(_validate_app_name(name)) / "data"
+    ensure_home_for(d)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def engine_not_installed(name: str) -> bool:
+    """Whether installed app *name* declares an engine (``sidecarDependencies``) that is not in its
+    own Python environment, ``APP_VENV_DIRNAME``: what Install engine then puts there."""
+    from personalclaw.local_models.sidecar import SidecarInstall
+
+    install = SidecarInstall.for_app(name)
+    return install is not None and bool(install.requirements) and not install.installed
+
+
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+def read_app_owned_text(root: Path, *parts: str) -> str:
+    """The UTF-8 text of ``root/<parts…>``, never read through a link below ``root``.
+
+    For a file the gateway reads, with its own authority, inside a folder an APP writes: its
+    ``data/`` (``root`` the app's folder, ``parts`` starting ``"data"``) or a parked copy of
+    one (``root`` the copy). A confined app may write there, so a link it planted —
+    ``data/config.json -> ~/.ssh/…`` or ``-> ../../other-app/data/config.json`` — would hand
+    it whatever the link names. So every component below ``root`` is opened ``O_NOFOLLOW``
+    (``root`` itself is the gateway's own path and may be reached through a link), and the
+    file must be a regular file: a named pipe is refused, never waited on.
+
+    Raises :class:`OSError` — ``FileNotFoundError`` when it is absent, ``ELOOP`` for a link,
+    ``EINVAL`` for anything but a regular file — so a caller treats every refusal as it
+    already treats an unreadable file."""
+    if os.open in os.supports_dir_fd:
+        fd = os.open(root, os.O_RDONLY | _DIRECTORY)
+        try:
+            for part in parts[:-1]:
+                inner = os.open(part, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = inner
+            leaf = os.open(parts[-1], os.O_RDONLY | _NOFOLLOW | _NONBLOCK, dir_fd=fd)
+        finally:
+            os.close(fd)
+    else:  # no openat on this platform: refuse a link at each hop, then open
+        here = root
+        for part in parts:
+            here = here / part
+            if here.is_symlink():
+                raise OSError(errno.ELOOP, "is a link, which is never followed", str(here))
+        leaf = os.open(here, os.O_RDONLY | _NOFOLLOW | _NONBLOCK)
+    with os.fdopen(leaf, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(errno.EINVAL, "is not a regular file", str(root.joinpath(*parts)))
+        return fh.read().decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Installed metadata
+# ---------------------------------------------------------------------------
+
+# Valid values for InstalledApp classification fields
+_VALID_ORIGIN: frozenset[str] = frozenset({"builtin", "registry", "local", "external"})
+_VALID_RESOURCES: frozenset[str] = frozenset({"gateway", "app"})
+_VALID_LIFECYCLE: frozenset[str] = frozenset({"gateway", "app", "locked"})
+# The supply-chain trust tier the install gate settled on for THESE bytes. Spelled out
+# here rather than imported from ``supply_chain.TrustTier`` for the same reason
+# ``_VALID_ORIGIN`` is: this module owns the on-disk record and must not pull the scanner
+# in to read one. A tier the enum gains has to be listed here too — ``from_dict`` drops an
+# unrecognised one rather than persisting a value no reader can interpret.
+_VALID_TIER: frozenset[str] = frozenset({"builtin", "official", "trusted", "community"})
+
+
+@dataclass
+class InstalledApp:
+    """Metadata persisted in ``installed.json`` for each installed app/extension."""
+
+    name: str = ""
+    version: str = ""
+    displayName: str = ""  # noqa: N815
+    enabled: bool = True
+    installedAt: str = ""  # noqa: N815
+    updatedAt: str = ""  # noqa: N815
+    source: str = ""  # concrete provenance: path, URL, "registry:name", "builtin"
+    origin: str = "registry"  # builtin | registry | local | external
+    resources: str = "gateway"  # gateway | app
+    lifecycle: str = "gateway"  # gateway | app | locked
+    # The trust tier the install/update gate computed for the bytes that landed —
+    # ``supply_chain.TrustTier``, the SAME value the install dialog disclosed
+    # ("Unsigned — community tier"). Recorded rather than re-derived because the gate
+    # knows one thing a later read cannot: a verified maintainer signature RAISES a
+    # community bundle to ``official``, and the signature is checked on the staged tree.
+    # "" means "installed before this field existed"; readers fall back to the tier the
+    # app's ``origin`` earns (``app_manager.trust_tier_of``), never to ``builtin`` (#2627).
+    tier: str = ""
+    schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
+
+    def validate_fields(self) -> list[str]:
+        """Validate classification field values. Returns error list (empty = valid)."""
+        errors: list[str] = []
+        if self.origin not in _VALID_ORIGIN:
+            errors.append(f"invalid origin: {self.origin!r}")
+        if self.resources not in _VALID_RESOURCES:
+            errors.append(f"invalid resources: {self.resources!r}")
+        if self.lifecycle not in _VALID_LIFECYCLE:
+            errors.append(f"invalid lifecycle: {self.lifecycle!r}")
+        # "" is legal (an app installed before the field existed), a junk value is not.
+        if self.tier and self.tier not in _VALID_TIER:
+            errors.append(f"invalid tier: {self.tier!r}")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v or isinstance(v, (bool, int))}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "InstalledApp":
+        inst = cls(
+            name=str(data.get("name", "")),
+            version=str(data.get("version", "")),
+            displayName=str(data.get("displayName", "")),
+            # On unless switched off; a switch that reads as neither yes nor no leaves the app off,
+            # since an app runs code (`bool("false")` is True, which kept a switched-off app on).
+            enabled=strict_bool(
+                data.get("enabled"), field="installed app enabled", default=False, absent=True
+            ),
+            installedAt=str(data.get("installedAt", "")),
+            updatedAt=str(data.get("updatedAt", "")),
+            source=str(data.get("source", "")),
+            origin=str(data.get("origin", "registry")),
+            resources=str(data.get("resources", "gateway")),
+            lifecycle=str(data.get("lifecycle", "gateway")),
+            tier=str(data.get("tier", "")),
+            schemaVersion=int(data.get("schemaVersion", 1)),
+        )
+        errors = inst.validate_fields()
+        if errors:
+            logger.warning(
+                "InstalledApp %s has invalid fields: %s — using defaults",
+                inst.name,
+                errors,
+            )
+            if inst.origin not in _VALID_ORIGIN:
+                inst.origin = "registry"
+            if inst.resources not in _VALID_RESOURCES:
+                inst.resources = "gateway"
+            if inst.lifecycle not in _VALID_LIFECYCLE:
+                inst.lifecycle = "gateway"
+            # Drop an unreadable tier to "" — which readers resolve from `origin` — rather
+            # than default it to a tier. Guessing here would invent a provenance claim.
+            if inst.tier and inst.tier not in _VALID_TIER:
+                inst.tier = ""
+        return inst
+
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _read_installed(name: str) -> InstalledApp | None:
+    """Read installed.json for an app, or None if not installed."""
+    # A path-escaping name (app_dir rejects it) can't be an installed app;
+    # return None so lifecycle callers (incl. force_uninstall's rmtree pre-check)
+    # treat it as "not installed" rather than surfacing the guard's ValueError.
+    try:
+        meta_path = app_dir(name) / INSTALLED_META_FILENAME
+    except ValueError:
+        return None
+    if not meta_path.is_file():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        return InstalledApp.from_dict(data)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read %s: %s", meta_path, exc)
+        return None
+
+
+def _write_installed(name: str, meta: InstalledApp) -> None:
+    """Write installed.json for an app."""
+    meta_path = app_dir(name) / INSTALLED_META_FILENAME
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(meta_path, json.dumps(meta.to_dict(), indent=2) + "\n")
+
+
+def list_apps() -> list[dict[str, Any]]:
+    """Return metadata for all installed apps/extensions (read-only discovery)."""
+    root = apps_dir()
+    if not root.is_dir():
+        return []
+    result: list[dict[str, Any]] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        meta = _read_installed(entry.name)
+        if not meta:
+            continue
+        manifest_path = entry / APP_MANIFEST_FILENAME
+        manifest_data: dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                manifest = AppManifest.from_json_file(manifest_path)
+                manifest_data = manifest.to_dict()
+                # A self-managed app may update its own app.json directly; sync the
+                # version so discovery reflects the real one, not a stale installed.json.
+                if (
+                    meta.lifecycle == "app"
+                    and manifest.version
+                    and manifest.version != meta.version
+                ):
+                    meta.version = manifest.version
+                    meta.updatedAt = _now_iso()
+                    _write_installed(entry.name, meta)
+            except Exception:
+                pass
+        result.append({**meta.to_dict(), "manifest": manifest_data})
+    return result

@@ -1,0 +1,1032 @@
+"""The outbound delivery contract: statusUrl, stable event ids, destination formatting.
+
+The goal: a completed-run notification deep-links (statusUrl) to the exact run journal row, and a
+retried delivery does not double-ping.
+
+**Measured before writing.** A grep for `statusUrl` or `status_url` across `src/personalclaw`
+returns **nothing** — the deep link does not exist anywhere in the package.
+(Stated as prose rather than as the literal grep pattern: a backslash-pipe alternation inside a
+non-raw docstring is an invalid escape sequence, and Python warns on import. Caught by running
+the module, not by reading it.) A completed-run notification carries a title and a body, so a
+user reading "Nightly digest finished" has no route to the run that produced it: the
+notification→journal dead end.
+
+Three things this owns:
+
+* **`statusUrl`** — `#/workflows/runs/<run_id>` for a workflow run, `#/triggers?open=<id>` for
+  a fire
+  with no run behind it. Verified against the live routes: `WorkflowsSection` documents
+  `#/workflows/runs/<run_id>`, and `TriggersListPage` opens its side panel from `?open=<id>`.
+* **A stable event id preserved across retries** — the idempotency key a channel consumer
+  dedupes on.
+  Derived, not random: a `uuid4()` would be a *different* id on the retry, which is precisely the
+  double-ping to avoid.
+* **Destination-aware formatting** — a rich block for inbox/notify, flattened text for
+  `channel:slack`. Slack renders a dict as `[object Object]`; the flattening is not cosmetic.
+
+**This does NOT build a second notification path.** Delivery routes through
+`DashboardState.notify` → `notification_allowed()`. Everything here produces the ARGUMENTS for
+that call — `kind`, `title`, `body`, `meta` — and `meta` is the dict `notify` already merges
+into the note, so `statusUrl` reaches every surface without widening a schema. The redaction
+happens on the way in, because a run summary can contain a URL or a token from whatever
+the run touched.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import itertools
+import logging
+import re
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: The event types. Two, not one with a boolean: a channel consumer routes on the event name, and
+#: `automation.run` + `{"ok": false}` would make "only tell me about failures" a body inspection.
+EVENT_SUCCEEDED = "automation.run.succeeded"
+EVENT_FAILED = "automation.run.failed"
+
+#: Destinations that render structured blocks vs flattened text. Prefix-matched because a channel
+#: route names its channel and usually a chat on it (`channel:<name>:<target>`), so an exact match
+#: would silently fall back to rich blocks for every real channel destination.
+_FLAT_TEXT_PREFIXES = ("channel:",)
+
+#: What a notification's body holds of a result: the record the bell, the notifications page and
+#: the phone read. The bell shows its first line; the page and the phone show it whole. Room for a
+#: result a person reads through (a command's few lines, a morning briefing), short of a log.
+NOTE_BODY_CAP = 1200
+
+#: What a chat channel is sent of a result. More than the notification holds: a chat is where the
+#: owner chose to read results, and a chat message has nothing to open for the rest. Short enough
+#: that, with its title, it is one message on every chat channel that splits long ones.
+CHANNEL_BODY_CAP = 3500
+
+#: The last line of a result cut short, saying where it is whole. A command's output and an agent's
+#: reply are kept on the trigger's history row; a workflow run's summary is on its run's page.
+REST_IN_HISTORY = "The rest is in the trigger's history."
+REST_ON_RUN_PAGE = "The rest is on the run's page."
+
+
+def excerpt(text: str, cap: int, *, rest: str) -> str:
+    """*text* whole when it fits in *cap* characters; else as much as fits, ending where a line
+    ends, and a last line, *rest*, saying where it is whole.
+
+    Cut at a line end because a line is the unit a result is read in: the bell reads a body's first
+    line, and a chat message that stops mid-line reads as a broken one. A first line too long to
+    fit is cut where a word ends, and marked with "…".
+    """
+    text = text or ""
+    if len(text) <= cap:
+        return text
+    room = max(0, cap - len(rest) - 1)
+    kept = text[:room]
+    cut = kept.rfind("\n")
+    if cut > 0:
+        kept = kept[:cut]
+    else:
+        # One line, longer than the room: its words up to the room, and the mark that it goes on.
+        head = kept[: max(0, room - 1)]
+        space = head.rfind(" ")
+        kept = (head[:space] if space > 0 else head).rstrip() + "…"
+    return f"{kept.rstrip()}\n{rest}"
+
+
+def status_url(*, run_id: str = "", trigger_id: str = "") -> str:
+    """The deep link into the exact run journal row, or the trigger that fired.
+
+    A RUN id wins when both are present: the link targets the exact runs-inbox row / run journal,
+    and the run is the specific thing that just happened. Falling back to the trigger matters for
+    the `LEDGER`-weight fires that never produce a run directory (a suppressed or noop fire) — a
+    notification about one of those still needs somewhere to go, and pointing at the trigger is
+    honest where pointing at a nonexistent run would 404.
+
+    Returns "" when neither is known rather than a bare `#/` — a link that goes to the dashboard
+    root tells the user nothing and costs them a click to discover that.
+
+    `trigger_id` is the STORE id (`clock:standup-nudge`), which is what every caller holds. The
+    Triggers page lists that row under a namespaced id (`schedule:clock:standup-nudge`), and it
+    resolves `?open=` against both — see `resolveOpenTrigger` in `web/.../triggerMeta.ts`. Until
+    that resolver existed, every link this built opened the list with no panel.
+    """
+    if run_id:
+        return f"#/workflows/runs/{run_id}"
+    if trigger_id:
+        return f"#/triggers?open={trigger_id}"
+    return ""
+
+
+def event_id(*, trigger_id: str, run_id: str = "", attempt_key: str = "") -> str:
+    """The stable id a retried delivery reuses. DERIVED, never random.
+
+    A stable event id is preserved across retries (the idempotency key — channel consumers dedupe
+    re-delivered notifications). So the id is a hash of what identifies the EVENT, not of when
+    the delivery happened: a `uuid4()` or a timestamp would produce a new id on the retry and
+    the consumer would show the notification twice, which is the exact failure to avoid.
+
+    `attempt_key` is for the case where a re-run genuinely IS a new event — a manual re-fire of
+    the same trigger should ping again. Callers pass the run's epoch or attempt number; leaving it
+    empty means "the same event", which is the safe default for a transport retry.
+    """
+    basis = "|".join([trigger_id or "", run_id or "", attempt_key or ""])
+    return "evt_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:20]
+
+
+def _redact(text: str) -> str:
+    """The delivery redaction, applied before ANY surface — as heartbeat delivery does today.
+
+    A run summary is whatever the run produced: it can contain a URL the run fetched or a token a
+    tool printed. Redacting at the delivery boundary rather than at each emitter is what makes the
+    guarantee hold for an emitter nobody has written yet. A text the redactor fails on is withheld
+    (``security.redact_or_withhold``): the notification still goes, without what it could not mask.
+    """
+    from personalclaw.security import redact_or_withhold
+
+    return redact_or_withhold(text or "")
+
+
+@dataclass
+class Delivery:
+    """One outbound run-completion notification, ready for `DashboardState.notify`.
+
+    Carries the notify ARGUMENTS rather than sending anything: a second notification path is
+    forbidden, and a dataclass that delivered itself would be one. `to_notify_kwargs` is the whole
+    interface.
+    """
+
+    event: str
+    event_id: str
+    title: str
+    #: The result as the notification holds it (:data:`NOTE_BODY_CAP`).
+    body: str
+    #: The same result as a chat channel is sent it, with room for more (:data:`CHANNEL_BODY_CAP`).
+    channel_body: str = ""
+    status_url: str = ""
+    trigger_id: str = ""
+    run_id: str = ""
+    destination: str = ""
+    #: The notification kind the gate checks. Defaults per outcome in `build_delivery`.
+    kind: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+    #: Whether this is a failure filed in the Inbox (:func:`files_in_inbox`), as an item whose one
+    #: notification is its view, rather than a notification alone.
+    inbox: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.event == EVENT_SUCCEEDED
+
+    def to_notify_kwargs(self) -> dict[str, Any]:
+        """`**kwargs` for `state.notify(kind, title, body, meta=...)`.
+
+        Everything routable lives in `meta`, which `notify` merges into the persisted note — so a
+        surface reads `statusUrl` off the notification without `InboxItem` or the note schema
+        gaining a field. The same reason the structured card rides `refs`.
+        """
+        meta: dict[str, Any] = {
+            "event": self.event,
+            # camelCase because the contract names it `statusUrl` and a channel consumer reads the
+            # wire key.
+            "statusUrl": self.status_url,
+            "eventId": self.event_id,
+            **self.meta,
+        }
+        if self.trigger_id:
+            meta["trigger_id"] = self.trigger_id
+        if self.run_id:
+            meta["run_id"] = self.run_id
+        return {"kind": self.kind, "title": self.title, "body": self.body, "meta": meta}
+
+    def to_text(self) -> str:
+        """The flattened form for a text destination: what a chat channel is sent — the title, then
+        the result as a chat holds it (:attr:`channel_body`).
+
+        A statusUrl is appended as a LINE rather than embedded in prose, so a chat app that
+        auto-links bare URLs makes it clickable and a user scanning text finds it at the end. Only
+        a real URL, though: a dashboard fragment (`#/workflows/runs/…`) opens nothing outside the
+        dashboard, so in a chat it's just noise under the result.
+        """
+        parts = [self.title]
+        if self.channel_body:
+            parts.append(self.channel_body)
+        if self.status_url and not self.status_url.startswith("#"):
+            parts.append(self.status_url)
+        return "\n".join(parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event": self.event,
+            "event_id": self.event_id,
+            "title": self.title,
+            "body": self.body,
+            "channel_body": self.channel_body,
+            "status_url": self.status_url,
+            "trigger_id": self.trigger_id,
+            "run_id": self.run_id,
+            "destination": self.destination,
+            "kind": self.kind,
+            "ok": self.ok,
+            "inbox": self.inbox,
+            "meta": dict(self.meta),
+        }
+
+
+def wants_flat_text(destination: str) -> bool:
+    """Whether this destination needs flattened text instead of a structured block.
+
+    Prefix-matched on `channel:` — the id carries a workspace suffix in practice, and an exact
+    `== "channel:slack"` would send rich blocks to every real Slack destination, which renders as
+    `[object Object]`.
+    """
+    dest = (destination or "").strip().lower()
+    return any(dest.startswith(p) for p in _FLAT_TEXT_PREFIXES)
+
+
+#: The trigger kind that means "a scheduled job" — a clock trigger, whatever its `spec.kind`
+#: (cron / at / interval / sequence / adaptive are all clocks).
+SCHEDULED_TRIGGER_KIND = "clock"
+
+
+def is_scheduled(trigger: Any) -> bool:
+    """Whether *trigger* is a scheduled job, and so reports through the ``cron/*`` kinds (#415).
+
+    Named here rather than inlined at the call site so the gateway's routing and any test that
+    needs to know which kind an outcome will carry read the SAME predicate. A test that hardcoded
+    "a remediation run notifies as `info`" is exactly how the `cron` rows went unnoticed for a
+    release: the assumption lived in the test instead of in one function.
+    """
+    return str(getattr(trigger, "kind", "") or "") == SCHEDULED_TRIGGER_KIND
+
+
+def build_delivery(
+    *,
+    trigger_id: str,
+    trigger_name: str = "",
+    ok: bool,
+    summary: str = "",
+    run_id: str = "",
+    destination: str = "",
+    attempt_key: str = "",
+    duration_secs: float = 0.0,
+    scheduled: bool = False,
+    inbox: bool = False,
+    title: str = "",
+) -> Delivery:
+    """Assemble one run-completion delivery. Pure.
+
+    *inbox* says the outcome is a failure its trigger files in the Inbox (:func:`files_in_inbox`).
+    *title* is the headline when the outcome's own ("<name> finished", "<name> failed") would not
+    be true: a run refused before its action ran did not fail, it did not run.
+
+    The notification KIND is chosen per outcome, not per emitter: a failure has to be able to
+    escalate past a "digest" rule while a success should not, and that is a property of what
+    happened rather than of who is reporting it. Both names come from `notification_kinds` so the
+    user's existing rules apply — inventing a kind here would produce a notification no rule
+    matches, which resolves to `system/generic`, a badge, and ignores the user's settings.
+
+    *scheduled* says the trigger is a CLOCK trigger — a scheduled job — and picks the `cron/*`
+    pair over the generic `system/*` one.
+
+    🔴 WHY THE FLAG, AND WHY NOT UNCONDITIONALLY (issue #415). The ScheduleService removal deleted
+    every emitter of the `cron` kind but left its two rules rows, so "Scheduled job failed →
+    Notify" was a control nothing could trigger and the failure it wanted landed on `system/error`
+    — a row the user never configured, and one they cannot quieten without also quietening every
+    other error. The capability the two rows exist to provide ("interrupt me when a scheduled job
+    breaks, stay quiet about other errors") had silently stopped being expressible.
+    #415 offers restoring the kind or retiring the rows; restoring it keeps the capability.
+
+    But this substrate serves EVERY trigger kind — webhook, event, file, web_watch — so emitting
+    `cron/*` here unconditionally (which is what the report's own suggested one-liner does) would
+    label a webhook's outcome "Scheduled job result". The caller knows the trigger; it passes the
+    one bit this decision needs.
+    """
+    from personalclaw import notification_kinds
+
+    name = trigger_name or trigger_id or "automation"
+    event = EVENT_SUCCEEDED if ok else EVENT_FAILED
+    if scheduled:
+        kind = notification_kinds.CRON if ok else notification_kinds.CRON_FAILED
+    else:
+        kind = notification_kinds.INFO if ok else notification_kinds.ERROR
+    verb = "finished" if ok else "failed"
+    title = _redact(title or f"{name} {verb}")
+    # Masked whole, then sized for each surface: a cut made first could leave half of something the
+    # masker would have recognised whole.
+    result = _redact(summary or "")
+    rest = REST_ON_RUN_PAGE if run_id else REST_IN_HISTORY
+    meta: dict[str, Any] = {}
+    if duration_secs:
+        meta["duration_secs"] = round(float(duration_secs), 3)
+    return Delivery(
+        event=event,
+        event_id=event_id(trigger_id=trigger_id, run_id=run_id, attempt_key=attempt_key),
+        title=title,
+        body=excerpt(result, NOTE_BODY_CAP, rest=rest),
+        channel_body=excerpt(result, CHANNEL_BODY_CAP, rest=rest),
+        status_url=status_url(run_id=run_id, trigger_id=trigger_id),
+        trigger_id=trigger_id,
+        run_id=run_id,
+        destination=destination,
+        kind=kind,
+        meta=meta,
+        inbox=inbox and not ok,
+    )
+
+
+#: Action providers whose successful fire IS a dashboard notification.
+#:
+#: 🔴 WHY THIS EXISTS. A `notify` trigger firing every minute produced
+#: TWO notifications per fire — 5 fires, 10 notes. One was the action itself ("Standup nudge:
+#: review Q4 tasks", the title the user wrote); the other was this module's run-completion report
+#: ("Standup nudge finished", empty body). Both describe the same event, and the second says nothing
+#: the first did not. The bundled triggers whose OUTPUT is a notification already knew this — the
+#: digest, usage-recap and source-digest reconcilers store `delivery: "none"` because "a
+#: cron-result notification about it would be a notification about your notification". A
+#: user-authored notify trigger had nobody to set that for it.
+#:
+#: Decided per run by `report_run`, not stored as `delivery: "none"` at create
+#: time: a stored route would go stale the moment the action is edited, would fix no trigger that
+#: already exists, and would overwrite a setting the user owns. It is also not a ROUTE (`route_for`
+#: still answers where a report would go) — it is whether there is a report at all. A FAILED fire
+#: is unaffected: the action's own note never went out, so the failure report is the only word the
+#: user gets.
+SELF_NOTIFYING_PROVIDERS: frozenset[str] = frozenset({"notify"})
+
+
+def notifies_on_its_own(trigger: Any) -> bool:
+    """Whether *trigger*'s action already put a notification in front of the user when it ran."""
+    from personalclaw.triggers.schedule_view import _inline_action
+
+    return str(_inline_action(trigger).get("provider") or "") in SELF_NOTIFYING_PROVIDERS
+
+
+def route_for(trigger: Any, *, ok: bool) -> str:
+    """The destination this OUTCOME routes to.
+
+    🔴 WHY THIS EXISTS. `Trigger.failure_delivery` is declared, persisted, round-tripped by
+    `to_dict`/`from_dict`, defaulted by the migration and accepted by `automation_update` — and read
+    by NOTHING. Its own comment states the contract it was meant to enforce: *"A SEPARATE route for
+    failures. Failures reach the inbox even when `delivery` is none: an automation the user
+    asked to stay quiet still has to be able to say it broke."*
+
+    Measured before writing: the fire's report passed `destination=trigger.delivery`
+    unconditionally, so the failure route was never consulted — and a `delivery: "none"` automation
+    that broke reported its failure through the silent channel.
+
+    Falls back to `delivery` when `failure_delivery` is empty, and only for a FAILURE — a success
+    must never inherit the failure route, or a quiet automation would start announcing its ordinary
+    runs through the inbox.
+
+    🔴 A BLANK IS NOT THE SILENT VALUE (#450). This used to read `str(trigger.delivery or "none")`,
+    the same `or "none"` `parse_trigger` carried — so fixing the loader alone left the latch
+    standing, because THIS is the layer that decides delivery. It also contradicted `is_muted`'s own
+    stated rule four functions down ("an empty destination is NOT muted … defaulting that to silence
+    would let a bug turn into missing alerts"). A blank now travels as a blank and `is_muted`
+    remains the single place that decides what silence is.
+    """
+    if ok:
+        return str(getattr(trigger, "delivery", "") or "")
+    failure = str(getattr(trigger, "failure_delivery", "") or "")
+    return failure or str(getattr(trigger, "delivery", "") or "")
+
+
+#: The route that files a failure in the Inbox: the Triggers page's "If it fails: Inbox", and the
+#: entity's default failure route (`Trigger.failure_delivery`).
+INBOX_ROUTE = "inbox"
+
+
+def files_in_inbox(trigger: Any, *, ok: bool) -> bool:
+    """Whether this outcome of *trigger* is filed in the Inbox: a failure whose own failure route is
+    the Inbox.
+
+    What the Triggers page and the automations guide promise ("If it fails: Inbox"; "a run that
+    FAILS reaches your inbox"), and what a failure is: something waiting on the owner until they
+    deal with it. It was a notification alone, which the Inbox never listed. A result is not filed:
+    the page's words for one are "It still reaches the dashboard", which its notification does, and
+    a result nobody has to act on would only pile up there. A blank failure route ("Same as
+    results") follows the results, so a failure routed that way is a notification too — which is
+    why the result route's `inbox` (the ordinary delivery) does not file anything.
+    """
+    if ok:
+        return False
+    return str(getattr(trigger, "failure_delivery", "") or "").strip() == INBOX_ROUTE
+
+
+#: Volatile patterns stripped before hashing a failure for dedup: ISO timestamps and UUIDs. Without
+#: this, the same outage produces a fresh hash every minute simply because its message carries the
+#: clock, and dedup never fires.
+_VOLATILE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"  # ISO timestamps
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # UUIDs
+    re.IGNORECASE,
+)
+_EPOCH_RE = re.compile(r"\b\d{10,13}\b")
+_EPOCH_WINDOW_SECS = 300  # strip epoch values within ±5 min of now
+
+
+def failure_hash(text: str) -> str:
+    """Normalize volatile data and return a 16-hex-char SHA-256 prefix.
+
+    Strips ISO timestamps, UUIDs, and any 10-13 digit number that looks like an epoch within ±5
+    minutes of now. Non-epoch numeric ids (account ids, build ids) are preserved because they fall
+    outside the window — two failures differing only in a build id are genuinely different failures.
+
+    Truncated to 64 bits: sufficient for a 1:1 comparison against a single previous hash.
+
+    MOVED here from `gateway._result_hash`, which had been left with **zero callers**
+    when the legacy failure-dedup control was lost in the migration — along with four other
+    orphaned constants. It lives beside its only reader now rather than in the orchestrator,
+    so a `triggers` module does not have to import the gateway.
+    """
+    now = time.time()
+    lo = now - _EPOCH_WINDOW_SECS
+    hi = now + _EPOCH_WINDOW_SECS
+
+    def _strip_epoch(m: "re.Match[str]") -> str:
+        v = int(m.group())
+        ts = v / 1000 if v > 9_999_999_999 else v  # 13 digits → millis
+        return "" if lo <= ts <= hi else m.group()
+
+    text = _VOLATILE_RE.sub("", text)
+    text = _EPOCH_RE.sub(_strip_epoch, text)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+#: How long an IDENTICAL failure stays deduped before it re-alerts (`dedupe_hash`).
+#:
+#: 3600s, carried over verbatim from the legacy scheduler's `_FAILURE_REMINDER_SECS` — a
+#: constant that survived the migration in `gateway.py` and had **no reader left**, because the
+#: control it belonged to was lost. Preserved rather than re-chosen: an operator who learned
+#: "a broken cron nags me hourly" should not have that change silently.
+FAILURE_REMINDER_SECS = 3600.0
+
+
+def suppress_repeat_failure(
+    *, error: str, last_hash: str, last_at: float, now: float
+) -> tuple[bool, str]:
+    """Whether this failure repeats the last one inside the reminder window.
+
+    Returns `(suppress, hash_of_this_error)`. The caller persists the hash either way, so a
+    NEW error resets the window rather than inheriting the old one's.
+
+    🔴 WHY THIS EXISTS. `failure_policy.dedupe_hash` is written by the migration from the
+    legacy `last_failure_hash` and read by nothing — the last unread key on that field. The
+    legacy `gateway.py` had the whole control (`is_dup = fh == job.last_failure_hash` inside a
+    1h window, with `consecutive_failures` still advancing so autopause was unaffected); the
+    unified fire path kept the constant and dropped the check. Measured: a trigger failing with
+    the SAME error on 6 consecutive fires produced **6 notifications**, because `event_id`
+    dedupes the same event REDELIVERED (same `run_id`), not different fires with one error.
+
+    **Hashed from the ERROR TEXT, not from `last_error_summary`.** That field holds
+    `PauseDecision.reason` — `"failure 1 of 5"`, `"failure 2 of 5"` — which changes on every
+    failure even when the cause is identical, so hashing it could never dedupe once.
+
+    Volatile data is normalised by `failure_hash` (timestamps, UUIDs, epoch-looking numbers),
+    so one outage does not mint a fresh hash every minute because its message carries a clock.
+
+    **Suppression is capped by the window, never unbounded**: a still-broken automation
+    re-alerts hourly, because "it stopped telling me" and "it got fixed" must not look alike.
+    An empty error or a missing prior hash never suppresses — the first alert always goes out.
+    """
+    text = (error or "").strip()
+    if not text:
+        return False, ""
+    digest = failure_hash(text)
+    if not last_hash or digest != last_hash:
+        return False, digest
+    if last_at <= 0:
+        return False, digest
+    return (now - last_at) < FAILURE_REMINDER_SECS, digest
+
+
+def is_muted(destination: str) -> bool:
+    """Whether this destination means "do not notify" (the `none` destination).
+
+    🔴 THE SECOND HALF. `Delivery` carried `destination` and `to_notify_kwargs` **dropped it**, so
+    `delivery: "none"` silenced nothing: measured, a `none` trigger notified exactly like an `inbox`
+    one. The field existed, round-tripped, and was inert at the only point that could honour it.
+
+    Checked HERE rather than by teaching `state.notify` about triggers. The
+    substrate does not build a second notification path, and `notify` owns GLOBAL policy
+    (mute-all, severity, quiet hours) plus per-(source, kind) rules. Per-TRIGGER routing is
+    this substrate's own concern, so it is decided before the shared chokepoint is called,
+    never inside it.
+
+    An empty destination is NOT muted: `from_dict` defaults `delivery` to `"none"` explicitly, so a
+    blank value means a caller built a `Delivery` without one, and defaulting that to silence would
+    let a bug turn into missing alerts.
+    """
+    return str(destination or "").strip().lower() == "none"
+
+
+#: A channel destination's prefix, matching `schedule_view.channel_of`'s reading of `delivery`.
+CHANNEL_ROUTE_PREFIX = "channel:"
+
+#: The bare destinations a route may name. `""` is a REAL value, not an absent one: `route_for`
+#: treats an empty `failure_delivery` as "inherit `delivery`", which is the third choice a user has.
+#: `inbox` as a result route is the ordinary delivery, a notification; as a failure route it files
+#: the failure in the Inbox (:func:`files_in_inbox`).
+ROUTE_VALUES: frozenset[str] = frozenset({"", INBOX_ROUTE, "none"})
+
+
+def is_valid_route(destination: Any) -> bool:
+    """Whether *destination* is a route this substrate can honour.
+
+    ONE vocabulary in ONE place. `failure_delivery` reached the entity through the
+    `automation_update` allowlist with no validation at all, so an agent (and now a form) could
+    store `"slack"` or `"emial"` and get a 200 — and `route_for` would hand it to `deliver`, which
+    mutes only `"none"`, so the automation would notify through the default path while its stored
+    setting said otherwise. A setting that is accepted and not honoured is the inert shape this
+    program keeps finding, one layer out.
+
+    Deliberately NOT case-folding: `is_muted` lowercases before comparing, but the stored value is
+    what a surface renders back to the user, and silently accepting `"None"` would show them a route
+    spelled differently from every other row.
+    """
+    value = str(destination or "").strip()
+    return value in ROUTE_VALUES or (
+        value.startswith(CHANNEL_ROUTE_PREFIX) and len(value) > len(CHANNEL_ROUTE_PREFIX)
+    )
+
+
+# ── channel routes: `channel:<name>` and `channel:<name>:<target>` ─────────────────────────────
+#
+# A route names the chat channel and, optionally, a chat on it. Without a target it means the
+# owner's direct messages on that channel. It used to be `channel:<id>`, an id with no channel,
+# which nothing could deliver (#959: an id means nothing without the channel that issued it) and
+# nothing did: `deliver` handed the note to `notify`, which never reads a destination.
+
+#: The meta key a note carries once its result went out on a channel, naming that channel. A
+#: notification rule that DMs the owner on a channel skips a note carrying it, so a result does not
+#: arrive there twice.
+SENT_TO_CHANNEL_KEY = "sent_to_channel"
+
+
+def parse_channel_route(destination: Any) -> tuple[str, str] | None:
+    """``(name, target)`` for a channel route, or None for any other route.
+
+    ``target`` is ``""`` for the owner's DM. It may itself hold a colon (it is the channel's id,
+    in the channel's own spelling), so only the first colon after the name splits.
+    """
+    value = str(destination or "").strip()
+    if not value.startswith(CHANNEL_ROUTE_PREFIX):
+        return None
+    name, _, target = value[len(CHANNEL_ROUTE_PREFIX) :].partition(":")
+    if not name.strip():
+        return None
+    return name.strip(), target.strip()
+
+
+def _chat_channel(name: str, transports: Mapping[str, Any] | None) -> Any:
+    """The chat channel called *name*: in *transports*, else among the registered ones."""
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport
+
+    if name == WEBUI_TRANSPORT:
+        return None
+    if transports is not None:
+        return transports.get(name)
+    return get_transport(name)
+
+
+def channel_route_problem(destination: Any, *, transports: Mapping[str, Any] | None = None) -> str:
+    """Why a channel route can't be delivered, in one sentence the owner reads. ``""`` if it can.
+
+    Any other route is not this function's to judge and answers ``""``. The channel must be one set
+    up here, and when the route names a target, the channel itself checks it
+    (``ChannelTransportProvider.validate_target``): core does not know what an id looks like on any
+    platform. *transports* is the channels to ask, by name; the gateway's registered channels when
+    omitted. A process without the gateway (the CLI) passes the channels it built.
+    """
+    route = parse_channel_route(destination)
+    if route is None:
+        return ""
+    name, target = route
+    transport = _chat_channel(name, transports)
+    if transport is None:
+        return f"{name} isn't one of the chat channels set up here."
+    if not target:
+        return ""
+    try:
+        return str(transport.validate_target(target) or "")
+    except Exception:  # noqa: BLE001 - a broken check refuses rather than letting any id through
+        logger.warning("channel %s: validate_target raised", name, exc_info=True)
+        return f"{transport.display_name} couldn't check that id."
+
+
+#: What a route may be, said to whoever wrote one that is not.
+ROUTE_RULE = (
+    "A route is 'inbox' (a notification in PersonalClaw), 'none' (nothing is sent), or "
+    "'channel:<name>' (your direct messages on a chat channel set up here; "
+    "'channel:<name>:<chat id>' for a chat on it)."
+)
+
+
+def written_route(value: Any, *, transports: Mapping[str, Any] | None = None) -> tuple[str, str]:
+    """The route *value* is, as ``(route, "")``, or ``("", the sentence saying why it is none)``.
+
+    For every writer that takes a route from a caller (the chat's `automation_update`): the
+    vocabulary the store reads it with (:func:`is_valid_route`), and a channel route's channel set
+    up here and its chat one that channel takes (:func:`channel_route_problem`), over
+    *transports*, the registered channels when omitted. A value is stored as the route it names,
+    never as written: the store would read an unknown one back as ``inbox`` with a warning, so a
+    write it accepted would send results somewhere other than where the caller was told.
+
+    A value that names exactly one route is that route: a route's own word in another case
+    (``Inbox``), and a chat channel set up here by its key or the name it is shown under, bare
+    (``telegram``, ``Telegram``) or in a channel route (``channel:Telegram``), which is how
+    ``automation_create``'s ``via`` names a channel too (`channel_delivery.named_chat_channel`).
+    Anything else is refused with what a route can be.
+    """
+    if not isinstance(value, str):
+        return "", f"A route is text. {ROUTE_RULE}"
+    route = value.strip()
+    if route.casefold() in ROUTE_VALUES:
+        return route.casefold(), ""
+    if is_valid_route(route):
+        channel = parse_channel_route(route)
+    else:
+        channel = None if ":" in route else (route, "")
+    if channel is None:
+        return "", f"{value!r} isn't a route. {ROUTE_RULE}"
+    from personalclaw.channel_delivery import named_chat_channel
+
+    name, target = channel
+    key, problem = named_chat_channel(name, transports=transports)
+    if problem:
+        return "", f"{problem} {ROUTE_RULE}"
+    written = f"{CHANNEL_ROUTE_PREFIX}{key}" + (f":{target}" if target else "")
+    problem = channel_route_problem(written, transports=transports)
+    return ("", problem) if problem else (written, "")
+
+
+def _channel_name(name: str) -> str:
+    """The name a channel is shown under: its transport's display name, else its key."""
+    transport = _chat_channel(name, None)
+    return str(getattr(transport, "display_name", "") or name) if transport is not None else name
+
+
+async def _send_on_channel(name: str, target: str, text: str) -> str:
+    """Send *text* on channel *name*: to *target*, else to the owner's DM there.
+
+    Returns ``""`` once it went out, else the sentence the note carries instead. One channel, the
+    one the route names: a result the owner asked for on one channel does not go to another.
+    """
+    from personalclaw.channel_delivery import delivery_for
+    from personalclaw.config.credentials import owner_id_for
+
+    shown = _channel_name(name)
+    handle = delivery_for(name)
+    if handle is None:
+        return f"{shown} isn't connected, so this didn't go out there."
+    where = target
+    if not where:
+        owner = owner_id_for(name)
+        if not owner:
+            return f"{shown} doesn't know who you are yet, so this didn't go out there."
+        try:
+            where = str(await handle.open_dm(owner) or "")
+        except Exception:  # noqa: BLE001 - said on the note, logged for the detail
+            logger.warning("channel %s: opening the owner's DM failed", name, exc_info=True)
+            where = ""
+        if not where:
+            return f"{shown} couldn't open a conversation with you, so this didn't go out there."
+    try:
+        await handle.deliver_text(where, text)
+    except Exception:  # noqa: BLE001 - said on the note, logged for the detail
+        logger.warning("channel %s: sending a trigger result failed", name, exc_info=True)
+        return f"Sending it on {shown} failed, so it's only here. The gateway log has the error."
+    return ""
+
+
+async def _deliver_on_channel(state: Any, delivery: Delivery, name: str, target: str) -> None:
+    """Send the result on its channel, then record the note: marked as sent, or saying why not.
+
+    The note is recorded after the send so it can say what happened, once. Never raises.
+    """
+    kwargs = delivery.to_notify_kwargs()
+    try:
+        reason = await _send_on_channel(name, target, delivery.to_text())
+    except Exception:  # noqa: BLE001 - the note still goes out; the log has the rest
+        logger.warning("channel %s: delivering a trigger result failed", name, exc_info=True)
+        reason = f"Sending it on {_channel_name(name)} failed, so it's only here."
+    if reason:
+        kwargs["body"] = "\n\n".join(part for part in (kwargs["body"], reason) if part)
+    else:
+        kwargs["meta"][SENT_TO_CHANNEL_KEY] = name
+    try:
+        state.notify(**kwargs)
+    except Exception:  # noqa: BLE001 - the run already completed; a failed ping must not undo it
+        logger.debug("delivery %s could not be recorded", delivery.event_id, exc_info=True)
+
+
+#: Channel sends in flight. Held so a task is not collected before it finishes.
+_IN_FLIGHT: set[asyncio.Task[None]] = set()
+
+
+def _start_channel_delivery(state: Any, delivery: Delivery, name: str, target: str) -> None:
+    """Run :func:`_deliver_on_channel` without making the fire path wait on a chat platform."""
+    work = _deliver_on_channel(state, delivery, name, target)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running means no gateway, so no channel is connected in this process: the send
+        # finds that out at once and the note says so.
+        asyncio.run(work)
+        return
+    task = loop.create_task(work)
+    _IN_FLIGHT.add(task)
+    task.add_done_callback(_IN_FLIGHT.discard)
+
+
+def _file_in_inbox(state: Any, delivery: Delivery) -> bool:
+    """File a failure in the Inbox: one item, and its notification, which is its view
+    (`inbox.emit_attention_item`), so the bell has one entry for it and the owner's rule for the
+    kind still decides how loudly it arrives. Never raises.
+
+    The item carries what the note carries (`statusUrl`, the event and its id) and the trigger it is
+    about, which is where the Inbox row leads. Returns whether it went out: the notification does
+    even when the Inbox could not be written (`emit_attention_item` logs that).
+    """
+    from personalclaw import notification_kinds
+    from personalclaw.inbox import ItemKind, emit_attention_item
+
+    kwargs = delivery.to_notify_kwargs()
+    registered = notification_kinds.kind_for_legacy(delivery.kind)
+    try:
+        emit_attention_item(
+            state,
+            source=registered.source,
+            kind=registered.kind,
+            item_kind=ItemKind.SYSTEM.value,
+            title=delivery.title,
+            body=delivery.body,
+            refs={**kwargs["meta"], "trigger": delivery.trigger_id},
+        )
+    except Exception:  # noqa: BLE001 - the run already completed; a failed filing must not undo it
+        logger.warning(
+            "delivery %s could not be filed in the Inbox", delivery.event_id, exc_info=True
+        )
+        return False
+    return True
+
+
+def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
+    """Whether this delivery has already gone out — the "does not double-ping" half.
+
+    Checked on `event_id`, which is stable across retries by construction. The caller owns the
+    seen-set because the retry window is a transport concern (an in-memory set for a process, a
+    persisted one for a channel), and baking a store in here would make this module stateful for
+    no reader.
+    """
+    return bool(delivered_ids) and delivery.event_id in set(delivered_ids or ())
+
+
+def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> bool:
+    """Send one delivery through `state.notify`. Returns True if it went out.
+
+    Routes through the EXISTING gate by construction — this calls `notify`, which applies
+    `notification_allowed` and then the per-(source, kind) rule. The substrate does not
+    build a second notification path.
+
+    Adds the event id to `delivered_ids` when the caller supplies a mutable set, so a retry
+    through the same set is suppressed without the caller having to remember to record it. Never
+    raises: a notification failure must not fail the run that completed, which already happened.
+
+    A channel route (`channel:<name>[:<target>]`) is also SENT there, on that channel only, and
+    the note goes through `notify` once the send is done: marked `sent_to_channel`, or ending with
+    the sentence saying why it didn't go out. The send runs on the loop, so the fire path does not
+    wait on a chat platform; True means it was started.
+
+    A failure filed in the Inbox (`Delivery.inbox`) is an Inbox item whose one notification, sent
+    through `notify` like every other, is its view.
+    """
+    if state is None:
+        return False
+    # 🔴 HONOUR `destination: none`. `to_notify_kwargs` drops `destination`, so before this
+    # check a muted automation notified exactly like an `inbox` one. Enforced HERE rather than at
+    # each caller so a future emitter inherits it — as redaction already does at this boundary.
+    if is_muted(delivery.destination):
+        logger.debug("delivery %s suppressed: destination is none", delivery.event_id)
+        return False
+    if is_duplicate(delivery, delivered_ids if isinstance(delivered_ids, (set, list)) else None):
+        logger.debug("delivery %s already sent; not double-pinging", delivery.event_id)
+        return False
+    if delivery.inbox:
+        filed = _file_in_inbox(state, delivery)
+        if filed and isinstance(delivered_ids, set):
+            delivered_ids.add(delivery.event_id)
+        return filed
+    route = parse_channel_route(delivery.destination)
+    if route is not None:
+        # Recorded as sent before the send starts, so a retry through the same set cannot send
+        # it on the channel a second time while the first is still going out.
+        if isinstance(delivered_ids, set):
+            delivered_ids.add(delivery.event_id)
+        _start_channel_delivery(state, delivery, *route)
+        return True
+    try:
+        state.notify(**delivery.to_notify_kwargs())
+    except Exception:  # noqa: BLE001 - the run already completed; a failed ping must not undo it
+        logger.debug("delivery %s could not be sent", delivery.event_id, exc_info=True)
+        return False
+    if isinstance(delivered_ids, set):
+        delivered_ids.add(delivery.event_id)
+    return True
+
+
+# ── reporting a run on its trigger's route ─────────────────────────────────────────────────────
+#
+# ONE reporter for every run a trigger makes: a fire, whatever started it or asked for it
+# (`gateway._fire_store_trigger`), the end of work a fire only started
+# (`gateway._report_to_its_trigger`), and every run of yours (`trigger_runs._dispatch_store_action`:
+# Run now, the restart review's Run now, an answered park). It lived on the gateway, where that
+# dispatch could not reach it, so a Run now of a trigger set to report to a chat channel reported
+# nowhere.
+
+#: The event ids this process has delivered (`is_duplicate`'s seen-set). Process-local, which is
+#: the honest scope: the retry window is a transport concern, and an in-memory set is right for one
+#: gateway process — a persisted one would claim a durability this path does not have. `event_id`
+#: is stable across retries by construction, so a redelivery inside the process is suppressed.
+_DELIVERED_EVENT_IDS: set[str] = set()
+
+#: The per-report attempt counter (:func:`next_attempt_key`).
+_ATTEMPTS = itertools.count(1)
+
+
+def says_nothing_now(result: Any) -> bool:
+    """Whether a run whose action succeeded has nothing to tell its trigger's route yet, or at all.
+
+    An action that only started or parked its work (``launched``, ``queued``, ``needs_input``:
+    `Outcome.DEFERRED`) has its trigger hear how it went when that work ends or is answered, not
+    now. One that had nothing to do (``skip``: `Outcome.SKIPPED_NOOP`) succeeded silently, which is
+    what the outcome means (`ActionResult.outcome`): its history row says why, and a "finished"
+    note about it would say something happened.
+    """
+    from personalclaw.triggers.executor import Outcome, classify
+
+    outcome, _ = classify(str(getattr(result, "outcome", "") or ""))
+    return outcome in (Outcome.DEFERRED.value, Outcome.SKIPPED_NOOP.value)
+
+
+def next_attempt_key() -> str:
+    """A monotonically increasing per-report key for `event_id`.
+
+    Each run is a distinct event, so its delivery needs a distinct id — otherwise `is_duplicate`
+    reads the second run of a healthy automation as a redelivery of the first and drops it. A
+    counter rather than a timestamp because a millisecond stamp collides for runs in the same tick:
+    measured, 5 rapid `int(time.time() * 1000)` reads returned ONE distinct value, so 5 fires still
+    produced only 2 notifications. Process-local like the seen-set it is checked against.
+    """
+    return f"a{next(_ATTEMPTS)}"
+
+
+def repeats_last_failure(trigger: Any, *, error: str) -> bool:
+    """True when this failure repeats the last alerted one inside the reminder window.
+
+    Persists the hash + timestamp on the trigger either way, so a NEW error resets the window
+    rather than inheriting the previous one's remaining time.
+
+    Gated on `failure_policy.dedupe_hash` because that is what the trigger declares. Coalescing
+    alerts for a user who did not ask for it would be the opposite failure — a broken automation
+    going quieter than they expect.
+
+    **The autopause counter is untouched.** The legacy control advanced `consecutive_failures`
+    while suppressing the notification, and that separation is the point: dedup is about how
+    loudly the user is told, never about whether the failure counted. Coupling them would let a
+    repeating error escape autopause entirely — the worst possible reading.
+
+    Never raises: a bookkeeping failure must not swallow a real alert, so any error falls
+    through to delivering (fail-LOUD, the safe direction for a notification).
+    """
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        policy = getattr(trigger, "failure_policy", None)
+        if not isinstance(policy, dict) or not policy.get("dedupe_hash"):
+            return False
+        trigger_id = str(getattr(trigger, "id", "") or "")
+        if not trigger_id:
+            return False
+        # 🔴 READ THE DEDUP STATE FROM THE STORE, not from the passed-in trigger. Caught by
+        # driving it: the fire path hands `report_run` the in-memory row the TICK built, and this
+        # writes the hash back to disk — so the object the next fire arrives with is stale, its
+        # `last_alert_hash` still empty, and nothing ever matched. A dedup control whose state the
+        # reader cannot see is the inert shape again, one layer in. The run's recorder
+        # (`run_record.record_run`) re-reads the store for exactly this reason.
+        store = TriggerStore(base_dir=config_dir())
+        row = store.get(trigger_id)
+        live = row.trigger if row is not None else trigger
+        suppress, digest = suppress_repeat_failure(
+            error=error,
+            last_hash=str(getattr(live, "last_alert_hash", "") or ""),
+            last_at=float(getattr(live, "last_alert_at", 0.0) or 0.0),
+            now=time.time(),
+        )
+        if not digest:
+            return False
+        if not suppress:
+            if row is not None:
+                live.last_alert_hash = digest
+                live.last_alert_at = time.time()
+                store.upsert(live)
+            return False
+        logger.info(
+            "trigger %s: duplicate failure suppressed (same error within the reminder window)",
+            trigger_id,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - see the docstring: fall through to delivering
+        logger.debug("failure dedup check failed for %s", trigger, exc_info=True)
+        return False
+
+
+def report_run(
+    state: Any,
+    trigger: Any,
+    *,
+    ok: bool,
+    error: str = "",
+    summary: str = "",
+    run_id: str = "",
+    title: str = "",
+) -> bool:
+    """Tell the trigger's route how a run went, with a deep link.
+
+    ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
+    run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
+    summary, and ``title`` the headline when the outcome's own is not true (`build_delivery`).
+    *state* is the dashboard state whose `notify` every note goes through; with none, nothing is
+    sent.
+
+    Returns whether the trigger has spoken for this outcome: a note went out now; a failure it
+    collapses as a repeat went out within the reminder window; or its route says nothing of it —
+    ``none``, which its owner chose, or an action whose own note was the word. False only when no
+    note could go out. A caller with a note of its own (an agent task's, `gateway._subagent_done`)
+    sends it only when this is false, so neither a collapsed repeat nor an outcome its route keeps
+    quiet about reaches the bell another way.
+
+    Routes through `state.notify` (:func:`deliver`): the substrate does not build a
+    second notification path, so the existing `notification_allowed` gate and the per-(source,
+    kind) rule both still apply. A muted channel stays muted.
+
+    Never raises. A notification failure must not fail the run that already completed.
+    """
+    try:
+        if state is None:
+            return False
+        # 🔴 ONE NOTIFICATION PER RUN. A `notify` action's success already put the user's own
+        # note in front of them — measured: 5 fires of a per-minute notify trigger made 10
+        # notifications, each fire's "Standup nudge: review Q4 tasks" followed by an empty
+        # "Standup nudge finished". The report would be a note about the note, so it is not
+        # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
+        # A failure still reports: in that case the action's own note never went out.
+        if ok and notifies_on_its_own(trigger):
+            return True
+        # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (`dedupe_hash`). `event_id` dedupes the
+        # same event REDELIVERED (same run_id), not different runs carrying an identical error:
+        # the same error on 6 consecutive fires produced 6 notifications. Opt-in via
+        # `failure_policy.dedupe_hash`, and capped by a 1h window, so a still-broken automation
+        # re-alerts: "it stopped telling me" and "it got fixed" must not look alike.
+        if not ok and repeats_last_failure(trigger, error=error):
+            return True
+        note = build_delivery(
+            trigger_id=str(getattr(trigger, "id", "") or ""),
+            trigger_name=str(getattr(trigger, "name", "") or ""),
+            ok=ok,
+            # Whole: `build_delivery` sizes it for each surface. Cut here, an agent's reply
+            # reached its chat channel as its first 512 characters.
+            summary=summary if ok else error,
+            run_id=run_id,
+            # 🔴 EACH RUN IS A NEW EVENT. Without an attempt key `event_id` — derived
+            # from the trigger, the run and this key — was the SAME for every fire of a trigger,
+            # and `is_duplicate` dropped every notification after the first: a healthy daily
+            # digest notified the user ONCE, EVER. The retry dedup is for the same event
+            # REDELIVERED (a transport retry), and applying it to distinct runs made it a mute.
+            attempt_key=next_attempt_key(),
+            # 🔴 The OUTCOME picks the route, so `failure_delivery` is
+            # consulted for a failure: "failures reach the inbox even when `delivery` is none".
+            destination=route_for(trigger, ok=ok),
+            # A failure whose route is the Inbox is filed there, as the Triggers page's "If it
+            # fails: Inbox" says.
+            inbox=files_in_inbox(trigger, ok=ok),
+            # 🔴 A CLOCK TRIGGER IS A SCHEDULED JOB (issue #415), and its outcome belongs on the
+            # `cron/*` rows the matrix offers. Read off the trigger because this substrate also
+            # carries webhook, event, file and web_watch outcomes, and those are not scheduled jobs.
+            scheduled=is_scheduled(trigger),
+            title=title,
+        )
+        # 🔴 A ROUTE OF `none` HAS SAID ALL IT WILL. `deliver` sends nothing on it, and answering
+        # that as "not told" handed the outcome to the agent's own completion note, so a silent
+        # trigger's agent posted one on every run: every app's scheduled job, whose route is
+        # always `none`, among them.
+        if is_muted(note.destination):
+            return True
+        return deliver(state, note, delivered_ids=_DELIVERED_EVENT_IDS)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not report the run of %s", trigger, exc_info=True)
+        return False

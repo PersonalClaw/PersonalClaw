@@ -1,0 +1,137 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Chat
+  - heading "Chat" [level=#]
+  - paragraph: How sessions restore, how messages display, and how long context lives. These follow you across browsers.
+  - heading "Sessions" [level=#]
+  - paragraph: What happens to your chats on restart, and while the agent is busy.
+  - text: Restore sessions on startup Re-open recently active sessions when the app starts.
+  - status
+  - switch "Restore sessions on startup"
+  - text: Merge queued messages While the agent is busy, combine follow-ups into one labeled prompt instead of queueing separately.
+  - switch "Merge queued messages"
+  - text: Auto-tag new chats When a chat's title is generated, also propose and assign tags in the same pass. Never touches chats you've tagged yourself, or incognito/temporary chats.
+  - switch "Auto-tag new chats" [checked]
+  - heading "Messages" [level=#]
+  - paragraph: How messages and tool activity render in the chat.
+  - text: Send on Enter Enter sends · Shift+Enter for a newline.
+  - status
+  - switch "Send on Enter" [checked]
+  - text: Show timestamps Display a time on each message.
+  - switch "Show timestamps"
+  - text: Show thinking inline Show intermediate reasoning between tool calls instead of collapsing it.
+  - switch "Show thinking inline"
+  - text: Simplified tool names Tool pills show a simplified purpose instead of the exact command.
+  - switch "Simplified tool names"
+  - text: Follow-up suggestions After each reply, show #-# suggested next messages (one small background call; never blocks the turn). Skipped for temporary/incognito chats; silent with no model bound.
+  - switch "Follow-up suggestions" [checked]
+  - text: Offer “Check this work” After a turn that did real multi-step work, offer a chip that re-derives and re-runs the checks against what the turn claimed. Only ever an offer — the verification cost is spent on your click, never automatically.
+  - switch "Offer 'Check this work'" [checked]
+  - text: Share screen in chat Adds a “Share screen” control to the composer. With it on, a message can carry ONE frame of a screen or window you pick in your browser's own share dialog — held in memory for that single turn, never written to disk. Your browser shows its own capture indicator the whole time. Off means the control is hidden and the server refuses any frame.
+  - switch "Share screen in chat"
+  - text: "Streaming text reveal Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives."
+  - 'button "Streaming text reveal: Smooth" [pressed]': Smooth
+  - 'button "Streaming text reveal: Immediate"': Immediate
+  - text: Widget density How aggressively the agent uses inline widgets for visual content.
+  - 'button "Widget density: More" [pressed]': More
+  - 'button "Widget density: Less"': Less
+  - heading "Mid-turn messages" [level=#]
+  - paragraph: What happens when you send something while an answer is still being written.
+  - text: "Default handling Queue: deliver it as the next turn. Steer: fold it into the answer being written, where the running agent supports that — otherwise it queues. Replace: stop the current answer and start over with the new message. Unattended work (loops, cron, subagents) always queues."
+  - status
+  - 'button "Default handling: Queue" [pressed]': Queue
+  - 'button "Default handling: Steer"': Steer
+  - 'button "Default handling: Replace"': Replace
+  - heading "Agent routing" [level=#]
+  - paragraph: Suggest a better-fit specialist agent when a message matches one — you always confirm before it re-targets the chat.
+  - text: Suggest specialists When a message in a default-agent chat fits an installed specialist, show a one-click 'route to <agent>?' chip. Never routes silently.
+  - status
+  - switch "Suggest specialists" [checked]
+  - text: Confidence threshold Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions.
+  - status
+  - spinbutton "Confidence threshold": "#.#"
+  - text: Dismiss cooldown After you dismiss a suggestion for an agent, suppress it for this long. A third dismissal mutes the agent for good — Muted agents below is where you undo that; this field can't, and neither can the switch above.
+  - status
+  - spinbutton "Dismiss cooldown": "#"
+  - text: h Muted agents Agents the router has stopped suggesting because you dismissed them three times. Unmuting clears the mute and the dismissal count, so the agent can be suggested again.
+  - paragraph: None — no agent is muted.
+  - heading "Context & lifecycle" [level=#]
+  - paragraph: Keep long sessions productive and control how warm sessions are kept ready.
+  - text: Auto-compact threshold Context use at which a chat compacts. An agent CLI that compacts itself does so at its own limit; any other is restarted from the chat's history.
+  - status
+  - spinbutton "Auto-compact threshold": "#"
+  - text: "% Idle timeout Auto-close an idle session after this long. # = never."
+  - status
+  - spinbutton "Idle timeout": "#"
+  - text: s Auto-archive after Archive chats with no activity for this long. Archived chats stay searchable and restore in one click — nothing is deleted. # = off.
+  - status
+  - text: none stale now
+  - spinbutton "Auto-archive after (days)": "#"
+  - text: days Warm pool size Pre-started sessions kept ready for an instant first turn. # = off.
+  - spinbutton "Warm pool size": "#"
+  - heading "Background compression" [level=#]
+  - paragraph: When a long, idle chat is picked up again, the history handed to the model opens with a summary of its older part instead of every message.
+  - text: "Background compression Summarizes the older part of idle chats, using the background model. Your chats are never changed: every message stays as you left it. A summary stops being used the moment a message it covers changes, and is deleted with its chat. Incognito and temporary chats are never summarized."
+  - status
+  - switch "Background compression" [checked]
+  - text: Idle window before summarizing Only summarize chats untouched for at least this long. An active chat is never summarized.
+  - status
+  - spinbutton "Idle window before summarizing": "#"
+  - text: d
+  - heading "File checkpoints" [level=#]
+  - paragraph: "Before the agent's first edit of a file in a turn, with its own file tools or as an agent CLI that asks first, the file's current bytes are saved so /rewind-to-turn can restore them. What a shell command changes, and what an agent CLI edits without asking, has no backup: the rewind's preview lists those files in the chat's folder (not in its version-control, dependency or build folders) and leaves them as they are. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either."
+  - text: Back up files before an edit An edit by the agent's file tools, or one an agent CLI asked about, can be put back with /rewind-to-turn N. A command's changes cannot.
+  - status
+  - switch "Back up files before an edit" [checked]
+  - text: Store cap per chat Megabytes of saved file contents kept per chat. When a new backup would exceed this, the oldest turns are dropped — rewinding past them stops being possible. # = no byte cap.
+  - status
+  - spinbutton "Store cap per chat": "#"
+  - text: MB Turns kept How many recent turns you can rewind to. Older turns are dropped.
+  - status
+  - spinbutton "Turns kept": "#"
+  - text: Largest file backed up A file bigger than this is noted but not copied, so a rewind reports it as not captured instead of restoring it. Keeps one big write from filling the whole store. # = no limit.
+  - status
+  - spinbutton "Largest file backed up": "#"
+  - text: MB
+  - heading "Agent Rooms" [level=#]
+  - paragraph: A standing conversation where several of your agents deliberate with you refereeing — each with its own role, its own provider session and its own tool reach.
+  - text: Agent Rooms Off by default. While off, no room can be opened or started — including one you already made, which stays on disk untouched.
+  - status
+  - switch "Agent Rooms"
+  - heading "Chat starters" [level=#]
+  - paragraph: Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.
+  - paragraph: No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.

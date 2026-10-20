@@ -1,0 +1,529 @@
+"""The judge subagent — the third-party cycle assessor.
+
+A dedicated, **separate** agent — never the worker, never a member of a
+multi-agent roster — assesses each cycle's output for the open-ended and
+stuck-detector paths. It is the mechanism that lets us assess done-ness
+with an LLM *without* violating VISION's tenet: it has no stake in the work,
+having not produced it. The worker only *produces*; the judge *advises*; the
+supervisor (deterministic) *decides*.
+
+It receives the goal/DoD + the cycle's finding + a compact digest of prior
+findings and emits a structured verdict:
+
+    {done, done_reason, marginal_value (0-5), quality_score (0-5), regressed}
+
+It runs in its own session with no write tools — it reads and judges, it doesn't
+act. Built on the eval :class:`LLMJudge` (the same provider seam the ratchet
+already uses) but with its own done-ness + marginal-value rubric.
+
+**The verdict object is the contract's, not this module's.** There used to be a
+private ``CycleVerdict`` here — a third vocabulary over one decision, alongside the two
+already merged into the contract. It is DELETED: `assess_cycle` returns a
+:class:`~personalclaw.workflows.judge_contract.JudgeVerdict`, the boolean ``done`` above is
+projected onto the closed enum by the contract's single `verdict_for_cycle`, and the asymmetric
+skeptic merge lives with the fields it merges (`judge_contract.adjudicate`). The loop's own
+addition to the contract is evidence: `_observe_ground_truth` is unchanged, and
+:func:`evidence_refs_from_observation` turns what it observed into the contract's
+``evidence_refs`` — proof the SUPERVISOR gathered, not a claim the worker made.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+from personalclaw.loop.files import file_inside
+from personalclaw.safety_flags import yes_or_no
+from personalclaw.turn_streams import closing_stream
+from personalclaw.usage_ledger import Attribution, recorder
+from personalclaw.workflows.judge_contract import (
+    JudgeVerdict,
+    clamp_marginal,
+    evidence_hash_of,
+    verdict_for_cycle,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def judge_use_case() -> str:
+    """The model axis every loop judge rides — NOT the worker's ``loops`` axis.
+
+    Reads ``loops.judge_use_case`` (default ``reasoning``). This is what makes the
+    judge a genuinely *third-party* check: independent session, independent prompt,
+    and now an independent model binding, so a reviewer mistake is not correlated
+    with the mistake it is reviewing. Config-driven rather than hardcoded so a user
+    can pin the strongest model they have to judgment specifically — and can put
+    judge and worker back on one binding (``loops``) if they want that.
+
+    Degrades to ``reasoning`` if config is unreadable: an unreadable config must not
+    silently hand judgment back to the worker's binding.
+
+    Whichever axis it is, a judge resolves the axis's model itself, behind the spend guard
+    (``provider_bridge.resolve_metered_model``): a judge is automation's call on any binding.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return AppConfig.load().loops.judge_use_case or "reasoning"
+    except Exception:
+        logger.debug("loop judge: config unreadable — using 'reasoning' axis", exc_info=True)
+        return "reasoning"
+
+
+def _digest(prior_findings: list[dict], limit: int = 8) -> str:
+    """A compact digest of prior cycles' summaries (so the judge sees the trail)."""
+    lines = []
+    for f in prior_findings[-limit:]:
+        cycle = f.get("cycle", "?")
+        summary = str(f.get("summary") or f.get("key_insight") or "")[:160]
+        lines.append(f"- cycle {cycle}: {summary}")
+    return "\n".join(lines) or "(no prior cycles)"
+
+
+async def _observe_ground_truth(
+    verify_command: str,
+    workspace: str | None,
+    deliverables: list[str],
+    fallback_dirs: list[str] | None = None,
+) -> str:
+    """Independently observe ground truth for the judge: run the goal's
+    verify command and read its exit code and what it printed, and read the real content of every
+    file a deliverable names — rather than trusting the worker's narration. Returns a block to
+    inject into the judge prompt (labeled supervisor-observed), or "" when there's nothing
+    runnable/readable. Best-effort + bounded; never raises.
+
+    The command is run with its test runner asked to name each test (``per_test``), and the end
+    of what it printed is shown: an exit code says only that the whole of it passed, never that
+    the one test a goal names did. What it printed and what a file holds come through the door
+    every text from outside takes (``gates.for_a_judge``): fenced, the judge reads them as data,
+    and :func:`evidence_refs_from_observation` never reads a line of theirs as one of the
+    supervisor's own.
+
+    The deliverable is searched across ``workspace`` PLUS ``fallback_dirs`` (e.g. the loop's
+    own dir) — the worker may write the deliverable to the loop dir when no workspace is bound,
+    exactly as the watchdog's deliverable-graduation resolves it (workspace-first, else loop dir).
+    Searching only ``workspace`` made the skeptic wrongly conclude 'no proof the file exists'
+    for an unbound open-ended loop whose REPORT.md lived in the loop dir (found live)."""
+    import os
+
+    from personalclaw.loop.gates import for_a_judge
+
+    parts: list[str] = []
+    cmd = (verify_command or "").strip()
+    if cmd:
+        from personalclaw.loop.gates import CheckReport, refusal, run_verify_command
+
+        if refused := refusal(cmd, cwd=workspace or ""):
+            # Refused, not "could not run": the judge is told no check result exists and why.
+            parts.append(f"Did not run `{cmd}`: {refused}")
+        else:
+            report = CheckReport()
+            try:
+                ok = await run_verify_command(
+                    cmd, workspace or None, label="judge-verify", report=report, per_test=True
+                )
+            except Exception:
+                ok = None
+            if ok is True:
+                state = "PASSED (exit 0)"
+            elif ok is False:
+                state = "FAILED (non-zero exit)"
+            else:
+                state = "could not run (tool missing / blocked / timed out)"
+            ran = f"Ran `{cmd}` → {state}."
+            if report.output:
+                printed, _ = for_a_judge(
+                    report.output,
+                    what=f"What `{cmd}` printed",
+                    source="check",
+                    source_type="output",
+                )
+                ran += f"\nThe end of what it printed:\n{printed}"
+            parts.append(ran)
+    search_dirs = [
+        d for d in [(workspace or "").strip(), *(fallback_dirs or [])] if d and os.path.isdir(d)
+    ]
+    if search_dirs:
+        read: set[str] = set()
+        for label in deliverables:
+            names = re.findall(r"[\w./-]+\.[A-Za-z0-9]+", label or "")
+            for n in names:
+                # Resolve the file across every search dir (workspace, then fallbacks like
+                # the loop dir); first hit wins. Only a file INSIDE the dir counts: the name is
+                # the loop's deliverable, which the owner can type, and one that climbs out of
+                # the dir is not what the worker wrote, so it is never read into the judge's
+                # prompt (`loop.files.file_inside`, the watchdog's own containment). Every file
+                # a label names is read: "REPORT.md and SOURCES.md" is two deliverables.
+                p = ""
+                for d in search_dirs:
+                    found = file_inside(d, n.lstrip("./")) or file_inside(d, os.path.basename(n))
+                    if found is not None:
+                        p = str(found)
+                        break
+                if not p or p in read or len(read) >= _DELIVERABLE_FILES:
+                    continue
+                try:
+                    with open(p, encoding="utf-8", errors="strict") as fh:
+                        text = fh.read(4001)
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if not text:
+                    continue
+                read.add(p)
+                if len(text) > 4000:
+                    text = text[:4000] + "\n… (truncated)"
+                shown, withheld = for_a_judge(
+                    text,
+                    what=f"The content of {n}",
+                    source="workspace",
+                    source_type="file",
+                    source_id=n,
+                )
+                # Withheld, it was not observed by the judge, so it is not one it may cite.
+                parts.append(shown if withheld else f"Read `{n}`:\n{shown}")
+    if not parts:
+        return ""
+    body = "\n\n".join(parts)
+    return (
+        "\n\nGROUND TRUTH the supervisor observed DIRECTLY this cycle "
+        "(authoritative — weigh over the worker's report):\n" + body
+    )
+
+
+#: The most deliverable files one observation reads.
+_DELIVERABLE_FILES = 6
+
+#: The two shapes :func:`_observe_ground_truth` emits, matched so the refs are read back out of
+#: the very block the judge was shown; and a fenced span, which is a check's or a file's own text
+#: and is never read for them.
+_OBSERVED_COMMAND_RE = re.compile(r"^Ran `(.+?)` → (.+)$", re.M)
+_OBSERVED_FILE_RE = re.compile(r"^Read `(.+?)`:$", re.M)
+_FENCED_RE = re.compile(r"<untrusted_content\b[^>]*>.*?</untrusted_content>", re.S)
+
+
+def evidence_refs_from_observation(observed: str) -> list[str]:
+    """The ``evidence_refs`` a loop cycle can honestly cite, derived from the observation block.
+
+    This is the loop side of the contract's proof requirement. It PARSES what
+    :func:`_observe_ground_truth` returned rather than re-deriving refs from ``verify_command``
+    /``deliverables``, and that choice is the whole guarantee: a ref built from the inputs would
+    claim an observation that may not have happened — the command can be missing, the file
+    unreadable, the deliverable absent — and a proof that can be wrong is worse than no proof.
+    Because the string parsed here is the same string the judge was shown, the refs can never
+    cite evidence the judge did not see.
+
+    Empty for a transcript-only cycle, which is honest: nothing was observed, so nothing is
+    cited. That is also why the contract's PASS precondition is not applied to a loop cycle —
+    see `judge_contract`'s population measurement.
+
+    What a check printed and what a file holds are fenced in the block, and read past: a line a
+    check printed that looks like one of the two shapes is the check's text, not an observation.
+    """
+    text = _FENCED_RE.sub("", observed or "")
+    refs = [
+        f"command:{command} → {state.rstrip('.')}"
+        for command, state in _OBSERVED_COMMAND_RE.findall(text)
+    ]
+    refs += [f"file:{name}" for name in _OBSERVED_FILE_RE.findall(text)]
+    return refs
+
+
+def _build_prompt(
+    goal: str, success_criteria: str, finding: dict, prior_findings: list[dict], observed: str = ""
+) -> str:
+    from personalclaw.loop.loop import finding_content
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    cycle = finding.get("cycle", "?")
+    # Same canonical extraction the ratchet uses, so both score identical text.
+    evidence = finding_content(finding)
+    # Append the supervisor's own observation (ran the command / read the file)
+    # so the judge scores ground truth, not just the worker's narration.
+    if observed:
+        evidence = f"{evidence}{observed}"
+    metric = finding.get("metric")
+    metric_line = f"\nReported metric this cycle: {json.dumps(metric)}" if metric else ""
+    dod = f"\nDefinition of done: {success_criteria}" if success_criteria else ""
+    # The judge prompt lives in the prompt system (bundled ``task-cycle-judge``,
+    # bindable in Settings → Prompts). The conditionally-empty ``dod``/``metric_line``
+    # are pre-assembled (with their leading newline) and passed through as variables.
+    return (
+        render_use_case_prompt(
+            "cycle_judge",
+            {
+                "goal": goal,
+                "dod": dod,
+                "digest": _digest(prior_findings),
+                "cycle": cycle,
+                "evidence": evidence,
+                "metric_line": metric_line,
+            },
+        )
+        or ""
+    )
+
+
+async def assess_cycle(
+    goal: str,
+    success_criteria: str,
+    finding: dict,
+    prior_findings: list[dict],
+    *,
+    loop_id: str,
+    provider_factory=None,
+    verify_command: str = "",
+    workspace: str | None = None,
+    deliverables: list[str] | None = None,
+    fallback_dirs: list[str] | None = None,
+) -> JudgeVerdict | None:
+    """Assess one cycle with a separate judge subagent. Returns None on failure.
+
+    ``provider_factory`` is injected for testing; in production it resolves the
+    ``loops.judge_use_case`` axis — 'reasoning' by default (a stronger third-party
+    check than the worker's model, which rides the separate 'loops' axis), matching
+    the ratchet's existing judge wiring.
+
+    When ``verify_command`` and/or ``deliverables`` are supplied, the
+    judge INDEPENDENTLY observes ground truth — it runs the command + reads the named
+    artifact files itself — and weighs that over the worker's reported finding. Absent
+    those, it stays transcript-only (unchanged behavior for goals with no runnable/
+    readable anchor).
+
+    The verdict's usage row is the loop's (*loop_id*): :func:`_judge_usage`.
+    """
+    if provider_factory is None:
+
+        def provider_factory(_session_key):
+            from personalclaw.providers.provider_bridge import resolve_metered_model
+
+            return resolve_metered_model(judge_use_case())
+
+    from personalclaw.eval.judge import LLMJudge
+
+    observed = ""
+    if verify_command or deliverables:
+        observed = await _observe_ground_truth(
+            verify_command, workspace, deliverables or [], fallback_dirs
+        )
+
+    judge = LLMJudge(provider_factory)
+    try:
+        await judge.start()
+    except Exception:
+        # A degraded done-ness brain must be VISIBLE, not silent: the judge is what
+        # enforces "no agent certifies its own work", so if it can't even start (its
+        # judge-axis provider is unresolvable / unavailable) the caller returns None
+        # (defer, never a false complete) — but we log WARNING so the degradation is
+        # diagnosable rather than an invisible forever-defer. Naming the axis matters
+        # now that it is configurable: the binding to go check is loops.judge_use_case's.
+        logger.warning(
+            "loop judge: provider failed to start — cycle assessed as degraded "
+            "(no verdict); check the %r model binding (loops.judge_use_case)",
+            judge_use_case(),
+            exc_info=True,
+        )
+        return None
+    try:
+        prompt = _build_prompt(goal, success_criteria, finding, prior_findings, observed)
+        # judge_turn just streams the prompt + parses {score, reason}; we reuse its
+        # provider but parse our own richer verdict from the raw stream. Simpler:
+        # send via judge_turn's provider directly.
+        raw = await _stream(judge, prompt, _judge_usage(loop_id))
+    except Exception:
+        logger.warning(
+            "loop judge: stream failed — cycle assessed as degraded (no verdict)", exc_info=True
+        )
+        return None
+    finally:
+        try:
+            await judge.shutdown()
+        except Exception:
+            pass
+    from personalclaw.loop.loop import finding_content
+
+    return _parse_verdict(
+        raw,
+        evidence_refs_from_observation(observed),
+        evidence_text=f"{finding_content(finding)}{observed}",
+    )
+
+
+async def assess_cycle_skeptic(
+    goal: str,
+    success_criteria: str,
+    finding: dict,
+    prior_findings: list[dict],
+    *,
+    loop_id: str,
+    provider_factory=None,
+    verify_command: str = "",
+    workspace: str | None = None,
+    deliverables: list[str] | None = None,
+    fallback_dirs: list[str] | None = None,
+) -> JudgeVerdict | None:
+    """A second, adversarial judge — same third-party independence as
+    :func:`assess_cycle`, but prompted to REFUTE a claimed completion/regression: it
+    defaults to *not done* / *not regressed* unless the evidence is undeniable. Used to
+    cross-check a high-stakes primary verdict via :func:`adjudicate`. Same ground-truth
+    observation (runs the command / reads the deliverable) so the skeptic argues from the
+    same facts, not a weaker view. Returns None on failure (adjudicate treats that as
+    'no refutation available')."""
+    if provider_factory is None:
+
+        def provider_factory(_session_key):
+            from personalclaw.providers.provider_bridge import resolve_metered_model
+
+            return resolve_metered_model(judge_use_case())
+
+    from personalclaw.eval.judge import LLMJudge
+
+    observed = ""
+    if verify_command or deliverables:
+        observed = await _observe_ground_truth(
+            verify_command, workspace, deliverables or [], fallback_dirs
+        )
+
+    judge = LLMJudge(provider_factory)
+    try:
+        await judge.start()
+    except Exception:
+        logger.warning(
+            "loop judge (skeptic): provider failed to start — no refutation available",
+            exc_info=True,
+        )
+        return None
+    try:
+        prompt = _build_skeptic_prompt(goal, success_criteria, finding, prior_findings, observed)
+        raw = await _stream(judge, prompt, _judge_usage(loop_id))
+    except Exception:
+        logger.warning(
+            "loop judge (skeptic): stream failed — no refutation available", exc_info=True
+        )
+        return None
+    finally:
+        try:
+            await judge.shutdown()
+        except Exception:
+            pass
+    from personalclaw.loop.loop import finding_content
+
+    return _parse_verdict(
+        raw,
+        evidence_refs_from_observation(observed),
+        evidence_text=f"{finding_content(finding)}{observed}",
+    )
+
+
+def _build_skeptic_prompt(
+    goal: str, success_criteria: str, finding: dict, prior_findings: list[dict], observed: str = ""
+) -> str:
+    """The refute-prompt for the skeptic judge. Bundled ``cycle_judge_skeptic`` (bindable in
+    Settings → Prompts); falls back to wrapping the primary judge prompt with an explicit
+    refutation directive if the skeptic prompt isn't registered, so the feature never silently
+    no-ops on a fresh prompt store."""
+    from personalclaw.loop.loop import finding_content
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    cycle = finding.get("cycle", "?")
+    evidence = finding_content(finding)
+    if observed:
+        evidence = f"{evidence}{observed}"
+    metric = finding.get("metric")
+    metric_line = f"\nReported metric this cycle: {json.dumps(metric)}" if metric else ""
+    dod = f"\nDefinition of done: {success_criteria}" if success_criteria else ""
+    vars_ = {
+        "goal": goal,
+        "dod": dod,
+        "digest": _digest(prior_findings),
+        "cycle": cycle,
+        "evidence": evidence,
+        "metric_line": metric_line,
+    }
+    rendered = render_use_case_prompt("cycle_judge_skeptic", vars_)
+    if rendered:
+        return rendered
+    # Fallback: reuse the primary rubric + a hard refutation preamble (same JSON verdict shape).
+    base = render_use_case_prompt("cycle_judge", vars_) or ""
+    return (
+        "You are a SKEPTICAL reviewer. Another judge claimed this cycle is DONE or has "
+        "REGRESSED. Your job is to REFUTE that claim. Set done=true ONLY if completion is "
+        "undeniable from the evidence/ground-truth; set regressed=true ONLY if a regression "
+        "is unmistakable. When in doubt, done=false and regressed=false. Return the SAME JSON "
+        "verdict shape.\n\n" + base
+    )
+
+
+def _judge_usage(loop_id: str) -> Attribution:
+    """Whose spend a judge's verdict is: the loop's, under the key its spend is read by
+    (``loop.manager.usage_key``)."""
+    from personalclaw.loop.manager import usage_key
+
+    return Attribution(source="loop", session_key=usage_key(loop_id))
+
+
+async def _stream(judge, prompt: str, usage: Attribution) -> str:
+    """Stream a prompt through the judge's provider and collect the text, writing the call's
+    usage row for *usage*."""
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
+
+    provider = judge._provider
+    if provider is None:
+        raise RuntimeError("judge provider not started")
+    record = recorder(provider, usage)
+    chunks: list[str] = []
+    async with closing_stream(provider.stream(prompt)) as events:
+        async for event in events:
+            if event.kind == EVENT_TEXT_CHUNK:
+                chunks.append(event.text)
+            elif event.kind == EVENT_PERMISSION_REQUEST:
+                # The judge has no write tools; reject anything it tries to call.
+                if event.request_id:
+                    await provider.reject_tool(event.request_id)
+            elif event.kind == EVENT_SPENT:
+                record(event)
+            elif event.kind == EVENT_COMPLETE:
+                record(event)
+                break
+    return "".join(chunks)
+
+
+def _parse_verdict(
+    raw: str, evidence_refs: list[str] | None = None, evidence_text: str = ""
+) -> JudgeVerdict | None:
+    """Parse the loop judge's JSON answer into the CONTRACT's verdict record.
+
+    The prompt asks for ``done``/``regressed`` booleans, so the closed enum is derived here by
+    the contract's one projection (`verdict_for_cycle`) rather than being asked for a second
+    time in a second spelling — asking a model to restate a fact it already stated is how a
+    third vocabulary starts. ``evidence_refs`` are the supervisor's, threaded in from
+    :func:`evidence_refs_from_observation`; the judge is never asked to cite proof, because the
+    bundled prompt does not offer it the field. The answer is read the way every model's JSON
+    answer is (``llm_helpers.parse_llm_json``): a fence, or prose either side of the object.
+    """
+    from personalclaw.llm_helpers import parse_llm_json
+
+    data = parse_llm_json(raw)
+    if data is None:
+        logger.warning("judge returned unparseable verdict: %s", (raw or "")[:200])
+        return None
+    # Each is a yes only when the judge said yes, as the word it spells or the literal: a
+    # model writes `"done": "true"` as often as `true`, and an identity check read that as
+    # not done, so a finished loop kept running cycles. The skeptic still has to agree.
+    done = yes_or_no(data.get("done")) is True
+    regressed = yes_or_no(data.get("regressed")) is True
+    return JudgeVerdict(
+        verdict=verdict_for_cycle(done, regressed),
+        done_reason=str(data.get("done_reason", "")).strip()[:500],
+        marginal_value=clamp_marginal(data.get("marginal_value")),
+        quality_score=clamp_marginal(data.get("quality_score")),
+        regressed=regressed,
+        reasoning=str(data.get("reasoning", "")).strip()[:1000],
+        evidence_refs=list(evidence_refs or []),
+        # Which evidence this verdict judged. The refs are supervisor-derived from the
+        # SAME observed block (answerable by construction), so no grounding check is needed
+        # here — the hash alone makes the record auditable.
+        evidence_hash=evidence_hash_of(evidence_text),
+    )

@@ -1,0 +1,165 @@
+"""Shared helpers for model-backed pipeline nodes.
+
+A node resolves its model through a Settings>Models **use-case** (via
+``resolve_metered_model``: the model itself, behind the spend guard; image understanding through
+the platform's image reader, ``providers.image_input.resolve_image_reader``) and runs a one-shot
+completion.
+The executor has already verified a model serves the use-case (``registry.unserved_reason``)
+before a model-backed node runs, so these helpers assume a model exists — but still degrade to
+``""`` on any provider error rather than raising (the node then reports failure and
+the item goes partial).
+
+Ingestion is a NON-INTERACTIVE axis, so a declared fallback chain gets the call-failure
+advance too: with >1 entry bound, a provider failure from
+entry N rebuilds from N+1 through the one shared walk in ``llm_helpers``. Before that,
+a node resolved exactly once and degraded to ``""`` on the first ``CircuitOpenError`` —
+so a user who had bound a fallback model watched the pipeline produce nothing while a
+live model sat unused one position down the chain.
+"""
+
+from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def complete_text(use_case: str, prompt: str, *, images: list[str] | None = None) -> str:
+    """Resolve *use_case* → provider → one-shot completion; return collected text.
+
+    *images* (paths) are attached for vision use-cases when the provider supports
+    multimodal content blocks. Returns ``""`` on any failure: the part of an answer that
+    arrived before its call failed (a stream cut off before its provider said it was finished,
+    a connection lost, a timeout) is not the answer, and handed back it was stored as the
+    step's whole text, a truncated transcription or description nothing marked.
+
+    With a >1-entry chain bound to *use_case*, a provider failure advances to the next
+    entry instead of degrading on the first one. A one-entry/unbound axis takes
+    the plain single-resolve path below, with its two distinct WARNING lines.
+
+    Each completed call writes its usage row, as background work: a library ingests unwatched.
+    And each is metered, whatever the axis (``provider_bridge.resolve_metered_model``, which the
+    chain walk resolves through too), on the model itself: a node on the chat axis used to be
+    handed the native agent, which has no ``complete()``, so video consolidation always fell back
+    to the raw transcript, and none of a node's calls counted against the daily cap.
+
+    Each call is knowledge processing (``caller_scope("knowledge")``): background work, which a
+    call somebody is waiting for on the same local model goes ahead of, and which that call's page
+    names as what the model is busy with.
+    """
+    from personalclaw.guardrails.audit import caller_scope
+
+    with caller_scope("knowledge"):
+        return await _complete_text(use_case, prompt, images)
+
+
+async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -> str:
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
+    from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
+    from personalclaw.usage_ledger import UNATTENDED, recorder
+
+    messages = _build_messages(prompt, images)
+
+    async def _collect(provider) -> str:
+        # A failure is raised, never swallowed here, so the walk can advance: a swallowed error
+        # would pin it to entry 0.
+        parts: list[str] = []
+        record = recorder(provider, UNATTENDED)
+        async for ev in provider.complete(messages):
+            if ev.kind == EVENT_TEXT_CHUNK:
+                parts.append(getattr(ev, "text", "") or "")
+            elif ev.kind in (EVENT_COMPLETE, EVENT_SPENT):
+                record(ev)
+        return "".join(parts)
+
+    chain = use_case_chain(use_case)
+    if len(chain) > 1:
+        try:
+            text = await run_over_use_case_chain(
+                use_case, chain, _collect, label="knowledge node chain"
+            )
+        except Exception:
+            # Every entry failed. ONE warning naming the axis and the chain length — the
+            # walk already logged each advance, so this is the summary, not N traces.
+            logger.warning(
+                "knowledge node: every entry in the %s chain failed (%d entries)",
+                use_case,
+                len(chain),
+                exc_info=True,
+            )
+            return ""
+    else:
+        try:
+            provider = await _single_provider(use_case)
+        except Exception:
+            # Resolution failing (no provider for the use-case, bad binding) is a real
+            # reason a node produces nothing — surface it at WARNING, not DEBUG, so a
+            # misconfigured vision/ocr binding is diagnosable instead of a silent empty
+            # node.
+            logger.warning("knowledge node: could not resolve use-case %s", use_case, exc_info=True)
+            return ""
+        try:
+            text = await _collect(provider)
+        except Exception:
+            # A provider error here is why an item goes partial with empty extraction —
+            # it must be visible (WARNING), not swallowed at DEBUG, or the failure is
+            # invisible.
+            logger.warning(
+                "knowledge node completion failed (use-case %s)", use_case, exc_info=True
+            )
+            return ""
+    result = text.strip()
+    if not result:
+        # No exception but empty output — the model returned nothing (or dropped the
+        # image blocks). Surface it: this is the difference between "ran, said nothing"
+        # and "silently misconfigured", which otherwise both look like an empty node.
+        logger.warning(
+            "knowledge node: use-case %s returned EMPTY text (images=%d) — "
+            "provider produced no content",
+            use_case,
+            len(images or []),
+        )
+    return result
+
+
+async def _single_provider(use_case: str):
+    """The model a one-entry or unbound *use_case* runs on, metered.
+
+    Image understanding asks the platform's image reader — its binding, else a chat model that
+    takes images, built by that model's name (``providers.image_input.resolve_image_reader``) —
+    because the plain resolver has no implicit pick for it. Every other use case resolves as
+    itself.
+    """
+    from personalclaw.providers.image_input import IMAGE_USE_CASE, resolve_image_reader
+    from personalclaw.providers.provider_bridge import resolve_metered_model
+
+    if use_case == IMAGE_USE_CASE:
+        return await resolve_image_reader(metered=True)
+    return resolve_metered_model(use_case)
+
+
+def _build_messages(prompt: str, images: list[str] | None) -> list[dict]:
+    """Build the messages list. With images, use a multimodal content-block shape
+    (base64 data URLs); providers that ignore blocks still see the text prompt."""
+    if not images:
+        return [{"role": "user", "content": prompt}]
+    blocks: list[dict] = [{"type": "text", "text": prompt}]
+    for path in images:
+        data_url = _image_data_url(path)
+        if data_url:
+            blocks.append({"type": "image_url", "image_url": {"url": data_url}})
+    return [{"role": "user", "content": blocks}]
+
+
+def _image_data_url(path: str) -> str:
+    import base64
+    import mimetypes
+
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    except OSError:
+        return ""

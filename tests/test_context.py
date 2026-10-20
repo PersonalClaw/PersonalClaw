@@ -1,0 +1,818 @@
+"""Tests for context builder."""
+
+from unittest.mock import patch
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from personalclaw.context import USER_REQUEST_MARKER, ContextBuilder
+from personalclaw.hooks import ContextRule, HookManager, HooksConfig
+from personalclaw.memory import MemoryStore
+from personalclaw.skills import SkillsLoader
+
+# ---------------------------------------------------------------------------
+# Strategies
+# ---------------------------------------------------------------------------
+
+# Valid workspace/memory_store names: non-empty alphanumeric + hyphens/underscores
+_name_st = st.text(
+    alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789-_"),
+    min_size=1,
+    max_size=30,
+)
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryScopedByCwdProperty:
+    # Filesystem-fallback memory is partitioned by the session's working
+    # directory: build_session_context(cwd=...) must look memory up by that cwd.
+    @given(cwd=_name_st)
+    @settings(deadline=None)
+    def test_memory_scoped_by_cwd_in_build_session_context(self, cwd: str, tmp_path_factory):
+        """The cwd passed to build_session_context drives the memory partition.
+
+        get_memory_for must be called with the cwd value so that memory is
+        scoped to the working directory (see ``memory_dir_for_cwd``).
+        """
+        tmp = tmp_path_factory.mktemp("ws")
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp / "ws"),
+            skills=SkillsLoader(skills_path=tmp / "skills", install_builtins=False),
+        )
+
+        calls: list[str | None] = []
+        original_get_memory = ContextBuilder.get_memory_for
+
+        def _tracking_get_memory(cwd=None, memory_store=None):
+            calls.append(cwd)
+            return original_get_memory(cwd, memory_store)
+
+        with patch.object(ContextBuilder, "get_memory_for", side_effect=_tracking_get_memory):
+            builder.build_session_context(cwd=cwd)
+
+        assert any(
+            c == cwd for c in calls
+        ), f"Expected get_memory_for to be called with cwd {cwd!r}, got calls: {calls}"
+
+
+class TestWorkspaceMemoryUnification:
+    """The gateway's main memory store (the one the Memory UI + consolidator
+    read/write) must also serve the gateway's OWN workspace, so a dashboard chat
+    — whose workspace_dir is PERSONALCLAW_WORKSPACE — recalls what the user saved.
+
+    Regression for the confirmed-live gap: ContextBuilder.__init__ registered its
+    memory only under the "_default" partition key, so a workspace-scoped chat
+    resolved a different, near-empty cwd partition and the agent could not see
+    user-saved / consolidated memory.
+    """
+
+    def _reset_cache(self):
+        import personalclaw.context as ctx
+
+        ctx._memory_stores.clear()
+
+    def test_workspace_resolves_to_main_store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "proj"))
+        self._reset_cache()
+        main = MemoryStore(workspace=tmp_path / "mainmem")
+        ContextBuilder(
+            memory=main,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        from personalclaw.config.loader import default_workspace_dir
+
+        # a chat scoped to the gateway's own workspace gets the MAIN store, not a
+        # fresh empty partition
+        resolved = ContextBuilder.get_memory_for(default_workspace_dir())
+        assert resolved is main
+
+    def test_no_cwd_also_resolves_to_main_store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "proj"))
+        self._reset_cache()
+        main = MemoryStore(workspace=tmp_path / "mainmem")
+        ContextBuilder(
+            memory=main,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        assert ContextBuilder.get_memory_for(None) is main
+
+    def test_other_cwd_still_gets_its_own_partition(self, tmp_path, monkeypatch):
+        """The per-cwd isolation design is preserved for genuinely different
+        working dirs — only the gateway's own workspace is unified onto main."""
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "proj"))
+        self._reset_cache()
+        main = MemoryStore(workspace=tmp_path / "mainmem")
+        ContextBuilder(
+            memory=main,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        other = ContextBuilder.get_memory_for(str(tmp_path / "a-totally-different-project"))
+        assert other is not main
+
+    def test_config_profile_key_resolves_silently_not_as_provider(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A ``memory_store`` name that is a ``config.memory_stores`` TUNING-PROFILE key
+        (e.g. the seeded ``"default"``) must resolve to the filesystem fallback SILENTLY —
+        it is NOT a provider binding, so it must not log the false 'not registered' warning.
+        Regression: the seeded ``default`` agent binds ``memory_store="default"``, which
+        the bindings resolver passes through (it IS a valid profile key), then
+        ``get_memory_for`` looked it up in the PROVIDER registry (only ``native`` lives
+        there) → a bogus WARNING on every default-agent turn. A genuinely-unknown name
+        (neither provider nor profile) must STILL warn."""
+        import logging
+
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "proj"))
+        self._reset_cache()
+        # "default" is always synthesized into config.memory_stores by AppConfig.load().
+        with caplog.at_level(logging.WARNING, logger="personalclaw.context"):
+            store = ContextBuilder.get_memory_for(None, "default")
+        assert store is not None
+        assert not any(
+            "not registered" in r.getMessage() for r in caplog.records
+        ), "a config profile-key must resolve silently, not warn like a dangling provider"
+
+        # A name that is NEITHER a registered provider NOR a known profile is dangling.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="personalclaw.context"):
+            ContextBuilder.get_memory_for(None, "no-such-store-or-profile-xyz")
+        assert any(
+            "not registered" in r.getMessage() for r in caplog.records
+        ), "a genuinely-unknown memory_store name must still warn"
+
+
+class TestContextBuilder:
+    def test_empty_context_has_critical_rules(self, tmp_path):
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context()
+        assert "[CRITICAL RULES" in ctx
+        assert "diff" in ctx
+
+    def test_memory_injected(self, tmp_path):
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write("# Memory\n\nUser likes Python.")
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context()
+        assert "Python" in ctx
+        assert "[Memory" in ctx
+
+    def test_skills_injected(self, tmp_path):
+        skills_dir = tmp_path / "skills" / "test"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text(
+            "---\nname: test\ndescription: Test\nalways: true\n---\n# Test\nDo stuff."
+        )
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context()
+        assert "[Skills:]" in ctx
+        assert "Do stuff." in ctx
+
+    def test_build_message_new_session(self, tmp_path):
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write("# Memory\n\nUser likes lobsters.")
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        msg, hook = builder.build_message("hello", is_new_session=True)
+        assert "lobsters" in msg
+        assert "hello" in msg
+
+    def test_current_date_appended_after_truncation(self, tmp_path, monkeypatch):
+        """`[CURRENT DATE]` is appended AFTER the
+        `_MAX_CONTEXT_CHARS` truncation, so it survives an oversized context (it is
+        the first thing a tail-truncated context would otherwise lose). We shrink the
+        cap so the assembled body reliably exceeds it regardless of per-component caps."""
+        import personalclaw.context as ctx_mod
+
+        monkeypatch.setattr(ctx_mod, "_MAX_CONTEXT_CHARS", 200)
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write("# Memory\n\n" + "User likes lobsters. " * 200)
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context(session_key="s1", cwd=str(ws))
+        # The body was hard-truncated at the (shrunken) cap, yet the date line is
+        # present AND is the tail — proving it was appended AFTER truncation. (A body
+        # comfortably larger than the 200-char cap confirms truncation actually ran.)
+        assert len(store.read()) > 400  # the memory doc alone dwarfs the cap
+        assert "[CURRENT DATE]" in ctx
+        # It is the LAST block: nothing but the date line (+ trailing blank) follows it.
+        tail = ctx[ctx.rindex("[CURRENT DATE]") :]
+        assert tail.startswith("[CURRENT DATE]")
+        assert "\n\n" not in tail.rstrip("\n"), "content leaked after the date line"
+        assert ctx.count("[CURRENT DATE]") == 1  # exactly once, never duplicated
+
+    def test_current_date_present_on_small_context(self, tmp_path):
+        """A normal (un-truncated) session still carries the date line exactly once,
+        and it is the final block of the assembled context."""
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context(session_key="s1")
+        assert ctx.count("[CURRENT DATE]") == 1
+        tail = ctx[ctx.rindex("[CURRENT DATE]") :]
+        assert "\n\n" not in tail.rstrip("\n"), "content leaked after the date line"
+
+    def _memory_citation_builder(self, tmp_path):
+        return ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+
+    def test_memory_citation_clauses_present_when_episodic_injected(self, tmp_path):
+        """A new session with episodic recall gets both the cite-by-index and the
+        admit-ignorance clauses, and build_message fills the citation manifest."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            if citations_out is not None:
+                citations_out.append({"n": 1, "id": "42", "preview": "deployed billing"})
+            return "[Episodic Memory]\n[Memory 1] deployed billing\n[End of episodic memory]\n"
+
+        cites: list[dict] = []
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message(
+                "what did I deploy?", is_new_session=True, citations_out=cites
+            )
+        assert "[Memory 1]" in msg
+        assert "cite it inline as `[Memory N]`" in msg  # cite-by-index clause
+        assert "say you don't have it in memory" in msg  # admit-ignorance clause
+        assert cites == [{"n": 1, "id": "42", "preview": "deployed billing"}]
+
+    def test_cite_clause_absent_without_manifest(self, tmp_path):
+        """Episodic block present but no `[Memory N]` manifest (citations_out empty)
+        → no cite-by-index instruction, but admit-ignorance still applies."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            # Emits a block but populates NO citations (legacy numbering).
+            return "[Episodic Memory]\n1. deployed billing\n[End of episodic memory]\n"
+
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message(
+                "what did I deploy?", is_new_session=True, citations_out=[]
+            )
+        assert "cite it inline as `[Memory N]`" not in msg
+        assert "say you don't have it in memory" in msg
+
+    def test_no_memory_no_clauses(self, tmp_path):
+        """No episodic block at all → neither memory-citation clause is injected."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            return ""
+
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message("hi", is_new_session=True, citations_out=[])
+        assert "cite it inline as `[Memory N]`" not in msg
+        assert "say you don't have it in memory" not in msg
+
+    def test_force_skill_ids_loads_even_for_custom_agent(self, tmp_path):
+        # Goal-loop capabilities: a confirmed skill loads ACTIVELY even on a
+        # custom agent's turn (which otherwise skips passive skill surfacing).
+        sd = tmp_path / "skills" / "rate-limits"
+        sd.mkdir(parents=True)
+        (sd / "SKILL.md").write_text(
+            "---\nname: rate-limits\ndescription: Rate limiting patterns\n---\n# Rate limits\nUse token buckets."  # noqa: E501
+        )
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        # agent="loop-worker" → is_custom path (passive skills skipped); the forced
+        # id must still inject the body.
+        msg, _ = builder.build_message(
+            "next cycle",
+            is_new_session=True,
+            agent="loop-worker",
+            force_skill_ids=["rate-limits"],
+        )
+        assert "[Skill: rate-limits]" in msg
+        assert "Use token buckets." in msg
+        # An unknown forced id is silently ignored (no crash, no body).
+        msg2, _ = builder.build_message(
+            "next cycle",
+            is_new_session=True,
+            agent="loop-worker",
+            force_skill_ids=["does-not-exist"],
+        )
+        assert "does-not-exist" not in msg2
+
+    def test_build_message_existing_session(self, tmp_path):
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write("# Memory\n\nUser likes lobsters.")
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        msg, hook = builder.build_message("hello", is_new_session=False)
+        # No memory context on subsequent messages — and the request is still FRAMED: a
+        # follow-up that arrived unframed was answered as whatever guidance followed it.
+        assert "lobsters" not in msg
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\nhello")
+
+    def test_hook_inject_context(self, tmp_path):
+        hooks_cfg = HooksConfig(
+            context_rules=[ContextRule(triggers=["pipeline"], context="Use pipeline tool.")]
+        )
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            hooks=HookManager(hooks_cfg),
+        )
+        msg, hook = builder.build_message("check pipeline", is_new_session=False)
+        assert "[Hook context:]" in msg
+        assert "pipeline tool" in msg
+
+    def test_hook_modify(self, tmp_path):
+        from personalclaw.hooks import TransformHook
+
+        hooks_cfg = HooksConfig(transforms=[TransformHook(pattern="deploy", prefix="[DEPLOY]")])
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            hooks=HookManager(hooks_cfg),
+        )
+        msg, hook = builder.build_message("deploy app", is_new_session=False)
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\n[DEPLOY]")
+
+    def test_a_new_dashboard_session_gets_no_other_sessions_history(self, tmp_path):
+        """History is only ever the session's OWN. Another dashboard session's messages
+        used to arrive as an "[Other chat tabs]" block in every new session's context."""
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        # Simulate previous dashboard conversation
+        conv_log.append("dashboard:chat-1-100", "user", "what is 2+2?")
+        conv_log.append("dashboard:chat-1-100", "assistant", "4")
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        ctx = builder.build_session_context("dashboard:chat-2-200")
+        assert "what is 2+2?" not in ctx
+        assert "Other chat tabs" not in ctx
+        assert "THREAD CONVERSATION HISTORY" not in ctx
+
+    def test_dashboard_cross_session_excludes_self(self, tmp_path):
+        """Cross-session history excludes the current session."""
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        conv_log.append("dashboard:chat-1-100", "user", "old msg")
+        conv_log.append("dashboard:chat-1-100", "assistant", "old reply")
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        # Same key — should use normal recent(), not cross-session
+        ctx = builder.build_session_context("dashboard:chat-1-100")
+        assert "THREAD CONVERSATION HISTORY" in ctx
+        assert "Other chat tabs" not in ctx
+
+    def test_non_dashboard_no_cross_session(self, tmp_path):
+        """Slack sessions should NOT get cross-session dashboard history."""
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        conv_log.append("dashboard:chat-1-100", "user", "dashboard msg")
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        # Non-dashboard session should not get dashboard cross-session history
+        ctx = builder.build_session_context("slack:thread-123")
+        assert "Other chat tabs" not in ctx
+
+    def test_history_budget_truncates_long_messages(self, tmp_path):
+        """Long assistant messages are truncated to _PER_MESSAGE_CAP."""
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        conv_log.append("dashboard:tab-1", "user", "show me the code")
+        conv_log.append("dashboard:tab-1", "assistant", "x" * 10000)
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        ctx = builder.build_session_context("dashboard:tab-1")
+        assert "…[truncated]" in ctx
+        # Full 10000-char message should NOT appear
+        assert "x" * 10000 not in ctx
+
+    def test_history_budget_limits_total_chars(self, tmp_path):
+        """History injection respects _HISTORY_BUDGET_CHARS."""
+        from personalclaw.context import _HISTORY_BUDGET_CHARS
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        # Add many messages that together exceed the budget
+        for i in range(40):
+            conv_log.append("thread-1", "user", f"question {i} " + "z" * 200)
+            conv_log.append("thread-1", "assistant", f"answer {i} " + "z" * 200)
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        ctx = builder.build_session_context("thread-1")
+        # History portion should be bounded
+        history_start = ctx.find("[THREAD CONVERSATION HISTORY")
+        history_end = ctx.find("[End of thread history]")
+        assert history_start >= 0
+        history_block = ctx[history_start:history_end]
+        assert len(history_block) <= _HISTORY_BUDGET_CHARS + 1000  # some overhead for labels
+
+
+class TestCompressAssistantMessage:
+    """Tests for _compress_assistant_message code block and JSON handling."""
+
+    def test_small_code_block_preserved(self):
+        from personalclaw.context import _compress_assistant_message
+
+        text = "Here:\n```python\nprint('hi')\n```\nDone."
+        assert _compress_assistant_message(text) == text
+
+    def test_large_code_block_head_tail(self):
+        from personalclaw.context import _compress_assistant_message
+
+        lines = [f"line {i} " + "a" * 100 for i in range(30)]
+        block = "```python\n" + "\n".join(lines) + "\n```"
+        result = _compress_assistant_message(f"Before\n{block}\nAfter")
+        assert "line 0" in result
+        assert "line 9" in result  # head: first 10
+        assert "line 25" in result  # tail: last 5
+        assert "15 lines omitted" in result
+        assert "line 15" not in result  # middle omitted
+
+    def test_few_long_lines_char_truncated(self):
+        from personalclaw.context import _compress_assistant_message
+
+        # 5 lines of 1K each = 5K total, >2K but <=15 lines
+        lines = ["x" * 1000 for _ in range(5)]
+        block = "```python\n" + "\n".join(lines) + "\n```"
+        result = _compress_assistant_message(block)
+        assert "chars truncated" in result
+        assert len(result) < len(block)
+
+    def test_json_blob_small_preserved(self):
+        from personalclaw.context import _compress_assistant_message
+
+        text = 'Result: {"key": "value", "num": 42}'
+        assert _compress_assistant_message(text) == text
+
+    def test_json_blob_large_truncated(self):
+        from personalclaw.context import _compress_assistant_message
+
+        blob = '{"data": "' + "x" * 1500 + '"}'
+        result = _compress_assistant_message(f"Output: {blob}")
+        assert "[tool output truncated]" in result
+
+
+class TestCompressThreadHistory:
+    """``compress_thread_history`` compresses the transcript it is HANDED — the session's
+    own turns before the one being sent — rather than re-reading the log, which may
+    already hold the in-flight message."""
+
+    @staticmethod
+    def _turns(n: int, width: int) -> list[dict]:
+        out: list[dict] = []
+        for i in range(n):
+            out.append({"role": "user", "content": f"msg {i} " + "x" * width})
+            out.append({"role": "assistant", "content": f"reply {i} " + "y" * width})
+        return out
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_history(self, tmp_path):
+        from personalclaw.context import compress_thread_history
+
+        result = await compress_thread_history([], "no-thread", "hi")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_short_transcript_returned_without_llm(self, tmp_path):
+        from personalclaw.context import compress_thread_history
+
+        transcript = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        result = await compress_thread_history(transcript, "t1", "hello")
+        assert result is not None
+        assert "hello" in result
+        assert "hi there" in result
+
+    @pytest.mark.asyncio
+    async def test_only_user_and_assistant_turns_are_compressed(self, tmp_path):
+        """The roles the bootstrap has always restored — a tool row or a system notice in
+        the handed transcript is not conversation."""
+        from personalclaw.context import compress_thread_history
+
+        transcript = [
+            {"role": "user", "content": "hello"},
+            {"role": "tool", "content": "TOOL-ROW-ONLY"},
+            {"role": "system", "content": "SYSTEM-NOTICE-ONLY"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        result = await compress_thread_history(transcript, "t1", "hello")
+        assert result is not None
+        assert "TOOL-ROW-ONLY" not in result
+        assert "SYSTEM-NOTICE-ONLY" not in result
+
+    @pytest.mark.asyncio
+    async def test_long_transcript_calls_llm(self, tmp_path, monkeypatch):
+        """A transcript past the cap is condensed as a chore of the session's own: one call,
+        sent the compression prompt, its spend the session's."""
+        from unittest.mock import AsyncMock
+
+        from personalclaw.context import compress_thread_history
+
+        asked = AsyncMock(return_value="compressed summary here")
+        monkeypatch.setattr("personalclaw.chores.run_chore", asked)
+
+        result = await compress_thread_history(self._turns(50, 1400), "t1", "latest q")
+        assert result is not None
+        assert "compressed summary here" in result
+        assert "Thread start (verbatim)" in result
+        assert "Compressed history" in result
+        assert "Recent exchanges (verbatim)" in result
+        asked.assert_awaited_once()
+        assert "latest q" in asked.call_args.args[0]
+        assert asked.call_args.kwargs["usage"].session_key == "t1"
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_returns_none(self, tmp_path, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from personalclaw.context import compress_thread_history
+
+        monkeypatch.setattr(
+            "personalclaw.chores.run_chore", AsyncMock(side_effect=RuntimeError("boom"))
+        )
+
+        result = await compress_thread_history(self._turns(50, 1400), "t1", "q")
+        assert result is None
+
+    def test_build_session_context_uses_compressed_history(self, tmp_path):
+        """When compressed_history is passed, it replaces naive truncation."""
+        from personalclaw.history import ConversationLog
+
+        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
+        conv_log.init()
+        conv_log.append("t1", "user", "what color?")
+        conv_log.append("t1", "assistant", "blue")
+
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            conversation_log=conv_log,
+        )
+        ctx = builder.build_session_context(
+            "t1", compressed_history="COMPRESSED: user asked about color, answer was blue"
+        )
+        assert "COMPRESSED: user asked about color" in ctx
+
+    @pytest.mark.asyncio
+    async def test_compressed_output_redacts_credentials(self, tmp_path, monkeypatch):
+        """Credentials in LLM compression output must be scrubbed."""
+        from unittest.mock import AsyncMock
+
+        from personalclaw.context import compress_thread_history
+
+        fake_key = "AKIAIOSFODNN7EXAMPLE"
+        monkeypatch.setattr(
+            "personalclaw.chores.run_chore",
+            AsyncMock(return_value=f"summary with {fake_key} leaked"),
+        )
+
+        result = await compress_thread_history(self._turns(50, 500), "t1", "q")
+        assert result is not None
+        assert fake_key not in result
+
+
+class TestRuntimeDisplayName:
+    """Tests for _runtime_display_name() and agent identity injection."""
+
+    @pytest.mark.parametrize(
+        "session_key, expected_runtime",
+        [
+            ("dashboard:chat-1-100", "PersonalClaw dashboard"),
+            ("cron:daily", "PersonalClaw cron job"),
+            ("subagent:abc-123", "PersonalClaw subagent"),
+            ("room:pricing:analyst", "PersonalClaw agent room"),
+            ("workflow:r-1:review", "PersonalClaw workflow step"),
+            ("1234567890.123456", "messaging channel"),
+        ],
+    )
+    def test_runtime_display_name(self, session_key, expected_runtime):
+        from personalclaw.context import _runtime_display_name
+
+        assert _runtime_display_name(session_key) == expected_runtime
+
+    @pytest.mark.parametrize(
+        "session_key",
+        ["dashboard:chat-1-100", "cron:daily", "subagent:abc-123", "workflow:r-1:review", "C0:1"],
+    )
+    def test_the_runtime_is_the_interface_the_security_log_names(self, session_key):
+        """The model is told the runtime the audit log records the work under, so the two agree:
+        a workflow step's model was told it ran in a messaging channel."""
+        from personalclaw.context import _RUNTIME_DISPLAY, _runtime_display_name
+        from personalclaw.sel import _infer_source
+
+        assert _runtime_display_name(session_key) == _RUNTIME_DISPLAY[_infer_source(session_key)]
+
+    def test_agent_identity_injected_with_session_key(self, tmp_path):
+        """build_session_context injects [CURRENT AGENT] and [RUNTIME] when session_key is provided."""  # noqa: E501
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path))
+        ctx = builder.build_session_context("dashboard:chat-1", agent="gpu-comms")
+        assert "[CURRENT AGENT] gpu-comms" in ctx
+        assert "[RUNTIME] PersonalClaw dashboard" in ctx
+
+    def test_agent_identity_omitted_without_session_key(self, tmp_path):
+        """build_session_context omits agent identity when session_key is None."""
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path))
+        ctx = builder.build_session_context()
+        assert "[CURRENT AGENT]" not in ctx
+        assert "[RUNTIME]" not in ctx
+
+    def test_the_default_agent_is_labelled_with_the_assistant_name(self, tmp_path):
+        """The default agent IS the assistant the user named, so the identity block names
+        it that way — never the internal key, which contradicted "You are <name>"."""
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path), bot_name="Chlos Aide")
+        for agent in (None, "personalclaw", "PersonalClaw"):
+            ctx = builder.build_session_context("dashboard:chat-1", agent=agent)
+            assert "[CURRENT AGENT] Chlos Aide" in ctx, agent
+            assert "[CURRENT AGENT] personalclaw" not in ctx, agent
+
+    def test_the_owner_is_named_through_the_one_operator_name_resolver(self, tmp_path):
+        """Settings → Account → Your name reaches the model — except the ``Operator``
+        placeholder a skipped setup stores, which would introduce the owner as "Operator"."""
+        import json
+
+        from personalclaw.config.loader import config_path
+
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path))
+        for stored, line in (("Maya R. Chen", "[USER] Maya R. Chen"), ("Operator", None)):
+            config_path().write_text(json.dumps({"dashboard": {"user_name": stored}}))
+            ctx = builder.build_session_context("dashboard:chat-1")
+            if line:
+                assert line in ctx
+            else:
+                assert "[USER]" not in ctx
+
+    def test_a_custom_agent_keeps_its_own_label(self, tmp_path):
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path), bot_name="Chlos Aide")
+        ctx = builder.build_session_context("dashboard:chat-1", agent="Researcher")
+        assert "[CURRENT AGENT] Researcher" in ctx
+
+
+class TestMultibyteSanitization:
+    """Tests for multi-byte UTF-8 sanitization (personalclaw-cli panic workaround)."""
+
+    def test_build_message_strips_multibyte(self, tmp_path):
+        """build_message replaces multi-byte punctuation with ASCII equivalents."""
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        msg, _ = builder.build_message(
+            "Check the pipeline \u2014 it\u2019s failing\u2026",
+            is_new_session=False,
+        )
+        assert "\u2014" not in msg
+        assert "\u2019" not in msg
+        assert "\u2026" not in msg
+        assert "--" in msg
+        assert "'" in msg
+        assert "..." in msg
+
+    def test_build_message_new_session_strips_multibyte(self, tmp_path):
+        """Multi-byte chars in memory/skills context are also sanitized."""
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write(
+            "# Memory\n\nUser prefers \u201csmart quotes\u201d and em dashes \u2014 always."
+        )
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        msg, _ = builder.build_message("hello", is_new_session=True)
+        assert "\u201c" not in msg
+        assert "\u201d" not in msg
+        assert "\u2014" not in msg
+
+    def test_multibyte_table_covers_all_chars(self):
+        """Translation table handles all listed multi-byte chars."""
+        from personalclaw.context import _MULTIBYTE_TABLE
+
+        sample = "\u2014 \u2013 \u2018 \u2019 \u201c \u201d \u2026 \u00a0 \u2022"
+        result = sample.translate(_MULTIBYTE_TABLE)
+        assert result == "-- - ' ' \" \" ...   -"
+
+    @pytest.mark.asyncio
+    async def test_compress_thread_history_strips_multibyte(self, tmp_path):
+        """Short transcript with multi-byte chars gets sanitized."""
+        from personalclaw.context import compress_thread_history
+
+        transcript = [
+            {"role": "user", "content": "what\u2019s the status \u2014 any update?"},
+            {"role": "assistant", "content": "All good \u2026 no issues."},
+        ]
+        result = await compress_thread_history(transcript, "t1", "hello")
+        assert result is not None
+        assert "\u2019" not in result
+        assert "\u2014" not in result
+        assert "\u2026" not in result
+
+
+class TestCurrentDateTimezone:
+    """[CURRENT DATE] injection must honour AppConfig.timezone, so LLMs
+    see the user's local time rather than the gateway host TZ (often UTC)."""
+
+    def _make_builder(self, tmp_path):
+        return ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+            hooks=HookManager(HooksConfig()),
+        )
+
+    def _date_line(self, ctx):
+        return [ln for ln in ctx.splitlines() if ln.startswith("[CURRENT DATE]")][0]
+
+    def test_current_date_uses_configured_timezone(self, tmp_path):
+        builder = self._make_builder(tmp_path)
+        # Patched where the value is READ (`personalclaw.timezones`), not where it used to be
+        # imported — `schedule` no longer holds an `AppConfig` reference of its own (#2520).
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
+            mock_load.return_value.timezone = "Asia/Tokyo"
+            ctx = builder.build_session_context()
+        # Tokyo is JST/UTC+9; %Z renders "JST"
+        assert "[CURRENT DATE]" in ctx
+        assert "JST" in self._date_line(ctx)
+
+    def test_current_date_falls_back_to_the_machine_zone_when_config_is_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """CHANGED BY #2520: a blank `config.timezone` used to mean UTC — even here, where the
+        line's whole job is telling the model what time it is *for the user*. It now resolves
+        the machine's zone, so the model is told the local hour rather than a UTC one."""
+        builder = self._make_builder(tmp_path)
+        monkeypatch.setenv("TZ", "Asia/Tokyo")
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
+            mock_load.return_value.timezone = ""
+            ctx = builder.build_session_context()
+        assert "JST" in self._date_line(ctx)
+
+    def test_current_date_falls_back_to_utc_only_when_nothing_resolves(self, tmp_path, monkeypatch):
+        from personalclaw import timezones as tzmod
+
+        builder = self._make_builder(tmp_path)
+        monkeypatch.delenv("TZ", raising=False)
+        monkeypatch.setattr(tzmod, "LOCALTIME_LINK", tmp_path / "absent-localtime")
+        monkeypatch.setattr(tzmod, "TIMEZONE_FILE", tmp_path / "absent-timezone")
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
+            mock_load.return_value.timezone = ""
+            ctx = builder.build_session_context()
+        assert "UTC" in self._date_line(ctx)

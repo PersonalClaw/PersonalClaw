@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-question-tools",
+  "version": "1.0.0",
+  "displayName": "Questions for you",
+  "description": "Lets the agent ask you a question with choices when it needs your decision to go on, and wait for your answer: the question shows as a card in the chat, in Mission Control's Your turn and in the Inbox. You choose an option, write your own answer, or skip it; stopping the turn withdraws it.",
+  "icon": "MessageCircleQuestion",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.ask_user:create_question_tools_provider",
+    "capabilities": [
+      "questions"
+    ]
+  },
+  "native": true
+}

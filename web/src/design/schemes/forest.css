@@ -1,0 +1,47 @@
+/* Forest. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="forest"] {
+  /* layer 1: the steps the base sheet does not have */
+  --green-245: #06280f;
+  --green-312: #0f3a22;
+  --green-451: #006736;
+  --green-475: #006f3b;
+  --green-585: #3a8f5e;
+  --green-609: #1f9b58;
+  --green-749: #4fc97f;
+  --green-835: #86e0a6;
+  --green-938: #d6f3e0;
+  --lime-593: #5f8f15;
+  --lime-637: #5f9f3a;
+  --lime-791: #9bcf3a;
+  --lime-834: #9bdf6f;
+  --teal-468: #02695e;
+  --teal-688: #3ab0a0;
+  --yellow-811: #d8c24a;
+  /* layer 2, dark */
+  --color-primary: var(--green-749);
+  --color-primary-emphasis: var(--green-835);
+  --color-on-primary: var(--green-245);
+  --color-primary-container: var(--green-312);
+  --color-secondary: var(--lime-791);
+  --color-info: var(--teal-688);
+  --grad-1: var(--green-585);
+  --grad-2: var(--green-749);
+  --grad-3: var(--lime-834);
+  --grad-4: var(--yellow-811);
+  --glow-a: var(--green-749);
+  --glow-b: var(--lime-834);
+}
+:root.light[data-theme="forest"] {
+  --color-primary: var(--green-475);
+  --color-primary-emphasis: var(--green-451);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--green-938);
+  --color-secondary: var(--lime-593);
+  --color-info: var(--teal-468);
+  --grad-1: var(--green-585);
+  --grad-2: var(--green-475);
+  --grad-3: var(--lime-637);
+  --grad-4: var(--yellow-811);
+  --glow-a: var(--green-609);
+  --glow-b: var(--lime-637);
+}

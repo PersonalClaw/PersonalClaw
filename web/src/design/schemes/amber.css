@@ -1,0 +1,43 @@
+/* Amber. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="amber"] {
+  /* layer 1: the steps the base sheet does not have */
+  --amber-289: #3f2404;
+  --amber-374: #5a3810;
+  --amber-622: #b07a3a;
+  --amber-731: #d89a4a;
+  --amber-878: #ffce7f;
+  --amber-883: #ffd08a;
+  --amber-941: #ffe8c8;
+  --orange-478: #8d4800;
+  --orange-487: #8d4d01;
+  --orange-499: #915000;
+  --red-555: #c8362f;
+  --red-677: #f55e57;
+  /* layer 2, dark */
+  --color-primary: var(--amber-824);
+  --color-primary-emphasis: var(--amber-883);
+  --color-on-primary: var(--amber-289);
+  --color-primary-container: var(--amber-374);
+  --color-secondary: var(--red-677);
+  --color-info: var(--amber-824);
+  --grad-1: var(--amber-622);
+  --grad-2: var(--amber-824);
+  --grad-3: var(--amber-883);
+  --grad-4: var(--red-677);
+  --glow-a: var(--amber-824);
+  --glow-b: var(--amber-878);
+}
+:root.light[data-theme="amber"] {
+  --color-primary: var(--orange-499);
+  --color-primary-emphasis: var(--orange-478);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--amber-941);
+  --color-secondary: var(--red-555);
+  --color-info: var(--orange-487);
+  --grad-1: var(--amber-622);
+  --grad-2: var(--orange-499);
+  --grad-3: var(--amber-731);
+  --grad-4: var(--red-677);
+  --glow-a: var(--orange-659);
+  --glow-b: var(--amber-731);
+}

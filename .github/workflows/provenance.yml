@@ -1,0 +1,89 @@
+# Provenance — every commit a push to main lands, checked against the commit policy.
+#
+# scripts/check_commit_provenance.py in `main` mode over `before..sha`: a sign-off matching the
+# author (rule 1), a committer MAINTAINERS lists (rule 2), no co-author or tool marks on a
+# maintainer's commit (rule 3), and no marker that would start no run (rule 5). Rule 4, the
+# pushed tree against the tree the merge verdict recorded, is not checked here: #3908 keeps it
+# open until that record exists.
+#
+# WHY ITS OWN WORKFLOW, not a job in ci.yml. Each push checks only its own range, so a run that
+# never finishes leaves its commits unchecked for good: the next push starts from its own
+# `before`. A workflow with one job and no `needs:` cannot be dropped by tree-check's answer or
+# by any other job's outcome, and at a few seconds on one runner it is never worth cancelling,
+# whatever later becomes of ci.yml's main runs (#3915 plans one run per candidate). Its group
+# is the commit's own, so no run can replace another.
+#
+# WHY THE PREVIOUS COMMIT'S COPY. The pushed commit is what is being judged, so its check, its
+# MAINTAINERS and anything beside them under scripts/ are the judged side: a push that edited
+# them, or added its own committer to MAINTAINERS, would pass itself. The job reads both from
+# `github.event.before`, as tree-check reads tools/ci/tree_tested.py, and runs the check
+# isolated (`python3 -I`, from the runner's temporary folder), so nothing the push brings is
+# imported. A change to the check or to MAINTAINERS judges the pushes after the one that lands it.
+#
+# The one push with no previous copy is the one that adds the check to main. It is recognised by
+# the script never having existed in BEFORE's history, and only then does the job run the pushed
+# copy, saying so in the summary. A BEFORE that once had the script and has lost it is refused:
+# deleting the check must not open a push that judges itself. A BEFORE the checkout cannot
+# resolve (all zeros, or an old tip a forced update orphaned) is refused first, so a git failure
+# is never read as "never had the check".
+name: Provenance
+
+on:
+  push:
+    branches: [main]
+
+# One group per commit, never cancelled: GitHub keeps one pending run per group and replaces it
+# with the next, so a group shared across commits could drop a run before it started.
+concurrency:
+  group: provenance-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so `BEFORE..sha` resolves however many commits the push brings,
+          # and BEFORE's own copy of the check can be read.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: check every commit the push lands, with the previous commit's check
+        env:
+          BEFORE: ${{ github.event.before }}
+        # The runner image's own python3, isolated: the check is standard-library Python, and
+        # nothing is installed. Exit 1 is a violation and exit 2 a check that could not run.
+        run: |
+          set -euo pipefail
+          check="$RUNNER_TEMP/check.py"
+          maintainers="$RUNNER_TEMP/MAINTAINERS"
+          if ! git rev-parse --verify --quiet "$BEFORE^{commit}" > /dev/null; then
+            echo "::error::the previous main commit ($BEFORE) does not resolve in this checkout," \
+              "so there is no copy of the check to judge this push with"
+            exit 2
+          fi
+          if git cat-file -e "$BEFORE:scripts/check_commit_provenance.py" 2>/dev/null; then
+            git show "$BEFORE:scripts/check_commit_provenance.py" > "$check"
+            git show "$BEFORE:MAINTAINERS" > "$maintainers"
+            echo "checked with the previous main commit's ($BEFORE) check and MAINTAINERS" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$(git log --format=%H "$BEFORE" -- scripts/check_commit_provenance.py)" ]; then
+            git show "$GITHUB_SHA:scripts/check_commit_provenance.py" > "$check"
+            git show "$GITHUB_SHA:MAINTAINERS" > "$maintainers"
+            echo "the previous main commit ($BEFORE) never had the check, so this push, which" \
+              "adds it, is checked with its own copy" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::the previous main commit ($BEFORE) once had the check and has lost it;" \
+              "restore it before this push can be judged"
+            exit 2
+          fi
+          python3 -I "$check" --maintainers "$maintainers" --mode main --range "${BEFORE}..${GITHUB_SHA}"

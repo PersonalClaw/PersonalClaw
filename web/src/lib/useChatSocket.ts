@@ -1,0 +1,129 @@
+import { useEffect, useRef } from 'react'
+import { signedOutState } from './signedOut'
+
+export interface WsMessage { type: string; data: Record<string, unknown> }
+
+/** The kinds a `refresh` frame names (`DashboardState.push_refresh`: `loops`, `crons`,
+ *  `workflow_runs`, …), or `[]` for any other frame. The gateway's listing-refresh hint: a page
+ *  re-reads the listings it names instead of polling them. */
+export function refreshKinds(m: WsMessage): string[] {
+  const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
+  return Array.isArray(kinds) ? kinds.map(String) : []
+}
+
+/** Subscribe to the tab's ONE WebSocket to /api/ws. Calls `onMessage` for every envelope;
+ *  consumers filter by type + data.session. `onReconnect` fires when the socket reopens AFTER
+ *  a drop this caller had seen it open before (not its first connect). `onStatus(connected)`
+ *  reports link state for a UI indicator: `true` on every open (at once, if the socket is already
+ *  open when the caller subscribes), `false` on a drop after that.
+ *
+ *  `onReconnect` is required. Every frame the gateway sent while the socket was down is lost (a
+ *  restart drops every socket, and what the new process does first, such as a resumed run asking
+ *  for an approval, is broadcast while the pages are still reconnecting), so a caller that keeps
+ *  state current from frames (a list, a pending approval, a job's progress) re-reads it here.
+ *  `null` says the caller keeps nothing a lost frame leaves stale: a toast, a live ticker whose
+ *  subject is polled. When the re-read was optional, most callers that needed it left it out.
+ *
+ *  Every caller shares one connection. Each call used to open its own, so an idle Home held
+ *  eight sockets and a chat six, and the gateway serialised and wrote every broadcast frame
+ *  once per socket. It also cost the chat its terminal frames: the chat's socket was its own,
+ *  so the session-create remount closed it and the replacement was not listening yet while a
+ *  fast turn finished (#3575). The shared socket outlives any one consumer. It opens with the
+ *  first subscriber, reconnects with backoff while anyone listens, and closes when the last one
+ *  leaves (checked after the current task, so a remount that unsubscribes and resubscribes in
+ *  one commit keeps it).
+ *
+ *  An installed app's events are a different connection by design (`createAppEvents`): the
+ *  gateway filters an app-token socket to the app's declared events, and that filter is the
+ *  enforcement, so it cannot ride this one. */
+export function useChatSocket(
+  onMessage: (m: WsMessage) => void,
+  onReconnect: (() => void) | null,
+  onStatus?: (connected: boolean) => void,
+) {
+  const cb = useRef(onMessage)
+  cb.current = onMessage
+  const reconnectCb = useRef(onReconnect)
+  reconnectCb.current = onReconnect
+  const statusCb = useRef(onStatus)
+  statusCb.current = onStatus
+
+  useEffect(() => subscribe({ onMessage: cb, onReconnect: reconnectCb, onStatus: statusCb, sawOpen: false }), [])
+}
+
+interface Subscriber {
+  onMessage: { current: (m: WsMessage) => void }
+  onReconnect: { current: (() => void) | null }
+  onStatus: { current: ((connected: boolean) => void) | undefined }
+  /** This subscriber has seen the socket open, so the next open is a REconnect for it. */
+  sawOpen: boolean
+}
+
+// The tab's socket. Module state, because the point is that there is one per page.
+const subscribers = new Set<Subscriber>()
+let ws: WebSocket | null = null
+let open = false
+let retry = 0
+let timer: number | undefined
+
+/** Call one consumer. A consumer that throws must not take the frame from the rest. */
+function call(fn: () => void): void {
+  try { fn() } catch { /* the consumer's own failure; the others still get the frame */ }
+}
+
+function connect(): void {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const sock = new WebSocket(`${proto}://${location.host}/api/ws`)
+  ws = sock
+  sock.onopen = () => {
+    if (ws !== sock) return
+    retry = 0
+    open = true
+    for (const s of [...subscribers]) {
+      call(() => s.onStatus.current?.(true))
+      if (s.sawOpen) call(() => s.onReconnect.current?.())
+      s.sawOpen = true
+    }
+  }
+  sock.onmessage = (ev) => {
+    if (ws !== sock) return
+    let m: WsMessage
+    try { m = JSON.parse(ev.data) as WsMessage } catch { return }  // ignore non-JSON
+    for (const s of [...subscribers]) call(() => s.onMessage.current(m))
+  }
+  sock.onclose = () => {
+    if (ws !== sock) return
+    ws = null
+    open = false
+    // Only flag drops after a real connection, as each caller's own socket did.
+    for (const s of [...subscribers]) if (s.sawOpen) call(() => s.onStatus.current?.(false))
+    retry = Math.min(retry + 1, 6)
+    // A signed-out tab stops reconnecting: every upgrade would be refused, and each refusal is a
+    // row in the gateway's security log. Signing in again reloads the page, which starts over.
+    if (signedOutState()) return
+    timer = window.setTimeout(() => { timer = undefined; if (subscribers.size && !signedOutState()) connect() }, 250 * 2 ** retry)
+  }
+  sock.onerror = () => sock.close()
+}
+
+function subscribe(s: Subscriber): () => void {
+  subscribers.add(s)
+  if (open) {
+    s.sawOpen = true
+    call(() => s.onStatus.current?.(true))
+  } else if (!ws && timer === undefined) {
+    connect()
+  }
+  return () => {
+    subscribers.delete(s)
+    queueMicrotask(() => {
+      if (subscribers.size) return
+      if (timer !== undefined) { window.clearTimeout(timer); timer = undefined }
+      const sock = ws
+      ws = null
+      open = false
+      retry = 0
+      sock?.close()
+    })
+  }
+}

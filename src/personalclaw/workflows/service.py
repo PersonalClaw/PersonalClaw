@@ -1,0 +1,2602 @@
+"""Workflow operations — the ONE implementation the chat tools and HTTP routes share.
+
+Every workflow operation lives here as a plain function returning a plain dict. The chat
+tools call it in-process; the REST handlers call the same
+functions and serialize the same dicts. That is deliberate: two surfaces over one engine
+must not grow two behaviours, and "the tool did X but the API did Y" is the bug class this
+prevents by construction.
+
+Three rules the shape follows:
+
+**Never raise across the boundary.** Every function returns `{"ok": bool, ...}` with a
+stable `code` on failure. A tool call that raises burns the model's turn on a traceback it
+cannot act on; a coded error it can read and correct.
+
+**The supervisor is injected, never imported from a global.** A run needs a controller to
+drive it, and that controller must be the one the watchdog knows about — otherwise a
+restart adopts the run a second time and two writers race. Callers pass the supervisor;
+tests pass a fake.
+
+**Reads never mutate.** `status`/`output`/`observe` construct no controller and start no
+run. A read that lazily started something would make polling a side-effecting act.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import shutil
+import time
+from typing import Any
+
+from personalclaw.approval_answer import Principal
+from personalclaw.stale_write import revision_of
+from personalclaw.workflows import (
+    attention,
+    automation_version,
+    blocks,
+    declines,
+    definition_check,
+)
+from personalclaw.workflows import defs as defs_mod
+from personalclaw.workflows import (
+    incident_hold,
+)
+from personalclaw.workflows import journal as journal_mod
+from personalclaw.workflows import (
+    judge_calibration,
+    macros,
+    models,
+    mutations,
+    run_budget,
+    secrets,
+    store,
+)
+from personalclaw.workflows.failure_taxonomy import with_breaker_window
+from personalclaw.workflows.models import (
+    RUN_PHASES,
+    SUCCESS_STATES,
+    TERMINAL_RUN_STATUSES,
+    TERMINAL_STATES,
+    InstanceState,
+    LifecyclePhase,
+    Node,
+    OriginKind,
+    RunBudget,
+    RunOrigin,
+    RunStatus,
+    WorkflowDef,
+    WorkflowRun,
+    cancelled_because,
+    instance_order,
+    sibling_group,
+    spec_path,
+    valid_name,
+    walk,
+)
+from personalclaw.workflows.validator import Issue
+from personalclaw.workflows.versions import AGENT, PUBLISH
+
+logger = logging.getLogger(__name__)
+
+#: `workflow_observe` window bounds. Clamped because an unbounded subscribe in a chat turn
+#: is a hang: the model waits, the user waits, and nothing says why.
+MIN_OBSERVE_MS = 100
+MAX_OBSERVE_MS = 30_000
+DEFAULT_OBSERVE_MS = 5_000
+
+
+def _service_failure(code: str, message: str, **extra: Any) -> dict[str, Any]:
+    """A SERVICE-result failure — deliberately NOT the wire envelope.
+
+    This layer is transport-independent: the same dict is the MCP tool result
+    (``mcp_workflows.py`` returns it verbatim) and the input to
+    ``workflows/handlers.py``'s ``_fail``, which translates ``code`` through
+    ``_STATUS_MAP`` into an HTTP status + a ``lowercase_snake`` wire code and
+    emits it via :func:`personalclaw.http_errors.json_error`. So ``code`` here is
+    the third vocabulary (``WF_UPPER_SNAKE``), not a wire code, and this helper
+    must not return a ``web.Response``. It was named ``_err`` — the same name as
+    twelve Response-returning handler helpers — which made a copy-paste between
+    the two layers a type error waiting to happen.
+    """
+    return {"ok": False, "code": code, "message": message, **extra}
+
+
+def _ok(**fields: Any) -> dict[str, Any]:
+    return {"ok": True, **fields}
+
+
+# ── definitions ──────────────────────────────────────────────────────────────
+
+
+async def list_defs(*, tag: str = "", source: str = "") -> dict[str, Any]:
+    """Every definition across every registered provider."""
+    out: list[dict[str, Any]] = []
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found, _total = await provider.list_defs(limit=500)
+        except Exception:
+            # One broken provider must not hide every other pack's templates.
+            logger.debug("workflow def provider %s failed to list", provider_name)
+            continue
+        for item in found:
+            d = item if isinstance(item, dict) else getattr(item, "to_dict", lambda: {})()
+            if not isinstance(d, dict) or not d.get("name"):
+                continue
+            if tag and tag not in (d.get("tags") or []):
+                continue
+            if source and str(d.get("source", "")) != source:
+                continue
+            out.append(
+                {
+                    "name": d.get("name"),
+                    "description": d.get("description", ""),
+                    "source": d.get("source", "user"),
+                    "version": d.get("version", 1),
+                    "tags": d.get("tags") or [],
+                    "provider": provider_name,
+                }
+            )
+    out.sort(key=lambda d: str(d.get("name")))
+    return _ok(defs=out, total=len(out))
+
+
+async def list_defs_surfacing(*, now: float = 0.0) -> dict[str, Any]:
+    """The templates list WITH its surfacing state — freshness, scope, packs, route, reachability.
+
+    `list_defs` deliberately returns a thin projection (name/description/source/version/tags/
+    provider). Measured: that projection drops `metadata` entirely, so a templates list built
+    on it CANNOT render a freshness gradient, a scope chip, or a surfacing toggle no matter what the
+    def declares — the fields would be present on disk and invisible to every surface. This is the
+    read the UX consumes.
+
+    Cadence facts are batched here rather than looked up per def: one `list_runs` call per template
+    on every list render is the shape that makes a list feel broken on a machine with history.
+    """
+    from personalclaw.workflows import surfacing_channels as channels
+
+    defs_by_name: dict[str, Any] = {}
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found, _total = await provider.list_defs(limit=500)
+        except Exception:
+            logger.debug("workflow def provider %s failed to list", provider_name)
+            continue
+        for item in found:
+            name = ""
+            metadata: Any = None
+            if isinstance(item, dict):
+                name = str(item.get("name", "") or "")
+                metadata = models.DefMetadata.from_dict(item.get("metadata") or {})
+            else:
+                name = str(getattr(item, "name", "") or "")
+                metadata = getattr(item, "metadata", None)
+            if not name or metadata is None:
+                continue
+            defs_by_name.setdefault(name, (provider_name, metadata))
+
+    rows: list[dict[str, Any]] = []
+    doctor_entries: list[dict[str, Any]] = []
+    for name, (provider_name, metadata) in sorted(defs_by_name.items()):
+        cadence = channels.cadence_from_def(
+            name, metadata, last_completed_at=channels.last_completed(name)
+        )
+        rows.append(
+            {
+                "name": name,
+                "provider": provider_name,
+                "surface_mode": metadata.surface_mode,
+                "summary": metadata.summary,
+                "when_to_use": metadata.when_to_use,
+                "cadence_days": metadata.cadence_days,
+                "escalation": metadata.escalation,
+                "packs": list(metadata.packs),
+                "guided": metadata.guided,
+                "freshness": channels.freshness(cadence, now).value,
+                "overdue": channels.overdue(cadence, now),
+                "last_completed_at": cadence.last_completed_at,
+                "hands_off_to": [h.to_dict() for h in channels.handoffs_from_def(metadata)],
+            }
+        )
+        doctor_entries.append(channels.doctor_entry(name, metadata))
+
+    # Overdue-first; `sort_key` owns the rule so the API and
+    # any other surface cannot disagree about the order.
+    order = {
+        name: channels.sort_key(
+            channels.cadence_from_def(
+                name,
+                meta,
+                last_completed_at=next(
+                    (r["last_completed_at"] for r in rows if r["name"] == name), 0.0
+                ),
+            ),
+            now,
+        )
+        for name, (_prov, meta) in defs_by_name.items()
+    }
+    rows.sort(key=lambda r: order.get(str(r["name"]), (9, 0.0, str(r["name"]))))
+    return _ok(
+        defs=rows,
+        total=len(rows),
+        findings=[f.to_dict() for f in channels.doctor(doctor_entries)],
+    )
+
+
+async def get_def(name: str) -> dict[str, Any]:
+    """One definition in full, with secret values stripped to `_has*` flags.
+
+    Stripped on the way OUT, always: a def read is rendered in a UI and echoed into a chat
+    turn, and a credential that reaches either is a credential leaked to both.
+    """
+    if not name:
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found = await provider.get_def(name)
+        except Exception:
+            logger.debug("workflow def provider %s failed on %s", provider_name, name)
+            continue
+        if found is None:
+            continue
+        raw = found if isinstance(found, dict) else getattr(found, "to_dict", lambda: {})()
+        return _ok(
+            definition=secrets.strip_secrets(raw),
+            provider=provider_name,
+            default_eligibility=_default_eligibility(name),
+        )
+    return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+
+
+def _default_eligibility(name: str) -> dict[str, Any]:
+    """May this template become its kind's default?
+
+    Reads every `judge_verdict` this template's runs recorded to the ledger and asks the
+    nodding-loop detector. A gate that has never rejected across enough real runs blocks the
+    template from becoming a default and surfaces as a warning badge. Read-only projection over
+    the ledger — no model call, no separate store.
+    """
+    records: list[judge_calibration.VerdictRecord] = []
+    runs, _total = store.list_runs(workflow_name=name, limit=200)
+    for run in runs:
+        run_id = getattr(run, "id", "")
+        if not run_id:
+            continue
+        entries = journal_mod.ledger(run_id, kinds={journal_mod.JUDGE_VERDICT})
+        records.extend(judge_calibration.verdicts_from_journal(entries))
+    allowed, reason = judge_calibration.may_become_default(records, template=name)
+    return {"may_become_default": allowed, "reason": reason, "verdicts": len(records)}
+
+
+async def _reserved_name_provider(name: str) -> str:
+    """The read-only provider already serving ``name``, or ``""``.
+
+    Provider-agnostic on purpose: it asks every registered provider whether it is `readonly` and
+    whether it holds the name, rather than naming `bundled`. A pack provider (`"research-pack"`)
+    is read-only for the same reason and reserves its names on the same terms, so a rule written
+    against one provider id would have to be rewritten for the second.
+
+    Fails OPEN — a provider that raises is treated as not holding the name, with a warning. The
+    protocol says `get_def` must not raise on a miss, so this is a contract violation rather than
+    an expected path; the choice is between one possible shadow and a broken third-party pack
+    blocking ALL authoring, and the latter is worse. This is a name-collision guard, not a
+    security boundary, which is why fail-open is the right direction here and is not in
+    `apps/permissions.py`.
+    """
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None or not provider.readonly:
+            continue
+        try:
+            if await provider.get_def(name) is not None:
+                return provider.name
+        except Exception:  # noqa: BLE001 - see the fail-open note above
+            logger.warning(
+                "provider %s raised while checking whether %s is reserved; treating as free",
+                provider_name,
+                name,
+                exc_info=True,
+            )
+    return ""
+
+
+async def _reinject_source(name: str, *, version: int = 0) -> dict[str, Any]:
+    """The stored definition a save restores hidden values from — RAW, never the stripped read.
+
+    ``version`` reads one recorded snapshot instead of the current definition: an edit that
+    started from version 2 needs version 2's values back, and the current definition may no
+    longer hold the step they belong to. Empty when there is nothing to read, which leaves every
+    flag unmatched — so the save refuses rather than guessing.
+    """
+    if not valid_name(name):
+        return {}
+    if version > 0:
+        from personalclaw.workflows import versions
+
+        record = versions.get_version(name, version)
+        return dict(record.spec) if record is not None else {}
+    definition = await _raw_def(name)
+    if definition is None:
+        return {}
+    return definition if isinstance(definition, dict) else definition.to_dict()
+
+
+def _hidden_value_issue(where: str, node_id: str, field: str, *, source: str) -> Issue:
+    """The refusal for one hidden value this save could not restore.
+
+    Code `WF_HIDDEN_VALUE_UNMATCHED`, at the step the value belongs to."""
+    real = field.rsplit(".", 1)[-1]
+    lost = (
+        f"is a value the definition keeps hidden when it is read, and {source!r} has no value "
+        "there to keep, so this save would lose it"
+    )
+    if where == "root" or where.startswith("root."):
+        return Issue(
+            code="WF_HIDDEN_VALUE_UNMATCHED",
+            message=(
+                f"`{field}` on step {node_id or where!r} {lost}. If you renamed the step, give it "
+                f"back its original id; otherwise set `{real}` to a value, or remove it."
+            ),
+            path=where,
+        )
+    return Issue(
+        code="WF_HIDDEN_VALUE_UNMATCHED",
+        message=f"`{field}` {lost}. Set `{real}` to a value, or remove it.",
+        path=where,
+    )
+
+
+async def author_def(
+    *,
+    name: str,
+    root: dict[str, Any],
+    description: str = "",
+    inputs: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    save: bool = True,
+    saved_by: str = AGENT,
+    strict: bool = True,
+    workspace: dict[str, Any] | None = None,
+    runtime_hints: dict[str, Any] | None = None,
+    defaults: dict[str, Any] | None = None,
+    on_overlap: str = "",
+    based_on: str = "",
+    based_on_version: int = 0,
+    owner_allowed: bool = False,
+) -> dict[str, Any]:
+    """Validate a spec and (optionally) save it.
+
+    `save=False` is a real dry run: it validates and returns the issues WITHOUT writing, so
+    an author can iterate before committing anything. Validating only at save time would
+    mean every failed attempt leaves a broken def on disk. A dry run of a spec whose save needs
+    the owner's own yes says which steps it is for (``needs_owner_allow``), asking nobody.
+
+    `saved_by` is the door the save comes through (``versions.SAVERS``): the owner's editor, an
+    agent's tool, an import. The door says it, never what it was handed, and it is what the version
+    records as who saved it, which decides whether an automation follows it
+    (`workflows.automation_version`); a door that says nothing is an agent's.
+
+    `owner_allowed` is the owner's own yes to what the save lets its steps do: her ``confirm`` on
+    her editor's save, or her Allow of an ask that named each step (`batch_start`,
+    `definition_ask`). Without it, a save that lets a step do more than the same step of the
+    stored definition does is refused with ``WF_DEF_NEEDS_OWNER_YES`` and nothing is written
+    (:func:`_write_definition`).
+
+    `strict` rejects on WARNINGS too. Authoring is exactly when a warning is cheap to fix,
+    and a template that ships with a known smell propagates it to every run.
+
+    `metadata` is the def's declared surfacing/matching block. Measured: there was NO write
+    path for it — the parameter did not exist, so every `DefMetadata` field (including the
+    `surface_mode`, `cadence_days` and `packs` the surfacing channels read) could be loaded from
+    disk and never SET through the API. A field with a read path and no write path is a field only a
+    hand-edited file can use, which is the config round-trip contract's exact failure.
+
+    `runtime_hints`, `defaults` and `on_overlap` are the same failure for three more fields a
+    definition has, found when the dashboard editor saved a copy of a shipped template: nine of
+    them carry `runtime_hints` (the judge rubric, the WIP invariant), and a copy saved through
+    here came back without any of it.
+
+    `based_on` names the definition this save was EDITED FROM — the definition itself when
+    absent — and `based_on_version` one recorded version of it. The editor starts from a read,
+    and every read is stripped (`get_def`): a value under a credential-shaped key is replaced by
+    a `_has_<key>` presence flag. Those values are restored from the definition the edit came
+    from before anything is validated or written (`secrets.reinject_secrets`), and a flag nothing
+    can restore is refused at its step rather than written to disk as a field.
+    """
+    spec, body = await definition_check.checked_spec(
+        name=name,
+        root=root,
+        description=description,
+        inputs=inputs,
+        tags=tags,
+        metadata=metadata,
+        strict=strict,
+        workspace=workspace,
+        runtime_hints=runtime_hints,
+        defaults=defaults,
+        on_overlap=on_overlap,
+        based_on=based_on,
+        based_on_version=based_on_version,
+    )
+    if spec is None:
+        return body
+    if not save:
+        asks = await _loosenings(spec)
+        if asks:
+            body["needs_owner_allow"] = [step.to_dict() for step in asks]
+        return _ok(saved=False, dry_run=True, **body)
+
+    # Dry-run-before-save for AGENT-authored defs. A human saving a spec they
+    # wrote has already reviewed it; an agent's spec gets a preflight first, so a def that
+    # cannot possibly run is caught at authoring rather than at every future start. The
+    # findings are ATTACHED, not fatal: a template referencing a credential the user has not
+    # added yet is a legitimate thing to save.
+    dry_run_report: dict[str, Any] | None = None
+    if saved_by == AGENT:
+        from personalclaw.workflows.preflight import preflight as run_preflight
+
+        dry_run_report = run_preflight(spec).to_dict()
+
+    raw, refused = await _write_definition(spec, saved_by=saved_by, owner_allowed=owner_allowed)
+    if refused is not None:
+        return refused
+    return _ok(
+        saved=True,
+        definition=secrets.strip_secrets(raw),
+        saved_by=saved_by,
+        preflight=dry_run_report,
+        **body,
+    )
+
+
+async def _loosenings(spec: dict[str, Any]) -> list[Any]:
+    """The steps of *spec* that would do more than the same steps of the stored definition do
+    (``automation_posture.workflow_loosenings``): what its save needs the owner's own yes for."""
+    from personalclaw.automation_posture import workflow_loosenings
+
+    name = str(spec.get("name") or "")
+    stored = await _raw_def(name) if valid_name(name) else None
+    current = stored if isinstance(stored, dict) or stored is None else stored.to_dict()
+    root = spec.get("root")
+    return workflow_loosenings(
+        name,
+        current_root=(current or {}).get("root"),
+        new_root=root if isinstance(root, dict) else {},
+    )
+
+
+#: What a definition's writer sets, never the spec it is handed: who saved the version and the ops
+#: it records (the provider's hints), and the label of who saved it the definition carries.
+_SET_BY_THE_WRITER: frozenset[str] = frozenset({"_saved_by", "_version_ops", "provenance"})
+
+
+async def _write_definition(
+    spec: dict[str, Any],
+    *,
+    saved_by: str,
+    owner_allowed: bool = False,
+    ops: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Write *spec* to the writable provider: the one write of a definition there is, behind the
+    posture screen. Returns ``(the definition as stored, None)``, or ``({}, the failure)``.
+
+    A step that approves its own tool calls, or changes things where it only read, does so each
+    time the workflow runs, unattended included, so it is the owner's yes alone that may put one
+    there. A write that would let any step do more than the same step of the stored definition
+    does (a loosened posture key, or an allowed one on a step given new work) is refused with
+    ``WF_DEF_NEEDS_OWNER_YES``, naming each such step and what it would then do, unless
+    *owner_allowed* says her yes covers it; nothing is written. The screen reads the spec as it
+    is written (macros expanded, hidden values restored), and compares it with the definition it
+    replaces.
+
+    *saved_by* is the door the write comes through (``versions.SAVERS``), and the version records
+    it as who saved it, with *ops* (an accepted diff's): handed to the provider as its hints, and
+    never taken from *spec*, whose own keys of that name are dropped. A writer that names no door is
+    refused, since who saved a version decides whether an automation follows it.
+
+    Every door that writes a definition comes through here (``author_def``, the A2A toggle, an
+    accepted refiner diff), and ``tests/test_workflow_definition_writer_census.py`` fails a new
+    write that does not.
+    """
+    loosened = await _loosenings(spec)
+    if loosened and not owner_allowed:
+        name = str(spec.get("name") or "")
+        said = "; ".join(f"“{s.label}” {', and '.join(s.may)}" for s in loosened)
+        # Its failure carries ``field``, ``consent``, ``change`` and ``caution`` (the first such
+        # step's, as the editor's consent dialog asks it) and ``steps`` (each such step,
+        # ``Loosening.to_dict``).
+        return {}, _service_failure(
+            "WF_DEF_NEEDS_OWNER_YES",
+            f"{name!r} was not saved: its steps would then do more ({said}), and only your own "
+            "yes saves that: save it in the workflow's editor, which asks you.",
+            field=loosened[0].field,
+            consent=loosened[0].consent,
+            change=loosened[0].change,
+            caution=loosened[0].caution,
+            steps=[step.to_dict() for step in loosened],
+        )
+    from personalclaw.workflows.versions import SAVERS
+
+    if saved_by not in SAVERS:
+        raise ValueError(f"a definition's write names who saved it, not {saved_by!r}")
+    writable = [
+        p
+        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
+        if p is not None and not p.readonly
+    ]
+    if not writable:
+        return {}, _service_failure(
+            "WF_DEF_NO_WRITABLE_PROVIDER",
+            "no writable workflow definition provider is registered",
+        )
+    fields = {k: v for k, v in spec.items() if k not in _SET_BY_THE_WRITER}
+    try:
+        saved = await writable[0].save_def(
+            **fields, _saved_by=saved_by, _version_ops=list(ops or [])
+        )
+    except Exception as exc:
+        return {}, _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
+    raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
+    return dict(raw or {}), None
+
+
+async def save_accepted_diff(
+    candidate: dict[str, Any], *, ops: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Save an accepted refiner diff's result, *candidate*, as a new version of its definition,
+    the version recording its *ops* as the refiner's (``versions.REFINER``): a model's proposal,
+    which an automation of the workflow does not follow until its owner says to.
+
+    The refiner is a model, and accepting its proposal is no yes to a step doing more: a diff that
+    would let a step approve its own tool calls or change things is refused, naming the step, and
+    nothing is written. The owner allows that where she is asked, in the workflow's editor."""
+    from personalclaw.workflows.versions import REFINER
+
+    raw, refused = await _write_definition(dict(candidate), saved_by=REFINER, ops=list(ops))
+    if refused is not None:
+        return refused
+    return _ok(saved=True, version=int(raw.get("version") or 0))
+
+
+async def set_a2a_published(
+    name: str, published: bool, *, saved_by: str = PUBLISH
+) -> dict[str, Any]:
+    """Flip one template's ``metadata.a2a_published``, as a new version
+    saved by *saved_by*: the publish switch (``versions.PUBLISH``), unless the request that pressed
+    it proved an app or an agent. No automation follows the version it writes, which re-saves the
+    steps of the one before it without showing them.
+
+    A DEDICATED write path rather than routing the toggle through :func:`author_def`: it mutates
+    the RAW stored def and never round-trips the definition through the client, and it declines
+    to re-validate. Publishing does not change the graph, and a template that was savable when it
+    was authored must not become unpublishable because the validator grew a new warning since —
+    which a toggle routed through ``author_def`` would, since that validates the whole spec.
+    """
+    if not name:
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
+    definition = await _raw_def(name)
+    if definition is None:
+        return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+    spec = definition if isinstance(definition, dict) else definition.to_dict()
+    spec = dict(spec)
+    metadata = dict(spec.get("metadata") or {})
+    # Written as an exact bool. `DefMetadata.from_dict` reads this field with `is True`, so a
+    # truthy-but-not-True value on disk would read as unpublished and the toggle would appear
+    # to do nothing.
+    metadata["a2a_published"] = bool(published)
+    spec["metadata"] = metadata
+    # Its steps are the stored definition's own, so the posture screen asks nobody here.
+    raw, refused = await _write_definition(spec, saved_by=saved_by)
+    if refused is not None:
+        return refused
+    return _ok(
+        name=name,
+        a2a_published=bool((raw.get("metadata") or {}).get("a2a_published") is True),
+        definition=secrets.strip_secrets(raw),
+    )
+
+
+async def delete_def(name: str) -> dict[str, Any]:
+    if not name:
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None or provider.readonly:
+            continue
+        try:
+            if await provider.delete_def(name):
+                return _ok(deleted=True, name=name, provider=provider_name)
+        except Exception as exc:
+            return _service_failure("WF_DEF_DELETE_FAILED", f"could not delete {name!r}: {exc}")
+    return _service_failure("WF_DEF_NOT_FOUND", f"no writable definition named {name!r}")
+
+
+# ── runs ─────────────────────────────────────────────────────────────────────
+
+
+async def start_run(
+    *,
+    name: str,
+    inputs: dict[str, Any] | None = None,
+    mode: str = "background",
+    supervisor: Any = None,
+    origin_kind: OriginKind = OriginKind.CHAT,
+    session_key: str = "",
+    project_id: str = "",
+    idempotency_key: str = "",
+    blocking_timeout: float = 0.0,
+    skip_preflight: bool = False,
+    loop_kind: str = "",
+    title: str = "",
+    policy_overrides: dict[str, Any] | None = None,
+    document: str = "",
+    extra: dict[str, Any] | None = None,
+    budget: RunBudget | None = None,
+    held_to_its_work: bool = True,
+    definition: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Instantiate a def and start driving it.
+
+    A caller idempotency key returns the EXISTING run rather than minting a second one — a
+    retried tool call is a retry, not a new request.
+
+    Work done for an owner-allowed automation's run starts only what that run may start
+    (`automation_version.held_start`); a batch's start (`batch_start`) is not held to its work.
+
+    Preflight runs first unless explicitly skipped: a missing credential caught here costs
+    nothing, and caught at node 7 has already paid for six nodes of model calls.
+
+    ``loop_kind``/``title``/``policy_overrides``/``document`` are what a LOOP start carries that no
+    other start does (:func:`start_kind_run` is their one caller): the kind the user asked for, the
+    loop's name, the per-instance knobs it was created with, and the document its work produces
+    (`deliverable.RUN_DOCUMENT_KEY`, already held to one plain document name by that caller). They
+    are written onto the run AT CREATE — before the supervisor launches it — because the overlay
+    is frozen once a run has launched (:func:`set_policy_overrides`) and the first tick must
+    already see it: an unattended grant applied one tick late is one approval prompt too many.
+
+    ``extra`` is what the run's record carries from its start beside its inherited memory mode,
+    written at create for the same reason: a batch's Allow (`batch_start.CONSENT_KEY`), which its
+    first step's spawn reads. Whose work the run is, when *session_key* is an app's work
+    (`apps.app_work.RUN_KEY`), is recorded beside them, unless ``extra`` already says.
+
+    ``budget`` is the caps this start sets for its run (a loop's dollar limit), each one it sets
+    in place of the cap its definition declares (`defaults.budget`) and the rest as declared.
+
+    ``definition`` is the definition to run when it is saved nowhere (a batch's tasks,
+    ``definition_check.run_once_def``): the run holds it, and no list, read or start of a
+    definition by *name* finds it.
+    """
+    from personalclaw.workflows.effects import START_DEDUPE
+    from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+    overrides = dict(policy_overrides or {})
+    unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+    if unknown:
+        # The write seam's strictness (`store.set_policy_overrides`), applied at the only other
+        # door an overlay enters by — a typo'd knob persisted here would resolve to nothing forever
+        # while the user believes it is set. Same code, so both doors refuse alike.
+        return _service_failure(
+            "WF_POLICY_KEY_UNKNOWN",
+            f"unknown policy override key(s) {unknown} — "
+            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
+            unknown_keys=unknown,
+            overridable=sorted(OVERRIDABLE_POLICY_KEYS),
+        )
+
+    if idempotency_key:
+        existing = START_DEDUPE.lookup(idempotency_key)
+        if existing:
+            return _ok(run_id=existing, deduped=True, status=_status_of(existing))
+
+    if definition is None:
+        found = await get_def(name)
+        if not found.get("ok"):
+            return found
+        # The STORED def, not the stripped read: a run needs the real credential bindings.
+        stored = await _raw_def(name)
+        if stored is None:
+            return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+        spec = stored if isinstance(stored, dict) else stored.to_dict()
+    else:
+        spec = dict(definition)
+    key = session_key if held_to_its_work else ""  # a batch runs the agent's own tasks
+    held = await automation_version.held_start(name, spec, key, getattr(supervisor, "state", None))
+    if held.refused:
+        return _service_failure(held.code, held.refused)
+    spec = held.spec
+    # Use the SAME tree-derived schema the planner review emits. A declared-only check misses
+    # `{{inputs.x}}` when the definition forgot to declare x, which is precisely the drift
+    # `resolve_unfilled_inputs` exists to make impossible.
+    from personalclaw.workflows import contracts as contracts_mod
+
+    contract_spec = {
+        "inputs": spec.get("inputs") or {},
+        "root": spec.get("root") or {},
+    }
+    extraction = contracts_mod.apply_extraction(
+        contracts_mod.resolve_unfilled_inputs(contract_spec),
+        # Use the contract's explicit envelope. Passing the flat start payload is ambiguous when
+        # a workflow legitimately declares an object parameter named ``extracted``.
+        {"extracted": dict(inputs or {})},
+    )
+    if not extraction.all_filled:
+        # Refused BEFORE tokens are spent, with the extraction contract intact so a calling model
+        # can ask one follow-up and retry instead of parsing a binding failure after launch.
+        return _service_failure(
+            "WF_RUN_MISSING_INPUTS",
+            f"missing required input(s): {', '.join(extraction.missing)}",
+            **extraction.to_dict(),
+        )
+    # Declared TYPES are enforced, for the same reason and at the same door as the derived check
+    # above: a mistyped input caught here costs nothing, and caught at node 7 has already paid for
+    # six nodes — or worse, has quietly run with a value the caller never chose. Coerced rather
+    # than merely rejected, because a string is what an HTML form, a shell and a chat planner all
+    # produce for a number; only a value that cannot BE its declared type is refused.
+    inputs, type_errors = contracts_mod.coerce_declared_inputs(spec, dict(inputs or {}))
+    if type_errors:
+        return _service_failure(
+            "WF_RUN_INPUT_TYPE",
+            "input(s) do not match their declared type: " + "; ".join(type_errors),
+            input_errors=type_errors,
+        )
+    # Declared defaults are APPLIED, not merely documented. Before this they were validated and
+    # then ignored: a template declaring `acceptance` with a default and a run that omitted it
+    # failed on `binding failed: unresolved reference at 'acceptance'` — so every optional input
+    # was a landmine, and a template could only be run by passing every key it declared. Found by
+    # starting a bundled template from the UI with its optional field left blank.
+    inputs = with_declared_defaults(spec, inputs or {})
+    # A run that says it continues another starts from that run's document, so one that cannot is
+    # refused in words here, before any run exists — never run as a fresh start that claims to
+    # continue (`deliverable.continuation_refusal`).
+    from personalclaw.workflows.deliverable import continuation_refusal
+
+    if refused := continuation_refusal(name, spec, inputs):
+        return _service_failure("WF_RUN_CONTINUATION_INVALID", f"cannot continue: {refused}")
+
+    # Run-start preflight: credentials, binaries, models and action providers.
+    # Blocking here rather than degrading at node 7, which has already paid for six nodes.
+    # `skip_preflight` exists for a deliberate override, and says so in the response. Its
+    # credentials are checked as the run's steps will read them, its project's own first.
+    if not skip_preflight:
+        from personalclaw.workflows.preflight import no_tools_finding
+        from personalclaw.workflows.preflight import preflight as run_preflight
+        from personalclaw.workflows.preflight import tool_less_steps
+
+        checks = run_preflight(spec, project_id=project_id)
+        # A step that works with tools, on a model that can't use them, would only claim its work.
+        no_tools = [no_tools_finding(*step) for step in await tool_less_steps(spec)]
+        if not checks.ok or no_tools:
+            report = checks.to_dict()
+            report.update(
+                ok=False,
+                findings=[*report.get("findings", []), *(f.to_dict() for f in no_tools)],
+            )
+            return _service_failure(
+                "WF_RUN_PREFLIGHT_FAILED",
+                "the run cannot start: "
+                + "; ".join(f.message for f in (*checks.errors, *no_tools)),
+                preflight=report,
+            )
+        if checks.warnings:
+            logger.info(
+                "workflow %s: starting with %d unverifiable requirement(s)",
+                name,
+                len(checks.warnings),
+            )
+
+    # Inherit the launching session's memory posture. A run started from an
+    # incognito/temporary chat must carry that mode DOWN into everything it owns, or its stages
+    # would quietly write memories the user asked not to record — invisibly, because the chat itself
+    # stayed clean. The mode rides in `extra` (already persisted and round-tripped), so a restart
+    # replays it and the engine's node-skip + the run-end gate keep enforcing it after the process
+    # forgets the in-memory registry. Stamped BEFORE create so the very first tick already sees it.
+    # The model its chat runs on rides beside it: the run's work reaches no other, after a restart
+    # too (`run_start.run_context`). The chat's mode is read from the live chat first, through the
+    # chats of the gateway the supervisor runs in: a run a chat starts on its first turn, or for it
+    # once a batch's ask is answered, has no transcript of the chat to read yet.
+    from personalclaw import memory_writes
+    from personalclaw.workflows import ownership
+
+    inherited = ownership.inherit_mode(session_key, state=getattr(supervisor, "state", None))
+    # NORMAL is left UNSTAMPED: `run_mode` reads an absent key as normal, so stamping it would add a
+    # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
+    # inheritance is a fact worth recording.
+    run_extra: dict[str, Any] = dict(extra or {})
+    from personalclaw.apps import app_work
+
+    if app_work.RUN_KEY not in run_extra:
+        # Whose work it is, when its session is an app's: its steps are then the app's, held to
+        # its tier and asking her for their calls, after the agent that started it is gone too.
+        # A caller that decided it already (a batch, which waits for an answer first) says so.
+        work = app_work.of_session(getattr(supervisor, "state", None), session_key)
+        run_extra = app_work.stamp(run_extra, work)
+    if inherited is not ownership.MemoryMode.NORMAL:
+        model = memory_writes.handed_model(session_key)
+        run_extra = ownership.stamp_run_mode(run_extra, inherited, model=model)
+    if document:
+        from personalclaw.workflows.deliverable import RUN_DOCUMENT_KEY
+
+        run_extra[RUN_DOCUMENT_KEY] = document
+    if held.carried is not None:
+        run_extra = automation_version.stamp(run_extra, held.carried)
+
+    try:
+        caps = run_budget.declared(spec, over=budget)
+    except ValueError as exc:
+        return _service_failure("WF_RUN_BUDGET_INVALID", f"the run cannot start: {exc}")
+    run = store.create(
+        WorkflowRun(
+            id="",
+            workflow_name=name,
+            status=RunStatus.DRAFT,
+            spec_version=held.version,
+            inputs=dict(inputs or {}),
+            mode=mode if mode in ("blocking", "background") else "background",
+            project_id=project_id,
+            origin=RunOrigin(kind=origin_kind, session_key=session_key),
+            # The caps its definition declares (`defaults.budget`), which it pauses at, with any
+            # this start sets in their place.
+            budget=run_budget.for_run(caps),
+            policy_overrides=overrides,
+            loop_kind=loop_kind,
+            title=title,
+            extra=run_extra,
+        )
+    )
+    store.write_spec(run.id, spec)
+    if idempotency_key:
+        START_DEDUPE.remember(idempotency_key, run.id)
+
+    if supervisor is None:
+        return _service_failure(
+            "WF_NO_SUPERVISOR",
+            "the workflow supervisor is unavailable, so the run was created but not started",
+            run_id=run.id,
+        )
+    try:
+        controller = await supervisor.launch(run, spec)
+    except Exception as exc:
+        return _service_failure(
+            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
+        )
+
+    if run.mode == "blocking":
+        # `wait_for_terminal`, NOT `run_to_completion`: a blocking caller must also return
+        # when the run parks on needs_input, or the tool holds the turn that would render
+        # the ask and nothing can ever answer it.
+        status = await controller.wait_for_terminal(
+            timeout=blocking_timeout or 0.0,
+            on_progress=lambda snap: controller._publish("workflow_progress", snap),
+        )
+        body = _ok(run_id=run.id, status=status.value, blocking=True, nodes=_nodes_of(run.id))
+        if status == RunStatus.NEEDS_INPUT:
+            # Hand the caller what it needs to answer, in the same response — otherwise the
+            # model has to guess that a second call is required and which token to use.
+            from personalclaw.workflows.human_input import list_continuations
+
+            pending = list_continuations(run.id)
+            body["needs_input"] = [
+                {
+                    "node_id": c.node_id,
+                    "resume_token": c.token,
+                    "ask": c.ask,
+                    "handoff": c.handoff,
+                }
+                for c in pending
+            ]
+        elif status in TERMINAL_RUN_STATUSES:
+            # Mirror a completion summary back into the launching session. A run still going
+            # when a bounded wait (`blocking_timeout`) ran out has none: its status says so.
+            # The blocking tool RESULT is the honest mirror surface: it lands in the launching
+            # chat's transcript as a normal message and is persisted by that chat's own full
+            # rewrite — a controller-side `ConversationLog.append` into the origin JSONL would be
+            # clobbered by `save_session_to_history`, which rebuilds the file from in-memory
+            # messages. Indexability travels WITH the text via `ownership.announcement` rather
+            # than being re-derived at the destination: a restricted origin gets the summary
+            # WITHOUT it being indexed. (The durable control is belt-and-suspenders — a restricted
+            # origin session is already skipped whole by `session_search` on reindex — but deciding
+            # here keeps every future mirror surface from re-deriving the rule and getting it
+            # wrong.)
+            note = ownership.announcement(
+                origin_key=run.origin.session_key,
+                text=_completion_summary(store.get(run.id) or run, status),
+                mode=inherited,
+            )
+            body["announcement"] = note.to_dict()
+        return body
+    return _ok(run_id=run.id, status=RunStatus.RUNNING.value, blocking=False)
+
+
+# ── A loop KIND starts as a WorkflowRun ──
+#
+# `loop_aliases` already answers "which template replaces this kind", but nothing ever ACTED on
+# that answer: its only non-test caller walks the table forward to build a filename map, so a
+# `general` loop still became a `loops` row driven by `loop/watchdog.py` rather than a run driven
+# by the engine. This is the door that was missing — the kind resolves to its template and then
+# actually starts, through the SAME `start_run` every other launch uses.
+#
+# Ported one kind at a time ON PURPOSE. `loop/kinds/` is 3,534 lines across five modules and each
+# kind's non-supervisor half (intake, worker framing, phasing, its canvases) has to arrive as its
+# template's nodes before that kind can run here. An un-ported kind is REFUSED rather than
+# launched: `loop_aliases` resolves all five, so resolution is NOT evidence that the template
+# carries the kind's behaviour, and launching on resolution alone would silently run a stub.
+
+#: The loop kinds whose behaviour has actually arrived in their bundled template, so a run of that
+#: template IS the loop. Grows by one per port; when it equals `loop_aliases.KIND_TO_TEMPLATE` the
+#: loop path and its `KIND_CONVERGENCE` table retire together.
+#:
+#: 🔴 `research` is deliberately NOT here yet, and its absence is a MEASUREMENT rather than an
+#: omission. Its behaviour HAS arrived in `deep-research` — the convergence policy, a separate
+#: judge, the `RESEARCH.md` deliverable, the breadth×depth sweep, the whole loop-kind contract in
+#: `tests/test_workflows_loop_templates.py` — but the run path cannot yet DRIVE a loop whose body is
+#: a `stage`, which is what all five of these templates are. Three independent engine defects,
+#: each pinned with a control in `tests/test_research_kind_as_run.py`: the iteration counter is
+#: not advanced from the stage reconciler (fixed there), the double-execution claim is keyed on the
+#: NODE ID so a loop cannot re-run its own body inside the lease TTL, and a reconciled stage's
+#: output never reaches the binding namespace in its declared shape, so a loop's `progress_field`
+#: and its judge contract both read nothing.
+#:
+#: Adding `research` here before those are fixed would REPLACE a working loop with a worse one: a
+#: research loop today runs on `loop/watchdog.py` and iterates, and routing it here would give the
+#: user a run that executes one round and escalates. That is the outcome this door's own docstring
+#: refuses, so the frozenset waits for the engine fix rather than the template.
+PORTED_LOOP_KINDS: frozenset[str] = frozenset({"general"})
+
+
+async def kind_tool_less_steps(kind: str) -> list[tuple[str, str]]:
+    """The steps of the template a ported loop *kind* runs as that work with tools and would run
+    on a model that can't use them (``preflight.tool_less_steps``), so the loop's composer hears it
+    before the run is started; ``[]`` for a kind no template replaces."""
+    from personalclaw.workflows import loop_aliases
+    from personalclaw.workflows.preflight import tool_less_steps
+
+    template = loop_aliases.resolve_kind(kind)
+    definition = await _raw_def(template) if template else None
+    if definition is None:
+        return []
+    return await tool_less_steps(
+        definition if isinstance(definition, dict) else definition.to_dict()
+    )
+
+
+async def start_kind_run(
+    kind: str,
+    *,
+    task: str,
+    exit_condition: str = "",
+    variant: str = "",
+    has_verify_command: bool = False,
+    title: str = "",
+    policy_overrides: dict[str, Any] | None = None,
+    document: str = "",
+    **start_kw: Any,
+) -> dict[str, Any]:
+    """Start a legacy loop `kind` as a `WorkflowRun` on the template that replaced it.
+
+    The run is stamped with the kind it was started as (``WorkflowRun.loop_kind``) and the loop's
+    ``title``, which is what puts it in the ONE loop listing; ``policy_overrides`` is the loop's
+    per-instance knobs (``attended``, ``max_cycles``, …) under the sparse-overlay contract. Before
+    these three arrived here the loop door handed the run nothing but the task, so an "Unattended"
+    loop ran attended, its cycle budget was the template's, and it was listed nowhere as a loop.
+
+    Two refusals, both deliberately BEFORE any run exists:
+
+    * a kind with no alias at all — `loop_aliases` returns "" and this returns that, rather than
+      guessing a template. Its module docstring's reason applies unchanged: "it ran something" is
+      harder to debug than "it ran nothing and said why".
+    * a kind that resolves but is not in :data:`PORTED_LOOP_KINDS`. This is the refusal that
+      matters, because it is the one a caller will not expect: all five kinds RESOLVE today, so
+      without it a `sdlc` loop would start a `code-project` run whose nodes carry none of
+      `sdlc.py`'s 1,788 lines and report success.
+
+    * a ported kind whose template declares NO `loop_field: task` input. The parameter name is the
+      template's choice — measured, the five templates the kinds resolve to spell it `task`,
+      `brief` and `question` — so the launch reads the marker off the template rather than spelling
+      one name for all five (`loop_run_map`'s `task` row: *"the noun change needs a per-template
+      input name, not one constant"*). A ported template that forgot the marker is refused here
+      instead of starting a run whose worker was handed nothing.
+
+    `exit_condition` is the loop's `success_criteria` under the name the template declares for it —
+    the same concept ("what done means"), not a new input. Left blank, or unclaimed by any input,
+    the template's own declared default applies via `with_declared_defaults`.
+
+    `document` names the file the loop's work produces in the folder it works in, when its task
+    asks for one (a note, a draft): the run then shows it as its document. Held to one plain
+    document name (`deliverable.keepable`) and refused otherwise, before any run exists — the
+    name is copied out of a folder other runs share, so it may not reach outside it.
+
+    The template is read HERE as well as inside `start_run`, and deliberately: the alternative is to
+    teach the generic door the loop vocabulary, which would put `success_criteria` in the signature
+    every non-loop caller uses. One extra provider read per launch is the cheaper asymmetry.
+    """
+    from personalclaw.workflows import loop_aliases
+
+    template = loop_aliases.resolve_kind(
+        kind, variant=variant, has_verify_command=has_verify_command
+    )
+    if not template:
+        return _service_failure(
+            "WF_LOOP_KIND_UNKNOWN",
+            f"no template replaces loop kind {kind!r}",
+            kind=kind,
+            ported=sorted(PORTED_LOOP_KINDS),
+        )
+    normalized = (kind or "").strip().lower()
+    from personalclaw.workflows.deliverable import keepable
+
+    if document and not keepable(document):
+        return _service_failure(
+            "WF_LOOP_DOCUMENT_INVALID",
+            (
+                f"the document {document!r} is not one plain file name ending in .md, .markdown "
+                "or .txt, so it cannot be the loop's document"
+            ),
+            kind=normalized,
+        )
+    if normalized not in PORTED_LOOP_KINDS:
+        return _service_failure(
+            "WF_LOOP_KIND_NOT_PORTED",
+            (
+                f"loop kind {normalized!r} resolves to template {template!r}, but its behaviour "
+                "has not been ported to that template yet — it still runs on the loop path"
+            ),
+            kind=normalized,
+            template=template,
+            ported=sorted(PORTED_LOOP_KINDS),
+        )
+    definition = await _raw_def(template)
+    if definition is None:
+        # The SAME code `start_run` reports for the same cause, so a missing bundled provider reads
+        # identically whichever door was used. Distinct from the marker refusal below: "the template
+        # is not there" and "the template is there and declares no task input" are different bugs.
+        return _service_failure(
+            "WF_DEF_NOT_FOUND", f"no workflow definition named {template!r}", kind=normalized
+        )
+    spec = definition if isinstance(definition, dict) else definition.to_dict()
+    intake = loop_aliases.template_intake(spec)
+    task_input = intake.get("task", "")
+    if not task_input:
+        return _service_failure(
+            "WF_LOOP_KIND_NO_TASK_INPUT",
+            (
+                f"template {template!r} declares no input marked `loop_field: task`, so there is "
+                f"nowhere to put a {normalized!r} loop's task"
+            ),
+            kind=normalized,
+            template=template,
+        )
+    inputs: dict[str, Any] = {task_input: task}
+    criterion_input = intake.get("success_criteria", "")
+    if criterion_input and exit_condition:
+        inputs[criterion_input] = exit_condition
+    return await start_run(
+        name=template,
+        inputs=inputs,
+        loop_kind=normalized,
+        title=title,
+        policy_overrides=policy_overrides,
+        document=document,
+        **start_kw,
+    )
+
+
+def status(run_id: str) -> dict[str, Any]:
+    """Run status plus node-level progress. Pure read — constructs no controller."""
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    return _ok(
+        run_id=run.id,
+        workflow=run.workflow_name,
+        status=run.status.value,
+        spec_version=run.spec_version,
+        error=run.error_message,
+        attention=run.attention,
+        # EVERY escalation, oldest first. `attention` is one slot — the current decision — and
+        # each escalation overwrote it, so a run whose two steps both gave up showed one.
+        escalations=_escalations(run_id),
+        tokens=run.total_tokens,
+        # What it is held to and what it has spent against that, as the run page shows them: its
+        # caps (`0` = none), what its steps and the runs they started booked, how many of its
+        # steps no price covered (the dollar figure is then a floor), and whether it is paused at
+        # a cap, which its owner lifts by raising it as she resumes (`resume_run`).
+        **run_budget.shown(run),
+        elapsed_secs=run.elapsed_seconds,
+        # The containing project, so the run view can offer per-project controls (the
+        # judge-guidance override writes through the project, which is what reaches this
+        # run's worker and judge sessions). Empty for an unscoped run — the view hides the
+        # control rather than writing to a project that does not exist.
+        project_id=run.project_id,
+        # The sparse per-run SupervisorPolicy overlay — only the knobs the
+        # user overrode; an empty dict means "kind/template defaults throughout". The run
+        # view's prelaunch policy editor renders and writes this.
+        policy_overrides=run.policy_overrides,
+        # The overlay's revision: the editor PUTs the WHOLE overlay, so the write names the
+        # revision of the copy it was built from (`personalclaw/stale_write.py`).
+        revisions={"policy_overrides": revision_of(run.policy_overrides)},
+        # A run started as a loop is headed by the loop's name, not by its template's — the run
+        # page was titled "general-project" for a loop the user had just named.
+        loop_kind=run.loop_kind,
+        title=run.title,
+        # A pause is applied on the controller's next step, so between the click and the step the
+        # status still reads `running`. Reported so the page can say "Pausing…" rather than go
+        # on showing a Pause button that looks like it did nothing.
+        pause_requested=store.pause_requested(run_id),
+        # Why a running run is doing nothing while incident mode holds it (`incident_hold`), so the
+        # page does not read "Running" through the hold.
+        held=incident_hold.held_reason(run.status),
+        # What its owner declined in the run, step by step (`declines.listed`): the page's
+        # "Declined by you", after the run has ended too. And whether it is paused because its
+        # loop waits for her after one, so the page says so as her wait and not as a fault.
+        declined=declines.listed(run_id),
+        declined_wait=run.status == RunStatus.PAUSED and declines.waits(run),
+        nodes=_nodes_of(run_id),
+    )
+
+
+def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    """Replace a run's sparse ``SupervisorPolicy`` overlay.
+
+    REPLACE semantics — the store's contract: the dict IS the new overlay, so ``{}``
+    clears every override and the run falls back to its kind/template defaults.
+
+    PRE-LAUNCH ONLY, gated on the run's lifecycle PHASE (``RUN_PHASES[...] is
+    LifecyclePhase.PRELAUNCH``) rather than the literal ``DRAFT`` status, so a future
+    prelaunch status inherits the gate without this function changing. The two reasons
+    the gate is FORCED (a write-write race with the engine's ``_save_run``, and parity
+    with the loop side's launch freeze) are recorded on the HTTP route,
+    :func:`personalclaw.workflows.handlers.api_run_policy_overrides`.
+
+    The store's strict unknown-key refusal surfaces here as ``WF_POLICY_KEY_UNKNOWN``
+    carrying the offending keys AND the overridable set — a typo'd knob must name what
+    was wrong and what would have been right, or the user retries blind.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if RUN_PHASES[run.status] is not LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_PRELAUNCH",
+            f"run {run_id!r} has launched ({run.status.value}) and its policy overlay is "
+            "frozen — the engine's own saves would silently revert a live edit. "
+            "Edit the overrides before launch.",
+        )
+    try:
+        updated = store.set_policy_overrides(run_id, dict(overrides))
+    except ValueError:
+        # Lazy for the same reason the store's own import is (the policy module pulls in
+        # the loop/guardrails import chains); the detail is re-derived from the SAME
+        # frozenset the store refused against, so the two cannot disagree.
+        from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+        unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+        return _service_failure(
+            "WF_POLICY_KEY_UNKNOWN",
+            f"unknown policy override key(s) {unknown} — "
+            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
+            unknown_keys=unknown,
+            overridable=sorted(OVERRIDABLE_POLICY_KEYS),
+        )
+    if updated is None:
+        # The row vanished between the phase read and the UPDATE — a concurrent delete.
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    return _ok(
+        run_id=updated.id,
+        status=updated.status.value,
+        policy_overrides=updated.policy_overrides,
+        # What the editor's next write names — the same field `status` reports it under.
+        revisions={"policy_overrides": revision_of(updated.policy_overrides)},
+    )
+
+
+def output(run_id: str, node_id: str) -> dict[str, Any]:
+    """One node's stored output.
+
+    Reads the LAST instance for a node id: a `foreach` body produces many, and returning
+    the first would silently hand back item 0's answer for the whole fan-out.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    try:
+        root = Node.from_dict(spec.get("root") or {})
+    except ValueError as exc:
+        return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
+    paths = {p for p, node in walk(root) if node.id == node_id}
+    if not paths:
+        return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
+    instances = store.read_state(run_id)
+    # Instance → spec, then EQUALITY. A prefix test (`p.startswith(b + "@")`) both under- and
+    # over-matched: it missed `root.body@0.children[0]` for the spec path of the child, and
+    # claimed it for the spec path of the BODY — so a container answered with a descendant's
+    # output (#3371).
+    matched = [p for p in instances if spec_path(p) in paths]
+    if not matched:
+        return _service_failure(
+            "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
+        )
+    # The last by INDEX, not by characters: `body#10` sorts before `body#2` as text, so an
+    # eleven-item fan-out answered with item 9.
+    target = max(matched, key=instance_order)
+    return _ok(
+        run_id=run_id,
+        node_id=node_id,
+        instance_path=target,
+        state=instances[target].state.value,
+        output=store.read_output(run_id, target),
+    )
+
+
+def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
+    """The reconstructability set for one node, as far as it has got.
+
+    Read-only forensics over data the controller already persisted: from this payload alone
+    a reader can see what a node *saw* (`resolved_prompt` + `resolved_inputs`), what it
+    *produced* (`output`, or an `artifact_ref` when the value was offloaded), how many tries
+    it took (`attempts`), the ledger slice that records the trajectory (`ledger_events`),
+    and whether the output was served from the resume cache rather than a fresh run
+    (`cached`). The bar is that prompt → tools → output is
+    reconstructable from these events alone; this is the surface that exposes it.
+
+    **A node that has not finished answers too, with its live state** (`state`): what it has
+    seen and recorded so far, and no output yet — a step still running has produced nothing, and
+    an earlier attempt's output would be read as this one's. A node the run has not reached yet
+    is ``pending`` with nothing recorded. It used to answer 409 for both, so a step the run was
+    working on, and the one waiting behind it, could not be looked at while the run was live —
+    the moment a person is watching it.
+
+    Never raises across the boundary — like every function here it returns
+    `{"ok": bool, ...}`. An unknown run/node is a 404 (nothing to show), and neither is a
+    server fault.
+
+    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored by the
+    controller through `store.write_output`, which does NOT run the journal's redactor, so this
+    dict is NOT safe to emit as-is. Redaction is the HTTP surface's job;
+    keeping the read un-redacted mirrors `output()`/`status()`, which also hand back stored state
+    verbatim to their one in-process caller.
+
+    Since #3166 the stored prompt is the text the PROVIDER received rather than the text the node
+    composed, and `resolved_prompt_redacted` / `resolved_prompt_scan` say whether the outbound
+    secret/PII scan substituted anything on the way out. That is a narrower guarantee than the
+    HTTP redaction, not a replacement for it: the outbound scan only substitutes in `redact` mode,
+    is forced to `warn` for local providers, and does not run for an injected completion.
+    """
+    from personalclaw.workflows.bindings import node_deps
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    try:
+        root = Node.from_dict(spec.get("root") or {})
+    except ValueError as exc:
+        return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
+
+    node_by_path = dict(walk(root))
+    id_paths = {p for p, node in node_by_path.items() if node.id == node_id}
+    if not id_paths:
+        return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
+
+    instances = store.read_state(run_id)
+    # Same instance→spec equality as `output()`, for the same reason (#3371).
+    matched = [p for p in instances if spec_path(p) in id_paths]
+    if not matched:
+        # Not reached yet: nothing seen, nothing produced, nothing recorded.
+        return _ok(
+            run_id=run_id,
+            node_id=node_id,
+            instance_path="",
+            state=InstanceState.PENDING.value,
+            resolved_prompt="",
+            resolved_prompt_redacted=False,
+            resolved_prompt_scan=[],
+            resolved_inputs={},
+            output=None,
+            attempts=[],
+            ledger_events=[],
+            cached=False,
+        )
+    # The LAST instance for the id — a `foreach` body produces many, and inspecting item 0
+    # for the whole fan-out is the same footgun `output()` documents. Last by index, as `output()`
+    # reads it: by characters, `body#9` came after `body#10`.
+    target = max(matched, key=instance_order)
+    inst = instances[target]
+    finished = inst.state in TERMINAL_STATES
+
+    node = node_by_path.get(spec_path(target))
+
+    # The ledger slice for THIS instance. `journal.ledger` reads events.jsonl (the LEDGER_KINDS
+    # subset the flywheel reads); filtering to the exact instance_path keeps a sibling foreach
+    # item's events out of this node's forensics.
+    node_events = [e for e in journal_mod.ledger(run_id) if e.get("instance_path") == target]
+
+    # resolved_prompt — the fully-resolved post-binding prompt the controller stored raw at
+    # `<path>::prompt`. Inline when small; a ref past the inline boundary, so a megabyte prompt
+    # does not ride in every inspect response. The ref is the one step_completed already recorded.
+    prompt_ref = ""
+    prompt_redacted = False
+    prompt_scan: list[str] = []
+    for e in node_events:
+        if e.get("kind") == journal_mod.STEP_COMPLETED and e.get("resolved_prompt_ref"):
+            prompt_ref = str(e["resolved_prompt_ref"])
+            # Why the stored prompt may not be verbatim (#3166). Read from the SAME row as the
+            # ref so the body and the explanation cannot disagree: a redaction badge sourced from
+            # anywhere else could say "altered" about a prompt this ref does not point at.
+            prompt_redacted = bool(e.get("resolved_prompt_redacted", False))
+            prompt_scan = [str(c) for c in (e.get("resolved_prompt_scan") or [])]
+            break
+    stored_prompt = store.read_output(run_id, f"{target}::prompt")
+    resolved_prompt: Any
+    if isinstance(stored_prompt, str) and stored_prompt:
+        if len(stored_prompt.encode("utf-8")) > journal_mod.MAX_INLINE_OUTPUT_BYTES:
+            resolved_prompt = {"ref": prompt_ref or f"{target}::prompt"}
+        else:
+            resolved_prompt = stored_prompt
+    elif prompt_ref:
+        resolved_prompt = {"ref": prompt_ref}
+    else:
+        # A transform/action node has no LLM prompt — an empty string, not a fabricated ref.
+        resolved_prompt = ""
+
+    # resolved_inputs — what actually reached the node: each declared dependency mapped to the
+    # output it produced. Reconstructed from persisted state the way `node_bindings.resolved_inputs`
+    # builds it live (node_deps → the dep's stored output), so a read after a restart sees the same
+    # closure the run did. Only declared deps, not the whole output map.
+    id_to_base: dict[str, str] = {}
+    for p, n in node_by_path.items():
+        if n.id:
+            id_to_base.setdefault(n.id, p)
+    resolved_inputs: dict[str, Any] = {}
+    for dep in sorted(node_deps(node.config or {}) if node else set()):
+        dep_base = id_to_base.get(dep)
+        dep_matches = (
+            [
+                ip
+                for ip in instances
+                if ip == dep_base or ip.startswith(f"{dep_base}#") or ip.startswith(f"{dep_base}@")
+            ]
+            if dep_base
+            else []
+        )
+        resolved_inputs[dep] = (
+            store.read_output(run_id, sorted(dep_matches)[-1]) if dep_matches else None
+        )
+
+    # output — the node's terminal value, unless it was offloaded. An artifact pointer (a
+    # ref that is not an `outputs/` path) or a spilled oversize/binary payload is
+    # returned as `{"artifact_ref": ...}` rather than inlined: the whole point of the spill is
+    # that the blob does not ride in the response, and a 5MB output (or a base64 screenshot)
+    # inline would flood whatever renders this.
+    output_ref = inst.output_ref or ""
+    raw_output = store.read_output(run_id, target) if finished else None
+    if not finished:
+        # Still at work: nothing produced yet (a stored value is an earlier attempt's).
+        output_field: Any = None
+    elif output_ref and not output_ref.startswith("outputs/"):
+        output_field = {"artifact_ref": output_ref}
+    elif journal_mod.is_binary_payload(raw_output) or _serialized_bytes(raw_output) > (
+        journal_mod.MAX_INLINE_OUTPUT_BYTES
+    ):
+        output_field = {"artifact_ref": output_ref or target}
+    else:
+        output_field = raw_output
+
+    return _ok(
+        run_id=run_id,
+        node_id=node_id,
+        instance_path=target,
+        state=inst.state.value,
+        resolved_prompt=resolved_prompt,
+        # "This prompt is what the model saw, and here is why it differs from the template"
+        # (#3166). Without these two the stored body is ambiguous: a reader cannot tell a
+        # substituted prompt from one whose author typed `[REDACTED_EMAIL]` themselves.
+        resolved_prompt_redacted=prompt_redacted,
+        resolved_prompt_scan=prompt_scan,
+        resolved_inputs=resolved_inputs,
+        output=output_field,
+        # The retry records for this node — empty for a node that succeeded first try, since
+        # `step_attempt` is only journaled on a retry. A list, so a reader can show each try's
+        # typed failure and fix instruction rather than a bare count.
+        attempts=[e for e in node_events if e.get("kind") == journal_mod.STEP_ATTEMPT],
+        ledger_events=node_events,
+        # cached — served from the resume/rewind cache rather than a fresh run. The
+        # `step_cached` event is the record; "did my edit actually re-run this?" is answerable
+        # from here, which is the question the event exists to answer.
+        cached=any(e.get("kind") == journal_mod.STEP_CACHED for e in node_events),
+    )
+
+
+def _serialized_bytes(value: Any) -> int:
+    """Byte size of a value's canonical JSON — the same boundary the journal spills at, so
+    the inspect view offloads exactly what the journal would have."""
+    import json
+
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def observe(run_id: str, duration_ms: int = DEFAULT_OBSERVE_MS) -> dict[str, Any]:
+    """Watch a run for a bounded window and return what changed.
+
+    Cheaper and safer than a status-polling loop in chat: one call, one clamped wait, a
+    timestamped delta. The clamp is the point — an unbounded subscribe in a chat turn is a
+    hang where the model waits, the user waits, and nothing explains why.
+
+    Returns as soon as the run goes terminal rather than burning the whole window on a run
+    that already finished.
+    """
+    import asyncio
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    window = max(MIN_OBSERVE_MS, min(int(duration_ms or DEFAULT_OBSERVE_MS), MAX_OBSERVE_MS))
+    before = {p: i.state.value for p, i in store.read_state(run_id).items()}
+    baseline = len(journal_mod.ledger(run_id))
+    deadline = time.monotonic() + (window / 1000.0)
+
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.1)
+        current = store.get(run_id)
+        if current is not None and current.status in TERMINAL_RUN_STATUSES:
+            break
+
+    after = {p: i.state.value for p, i in store.read_state(run_id).items()}
+    changed = [
+        {"instance_path": p, "from": before.get(p, "pending"), "to": s}
+        for p, s in sorted(after.items())
+        if before.get(p) != s
+    ]
+    final = store.get(run_id)
+    return _ok(
+        run_id=run_id,
+        window_ms=window,
+        clamped=window != int(duration_ms or DEFAULT_OBSERVE_MS),
+        status=final.status.value if final else "unknown",
+        changed=changed,
+        events=journal_mod.ledger(run_id)[baseline:],
+    )
+
+
+# ── mutation + control ───────────────────────────────────────────────────────
+
+
+def _live(run_id: str, supervisor: Any) -> Any | None:
+    if supervisor is None:
+        return None
+    getter = getattr(supervisor, "controller", None)
+    return getter(run_id) if callable(getter) else None
+
+
+def _run_not_found(run_id: str) -> dict[str, Any]:
+    """The one 404 for a run-control verb.
+
+    Existence is the FIRST question every verb has to ask, and the ones that forgot it did not fail
+    quietly — they answered confidently about a run that was not there:
+
+    * `confirm {verb: skip|quit}` returned **200** `{"resumed": false, "still_pending": true}` for a
+      nonexistent id, because the non-resuming verbs early-returned before any `store.get`. Only
+      approve/reject reached `resume_run`, which is where the 404 lived. A tool firing skip at a
+      typo'd or already-deleted run was told it had worked.
+    * `rewind` / `run_from` / `edit` returned **409 run_not_live** with "resume the run before
+      rewind" — remediation for a run that cannot be resumed because there is nothing to resume.
+      They asked `_live()` first, and a nonexistent run has no controller either.
+    * `preview_edit` returned `WF_RUN_NO_SPEC`, which `_STATUS_MAP` translates to a **500
+      spec_unreadable** — a typo'd id reporting a server fault. Found by
+      `tests/test_workflows_run_control_guard.py`, not reported.
+
+    All issue 765. The same missing precheck is behind issue 679, where `resume` answered 200 on a
+    terminal run *and wrote to the finished run's `extra` on the way through*.
+
+    This line appeared FOURTEEN times, verbatim, which is why three paths could omit it without
+    looking odd — there was no single thing to be missing. A builder rather than a
+    resolve-and-return helper so `store.get`'s exact type survives at each call site.
+    """
+    return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+
+
+def edit_run(
+    run_id: str,
+    ops: list[dict[str, Any]],
+    *,
+    supervisor: Any = None,
+    expect_version: int | None = None,
+    confirm_cascade: bool = False,
+    actor: str = "chat",
+    owner_allowed: bool = False,
+) -> dict[str, Any]:
+    """Queue a mutation batch on a live run.
+
+    Requires a LIVE controller: mutation is only safe at the controller's drain point, and
+    editing a run nobody is driving would write state with no one to apply it.
+    `owner_allowed` is the owner's own yes to a step the edit would let do more (her ``confirm``
+    on her own edit); without it such an edit is refused (`mid_flight.posture_refusal`).
+    """
+    # Existence before liveness — see `_reentry`. This answered 409 "only a running workflow can
+    # be edited" for an id that named no workflow at all (issue 765).
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
+    controller = _live(run_id, supervisor)
+    if controller is None:
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has no live controller — only a running workflow can be edited",
+        )
+    body = controller.submit_mutation(
+        ops,
+        actor=actor,
+        confirm=confirm_cascade,
+        expect_version=expect_version,
+        owner_allowed=owner_allowed,
+    )
+    body.setdefault("run_id", run_id)
+    return body
+
+
+def preview_edit(run_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
+    """The cascade preview WITHOUT queueing anything — a pure what-if.
+
+    Available on a run with no live controller too, so a user can see what an edit would
+    cost before deciding to resume the run and apply it.
+    """
+    # Existence first, so a nonexistent id is a 404 and not "has no readable spec" — which maps to
+    # a 500 `spec_unreadable`, the worst answer of the four this guard corrects. Found by the rail
+    # in `test_workflows_run_control_guard.py` rather than reported, which is what the rail is for.
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    from personalclaw.workflows.effects import effect_history
+
+    result = mutations.prepare_batch(
+        ops, spec, store.read_state(run_id), effects=effect_history(run_id)
+    )
+    return {**result.to_dict(), "run_id": run_id, "queued": False}
+
+
+def cancel_run(run_id: str, *, supervisor: Any = None, reason: str = "") -> dict[str, Any]:
+    """Record a STICKY cancel intent — and, for a PRELAUNCH run, finalize it here.
+
+    *reason* is why something other than the run's owner stops it, as a clause (the loop that
+    started it ended, `loop.children`); the intent carries it to whichever controller applies it
+    (`store.request_cancel`), and the run's ending says it.
+
+    The intent is written to disk rather than applied in memory, so a cancel issued while
+    the gateway is down is still honoured on restart. For a run that has LAUNCHED, the
+    controller (or the watchdog) writes the terminal status — a handler must never do it.
+
+    🔴 A PRELAUNCH run is the exception, and it has to be, because nothing else would ever
+    write its terminal status. It has no controller to see the intent, and the watchdog's
+    ``_honor_cancel`` only sees ``store.active_runs()`` — RUNNING / PAUSED / NEEDS_INPUT,
+    never DRAFT. So this returned ``200 {"cancel_requested": true}``, the status stayed
+    ``draft`` forever, and ``DELETE /api/workflows/runs/{run_id}`` then refused with
+    ``WF_RUN_NOT_TERMINAL`` naming *this* call as the remedy: an acknowledged write that
+    was never performed, and
+    a 409 pointing at a dead end. Every draft run ever created was permanently
+    undeletable, so the leak accumulated.
+
+    Writing the terminal status here does NOT weaken that rule; it is the same reasoning
+    ``overlap.drain`` already relies on when it FAILs an unlaunchable queued run —
+    *"writing a terminal status outside a tick loop is safe for exactly the reason the
+    watchdog's orphan reaper is safe — a DRAFT run has no controller"*. The cancel intent
+    is written FIRST and cleared only after the terminal save, so a crash between the two
+    leaves the sticky intent on disk rather than a half-cancelled row. A queued start
+    drops out of ``overlap.queued_runs`` on its own once the status is no longer DRAFT.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status in TERMINAL_RUN_STATUSES:
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    store.request_cancel(run_id, reason=reason)
+    controller = _live(run_id, supervisor)
+    if controller is not None:
+        # A PAUSED run's controller has no tick loop running to read the intent, so it is woken
+        # to apply it; a running loop reads it on its next step and this is a no-op.
+        controller.wake()
+        return _ok(run_id=run_id, cancel_requested=True)
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        run.status = RunStatus.CANCELLED
+        run.error_message = cancelled_because(reason)
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        store.clear_cancel(run_id)
+        return _ok(run_id=run_id, cancel_requested=True, status=run.status.value)
+    return _ok(run_id=run_id, cancel_requested=True)
+
+
+async def delete_run(
+    run_id: str, *, supervisor: Any = None, keep_open: bool = False
+) -> dict[str, Any]:
+    """Delete a TERMINAL run and its artifacts, tearing its workspace down FIRST.
+
+    Refused while a run can still move. Deleting a live run would leave its controller writing
+    journal entries and terminal status to a row that no longer exists — the single-writer
+    discipline assumes the row outlives the writer. Cancel first, then delete: two
+    deliberate steps for two genuinely different intents.
+
+    Removes the run DIRECTORY as well as the row. A row-only delete would leave the journal,
+    outputs and continuations on disk forever, invisible to every surface — the run would look
+    gone while still costing the disk and still holding a live resume token.
+
+    ASYNC because teardown runs a subprocess, and it must run BEFORE the
+    directory goes away — that is the whole reason teardown exists. A scratch workspace lives
+    UNDER the run dir, so the `rmtree` below would take it out; running teardown after that would
+    execute `docker compose down` against a path that no longer holds the compose file. The one
+    caller (`handlers.api_run_delete`) is already async.
+
+    `keep_open` is the override for when the workspace IS the deliverable: the run row and
+    directory go, the workspace stays. Teardown still runs — keeping the directory is not keeping
+    the processes.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status not in TERMINAL_RUN_STATUSES:
+        # The remedy has to be one the caller can actually complete. "cancel it before
+        # deleting" is true for a PRELAUNCH run only because `cancel_run` now finalizes
+        # one in-band; for a LAUNCHED run the cancel is an intent its controller applies on
+        # its next step, so the honest instruction is cancel AND wait. Saying only "cancel
+        # it" sent a user round a loop that could not close (a draft's cancel changed
+        # nothing at all, so the same 409 came back forever).
+        return _service_failure(
+            "WF_RUN_NOT_TERMINAL",
+            f"run is {run.status.value}; cancel it, then delete once it reports a terminal "
+            "status (cancelling a launched run is a request its controller applies on its "
+            "next step, so this can take a moment)",
+            status=run.status.value,
+        )
+    # A controller for a terminal run is finished but may still be registered; dropping it
+    # first means nothing holds a handle to a run being deleted.
+    controller = _live(run_id, supervisor)
+    if controller is not None and supervisor is not None:
+        try:
+            supervisor.forget(run_id)
+        except Exception:
+            logger.debug("could not unregister the controller for %s", run_id, exc_info=True)
+
+    # Traversal guard, same shape as `prune_fork`: the id reaches here from a URL, and a
+    # crafted one must not walk out of the runs root.
+    target = store.run_dir(run_id).resolve()
+    root = store.runs_root().resolve()
+    if root not in target.parents:
+        return _service_failure(
+            "WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root"
+        )
+    # What its steps started ends with it (`started_work.end_run`), read off its state before the
+    # directory holding that state goes: a run that ended without ending them leaves none behind.
+    from personalclaw import started_work
+
+    await started_work.end_run(
+        run,
+        ending="was deleted",
+        subagents=getattr(getattr(supervisor, "_state", None), "subagents", None),
+        supervisor=supervisor,
+    )
+    torn = await teardown_workspace(run, reason="delete", keep_open=keep_open)
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    # The inbox rows go too: a gate that was open when the run was cancelled would otherwise
+    # outlive the run entirely and be unanswerable forever. The state comes off the supervisor,
+    # which is what the route has — a delete is a request path, not the engine's own.
+    attention.expire_run_items(
+        getattr(supervisor, "_state", None), run_id, ended="the workflow run was deleted"
+    )
+    deleted = store.delete(run_id)
+    return _ok(run_id=run_id, deleted=deleted, teardown=torn.to_dict())
+
+
+async def teardown_workspace(
+    run: Any, *, reason: str, keep_open: bool = False, runner: Any = None
+) -> Any:
+    """Tear a run's workspace down before its directory is deleted.
+
+    The shared performer for BOTH deletion paths — the explicit delete here and retention expiry
+    in `watchdog.prune_runs`. One function rather than two call sites doing the same thing,
+    because the two would eventually disagree about the order, and the order IS the contract.
+
+    Gated by `workflows.workspace_teardown_on_expiry`. That knob has a real reader precisely
+    here: when it is off, the workspace is removed without running its command. Off is the
+    escape hatch for a teardown command that is itself the problem (one that hangs, or one whose
+    author got it wrong), which is a real situation — but it defaults ON, because leaving a
+    `docker compose` up after the run that started it is gone is the commoner harm.
+
+    Never raises: both callers are deletion paths, and a run that cannot be deleted because its
+    teardown threw would be a row visible forever with no way to remove it.
+    """
+    from personalclaw.workflows import provisioning
+
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        enabled = bool(AppConfig.load().workflows.workspace_teardown_on_expiry)
+    except Exception:
+        # A config read failure defaults to RUNNING teardown. Fail-safe in the direction of
+        # stopping services: the cost of an extra teardown is a no-op (the BYOI contract requires
+        # idempotency), while skipping one leaks whatever it was going to stop.
+        enabled = True
+
+    state = provisioning.workspace_state(run)
+    if not state:
+        return provisioning.TornDown()
+    if not enabled:
+        # Removal still happens (the directory would be orphaned otherwise) — only the declared
+        # COMMAND is skipped, which is what the knob is about.
+        state = dict(state)
+        state.pop("teardown", None)
+        extra = getattr(run, "extra", None)
+        if isinstance(extra, dict):
+            extra[provisioning.WORKSPACE_KEY] = state
+    try:
+        workspace_dir = _run_workspace_dir(run)
+        torn = await provisioning.teardown(
+            run, workspace_dir=workspace_dir, keep_open=keep_open, runner=runner
+        )
+    except Exception:
+        logger.warning("workspace teardown failed for %s", getattr(run, "id", "?"), exc_info=True)
+        return provisioning.TornDown()
+    try:
+        from personalclaw.workflows.journal import Journal
+
+        Journal(str(getattr(run, "id", "") or "")).workspace_teardown(torn.to_dict(), reason=reason)
+    except Exception:
+        logger.debug("could not journal the workspace teardown", exc_info=True)
+    return torn
+
+
+def _run_workspace_dir(run: Any) -> str:
+    """The codebase a run's project binds, for git-side teardown. "" when there is none.
+
+    Read from the PROJECT rather than the run record on purpose: a bound workspace can be
+    re-pointed between the run and its deletion, and the git operations (worktree remove, branch
+    bookkeeping) must target wherever the repo is NOW, not where it was.
+    """
+    pid = str(getattr(run, "project_id", "") or "")
+    if not pid:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().get_project(pid)
+        return str(getattr(project, "workspace_dir", "") or "") if project else ""
+    except Exception:
+        logger.debug("project workspace lookup failed for %s", pid, exc_info=True)
+        return ""
+
+
+def drop_status(run_id: str) -> dict[str, Any]:
+    """The run's file-drop policy + what has already been dropped.
+
+    Returns OK with `enabled: false` for a run whose template declared no drop, rather than an
+    error:
+    "this run does not accept files" is a fact the UI renders as a disabled affordance, and a 4xx
+    would make an intentional configuration look like a broken request (an honest disabled
+    status).
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    policy = filedrop.parse_policy(store.read_spec(run_id))
+    return _ok(
+        enabled=policy.enabled,
+        reason=policy.reason,
+        auto_accept_mimes=list(policy.auto_accept_mimes),
+        max_files=filedrop.MAX_DROPPED_FILES,
+        files=filedrop.read_manifest(run_id),
+    )
+
+
+def accept_dropped_file(
+    run_id: str, *, filename: str, data: bytes, mime: str = "", confirmed: bool = False
+) -> dict[str, Any]:
+    """Ingest one dropped file into the run's immutable zone, gated on approval.
+
+    Every refusal is a DISTINCT code, because the four reasons a drop is refused need four different
+    reactions from the caller: not accepting files at all (hide the affordance), needing approval
+    (show what + size and ask), too many files (offer a clear-out), too large (nothing to do but
+    pick a smaller file). One generic rejection would collapse them into a dead end.
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    policy = filedrop.parse_policy(store.read_spec(run_id))
+    if not policy.enabled:
+        return _service_failure(
+            "WF_DROP_DISABLED", policy.reason or "this run does not accept dropped files"
+        )
+    needs, why = filedrop.approval_required(policy, mime, confirmed=confirmed)
+    if needs:
+        return _service_failure(
+            "WF_DROP_APPROVAL_REQUIRED",
+            why,
+            pending={"filename": filedrop.safe_filename(filename), "size": len(data), "mime": mime},
+        )
+    existing = filedrop.read_manifest(run_id)
+    safe = filedrop.safe_filename(filename)
+    if len(existing) >= filedrop.MAX_DROPPED_FILES and not any(
+        e.get("filename") == safe for e in existing
+    ):
+        return _service_failure(
+            "WF_DROP_LIMIT",
+            f"this run already holds {filedrop.MAX_DROPPED_FILES} dropped files",
+        )
+    try:
+        entry = filedrop.store_dropped_bytes(run_id, filename, data)
+    except (OSError, ValueError) as exc:
+        return _service_failure("WF_DROP_WRITE_FAILED", f"could not store the dropped file: {exc}")
+    entry["mime"] = mime
+    entry["approved"] = not needs
+    entry["accepted_at"] = _now()
+    filedrop.record_drop(run_id, entry)
+    return _ok(file=entry, files=filedrop.read_manifest(run_id))
+
+
+def outbox(run_id: str) -> dict[str, Any]:
+    """The run's published-artifact listing — the run's outbox, newest-first.
+
+    A read over what `apply_publish` journalled, so the listing and the publishes cannot disagree.
+    Each row carries its artifact `kind`; the FE resolves the preview through the `contentTypes`
+    registry rather than this route naming renderers.
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    return _ok(files=filedrop.outbox_entries(run_id))
+
+
+def workspace_review(run_id: str) -> dict[str, Any]:
+    """The code-run cockpit's diff panel + the two reintegration verbs.
+
+    Pure read: it shells out for `git status --porcelain` and a `merge-tree` conflict probe,
+    neither of which mutates either tree. Reintegration is OFFERED, never performed — by
+    design, and the reason this is a GET rather than a POST.
+    """
+    from personalclaw.workflows import provisioning
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    try:
+        body = provisioning.reintegration(run, workspace_dir=_run_workspace_dir(run))
+    except Exception as exc:
+        logger.debug("workspace review failed for %s", run_id, exc_info=True)
+        return _service_failure(
+            "WF_WORKSPACE_UNREADABLE", f"could not read the run's workspace: {exc}"
+        )
+    # `preserved_workspace_path` is recorded HERE because this is where the live alive+dirty state
+    # is computed. Reading it costs a git call, so the run record carries the answer for every
+    # surface that cannot afford one (the Work board, the export archive) — and the value is only
+    # non-empty when a dirty workspace was genuinely kept.
+    try:
+        state = provisioning.inspect_run(run)
+        if provisioning.stamp_preserved_path(run, state):
+            store.save(run)
+    except Exception:
+        logger.debug("could not record preserved_workspace_path for %s", run_id, exc_info=True)
+    # The localhost web preview. Scanned HERE, on read, rather than stamped on the run
+    # record: a persisted port list outlives the process that owned the port, and an "Open
+    # Preview" built from a stale port is worse than no affordance at all. The panel that asks
+    # "what did this run change and how do I take it" is the same panel that should be able to
+    # show it running.
+    from personalclaw.workflows import web_preview
+
+    body["preview"] = web_preview.preview_scan(run).to_dict()
+    return _ok(**body)
+
+
+def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+    """Pause a run: the work in flight is withdrawn and nothing more runs until it is resumed.
+
+    A pause is a STICKY INTENT (`store.request_pause`, a file like cancel's), applied by the tick
+    loop on its next step — the single-writer discipline. What the step does with it is
+    `RunController._withdraw_inflight`: a running stage's subagent is stopped and re-queued, so
+    "paused" means paused rather than "stops launching new nodes while the current one writes for
+    another ten minutes". The intent was a key in ``run.extra`` until this, which the live
+    controller's next save overwrote and nothing ever read (#370), so Pause did nothing at all.
+
+    Sticky across a restart: the watchdog does not re-adopt a paused run, so it stays paused.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status in TERMINAL_RUN_STATUSES:
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        # A draft has no work to pause, and recording an intent on one would make its first
+        # tick pause a run the user then has to resume before it ever started.
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has not started, so there is nothing to pause — start it first.",
+            status=run.status.value,
+        )
+    store.request_pause(run_id)
+    controller = _live(run_id, supervisor)
+    if controller is not None:
+        # A live loop reads the intent on its next step; waking it makes that step now.
+        controller.wake()
+    return _ok(run_id=run_id, pause_requested=True)
+
+
+def steer_run(run_id: str, text: str) -> dict[str, Any]:
+    """Queue a mid-run steering instruction.
+
+    Recorded as an intent in the run's folder (`store.queue_steering`) and consumed at the next
+    iteration boundary, exactly like a pause: the tick loop is the single writer, and injecting
+    mid-iteration would race the worker's own state. Queued rather than applied, so the user can
+    steer a run that is busy without waiting for it — the alternative is cancel-and-restart,
+    which loses the cycle context that made steering worth doing. A run waiting for its owner
+    after her Deny takes what she queued while it waited into the cycle her Resume runs
+    (`declines.carry_on`).
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status in TERMINAL_RUN_STATUSES:
+        # A terminal run cannot act on an instruction, and silently accepting one would
+        # leave the user believing they had changed something.
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return _service_failure("WF_STEER_EMPTY", "a steering instruction needs text")
+    return _ok(run_id=run_id, queued=store.queue_steering(run_id, cleaned[:4000]))
+
+
+def pending_steering(run_id: str) -> dict[str, Any]:
+    """What is queued but not yet consumed — so the UI can show it as pending.
+
+    A queued instruction the user cannot see is indistinguishable from one that was
+    dropped, and they will queue it again.
+    """
+    if store.get(run_id) is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    items = store.pending_steering(run_id)
+    return _ok(run_id=run_id, pending=items, count=len(items))
+
+
+def resolve_confirmation(
+    run_id: str,
+    *,
+    by: Principal,
+    supervisor: Any = None,
+    verb: str = "",
+    token: str = "",
+    note: str = "",
+) -> dict[str, Any]:
+    """Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny needs.
+
+    Rides `resume_run` rather than reaching into the controller: there is ONE place a resume
+    token is consumed (the claim primitive lives with the token, and a read-then-unlink version
+    was measured letting multiple callers consume one approval in 36 of 40 races). A second
+    resolve path would be a second chance to double-approve.
+
+    What this adds over `resume_run` is the VERB vocabulary: `approve | reject | skip | quit`,
+    with an unknown verb REFUSED rather than treated as a reject. A typo silently declining an
+    approval would reject work the user meant to allow, and they would have no way to know why.
+
+    `skip` and `quit` resolve nothing on purpose — skip leaves the item pending for the next
+    pass (different from rejecting it) and quit stops asking without answering. Neither touches
+    the run, so neither consumes the token.
+
+    *by* is who is answering, held to the rule `controller.resume` applies: only you.
+    """
+    from personalclaw.workflows.confirmation import resolve as resolve_verb
+
+    resolution, error = resolve_verb(verb, note=note)
+    if resolution is None:
+        return _service_failure("WF_CONFIRM_VERB_INVALID", error)
+    # Existence BEFORE the verb split. `skip`/`quit` resolve nothing, but they are still statements
+    # about a run's gate, and a gate belongs to a run — there is nothing to skip on a run that does
+    # not exist. This used to sit after the split, so approve/reject 404'd (via `resume_run`) while
+    # skip/quit answered 200 `{"resumed": false, "still_pending": true}` for a typo'd id (765).
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
+    if not resolution.resumes:
+        # Skip/quit are decisions ABOUT the queue, not answers to the gate. Returning ok=True with
+        # `resumed=False` says exactly that; consuming the token here would burn a single-use claim
+        # on a non-answer and strand the gate forever.
+        return _ok(
+            run_id=run_id,
+            resumed=False,
+            still_pending=resolution.still_pending,
+            verb=resolution.verb,
+        )
+    result = resume_run(
+        run_id,
+        supervisor=supervisor,
+        token=token,
+        # The gate's answer is the APPROVAL BOOLEAN, which is what the engine's gate resolution
+        # reads. Passing the verb string would make `reject` truthy — the single worst possible
+        # mistranslation in this path.
+        answer=resolution.approved,
+        by=by,
+    )
+    result.setdefault("verb", resolution.verb)
+    if result.get("ok", True):
+        # Only an answer that applied says what it decided: a refused or lost one decided
+        # nothing, and an `approved: true` beside its error read as the gate approved.
+        result.setdefault("approved", resolution.approved)
+    return result
+
+
+def resume_run(
+    run_id: str,
+    *,
+    by: Principal,
+    supervisor: Any = None,
+    token: str = "",
+    answer: Any = None,
+    channel: str = "",
+    always_allow: bool = False,
+    budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Answer a gate, or clear a pause.
+
+    *by* is who is asking. Anyone who may resume the run may clear its pause; only you answer
+    its gate (`controller.resume`, which refuses anyone else before the token is touched). An
+    `event` gate is the exception: the trigger it waits for answers it too.
+
+    *budget* is the caps a cleared pause goes on with (``max_tokens`` / ``max_cost``, ``0`` for
+    none; a cap it leaves out stays as it is): how a run paused at its budget is resumed
+    (`run_budget.resume_refusal`). Only you raise a run's caps, or let it go on past a step its
+    dollar cap could not count, and a resume that would only pause again at the same cap is
+    refused rather than answered `resumed`.
+
+    When no token is given the newest pending continuation is used — a chat user says
+    "approve it", not a 32-character token. If several gates are pending, the token becomes
+    required rather than guessed: approving the wrong gate is worse than asking.
+
+    `answer` also carries the `revise{step_ref, comment}` verb, which `controller.resume`
+    recognises: one step is amended and the gate re-asks, instead of the reviewer having to
+    reject the whole plan and re-run it to get one sentence changed.
+    """
+    from personalclaw.workflows.human_input import list_continuations
+
+    run = store.get(run_id)
+    if run is None:
+        return _run_not_found(run_id)
+    # A finished run cannot be resumed, and saying otherwise was not merely cosmetic: the
+    # clear-pause path below WRITES (it removes the run's sticky pause intent), so a resume against
+    # a complete, failed or cancelled run wrote to the finished run and answered
+    # `{"resumed": true}` (issue 679). Its three siblings — cancel, pause, steer — already refuse
+    # with this exact code; `resume` was the one that did not ask.
+    if run.status in TERMINAL_RUN_STATUSES:
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    # A run that never launched has no pause to clear and no gate to answer, and answering
+    # `resumed: true` to one was the false success at the centre of #372's closed loop: `run_from`
+    # refused with "resume the run before run_from", `resume` reported success, and the draft stayed
+    # draft forever. The refusal names `start`, which is the verb that actually applies. Sits above
+    # the clear-pause path deliberately — that path is what produced the lie, by clearing a pause a
+    # draft never had and reporting it resumed.
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has not started, so there is no pause to clear and no gate to "
+            "answer — start it first.",
+            status=run.status.value,
+        )
+
+    if budget is not None and (answer is not None or token):
+        return _service_failure(
+            "WF_RUN_BUDGET_INVALID",
+            "a budget goes with a resume that clears a pause, not with a gate's answer",
+        )
+    if answer is None and not token:
+        # Within its budget first: a run that would pause again at the cap it stopped at is told
+        # so, with what it spent, instead of being woken to stop where it stands.
+        held = run_budget.resume_refusal(run, by=by, budget=budget)
+        if held is not None:
+            return held
+        # Clear the pause, then restart the loop that was stopped by it. A controller that is
+        # still registered has an EXITED tick loop (that is what a pause is), so it must be woken;
+        # with none (a restart), the watchdog adopts the run on its next poll now that no pause
+        # intent holds it back. Clearing an intent the step has not applied yet simply withdraws
+        # the pause before it lands.
+        store.clear_pause(run_id)
+        controller = _live(run_id, supervisor)
+        if controller is not None:
+            controller.wake()
+        return _ok(run_id=run_id, resumed=True, gate_answered=False)
+
+    controller = _live(run_id, supervisor)
+    if controller is None:
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has no live controller to apply the answer to",
+        )
+    if not token:
+        # `list_continuations` yields only UNANSWERED gates, so both branches below mean what
+        # they say. They did not always: a claimed record used to keep reading as pending, which
+        # made "no gate left to answer" arrive as an unknown-token error and turned one earlier
+        # answer into a permanent `WF_AMBIGUOUS_GATE` for every later token-less approval.
+        pending = list_continuations(run_id)
+        if not pending:
+            return _service_failure("WF_NO_PENDING_GATE", "this run has no gate awaiting an answer")
+        if len(pending) > 1:
+            named = ", ".join(c.node_id or c.instance_path for c in pending)
+            return _service_failure(
+                "WF_AMBIGUOUS_GATE",
+                f"{len(pending)} gates are awaiting an answer ({named}) — answer one by its "
+                "resume token, listed under `pending`",
+                pending=[
+                    {"node_id": c.node_id, "token": c.token, "prompt": c.ask.get("prompt", "")}
+                    for c in pending
+                ],
+            )
+        token = pending[0].token
+    result = controller.resume(token, answer, by=by, channel=channel, always_allow=always_allow)
+    result.setdefault("run_id", run_id)
+    return result
+
+
+def _reentry(
+    run_id: str,
+    node_id: str,
+    op: str,
+    *,
+    supervisor: Any = None,
+    redo_effects: bool = False,
+    force: bool = False,
+    confirm_cascade: bool = False,
+) -> dict[str, Any]:
+    # Existence before liveness. A nonexistent run has no controller either, so asking `_live`
+    # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
+    # resumed because there is nothing to resume (issue 765). 404 first, then the liveness 409,
+    # which is the order the eight sibling verbs already use.
+    run = store.get(run_id)
+    if run is None:
+        return _run_not_found(run_id)
+    controller = _live(run_id, supervisor)
+    if controller is None:
+        # The remediation names the verb that APPLIES to this run's phase. A draft has nothing to
+        # resume, and saying "resume the run before run_from" sent the caller to a call that
+        # answered `resumed: true` and changed nothing — the other half of #372's closed loop.
+        first = "start" if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH else "resume"
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has no live controller — {first} the run before {op}",
+        )
+    return controller.submit_mutation(
+        [{"op": op, "node_id": node_id, "redo_effects": redo_effects, "force": force}],
+        actor="chat",
+        confirm=confirm_cascade,
+    )
+
+
+def rewind_run(run_id: str, node_id: str, **kw: Any) -> dict[str, Any]:
+    return _reentry(run_id, node_id, "rewind", **kw)
+
+
+def run_from(run_id: str, node_id: str, **kw: Any) -> dict[str, Any]:
+    return _reentry(run_id, node_id, "run_from", **kw)
+
+
+def skip_nodes(run_id: str, node_ids: list[str], *, supervisor: Any = None) -> dict[str, Any]:
+    controller = _live(run_id, supervisor)
+    if controller is None:
+        return _service_failure("WF_RUN_NOT_LIVE", f"run {run_id!r} has no live controller")
+    return controller.submit_mutation(
+        [{"op": "skip", "node_id": n} for n in (node_ids or [])], actor="chat", confirm=True
+    )
+
+
+def fork_run(
+    run_id: str, *, checkpoint_id: str = "", note: str = "", supervisor: Any = None
+) -> dict[str, Any]:
+    """Branch a new run. Works on a terminal run too — forking a finished result to explore
+    an alternative is the main reason to fork at all."""
+    from personalclaw.workflows.checkpoints import fork_run as do_fork
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    try:
+        result = do_fork(
+            run,
+            spec,
+            store.read_state(run_id),
+            checkpoint_id=checkpoint_id,
+            note=note,
+            now=_now(),
+        )
+    except ValueError as exc:
+        return _service_failure("WF_FORK_FAILED", str(exc))
+    return _ok(**result.to_dict())
+
+
+async def start_draft_run(
+    run_id: str, *, supervisor: Any = None, session_key: str = ""
+) -> dict[str, Any]:
+    """Start a run that already EXISTS as a draft — the caller-driven launch
+    `mid_flight._apply_fork` promises.
+
+    `fork_run` mints its child in DRAFT deliberately ("starting it is the caller's decision,
+    because a fork is usually created to be edited before it runs"), and until #372 no verb
+    delivered that decision. `start_run` could not: it takes a def name plus inputs and CREATES
+    the row, so pointing it at an existing draft would mint a second run and orphan the first —
+    the lineage the fork recorded is the thing being launched. The nine run verbs
+    (edit/cancel/pause/resume/confirm/steer/rewind/run_from/fork) all assume a run that has
+    already started, and the two re-entry verbs say so in their own remediation ("resume the run
+    before run_from"), which closed the loop: `resume` popped `pause_requested`, answered
+    `resumed: true`, and left the status `draft`.
+
+    Gated on the run's lifecycle PHASE rather than the literal DRAFT status, exactly like
+    `set_policy_overrides` — a future prelaunch status inherits the gate without this function
+    changing, and the two prelaunch-only operations cannot drift apart. A launched or finished
+    run is refused with the same `WF_RUN_NOT_PRELAUNCH` the overlay editor uses, naming the
+    verb that DOES apply, because "cannot start" with no alternative reads as breakage.
+
+    Nothing special is needed for an overlap-QUEUED draft (`overlap.QUEUED_KEY`): the drain
+    selects on `status=DRAFT`, so a manually started run leaves its window and cannot be
+    launched twice — and `supervisor.launch` is idempotent per run id regardless.
+
+    A start made for the work of a run an owner-allowed automation started (*session_key*) is
+    refused, in words (`automation_version.draft_refusal`).
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _run_not_found(run_id)
+    if RUN_PHASES[run.status] is not LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_PRELAUNCH",
+            f"run {run_id!r} is already {run.status.value}, so there is nothing to start — "
+            "resume it to answer a gate or clear a pause, rewind it to re-run a node, or fork "
+            "it to branch a fresh attempt.",
+            status=run.status.value,
+        )
+    why = automation_version.draft_refusal(run_id, session_key, getattr(supervisor, "state", None))
+    if why:
+        return _service_failure("WF_RUN_NOT_ALLOWED", why)
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    if supervisor is None:
+        return _service_failure(
+            "WF_NO_SUPERVISOR", "the workflow supervisor is unavailable, so the run cannot start"
+        )
+    try:
+        await supervisor.launch(run, spec)
+    except Exception as exc:
+        return _service_failure(
+            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
+        )
+    # RUNNING optimistically, the same reading `start_run` returns on its non-blocking path: the
+    # tick loop is scheduled but has not run yet, so reading the row back here would report the
+    # `draft` the caller just left. `started` is the fact this call is actually reporting.
+    return _ok(run_id=run.id, status=RunStatus.RUNNING.value, started=True)
+
+
+def audit(
+    *, dry_run: bool = True, supervisor: Any = None, only: frozenset[str] | None = None
+) -> dict[str, Any]:
+    """Diagnose the run store, and heal it unless *dry_run*: over the live runs its caller reads
+    (*only*, their ids: ``chat_runs.live_runs_read``), or every live run for you."""
+    from personalclaw.workflows.audit import audit as do_audit
+
+    return _ok(**do_audit(dry_run=dry_run, supervisor=supervisor, only=only).to_dict())
+
+
+# ── manifest ─────────────────────────────────────────────────────────────────
+
+
+def manifest() -> dict[str, Any]:
+    """The node taxonomy, pipes and op catalog, GENERATED from the real registries.
+
+    Generated, never hand-written: a hand-maintained catalog drifts from the code the
+    moment either changes, and an author following a stale catalog writes specs the engine
+    rejects. A CI drift test can compare this against the code because both come from the
+    same enums.
+    """
+    from personalclaw.workflows import loop_aliases
+    from personalclaw.workflows.bindings import PIPES
+    from personalclaw.workflows.models import (
+        CONTAINER_KINDS,
+        GateKind,
+        ItemErrorPolicy,
+        JoinMode,
+        LoopMode,
+        NodeKind,
+        lane_for,
+    )
+
+    return _ok(
+        spec_semver=__import__(
+            "personalclaw.workflows.models", fromlist=["SPEC_SEMVER"]
+        ).SPEC_SEMVER,
+        node_kinds=[
+            {
+                "kind": k.value,
+                "container": k in CONTAINER_KINDS,
+                "lane": lane_for(k),
+            }
+            for k in NodeKind
+        ],
+        gate_kinds=[g.value for g in GateKind],
+        join_modes=[j.value for j in JoinMode],
+        loop_modes=[m.value for m in LoopMode],
+        item_error_policies=[p.value for p in ItemErrorPolicy],
+        pipes=sorted(PIPES),
+        mutation_ops=[o.value for o in mutations.OpKind],
+        instance_states=[s.value for s in InstanceState],
+        run_statuses=[s.value for s in RunStatus],
+        # Authoring sugar, in the manifest because the manifest is what an authoring model reads
+        # to learn the shapes it may write. A macro or block absent here is one a model will
+        # never use, so the library would be dead weight.
+        macros=macros.macro_names(),
+        shared_blocks=blocks.block_names(),
+        # The legacy loop-kind aliases. In the manifest because the
+        # picker and any authoring model both need to know that `kind: goal` still resolves
+        # — and because listing them here is what makes their retirement measurable
+        # rather than a guess about who still refers to loops by kind.
+        loop_aliases=loop_aliases.alias_manifest(),
+    )
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+async def _raw_def(name: str) -> Any | None:
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found = await provider.get_def(name)
+        except Exception:
+            continue
+        if found is not None:
+            return found
+    return None
+
+
+def with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:
+    """Fill in every declared input the caller omitted, using its declared default.
+
+    Applied at RUN START, once, so the run record shows the values the run actually used — a run
+    whose inputs were completed lazily at each binding would leave a record that does not explain
+    its own behaviour.
+
+    A declared input with NO default still gets a key, valued "": the alternative is a binding
+    error on an input the template said was optional, which is the bug this function exists to
+    fix. An optional input's whole meaning is "the workflow works without it".
+
+    The caller's value always wins, including an explicit empty string — a user who deliberately
+    cleared a field is not asking for the default back.
+    """
+    declared = spec.get("inputs") or {}
+    if not isinstance(declared, dict):
+        return provided
+    out = dict(provided)
+    for key, meta in declared.items():
+        if key in out:
+            continue
+        default = meta.get("default") if isinstance(meta, dict) else None
+        out[str(key)] = "" if default is None else default
+    return out
+
+
+def _escalations(run_id: str) -> list[dict[str, Any]]:
+    """Every escalation the run raised, oldest first, read back from its `step_escalated` rows.
+
+    The ledger already kept each one — `_escalate` journals the artifact before it replaces
+    `run.attention` — so this is a projection, not a second record to keep in step. A step that
+    gave up and has since SUCCEEDED (a rewind re-ran it) is left out: its escalation no longer
+    says why the run is where it is.
+    """
+    fields = (
+        "node_id",
+        "instance_path",
+        "reason",
+        "cause",
+        "detail",
+        "remedy",
+        "options",
+        "attempts",
+    )
+    instances = store.read_state(run_id)
+    rows = journal_mod.ledger(run_id, kinds={journal_mod.STEP_ESCALATED})
+    return [
+        {"kind": "escalation", **{key: row.get(key) for key in fields}}
+        for row in rows
+        if (inst := instances.get(str(row.get("instance_path") or ""))) is None
+        or inst.state not in SUCCESS_STATES
+    ]
+
+
+def _nodes_of(run_id: str) -> list[dict[str, Any]]:
+    instances = store.read_state(run_id)
+    spec = store.read_spec(run_id)
+    waits = _steps_waiting(run_id)
+    ids: dict[str, str] = {}
+    labels: dict[str, str] = {}
+    if spec:
+        try:
+            for path, node in walk(Node.from_dict(spec.get("root") or {})):
+                if node.id:
+                    ids[path] = node.id
+                if node.label:
+                    labels[path] = node.label
+        except ValueError:
+            pass
+    # How many instances share each expansion GROUP — the `2` in "[1/2]" for a LOOP's iterations,
+    # whose total is unknowable until the loop ends and so can only be counted.
+    #
+    # Keyed by `sibling_group` (the instance's own trailing marker removed), not by `spec_path`
+    # (every marker removed): `spec_path` made two iterations of a loop containing a fan-out share
+    # one key, so the group held six rows and every one of them claimed to be item 1–3 of 6
+    # (#3403). Not the pre-#3371 truncation either, which counted a fan-out against its enclosing
+    # body and rendered `[N/4]` for a three-item foreach beside one sibling.
+    groups: dict[str, int] = {}
+    for path in instances:
+        key = sibling_group(path)
+        groups[key] = groups.get(key, 0) + 1
+
+    out: list[dict[str, Any]] = []
+    # In the order the engine runs them (by index: `children[2]` before `children[10]`).
+    for path in sorted(instances, key=instance_order):
+        inst = instances[path]
+        base = spec_path(path)
+        # Asked again at every read: the breaker a Retry passes through can have opened since the
+        # step failed, and a Retry offered inside the window is refused without a call.
+        failure = with_breaker_window(inst.failure)
+        row: dict[str, Any] = {
+            "instance_path": path,
+            # The run view's LABEL, not just an api field: `web/src/pages/workflows/runDag.ts:136`
+            # renders each DAG row from `row.node.node_id` and the chat workflow card deep-links
+            # `?node=<node_id>`. Resolve it off the wrong spec path and every sibling in a loop
+            # body reads as the body, so the failing node cannot be named or opened (#3371).
+            "node_id": ids.get(base, ""),
+            "state": inst.state.value,
+            "attempt": inst.attempt,
+            "degraded_reason": inst.degraded_reason,
+            "failure": failure.to_dict() if failure else None,
+        }
+        # The author's name for the step: what the run's ending and every failure line call it
+        # (`ending_sentence._step`), so the page names it the same way beside them. Omitted for a
+        # step without one, which has nothing better than its id.
+        if labels.get(base):
+            row["label"] = labels[base]
+        if inst.model_substituted:  # "ran on X instead of Y: why", omitted when there is none
+            row["model_substituted"] = list(inst.model_substituted)
+        if inst.declined:  # "You declined write_file (notes/plan.md).", omitted when she did not
+            row["declined"] = declines.caption(inst.declined)
+        # Cache-origin, so "did my edit actually re-run anything?" is answerable from
+        # the run's own node list rather than by opening a per-node drawer on each row in turn.
+        #
+        # TERMINAL-ONLY, and only when True. `NodeInstance.cached` is stamped at dispatch, so
+        # between a rewind and the re-dispatch a PENDING instance still carries the previous
+        # epoch's answer — reporting it then would mark a row cached before it has run. Omitted
+        # rather than sent as False for the same reason `item_index` is: absence already means
+        # "freshly produced", and a `cached: false` on all twenty rows of a normal run is twenty
+        # fields carrying no information.
+        if inst.cached and inst.state in TERMINAL_STATES:
+            row["cached"] = True
+        # Per-item foreach context, included only for an actually-iterated instance:
+        # an `item_index` on a lone node would render "[1/1]", which is noise.
+        #
+        # A FAN-OUT item carries its own denominator — the resolved item count, stamped at dispatch
+        # — which is the single number the live `workflow_node_started` event also publishes, so the
+        # two surfaces cannot disagree. A LOOP ITERATION has no such count (nothing knows how many
+        # iterations an `until_dry` loop will run until it stops), so its coordinate falls back to
+        # the size of its expansion group, which for a finished loop is the iteration count.
+        suffix = re.search(r"[#@](\d+)$", path)
+        total = inst.item_total or groups.get(sibling_group(path), 0)
+        if suffix and total > 1:
+            row["item_index"] = int(suffix.group(1))
+            row["item_total"] = total
+            if inst.item_label:
+                row["item_label"] = inst.item_label
+        # A step that waits on its owner says so, and for what: it reads "running" meanwhile.
+        if (wait := waits.get(row["node_id"])) and inst.state not in TERMINAL_STATES:
+            row["waiting_for"] = wait
+        out.append(row)
+    return out
+
+
+def _steps_waiting(run_id: str) -> dict[str, str]:
+    """What each step of *run_id* waits on its owner's answer for, by node id: its start, or one
+    of its agent's calls, by the tool's name. Read from the approval registry its asks are listed
+    in, under the step's own key (``workflow:<run>:<node>``), where this process holds it (the
+    gateway's `ActionServices.state`); a process that holds none says nothing it cannot know."""
+    from personalclaw.action_providers.services import get_action_services
+    from personalclaw.workflows import ownership
+
+    asks_under = getattr(getattr(get_action_services(), "state", None), "asks_under", None)
+    if not callable(asks_under):
+        return {}
+    waits: dict[str, str] = {}
+    try:
+        asks = asks_under(f"{ownership.OWNED_PREFIX}{run_id}:")
+    except Exception:  # noqa: BLE001 - a status read says what it can
+        logger.debug("run %s: its steps' asks could not be read", run_id, exc_info=True)
+        return {}
+    for ask in asks:
+        step = ownership.parse_owned(str(ask.get("session") or ""))
+        if step is not None:
+            waits.setdefault(
+                step[1],
+                (
+                    "its owner's Allow to start"
+                    if str(ask.get("id") or "").startswith("spawn:")
+                    else f"its owner's answer on {ask.get('tool') or 'a call'}"
+                ),
+            )
+    return waits
+
+
+def _completion_summary(run: Any, status: RunStatus) -> str:
+    """A one-line completion summary for the launching session's mirror.
+
+    Drawn from the run's own recorded handoff summary — what the run said it produced —
+    rather than fabricated, matching `run_finish.revise_project_overview`. A run that said
+    nothing hands over nothing, so the line falls back to name + status, which is honest.
+    """
+    name = getattr(run, "workflow_name", "") or "run"
+    line = f"{name} → {status.value}"
+    try:
+        handoff = (getattr(run, "extra", {}) or {}).get("summary")
+        if isinstance(handoff, str) and handoff.strip():
+            line += f": {handoff.strip().splitlines()[0][:200]}"
+    except Exception:
+        logger.debug("completion summary handoff read failed for %r", name, exc_info=True)
+    return line
+
+
+def _status_of(run_id: str) -> str:
+    run = store.get(run_id)
+    return run.status.value if run else "unknown"
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+__all__ = [
+    "WorkflowDef",
+    "audit",
+    "author_def",
+    "cancel_run",
+    "delete_def",
+    "edit_run",
+    "fork_run",
+    "get_def",
+    "list_defs",
+    "manifest",
+    "observe",
+    "output",
+    "pause_run",
+    "preview_edit",
+    "resume_run",
+    "rewind_run",
+    "run_from",
+    "save_accepted_diff",
+    "skip_nodes",
+    "start_run",
+    "status",
+]

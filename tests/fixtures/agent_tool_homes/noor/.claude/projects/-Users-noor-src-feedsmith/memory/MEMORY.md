@@ -1,0 +1,3 @@
+- [feedsmith release checklist](release-checklist.md) — how feedsmith releases are cut and who does what
+- [#412 cause is double escaping](issue-412-cause.md) — digest.py escapes titles and Jinja autoescape escapes them again
+- [feedsmith maintainers](maintainers.md) — who the other maintainers are and what they own

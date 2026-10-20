@@ -1,0 +1,445 @@
+"""Settings → External Access — the inbound seam's operator surface.
+
+Read-mostly. The panel needs four things and this module is careful about which of
+them it will hand back:
+
+* **Per-surface state** — enabled, whether a valid token exists, when it stops working,
+  and remote posture. Whether a token EXISTS is reported; the token itself never is.
+  `token_problem` already returns a reason rather than a bool, so "why is this surface
+  off?" is answerable without the credential ever entering a response body.
+* **Per-client records** — labels and bindings, with the token *hash* elided too.
+  A hash is not a credential, but publishing it over HTTP hands an offline
+  guesser the exact target it needs, for no operator benefit.
+* **Derived activity** — last-seen and request counts computed FROM
+  `inbound_audit.jsonl`, not from a second counter kept beside it. The guardrails
+  health-view pattern: a count maintained alongside a table is two things that can
+  disagree, and the table is the one that is true.
+* **Kill switches** — flipped through the existing `_EDITABLE_CONFIG` PATCH path,
+  NOT here. `public_url`, `allow_remote` and the tokens are deliberately unreachable
+  from any write path on this surface.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from aiohttp import web
+
+from personalclaw.http_errors import json_error
+from personalclaw.request_validation import bool_field, json_object_body, require_bool
+from personalclaw.safety_flags import confirm_answer
+
+logger = logging.getLogger(__name__)
+
+
+def _surface_rows() -> list[dict]:
+    """One row per surface: its switches and whether a usable token is configured."""
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.inbound import auth
+
+    try:
+        ea = AppConfig.load().external_access
+    except Exception:  # noqa: BLE001
+        logger.debug("external-access: config unreadable", exc_info=True)
+        return []
+    rows: list[dict] = []
+    for surface in auth.surfaces():
+        surface_cfg = getattr(ea, surface, None)
+        problem = auth.token_problem(surface)
+        lifetime = _token_lifetime(surface) if problem is None else {}
+        rows.append(
+            {
+                "surface": surface,
+                "enabled": bool(getattr(surface_cfg, "enabled", False)),
+                "allow_remote": bool(getattr(surface_cfg, "allow_remote", False)),
+                # The REASON, not the token. An operator whose surface will not mount
+                # needs the cause named; a bare `false` costs an hour.
+                "token_configured": problem is None,
+                "token_problem": problem or "",
+                # When the token stops working, and whether it already has: expiry and
+                # revocation refuse the TOKEN, not the surface, so a registered client's own
+                # token keeps working and `token_configured` stays true.
+                **lifetime,
+                # The bridge's exception is reported as data so the FE does not have to
+                # re-derive a rule the backend already enforces.
+                "loopback_only": surface == auth.BRIDGE_SURFACE,
+                # Every surface on the dashboard's port serves from the next request; the bridge
+                # listens on its own port, started with the gateway, so it is the one that can be
+                # on, with a token, and not listening yet.
+                **({"listening": _bridge_listening()} if surface == auth.BRIDGE_SURFACE else {}),
+            }
+        )
+    return rows
+
+
+def _bridge_listening() -> bool:
+    from personalclaw.inbound import bridge
+
+    return bridge.listening()
+
+
+def _token_lifetime(surface: str) -> dict:
+    """``token_expires_at`` and ``token_state`` for *surface*'s configured token — or, when the
+    record of token lifetimes cannot be read, ``token_state: "unavailable"`` (every surface token
+    is refused until it can)."""
+    from personalclaw.inbound import auth, tokens
+
+    try:
+        record = tokens.surface_token(surface, auth.load_surface_token(surface))
+    except tokens.RegistryUnavailable:
+        return {"token_expires_at": 0.0, "token_state": "unavailable"}
+    if record is None:
+        return {}
+    return {"token_expires_at": record.expires_at, "token_state": record.state()}
+
+
+def _unknown_provider(name: str) -> str | None:
+    """``None`` when ``name`` is an acceptable ProviderEntry, else the configured names.
+
+    Deliberately asymmetric: it refuses only on POSITIVE knowledge that the name is
+    absent. An unreadable registry returns ``None`` (accept), because the alternative —
+    refusing every client creation whenever provider enumeration fails — turns an
+    unrelated fault into "you cannot register an integration", and buys no safety: this
+    value is a provider name, never a host, and the forward it selects is pre-flighted
+    against the operator's egress allow-list before any socket opens.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        configured = [e.name for e in get_default_registry().list_entries()]
+    except Exception:  # noqa: BLE001 — cannot enumerate ⇒ cannot call it unknown
+        logger.debug("external-access: provider enumeration failed", exc_info=True)
+        return None
+    if name in configured:
+        return None
+    return ", ".join(sorted(configured))
+
+
+def _client_rows() -> list[dict]:
+    """One row per client, with activity derived from the audit trail."""
+    from personalclaw.inbound import audit as audit_mod
+    from personalclaw.inbound import clients as clients_mod
+
+    counts: dict[str, int] = {}
+    refusals: dict[str, int] = {}
+    try:
+        for row in audit_mod.recent(limit=2000):
+            cid = str(row.get("client_id") or "")
+            if not cid:
+                continue
+            counts[cid] = counts.get(cid, 0) + 1
+            if row.get("refused_reason"):
+                refusals[cid] = refusals.get(cid, 0) + 1
+    except Exception:  # noqa: BLE001 — an unreadable trail means "no activity yet"
+        logger.debug("external-access: audit read failed", exc_info=True)
+    out: list[dict] = []
+    for client in clients_mod.load_clients().values():
+        out.append(
+            {
+                "client_id": client.client_id,
+                "label": client.label,
+                "surfaces": list(client.surfaces),
+                "agent": client.agent,
+                "tools": list(client.tools),
+                "scope": dict(client.scope),
+                # Reported because "where does this client's captured traffic go?" must
+                # be answerable without reading inbound_clients.json by hand. It is a
+                # provider NAME, so unlike a token or a hash there is nothing here an
+                # attacker gains by reading — and an egress binding nobody can see is
+                # the one that goes unnoticed when it is wrong.
+                "upstream": client.upstream,
+                "rate_overrides": dict(client.rate_overrides),
+                # Whether its requests to the OpenAI-compatible endpoint continue a conversation
+                # (one per `user` value) or are each answered as the first.
+                "persistent_sessions": client.persistent_sessions,
+                "disabled": bool(client.disabled),
+                "created_at": client.created_at,
+                "last_seen_at": client.last_seen_at,
+                # When its token stops working (epoch seconds): at most 90 days after it was
+                # issued. Past it, the client is refused and told so until registered again.
+                "expires_at": client.expires_at,
+                # Derived, — never a stored counter.
+                "requests_seen": counts.get(client.client_id, 0),
+                "refusals_seen": refusals.get(client.client_id, 0),
+                # 🔴 `token_hash` is deliberately ABSENT. See the module docstring.
+            }
+        )
+    out.sort(key=lambda r: (r["label"].lower(), r["client_id"]))
+    return out
+
+
+async def api_external_access(request: web.Request) -> web.Response:
+    """GET /api/external-access — the whole operator view of the inbound seam."""
+    from personalclaw.config.loader import AppConfig
+
+    try:
+        ea = AppConfig.load().external_access
+        master = bool(ea.enabled)
+        caps = {
+            "rate_rps": float(ea.rate_rps),
+            "rate_burst": int(ea.rate_burst),
+            "rate_concurrent": int(ea.rate_concurrent),
+            "auto_disable_after_breaches": int(ea.auto_disable_after_breaches),
+            "capture_retention_days": int(ea.capture_retention_days),
+            # Read from the NESTED surface object, which is the spelling `load()` fills
+            # and the only one the PATCH allowlist accepts
+            # (`external_access.capture.upstream_allowlist`). Reported because an empty
+            # allow-list denies EVERY upstream — correct, fail-closed, and completely
+            # opaque to a user who has just enabled capture and is getting 502s. A knob
+            # whose default breaks the surface has to be visible where the surface is.
+            "capture_upstream_allowlist": list(ea.capture.upstream_allowlist),
+        }
+        public_url = str(ea.public_url or "")
+    except Exception:  # noqa: BLE001
+        logger.debug("external-access: config unreadable", exc_info=True)
+        master, caps, public_url = False, {}, ""
+    incident = False
+    try:
+        from personalclaw.guardrails.incident import incident_active
+
+        incident = bool(incident_active())
+    except Exception:  # noqa: BLE001
+        incident = True  # unreadable ⇒ report the refusing state, matching `gate.py`
+    return web.json_response(
+        {
+            "enabled": master,
+            # Reported so the panel can explain why an enabled surface is answering
+            # 503 — otherwise the operator sees "on" and a dead endpoint.
+            "incident_active": incident,
+            "public_url": public_url,
+            "caps": caps,
+            "surfaces": _surface_rows(),
+            "clients": _client_rows(),
+        }
+    )
+
+
+async def api_external_access_client(request: web.Request) -> web.Response:
+    """POST /api/external-access/clients — create. DELETE …/{client_id} — revoke.
+
+    The token is in the CREATE response and nowhere else, ever: only its hash is
+    stored, so this is the single moment it can be shown. Revocation deletes the
+    record, which is what kills the token — there is no separate revocation list to
+    fall out of sync with the registry.
+
+    A token works for ``ttl`` (``30m`` / ``20h`` / ``7d``; default and limit 90 days). A
+    longer one is refused, never shortened: whoever asked would believe it lasts longer.
+
+    ``persistent_sessions: true`` registers a client that keeps its conversation (left out, it
+    keeps none); only a client bound to the OpenAI-compatible surface has one to keep.
+
+    A client bound to the ``webhook`` is a sender token: bound to it alone, pinned to the one
+    webhook automation ``scope.trigger`` names (as its page shows it, or by its own id), and nothing
+    else (``inbound.webhook.sender_problem``). Its answer also says what a program sends to fire
+    the automation with it: the address, the header and a command that does it.
+
+    Creating one needs a recent sign-in, not just a live session (``owner_presence``): the
+    token outlives the session that asked for it. Revoking one never asks — that is containment.
+    """
+    from personalclaw.auth import lifetimes
+    from personalclaw.dashboard.owner_presence import (
+        ACTION_INTEGRATION_TOKEN,
+        require_owner_presence,
+    )
+    from personalclaw.inbound import auth
+    from personalclaw.inbound import clients as clients_mod
+    from personalclaw.inbound.tokens import INTEGRATION_TTL_SECS
+
+    actor = str(request.get("user") or "owner")
+    if request.method == "DELETE":
+        client_id = str(request.match_info.get("client_id", "") or "")
+        if not clients_mod.revoke_client(client_id, actor=actor):
+            return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+        return web.json_response({"ok": True, "revoked": client_id})
+
+    body = await json_object_body(request)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", message="body must be a JSON object", status=400)
+    label = str(body.get("label", "") or "").strip()
+    if not label:
+        return json_error("invalid_request", message="label is required", status=400)
+    raw_surfaces = body.get("surfaces")
+    if not isinstance(raw_surfaces, list) or not raw_surfaces:
+        return json_error(
+            "invalid_request", message="surfaces must be a non-empty list", status=400
+        )
+    known = set(auth.client_surfaces())
+    requested = [str(s) for s in raw_surfaces]
+    unknown = sorted(set(requested) - known)
+    if unknown:
+        # Refused rather than filtered: silently dropping an unknown surface would
+        # create a client the operator believes is bound to something it is not.
+        return json_error(
+            "invalid_request",
+            message=(f"unknown surfaces: {', '.join(unknown)} (known: {', '.join(sorted(known))})"),
+            status=400,
+        )
+    # A standing grant, so an omitted field is never one.
+    persistent_sessions = bool_field(body, "persistent_sessions", default=False)
+    if persistent_sessions and _CONVERSATION_SURFACE not in requested:
+        return _no_conversation_to_keep()
+    ttl_text = str(body.get("ttl", "") or "").strip()
+    ttl_secs = lifetimes.lifetime_seconds(ttl_text) if ttl_text else INTEGRATION_TTL_SECS
+    if ttl_secs is None:
+        return json_error("token_ttl_invalid", message=lifetimes.unreadable(ttl_text), status=400)
+    if ttl_secs > INTEGRATION_TTL_SECS:
+        return json_error(
+            "token_ttl_too_long", message=lifetimes.integration_too_long(ttl_secs), status=400
+        )
+    tools = body.get("tools")
+    scope = body.get("scope")
+    rate_overrides = body.get("rate_overrides")
+    upstream = str(body.get("upstream", "") or "").strip()
+    from personalclaw.dashboard.handlers.triggers import _trigger_store
+    from personalclaw.inbound import webhook
+
+    problem, automation = webhook.sender_problem(
+        _trigger_store(),
+        surfaces=requested,
+        scope=scope,
+        agent=str(body.get("agent", "") or ""),
+        tools=tools,
+        upstream=upstream,
+    )
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
+    if automation:
+        scope = {"trigger": automation}
+    if upstream:
+        unknown_upstream = _unknown_provider(upstream)
+        if unknown_upstream is not None:
+            # Refused rather than stored, for the same reason an unknown surface is:
+            # a client whose `upstream` names nothing would look bound to a provider it
+            # is not, and would only reveal that as a 502 at its first captured turn.
+            #
+            # This is a LEGIBILITY guard, not the security boundary. `upstream` is a
+            # provider NAME, so it cannot name a host at all; the destination comes from
+            # the entry's own options and is pre-flighted against the operator's egress
+            # allow-list in `capture_proxy._handle` regardless of what lands here. So it
+            # is safe for this check to pass a name through when the registry cannot be
+            # read (see `_unknown_provider`) — the forward is still gated downstream.
+            return json_error(
+                "invalid_request",
+                message=(
+                    f"unknown upstream provider {upstream!r} "
+                    f"(configured: {unknown_upstream or 'none'})"
+                ),
+                status=400,
+            )
+    refused = require_owner_presence(request, ACTION_INTEGRATION_TOKEN)
+    if refused is not None:
+        return refused
+    client, token = clients_mod.create_client(
+        label,
+        surfaces=requested,
+        agent=str(body.get("agent", "") or ""),
+        tools=[str(t) for t in tools] if isinstance(tools, list) else None,
+        scope=scope if isinstance(scope, dict) else None,
+        upstream=upstream,
+        rate_overrides=rate_overrides if isinstance(rate_overrides, dict) else None,
+        persistent_sessions=persistent_sessions,
+        ttl_secs=ttl_secs,
+        actor=actor,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "client_id": client.client_id,
+            "label": client.label,
+            "surfaces": list(client.surfaces),
+            "persistent_sessions": client.persistent_sessions,
+            "expires_at": client.expires_at,
+            # Shown ONCE. There is no endpoint that can return it again.
+            "token": token,
+            "token_notice": (
+                "Copy this now — it is stored only as a hash and cannot be shown again. It "
+                f"works for {lifetimes.duration_words(ttl_secs)}, until "
+                f"{lifetimes.until_words(client.expires_at)}; Settings → Devices lists it."
+            ),
+            **({"webhook": webhook.instructions(automation, token)} if automation else {}),
+        }
+    )
+
+
+async def api_external_access_client_toggle(request: web.Request) -> web.Response:
+    """POST /api/external-access/clients/{client_id}/disabled — kill-switch layer (c).
+
+    Body ``{disabled: bool}``. Separate from the create/revoke route because
+    "switch this integration off for an hour" and "destroy its credential" are
+    different decisions, and collapsing them makes the reversible one feel final.
+    """
+    from personalclaw.inbound import clients as clients_mod
+
+    client_id = str(request.match_info.get("client_id", "") or "")
+    disabled = require_bool(await json_object_body(request), "disabled")
+    if not clients_mod.set_disabled(client_id, disabled, reason="operator action"):
+        return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+    return web.json_response({"ok": True, "client_id": client_id, "disabled": disabled})
+
+
+#: The one surface whose requests can keep a conversation: the OpenAI-compatible endpoint.
+_CONVERSATION_SURFACE = "openai"
+
+
+def _no_conversation_to_keep() -> web.Response:
+    """The refusal for keeping a conversation where none can be kept. Refused rather than stored,
+    for the reason an unknown surface is: the record would say the client keeps a conversation
+    it never has."""
+    return json_error(
+        "invalid_request",
+        message=(
+            "Only a client bound to the OpenAI-compatible surface has a conversation to keep; "
+            "this one is not."
+        ),
+        status=400,
+    )
+
+
+async def api_external_access_client_persistent_sessions(request: web.Request) -> web.Response:
+    """POST /api/external-access/clients/{client_id}/persistent-sessions — keep its conversation.
+
+    Body ``{persistent_sessions: bool}``. ``true``: the client's requests to the OpenAI-compatible
+    endpoint continue one conversation per ``user`` value (or ``X-PersonalClaw-Session`` header).
+    ``false``: each is answered as if it were its first. A change starts the client's
+    conversations over, either way: a turn running now finishes as it began, and no request after
+    the change continues a conversation from before it; those stay in the chat history.
+    """
+    from personalclaw.inbound import clients as clients_mod
+
+    client_id = str(request.match_info.get("client_id", "") or "")
+    persistent = require_bool(await json_object_body(request), "persistent_sessions")
+    current = clients_mod.load_clients().get(client_id)
+    if current is None:
+        return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+    # Any client can be set to keep none, so only keeping one asks for the surface.
+    if persistent and not current.may_use(_CONVERSATION_SURFACE):
+        return _no_conversation_to_keep()
+    actor = str(request.get("user") or "owner")
+    client = clients_mod.set_persistent_sessions(client_id, persistent, actor=actor)
+    if client is None:
+        return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+    return web.json_response(
+        {"ok": True, "client_id": client_id, "persistent_sessions": client.persistent_sessions}
+    )
+
+
+async def api_bridge_confirmation(request: web.Request) -> web.Response:
+    """POST /api/external-access/bridge/confirmations/{id} — your answer to a control-bridge action.
+
+    Body ``{confirm: bool}``. A local agent's confirm-flagged action waits here, raised in your
+    Inbox, until you answer: ``true`` runs it once, ``false`` drops it. Only you answer
+    (``approval_answer``): an app, an agent's tool and the bridge client that asked are refused 403
+    ``approval_owner_only``, and the attempt is audited.
+    """
+    from personalclaw import approval_answer
+    from personalclaw.inbound import bridge
+
+    approved = confirm_answer(await json_object_body(request))
+    if approved is None:
+        return json_error("invalid_body", message="body must be {confirm: bool}", status=400)
+    return await bridge.answer_confirmation(
+        request.app["state"],
+        str(request.match_info.get("id", "") or ""),
+        approved=approved,
+        by=approval_answer.of_request(request),
+    )

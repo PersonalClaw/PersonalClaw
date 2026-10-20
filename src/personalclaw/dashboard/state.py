@@ -1,0 +1,2672 @@
+"""Dashboard shared state — ChatSession and DashboardState."""
+
+import asyncio
+import copy
+import functools
+import json
+import logging
+import os
+import re
+import time
+import traceback
+import uuid
+from collections.abc import Coroutine, Iterable, Mapping
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
+
+from aiohttp import web
+
+from personalclaw import bounded_log, record_files, restart_request, started_work, trust_mode
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import DASHBOARD_PORT
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+from personalclaw.dashboard import channel_links, chat_phase
+from personalclaw.dashboard.approval_state import DashboardApprovalState
+from personalclaw.dashboard.chat_queue import ChatQueue
+from personalclaw.dashboard.desktop_registry import DesktopRegistry
+from personalclaw.dashboard.sse import SseRegistry
+from personalclaw.dashboard.ws_state import DashboardWebSocketState
+from personalclaw.guardrails.loop_breaker import LoopBreaker
+from personalclaw.history import CREATED_BY_APP_META_KEY
+from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.memory_locality import work_folder
+from personalclaw.memory_reads import reach_of
+from personalclaw.own_words import OWN_WORDS
+from personalclaw.owner_questions import OwnerQuestions
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
+    is_read_only_bash,
+    reads_only,
+    resolve_effective_risk,
+    shell_command,
+    tool_input_to_str,
+)
+from personalclaw.textfmt import board_options, without_board_options
+from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+if TYPE_CHECKING:
+    from personalclaw.context_headroom import Window
+    from personalclaw.dashboard._types import (  # noqa: F401
+        ContextBuilder,
+        ConversationLog,
+        HistoryConsolidator,
+        SessionManager,
+        SubagentManager,
+    )
+    from personalclaw.dashboard.chat_phase import ChatRun
+    from personalclaw.dashboard.running_turn import Rebinding
+    from personalclaw.dashboard.side_state import SideState
+    from personalclaw.engagement_signals import EngagementStore
+    from personalclaw.guardrails.failure import BudgetExceededError
+
+logger = logging.getLogger(__name__)
+
+
+def _knowledge_embedder_factory():
+    """Build a knowledge embedder from PClaw config (or None if disabled).
+
+    Used by the ingestion queue's terminal embed stage — built per call, so it follows a
+    rebind in Settings → Models as ``knowledge.get_knowledge_embedder`` does."""
+    try:
+        from personalclaw.config.loader import config_path
+        from personalclaw.knowledge.embedder import create_embedder_from_config
+
+        cfg_path = config_path()
+        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        return create_embedder_from_config(cfg)
+    except Exception:
+        return None
+
+
+def _log_task_exception(task: asyncio.Task[Any]) -> None:
+    """Log unhandled exceptions from fire-and-forget tasks.
+
+    Shared by gateway._deliver_result and chat.py queue-drain paths.
+    Short-circuits on cancelled tasks (task.exception() would raise CancelledError).
+    Exception message is redacted to avoid leaking credentials/URLs to log sinks.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        try:
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            redacted_tb, _ = redact_credentials(tb)
+            redacted_tb, _ = redact_exfiltration_urls(redacted_tb)
+            logger.error("Background task failed:\n%s", redacted_tb)
+        except Exception as redaction_err:
+            # Include the redaction failure class so bugs in the redactor are visible,
+            # without logging the raw traceback (which defeats the redaction contract).
+            logger.error(
+                "Background task failed (redaction error %s): %s",
+                type(redaction_err).__name__,
+                type(exc).__name__,
+            )
+
+
+# Read-only bash command classification lives in the neutral ``task_modes``
+# module (shared by the dashboard + the native runtime without a dependency
+# cycle). ``is_read_only_bash`` is imported at the top of this module and
+# re-exported for the dashboard call sites that import it from state.
+
+
+# ── Shared helpers ──
+
+
+def parse_cls_meta(cls_val: str) -> dict | None:
+    """Parse a JSON-encoded ``cls`` string into a meta dict.
+
+    Returns the parsed dict (with ``tool_input`` sanitized) or ``None``
+    if ``cls_val`` is not valid JSON or not a dict.  Used by both
+    ``_prepare_messages`` (HTTP history) and ``_broadcast_chat_message``
+    (live WS push) so the frontend sees an identical ``meta`` structure.
+    """
+    if not cls_val:
+        return None
+    try:
+        meta = json.loads(cls_val)
+        if not isinstance(meta, dict):
+            return None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    # Defence-in-depth: sanitize LLM-controlled content at every read boundary
+    if isinstance(meta.get("tool_input"), str):
+        sanitized, _ = redact_exfiltration_urls(meta["tool_input"])
+        sanitized, _ = redact_credentials(sanitized)
+        meta["tool_input"] = sanitized
+
+    # Normalize: backend stores as request_id, frontend expects approval_id
+    if "request_id" in meta and "approval_id" not in meta:
+        meta["approval_id"] = meta.pop("request_id")
+
+    return meta
+
+
+# ── Constants ──
+
+
+_DEFAULT_PORT = DASHBOARD_PORT
+_SSE_INTERVAL_SECS = 5
+_NOTIFICATIONS_FILE = "notifications.jsonl"
+_MAX_PERSISTED_NOTIFICATIONS = 200
+#: What a conversation is told when the session manager restarts its session at the context
+#: threshold, with the manager's reason (``SessionManager.set_restart_callback``). A restart, not
+#: a compaction: the agent's runtime ended, and its next turn starts from the conversation.
+_RESTART_NOTICE = (
+    "Restarted the agent's session at {pct:.0f}% of its context window: {reason}. It continues "
+    "from what was said here, without the results of its earlier tool calls."
+)
+
+# Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
+# Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
+_CHAT_N_RE = re.compile(r"chat-\d+")
+
+# Cron notification wrapper format — used by handlers.py (create), chat.py (detect), ChatPage.tsx (render)  # noqa: E501
+CRON_NOTIFY_PREFIX = "[Cron notification from "
+CRON_NOTIFY_END = "[End of cron notification]"
+CRON_NOTIFY_RE = re.compile(rf'^{re.escape(CRON_NOTIFY_PREFIX)}"(.*)"\]')
+SUBAGENT_COMPLETION_PREFIX = "[Subagent completion event]"
+
+
+def _redact(text: str) -> str:
+    """Sanitise LLM output before surfacing to dashboard."""
+    text, _ = redact_exfiltration_urls(text)
+    text, _ = redact_credentials(text)
+    return text
+
+
+VALID_MEMORY_MODES = ("persistent", "incognito", "temporary")
+
+
+class _ChatSession(ChatQueue):
+    """Independent chat session that runs server-side."""
+
+    __slots__ = (
+        "key",
+        "title",
+        "agent",
+        "model",
+        "linked_session_key",
+        "reasoning_effort",
+        "acp_provider",
+        "acp_provider_agent",
+        "_acp_meta_binding",
+        "mode",
+        "workspace_dir",
+        "project_id",
+        "created_at",
+        "messages",
+        "_stream",
+        "task",
+        "event",
+        "_pending",
+        "_queue",
+        "_approval_futures",
+        "_trust",
+        "_trust_reads",
+        "_agent_floor_seeded",
+        "_trust_from_floor",
+        "_task_mode",
+        "_investigate_ctx",
+        "_suppress_autonudge_rearm",
+        "_titled",
+        "_resumed_count",
+        "_on_message",
+        "_has_reader",
+        "_stop_state_now",
+        "_stop_asked",
+        "_stop_event_id",
+        "_rebinding",
+        "_takes_steers",
+        "_steers",
+        "_dirty",
+        "_stage_titles",
+        "_stage_descriptions",
+        "_plan_goal",
+        "_channel_link_of",
+        "folder_id",
+        "pinned",
+        "tags",
+        "lifecycle",
+        "last_activity_at",
+        "never_archive",
+        "_owed_subagent_endings",
+        "_prompt_busy_retries",
+        "_acp_pipe_death_retries",
+        "_empty_response_retries",
+        "_batch_rejected",
+        "color_index",
+        "color_theme",
+        "reply_style",
+        "_reply_style_noticed",
+        "memory_mode",
+        "_ephemeral",
+        "_pending_context",
+        "_app",
+        "created_by_app",
+        "_last_turn_errored",
+        "_last_turn_refusal",
+        "_last_turn_declined",
+        "_run",
+        "context_usage",
+        "_followups_task",
+        "_pending_variants",
+        "_lock",
+        "forked_from",
+        "_fork_lock",
+        "_tab_id",
+        "_disk_older_count",
+        "_kept_unread",
+        "_file_changes",
+        "_declared_file_change_idx",
+        "_acp_breaker",
+        "_memory_citations",
+        "_skills_used",
+        "_side",
+        "_extra_tool_roots",
+        "_unattended",
+        "_spend_metered",
+        "__weakref__",  # per-chat state kept beside the chat, e.g. session_organize._ASKS
+    )
+
+    def __init__(
+        self,
+        key: str,
+        title: str = "",
+        agent: str = "",
+        workspace_dir: str = "",
+        model: str = "",
+        mode: str = "",
+        memory_mode: str = "persistent",
+        ephemeral: bool = False,
+        project_id: str = "",
+    ) -> None:
+        self.key = key
+        self.title = title or key
+        self.agent = agent
+        self.model = model
+        # The Project this chat scopes under (optional). A project-bound chat is fed
+        # its project's workspace + loop history + context-dir locations, so
+        # every loop + chat under a project shares one cohesive context. "" = unscoped.
+        self.project_id: str = project_id
+        # When set, this dashboard session is linked to another session's
+        # conversation (e.g. a cron-{id} chat threaded to its cron:{id} agent
+        # session). Drives the "Continue" affordance + bidirectional threading.
+        self.linked_session_key: str = ""
+        # Reasoning effort: "" = provider default, else one of low/medium/high/max.
+        # Consumed by Claude Code (--effort flag).
+        self.reasoning_effort: str = ""
+        # Ephemeral ACP-agent override (a discovered runtime agent picked live in
+        # the chat picker — NOT a saved AgentProfile). When set these win over the
+        # named-definition resolution in chat_runner: ``acp_provider`` is the
+        # runtime id ("acp:<cli>"), ``acp_provider_agent`` the ACP modeId (persona-style
+        # agent; "" for claude). Discovery is live + account-dynamic, so we
+        # never persist these to config — they live only on the session.
+        self.acp_provider: str = ""
+        self.acp_provider_agent: str = ""
+        # What the session's PERSISTED meta line asked its runtime to be, recorded on
+        # restore whether or not the binding was honoured, and consumed by the first
+        # turn after a restore. A lost ACP binding is not a cosmetic loss: the turn
+        # then runs on the native axis with different tools and different confinement
+        # while looking completely normal, so the turn says so instead. Empty
+        # once consumed, and cleared outright when the user picks a runtime by hand —
+        # an explicit choice is not a silent fallback.
+        self._acp_meta_binding: str = ""
+        self.mode = mode
+        # The session's working directory. Memory is scoped to it. Empty = root.
+        self.workspace_dir: str = workspace_dir
+        # Extra dirs the native file tools may read/write OUTSIDE workspace_dir. Set
+        # for brownfield Code/Goal-Loop workers to the project files dir (under
+        # ~/.personalclaw), where the engine writes status.json/brief.md/findings —
+        # the worker's cwd is the user workspace, so without this the workspace-
+        # confined file tools would reject those engine-file paths. Empty for chat.
+        self._extra_tool_roots: list[str] = []
+        # Who answers this session's asks, when the session's owner decided it: True = nobody
+        # (an Unattended loop's worker), False = a person (an Attended loop's worker), None =
+        # nobody decided, so the session key does (``guardrails.policy.is_unattended_session``).
+        # A loop sets it from its Mode each time it arms one of its sessions (``loop.posture``),
+        # because a loop's key names a loop, not whether anybody is watching it. Unattended: the
+        # native runtime strips interactive tools and declines an ask at once, so the turn can't
+        # wedge waiting for a person who is not there.
+        self._unattended: bool | None = None
+        # Whether this session's model spend counts against the daily cap for unattended work. A
+        # loop sets it from its Mode (``loop.posture``): only an Attended loop's session is the
+        # owner's own, like a chat's. Every other session is metered by the axis it runs on.
+        self._spend_metered: bool = True
+        self.created_at: str = datetime.now(timezone.utc).isoformat()
+        # The transcript: one entry per thing the user wrote or saw, and nothing else.
+        # It is never trimmed — the whole-file save rewrites the transcript FROM this
+        # list, so an entry missing here is an entry deleted from disk (see
+        # `chat_persistence._seed_transcript`, which loads the whole file, never a window).
+        self.messages: list[dict[str, Any]] = []
+        # The answer being streamed right now, while it is still being written: ONE
+        # `streaming` entry in `messages`, grown in place by `stream_chunk` and settled
+        # into an `assistant` entry by `finish_stream`. None between answers.
+        self._stream: dict[str, Any] | None = None
+        self.task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self.event = asyncio.Event()
+        self._pending: list[dict[str, str]] = []
+        self._queue: list[dict[str, Any]] = []  # [{"id": uuid, "content": str}, ...]
+        self._approval_futures: dict[str, asyncio.Future[str]] = {}  # type: ignore[type-arg]
+        self._trust: bool = False  # auto-approve tools for this session
+        self._trust_reads: bool = False  # auto-approve read-only bash commands
+        # One-shot latch: has this live session already been seeded from the bound
+        # agent's persistent approval floor ("Always allow for this agent")? The seed
+        # RAISES trust exactly once per session so a later explicit "Normal" wins and
+        # is not clobbered on the next turn. In-memory like _trust itself: a gateway
+        # restart re-seeds from the durable AgentProfile floor (that's what a durable
+        # grant means), while the ephemeral per-session override does not survive.
+        self._agent_floor_seeded: bool = False
+        # Which floor raised the posture above, "auto" or "trust_reads", or "" when it was not a
+        # floor (you set it, or nothing did). A seeded posture ends when its floor does
+        # (`chat_runner._apply_approval_floor`); one you set is never withdrawn from under you.
+        self._trust_from_floor: str = ""
+        # Task mode — an ORTHOGONAL axis to the approval rungs above (which gate
+        # *whether* a tool auto-approves). Task mode gates *which* tools are even
+        # available + *how* the agent frames the work, layered on the active agent:
+        #   'agent' — full execution (default).
+        #   'ask'   — read-only: only SAFE/read tools run; mutating tools are denied.
+        #   'plan'  — the agent reasons/plans but NO tool executes (ACP claude also
+        #             enforces natively via acp_mode=plan; the host gate enforces
+        #             universally for native / the default dialect).
+        #   'build' — scoped to producing an artifact/widget/skill.
+        # Complements approval mode: e.g. Plan + Trust is a valid combination.
+        self._task_mode: str = "agent"
+        # Investigate Anywhere: the staged context envelope (a dict from
+        # InvestigateContext.to_dict) consumed + cleared by the FIRST turn's
+        # _inject_investigate_context. Transient — never persisted with history.
+        self._investigate_ctx: dict | None = None
+        # When set, chat_runner skips re-arming the autonudge idle timer on turn
+        # exit. The goal-loop re-prompt loop sets this while it drives several
+        # back-to-back turns within ONE logical cycle, so the idle timer doesn't
+        # fire a competing next-cycle nudge mid-loop; the loop re-arms once at the
+        # end. (Without it, each inner turn's completion re-armed the timer and
+        # raced the loop — see ACP goal-loop worker re-prompt.)
+        self._suppress_autonudge_rearm: bool = False
+        self._titled: bool = False  # True once a title has been assigned
+        self._resumed_count: int = 0  # messages loaded from history on resume
+        # Callback announcing each new row to the chat's open pages (the dashboard socket)
+        self._on_message: object | None = None  # Callable[[str, dict], None] | None
+        self._has_reader: bool = False  # True when HTTP SSE stream is draining
+        self._stop_state_now: str = "idle"  # see `_stop_state`
+        self._stop_asked: bool = False  # see `_stop_state`
+        self._stop_event_id: str | None = None  # transcript message id for in-flight stop
+        # A change to what answers this chat that waits for the running turn to end
+        # (`running_turn.rebind`), whether that turn takes a steer
+        # (`running_turn.set_steer_drains`), and the steers she sent it (`running_turn.steer`).
+        self._rebinding: "Rebinding | None" = None
+        self._takes_steers: bool = False
+        self._steers: list[dict[str, Any]] = []
+        self._dirty: bool = False  # True when messages changed since last flush
+        self._stage_titles: list[str] = []  # stage titles extracted from plan
+        self._stage_descriptions: list[list[str]] = []  # bullet points per stage
+        self._plan_goal: str = ""  # goal from 📋 Plan for: header
+        # Reads the channel thread this chat continues on where links are kept (`channel_link`);
+        # set by the dashboard that holds the chat.
+        self._channel_link_of: Callable[[], tuple[str, str]] | None = None
+        self.folder_id: str = ""  # project folder assignment
+        self.pinned: bool = False  # pinned to top of sidebar
+        self.tags: list[str] = []  # assigned tag ids (see DashboardState._tags)
+        # Session LIFECYCLE (distinct from history JSONL rotation, which is storage):
+        # "active" | "archived". Archiving declutters the list without deleting or
+        # de-indexing anything — an archived session stays fully searchable, which is
+        # what makes it safe to auto-archive on a timer.
+        self.lifecycle: str = "active"
+        # Wall-clock of the last real turn, driving the auto-archive rule. 0.0 means
+        # "never recorded" (an old session, or one that has not been used since the
+        # field landed) and is treated as not-yet-stale rather than instantly archivable.
+        self.last_activity_at: float = 0.0
+        # User pin against the lifecycle: never auto-archive this one. Independent of
+        # `pinned` (sidebar ordering) on purpose — wanting a session at the top and
+        # wanting it exempt from cleanup are different intents.
+        self.never_archive: bool = False
+        self._owed_subagent_endings: list[str] = []  # told its agent next (`subagent_endings`)
+        self._prompt_busy_retries: int = 0
+        self._acp_pipe_death_retries: int = 0
+        self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)
+        # How this turn's refused batch was refused ("rejected" | "expired" | "cancelled"), or "".
+        # The requests already waiting behind the refused one are refused without asking, and say
+        # so in the same words; the next thing the agent reports ends a Deny's or an expiry's
+        # batch, and a stop's lasts until the turn ends (`chat_runner._REFUSALS_OF_ONE_BATCH`).
+        self._batch_rejected: str = ""
+        self.color_index: int | None = None
+        self.color_theme: str = ""
+        # Reply style, per-conversation scope: a style id, or "" when this conversation states
+        # nothing and follows its agent (then the platform). "default" is a deliberate choice of
+        # no style over an agent that asks for one. Choosing here never edits the agent; the
+        # order is personalclaw/reply_style.py's REPLY_STYLE_PRECEDENCE.
+        self.reply_style: str = ""
+        # The chosen style that went away and that this chat has already said so about, so the
+        # notice is said once (chat_runner), across a restart too (kept in the session's meta
+        # line as `reply_style_noticed`); "" while every chosen style is there.
+        self._reply_style_noticed: str = ""
+        if memory_mode not in VALID_MEMORY_MODES:
+            raise ValueError(
+                f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"
+            )
+        self.memory_mode: str = memory_mode
+        self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
+        self._pending_context: list[dict[str, Any]] = []
+        # Where the conversation came from, for display and for what its turns are counted under: a
+        # hidden worker's tag ("loop", "loops"), the channel it arrived on ("slack"), or an app's
+        # name. It is NOT who owns it — those tags are ordinary strings an installed app can also
+        # be named — and not where it answers, which is its link's (`channel_provider_for`).
+        self._app: str = ""
+        # The app whose token started this conversation, or "" for yours. Set only from a
+        # VERIFIED app identity (`get_or_create_session(created_by_app=…)`), persisted on the meta
+        # line and restored with the session, and the one thing an app's reach into a conversation
+        # is decided on (`DashboardState.session_creating_app`).
+        self.created_by_app: str = ""
+        self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
+        # The spend cap's refusal the latest turn ended on (`failure.budget_refusal`), or None: what
+        # retries an errored turn by itself reads it, and does not re-run a refused call.
+        self._last_turn_refusal: "BudgetExceededError | None" = None
+        # The calls she declined in the latest turn (`declined_calls.declined_step`), cleared when a
+        # turn starts: what would ask the agent again after the turn (a loop's cycle) reads them.
+        self._last_turn_declined: list[dict[str, Any]] = []
+        # What the chat's turn is doing, as its last `work_phase` frame said it, with how its last
+        # turn ended (`chat_phase`): served as the chat's `run_state` by the list and its detail.
+        # None until a turn has run here.
+        self._run: "ChatRun | None" = None
+        # What the chat's context ring was last told (`DashboardState.say_context_usage`):
+        # ``{"pct", "window"}``, served as session detail's `context_usage` so a page opened
+        # later draws the same ring. None until a turn has said anything.
+        self.context_usage: dict[str, Any] | None = None
+        # Follow-up chips: the fire-and-forget background task that
+        # suggests next messages after a completed turn; cancelled by the next dispatch.
+        self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Regenerate feature: variants pending attachment to next finalized assistant message
+        self._pending_variants: list[dict] = []
+        self._lock = asyncio.Lock()
+        self.forked_from: str | None = None  # parent session key if this is a fork
+        self._fork_lock: asyncio.Lock = (
+            asyncio.Lock()
+        )  # serialises concurrent forks on this session
+        self._tab_id: str = ""  # permanent tab identity for cross-restart session chaining
+        # Messages in OLDER sibling files of this tab (legacy cross-restart chaining), which
+        # the conversation shows before this buffer but which this session never writes.
+        # Set when the transcript is seeded; the session's own file is always loaded whole.
+        self._disk_older_count: int = 0
+        self._kept_unread: bool = False  # what is kept could not be read (open_kept_chat)
+        # Per-turn file-change accumulator [{path, before, after}], reset at the
+        # top of each run_chat and flushed onto the assistant message's meta at turn end.
+        self._file_changes: list[dict[str, str]] = []
+        # path -> its index in `_file_changes`, for chips a BACKEND declared rather than
+        # ones the host inferred. A streaming adapter re-declares
+        # the same edit as its arguments fill in, and the flush's earliest-before rule
+        # would then pin a partial first declaration; this lets the newest one replace it
+        # in place. Reset alongside `_file_changes` — an index into an emptied list is
+        # what would overwrite slot 0 of the next turn.
+        self._declared_file_change_idx: dict[str, int] = {}
+        # The ACP loop breaker, kept for the SESSION rather than the turn.
+        # `LoopBreaker` defines its own ceiling as
+        # "this RUN's total failures" (default 30, `guardrails.loop_breaker`), and for an
+        # ACP session the host-side analogue of a native run is its sequence of turns —
+        # a fresh breaker per turn reset the counter every turn, so an unattended loop
+        # repeating a failing tool for twenty turns could never reach thirty and the
+        # circuit rung was unreachable by construction. Per-key streaks persist for the
+        # same reason, and `record()` still clears a key on success, so a tool that
+        # recovers is not held against the model.
+        self._acp_breaker = LoopBreaker()
+        # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt.
+        # Reset per turn, populated from the assembled
+        # context's metadata, and attached to each finalized assistant message's meta so
+        # the frontend can turn a `[Memory N]` token into a deep-link to the episode.
+        self._memory_citations: list[dict] = []
+        # Skills whose content actually reached THIS turn's prompt, as
+        # [{name, state, loaded_tokens}]. Reset per turn,
+        # populated from the assembled context's `skill_decisions` metadata, and attached
+        # to each finalized assistant message's meta so the frontend can show "used N
+        # skills" without a second channel. A REFUSED skill is deliberately absent: it was
+        # named to the agent but never loaded, so counting it would overstate the turn.
+        self._skills_used: list[dict] = []
+        # Ephemeral side-chat buffer (None = closed). Side Q&A lives ONLY here,
+        # never in self.messages — see dashboard/side_state.py.
+        self._side: "SideState | None" = None
+
+    @property
+    def _plan_stage_count(self) -> int:
+        return len(self._stage_titles)
+
+    @property
+    def _stop_state(self) -> str:
+        """``idle``, ``soft_pending`` or ``killing``: where a stop asked of this chat's turn stands.
+
+        Setting any other state than ``idle`` also records that a stop was asked of the turn
+        (``_stop_asked``, cleared when a turn starts). The state itself is back to ``idle`` as
+        soon as the runtime acknowledges the stop, which can be before the turn has ended, and how
+        a turn ended is read at its end: a stop the owner asked for is not one the turn suffered.
+        """
+        return self._stop_state_now
+
+    @_stop_state.setter
+    def _stop_state(self, value: str) -> None:
+        self._stop_state_now = value
+        if value != "idle":
+            self._stop_asked = True
+
+    @property
+    def _stopping(self) -> bool:
+        return self._stop_state != "idle"
+
+    @_stopping.setter
+    def _stopping(self, value: bool) -> None:
+        self._stop_state = "soft_pending" if value else "idle"
+
+    def append(
+        self,
+        role: str,
+        content: str,
+        cls: str = "",
+        ts: str = "",
+        *,
+        broadcast: bool = True,
+        meta: dict | None = None,
+        source: Mapping[str, str] = DASHBOARD_SOURCE,
+    ) -> None:
+        """Add one transcript entry — something the user wrote or saw.
+
+        *source* is where it came from (:mod:`personalclaw.turn_source`): the dashboard's, unless
+        the caller took the entry in from somewhere else or copies one that records its own.
+
+        Stream bookkeeping never comes through here. A streamed chunk grows the one open
+        answer (:meth:`stream_chunk`) and the end-of-turn marker goes to live readers only
+        (:meth:`signal_done`), because every entry in ``messages`` is served, counted and
+        persisted as a message.
+        """
+        msg: dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "cls": cls,
+            "ts": ts or datetime.now(timezone.utc).isoformat(),
+            **source_of(source),
+        }
+        if meta:
+            msg["meta"] = meta
+        self.messages.append(msg)
+        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp (it is
+        # "now"); history REPLAY passes each message's stored ts.
+        self._announce(msg, replay=bool(ts), broadcast=broadcast)
+
+    def _announce(self, msg: dict[str, Any], *, replay: bool, broadcast: bool) -> None:
+        """What a new — or newly settled — transcript entry owes the rest of the system."""
+        # Stamp real activity for the auto-archive rule. Only user/assistant turns count:
+        # system notices are not the user using the chat. Recording here — the one place
+        # every entry is announced — covers every producer (web, channel, resume) without
+        # touching any of them.
+        #
+        # A replay must not stamp: rehydrating an archived session replays its transcript
+        # through `append`, and stamping would un-archive a chat just by opening it, or by
+        # a restart restoring it.
+        if msg["role"] in ("user", "assistant") and not replay:
+            self.last_activity_at = time.time()
+            # A real turn un-archives: using an archived chat is the clearest possible
+            # signal that it is active again.
+            if self.lifecycle == "archived":
+                self.lifecycle = "active"
+        self._dirty = True
+        self._pending.append(msg)
+        self.event.set()
+        # Announced to every open page of the chat (the dashboard socket) whether or not an HTTP
+        # stream also drains this turn: that stream reads `_pending`, never the socket, so a page
+        # watching a chat another client drives gets its rows as they are written. A user entry is
+        # not echoed: the frontend adds it optimistically.
+        if broadcast and self._on_message and msg["role"] != "user":
+            self._on_message(self.key, msg)  # type: ignore[operator]
+
+    def _stream_index(self) -> int | None:
+        """Where the open streaming entry sits in ``messages`` — found by IDENTITY.
+
+        ``None`` when nothing is streaming, and also when the buffer was rebuilt without
+        the entry (a ``/clear``, a purge): the stream is then forgotten rather than grown
+        in a dict nothing will ever persist. The entry is the last or next-to-last row
+        while it streams, so the scan from the end stops at once.
+        """
+        entry = self._stream
+        if entry is not None:
+            for i in range(len(self.messages) - 1, -1, -1):
+                if self.messages[i] is entry:
+                    return i
+            self._stream = None
+        return None
+
+    @property
+    def streaming_text(self) -> str | None:
+        """The answer being streamed, as far as it has arrived — ``None`` when none is."""
+        idx = self._stream_index()
+        return None if idx is None else self.messages[idx]["content"]
+
+    def stream_chunk(self, text: str) -> None:
+        """Grow the answer being streamed by *text*.
+
+        A chunk is not a transcript entry. However many chunks an answer arrives in, it
+        is ONE ``streaming`` entry until it settles — ten thousand chunks used to be ten
+        thousand entries, and the buffer then pushed the user's own prompt out to make
+        room for them. A live reader still gets every delta as a ``chunk`` frame on
+        ``_pending`` (the HTTP SSE stream and the OpenAI dialect each claim
+        ``_has_reader`` before the turn starts); the WS path gets ``chat_chunk`` from the
+        runner. Without a reader nothing drains ``_pending``, so no frame is queued.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        idx = self._stream_index()
+        if idx is None:
+            self._stream = {"role": "streaming", "content": text, "cls": "msg msg-a", "ts": now}
+            self._stream.update(DASHBOARD_SOURCE)  # the chat's own answer
+            self.messages.append(self._stream)
+        else:
+            self.messages[idx]["content"] += text
+        self._dirty = True
+        if self._has_reader:
+            self._pending.append({"role": "chunk", "content": text, "cls": "chunk", "ts": now})
+            self.event.set()
+
+    def finish_stream(self, content: str) -> dict[str, Any]:
+        """Settle the answer being streamed as an ``assistant`` entry, where it streamed.
+
+        Settled IN PLACE, so a stop card appended while the answer was still arriving
+        stays after the prose. With no open stream (none started, or the buffer was
+        rebuilt under it) the answer is appended instead. Returns the settled entry.
+
+        Not announced to the socket (``broadcast=False``): every socket already has these
+        words, as the ``chat_chunk`` frames they streamed in. A ``chat_message`` frame is
+        how an open chat learns of an entry it does NOT have — a notice the gateway adds, such
+        as a compaction's outcome — and the page paints each one it gets, so the settled answer
+        arriving as one would show it twice.
+        """
+        idx = self._stream_index()
+        self._stream = None
+        if idx is None:
+            self.append("assistant", content, "msg msg-a", broadcast=False)
+            return self.messages[-1]
+        entry = self.messages[idx]
+        entry["role"] = "assistant"
+        entry["content"] = content
+        entry["ts"] = datetime.now(timezone.utc).isoformat()
+        self._announce(entry, replay=False, broadcast=False)
+        return entry
+
+    def discard_stream(self) -> None:
+        """Drop the answer being streamed without settling it."""
+        idx = self._stream_index()
+        self._stream = None
+        if idx is not None:
+            del self.messages[idx]
+            self._dirty = True
+
+    def signal_done(self) -> None:
+        """Tell a live reader the turn is over.
+
+        Not a transcript entry: it goes to ``_pending`` only, so nothing serves, counts
+        or persists it. (As a ``done`` row in ``messages`` it made the detail ``total``
+        and the paginated tail count one phantom message per turn.) Queued only for a
+        reader that is attached — a marker left in an undrained queue would end the NEXT
+        reader's stream before its turn began.
+        """
+        if self._has_reader:
+            now = datetime.now(timezone.utc).isoformat()
+            self._pending.append({"role": "done", "content": "", "cls": "done", "ts": now})
+            self.event.set()
+
+    def drain(self) -> list[dict[str, str]]:
+        """Return and clear pending messages."""
+        out = self._pending[:]
+        self._pending.clear()
+        self.event.clear()
+        return out
+
+    @property
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    @property
+    def run_state(self) -> dict[str, Any]:
+        """What its turn is doing, and how its last one ended, as every route that lists the chat
+        serves it: its last ``work_phase`` payload, idle once nothing runs (``chat_phase``)."""
+        return chat_phase.served(self)
+
+    @property
+    def is_restricted(self) -> bool:
+        """True when memory writes (consolidation, lessons) are blocked."""
+        return self.memory_mode != "persistent"
+
+    @property
+    def blocks_reads(self) -> bool:
+        """True when memory-context injection into this session is blocked."""
+        return self.memory_mode == "temporary"
+
+    def enqueue_or_run_prompt(
+        self,
+        prompt: str,
+        run_chat_coro: "Callable[[DashboardState, _ChatSession, str], Coroutine[Any, Any, None]]",
+        state: "DashboardState",
+        *,
+        own_words: str | None = None,
+        attended: bool = False,
+    ) -> bool:
+        """Queue *prompt* if busy, otherwise start an agent turn.
+
+        Encapsulates the queue-vs-run decision so callers don't need to
+        touch ``_queue``, ``task``, or ``_background_tasks`` directly.
+        Always registers :func:`_log_task_exception` to prevent silent failures.
+        ``own_words`` says which of *prompt*'s words a person typed, when the caller composed
+        more around them (``""`` when nobody did), so no learning path reads the rest as theirs.
+        ``attended`` says the owner typed it where they are, so queued it runs unbounded as it
+        would have run had the chat been idle (``chat_queue.ATTENDED``).
+
+        Returns ``True`` if the prompt started an agent turn, ``False`` if
+        it was queued. Lets callers gate UI-visible side-effects (notifications,
+        SSE pushes) on whether the prompt actually ran.
+
+        Concurrency: the check (``self.running``) and mutation (``self.task = ...``)
+        run synchronously on the asyncio event loop with no ``await`` between them,
+        so two concurrent callers targeting the same session cannot both observe
+        ``running == False`` within a single loop iteration.
+        """
+        if self.running:
+            self.queue_append(prompt, own_words=own_words, attended=attended)
+            state.say_run_state(self)  # one more message waits behind the turn
+            return False
+        meta = None if own_words is None else {OWN_WORDS: own_words}
+        self.append("user", prompt, "msg msg-u", meta=meta)
+        task = asyncio.create_task(run_chat_coro(state, self, prompt))
+        self.task = task
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+        task.add_done_callback(_log_task_exception)
+        return True
+
+    @property
+    def message_count(self) -> int:
+        """How many messages the open conversation serves.
+
+        The persisted head older than this buffer (``_disk_older_count``) plus every entry
+        in it — the buffer holds transcript entries only, and the detail view serves each
+        one once. The chat list reads this, so the sidebar and the open conversation cannot
+        disagree about one session (#2862).
+        """
+        return self._disk_older_count + len(self.messages)
+
+    @property
+    def channel_link(self) -> tuple[str, str]:
+        """The channel thread this chat continues on, as ``(thread, channel id)``, or
+        ``("", "")`` when it is on none.
+
+        Read where the link is kept each time it is asked (``channel_links.chat_link``), never
+        from a copy: one taken when the chat was made missed every link made after it."""
+        read = self._channel_link_of
+        return read() if read is not None else ("", "")
+
+    def to_dict(self) -> dict:
+        last_ts = self.messages[-1].get("ts", "") if self.messages else ""
+        # Single reverse scan for last_msg, options, and last_activity_ts.
+        last_msg = ""
+        has_options = False
+        options: list[str] = []
+        prompt_preview = ""
+        last_activity_ts = ""
+        found_conv = False
+        for m in reversed(self.messages):
+            role = m.get("role")
+            # Capture last_activity_ts from the most recent actionable message
+            if not last_activity_ts and role in ("tool_call", "tool_result", "assistant"):
+                last_activity_ts = m.get("ts") or ""
+            # Capture last conversational message (once)
+            if not found_conv and role in ("user", "assistant"):
+                txt = m.get("content") or ""
+                if txt:
+                    found_conv = True
+                    redacted = _redact(txt)
+                    last_msg = (redacted[:80] + "…") if len(redacted) > 80 else redacted
+                    if role == "assistant":
+                        options = board_options(txt)
+                        has_options = bool(options)
+                        if has_options:
+                            stripped = _redact(without_board_options(txt).strip())
+                            prompt_preview = (
+                                stripped[:240] + "…" if len(stripped) > 240 else stripped
+                            )
+            if found_conv and last_activity_ts:
+                break
+        channel_thread, channel_id = self.channel_link
+        return {
+            "key": self.key,
+            "title": _redact(self.title) if self.title else self.title,
+            "agent": self.agent,
+            "model": self.model,
+            "linked_session_key": self.linked_session_key,
+            "reasoning_effort": self.reasoning_effort,
+            "acp_provider": self.acp_provider,
+            "acp_provider_agent": self.acp_provider_agent,
+            "mode": self.mode,
+            "workspace_dir": self.workspace_dir,
+            "project_id": self.project_id,
+            "messages": self.message_count,
+            # What its turn is doing, and how its last one ended: its last phase frame.
+            "run_state": self.run_state,
+            "last_activity_ts": last_activity_ts,
+            "created": self.created_at,
+            "last_ts": last_ts,
+            "last_message": last_msg,
+            "has_options": has_options,
+            "options": [_redact(o) for o in options],
+            "prompt_preview": prompt_preview,
+            "trust": self._trust,
+            "trust_reads": self._trust_reads,
+            "task_mode": self._task_mode,
+            "channel_linked": bool(channel_thread),
+            "channel_id": channel_id,
+            "channel_thread_ts": channel_thread,
+            "folder_id": self.folder_id,
+            "pinned": self.pinned,
+            "tags": list(self.tags),
+            "lifecycle": self.lifecycle,
+            "last_activity_at": self.last_activity_at,
+            "never_archive": self.never_archive,
+            "color_index": self.color_index,
+            "color_theme": self.color_theme,
+            # This conversation's own choice only. The RESOLVED style, its source and the
+            # preview are added by the session-detail and reply-style handlers, not here:
+            # resolving reads the config, and this method runs once per row of the session list.
+            "reply_style": self.reply_style,
+            "memory_mode": self.memory_mode,
+            "forked_from": self.forked_from,
+            # The origin tag (a hidden worker's, a channel's, or the name of the app that started
+            # the conversation) — where it came from, not whose it is.
+            "app": self._app,
+            # The app whose token started the conversation, or "" for yours: what decides an app's
+            # reach into it, and what the history row names ("Started by …").
+            "created_by_app": self.created_by_app,
+        }
+
+
+class DashboardState(DashboardWebSocketState, DashboardApprovalState):
+    """Shared state injected into all handlers via ``app["state"]``."""
+
+    #: The notification file as this process last read or wrote it (None: it has not).
+    _notifications_seen: tuple[int, int, int] | None = None
+
+    def __init__(
+        self,
+        sessions: "SessionManager",
+        start_time: float,
+        subagents: "SubagentManager | None" = None,
+        context_builder: "ContextBuilder | None" = None,
+        conversation_log: "ConversationLog | None" = None,
+        consolidator: "HistoryConsolidator | None" = None,
+        owner_id: str = "",
+    ):
+        self.sessions = sessions
+        self.start_time = start_time
+        self.subagents = subagents
+        if subagents is not None:  # an agent's first prompt reads memory as this state answers
+            subagents.memory_reach = functools.partial(reach_of, self)
+            subagents.memory_folder = functools.partial(work_folder, self)
+        self._inbox_state: Any = None
+        self._inbox_store: Any = None
+        self._inbox_svc: Any = None
+        self._inbox_restart: Any = None
+        self.context_builder = context_builder
+        self.conversation_log = conversation_log
+        listeners = getattr(conversation_log, "title_listeners", None)
+        if isinstance(listeners, list):  # the name a channel gives a conversation reaches its chat
+            listeners.append(self.take_conversation_title)
+        self.consolidator = consolidator
+        # `channel_delivery` is a PROPERTY over `channel_delivery`'s per-provider registry (see
+        # below), not a slot. It was a slot here AND a second one on the gateway orchestrator —
+        # two holders for one fact, and every shipped transport wrote both, so one overwrite took
+        # out delivery on two unrelated paths at once (#959).
+        self.owner_id = owner_id
+        self._owner_hash: str | None = None
+        # Per-resource SSE: one hub per goal loop (key ``loop:<id>``). The loop
+        # watchdog publishes lifecycle events here; the per-loop /stream endpoint
+        # serves them. Single source of truth on the state so producer (watchdog)
+        # and consumer (handler) share the same hubs.
+        # (Always-on dashboard state rides the WebSocket — see _broadcast.)
+        # Per-loop lifecycle SSE (key ``loop:<id>``) — the unified watchdog publishes
+        # every kind's stage/finding/lifecycle events here; /api/loops/{id}/stream
+        # serves it. (The Code feature is the `code` kind on this ONE registry — the
+        # old per-project _code_sse was orphaned at the unification cutover.)
+        self._loop_sse = SseRegistry()
+        # Per-run workflow engine SSE (key ``workflow:<run_id>``) — the run controller
+        # publishes node/run lifecycle events here; the per-run /stream endpoint serves
+        # it. Deliberately NOT routed through ``notify``: that is the user-notification
+        # gate (mute / severity / quiet-hours) and would silently eat engine events.
+        self._workflow_sse = SseRegistry()
+        # The workflow supervisor (`WorkflowWatchdog`), attached at gateway boot. Declared
+        # here rather than set as a bare dynamic attribute so a reader can see it exists and
+        # that None is a real state — the REST handlers must tolerate a gateway whose
+        # workflows feature is disabled.
+        self.workflows: Any = None
+        # Per-item knowledge ingestion progress (key ``knowledge:ingest:<item_id>``).
+        # The ingest queue publishes node-graph progress here; the per-item /stream
+        # endpoint serves it.
+        self._knowledge_ingest_sse = SseRegistry()
+        self._knowledge_ingest_queue: Any = None  # lazy KnowledgeIngestQueue
+        self._knowledge_provider: Any = None  # lazy NativeKnowledgeProvider
+        # Config-tree FS watcher → live UI refresh (key ``fs:config``).
+        self._config_fs_sse = SseRegistry()
+        self._config_fs_watcher: Any = None  # lazy ConfigFsWatcher
+        # Bundled-model downloads run as background jobs and stream progress over
+        # their own per-job SSE hubs (key ``download:<id>``). Held on the state so
+        # the start/stream/cancel handlers share one registry across requests.
+        self._model_downloads: Any = None  # lazy ModelDownloadRegistry
+        self._embedding_reindex: Any = None  # lazy ReindexRegistry
+        # The Electron shell's pushed capability
+        # manifest + its per-session token. Empty (and honestly "not connected")
+        # whenever the gateway is serving a plain browser tab.
+        self.desktop = DesktopRegistry()
+        # Magic re-tag batch job (chat_retag) — one at a time; job retained
+        # after completion so a re-attaching client sees the terminal state.
+        self._retag_job: Any = None  # RetagJob | None
+        self._retag_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._notifications_seen = bounded_log.signature(_notifications_path())
+        self._notification_rows: list[dict[str, Any]] = _load_notifications()
+        self._sessions: dict[str, _ChatSession] = {}
+        self._session_counter = 0
+        self._folders: list[dict[str, Any]] = []  # project folder definitions
+        # Tag vocabulary: list of {id, name, color, order}. User-managed.
+        self._tags: list[dict[str, Any]] = []
+        # Sidebar columns — flat list of {id, name, tag_ids, mode, order, include_untagged}
+        self._tag_boards: list[dict[str, Any]] = []
+        # Each of the three files as this state last read or wrote it, so a write keeps what a
+        # sync or a restore's merge put there since, and a read takes it in (`_save_listed`).
+        self._kept_folders = record_files.Kept()
+        self._kept_tags = record_files.Kept()
+        self._kept_tag_boards = record_files.Kept()
+        self._listed_as_kept: dict[str, list[dict[str, Any]]] = {}  # what a refused write restores
+        self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # Why the gateway is stopping (`restart_request.stopping_for`), or "" while it serves. Set
+        # by `end_running_turns`; a turn that ends after it says it was interrupted.
+        self.stopping_for = ""
+        # YOLO / auto-approve is process-global trust state owned by
+        # personalclaw.trust_mode (single source of truth). The state object
+        # delegates to it and registers a callback to clear per-session approval
+        # policies when YOLO turns off. See enable_yolo / is_yolo_active below.
+        from personalclaw import trust_mode as _trust
+
+        _trust.register_on_disable(self._on_yolo_disabled)
+        self.no_crons: bool = False  # --no-crons flag: cron execution disabled
+        # The gateway's dispatch for an automation's fire, attached at boot: a webhook's fire and
+        # a view's refresh run through it as every fire does (`gateway._fire_store_trigger`).
+        self.fire_trigger: Callable[..., Any] | None = None
+        self._hook_store: Any = None  # Lazy-init ScriptHookStore
+        # Task refine state (background LLM spec generation)
+        self._refine_status: str = "idle"  # idle, running, done, error, cancelled
+        self._refine_text: str = ""
+        self._refine_error: str = ""
+        self._terminal_sessions: dict[str, Any] = {}  # PTY sessions for CLI panel
+        self._terminal_reaper: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._sel_prune_task: asyncio.Task | None = None  # type: ignore[type-arg]
+
+        # Knowledge Library
+        self._knowledge_store: "KnowledgeStore | None" = None  # Lazy-initialized on first access
+        self._refine_input: str = ""
+        self._refine_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._refine_session_key: str = ""
+        self._refine_answer_future: asyncio.Future | None = None  # type: ignore[type-arg]
+        # WebSocket clients (multiplexed real-time connection)
+        self._ws_clients: list[web.WebSocketResponse] = []
+        # Per-connection app identity for untrusted-app scoping: a WS
+        # opened by an app's SDK (owner cookie + ?app_token=) records the app name
+        # here; every send path then delivers only the events the app's manifest
+        # declares (permissions.events), via `_ws_may_receive`. An owner/dashboard
+        # connection is absent from this map and receives the full event stream.
+        self._ws_app: dict[web.WebSocketResponse, str] = {}
+        self._ws_log_subscribers: set[web.WebSocketResponse] = set()
+        self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
+        # The streamed-chunk stamp (`next_stream_seq`): the resume watermark a session
+        # detail reports and every chat_chunk carries. Based at the boot time in
+        # microseconds so it never restarts across a gateway restart (see there).
+        self._stream_seq = time.time_ns() // 1_000
+        # The gateway's event loop, captured when the first WS client registers.
+        # broadcast_ws is invoked from BOTH the loop (chat runner) and off-loop
+        # threads (MCP tool subprocess callbacks, subagent/cron announce paths);
+        # off-loop callers can't asyncio.ensure_future, which silently dropped the
+        # frame. We schedule sends onto this captured loop instead (see _dispatch_ws).
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
+        # Pending tool approvals: id → asyncio.Future[bool]
+        self._pending_approvals: dict[str, dict] = {}
+        self._approval_futures: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
+        # The questions agents are waiting on their owner's answer to.
+        self.owner_questions = OwnerQuestions(self)
+        # A stopped turn's pending approvals and questions are over (`cancel_turn_approvals`), and
+        # so is the work it started (`started_work.end_turn`). The SessionManager owns the stop
+        # verb and cannot import upward to this object, so it is handed the callbacks it needs.
+        # Guarded for a stub SessionManager in a test.
+        if hasattr(sessions, "register_turn_stop_hook"):
+            sessions.register_turn_stop_hook(self.cancel_turn_approvals)
+        if hasattr(sessions, "register_child_stopper"):
+            sessions.register_child_stopper(lambda key: started_work.end_turn(self, key))
+        # The session sweep reaps the runtime of a chat that no longer exists, and asks this
+        # object which chats exist each time it runs — whichever path made the chat.
+        if hasattr(sessions, "register_dashboard_sessions"):
+            sessions.register_dashboard_sessions(self.chat_session_keys)
+        self._flush_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._upload_sweep_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Scheduled-backup service; held to prevent GC.
+        self._durability_svc: object | None = None
+        # Watched-source poll engine; held to prevent GC.
+        self._source_engine: object | None = None
+        # Artifact→knowledge mirror. Held for the same reason
+        # AND one more: it owns the subscription in `artifacts.changes`, so dropping the
+        # reference would leave the listener registered against a collected indexer.
+        self._artifact_indexer: object | None = None
+        # The one-time conversion of watched items stored as markup; held to prevent GC.
+        self._stored_markup_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
+        # Update progress tracking (shared across all connected clients)
+        self._update_progress: dict[str, str] | None = None  # {step, detail}
+        # Ephemeral: session keys with no memory writes at all
+        self._ephemeral_keys: set[str] = set()
+        # Per-project file index registry (shared across sessions)
+        from personalclaw.dashboard.file_index import FileIndexRegistry
+
+        self.file_indexes = FileIndexRegistry()
+        # The last text spoken per session, so a hands-free
+        # transcription can be recognized as the speaker bleeding back into the
+        # microphone. Bounded and in-memory only: this is echo-suppression
+        # scratch, never history, and must not survive a restart.
+        self._last_spoken: dict[str, str] = {}
+
+    # ── the outbound channel seam ────────────────────────────────────────────────────────
+    #
+    # A property pair over `channel_delivery`'s per-provider registry, so this state and the
+    # gateway orchestrator resolve ONE set of handles instead of holding two slots that drifted.
+    #
+    # The SETTER is what keeps the shipped channel apps working unchanged: every transport does
+    # `services.dashboard_state.channel_delivery = delivery` (alongside its
+    # `register_channel_delivery` call), so that assignment is now a registration keyed by the
+    # handle's own provider rather than an overwrite of a shared slot. Assigning None clears
+    # every handle, which is what it always meant here.
+
+    @property
+    def channel_delivery(self) -> Any:
+        """A connected channel that can reach the owner, or None.
+
+        Deliberately the OWNER-REACHABLE pick, matching what the readers of this attribute ask:
+        "is any channel connected, and can it take a DM / list its reply targets". A REPLY to an
+        incoming message must not resolve here — it carries the origin channel's id and is
+        answerable by exactly one provider, which is :meth:`delivery_for`. That distinction is
+        the whole of #959: this attribute returning "whatever registered last" is how a Discord
+        answer was handed to Telegram with a Discord channel id.
+        """
+        from personalclaw.channel_delivery import owner_reachable
+
+        return owner_reachable()
+
+    @channel_delivery.setter
+    def channel_delivery(self, delivery: Any) -> None:
+        from personalclaw.channel_delivery import register
+
+        register(delivery)
+
+    def delivery_for(self, provider: str) -> Any:
+        """The handle for one provider, or None when that channel is not connected.
+
+        The resolver for a reply: None means DO NOT SEND. Falling back to another provider is
+        not a degraded delivery, it is a message posted to the wrong place.
+        """
+        from personalclaw.channel_delivery import delivery_for
+
+        return delivery_for(provider)
+
+    def channel_provider_for(self, session_key: str) -> str:
+        """The channel a chat continues on, or "" for a chat on no channel thread.
+
+        The channel its link names (:func:`~personalclaw.dashboard.channel_links.chat_channel`),
+        read where links are kept: the inbound door links every chat it opens to the thread its
+        message came on, and a handoff or a link from the dashboard, or a channel app's import or
+        resume, links a chat to the thread it opened (:meth:`link_channel`). Its answers, its
+        notices and its approval prompts go there, so a chat moved to another channel answers on
+        that one, before a restart and after it. It used to be the chat's origin tag, where it
+        came from, which a handoff set only for a chat that had none: a chat from Telegram
+        continued in a Slack thread kept answering on Telegram.
+
+        Takes either key a caller holds: the chat's name, which ``_sessions`` is keyed by, or its
+        history key (``dashboard:<name>``), which is what a turn carries. The mirror in
+        ``chat_runner`` asks with the history key, and reading it as a name is how every answer
+        to a channel message stayed in the dashboard.
+        """
+        return channel_links.chat_channel(self, session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
+
+    _LAST_SPOKEN_MAX_SESSIONS = 32
+    _LAST_SPOKEN_MAX_CHARS = 4000
+
+    def record_spoken(self, session_key: str, text: str) -> None:
+        """Remember what was just synthesized for ``session_key`` (latest wins)."""
+
+        key = str(session_key or "")
+        if not isinstance(text, str) or not text.strip():
+            return
+        self._last_spoken.pop(key, None)
+        self._last_spoken[key] = text[-self._LAST_SPOKEN_MAX_CHARS :]
+        while len(self._last_spoken) > self._LAST_SPOKEN_MAX_SESSIONS:
+            # dicts preserve insertion order — drop the least recently spoken.
+            self._last_spoken.pop(next(iter(self._last_spoken)))
+
+    def last_spoken(self, session_key: str) -> str:
+        """The last text synthesized for ``session_key``, or ``""``."""
+
+        return self._last_spoken.get(str(session_key or ""), "")
+
+    def wire_session_restart_callback(self) -> None:
+        """Register the one notice the session manager raises when it restarts a session at the
+        context threshold, with its reason: said in the session's dashboard chat when it is one,
+        and on the channel thread it is linked to (:meth:`tell_linked_channel`), whoever runs
+        its turns."""
+
+        async def _on_restarted(session_key: str, pct: float, reason: str) -> None:
+            message = _RESTART_NOTICE.format(pct=pct, reason=reason)
+            if session_key.startswith(DASHBOARD_SESSION_PREFIX):
+                self._say_restarted(session_key.removeprefix(DASHBOARD_SESSION_PREFIX), message)
+            await self.tell_linked_channel(session_key, message)
+
+        self.sessions.set_restart_callback(_on_restarted)
+
+    def _say_restarted(self, session_name: str, message: str) -> None:
+        """The restart notice in a dashboard chat, and its context gauge cleared."""
+        session = self.get_session(session_name)
+        if session is None:
+            return
+        try:
+            session.append("assistant", message, "msg msg-a")
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to append the restart notice to session %s", session_name
+            )
+        try:
+            # ``None``, not 0.0: the restarted session holds less than the old one did, but
+            # nothing has measured it yet, so the honest chip is absent rather than "0%".
+            self.say_context_usage(session, None)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to broadcast context_usage for session %s", session_name
+            )
+
+    def say_context_usage(
+        self, session: _ChatSession, pct: float | None, *, window: "Window | None" = None
+    ) -> None:
+        """Tell a chat's context ring how full its context is, and keep it for session detail.
+
+        *pct* is the provider's own measurement — the number the session manager acts on —
+        or ``None`` when it has measured nothing. *window* is the turn's resolved
+        ``context_headroom.Window``; its ``tokens`` go out as the frame's ``window``, ``None``
+        when nothing declared or served one, which is the one state in which the ring sends the
+        user to declare it. Omitted, the window last said stands: a restart at the threshold
+        clears the reading, not the window the model is served with.
+        """
+        usage = dict(session.context_usage or {})
+        usage["pct"] = None if pct is None else round(pct, 1)
+        if window is not None:
+            usage["window"] = window.tokens
+        session.context_usage = usage
+        self.broadcast_ws("context_usage", {"session": session.key, **usage})
+
+    def say_run_state(self, session: _ChatSession) -> None:
+        """Something a chat's run state carries beside its phase changed (a message joined its
+        queue): said to every page of the chat when it did (``chat_phase``)."""
+        chat_phase.restate(self, session)
+
+    def say_waiting(self, session_key: str) -> None:
+        """An approval or a question naming the chat *session_key* was raised or ended: while its
+        turn runs, its phase is what it waits on (``chat_phase``)."""
+        chat_phase.waiting_changed(self, session_key)
+
+    def say_helpers(self, session_key: str, count: int) -> None:
+        """*count* helpers work for the chat *session_key* now: while its turn runs, it is handing
+        off to them (``chat_phase``)."""
+        chat_phase.helpers_at_work(self, session_key, count)
+
+    async def tell_linked_channel(self, session_key: str, text: str) -> bool:
+        """Say *text* on the channel thread a conversation is linked to, where its replies go.
+
+        For a notice PersonalClaw adds to a conversation, not the agent's answer: a compaction's
+        outcome, a restart at the context threshold. A chat is told on the channel its link names
+        (:meth:`channel_provider_for`, the rule its replies follow), and a channel's
+        own thread, which is no chat here (a Slack thread its app runs), on the channel that issued
+        the thread's id (``channel_delivery.channel_of_id``), never on one that merely happens to
+        be connected. With no linked thread, or that channel not connected, nothing is sent. The
+        handle masks the text. Returns whether it went out; a notice that cannot go out is logged
+        and fails nothing else.
+        """
+        from personalclaw.channel_delivery import channel_of_id
+
+        try:
+            thread_ts, channel_id = self.sessions.get_channel_link(session_key)
+            if not channel_id:
+                return False
+            if session_key.startswith(DASHBOARD_SESSION_PREFIX):
+                provider = self.channel_provider_for(session_key)
+            else:
+                provider, problem = channel_of_id(channel_id)
+                if problem:
+                    logger.info("not telling %s's channel: %s", session_key, problem)
+            delivery = self.delivery_for(provider)
+            if delivery is None:
+                return False
+            await delivery.deliver_text(channel_id, text, thread_ts or "")
+            return True
+        except Exception:  # noqa: BLE001 - see the docstring: a notice fails nothing else
+            logger.warning("could not tell the channel of %s", session_key, exc_info=True)
+            return False
+
+    def trigger_counts(self) -> dict[str, int]:
+        """`{total, enabled, broken}` across the unified store.
+
+        One helper, because TWO status surfaces were counting automations off the legacy service and
+        both went blind at the store cutover — `GET /api/status`'s `cron` block and the
+        `cron_jobs` metric the dashboard's SystemHealth widget renders as "triggers". Measured
+        against a home with three valid store triggers (two enabled): both reported 0.
+
+        The legacy service is folded in by id so a home mid-migration counts each automation once.
+        Never raises: a status surface that 500s because a store row is malformed is worse than one
+        reporting zeros, and `broken` is what makes a malformed row visible anyway.
+        """
+        from personalclaw.triggers import schedule_view as SV
+        from personalclaw.triggers.store import TriggerStore
+
+        try:
+            # No `legacy=` fold-in any more. Proven redundant: the boot migration
+            # imports EVERY legacy row — including the ones the conversion refuses, written disabled
+            # — so `counts(store)` and `counts(store, legacy=svc)` returned identical results.
+            return SV.counts(TriggerStore(base_dir=config_dir()))
+        except Exception:  # noqa: BLE001 - status must render even with an unusable store
+            logger.debug("trigger counts unavailable", exc_info=True)
+            return {"total": 0, "enabled": 0, "broken": 0}
+
+    def _lessons_count(self) -> int:
+        """Count of lessons in memory.db ``lesson.*`` (the sole lesson store).
+
+        Reads through the memory service over the context builder's store; returns
+        0 when no store is wired (e.g. a bare test state)."""
+        cb = self.context_builder
+        if cb is None:
+            return 0
+        try:
+            from typing import cast
+
+            from personalclaw.memory_providers.base import MemoryProvider
+            from personalclaw.memory_service import service_for
+
+            # A markdown MemoryStore is accepted at runtime (service_for duck-types
+            # its markdown/FTS surface); the cast satisfies the strict annotation.
+            return len(service_for(cast("MemoryProvider", cb.memory)).get_lessons())
+        except Exception:
+            return 0
+
+    def status_snapshot(self, *, update_available: bool = False) -> dict[str, Any]:
+        """Core status fields served by GET /api/status."""
+        uptime = int(time.time() - self.start_time)
+        return {
+            "uptime": _fmt_duration(uptime),
+            "start_time": self.start_time,
+            "sessions": self.sessions.count,
+            # NB: the dashboard's "triggers" rail is NOT sourced here. `cron_jobs` used to be —
+            # `trigger_counts()["total"]`, the schedule STORE's count — but that under-counted the
+            # rail's own label: the Triggers page counts lifecycle hooks too (issue 773). The rail
+            # now reads `triggers` (the unified count), assembled by `api_status` via
+            # `handlers.triggers.unified_trigger_count`. The schedule-store count still ships as the
+            # richer `cron` block (`trigger_counts()`); a flat `cron_jobs` mirror of `cron["total"]`
+            # with no remaining reader is dropped.
+            "lessons": self._lessons_count(),
+            "subagents": self.subagents.count if self.subagents else 0,
+            "update_available": update_available,
+            "no_crons": self.no_crons,
+        }
+
+    def active_work_snapshot(self) -> dict[str, int]:
+        """Count in-flight work a restart/apply would interrupt: the background subagents it
+        cuts off (``subagent_waiting.cut_off``) + live chat sessions.
+
+        The ONE place "is it safe to restart/apply now?" is answered — reused by the
+        manual-restart confirm gate (``/api/system/restart?probe=1``) and the staged
+        auto-update gate (``gateway._work_in_flight``) so the two never diverge.
+        Lives on ``DashboardState`` (not the HTTP handler) because it reads only this
+        object's own ``subagents``/``sessions``, and the gateway must consult it without
+        importing the dashboard's HTTP surface.
+        """
+        running_agents = 0
+        subs = getattr(self, "subagents", None)
+        if subs is not None:
+            try:
+                from personalclaw.subagent_waiting import cut_off
+
+                running_agents = cut_off(subs.all_agents)
+            except Exception:
+                running_agents = 0
+        try:
+            sessions = len(self.sessions._sessions)
+        except Exception:
+            sessions = 0
+        return {"running_agents": running_agents, "sessions": sessions}
+
+    async def end_running_turns(self, *, timeout: float) -> int:
+        """End every chat turn still running because the gateway is stopping; how many there were.
+
+        The gateway's last save of the chats comes after this, so what each turn says as it ends
+        is in the transcript the next start reads: the answer as far as it got, and the notice that
+        the gateway restarted (or shut down) before it finished, where the owner reads it and on
+        the channel the chat is linked to (`chat_runner.say_how_an_unanswered_turn_ended`). Ended
+        in any other order, a turn cut off by a restart left its question unanswered with nothing
+        saying why, and the live page said it had stopped, as if the owner had pressed Stop.
+
+        A turn that has not ended within *timeout* is left to the rest of the shutdown.
+        """
+        self.stopping_for = restart_request.stopping_for()
+        tasks = [
+            s.task
+            for s in list(self._sessions.values())
+            if s.task is not None and not s.task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if not tasks:
+            return 0
+        _done, pending = await asyncio.wait(tasks, timeout=timeout)
+        if pending:
+            self._log.warning(
+                "%d of %d chat turn(s) had not ended %.0fs after the gateway began to stop",
+                len(pending),
+                len(tasks),
+                timeout,
+            )
+        return len(tasks)
+
+    _FLUSH_INTERVAL = 5  # seconds between dirty-session flushes
+
+    _log = logging.getLogger(__name__)
+
+    @property
+    def knowledge_store(self):  # type: ignore[override]
+        """Lazy-init KnowledgeStore on first access."""
+        if self._knowledge_store is None:
+            db_dir = os.path.join(str(config_dir()), "workspace", "knowledge")
+            os.makedirs(db_dir, exist_ok=True)
+            self._knowledge_store = KnowledgeStore(os.path.join(db_dir, "knowledge.db"))
+        return self._knowledge_store
+
+    _YOLO_TTL = trust_mode.YOLO_DASHBOARD_TTL_SECS  # 6h dashboard ceiling
+
+    def enable_yolo(self, *, from_config: bool = False) -> None:
+        """Enable YOLO mode — auto-approve all tools globally.
+
+        Delegates to the canonical :mod:`personalclaw.trust_mode`. When
+        *from_config* is True the mode is permanent (no TTL) and cannot be
+        downgraded by the dashboard toggle.
+        """
+        trust_mode.enable_yolo(ttl_secs=self._YOLO_TTL, from_config=from_config)
+
+    def disable_yolo(self) -> None:
+        """Turn off YOLO mode. Per-session trust is untouched."""
+        trust_mode.disable_yolo()
+
+    def _on_yolo_disabled(self, reason: str) -> None:
+        """trust_mode callback: audit + hand each chat's runtime the policy its posture answers
+        now (``push_chat_policy``).
+
+        Fires whenever YOLO turns off (manual toggle, TTL expiry, or config-driven YOLO taken out
+        of the config) so a lapsed override no longer leaves auto-approve policies on untrusted
+        sessions.
+        """
+        if reason in ("expired", "config"):
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="dashboard:yolo_ttl" if reason == "expired" else "dashboard:config",
+                    operation=(
+                        "mode_change:yolo_expired"
+                        if reason == "expired"
+                        else "mode_change:yolo_config_removed"
+                    ),
+                    outcome="disabled",
+                    resources=",".join(s.key for s in self._sessions.values()),
+                )
+            except Exception:
+                self._log.warning("SEL audit failed for YOLO %s", reason, exc_info=True)
+        for session in self._sessions.values():
+            self.push_chat_policy(session)
+
+    def is_yolo_active(self) -> bool:
+        """Return whether YOLO mode is currently active, auto-expiring after TTL."""
+        return trust_mode.is_yolo_active()
+
+    def yolo_remaining_secs(self) -> float | None:
+        """Seconds until YOLO auto-expires, or None if inactive/permanent.
+
+        Surfaced in status so the UI can warn the user the override is about to
+        lapse (and that it will require re-authorization). Config-driven YOLO is
+        permanent → None.
+        """
+        return trust_mode.yolo_remaining_secs()
+
+    def start_flush_loop(self) -> None:
+        """Start background loop that flushes dirty sessions to disk every 5s."""
+        if self._flush_task is None:
+            self._flush_task = asyncio.ensure_future(self._flush_loop())
+
+    async def _flush_loop(self) -> None:
+        """Periodically save dirty sessions so a crash loses at most 5s of chat."""
+        from personalclaw import shutdown_event
+
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=self._FLUSH_INTERVAL)
+                return
+            except asyncio.TimeoutError:
+                pass
+            await asyncio.get_running_loop().run_in_executor(None, self._flush_dirty_sessions)
+
+    def _flush_dirty_sessions(self) -> None:
+        """Write any DIRTY session to its JSONL file — messages or metadata.
+
+        The message-count half of this guard (``or not session.messages``) is gone (#2969).
+        ``_dirty`` already means "something changed"; the colour and reply-style handlers
+        set only that and nothing else, so on a conversation with no turns yet their writes
+        were accepted `200 {"ok": true}` and then dropped. Whether the change was a turn or
+        a piece of metadata is ``save_session_to_history``'s question, not this loop's — and
+        it answers it, refusing to write an empty buffer over a persisted transcript and
+        refusing to mint a file for a pristine tab.
+        """
+        if not self.conversation_log:
+            return
+        from personalclaw.dashboard.chat import save_session_to_history
+
+        for session in list(self._sessions.values()):
+            if not session._dirty:
+                continue
+            try:
+                save_session_to_history(self, session)
+                session._dirty = False
+            except Exception:
+                logger.warning("Flush failed for session %s", session.key, exc_info=True)
+
+    #: Note fields the PLATFORM decides, which caller-supplied `meta` may not set (issue 423).
+    #:
+    #: Only the ones the authority-last assignment in `notify` cannot cover on its own:
+    #:
+    #: * `mode`, `targets`, `source`, `escalated_by`, `badge_only`, `native` — written further down
+    #:   under a condition, so a note that took a different branch would leave a caller's value in
+    #:   place. `source` in particular names the surface a consumer deep-links to, and the comment
+    #:   at its assignment explains why the RULE owns it rather than the emitter.
+    #: * `acked` — `notify` never writes it; the ack path (`handlers/messaging.py`) does. A note
+    #:   that arrives already acknowledged is one the user never sees.
+    #:
+    #: `kind`/`title`/`body`/`ts` are deliberately NOT listed: they are assigned unconditionally
+    #: after the merge, which protects them structurally and keeps this set from having to grow in
+    #: step with the happy path.
+    #:
+    #: `withheld_reason`/`routed_to` are the addressing VERDICT — this method's
+    #: conclusion about a note, computed from the addressee below, not an input. They ride out
+    #: on the note through `GET /api/notifications`, so an emitter that could supply them could
+    #: label its own note "already routed to Dana" while it was in fact fired at the local
+    #: owner. The `addressee` ITSELF is deliberately NOT reserved: naming who a notification is
+    #: for is the emitter's job (see `inbox.emit_attention_item`).
+    #:
+    #: `raised_by_app` is WHICH APP raised the note, named by the producer that raises it for the
+    #: app (`notify(raised_by_app=...)`). It is what lets an app read the note back
+    #: (`notification_reaches`), so meta that could supply it could hand any note to any app.
+    #:
+    #: `trust_answer` is the owner's Allow or Deny on an unknown-sender note
+    #: (`answer_unknown_sender`): a note raised already answered would show no buttons, and the
+    #: stranger it names would be neither let in nor refused.
+    #:
+    #: `kind_label` is the registry's name for the note's kind, set only when the kind is
+    #: registered: a note could otherwise call itself "Approval needed".
+    _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
+        {
+            "kind_label",
+            "mode",
+            "targets",
+            "source",
+            "escalated_by",
+            "badge_only",
+            "native",
+            "acked",
+            "withheld_reason",
+            "routed_to",
+            "raised_by_app",
+            "trust_answer",
+        }
+    )
+
+    def notify(
+        self,
+        kind: str,
+        title: str,
+        body: str,
+        *,
+        meta: dict | None = None,
+        raised_by_app: str = "",
+    ) -> None:
+        """Push a notification to ALL connected SSE clients and persist to disk.
+
+        THE single delivery choke point for every emitter (crons, loops, hooks, inbox
+        alerts, heartbeats, app actions). Three layers of policy, in this order:
+
+        1. **The global gate** (`notification_posture`) — mute-all, minimum severity,
+           quiet hours. Still outermost: mute means mute, whatever a rule says, and a dropped
+           notification is dropped entirely, not logged unread. Quiet hours are "not now", not
+           "not at all": they stop a PING, and the rule below decides what that leaves. A note
+           whose rule already delivers quietly (the digest, a badge) is delivered as it says; a
+           ping of a kind somebody must answer (`quiet`), or one the user's own condition raised,
+           is recorded as a `badge` — a loop that needed an answer overnight has to leave a trace
+           (#341); any other ping (`hush`) is suppressed.
+        2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
+           immediate / digest, plus conditions that escalate a quieter mode when the text
+           matches a keyword or names the operator.
+        3. **The addressee** (`notification_addressing`) — WHO the note is for.
+           The first two layers answer "should this be delivered" and "how loudly"; neither
+           could answer "to whom", so every note went to *this* dashboard by construction.
+           A note addressed to somebody else is recorded here and fired nowhere here, and is
+           offered to a `type=notification` delivery provider that says it can reach them.
+
+        The three are ordered by whose instruction they carry: the user's own settings, then
+        the user's own rules, then the note's own attribution. The addressee sits *inside*
+        the rules layer (after `never`, before the delivery modes) because `digest` and
+        `badge` are local deliveries too — a foreign note in the morning digest is a foreign
+        note fired, one day late.
+
+        With no rules file and no addressee, each kind is delivered by its registered default,
+        to this owner: only a decision (an approval, a question) or an error interrupts, and the
+        rest arrive quietly, nearly all as a ``badge`` listed and counted in the bell
+        (`notification_kinds`). `test_notification_rules.py` pins the default and
+        `test_notification_addressing.py` the owner.
+
+        ``raised_by_app`` names the app a note is raised for (an app's proposal). Besides a note
+        about a conversation it started, it is the one note an app may read
+        (:meth:`notification_reaches`).
+        """
+        from personalclaw import notification_addressing as addressing
+        from personalclaw import notification_kinds
+        from personalclaw import notification_rules as rules
+        from personalclaw.providers import entity_routes
+
+        posture = entity_routes.POSTURE_DELIVER
+        try:
+            posture = entity_routes.notification_posture(kind)
+        except Exception:  # never let the prefs gate break delivery
+            logger.debug("notification_posture failed; delivering", exc_info=True)
+            posture = entity_routes.POSTURE_DELIVER
+        if posture == entity_routes.POSTURE_DROP:
+            logger.debug("Notification suppressed by settings: %s %r", kind, title)
+            return
+
+        # 🔴 THE NOTE OWNS ITS OWN FIELDS (issue 423). This was `note = {kind, title, body, ts}`
+        # followed by `note.update(meta)`, so caller-supplied meta merged OVER the four fields the
+        # platform had just decided. `kind` is the worst of them: `notification_allowed(kind)` above
+        # has already been evaluated on the PARAMETER, so an emitter could pass a gate as one kind
+        # and be persisted, broadcast and rule-matched as another. `acked` is next: the ack path
+        # (`handlers/messaging.py`) owns it, and a note carrying `acked: True` on arrival is one the
+        # user never sees.
+        #
+        # This matters because `notify` is the choke point for EVERY emitter — its own docstring
+        # lists "crons, loops, hooks, inbox alerts, heartbeats, app actions" — and an app bundle is
+        # third-party code. Meta is the one part of a note a caller controls.
+        #
+        # Meta goes in FIRST and the platform's fields are assigned after, so authority is
+        # structural rather than a list someone has to remember to extend: a field this method
+        # starts setting later is protected by the assignment itself. `_RESERVED_NOTE_KEYS` covers
+        # only what that cannot reach — the fields set further down under a condition, and `acked`,
+        # which `notify` never writes at all. That is the allowlist direction for input
+        # validation: only data fitting specific, approved criteria is processed.
+        supplied = dict(meta or {})
+        smuggled = sorted(set(supplied) & self._RESERVED_NOTE_KEYS)
+        if smuggled:
+            # Logged, not silent: a reserved key in meta is an emitter bug, and dropping it without
+            # a word is how the emitter's author never learns their field vanished.
+            logger.debug(
+                "notify(%s): ignoring platform-owned key(s) %s supplied in meta", kind, smuggled
+            )
+        note: dict[str, Any] = {
+            k: v for k, v in supplied.items() if k not in self._RESERVED_NOTE_KEYS
+        }
+        note.update(
+            {
+                "kind": kind,
+                "title": title,
+                "body": body,
+                "ts": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+        # Which app raised it, named by the producer that raises a note for an app (its proposal,
+        # through `inbox.emit_attention_item`). What an app raised is what it may read back, and
+        # everything else that reaches you is yours (`notification_reaches`). Never read off the
+        # request: an app's request scope is copied into every task the request starts, so a
+        # platform worker one of its requests happened to start would raise your notes as the
+        # app's, and the app would read them.
+        if raised_by_app:
+            note["raised_by_app"] = raised_by_app
+        # What the kind is called, in its registration's words, for every surface that shows the
+        # note: the Notifications page names kinds from a map of its own, which has no row for a
+        # kind an app registered, and a note outlives the app that raised it.
+        kind_label = notification_kinds.label_for_wire(kind)
+        if kind_label:
+            note["kind_label"] = kind_label
+
+        # The rule layer's decision (`notification_rules.rule_outcome`): your rule, raised by your
+        # conditions, and what quiet hours make of a ping. One function, because a surface that
+        # says what becomes of a notice (the triage card) reads the same answer this delivers by.
+        outcome = rules.rule_outcome(kind, f"{title}\n{body}", posture=posture)
+        rule = outcome.rule
+        if outcome.escalated_by:
+            note["escalated_by"] = outcome.escalated_by
+        if outcome.mode == rules.SUPPRESSED:
+            logger.debug("Notification suppressed by quiet hours: %s %r", kind, title)
+            return
+        mode = outcome.mode
+        note["mode"] = mode
+        if rule is not None:
+            note["targets"] = list(rule.targets)
+            # The rule key's source, not a prefix of `kind`. Legacy flat wire strings do
+            # not carry it (`app.route.drift` resolves to source `system`), so a consumer
+            # that split the kind would deep-link the wrong surface.
+            note["source"] = rule.source
+
+        if mode == "never":
+            logger.debug("Notification dropped by rule %s: %r", rule.key if rule else kind, title)
+            return
+
+        # 🔴 THE ADDRESSEE. Everything below this point is a LOCAL fire — a toast on
+        # this dashboard, a row in this digest, a ping to this owner's phone, a banner on this
+        # desktop. A note addressed to somebody else has no business in any of them, and before
+        # this it reached all four: the shared inbox renders a teammate's item, and when
+        # that item wanted attention `emit_attention_item` fired at whoever happened to be
+        # sitting here.
+        #
+        # Placed after `never` and before the three delivery modes deliberately. `never` is the
+        # user's own instruction and outranks everything, as it already did. The modes below are
+        # all *local* deliveries — including `digest`, which is why the addressing decision
+        # cannot live inside the `immediate` branch: a foreign note queued for the morning
+        # digest is a foreign note fired, one day late.
+        #
+        # This is the trigger posture, not a second mechanism: `triggers/ownership.py` withholds
+        # a foreign row from the ARM read (`triggers/provider.py::armable`) while the LISTING
+        # read keeps it visible. Here the notification log is the listing — `_append_notification`
+        # still runs, so the note appears in the bell and `GET /api/notifications` — and the fire
+        # half (`_broadcast`, `native`, `push`, the digest) is what the addressee gates.
+        if not addressing.is_locally_addressed(note):
+            # Route it where it actually belongs FIRST, so `routed_to` is recorded on the row
+            # the user sees. With no `type=notification` provider installed this returns "" and
+            # the note is simply visible-but-inert — "nobody could reach them" must never read
+            # as "delivered".
+            from personalclaw.notification_providers.registry import deliver_to_addressee
+
+            addressee = addressing.addressee_of(note)
+            note[addressing.WITHHELD_REASON_KEY] = addressing.FOREIGN_ADDRESSEE
+            note[addressing.ROUTED_TO_KEY] = deliver_to_addressee(note, addressee)
+            logger.debug(
+                "Notification addressed to %r, not this owner — visible, not fired (routed_to=%r)",
+                addressee,
+                note[addressing.ROUTED_TO_KEY],
+            )
+            self._append_notification(note)
+            self._announce_logged(note)
+            return
+
+        if mode == "digest":
+            rules.queue_for_digest(note)
+            return
+        if mode == "badge":
+            # Persist and count, but do not push a toast: the badge is the delivery.
+            note["badge_only"] = True
+            self._append_notification(note)
+            self._announce_logged(note)
+            return
+
+        # The `native` target. Decided HERE, on the one delivery choke point, and
+        # only for `immediate` — the three quieter modes returned above, which is what makes
+        # "badge means no interruption" survive a rule that also names `native`.
+        #
+        # The gateway cannot raise an OS notification itself: it is an HTTP server that may
+        # equally be serving a browser tab. So the decision rides the note out over the WS
+        # and the Electron renderer hands it to the main process (`desktop/
+        # nativeNotifications.js`). A note with no `native` key reaches a shell that will not
+        # raise anything, so an unrelated rule cannot leak an OS notification.
+        #
+        # Fail OPEN, like every other layer in this method: a registry read that raises
+        # degrades to the dashboard delivery below (which is the documented fallback anyway)
+        # rather than dropping the note. A native banner is the nice-to-have here; the note
+        # reaching the bell is not.
+        try:
+            native = rules.native_delivery(rule, self.desktop.capability(rules.NATIVE_CAPABILITY))
+        except Exception:
+            logger.debug("native delivery decision failed; dashboard only", exc_info=True)
+            native = None
+        if native is not None:
+            note["native"] = native
+
+        self._append_notification(note)
+        self._broadcast(note)
+        # The `push` delivery target, live. Deliberately after the
+        # dashboard broadcast and outside its try: the desktop delivery is the one that must
+        # never wait on (or be broken by) a third-party push service. `deliver_async` hands
+        # the blocking POST to a daemon thread and swallows its own failures.
+        if rule is not None and "push" in rule.targets:
+            self._push_target(kind, note)
+        # The `channel_dm` target: the note, in the owner's DM on the first connected channel
+        # that reaches them. A note a channel route already sent there (a schedule's Notify
+        # channel marks it `sent_to_channel`) is not sent twice.
+        if rule is not None and "channel_dm" in rule.targets and not note.get("sent_to_channel"):
+            self._channel_dm_target(note)
+
+    def _channel_dm_target(self, note: dict[str, Any]) -> None:
+        """Send *note* to the owner's DM on the first channel that reaches them.
+
+        A task on the gateway's loop, after the dashboard delivery above, so a slow or failing
+        channel never holds up the bell. When no channel can take it, the log says why; the note
+        is already in the bell and the Inbox, so nothing is lost.
+        """
+        from personalclaw.dashboard.channel_messages import channel_dm_text, send_to_owner
+
+        text = channel_dm_text(note)
+        if not text:
+            return
+
+        async def _send() -> None:
+            outcome = await send_to_owner(note, text)
+            if not outcome.delivered and not outcome.no_channel:
+                self._log.warning(
+                    "channel DM for %r reached nobody: %s", note.get("title"), outcome.sentence()
+                )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._log.debug("channel DM for %r: no event loop in this thread", note.get("title"))
+            return
+        task = loop.create_task(_send())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _announce_logged(self, note: dict[str, Any]) -> None:
+        """Tell the bell a note was recorded WITHOUT being fired (a badge, a foreign addressee).
+
+        Its own frame, not ``notification``: the toasts and the desktop banner act on that one,
+        and a badge is the promise that nothing interrupts. The bell, Home and the feed re-read
+        on any ``notification*`` frame and poll only as a safety net, so a note that sent
+        nothing reached the bell a poll later, and a captured note sat uncounted beside the
+        Inbox row it was about.
+        """
+        try:
+            self.broadcast_ws("notification_logged", {"ts": note.get("ts", "")})
+        except Exception:
+            logger.debug("notification_logged broadcast failed", exc_info=True)
+
+    #: Meta keys that can name the item a notification is about, most specific first. The
+    #: push payload carries the id and NOTHING else, so the phone can open the right thing
+    #: without the ping having described it.
+    _PUSH_ITEM_KEYS: tuple[str, ...] = ("item_id", "inbox_item", "session")
+
+    def _push_target(self, kind: str, note: dict[str, Any]) -> None:
+        """Fire one content-free ping for *note*. **Only ids cross this boundary.**
+
+        The payload is built from ``kind`` plus a single id looked up in the note's meta —
+        never from ``title`` or ``body``, which are the fields carrying the user's own text.
+        That is why this reads specific keys instead of forwarding ``note``: a
+        forward-the-dict shape is one careless edit away from shipping the message body to a
+        push service, and :func:`personalclaw.push.content_free_payload` is the only
+        constructor that can build what the sender accepts.
+        """
+        try:
+            from personalclaw import push
+
+            item_id = ""
+            for key in self._PUSH_ITEM_KEYS:
+                candidate = str(note.get(key) or "").strip()
+                if candidate:
+                    item_id = candidate
+                    break
+            push.deliver_async(kind, item_id)
+        except Exception:
+            self._log.debug("push target dispatch failed", exc_info=True)
+
+    def unread_count(self) -> int:
+        """How many things are actually waiting on you — derived, never cached.
+
+        **This now counts unresolved INBOX items, not unacked notification-log entries**.
+        The two stores had diverged into two answers to one question: the
+        log tracked "did a toast get acknowledged", the inbox tracks "is this dealt with".
+        A user who handled a request in the inbox still saw a badge, and dismissing a toast
+        cleared the badge for work that was still outstanding. Inbox status is the honest
+        answer, so the log becomes a pure delivery audit.
+
+        Counts PENDING only, not SEEN: the badge means "new since you last looked", and
+        opening an item marks it SEEN. Counting SEEN would leave the badge lit until every
+        item was resolved, which is what the *list* is for.
+
+        Fails to 0 rather than raising — a badge is chrome, and a broken read must not take
+        down every consumer of the sessions payload.
+        """
+        try:
+            from personalclaw.inbox import InboxStore, ItemStatus
+
+            store = getattr(self, "_inbox_store", None)
+            svc = getattr(self, "_inbox_svc", None)
+            if svc is not None:
+                store = svc.inbox
+            elif store is None:
+                store = InboxStore()
+                store.load()
+                self._inbox_store = store
+            return sum(1 for i in store.items.values() if i.status == ItemStatus.PENDING)
+        except Exception:
+            logger.debug("unread_count from inbox failed", exc_info=True)
+            return 0
+
+    def loop_sse(self) -> SseRegistry:
+        """The per-loop SSE registry (key ``loop:<id>``) — serves every kind, incl. code."""
+        return self._loop_sse
+
+    def workflow_sse(self) -> SseRegistry:
+        """The per-run workflow SSE registry (key ``workflow:<run_id>``)."""
+        return self._workflow_sse
+
+    def knowledge_ingest_sse(self) -> SseRegistry:
+        """Per-item knowledge ingestion SSE registry (key ``knowledge:ingest:<id>``)."""
+        return self._knowledge_ingest_sse
+
+    def config_fs_sse(self) -> SseRegistry:
+        """Config-tree FS-watch SSE registry (key ``fs:config``)."""
+        return self._config_fs_sse
+
+    def config_fs_watcher(self):
+        """Lazy-init the config-tree FS watcher. Publishes file ``changed``
+        events to ``config_fs_sse`` so the UI live-refreshes on out-of-band edits."""
+        if self._config_fs_watcher is None:
+            from personalclaw.fs_watch import ConfigFsWatcher, default_config_roots
+
+            self._config_fs_watcher = ConfigFsWatcher(
+                default_config_roots(),
+                publish=self._config_fs_sse.publish,
+            )
+            try:
+                self._config_fs_watcher.start()
+            except RuntimeError:
+                pass  # no loop yet; the gateway starts it on serve
+        return self._config_fs_watcher
+
+    def knowledge_ingest_queue(self):
+        """Lazy-init the knowledge ingestion queue (node-graph engine).
+
+        Reuses the per-resource SSE substrate for progress. Started on first access;
+        both the native provider (on create) and external sync enqueue into it."""
+        if self._knowledge_ingest_queue is None:
+            from personalclaw.knowledge.ingest_queue import KnowledgeIngestQueue
+
+            self._knowledge_ingest_queue = KnowledgeIngestQueue(
+                self.knowledge_store,
+                embedder_factory=_knowledge_embedder_factory,
+                insights_pool=None,  # set by the gateway when an LLM pool exists
+                sse_registry=self._knowledge_ingest_sse,
+            )
+            try:
+                self._knowledge_ingest_queue.start()
+            except RuntimeError:
+                # No running loop yet (e.g. accessed at import/test time) — the
+                # gateway re-starts it on serve; enqueue still buffers.
+                pass
+        return self._knowledge_ingest_queue
+
+    def knowledge_provider(self):
+        """Lazy-init the native knowledge provider (typed create per native type + enqueue)."""
+        if self._knowledge_provider is None:
+            from personalclaw.knowledge_providers.native import create_native_provider
+            from personalclaw.knowledge_providers.registry import register_provider
+
+            queue = self.knowledge_ingest_queue()
+            self._knowledge_provider = create_native_provider(
+                self.knowledge_store,
+                enqueue=queue.enqueue,
+            )
+            register_provider(self._knowledge_provider)
+        return self._knowledge_provider
+
+    def model_downloads(self) -> Any:
+        """The bundled-model download job registry (lazy, per-process singleton)."""
+        if self._model_downloads is None:
+            from personalclaw.dashboard.model_downloads import ModelDownloadRegistry
+
+            self._model_downloads = ModelDownloadRegistry()
+        return self._model_downloads
+
+    def embedding_reindex(self) -> Any:
+        """The embedding re-index job registry (lazy, per-process singleton)."""
+        if self._embedding_reindex is None:
+            from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+            self._embedding_reindex = ReindexRegistry()
+        return self._embedding_reindex
+
+    def delete_notification(self, ts: str) -> bool:
+        """Remove a single notification by timestamp and persist to disk.
+
+        Announced BEFORE the note leaves the log: an app's socket is told of a removal only when
+        the note was one it may read, which is read off the note (``ws_state._own_notifications``).
+        On the gateway loop the frame is only scheduled here and goes out after this returns, so
+        no client hears of the removal before the log has changed."""
+        if not any(n.get("ts") == ts for n in self._notification_log):
+            return False
+        self.broadcast_ws("notification_removed", {"ts": ts})
+        self._notification_log = [n for n in self._notification_log if n.get("ts") != ts]
+        self._write_notifications()
+        return True
+
+    def delete_notifications_for_loop(self, loop_id: str) -> int:
+        """Remove all notifications tagged with ``loop_id`` and persist. Called
+        when a goal loop is deleted so its notices don't linger as dead links
+        (their 'Open goal' would dead-end on the not-found cockpit). Returns the
+        count removed."""
+        if not loop_id:
+            return 0
+        removed_ts = [
+            n.get("ts", "") for n in self._notification_log if n.get("loop_id") == loop_id
+        ]
+        if not removed_ts:
+            return 0
+        # Announced first, like `delete_notification`: each app hears only its own notes' ts.
+        self.broadcast_ws("notification_removed", {"ts": removed_ts})
+        self._notification_log = [n for n in self._notification_log if n.get("loop_id") != loop_id]
+        self._write_notifications()
+        return len(removed_ts)
+
+    @property
+    def _notification_log(self) -> list[dict[str, Any]]:
+        """The log as the file holds it now: read again once another writer changed the file (a
+        merge restore, an import, a sync), or the bell missed their rows and the next ack, writing
+        the log back whole, deleted them. A file that is gone is not an empty log: what this
+        process holds stays, and its next write puts the file back."""
+        seen = bounded_log.signature(_notifications_path())
+        if seen is not None and seen != self._notifications_seen:
+            self._notifications_seen = seen
+            self._notification_rows = _load_notifications()
+        return self._notification_rows
+
+    @_notification_log.setter
+    def _notification_log(self, rows: list[dict[str, Any]]) -> None:
+        self._notification_rows = rows
+
+    def _write_notifications(self) -> None:
+        """Write the log back whole, and remember the file as written, not as changed elsewhere."""
+        _rewrite_notifications(self._notification_rows)
+        self._notifications_seen = bounded_log.signature(_notifications_path())
+
+    def _append_notification(self, note: dict[str, Any]) -> None:
+        """Append to the log — the ONE seam that enforces the size cap.
+
+        Memory and file are trimmed together: the log floats up to 2× the cap
+        between trims, then both drop to the newest cap-many rows in the same
+        step. Keeping memory the exact mirror of the file is what makes every
+        `_rewrite_notifications` call lossless (Issue 420 — a load that capped
+        below the file's row count let one ack silently destroy the rest).
+        Newest by each note's own ``ts`` (``bounded_log``), never by its place in the file.
+        """
+        log = self._notification_log
+        log.append(note)
+        if len(log) > _MAX_PERSISTED_NOTIFICATIONS * 2:
+            self._notification_rows = bounded_log.newest(log, _MAX_PERSISTED_NOTIFICATIONS, at="ts")
+            self._write_notifications()
+        else:
+            _persist_notification(note)
+            self._notifications_seen = bounded_log.signature(_notifications_path())
+
+    def notification(self, ts: str) -> dict[str, Any] | None:
+        """The notification written at ``ts``, or None when the log holds none."""
+        return next((n for n in self._notification_log if n.get("ts") == ts), None)
+
+    def answer_unknown_sender(self, ts: str, answer: str) -> bool:
+        """Record the owner's answer (``allowed`` or ``denied``) on the unknown-sender note at
+        ``ts`` and mark it read, so it offers Allow and Deny no more. False when there is none."""
+        note = self.notification(ts)
+        if note is None:
+            return False
+        note["trust_answer"] = answer
+        note["acked"] = True
+        self._write_notifications()
+        self.broadcast_ws("notification_ack", {"ts": ts})
+        return True
+
+    def ack_notification(self, ts: str) -> bool:
+        """Mark a notification as acknowledged and persist."""
+        for n in self._notification_log:
+            if n.get("ts") == ts:
+                n["acked"] = True
+                self._write_notifications()
+                self.broadcast_ws("notification_ack", {"ts": ts})
+                return True
+        return False
+
+    def ack_item_notifications(self, item_ids: Iterable[str]) -> list[str]:
+        """Mark read every notification that is a view of one of *item_ids*. Returns their ts.
+
+        Called by the Inbox's one status transition (`inbox.set_item_status`) when rows CLOSE:
+        a notification about a row that is done is not news, and the bell kept counting them.
+        Matched on ``inbox_item``, the link `inbox.emit_attention_item` stamps. One rewrite and
+        one frame for the whole batch, so "Dismiss all" is not one of each per row.
+        """
+        wanted = {str(i) for i in item_ids if i}
+        if not wanted:
+            return []
+        read: list[str] = []
+        for n in self._notification_log:
+            if not n.get("acked") and str(n.get("inbox_item") or "") in wanted:
+                n["acked"] = True
+                read.append(str(n.get("ts") or ""))
+        if read:
+            self._write_notifications()
+            self.broadcast_ws("notification_ack", {"ts": read})
+        return read
+
+    def unack_notification(self, ts: str) -> bool:
+        """Mark a notification as unread and persist."""
+        for n in self._notification_log:
+            if n.get("ts") == ts:
+                n["acked"] = False
+                self._write_notifications()
+                self.broadcast_ws("notification_unack", {"ts": ts})
+                return True
+        return False
+
+    def clear_notifications(self) -> None:
+        """Remove all notifications from memory and disk.
+
+        Announced first, like `delete_notification`: an app hears ``*`` only while the log still
+        holds a note of its."""
+        self.broadcast_ws("notification_removed", {"ts": "*"})
+        self._notification_log.clear()
+        path = _notifications_path()
+        try:
+            if path.exists():
+                path.write_text("", encoding="utf-8")
+        except Exception:
+            logger.debug("Failed to clear notifications file", exc_info=True)
+        self._notifications_seen = bounded_log.signature(_notifications_path())
+
+    def get_session(self, name: str) -> _ChatSession | None:
+        """Look up a session by name without creating it. Returns None if absent."""
+        return self._sessions.get(name)
+
+    def chat_session_keys(self) -> frozenset[str]:
+        """The key every chat held here runs its turns under (``dashboard:<name>``), for the
+        session sweep: a ``dashboard:`` runtime whose key is not among them belongs to no chat."""
+        return frozenset(dashboard_history_key(name) for name in list(self._sessions))
+
+    def take_conversation_title(self, key: str, title: str) -> None:
+        """Show *title*, which the conversation *key* was just given in the log, in the chat open
+        for it. A channel that runs a conversation itself names it there (Slack's thread titles),
+        and may do so after the chat opened: a Trust given on its first turn opens one before the
+        conversation has a name. The chat shows the name the conversation was last given, wherever
+        it was given, so its own saves keep that name too."""
+        session = self._sessions.get(key.removeprefix(DASHBOARD_SESSION_PREFIX))
+        if session is None or not title or title == session.title:
+            return  # no chat open for it, or the chat's own title, which it wrote itself
+        shown, _ = redact_exfiltration_urls(title)
+        shown, _ = redact_credentials(shown)
+        session.title = shown
+        session._titled = True
+        self.push_session_title(session.key, shown)
+
+    def take_channel_turn(
+        self, log: Any, session_key: str, user_text: str, reply: str, source: Mapping[str, str]
+    ) -> None:
+        """A turn a channel wrote to *log* for a conversation it runs itself, also into the chat
+        open here for that conversation, when one is (``llm_helpers.save_conversation_turn``).
+
+        The chat is the conversation as the dashboard shows it, and it rewrites the conversation's
+        whole file from what it holds (``save_session_to_history``). A turn written to the file
+        alone was missing from it: the dashboard went on showing the conversation as it was when
+        the chat was opened (or trusted, ``chat_trust``), and the save every gateway stop makes
+        wrote that over the turns since. Only for the log this dashboard reads its chats from.
+        Each line records the *source* the channel wrote it with."""
+        session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
+        if session is None or log is not self.conversation_log:
+            return
+        lines = [("user", user_text, "msg msg-u")]
+        if reply:
+            lines.append(("assistant", reply, "msg msg-a"))
+        for role, content, cls in lines:
+            session.append(role, content, cls, broadcast=False, source=source)
+            self._broadcast_chat_message(
+                session.key, {"role": role, "content": content, "cls": cls}
+            )
+        self.push_sessions_update()
+
+    def get_linked_session(self, thread_key: str) -> "_ChatSession | None":
+        """The chat a message on the channel thread *thread_key* continues, or None
+        (:func:`~personalclaw.dashboard.channel_links.linked_chat`)."""
+        return channel_links.linked_chat(self, thread_key)
+
+    def resolve_session(self, name: str) -> _ChatSession | None:
+        """Like :meth:`get_session`, but also resolves bare ``chat-N`` labels.
+
+        Falls back to a prefix match so ``chat-2`` resolves to
+        ``chat-2-<timestamp>`` when no exact match exists. The fallback is
+        gated to names matching ``chat-\\d+`` to prevent broad-prefix
+        collisions (e.g. a bare ``chat`` binding to any ``chat-*`` session).
+
+        Tie-break: when multiple sessions share the same ``chat-N-`` prefix
+        (e.g. after a resume creates a second timestamped session), returns
+        the first session in dict iteration order. Under normal operation
+        that's also the oldest session, but callers should not rely on it
+        after ad-hoc removals and re-adds. In practice only one active
+        session per chat-N label exists at a time.
+
+        Use this from trusted delivery paths (heartbeat, cron) where the
+        caller wants short-label addressing. Do NOT use from HTTP handlers
+        that pass the resolved name to key-derivation functions
+        (e.g. ``_history_key_for``) — those require the full session key.
+        """
+        session = self._sessions.get(name)
+        if session is not None:
+            return session
+        if not _CHAT_N_RE.fullmatch(name):
+            return None
+        prefix = name + "-"
+        for key, s in self._sessions.items():
+            if key.startswith(prefix):
+                return s
+        return None
+
+    def link_channel(
+        self, session_name: str, thread_ts: str, channel_id: str, *, provider: str
+    ) -> None:
+        """Link the chat *session_name* to a thread on the channel *provider*, so a message there
+        continues it and its answers go there; the owner's own DM it was in is told where it went
+        (:func:`~personalclaw.dashboard.channel_links.link`)."""
+        channel_links.link(self, session_name, thread_ts, channel_id, provider)
+
+    def get_or_create_session(
+        self,
+        name: str | None = None,
+        agent: str = "",
+        workspace_dir: str = "",
+        model: str = "",
+        mode: str = "",
+        memory_mode: str | None = None,
+        ephemeral: bool | None = None,
+        app: str = "",
+        project_id: str = "",
+        created_by_app: str = "",
+    ) -> _ChatSession:
+        """Return existing session or create a new one. With no *name*, the new chat is given
+        one no chat has (:func:`~personalclaw.dashboard.chat_names.new_chat_name`).
+
+        A *name* a chat is kept under makes that chat, its record and whole transcript
+        (``chat_persistence.open_kept_chat``), as an open one is returned as it is: the other
+        arguments shape a new chat only.
+
+        ``app`` is the origin tag (a hidden worker's, a channel's). ``created_by_app`` is the
+        VERIFIED identity of the app whose request starts the conversation, which only a route
+        handler holding an app token passes. A name already persisted keeps the creator its meta
+        line records, whatever the caller passed: every restore path mints its session here, so
+        this is the one place a restore could hand an app's conversation back as yours, or one of
+        yours to an app, and it does neither.
+        """
+        if name and name in self._sessions:
+            existing = self._sessions[name]
+            if memory_mode is not None and memory_mode != existing.memory_mode:
+                raise ValueError(
+                    f"Session {name!r} already exists with memory_mode={existing.memory_mode!r}"
+                )
+            return existing
+        named = bool(name)
+        if not name:
+            from personalclaw.dashboard.chat_names import new_chat_name
+
+            name = new_chat_name(self)
+        # A new chat's name is one no chat has, so nothing kept is read for it: it is a new chat
+        # and takes on no other chat's record. A name the caller gives may be a kept chat's, and
+        # then the session is that chat, with the creator and the tab id its record holds. The
+        # tab id is how a save tells the chat's own transcript from another chat's.
+        from personalclaw.dashboard import chat_persistence  # it imports this module
+
+        kept = chat_persistence.kept_chat(self, name) if named else None
+        persisted = kept[1] if kept is not None else None
+        if persisted is not None:
+            session = _ChatSession(name)
+        else:
+            session = _ChatSession(
+                name,
+                agent=agent,
+                workspace_dir=workspace_dir,
+                model=model,
+                mode=mode,
+                memory_mode=memory_mode or "persistent",
+                project_id=project_id,
+            )
+        session._on_message = self._broadcast_chat_message
+        session._channel_link_of = functools.partial(channel_links.chat_link, self, name)
+        held_tab = persisted.get("tab_id") if persisted else None
+        session._tab_id = (
+            held_tab if isinstance(held_tab, str) and held_tab else uuid.uuid4().hex[:12]
+        )
+        persisted_creator = _creating_app_of(persisted)
+        session.created_by_app = (
+            persisted_creator if persisted_creator is not None else created_by_app
+        )
+        # The origin tag: the channel the chat came from, the worker or app it is for. Its turns'
+        # usage is attributed to it and the chat list says where it came from by it, so it is read
+        # back from the meta line it is saved on. Where the chat answers is its link's
+        # (`channel_provider_for`), not this. An app's conversation carries the app as its origin
+        # tag when it has no other.
+        persisted_origin = persisted.get("app") if persisted else ""
+        session._app = (
+            app
+            or (persisted_origin if isinstance(persisted_origin, str) else "")
+            or session.created_by_app
+        )
+        if kept is not None:
+            chat_persistence.open_kept_chat(self, session, *kept, memory_mode=memory_mode)
+        elif ephemeral:
+            self._ephemeral_keys.add(f"dashboard:{name}")
+        self._sessions[name] = session
+        # The `session.created` platform-event emit site — a new session row just
+        # became true here. Fanned out ONLY to apps that declared the subscription (deny by
+        # default); `emit` is total, so an app-side failure can never fail this creation.
+        #
+        # Guarded on no record being kept, because this method is ALSO how a kept chat comes
+        # back (the start's restore, opening one from the list, resume, a worker naming its
+        # session): announcing those would re-fire `session.created` for every restored session
+        # on every restart, and an app would double-count sessions it already saw. Fails OPEN:
+        # a record that cannot be read at worst re-announces, never swallows a real creation.
+        if persisted is None:
+            from personalclaw.apps.app_events import SESSION_CREATED
+            from personalclaw.apps.app_events import emit as emit_platform_event
+
+            emit_platform_event(SESSION_CREATED, {"session": name})
+        self.push_sessions_update()
+        return session
+
+    def session_creating_app(self, name: str) -> str:
+        """The app whose token started the conversation *name*, or ``""``.
+
+        ``""`` answers for a conversation of yours, for one that does not exist, and for one whose
+        record cannot be read — every case in which an app must be refused, which is the point:
+        the permission middleware lets an app reach a conversation only when this names that app,
+        so there is no answer in which an unknown becomes the app's. A resident session answers
+        from memory, and one only on disk from its meta line, read without rehydrating it, so a
+        refused request loads nothing.
+        """
+        session = self._sessions.get(name)
+        if session is not None:
+            return session.created_by_app
+        return _creating_app_of(self._persisted_meta(name)) or ""
+
+    def notification_reaches(self, app: str, note: dict[str, Any]) -> bool:
+        """Whether the app *app* may read the notification *note*: one it raised
+        (``raised_by_app``), or one about a conversation it started (``session``).
+
+        Everything else that reached you is yours: what your crons, loops, inbox, channels and
+        other apps raised. The one rule for ``GET /api/notifications`` and for a notification
+        frame on an app's socket (``ws_state._own_notifications``)."""
+        if not app:
+            return False
+        if note.get("raised_by_app") == app:
+            return True
+        about = note.get("session")
+        return isinstance(about, str) and bool(about) and self.session_creating_app(about) == app
+
+    def _persisted_meta(self, name: str) -> dict[str, Any] | None:
+        """The meta line persisted under *name* (``{}`` for a record that has none), or ``None``
+        when nothing is persisted under it or its record cannot be read."""
+        log = self.conversation_log
+        if log is None:
+            return None
+        try:
+            from personalclaw.dashboard.chat_utils import resolve_history_key
+
+            key = resolve_history_key(log, name)
+            if not key:
+                return None
+            meta = log.get_metadata(key) or {}
+        except Exception:  # noqa: BLE001 — an unreadable record answers "unknown", never an app
+            self._log.warning("the record of chat %s could not be read", name, exc_info=True)
+            return None
+        return meta if isinstance(meta, dict) else {}
+
+    def _broadcast_chat_message(self, session_name: str, msg: dict) -> None:
+        """Push a chat message to all SSE clients via the global stream."""
+        payload: dict[str, Any] = {
+            "_type": "chat_message",
+            "session": session_name,
+            "role": msg.get("role", ""),
+            "content": msg.get("content", ""),
+            "ts": msg.get("ts", ""),
+        }
+        # Include cls so clients receive the raw class string
+        cls_val = msg.get("cls", "")
+        if cls_val:
+            payload["cls"] = cls_val
+            # Parse cls as JSON to send structured meta field for new frontend
+            meta = parse_cls_meta(cls_val)
+            if meta is not None:
+                payload["meta"] = meta
+        # Also include direct meta (e.g. tool_call_id on tool messages)
+        direct_meta = msg.get("meta")
+        if direct_meta and isinstance(direct_meta, dict):
+            payload["meta"] = {**(payload.get("meta") or {}), **direct_meta}
+        self._broadcast(payload)
+
+    # ── Folder persistence ──
+
+    _FOLDERS_FILE = "folders.json"
+    _TAGS_FILE = "tags.json"
+    _TAG_BOARDS_FILE = "tag_boards.json"
+
+    # Seed vocabulary created on first run when tags.json is missing or empty.
+    # status=True tags are mutually-exclusive workflow states. Drag-between-columns
+    # strips all status tags from a card and applies the destination column's
+    # status tag. Non-status tags survive the drag.
+    _DEFAULT_TAGS: list[dict[str, Any]] = [
+        {"id": "planned", "name": "Planned", "color": "#6b7280", "order": 0, "status": True},
+        {"id": "todo", "name": "ToDo", "color": "#3b82f6", "order": 1, "status": True},
+        {
+            "id": "implementation",
+            "name": "Implementation",
+            "color": "#8b5cf6",
+            "order": 2,
+            "status": True,
+        },
+        {"id": "review", "name": "Review", "color": "#f59e0b", "order": 3, "status": True},
+        {"id": "done", "name": "Done", "color": "#10b981", "order": 4, "status": True},
+    ]
+
+    def load_folders(self) -> None:
+        """Load folder definitions from disk (one that cannot be read loads none)."""
+        path = config_dir() / self._FOLDERS_FILE
+        try:
+            if path.exists():
+                self._folders = record_files.loaded(path, self._LISTED, self._kept_folders)
+        except Exception:
+            logger.warning("Failed to load folders", exc_info=True)
+        self._listed_kept("_folders")
+
+    def save_folders(self) -> None:
+        """Persist folder definitions to disk (atomic write)."""
+        self._save_listed(config_dir() / self._FOLDERS_FILE, "_folders")
+
+    def refresh_folders(self) -> None:
+        """Take in what another writer put in ``folders.json`` since this state last read or
+        wrote it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(config_dir() / self._FOLDERS_FILE, "_folders")
+
+    def load_tags(self) -> None:
+        """Load tag vocabulary and sidebar columns from disk; seed defaults if missing.
+
+        Only seed when ``tags.json`` does not exist. An explicitly-empty file
+        is left as-is (so a user who deletes every tag stays at zero tags
+        across restarts), and one that cannot be read loads no tag and is
+        never written over (``record_files.loaded``).
+        """
+        tags_path = config_dir() / self._TAGS_FILE
+        file_existed = tags_path.exists()
+        try:
+            if file_existed:
+                raw = record_files.loaded(tags_path, self._LISTED, self._kept_tags)
+                self._tags = [t for t in raw if isinstance(t, dict) and t.get("id")]
+        except Exception:
+            logger.warning("Failed to load tags", exc_info=True)
+        self._listed_kept("_tags")
+        if not file_existed and not self._tags:
+            # Fresh install (no tags.json on disk) — seed the default vocabulary.
+            self._tags = [dict(t) for t in self._DEFAULT_TAGS]
+            self.save_tags()
+
+        # Column layout: flat list of {id, name, tag_ids, mode, order}.
+        # Empty list = single implicit "all sessions" column.
+        columns_path = config_dir() / self._TAG_BOARDS_FILE
+        try:
+            if columns_path.exists():
+                raw = record_files.loaded(columns_path, self._LISTED, self._kept_tag_boards)
+                self._tag_boards = [c for c in raw if isinstance(c, dict) and c.get("id")]
+        except Exception:
+            logger.warning("Failed to load sidebar columns", exc_info=True)
+        self._listed_kept("_tag_boards")
+
+    def save_tags(self) -> None:
+        """Persist tag vocabulary to disk (atomic write)."""
+        self._save_listed(config_dir() / self._TAGS_FILE, "_tags")
+
+    def save_tag_boards(self) -> None:
+        """Persist sidebar column layout to disk (atomic write)."""
+        self._save_listed(config_dir() / self._TAG_BOARDS_FILE, "_tag_boards")
+
+    def refresh_tags(self) -> None:
+        """Take in what another writer put in ``tags.json`` since this state last read or wrote
+        it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(config_dir() / self._TAGS_FILE, "_tags")
+
+    def refresh_tag_boards(self) -> None:
+        """Take in what another writer put in ``tag_boards.json`` since this state last read or
+        wrote it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(config_dir() / self._TAG_BOARDS_FILE, "_tag_boards")
+
+    #: The three files are each a bare list of records with an ``id``.
+    _LISTED = record_files.Shape()
+
+    def _listed_kept(self, name: str) -> None:
+        """The list this state holds as *name* is as its file has it (:meth:`_save_listed`)."""
+        self._listed_as_kept[name] = copy.deepcopy(getattr(self, name))
+
+    def _save_listed(self, path: Path, name: str) -> None:
+        """Write the records this state holds as *name* (its folders, tags or boards, their file
+        known as ``_kept<name>``) to *path* under its lock, with what another writer put there
+        since this state last read or wrote it kept (``record_files.written``): writing the list
+        read before put back the file as it was then. Refused for a file that cannot be read
+        (``record_files.Unreadable``), and the change is taken back too."""
+        kept: record_files.Kept = getattr(self, f"_kept{name}")
+        records = getattr(self, name)
+        try:
+            record_files.written(
+                path, self._LISTED, kept, records, lambda out: self._atomic_write_json(path, out)
+            )
+        except record_files.Unreadable:
+            setattr(self, name, copy.deepcopy(self._listed_as_kept.get(name, [])))
+            raise
+        except OSError:
+            logger.warning("Failed to write %s", path.name, exc_info=True)
+        self._listed_kept(name)
+
+    def _take_in_listed(self, path: Path, name: str) -> None:
+        """Bring into the records this state holds as *name*, in place, what another writer put
+        in *path* since this state last read or wrote it — a folder, tag or board another machine
+        made, one a restore's merge brought back — unless this state changed the same one since."""
+        kept: record_files.Kept = getattr(self, f"_kept{name}")
+        records = getattr(self, name)
+        if not isinstance(records, list):
+            return
+        held = {r["id"]: r for r in records if isinstance(r, dict) and isinstance(r.get("id"), str)}
+        try:
+            moves = record_files.taken_in(path, self._LISTED, kept, held)
+        except OSError:
+            logger.warning("Failed to read %s", path.name, exc_info=True)
+            return
+        if moves:
+            records[:] = record_files.with_moves(records, moves)
+            self._listed_kept(name)
+
+    @staticmethod
+    def _atomic_write_json(path: Path, data: Any) -> None:
+        """Atomic JSON write used by folder/tag persistence helpers."""
+        try:
+            atomic_write(path, json.dumps(data), fsync=True)
+        except Exception:
+            logger.warning("Failed to write %s", path.name, exc_info=True)
+
+    def push_sessions_update(self) -> None:
+        """Push current session list to all SSE clients (instant UI update)."""
+        # Read for its effect, not its answer: a lapsed dashboard YOLO expires when it is read
+        # (`trust_mode`), which clears the auto-approve it left on your chats. This push runs on
+        # every change to a session, mid-turn included, so it is where a TTL that ran out takes
+        # hold soonest. The list itself no longer carries the flag.
+        self.is_yolo_active()
+        sessions_data = [s.to_dict() for s in self._sessions.values()]
+        self._broadcast(
+            {
+                "_type": "sessions",
+                "_sessions_list": sessions_data,
+                "sessions": json.dumps(sessions_data),
+            }
+        )
+
+    def push_session_title(self, key: str, title: str) -> None:
+        """Push a targeted title update for a single session.
+
+        Also pushes a full sessions update so the sidebar reflects the new
+        title without callers needing to do both.
+        """
+        self._broadcast({"_type": "session_title", "key": key, "title": title})
+        self.push_sessions_update()
+
+    def push_refresh(self, *kinds: str) -> None:
+        """Push a lightweight refresh hint for specific data types.
+
+        The frontend receives a ``refresh`` frame whose ``data.kinds`` lists them,
+        and fetches fresh data only for those types.  This replaces blind
+        polling — the server tells the client *when* to refresh, not the
+        client guessing on a timer.
+
+        Kinds in use: ``crons`` / ``cron_history`` (an automation changed / ran), ``loops``,
+        ``tasks`` (a task was written — ``tasks/registry``), ``workflow_runs`` (a workflow run
+        started, changed status or ended — ``workflows/watchdog``), ``history`` (the chat list),
+        ``agents``, ``lessons``,
+        ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
+        ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
+        ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),
+        ``voice`` (a voice setting an open chat reads changed: ``voice.*`` or text-to-speech's
+        settings, whoever saved them), and the self-update's ``update_available`` / ``updating`` /
+        ``update_failed``.
+        """
+        self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
+
+    def announce_artifact_change(self, change: str, slug: str) -> None:
+        """Tell every open page that shows artifacts that one was written or removed.
+
+        The ``artifacts.changes`` listener the dashboard server subscribes at start. It fires
+        AFTER the write, whoever wrote: the agent's ``artifact_update`` or ``image_generate`` in
+        a chat (the Iterate panel's, an agent CLI's from its tool server), a workflow step,
+        another tab, a revert. The page used to learn of a new version from the chat's
+        ``tool_call`` frame, sent when the model asks for the call, before its approval and
+        before the write, so the page re-read the old version and never read again.
+
+        The hint names the kind only, never the artifact: a page that shows artifacts re-reads
+        what it shows. Safe from any thread, like every broadcast (the agent's tools write from
+        an executor thread).
+        """
+        self.push_refresh("artifacts")
+
+    def push_update_progress(self, step: str, detail: str = "") -> None:
+        """Broadcast an update progress event to all connected clients.
+
+        ``step`` is a short machine-readable phase name (e.g. ``pulling``,
+        ``installing``, ``building``, ``restarting``, ``error``, ``failed``).
+        ``detail`` is an optional human-readable message.
+        """
+        self._update_progress = {"step": step, "detail": detail}
+        self._broadcast(
+            {
+                "_type": "update_progress",
+                "step": step,
+                "detail": detail,
+            }
+        )
+
+    def clear_update_progress(self) -> None:
+        """Reset update progress (e.g. after a dismiss or completion)."""
+        self._update_progress = None
+
+    def update_progress(self) -> dict[str, str] | None:
+        """The update progress last broadcast, ``{step, detail}``, or ``None`` once cleared."""
+        return self._update_progress
+
+
+def _creating_app_of(meta: dict[str, Any] | None) -> str | None:
+    """The creating app a chat's persisted meta line records (``""`` for yours), or ``None``
+    for a chat with no record (``DashboardState._persisted_meta``)."""
+    if meta is None:
+        return None
+    creator = meta.get(CREATED_BY_APP_META_KEY, "")
+    return creator if isinstance(creator, str) else ""
+
+
+# ── Notification persistence ──
+
+
+def _notifications_path() -> Path:
+    """Path to the notifications JSONL file."""
+    return config_dir() / _NOTIFICATIONS_FILE
+
+
+def _load_notifications() -> list[dict[str, Any]]:
+    """Load persisted notifications from disk, oldest first by each note's own ``ts`` whatever
+    order the file holds them in. ``GET /api/notifications`` lists the log newest first.
+
+    EVERY valid row loads — no cap slice. The in-memory log is the write
+    authority for `_rewrite_notifications`, so a load that silently truncated
+    below what the file holds turned the next read-state rewrite (one ack)
+    into permanent deletion of every unloaded row (Issue 420: the steady-state
+    file legitimately holds up to 2× the cap between trims). The size cap is
+    enforced at the append seam, on memory and file together.
+    """
+    path = _notifications_path()
+    if not path.exists():
+        return []
+    try:
+        entries: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return bounded_log.in_time_order(entries, at="ts")
+    except Exception:
+        logger.debug("Failed to load notifications", exc_info=True)
+        return []
+
+
+def _persist_notification(note: dict[str, str]) -> None:
+    """Append a single notification to the JSONL file on disk."""
+    path = _notifications_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(note) + "\n")
+    except Exception:
+        logger.debug("Failed to persist notification", exc_info=True)
+
+
+def _rewrite_notifications(notifications: list[dict[str, str]]) -> None:
+    """Rewrite the notifications file to exactly the given rows.
+
+    No cap slice here: this writes what the caller holds, so a read-state
+    change (ack/unack/delete) can never shorten the log below what memory —
+    which now mirrors the file in full — carries. The cap lives at the
+    append seam, where memory and file are trimmed together.
+    """
+    try:
+        atomic_write(_notifications_path(), "".join(json.dumps(n) + "\n" for n in notifications))
+    except Exception:
+        logger.debug("Failed to rewrite notifications file", exc_info=True)
+
+
+def _fmt_duration(secs: int) -> str:
+    """Format seconds as human-readable duration."""
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h {m}m" if h > 0 else f"{m}m {s}s"

@@ -1,0 +1,1450 @@
+"""Skills loader — markdown skill files for agent capabilities."""
+
+import copy
+import fcntl
+import hashlib
+import logging
+import os
+import re
+import shutil
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from pathlib import Path
+
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
+from personalclaw.home_paths import from_home
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+
+SKILLS_DIR_NAME = "skills"
+_MIN_TRIGGER_OVERLAP = 0.7
+DIRECT_SKILL_MAX_CONTENT_CHARS = 50_000
+_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+# The frontmatter ``source:`` a skill created through ``POST /api/skills`` — the dashboard's New
+# skill dialog — carries. The third writer beside ``AUTO_SKILL_SOURCE_VALUE`` and
+# ``ephemeral.TAUGHT_SKILL_SOURCE_VALUE``; the listing reads it back as the skill's provenance,
+# so the inspector can say the skill was created in the dashboard rather than guessing
+# "bundled or hand-placed" — which it said about exactly that skill before this.
+DASHBOARD_SKILL_SOURCE_VALUE = "dashboard"
+
+# ── Auto skill creation ──
+
+# Namespace for auto-generated skills — keeps them out of the way of
+# hand-authored skills.  Final path: ``~/.personalclaw/skills/auto/<name>/SKILL.md``.
+AUTO_SKILL_NAMESPACE = "auto"
+
+# Frontmatter field used to mark a skill as auto-generated.  Absence means
+# the skill is hand-authored.
+AUTO_SKILL_SOURCE_VALUE = "auto"
+
+# Cap synthesized procedure markdown at 10 KB.  Longer outputs indicate
+# the aux LLM failed to stay on-task and should be rejected.
+AUTO_SKILL_MAX_PROCEDURE_CHARS = 10_240
+
+# Regex for auto-generated skill name segment validation.  Deliberately
+# restrictive — we control the generator so we don't need to accept
+# arbitrary unicode.  ``_safe_name`` already rejects ``..`` and ``\``;
+# this is an additional sanitization layer specific to auto-gen.
+_AUTO_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
+
+
+@dataclass(frozen=True)
+class AutoSkillProvenance:
+    """Immutable provenance record for an auto-generated skill.
+
+    Serialized into the SKILL.md YAML frontmatter (``source: auto``,
+    ``session_key``, ``created_at``, ``refined_at``, ``reuse_count``) so
+    operators can always see how a skill was produced and when it was
+    last refined.  Absence of ``source: auto`` identifies the skill as
+    hand-authored.
+    """
+
+    session_key: str
+    created_at: str  # ISO 8601 UTC
+    refined_at: str = ""  # ISO 8601 UTC; empty until first refinement
+    reuse_count: int = 0
+
+    @staticmethod
+    def now_iso() -> str:
+        """Return the current time as an ISO 8601 UTC string."""
+        return datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+
+    def to_frontmatter_lines(self) -> list[str]:
+        """Serialize to the YAML key/value lines used in SKILL.md frontmatter."""
+        lines = [
+            f"source: {AUTO_SKILL_SOURCE_VALUE}",
+            f"session_key: {self.session_key}",
+            f"created_at: {self.created_at}",
+        ]
+        if self.refined_at:
+            lines.append(f"refined_at: {self.refined_at}")
+        if self.reuse_count:
+            lines.append(f"reuse_count: {self.reuse_count}")
+        return lines
+
+
+def _auto_name_from_title(raw: str) -> str:
+    """Convert a free-form title into a safe ``auto/<slug>`` skill name.
+
+    Strategy:
+    - lowercase
+    - replace any run of non-alphanumerics with a single hyphen
+    - strip leading/trailing hyphens
+    - truncate to 62 chars (leaves room for uniqueness suffix)
+
+    Returns the slug component only; caller prepends the namespace.
+    Returns an empty string if the input can't be sanitized.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")[:62].rstrip("-")
+    if not _AUTO_NAME_PATTERN.match(slug):
+        return ""
+    return slug
+
+
+def _build_auto_skill_content(
+    *,
+    slug: str,
+    description: str,
+    triggers: str,
+    procedure_md: str,
+    provenance: AutoSkillProvenance,
+) -> str:
+    """Render a complete ``SKILL.md`` body for an auto-generated skill.
+
+    Layout::
+
+        ---
+        name: auto/<slug>
+        description: <description>
+        triggers: <comma-separated triggers>
+        source: auto
+        session_key: <session>
+        created_at: <iso8601>
+        refined_at: <iso8601>      # omitted if empty
+        reuse_count: <int>         # omitted if 0
+        ---
+
+        # <slug> (auto-generated)
+
+        <procedure_md>
+
+    The leading ``---`` keeps this compatible with existing frontmatter
+    parsing in ``SkillsLoader._parse_frontmatter``.  YAML values are
+    single-line and newline-stripped to stay within the parser's
+    ``key: value`` line format.
+    """
+    name = f"{AUTO_SKILL_NAMESPACE}/{slug}"
+    desc_safe = re.sub(r"\s+", " ", description or "").strip() or name
+    triggers_safe = re.sub(r"\s+", " ", triggers or "").strip()
+    header_lines = [
+        "---",
+        f"name: {name}",
+        f"description: {desc_safe}",
+    ]
+    if triggers_safe:
+        header_lines.append(f"triggers: {triggers_safe}")
+    header_lines.extend(provenance.to_frontmatter_lines())
+    header_lines.append("---")
+    # Normalize line endings, strip leading/trailing blanks so diffs
+    # between revisions stay readable.
+    body = procedure_md.replace("\r\n", "\n").strip()
+    return "\n".join(header_lines) + "\n\n" + body + "\n"
+
+
+def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
+    """Recursively find all SKILL.md files under *base*.
+
+    Returns ``(relative_name, skill_file_path)`` pairs sorted by name.
+    The relative name uses ``/`` as separator (e.g. ``utils/tiny-url``).
+
+    🔴 THE enumeration, and public for that reason. Every surface answering "what skills
+    exist" has to call this one, because a surface that walked ONE level with ``iterdir()``
+    skipped the ``auto/`` namespace directory whole — it holds every accepted skill proposal
+    and has no ``SKILL.md`` of its own — so the skills were loaded into every agent's context
+    while the listing reported none of them (#302, #409). Four surfaces did exactly that.
+
+    A ``SKILL.md`` at *base* itself names no skill and is skipped: the key is the path relative
+    to the root, and the root's own relative path is ``"."``. So is one under a hidden folder (a
+    name starting with ``.``), which is PersonalClaw's own bookkeeping, never a skill: the
+    refinements beside the library (``.overlays``), and a new copy of a skill while an install
+    writes it, before it takes the skill's place (``marketplace.replace_skill_folder``).
+    """
+    results: list[tuple[str, Path]] = []
+    if not base.exists():
+        return results
+    for skill_file in sorted(base.rglob("SKILL.md")):
+        if skill_file.parent == base:
+            continue
+        # Name is the parent dir's path relative to base
+        rel = skill_file.parent.relative_to(base)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        name = str(rel).replace("\\", "/")
+        results.append((name, skill_file))
+    return results
+
+
+def is_instructions_file(name: str) -> bool:
+    """Whether a file named *name* holds a skill's instructions: ``SKILL.md``, in any case, since a
+    case-insensitive volume opens ``skill.md`` as that file.
+
+    Its body reaches a prompt only through :meth:`SkillsLoader.load_skill`, which applies the
+    skill's accepted refinements and the bench's suppression, and through ``skill_invoke``, which
+    counts the use; so the agent's file tools, which read the files a skill ships beside it
+    (``file_scope``), leave this one to ``skill_invoke``.
+    """
+    return name.casefold() == "skill.md"
+
+
+def skills_dir() -> Path:
+    return config_dir() / SKILLS_DIR_NAME
+
+
+#: The skills library's lock (``concurrency.lock_path``), in the home's ``locks/``.
+_LIBRARY_LOCK = "skills-library"
+
+
+@contextmanager
+def hold_library() -> Iterator[None]:
+    """Hold the skills library's lock, waiting for it, while a skill's ``SKILL.md`` or its
+    accepted refinements are read and written.
+
+    Every writer of either holds it across its read and its write: :meth:`SkillsLoader`'s one
+    writer of a ``SKILL.md`` (the Skills page's save, the curator, a consolidation's rewrite, a
+    skill created by any path, the repair of a file an earlier save doubled) and the overlay's
+    accept and revert. A skill loads in other processes too (an agent CLI's tools, the
+    ``personalclaw`` commands), and the repair writes from a load, so ``flock`` on a file opened
+    for this hold: it excludes another thread as it does another process, and the OS frees it if
+    the holder dies. Not re-entrant: nothing done while it is held may take it again. A program
+    that edits the file itself takes no lock.
+    """
+    from personalclaw.concurrency import lock_path
+    from personalclaw.durability.home_paths import open_lock
+
+    with open_lock(lock_path(_LIBRARY_LOCK)) as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _suppressed_producers() -> set[tuple[str, str]]:
+    """The feedback signal's withholding set, fetched fail-open.
+
+    ``feedback.suppressed_producers`` already fail-opens internally (config off →
+    empty, any error → empty); this wrapper adds a second belt so an import/attr
+    fault here degrades to *suppress nothing* rather than empty the turn's skills.
+    A feedback fault must never silence the assistant's capabilities."""
+    try:
+        from personalclaw import feedback
+
+        return feedback.suppressed_producers()
+    except Exception:
+        logger.debug("suppressed_producers fetch failed — suppressing nothing", exc_info=True)
+        return set()
+
+
+def _agent_slug(agent: str) -> str:
+    """Filesystem-safe slug for an agent's per-agent dir name.
+
+    Canonicalizes default-agent spellings to one key (matching agent-scoped
+    memory), then sanitizes to ``[a-z0-9._-]`` so the dir name can't traverse or
+    collide with control chars. Mirrors the agent-scoped-hooks convention."""
+    from personalclaw.agents.defaults import normalize_agent_name
+
+    name = normalize_agent_name(agent) or "personalclaw"
+    # Collapse any dotted run to a single '-' first (kills '..' traversal + leading
+    # dots), then map remaining unsafe chars to '-'.
+    slug = re.sub(r"\.+", "-", name)
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", slug).strip("-_").lower()
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug or "personalclaw"
+
+
+def agent_skills_dir(agent: str) -> Path:
+    """The agent-local skills tier: ``~/.personalclaw/agents/<slug>/skills/``.
+
+    Highest-precedence tier — a skill here overrides a
+    same-named bundled/global one, but only for this agent. Sits under the same
+    per-agent dir root as agent-scoped hooks/config."""
+    return config_dir() / "agents" / _agent_slug(agent) / SKILLS_DIR_NAME
+
+
+# ── Resource tier ───────────────────────────────
+#
+# A skill directory may carry files beside SKILL.md (``scripts/``, ``reference/``).
+# The optional ``resources:`` frontmatter block makes them ADDRESSABLE without a
+# directory walk, so an agent can pull one on demand instead of either ignoring
+# them or slurping the whole directory:
+#
+#     resources:
+#       - path: reference/api-notes.md
+#         description: field-by-field notes on the vendor payload
+#
+# This is the deepest tier UNDER the slot allocator, not a second tiering
+# engine: nothing here scores, ranks, budgets or degrades anything. The catalog is
+# a flat list of what was DECLARED; who gets to see it and how much of a skill
+# reaches a prompt stays the decision.
+#
+# The tier is how ANY agent, an agent CLI over MCP included, is handed a declared file.
+# The native agent's own file tools also read an installed skill's folder, read only
+# (``file_scope``'s skills library), so a skill from another harness that names its files
+# in prose ("use template.md") works unmodified; the allowlist below is this tool's rule.
+#
+# Security posture (the whole point of the tier):
+#   • the declared list is an ALLOWLIST, not a filter — an undeclared path is
+#     refused even when it plainly exists inside the skill dir;
+#   • containment is re-checked AFTER ``realpath``, so a declared path that is a
+#     symlink out of the skill dir is refused too;
+#   • the read is CAPPED with a visible notice (never a silent truncation);
+#   • a resource is READ, never executed — a ``scripts/*.sh`` resource comes back
+#     as text. Execution stays on the denylist-screened, sandbox-wrapped command
+#     path, which this tool deliberately does not touch.
+
+#: Cap on one resource read. Truncation is VISIBLE (see ``ResourceRead.truncated``)
+#: — same discipline as ``investigate.py``'s snapshot cap.
+RESOURCE_MAX_BYTES = 32_768
+
+#: Declared descriptions are clamped so the L0 catalog stays one line per resource
+#: (a mitigation for resource sprawl).
+RESOURCE_DESC_MAX_CHARS = 160
+
+
+@dataclass(frozen=True)
+class SkillResource:
+    """One resource a skill DECLARED in its frontmatter (never its contents)."""
+
+    path: str  # skill-dir-relative, POSIX-style, validated declarable
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ResourceRead:
+    """A single resource read: its text plus whether the cap bit."""
+
+    skill: str
+    path: str
+    text: str
+    size: int  # full on-disk size in bytes
+    truncated: bool
+
+
+class SkillResourceRefused(Exception):
+    """A resource load was refused. ``reason`` is a stable, testable code."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _norm_declared_path(raw: str) -> str:
+    """Canonical form of a declared/requested resource path, or "" if unusable.
+
+    Returns "" for anything that must never reach the filesystem: absolute paths,
+    Windows drive/UNC spellings, backslashes, NUL bytes, or a ``..`` segment.
+    Rejecting (rather than sanitizing) is deliberate — a path that needed
+    stripping to become safe is not the path the author declared.
+    """
+    val = (raw or "").strip().strip("\"'").replace("\r", "").replace("\n", "")
+    if not val or "\x00" in val or "\\" in val:
+        return ""
+    if val.startswith("/") or val.startswith("~") or re.match(r"^[A-Za-z]:", val):
+        return ""
+    parts = [p for p in val.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        return ""
+    return "/".join(parts)
+
+
+def parse_resources(content: str) -> list[SkillResource]:
+    """Parse the optional ``resources:`` frontmatter block from *content*.
+
+    The flat ``key: value`` frontmatter reader (:meth:`SkillsLoader._parse_frontmatter_text`)
+    cannot represent a list of mappings — it documents nested mappings as skipped —
+    so this is a small dedicated reader for exactly this one structured block
+    rather than a second general-purpose parser. Accepted spelling:
+
+        resources:
+          - path: reference/api-notes.md
+            description: one line
+          - path: scripts/check.sh
+          - reference/other.md
+
+    ``description`` is optional, and the bare-string spelling (last item) is
+    accepted as a path-only declaration — a skill that writes it should get the
+    resource, not silence. An item with no usable path is DROPPED: a malformed or
+    hostile declaration must never widen the allowlist. Like the rest of this
+    frontmatter reader, an inline ``# comment`` after a value is NOT stripped (it
+    would become part of the path); comment-only lines are skipped.
+    """
+    text = content.lstrip("﻿").lstrip().replace("\r\n", "\n")
+    if not text.startswith("---"):
+        return []
+    match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not match:
+        return []
+
+    out: list[SkillResource] = []
+    cur: dict[str, str] | None = None
+    in_block = False
+
+    def _flush() -> None:
+        if cur is None:
+            return
+        rel = _norm_declared_path(cur.get("path", ""))
+        if rel:
+            desc = " ".join(cur.get("description", "").split())[:RESOURCE_DESC_MAX_CHARS]
+            out.append(SkillResource(path=rel, description=desc))
+
+    for raw in match.group(1).split("\n"):
+        item = raw.strip()
+        if not item or item.startswith("#"):
+            continue
+        if not in_block:
+            # Only a top-level `resources:` key opens the block.
+            if not raw[:1].isspace() and re.match(r"^resources\s*:\s*$", item):
+                in_block = True
+            continue
+        if item.startswith("- "):
+            _flush()
+            cur = {}
+            item = item[2:].strip()
+            if not item:
+                continue
+        elif not raw[:1].isspace():
+            # A new top-level key ends the block.
+            _flush()
+            cur, in_block = None, False
+            continue
+        if cur is None:
+            continue
+        key, _, value = item.partition(":")
+        if key.strip().lower() in ("path", "description") and _:
+            cur[key.strip().lower()] = value.strip().strip("\"'")
+        elif not cur.get("path"):
+            # Bare-string item (`- reference/a.md`) — the whole token is the path.
+            cur["path"] = item.strip().strip("\"'")
+    _flush()
+    return out
+
+
+def parse_frontmatter(content: str) -> dict[str, str]:
+    """The flat ``key: value`` frontmatter of already-read SKILL.md *content*.
+
+    A module-level public reader beside :func:`parse_resources`, for callers that hold
+    the text and need one declared field (the skill allocator reads ``context_tier`` and
+    ``description``). It delegates to :meth:`SkillsLoader._parse_frontmatter_text` rather
+    than re-implementing the line parser: a second parser would disagree about BOMs,
+    block scalars and block lists exactly where the first one was carefully fixed.
+    """
+    return SkillsLoader._parse_frontmatter_text(content)
+
+
+def with_source_marker(content: str, value: str) -> str:
+    """*content* with ``source: <value>`` appended to its frontmatter — unless the frontmatter
+    already declares a ``source``, which is left exactly as the author wrote it.
+
+    For a writer that KNOWS how a skill came to exist while the body was authored by someone
+    else: the create route knows the skill is being created in the dashboard, and a body pasted
+    into the dialog cannot carry that fact. It only ever ADDS a key — overwriting a declared
+    ``source`` would discard text the user wrote, which is the one thing a write path must not
+    do silently. No closed frontmatter → unchanged, and ``validate_skill_md`` names the problem.
+
+    Finds the block the way ``SkillsLoader._parse_frontmatter_text`` does (leading whitespace
+    ignored, closed at the first ``\\n---``) and keeps the block's own line endings.
+    """
+    if "source" in parse_frontmatter(content):
+        return content
+    match = re.match(r"^(\s*---\r?\n)(.*?)(\r?\n---)", content, re.DOTALL)
+    if match is None:
+        return content
+    newline = "\r\n" if match.group(3).startswith("\r\n") else "\n"
+    at = match.end(2)
+    return f"{content[:at]}{newline}source: {value}{content[at:]}"
+
+
+def validate_skill_md(
+    content: str,
+    *,
+    expected_name: str | None = None,
+    max_chars: int | None = None,
+) -> list[str]:
+    """Return format errors for one SKILL.md body; empty means valid.
+
+    The loader owns this check beside its frontmatter parser so marketplace
+    installs and direct dashboard writes cannot drift into separate dialects.
+    ``expected_name`` binds a user-authored body to its directory/API key;
+    ``max_chars`` lets direct writes apply their request-size ceiling while
+    marketplace installs retain their existing uncapped commit-side scan.
+    """
+    errors: list[str] = []
+    if max_chars is not None and len(content) > max_chars:
+        errors.append(f"SKILL.md content exceeds {max_chars} character limit")
+
+    meta = parse_frontmatter(content)
+    if not meta:
+        errors.append("SKILL.md must contain closed YAML frontmatter (---)")
+
+    declared_name = meta.get("name", "").strip()
+    if not declared_name:
+        errors.append("SKILL.md frontmatter missing required 'name' field")
+    elif expected_name is not None:
+        if declared_name != expected_name:
+            errors.append(
+                f"SKILL.md frontmatter name must match skill key {expected_name!r} "
+                f"(got {declared_name!r})"
+            )
+    elif not _SKILL_NAME_PATTERN.fullmatch(declared_name):
+        errors.append(
+            "SKILL.md name must match ^[a-z0-9][a-z0-9-]{0,62}$ " f"(got {declared_name!r})"
+        )
+
+    if not meta.get("description", "").strip():
+        errors.append("SKILL.md frontmatter missing required 'description' field")
+    return errors
+
+
+class SkillsLoader:
+    """Load skill markdown files from ~/.personalclaw/skills/.
+
+    Supports nested directories. Each skill is identified by its
+    relative path from the skills root (e.g. ``utils/tiny-url``).
+
+    Directory layout::
+
+        ~/.personalclaw/skills/
+        ├── grill/SKILL.md          (comes with PersonalClaw: ``skills.shipped``)
+        ├── code/
+        │   ├── workspace-tools/SKILL.md
+        │   └── code-task-generation/SKILL.md
+        └── utils/
+            ├── tiny-url/SKILL.md
+            └── mcp-debug/SKILL.md
+
+    A default loader builds that library's copy of the skills PersonalClaw ships first
+    (``install_builtins``, :func:`personalclaw.skills.shipped.sync`), which never overwrites a
+    copy the owner changed.
+    """
+
+    def __init__(
+        self,
+        skills_path: Path | None = None,
+        install_builtins: bool = True,
+        *,
+        agent: str | None = None,
+    ):
+        # An explicit skills_path scopes the loader to that one library — it does
+        # NOT also fan out across the global discovery paths. Only the default
+        # loader (skills_path=None) aggregates every discovery root.
+        self._scoped = skills_path is not None
+        self._dir = skills_path or skills_dir()
+        # Agent-local tier: when an agent context is
+        # given, that agent's own skills dir takes precedence over bundled/global
+        # for that agent only — an agent can override or add skills nobody else
+        # sees. Only meaningful on the default (non-scoped) loader; a scoped
+        # loader stays confined to its one library. None = no agent tier.
+        self._agent_dir: Path | None = None
+        if agent is not None and not self._scoped:
+            self._agent_dir = agent_skills_dir(agent)
+        if install_builtins:
+            from personalclaw.skills import shipped
+
+            shipped.sync(self._dir)
+        # Cache: path → (mtime, parsed_frontmatter)
+        self._fm_cache: dict[str, tuple[float, dict[str, str]]] = {}
+        # The skills this loader sees of the shared library, when it is one agent's view of it
+        # (:func:`narrowed`): every listing, match and load below asks it. None sees them all.
+        self._allows: Callable[[str], bool] | None = None
+
+    def _sees(self, name: str) -> bool:
+        """Whether this loader sees the shared-library skill *name* (:func:`narrowed`)."""
+        return self._allows is None or self._allows(name)
+
+    def _iter(self) -> list[tuple[str, Path]]:
+        """Every ``(name, skill_file)`` this loader resolves, each name once, as the copy
+        :meth:`skill_file` resolves it to: the same folders, in the same order
+        (:meth:`_search_dirs`), the first copy of a name winning.
+
+        The default loader aggregates the global discovery paths; a loader constructed with an
+        explicit ``skills_path`` stays confined to it. An agent's view (:func:`narrowed`) lists
+        only the shared skills its list allows, and every skill of the agent's own tier.
+        """
+        results: list[tuple[str, Path]] = []
+        seen: set[str] = set()
+        for search_dir in self._search_dirs():
+            if not search_dir.is_dir():
+                continue
+            own = search_dir == self._agent_dir
+            for name, path in iter_skill_files(search_dir):
+                if name in seen or (not own and not self._sees(name)):
+                    continue
+                seen.add(name)
+                results.append((name, path))
+        return results
+
+    def _cached_frontmatter(self, path: Path) -> dict[str, str]:
+        """Parse frontmatter with mtime-based caching."""
+        key = str(path)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return {}
+        cached = self._fm_cache.get(key)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        meta = self._parse_frontmatter(path)
+        self._fm_cache[key] = (mtime, meta)
+        return meta
+
+    def list_skills(self, *, with_usage: bool = False, with_provenance: bool = False) -> list[dict]:
+        """Return list of skill metadata dicts with key, name, description, path, dir, always.
+
+        When *with_usage* is set, each dict also carries ``use_count`` and
+        ``last_used_at`` from the sidecar usage counter —
+        the live use signal consumed by surfacing-ranking and the
+        library curator. Lazy-imported to avoid an import cycle.
+
+        When *with_provenance* is set, each dict also carries ``created_at`` and
+        ``refined_at`` from :class:`AutoSkillProvenance`'s frontmatter (empty for a
+        skill that never carried provenance — a marketplace install, say). Opt-in for
+        the same reason ``with_usage`` is: ``/api/skills`` has a pinned payload shape,
+        and widening it for every caller to serve one panel would be a needless
+        contract change. The learning-summary block is the consumer.
+        """
+        usage: dict = {}
+        if with_usage:
+            try:
+                from personalclaw.skills.usage import SkillUsageStore
+
+                usage = SkillUsageStore().all_usage()
+            except Exception:
+                usage = {}
+        agent_root = str(self._agent_dir) if self._agent_dir is not None else None
+        skills: list[dict] = []
+        for name, skill_file in self._iter():
+            meta = self._cached_frontmatter(skill_file)
+            # An agent-local skill lives under this loader's agent dir — tag it so
+            # the UI can badge the tier.
+            is_agent_local = agent_root is not None and str(skill_file).startswith(agent_root)
+            row: dict = {
+                "key": name,
+                "name": meta.get("name", name),
+                "description": meta.get("description", name),
+                "triggers": meta.get("triggers", ""),
+                "path": str(skill_file),
+                "dir": str(skill_file.parent),
+                "always": meta.get("always", "").lower() == "true",
+                "status": (meta.get("status", "") or "active").lower(),
+                "agent_local": is_agent_local,
+            }
+            if with_usage:
+                u = usage.get(name)
+                row["use_count"] = u.count if u else 0
+                row["last_used_at"] = u.last_used_at if u else ""
+            if with_provenance:
+                row["created_at"] = meta.get("created_at", "")
+                row["refined_at"] = meta.get("refined_at", "")
+            skills.append(row)
+        return skills
+
+    @staticmethod
+    def _safe_name(name: str) -> bool:
+        """Whether *name* names a folder inside a tier: relative, each segment a name, no ``..``.
+
+        Absolute is refused with the rest: ``tier / "/x"`` is ``/x``, so a name with a leading
+        slash would resolve, read and write outside every tier.
+        """
+        if not name or ".." in name or "\\" in name or name.startswith("/"):
+            return False
+        return all(part not in ("", ".") for part in name.split("/"))
+
+    def _search_dirs(self) -> list[Path]:
+        """Directories this loader resolves names against.
+
+        A scoped loader (explicit ``skills_path``) confines all lookups to its
+        own dir; the default loader fans out across the global discovery paths.
+        """
+        if self._scoped:
+            return [self._dir]
+        from personalclaw.skills.marketplace import skill_discovery_paths
+
+        # Agent-local dir leads so an agent's own skill overrides a global one.
+        agent_dirs = [self._agent_dir] if self._agent_dir is not None else []
+        ordered: list[Path] = []
+        for folder in agent_dirs + [self._dir] + skill_discovery_paths():
+            if folder not in ordered:
+                ordered.append(folder)
+        return ordered
+
+    def _resolve(self, name: str) -> tuple[Path, Path] | None:
+        """The tier *name* resolves in (one of :meth:`_search_dirs`) and its ``SKILL.md``, or
+        None: THE rule for which copy of a skill wins, read by the loads, the listing
+        (:meth:`_iter`), the editor's write (:meth:`update_skill`) and the Skills page."""
+        if not self._safe_name(name):
+            return None
+        for search_dir in self._search_dirs():
+            if search_dir != self._agent_dir and not self._sees(name):
+                return None
+            skill_file = search_dir / name / "SKILL.md"
+            if skill_file.exists():
+                return search_dir, skill_file
+        return None
+
+    def skill_file(self, name: str) -> Path | None:
+        """The ``SKILL.md`` this loader resolves *name* to, or None.
+
+        One resolution order for the body and its resources: a resource must come
+        from the SAME directory as the SKILL.md that declared it, or a lower-
+        precedence tier could lend files to a higher-precedence skill's allowlist.
+        An agent's view (:func:`narrowed`) resolves a shared skill its list does not
+        allow to nothing, and a skill of the agent's own tier as ever.
+        """
+        resolved = self._resolve(name)
+        return resolved[1] if resolved is not None else None
+
+    def _written_tiers(self) -> list[Path]:
+        """The tiers this loader writes: the agent's own folder and its library, both in the
+        home. Never the folder other AI tools share, which PersonalClaw only reads."""
+        return [d for d in (self._agent_dir, self._dir) if d is not None]
+
+    def load_skill(self, name: str) -> str | None:
+        """Load a single skill's content by name, searching this loader's dirs.
+
+        The ablation/bench suppression set is consulted HERE, the one place a
+        body is read, so a suppressed skill's body cannot reach a prompt through the
+        forced, surfaced, or ``skill_invoke`` path. ``None`` (not ``""``) so a suppressed
+        skill is indistinguishable from an absent one to every caller — every one of them
+        already guards with ``if content:``. Suppression is env-scoped to a throwaway eval
+        child; with the env var absent this is the shipped behaviour exactly.
+        """
+        from personalclaw.skills.suppression import is_suppressed
+
+        if is_suppressed(name):
+            return None
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return None
+        content = skill_file.read_text(encoding="utf-8")
+        # Accepted refinements ride as a sidecar overlay merged HERE, at load time, each one
+        # once, after the skill's own text — never written into the file (so its
+        # `.pclaw-lock.json` stays intact and a revert removes a refinement completely). No
+        # overlay → the body is unchanged.
+        from personalclaw.skills import overlays
+
+        blocks = [a.block for a in overlays.applied(name)]
+        own = overlays.without_copies(content, blocks)
+        if own != content:
+            self._repair(name, skill_file, own)
+        return overlays.render(own, blocks)
+
+    def skill_text(self, name: str) -> str | None:
+        """The skill's own text: its ``SKILL.md`` as its author wrote it, or None when no file is
+        found for *name*.
+
+        What an editor of the file starts from — the Skills page, the curator — and never what a
+        session is given, which is :meth:`load_skill`'s body: that adds the accepted refinements
+        after this text, and a writer that saved it back put each refinement into the file, where
+        it then loaded twice. A copy an earlier save left there is not part of it
+        (``overlays.without_copies``). A pure read.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return None
+        from personalclaw.skills import overlays
+
+        return overlays.own_text(name, skill_file.read_text(encoding="utf-8"))
+
+    def _repair(self, name: str, skill_file: Path, own: str) -> None:
+        """Put a file an earlier save doubled back to its author's text *own*, the first time it
+        loads. Idempotent: once the copies are out, nothing is left to remove.
+
+        Only this library's own copy of the skill, the one file the old writers wrote, and only
+        while it still reads as *own* once its copies are left out (:meth:`_write_skill_md`), so a
+        save made since is never undone. A file that cannot be written loads the same either way.
+        """
+        if skill_file != self._dir / name / "SKILL.md":
+            return
+        try:
+            if self._write_skill_md(name, skill_file, own, over=own):
+                logger.info(
+                    "Skill %s: its file held a copy of a refinement that is applied on top of it "
+                    "(an earlier save wrote it there); kept only its own text",
+                    name,
+                )
+        except OSError:
+            logger.warning("Skill %s: could not put its file back to its own text", name)
+
+    def _write_skill_md(
+        self,
+        name: str,
+        skill_file: Path,
+        content: str,
+        *,
+        over: str | None = None,
+        new: bool = False,
+    ) -> bool:
+        """THE writer of a skill's ``SKILL.md``: every path that writes the file's text comes here.
+
+        It stores *content* as the skill's own text: a copy of a refinement applied on top of
+        *name* is left out of it (``overlays.without_copies``), so the refinement stays where it
+        is kept and loads once, and a revert removes it completely. Under :func:`hold_library`,
+        atomically, and only into what the caller expects: a skill *new* here (no folder yet), or
+        an existing file — and with *over*, only while that file still reads as *over*, the own
+        text the caller built *content* from. False when it wrote nothing.
+        """
+        from personalclaw.skills import overlays
+
+        with hold_library():
+            if new:
+                if skill_file.parent.exists():
+                    return False
+            elif not skill_file.is_file():
+                return False
+            elif (
+                over is not None
+                and overlays.own_text(name, skill_file.read_text(encoding="utf-8")) != over
+            ):
+                return False
+            atomic_write(skill_file, overlays.own_text(name, content))
+        return True
+
+    def revert_refinements(self, name: str, refinement: str = "") -> int:
+        """Revert *name*'s accepted refinements: the one whose id is *refinement*
+        (``overlays.Applied.id``), or every one. Returns how many were reverted.
+
+        A copy of one that an earlier save wrote into this library's ``SKILL.md`` is taken out of
+        the file first, while the overlay still says what it is, so the refinement leaves the
+        skill completely. The overlay itself is the only other thing changed.
+        """
+        from personalclaw.skills import overlays
+
+        skill_file = self._dir / name / "SKILL.md"
+        if self._safe_name(name) and skill_file.is_file():
+            content = skill_file.read_text(encoding="utf-8")
+            own = overlays.own_text(name, content)
+            if own != content:
+                self._repair(name, skill_file, own)
+        if refinement:
+            return 1 if overlays.revert_refinement(name, refinement) else 0
+        return overlays.revert_overlay(name)
+
+    # ── Resource tier ──
+
+    def resources_for(self, name: str) -> list[SkillResource]:
+        """The resources *name* DECLARED — the allowlist, and the L0 catalog's input.
+
+        Read from the on-disk ``SKILL.md`` and NOT from :meth:`load_skill`'s
+        overlay-rendered text: an accepted refinement is appended content, and it
+        must not be able to add a path to the allowlist. Never raises — an
+        unreadable or resource-less skill yields ``[]``.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return []
+        try:
+            raw = skill_file.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            return []
+        return parse_resources(raw)
+
+    def read_resource(self, name: str, path: str) -> ResourceRead:
+        """Read ONE declared resource of skill *name*. Refuses anything else.
+
+        Order matters, and each step is load-bearing:
+
+        1. the skill resolves at all (``_safe_name`` also fences the skill name);
+        2. the requested path canonicalizes (absolute / ``..`` / backslash → out);
+        3. it is IN the declared allowlist — an existing-but-undeclared file is
+           refused, so the tool can never become an arbitrary file read;
+        4. containment is verified AFTER ``realpath``, which is the only check a
+           symlink pointing out of the skill dir cannot satisfy;
+        5. it is a regular file, read with a cap and a truncation flag.
+
+        Raises :class:`SkillResourceRefused` (with a stable ``reason``) rather than
+        returning a sentinel, so a refusal can never be mistaken for content.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            raise SkillResourceRefused(
+                "unknown_skill", f"no skill named '{name}'. Check the skill index for exact names."
+            )
+        rel = _norm_declared_path(path)
+        if not rel:
+            raise SkillResourceRefused(
+                "bad_path",
+                f"'{path}' is not a usable resource path (must be relative to the "
+                "skill dir, with no '..' segment).",
+            )
+        declared = {r.path for r in self.resources_for(name)}
+        if rel not in declared:
+            listed = ", ".join(sorted(declared)) or "none"
+            raise SkillResourceRefused(
+                "undeclared",
+                f"'{rel}' is not declared in {name}'s `resources:` frontmatter "
+                f"(declared: {listed}). Only declared resources can be loaded.",
+            )
+        base = Path(os.path.realpath(skill_file.parent))
+        target = Path(os.path.realpath(base / rel))
+        if target != base and base not in target.parents:
+            raise SkillResourceRefused(
+                "escapes_skill_dir",
+                f"'{rel}' resolves outside {name}'s directory and was refused.",
+            )
+        if not target.is_file():
+            raise SkillResourceRefused(
+                "not_found", f"'{rel}' is declared by {name} but is not a readable file."
+            )
+        try:
+            size = target.stat().st_size
+            with target.open("rb") as fh:
+                data = fh.read(RESOURCE_MAX_BYTES)
+        except OSError as exc:
+            raise SkillResourceRefused(
+                "not_found", f"'{rel}' could not be read: {exc.strerror or exc}"
+            ) from exc
+        # READ, never execute — the bytes are decoded and handed back as text even
+        # when the resource is a script.
+        return ResourceRead(
+            skill=name,
+            path=rel,
+            text=data.decode("utf-8", errors="replace"),
+            size=size,
+            truncated=size > RESOURCE_MAX_BYTES,
+        )
+
+    @property
+    def _write_dir(self) -> Path:
+        """Where new skills are written. An agent-scoped loader writes into its
+        agent-local tier (so create/read agree — writing global while reading
+        agent-local would be a split brain); otherwise the loader's base dir."""
+        return self._agent_dir if self._agent_dir is not None else self._dir
+
+    def create_skill(self, name: str, content: str) -> bool:
+        """Create a new skill directory with SKILL.md.  Returns True on success.
+
+        Writes into the loader's write tier (agent-local when agent-scoped, else
+        the base skills dir) — matching where the same loader would resolve it."""
+        if not self._safe_name(name):
+            return False
+        if not self._write_skill_md(name, self._write_dir / name / "SKILL.md", content, new=True):
+            return False
+        logger.info("Created skill: %s", name)
+        return True
+
+    def update_skill(self, name: str, content: str, *, over: str | None = None) -> bool:
+        """Replace the own text of the copy of *name* this loader resolves, the copy its agents
+        read (:meth:`skill_file`), with *content*.  Returns True when written.
+
+        An agent's loader writes the agent's own copy where it has one, and the library's
+        otherwise; a copy in the folder other AI tools share is never written
+        (:meth:`_written_tiers`).
+        *content* is the skill's own text (:meth:`skill_text`), never the body a session loads:
+        a copy of an applied refinement in it is left out, so the refinement is still applied
+        once. With *over*, the own text *content* was built from, nothing is written once the file
+        reads otherwise — an edit saved since is kept, and this returns False."""
+        resolved = self._resolve(name)
+        if resolved is None or resolved[0] not in self._written_tiers():
+            return False
+        if not self._write_skill_md(name, resolved[1], content, over=over):
+            return False
+        logger.info("Updated skill: %s (in %s)", name, resolved[0])
+        return True
+
+    def delete_skill(self, name: str) -> bool:
+        """Delete a skill directory from the home's libraries.  Returns True if found and removed.
+
+        The agent's own folder and this library, both in the home. A skill found through the
+        folder AI tools share (``skill_discovery_paths``) is not PersonalClaw's to delete, so it is
+        not found here."""
+        if not self._safe_name(name):
+            return False
+        own = [self._agent_dir] if self._agent_dir is not None and not self._scoped else []
+        for search_dir in own + [self._dir]:
+            skill_dir = search_dir / name
+            if skill_dir.is_dir():
+                shutil.rmtree(skill_dir)
+                logger.info("Deleted skill: %s (from %s)", name, search_dir)
+                return True
+        return False
+
+    # ── Auto skill creation ──
+
+    def is_auto_generated(self, name: str) -> bool:
+        """Return True if *name* refers to a skill in the auto namespace.
+
+        Cheap filesystem check (no frontmatter parse) based on the
+        directory prefix.  Used for filtering and safety guards (e.g.
+        refusing to overwrite a hand-authored skill from an auto-update
+        path).
+        """
+        if not self._safe_name(name):
+            return False
+        return name.startswith(f"{AUTO_SKILL_NAMESPACE}/")
+
+    def find_similar(
+        self,
+        description: str,
+        threshold: float = 0.85,
+        *,
+        exclude: str = "",
+    ) -> str | None:
+        """Return the name of an existing skill whose description overlaps with *description*.
+
+        Uses case-insensitive word-set Jaccard-like overlap against every
+        loaded skill's ``description`` frontmatter value:
+
+            score = |words(a) ∩ words(b)| / |words(a) ∪ words(b)|
+
+        Intended for deduplication of auto-generated skills — we don't
+        want the agent producing a near-duplicate of an existing skill.
+        Returns the first skill whose score ≥ *threshold*, or ``None``
+        if nothing matches.
+
+        *exclude* lets callers suppress self-matches during refinement.
+        """
+        if not description:
+            return None
+        query_words = set(re.findall(r"\w+", description.lower()))
+        if not query_words:
+            return None
+        best_name: str | None = None
+        best_score: float = 0.0
+        for name, skill_file in self._iter():
+            if exclude and name == exclude:
+                continue
+            meta = self._cached_frontmatter(skill_file)
+            existing = meta.get("description", "")
+            if not existing:
+                continue
+            existing_words = set(re.findall(r"\w+", existing.lower()))
+            if not existing_words:
+                continue
+            intersection = query_words & existing_words
+            union = query_words | existing_words
+            score = len(intersection) / len(union) if union else 0.0
+            if score > best_score:
+                best_score = score
+                best_name = name
+        if best_score >= threshold:
+            return best_name
+        return None
+
+    def create_auto_skill(
+        self,
+        slug: str,
+        *,
+        description: str,
+        triggers: str,
+        procedure_md: str,
+        provenance: AutoSkillProvenance,
+    ) -> str | None:
+        """Write a new auto-generated skill under ``auto/<slug>/SKILL.md``.
+
+        Returns the full skill name (``auto/<slug>``) on success, or
+        ``None`` if the slug is invalid or the skill already exists.
+
+        Caller is responsible for:
+        - Running ``find_similar()`` first to avoid near-duplicates.
+        - Passing already-redacted ``procedure_md`` (sensitive data is
+          the caller's responsibility — this method is pure I/O).
+        - Enforcing the ``skills.auto_create_from_sessions`` config flag.
+        """
+        if not _AUTO_NAME_PATTERN.match(slug):
+            logger.warning("Rejected auto skill: slug %r failed validation", slug)
+            return None
+        if len(procedure_md) > AUTO_SKILL_MAX_PROCEDURE_CHARS:
+            logger.warning(
+                "Rejected auto skill %s: procedure %d chars exceeds cap %d",
+                slug,
+                len(procedure_md),
+                AUTO_SKILL_MAX_PROCEDURE_CHARS,
+            )
+            return None
+        name = f"{AUTO_SKILL_NAMESPACE}/{slug}"
+        content = _build_auto_skill_content(
+            slug=slug,
+            description=description,
+            triggers=triggers,
+            procedure_md=procedure_md,
+            provenance=provenance,
+        )
+        if not self._write_skill_md(name, self._dir / name / "SKILL.md", content, new=True):
+            logger.info("Auto skill %s already exists, skipping", name)
+            return None
+        logger.info("Created auto skill: %s", name)
+        return name
+
+    def update_auto_skill(
+        self,
+        name: str,
+        *,
+        description: str,
+        triggers: str,
+        procedure_md: str,
+        provenance: AutoSkillProvenance,
+    ) -> bool:
+        """Update an existing auto-generated skill with a refined procedure.
+
+        Refuses to overwrite skills NOT in the auto namespace — protects
+        hand-authored skills from being clobbered by the refine path.
+        Returns True on success.
+
+        Caller is responsible for passing already-redacted ``procedure_md``.
+        """
+        if not self.is_auto_generated(name):
+            logger.warning(
+                "Refusing to auto-refine non-auto skill: %s (not in %s/)",
+                name,
+                AUTO_SKILL_NAMESPACE,
+            )
+            return False
+        skill_file = self._dir / name / "SKILL.md"
+        if not skill_file.exists():
+            return False
+        if len(procedure_md) > AUTO_SKILL_MAX_PROCEDURE_CHARS:
+            logger.warning(
+                "Refusing to refine %s: procedure %d chars exceeds cap %d",
+                name,
+                len(procedure_md),
+                AUTO_SKILL_MAX_PROCEDURE_CHARS,
+            )
+            return False
+        # Preserve the original creation timestamp — refinement must not
+        # clobber provenance history.  Callers typically pass a fresh
+        # provenance with created_at=now; we override from the existing
+        # frontmatter here so the write path is authoritative.  Uses
+        # ``dataclasses.replace`` because AutoSkillProvenance is frozen.
+        existing_meta = self._cached_frontmatter(skill_file)
+        original_created_at = existing_meta.get("created_at")
+        if original_created_at:
+            provenance = replace(provenance, created_at=original_created_at)
+        slug = name.split("/", 1)[1]
+        content = _build_auto_skill_content(
+            slug=slug,
+            description=description,
+            triggers=triggers,
+            procedure_md=procedure_md,
+            provenance=provenance,
+        )
+        # The procedure comes from a session that loaded the skill, refinements included, so it
+        # can hold one word for word: the writer leaves that copy out.
+        if not self._write_skill_md(name, skill_file, content):
+            return False
+        logger.info("Refined auto skill: %s", name)
+        return True
+
+    def list_auto_skills(self) -> list[dict]:
+        """Return metadata dicts for all skills under the auto namespace.
+
+        Dashboard / CLI consumers use this to display provenance to
+        users.  Hand-authored skills are excluded.
+        """
+        return [s for s in self.list_skills() if s["key"].startswith(f"{AUTO_SKILL_NAMESPACE}/")]
+
+    def get_always_skills(self) -> list[str]:
+        """Return names of skills marked ``always: true`` in frontmatter."""
+        result: list[str] = []
+        for name, skill_file in self._iter():
+            meta = self._cached_frontmatter(skill_file)
+            if meta.get("always", "").lower() == "true":
+                result.append(name)
+        return result
+
+    def get_triggered_skills(self, text: str) -> list[str]:
+        """Return names of skills whose triggers match the given text.
+
+        Uses word-overlap matching with multi-word trigger phrases and
+        negative keywords.  Triggers are comma-separated phrases in the
+        ``triggers`` frontmatter field.  A phrase prefixed with ``!`` is a
+        negative trigger — if *any* negative trigger matches, the skill is
+        excluded regardless of positive matches.
+
+        Returns up to ``max_triggered`` skills sorted by best overlap score.
+        """
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.sel import sel
+
+        cfg = AppConfig.load()
+        text_words = set(re.findall(r"\w+", text.lower()))
+        text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+
+        scored: list[tuple[str, float]] = []
+        for name, skill_file in self._iter():
+            meta = self._cached_frontmatter(skill_file)
+            if meta.get("always", "").lower() == "true":
+                continue
+            triggers = meta.get("triggers", "")
+            if not triggers:
+                continue
+
+            # Split into positive and negative triggers
+            negated = False
+            best_overlap = 0.0
+            for trigger in triggers.split(","):
+                trigger = trigger.strip().lower()
+                if not trigger:
+                    continue
+                # Negative trigger: "!search" excludes if "search" words match
+                if trigger.startswith("!"):
+                    neg_words = set(re.findall(r"\w+", trigger[1:]))
+                    if neg_words and neg_words <= text_words:
+                        negated = True
+                        break
+                else:
+                    trigger_words = set(re.findall(r"\w+", trigger))
+                    if not trigger_words:
+                        continue
+                    overlap = len(trigger_words & text_words) / len(trigger_words)
+                    best_overlap = max(best_overlap, overlap)
+
+            if negated:
+                sel().log_tool_invocation(
+                    session_key="skills",
+                    tool_name="skill_trigger",
+                    tool_kind="permission",
+                    outcome="not_triggered",
+                    metadata={"skill": name, "reason": "negative_trigger", "text_hash": text_hash},
+                )
+                continue
+
+            outcome = "triggered" if best_overlap >= _MIN_TRIGGER_OVERLAP else "not_triggered"
+            sel().log_tool_invocation(
+                session_key="skills",
+                tool_name="skill_trigger",
+                tool_kind="permission",
+                outcome=outcome,
+                metadata={
+                    "skill": name,
+                    "overlap": round(best_overlap, 2),
+                    "text_hash": text_hash,
+                },
+            )
+            if best_overlap >= _MIN_TRIGGER_OVERLAP:
+                scored.append((name, best_overlap))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [name for name, _ in scored[: cfg.skills.max_triggered]]
+
+    def get_surfaced_skills(self, text: str) -> list[str]:
+        """Return skills for this turn via semantic ∪ keyword surfacing.
+
+        Embedding-preferred (reusing the active memory embedder), with the
+        keyword trigger path as a cheap union member / no-embedder fallback;
+        ranked by relevance then proven use_count. Falls back to the pure
+        keyword path :meth:`get_triggered_skills` on any error so a surfacing
+        failure can never break a turn.
+        """
+        from personalclaw.config.loader import AppConfig
+
+        try:
+            from personalclaw.skills.surfacing import surface_skills
+
+            cfg = AppConfig.load()
+            skills = self.list_skills(with_usage=True)
+            surfaced = surface_skills(
+                text,
+                skills,
+                max_skills=cfg.skills.max_triggered,
+                suppressed=_suppressed_producers(),
+            )
+            if surfaced:
+                # Audit the injection decision (replaces per-candidate skill_trigger
+                # telemetry from the keyword-only path with the actual outcome).
+                from personalclaw.sel import sel
+
+                sel().log_tool_invocation(
+                    session_key="skills",
+                    tool_name="skill_surface",
+                    tool_kind="permission",
+                    outcome="surfaced",
+                    metadata={
+                        "skills": surfaced,
+                        "text_hash": hashlib.sha256(text.encode()).hexdigest()[:16],
+                    },
+                )
+            return surfaced
+        except Exception:
+            logger.debug("Semantic skill surfacing failed; using keyword path", exc_info=True)
+            return self.get_triggered_skills(text)
+
+    def get_context(self, *, agent: str | None = None) -> str:
+        """Build skills context for prompt injection.
+
+        Always-loaded skills: full content included.
+        Other skills: summary with instruction to load via bash when needed.
+
+        When ``agent`` is given AND that agent has an agent-local skills dir,
+        resolve through an agent-scoped view so the
+        agent's own skills override same-named global/bundled ones for its turn.
+        The agent-scoped loader is only built when the dir actually exists, so the
+        common (no agent-local skills) path pays nothing."""
+        if agent is not None and not self._scoped and not self._agent_dir:
+            adir = agent_skills_dir(agent)
+            if adir.is_dir() and any(adir.iterdir()):
+                # Transient agent-scoped view; shares nothing mutable with self. It sees what
+                # this loader sees of the shared library (an agent's view, `narrowed`).
+                scoped = SkillsLoader(install_builtins=False, agent=agent)
+                scoped._allows = self._allows
+                return scoped.get_context()
+        always = self.get_always_skills()
+        all_skills = self.list_skills()
+        if not all_skills:
+            return ""
+
+        parts: list[str] = []
+
+        # Full content for always-loaded skills
+        for name in always:
+            content = self.load_skill(name)
+            if content:
+                stripped = self.strip_frontmatter(content)
+                parts.append(f"### Skill: {name}\n\n{stripped}")
+
+        # Index (progressive disclosure) for on-demand skills. Skills the curator
+        # archived are kept off the index. Phase 2 = the agent pulls a full
+        # body via skill_invoke{name}, which also records the use.
+        on_demand = [
+            s for s in all_skills if s["name"] not in always and s.get("status") != "archived"
+        ]
+        if on_demand:
+            summary_lines = [
+                "## Available Skills",
+                "",
+                "If a user request relates to any skill below, load its full steps "
+                "first with `skill_invoke{name}` before responding (this also records "
+                "the skill as used). To run a skill's scripts, `cd` into its dir first.",
+                "",
+            ]
+            for s in on_demand:
+                line = f"- **{s['name']}**: {s['description']} (dir: `{from_home(s['dir'])}`)"
+                summary_lines.append(line)
+            parts.append("\n".join(summary_lines))
+
+        return "[Skills:]\n" + "\n\n---\n\n".join(parts) + "\n[End of skills]\n\n"
+
+    # ── Private ──
+
+    @staticmethod
+    def _parse_frontmatter(path: Path) -> dict[str, str]:
+        """Parse YAML frontmatter from a markdown file (simple ``key: value``).
+
+        Deliberately a line parser, not a YAML parser — see
+        ``docs/reference/skill-format.md`` for the documented contract and its
+        limits. What matters here is that an *unparseable* file must not look
+        like a file with no metadata: returning ``{}`` for a skill that plainly
+        has a name is the silent-failure mode this function is careful to avoid,
+        because such a skill loads fine and then never matches anything.
+        """
+        # `utf-8-sig` transparently drops a BOM. Windows editors add one, and with
+        # plain `utf-8` the BOM sat before `---` so the startswith() guard below
+        # rejected the whole file: every field silently lost.
+        content = path.read_text(encoding="utf-8-sig")
+        return SkillsLoader._parse_frontmatter_text(content)
+
+    @staticmethod
+    def _parse_frontmatter_text(content: str) -> dict[str, str]:
+        """Frontmatter parse over already-read text (see `_parse_frontmatter`)."""
+        # Leading blank lines/whitespace are invisible in an editor but used to
+        # defeat the delimiter check the same way a BOM did.
+        content = content.lstrip().replace("\r\n", "\n")
+        if not content.startswith("---"):
+            return {}
+        match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+        if not match:
+            return {}
+        meta: dict[str, str] = {}
+        # The key whose continuation lines we are collecting, and how to join them:
+        # block-list items join with ", ", block-scalar lines with " ".
+        pending_key = ""
+        pending_sep = ""
+        collected: list[str] = []
+
+        # YAML block-scalar indicators. A value of exactly one of these means the
+        # real value is the indented block beneath it.
+        block_scalars = ("|", ">", "|+", "|-", ">+", ">-")
+
+        def _flush() -> None:
+            if pending_key and collected:
+                meta[pending_key] = pending_sep.join(collected)
+
+        for raw in match.group(1).split("\n"):
+            item = raw.strip()
+            indented = bool(raw[:1].isspace())
+            # A continuation line under the previous key.
+            if pending_key and indented and item:
+                if pending_sep == ", ":
+                    if item.startswith("- "):
+                        collected.append(item[2:].strip().strip("\"'"))
+                        continue
+                else:
+                    collected.append(item)
+                    continue
+            # A non-indented block-list item still belongs to the pending key
+            # (`triggers:` followed by `- pdf` at column 0 is legal YAML).
+            if pending_key and pending_sep == ", " and item.startswith("- "):
+                collected.append(item[2:].strip().strip("\"'"))
+                continue
+            if ":" in raw:
+                _flush()
+                pending_key, pending_sep, collected = "", "", []
+                # An indented key belongs to a nested mapping this parser cannot
+                # represent. Skip it rather than hoisting it to the top level,
+                # where `sub: v` would masquerade as a real field.
+                if indented:
+                    continue
+                key, value = raw.split(":", 1)
+                key, value = key.strip(), value.strip().strip("\"'")
+                if value in block_scalars:
+                    # Fold the indented block into one line — these fields are
+                    # single-line by contract (`description`, `triggers`).
+                    pending_key, pending_sep = key, " "
+                    meta[key] = ""
+                    continue
+                meta[key] = value
+                if not value:
+                    # May head a block list; remember the key so `- item` lines fold in.
+                    pending_key, pending_sep = key, ", "
+        _flush()
+        return meta
+
+    @staticmethod
+    def strip_frontmatter(content: str) -> str:
+        """Remove YAML frontmatter from markdown.
+
+        Tolerates the same BOM/leading-blank/CRLF variants as
+        `_parse_frontmatter`. It must: this function's output goes into the model
+        prompt, so failing to recognise a delimiter leaks the whole raw YAML
+        block into context instead of dropping it.
+        """
+        content = content.lstrip("﻿").lstrip().replace("\r\n", "\n")
+        if content.startswith("---"):
+            match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
+            if match:
+                return content[match.end() :].strip()
+        return content
+
+
+def narrowed(loader: SkillsLoader, allows: Callable[[str], bool]) -> SkillsLoader:
+    """*loader* as one agent sees the shared library: only the skills *allows* names, in every
+    listing, match and load the view makes (an agent's skill list, ``agents.skill_list``), while a
+    skill of the agent's own tier stays its own. A view, not a second library: it reads the same
+    directories, and shares *loader*'s frontmatter cache."""
+    view = copy.copy(loader)
+    view._allows = allows
+    return view

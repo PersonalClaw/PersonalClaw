@@ -1,0 +1,311 @@
+import { useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { api, type TaskItem, type ExitCriterion, type ActionPlanItem, type TaskNote, type ProjectItem, type TaskListItem } from '../../lib/api'
+import { STATUSES, PRIORITIES, isExitComplete } from './taskMeta'
+import { prereqIds } from './dag'
+import { useDefaultProject } from '../../lib/defaultProject'
+import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, Select, Checkbox } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { ChecklistEditor, DependencyEditor, NotesEditor } from './formControls'
+
+/** Editable task draft. `depends_on` is the working list of BLOCKS-prerequisite
+ *  ids the DependencyEditor manipulates; it's serialized back to typed
+ *  `dependencies` in draftToPayload. */
+export type TaskDraft = Partial<TaskItem> & { title: string; depends_on?: string[]; project_id?: string }
+
+export function emptyDraft(): TaskDraft {
+  return { title: '', description: '', status: 'open', priority: 'medium', labels: [], task_list_id: '', assignee: '', due: '', exit_criteria: [], action_plan: [], notes: [], research_notes: [], execution_notes: [], agent_instructions_template: '', depends_on: [] }
+}
+export function toDraft(t: TaskItem): TaskDraft {
+  return { ...t, labels: t.labels ?? [], exit_criteria: (t.exit_criteria ?? []).map(draftCriterion), action_plan: t.action_plan ?? [], notes: t.notes ?? [], research_notes: t.research_notes ?? [], execution_notes: t.execution_notes ?? [], depends_on: prereqIds(t) }
+}
+
+/** An exit criterion as the form edits it: ONE done flag (`met`), never two.
+ *
+ *  🔴 A TICK IN THE EDIT FORM WAS SILENTLY THROWN AWAY. The server stores a criterion as
+ *  `{description, status, comment, met}` and, when both are present, reads `status` and ignores
+ *  `met` (`models.normalize_exit_criterion`). The form's checklist flips `met` only, so a loaded
+ *  criterion ticked here went back as `{status: 'incomplete', met: true}` and was stored
+ *  incomplete — the form showed it ticked, the Save answered 200, the task still read 0/1. Choosing
+ *  Completed in the same Save was then refused by name for the criterion the user had just
+ *  ticked. The draft drops `status` and carries the criterion's real state in `met`, which is
+ *  the one field the checklist reads and writes and the one the server honours when it is alone. */
+function draftCriterion(e: ExitCriterion): ExitCriterion {
+  return { description: e.description, ...(e.comment ? { comment: e.comment } : {}), met: isExitComplete(e) }
+}
+
+/** The single form behind both the create PAGE and the in-panel edit mode.
+ *  `compact` tightens spacing for the narrower SidePanel. Sections mirror the
+ *  TasksMultiServer construct; all fields (exit criteria, action plan, typed
+ *  dependencies, agent instructions) are persisted by the backend. */
+export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: TaskDraft; onChange: (d: TaskDraft) => void; compact?: boolean; allTasks?: TaskItem[] }) {
+  const set = <K extends keyof TaskDraft>(k: K, v: TaskDraft[K]) => onChange({ ...draft, [k]: v })
+  const gap = compact ? 'gap-l' : 'gap-xl'
+
+  return (
+    <div className={`flex flex-col ${gap}`}>
+      <Section title="Basics" compact={compact}>
+        <Field label="Title">
+          <TextInput required value={draft.title} onChange={(v) => set('title', v)} placeholder="What needs to happen?" autoFocus />
+        </Field>
+        <Field label="Description">
+          <TextArea value={draft.description ?? ''} onChange={(v) => set('description', v)} placeholder="Context, acceptance notes, links… (markdown)" rows={compact ? 4 : 6} />
+        </Field>
+      </Section>
+
+      <Section title="Classification" compact={compact}>
+        {/* `collapse="wrap"`: six icon+label statuses measure 649px, and the edit form lives in a
+            420px side panel (320px at its narrowest). Unwrapped, Completed was cut off, Cancelled
+            and Skipped sat outside the panel, and choosing one scrolled the whole form sideways —
+            38px by click, 245px by arrow key — clipping every label. Wrapping keeps all six options
+            visible and keeps the control a radiogroup with its arrow-key contract. */}
+        <Field label="Status"><Segmented collapse="wrap" options={STATUSES.map((s) => ({ key: s.key, label: s.label, tone: s.tone, icon: s.icon }))} value={draft.status ?? 'open'} onChange={(v) => set('status', v)} /></Field>
+        <Field label="Priority">
+          <Segmented collapse="wrap" options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, tone: p.tone }))} value={draft.priority ?? 'medium'} onChange={(v) => set('priority', v)} />
+        </Field>
+        <div className={`grid grid-cols-2 ${compact ? 'gap-m' : 'gap-l'}`}>
+          {/* Every pick names the project it is in, in Edit as on a new task. Edit sent none, so
+              moving a task to another project sent only the cleared list, and the server, which
+              reads the project off the list, saved it in no project at all. Each pick is ONE change
+              of both fields: two `set`s in one event each spread the same old draft, and the second
+              put the old list back. An edited task's draft changes only when the user picks — its
+              opening writes nothing, so it cannot land on a field typed a moment before. */}
+          <ProjectListPicker taskListId={draft.task_list_id ?? ''} editing={!!draft.id}
+            onListChange={(listId, projectId) => onChange({ ...draft, task_list_id: listId, project_id: projectId })}
+            onProjectChange={(projectId) => onChange({ ...draft, task_list_id: '', project_id: projectId })}
+            onStartingProject={draft.id ? undefined : (projectId) => set('project_id', projectId)} />
+        </div>
+        {/* `auto-fit`, not `grid-cols-2`: a native date input cannot shrink below its content, so in
+            the side panel at its 320px minimum the Due field spilled 5px past the panel and focusing
+            it scrolled the form sideways. The two fields stack there and sit side by side (50/50,
+            as before) wherever two 10rem columns fit. */}
+        <div className={`grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] ${compact ? 'gap-m' : 'gap-l'} items-start`}>
+          <Field label="Assignee"><TextInput value={draft.assignee ?? ''} onChange={(v) => set('assignee', v)} placeholder="Who owns it" /></Field>
+          <Field label="Due"><DateInput value={draft.due ?? ''} onChange={(v) => set('due', v)} /></Field>
+        </div>
+        {/* The per-task opt-out for the due-date notice (`tasks/due_notices.py`): on unless the
+            user says the date is a soft target. Offered only once there is a date to be reminded
+            of; the choice is kept if the date is cleared and set again. */}
+        {draft.due && (
+          <label className="flex items-center gap-s">
+            <Checkbox checked={draft.due_reminder !== false} onChange={(v) => set('due_reminder', v)}
+              ariaLabel="Remind me the day before it is due" />
+            <span data-type="body-s" className="text-on-surface">Remind me the day before it is due</span>
+          </label>
+        )}
+        <Field label="Tags"><ChipInput values={draft.labels ?? []} onChange={(v) => set('labels', v)} placeholder="Add a tag, Enter" max={10} /></Field>
+      </Section>
+
+      <Section title="Structure" compact={compact}>
+        <Field label="Depends on" hint="Prerequisite tasks that must finish first. Choices that would form a cycle are blocked.">
+          <DependencyEditor selfId={draft.id} allTasks={allTasks} value={draft.depends_on ?? []} onChange={(v) => set('depends_on', v)} />
+        </Field>
+        <Field label="Exit criteria" hint="Conditions that must be true for this task to count as done.">
+          <ChecklistEditor<ExitCriterion> items={draft.exit_criteria ?? []} onChange={(v) => set('exit_criteria', v)} doneKey="met" placeholder="Add a completion condition" />
+        </Field>
+        <Field label="Action plan" hint="Ordered steps to carry the task out.">
+          <ChecklistEditor<ActionPlanItem> items={draft.action_plan ?? []} onChange={(v) => set('action_plan', v)} doneKey="completed" placeholder="Add a step" ordered />
+        </Field>
+      </Section>
+
+      <Section title="Notes" compact={compact}>
+        <Field label="General" hint="Free notes on this task.">
+          <NotesEditor items={draft.notes ?? []} onChange={(v) => set('notes', v as TaskNote[])} placeholder="Add a note, Enter" />
+        </Field>
+        <Field label="Research" hint="Findings gathered while investigating.">
+          <NotesEditor items={draft.research_notes ?? []} onChange={(v) => set('research_notes', v as TaskNote[])} placeholder="Add a research note, Enter" />
+        </Field>
+        <Field label="Execution" hint="What was done while carrying the task out.">
+          <NotesEditor items={draft.execution_notes ?? []} onChange={(v) => set('execution_notes', v as TaskNote[])} placeholder="Add an execution note, Enter" />
+        </Field>
+      </Section>
+
+      <Section title="Agent instructions" compact={compact}>
+        <Field label="Template" hint="Guidance an agent follows when it picks up this task.">
+          <TextArea value={draft.agent_instructions_template ?? ''} onChange={(v) => set('agent_instructions_template', v)} placeholder="e.g. Investigate, propose a fix, open a PR…" rows={compact ? 3 : 4} mono />
+        </Field>
+      </Section>
+    </div>
+  )
+}
+
+/** Project → TaskList picker. The structural FK is `task_list_id`; the project
+ *  is only a grouping filter (resolved from the chosen list, so a task can sit
+ *  directly under a project's default list or under a named list). The task's
+ *  human-readable `project` label is derived server-side from this list, and a
+ *  project with no list chosen is sent as `project_id`, which the server files
+ *  under that project's General list.
+ *
+ *  `onProjectChange` is a project the user picks (which leaves the list they had),
+ *  `onListChange` a list they pick with the project it is in, and `onStartingProject`
+ *  the project a NEW task opens on. An edited task opens on the project it is in, and
+ *  one in no project on "(none)", and reports nothing until the user picks: opening
+ *  it moves nothing. */
+// Sentinel value the Project/TaskList selects use to trigger an inline create.
+const NEW = '__new__'
+
+function ProjectListPicker({ taskListId, editing, onListChange, onProjectChange, onStartingProject }: {
+  taskListId: string
+  editing: boolean
+  onListChange: (listId: string, projectId: string) => void
+  onProjectChange: (projectId: string) => void
+  onStartingProject?: (projectId: string) => void
+}) {
+  const [projects, setProjects] = useState<ProjectItem[]>([])
+  const [lists, setLists] = useState<TaskListItem[]>([])
+  const [projectId, setProjectId] = useState('')
+  const [creating, setCreating] = useState<null | 'project' | 'list'>(null)
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  // The user's DEFAULT project — an account setting, the same one in every browser.
+  const { defaultProjectId, settled: defaultSettled, error: defaultErr } = useDefaultProject()
+
+  useEffect(() => {
+    let alive = true
+    Promise.all([api.projects(), api.taskLists()]).then(([ps, ls]) => {
+      if (!alive) return
+      setProjects(ps); setLists(ls); setLoaded(true)
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  // Derive the starting project ONCE, when both reads have answered. An edited task starts on the
+  // project its list is in, or none. A new one starts on the user's default project if it still
+  // exists; else the Personal catch-all; else the first project. Waiting for the default is what
+  // keeps a new task from opening on Personal and jumping a moment later.
+  const derived = useRef(false)
+  useEffect(() => {
+    if (derived.current || !loaded) return
+    const cur = lists.find((l) => l.id === taskListId)
+    if (editing) {
+      derived.current = true
+      setProjectId(cur?.project_id ?? '')
+      return
+    }
+    if (!defaultSettled) return
+    derived.current = true
+    const preferred = defaultProjectId && projects.some((p) => p.id === defaultProjectId) ? defaultProjectId : ''
+    // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
+    // each must fall through to the next when blank.
+    const start = cur?.project_id || preferred || projects.find((p) => p.is_builtin)?.id || projects[0]?.id || ''
+    setProjectId(start)
+    onStartingProject?.(start)
+  }, [loaded, editing, defaultSettled, defaultProjectId, lists, projects, taskListId, onStartingProject])
+
+  const projectLists = lists.filter((l) => l.project_id === projectId)
+
+  async function createProject() {
+    const name = newName.trim()
+    if (!name) return
+    setBusy(true); setErr('')
+    try {
+      const p = await api.createProject({ name })
+      setProjects((ps) => [...ps, p]); setProjectId(p.id); onProjectChange(p.id)
+      setCreating(null); setNewName('')
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not create project') }
+    finally { setBusy(false) }
+  }
+  async function createList() {
+    const name = newName.trim()
+    if (!name || !projectId) return
+    setBusy(true); setErr('')
+    try {
+      const l = await api.createTaskList({ name, project_id: projectId })
+      setLists((ls) => [...ls, l]); onListChange(l.id, projectId)
+      setCreating(null); setNewName('')
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not create task list') }
+    finally { setBusy(false) }
+  }
+
+  if (creating) {
+    const isProject = creating === 'project'
+    return (
+      <Field label={isProject ? 'New project' : 'New task list'}>
+        <div className="flex items-center gap-s">
+          <TextInput value={newName} onChange={setNewName} autoFocus
+            placeholder={isProject ? 'Project name' : 'Task list name'}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); isProject ? createProject() : createList() } }} />
+          <Button variant="primary" size="md" loading={busy} disabled={busy || !newName.trim()} disabledReason={!newName.trim() ? 'Enter a name first' : undefined} onClick={isProject ? createProject : createList}>Add</Button>
+          <Button variant="ghost" size="md" onClick={() => { setCreating(null); setNewName(''); setErr('') }}>Cancel</Button>
+        </div>
+        {err && <p role="alert" data-type="caption" className="mt-1 text-danger">{err}</p>}
+      </Field>
+    )
+  }
+
+  return (
+    <>
+      {/* A failed default read is SAID, on a new task only: the form still offers every project,
+          but "Personal" pre-selected must not read as the user's choice when it was a fallback. */}
+      <Field label="Project" hint={!editing && defaultErr ? 'Couldn’t load your default project — pick the one this task belongs to.' : undefined}>
+        <Select value={projectId}
+          onChange={(id) => { if (id === NEW) { setCreating('project'); setNewName('') } else { setProjectId(id); onProjectChange(id) } }}
+          options={[
+            // A task can be in no project (one made with no list); its editor says so rather than
+            // naming a project it is not in, and offers the way back to none.
+            ...(editing ? [{ value: '', label: '(none)' }] : []),
+            ...projects.map((p) => ({ value: p.id, label: p.is_builtin ? `${p.name} (builtin)` : p.name })),
+            { value: NEW, label: '＋ New project…' },
+          ]} />
+      </Field>
+      <Field label="Task list">
+        <Select value={taskListId}
+          onChange={(id) => { if (id === NEW) { setCreating('list'); setNewName('') } else onListChange(id, projectId) }}
+          disabled={!projectId}
+          options={[
+            { value: '', label: '(none)' },
+            ...projectLists.map((l) => ({ value: l.id, label: l.name })),
+            ...(projectId ? [{ value: NEW, label: '＋ New task list…' }] : []),
+          ]} />
+      </Field>
+    </>
+  )
+}
+
+function Section({ title, right, compact, children }: { title: string; right?: React.ReactNode; compact?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`flex flex-col ${compact ? 'gap-m' : 'gap-l'}`}>
+      <div className="flex items-center gap-s border-b border-outline-variant/30 pb-1.5">
+        {/* 🔴 h1 → h3, MEASURED. `#/tasks/new` renders `h1 "New task"` and then these section headers as
+            h3 ×5 — the one skipped level left in the app (20 surfaces swept; every other sequence is a
+            lone h1 or a clean 1→2). A screen-reader user navigating by heading falls past a tier that
+            does not exist.
+            Both hosts want h2: on `#/tasks/new` the page h1 is "New task", and in the task detail panel
+            on `#/tasks` the page h1 is "Tasks" while the panel itself carries no heading (a docked panel
+            is not the page — `PageTitle`'s own rule), so these sections sit one level under the page
+            either way. Same resolution as the dashboard's section headers. */}
+        <h2 className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</h2>
+        {right}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** Serialize a draft to the task wire shape. Prerequisites go out as typed
+ *  BLOCKS `dependencies` (the server's canonical form). */
+export function draftToPayload(d: TaskDraft): Record<string, unknown> {
+  return {
+    title: d.title.trim(),
+    description: d.description ?? '',
+    status: d.status ?? 'open',
+    priority: d.priority ?? 'medium',
+    task_list_id: d.task_list_id ?? '',
+    assignee: d.assignee ?? '',
+    due: d.due ?? '',
+    due_reminder: d.due_reminder !== false,
+    labels: d.labels ?? [],
+    exit_criteria: d.exit_criteria ?? [],
+    action_plan: d.action_plan ?? [],
+    notes: d.notes ?? [],
+    research_notes: d.research_notes ?? [],
+    execution_notes: d.execution_notes ?? [],
+    agent_instructions_template: d.agent_instructions_template ?? '',
+    dependencies: (d.depends_on ?? []).map((id) => ({ depends_on_task_id: id, dependency_type: 'BLOCKS' })),
+    // No explicit list chosen → let the server attach the task to the selected
+    // project's "General" list (else the project choice would silently drop).
+    ...(!d.task_list_id && d.project_id ? { project_id: d.project_id } : {}),
+  }
+}

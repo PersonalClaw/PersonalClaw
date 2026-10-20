@@ -1,0 +1,168 @@
+"""The owner-only census: every place an agent may not change, and every path it writes by that is
+held to them.
+
+``owner_only`` is one rule with three kinds of place: PersonalClaw's own files in its home, git's
+own settings and hook scripts, and the owner's shell startup files. This census lists every entry
+of each kind as the rule declares it, and fails for one it does not list, so a new entry is named
+here first. For each it checks that the rule recognises a path of that entry, and that a path
+which only shares a name is not one. That the architecture doc names each entry (what the doc
+says the rule holds is what it holds), and that every write path that must ask the rule still
+asks it, are the rail ``tests/rails/test_owner_only_census_tree.py``, once per CI run in the
+rails job. Every detector is shown to find what it looks for before its answer is trusted.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+import personalclaw.config.loader as loader
+from personalclaw import owner_only
+
+#: PersonalClaw's own, by name in its home: the files, then the folders.
+HOME_FILES = ("config.json", "mcp.json")
+HOME_FOLDERS = ("hooks", "agents", "grants")
+
+#: Git's, as the rule declares them.
+GIT_SETTINGS = ("config", "config.worktree", "commondir")
+GIT_HOOKS = "hooks"
+GIT_REBASE_STEPS = ("rebase-merge", "git-rebase-todo")
+GIT_MODULES = ".gitmodules"
+GIT_SYSTEM_SETTINGS = ("etc", "gitconfig")
+
+#: The shell's, as the rule declares them.
+SHELL_STARTUP_FILES = (
+    ".profile",
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".bash_aliases",
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".zlogin",
+    ".zlogout",
+    ".kshrc",
+    ".mkshrc",
+    ".cshrc",
+    ".tcshrc",
+    ".login",
+    ".logout",
+)
+ZSH_STARTUP_FILES = (".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout")
+FISH_STARTUP_FILES = ("config.fish",)
+FISH_STARTUP_DIRS = ("conf.d", "functions")
+
+
+@pytest.fixture
+def owner(tmp_path, monkeypatch):
+    """A home folder with PersonalClaw's home in it, and a repository laid out as git lays one."""
+    user = tmp_path / "user"
+    pc = user / ".personalclaw"
+    repo = pc / "workspace" / "site"
+    git = repo / ".git"
+    for folder in (git / "hooks", git / "objects", git / "refs"):
+        folder.mkdir(parents=True)
+    (git / "HEAD").write_text("ref: refs/heads/main\n")
+    bare = pc / "workspace" / "backup.git"
+    for folder in (bare / "objects", bare / "refs"):
+        folder.mkdir(parents=True)
+    (bare / "HEAD").write_text("ref: refs/heads/main\n")
+    linked = pc / "workspace" / "draft"
+    linked.mkdir()
+    (linked / ".git").write_text(f"gitdir: {git}/worktrees/draft\n")
+    monkeypatch.setenv("HOME", str(user))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("ZDOTDIR", str(user / ".config" / "zsh"))
+    monkeypatch.setattr(loader, "config_dir", lambda: pc)
+    return user, pc, repo
+
+
+# ── the entries ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_the_census_lists_every_entry_the_rule_declares():
+    assert owner_only.OWNER_ONLY_FILES == HOME_FILES
+    assert owner_only.OWNER_ONLY_DIRS == HOME_FOLDERS
+    assert owner_only.GIT_SETTINGS == GIT_SETTINGS
+    assert owner_only.GIT_HOOKS == GIT_HOOKS
+    assert owner_only.GIT_REBASE_STEPS == GIT_REBASE_STEPS
+    assert owner_only.GIT_MODULES == GIT_MODULES
+    assert owner_only.GIT_SYSTEM_SETTINGS == GIT_SYSTEM_SETTINGS
+    assert owner_only.SHELL_STARTUP_FILES == SHELL_STARTUP_FILES
+    assert owner_only.ZSH_STARTUP_FILES == ZSH_STARTUP_FILES
+    assert owner_only.FISH_STARTUP_FILES == FISH_STARTUP_FILES
+    assert owner_only.FISH_STARTUP_DIRS == FISH_STARTUP_DIRS
+
+
+def _entries(user: Path, pc: Path, repo: Path) -> dict[str, list[Path]]:
+    """A path of every entry, by the kind the rule must say it is."""
+    git = repo / ".git"
+    config = user / ".config"
+    return {
+        owner_only.HOME: [pc / name for name in HOME_FILES]
+        + [pc / name / "x" for name in HOME_FOLDERS],
+        owner_only.GIT: [git / name for name in GIT_SETTINGS]
+        + [
+            git / GIT_HOOKS / "pre-commit",
+            git.joinpath(*GIT_REBASE_STEPS),
+            repo / GIT_MODULES,
+            pc / "workspace" / "draft" / ".git",
+            pc / "workspace" / "backup.git" / GIT_HOOKS / "post-receive",
+            git / "modules" / "theme" / "config",
+            user / ".gitconfig",
+            config / "git" / "config",
+            Path("/opt/local").joinpath(*GIT_SYSTEM_SETTINGS),
+        ],
+        owner_only.SHELL: [user / name for name in SHELL_STARTUP_FILES]
+        + [config / "zsh" / name for name in ZSH_STARTUP_FILES]
+        + [config / "fish" / name for name in FISH_STARTUP_FILES]
+        + [config / "fish" / name / "x.fish" for name in FISH_STARTUP_DIRS],
+    }
+
+
+def test_the_rule_knows_every_entry_for_the_kind_it_is(owner):
+    for kind, paths in _entries(*owner).items():
+        for path in paths:
+            assert owner_only.kind_of(path) == kind, (kind, path)
+
+
+def test_a_path_that_only_shares_a_name_is_none_of_them(owner):
+    """The control: a project's own ``hooks/`` and ``config``, git's ignore rules, the home's
+    workspace, and a shell's history are not owner-only."""
+    user, pc, repo = owner
+    for path in (
+        repo / ".gitignore",
+        repo / ".gitattributes",
+        repo / ".git" / "info" / "exclude",
+        repo / "src" / "hooks" / "use-notes.ts",
+        repo / "config",
+        pc / "workspace" / "notes.md",
+        pc / "workspace" / "hooks" / "x",
+        user / ".zsh_history",
+        user / ".config" / "fish" / "fish_variables",
+        user / "notes" / ".profile.bak",
+    ):
+        assert owner_only.kind_of(path) == "", path
+
+
+# ── the write paths ─────────────────────────────────────────────────────────────────────────
+
+
+def test_the_fence_and_the_rule_name_the_same_owners_files(owner):
+    """The macOS profile is built from the rule's own list of the owner's files, so the two cannot
+    name different ones: each of the owner's files in her home folder is in the fence."""
+    from personalclaw.sandbox import _owners_own_fence
+
+    user = os.path.abspath(str(owner[0]))
+    files, _folders = _owners_own_fence()
+    in_home = [
+        os.path.abspath(path)
+        for path, is_dir, _kind in owner_only.owners_own()
+        if not is_dir and os.path.dirname(os.path.abspath(path)) == user
+    ]
+    assert in_home and set(in_home) <= set(files)

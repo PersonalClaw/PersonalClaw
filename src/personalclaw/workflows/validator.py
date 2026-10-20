@@ -1,0 +1,1830 @@
+"""Spec validation — structural checks with typed, stable issue codes.
+
+Two rules shape this module:
+
+* **It never throws on a malformed spec.** A validator that raises on the first problem
+  forces an LLM author into one-error-per-turn ping-pong. This accumulates every issue
+  and returns them together, so a repromptable error message can list all of them.
+* **Codes are stable strings.** `WF_UNKNOWN_NODE_KIND` is a contract an agent branches
+  on; rewording the human message must never change the code.
+
+`strict` separates "this spec cannot run" from "this spec is questionable". Warnings
+inform an author; errors block a save. The untrusted-origin lint is an ERROR by
+design — that is the seam that stops trigger payloads flowing unfenced into prompts, and
+making it advisory would leave it to template-author discipline.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from personalclaw.workflows.bindings import (
+    PIPES,
+    BindingError,
+    node_deps,
+    parse_pipe,
+    refs_in,
+    whole_ref,
+)
+from personalclaw.workflows.materialize import OPT_OUT_KEY
+from personalclaw.workflows.models import (
+    LLM_KINDS,
+    NO_OUTPUT_KINDS,
+    GateKind,
+    ItemErrorPolicy,
+    JoinMode,
+    LoopMode,
+    Node,
+    NodeKind,
+    OnError,
+    valid_name,
+    walk,
+)
+from personalclaw.workflows.step_arguments import authored_refusal
+
+SEVERITY_ERROR = "error"
+SEVERITY_WARNING = "warning"
+
+
+@dataclass
+class Issue:
+    code: str
+    message: str
+    path: str = ""
+    severity: str = SEVERITY_ERROR
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "path": self.path,
+            "severity": self.severity,
+        }
+
+
+@dataclass
+class ValidationResult:
+    issues: list[Issue] = field(default_factory=list)
+    #: Kahn levels: nodes that may run concurrently. Empty when the spec has errors.
+    levels: list[list[str]] = field(default_factory=list)
+
+    @property
+    def errors(self) -> list[Issue]:
+        return [i for i in self.issues if i.severity == SEVERITY_ERROR]
+
+    @property
+    def warnings(self) -> list[Issue]:
+        return [i for i in self.issues if i.severity == SEVERITY_WARNING]
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "issues": [i.to_dict() for i in self.issues],
+            "levels": [list(lv) for lv in self.levels],
+        }
+
+    def summary(self) -> str:
+        """One repromptable message listing every problem — the whole reason issues are
+        accumulated rather than raised."""
+        if self.ok and not self.warnings:
+            return "Spec is valid."
+        lines: list[str] = []
+        for issue in self.issues:
+            where = f" at {issue.path}" if issue.path else ""
+            lines.append(f"[{issue.severity}] {issue.code}{where}: {issue.message}")
+        return "\n".join(lines)
+
+
+#: Config keys that carry a prompt an untrusted value must not reach unfenced.
+_PROMPT_KEYS = frozenset({"prompt", "system", "instruction", "instructions", "message"})
+
+#: Binding roots whose content is attacker-influenced: trigger payloads and fetched web
+#: content. A ref from one of these into a prompt must pass a sanitization pipe.
+_UNTRUSTED_ROOTS = frozenset({"trigger", "payload", "webhook", "fetched"})
+
+#: Pipes that make untrusted content safe to interpolate. `fenced`/`fenced_sources` are the
+#: STRONGEST members and were missing: both run `security.fence_untrusted`, which neutralises an
+#: embedded close marker AND the chat-template role tokens (`<|im_start|>`, `[/INST]`) that
+#: `xml_escape` does not touch at all. Their absence meant the lint told an author who had reached
+#: for the platform's real fence to add a weaker pipe instead.
+_SANITIZING_PIPES = frozenset(
+    {"xml_escape", "truncate", "slugify", "json", "tojson", "fenced", "fenced_sources"}
+)
+
+#: The tell of a HAND-ROLLED fence: a template writing the fence's own markup as literal text
+#: instead of piping the value through `fenced`/`fenced_sources`.
+#:
+#: 🔴 This rail exists because the untrusted-ROOT rail structurally cannot see the case (#3112).
+#: `_UNTRUSTED_ROOTS` is a closed set of binding roots, and `nodes` is deliberately not in it —
+#: most node outputs are the run's own computation, so listing it would make every one of the 18
+#: bundled templates that bind a node output into a prompt an error. But a node output CAN be
+#: stored/fetched content (`knowledge-persist` hands back the neighbouring claims it read out of
+#: the store), and an author who knows that reaches for the tag by hand. Measured on
+#: `contradiction-review` at `2fe469b52`: one crafted stored claim rendered THREE
+#: `</untrusted_content>` markers into one prompt, 483 characters outside the fence including a
+#: forged `SYSTEM:` turn, and `<|im_start|>` verbatim.
+#:
+#: Keying on the literal markup rather than on the root is what makes this checkable: a template
+#: has no legitimate reason to write the fence itself — the pipes emit it, with the close marker
+#: and the role tokens neutralised — so the pattern is the defect, whatever root it wraps.
+_HANDROLLED_FENCE_MARKERS = ("<untrusted_content", "</untrusted_content")
+
+_MAX_DEPTH = 12
+_MAX_NODES = 500
+
+#: The keys of an action step's config that are NOT its provider's arguments, which the engine
+#: reads from `config.with` alone (`engine.dispatch_action`): what the dispatch itself reads
+#: (`provider`, `context`, `payload`), and what the engine reads on a step of any kind — what its
+#: failure means (`on_error`, `allow_failure`), its `retry`, its `success_when` check, its
+#: `output_contract`, the files it must leave (`required_artifacts`), the holds on its start
+#: (`lease`, `lease_ttl_secs`, `min_dwell_secs`, `metric_pass`, `metric_from`, `metric_floor`),
+#: whether it writes memory (`persists_memory`), the Task it is projected into (`OPT_OUT_KEY`,
+#: `label`, `task_body`, `done_means`), and what undoes or repeats its effect (`teardown`,
+#: `redo_effects`).
+_ACTION_STEP_KEYS = frozenset(
+    {
+        "provider",
+        "context",
+        "payload",
+        "on_error",
+        "allow_failure",
+        "retry",
+        "success_when",
+        "output_contract",
+        "required_artifacts",
+        "lease",
+        "lease_ttl_secs",
+        "min_dwell_secs",
+        "metric_pass",
+        "metric_from",
+        "metric_floor",
+        "persists_memory",
+        OPT_OUT_KEY,
+        "label",
+        "task_body",
+        "done_means",
+        "teardown",
+        "redo_effects",
+    }
+)
+
+#: The config keys that hold a gate's words for someone.
+GATE_TEXT_KEYS: tuple[str, ...] = ("prompt", "message")
+
+#: The words each gate kind is shown or graded by: the keys the engine reads for it. An approval's
+#: and an event's are its ask (`engine._ask_payload`: `prompt`, else `message`); a judge's `prompt`
+#: is the rubric its model is sent; an expression's `message` is what its failure says. A verifier
+#: and a ladder read no words at all.
+GATE_TEXT_READ: dict[GateKind, frozenset[str]] = {
+    GateKind.APPROVAL: frozenset({"prompt", "message"}),
+    GateKind.EVENT: frozenset({"prompt", "message"}),
+    GateKind.JUDGE: frozenset({"prompt"}),
+    GateKind.EXPRESSION: frozenset({"message"}),
+    GateKind.VERIFY_COMMAND: frozenset(),
+    GateKind.VERIFY_SCRIPT: frozenset(),
+    GateKind.LADDER: frozenset(),
+}
+
+#: Why each kind does not show a key it does not read, the second sentence of the warning.
+_GATE_WORDS_GO: dict[GateKind, str] = {
+    GateKind.JUDGE: "A judge's model is sent its `prompt`, and nothing else.",
+    GateKind.EXPRESSION: (
+        "An expression gate asks nobody: the engine decides it, and what its failure says is its "
+        "`message`. To ask a person, make it an approval."
+    ),
+}
+
+
+def _unshown_gate_text(gate: GateKind, cfg: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(key, why)`` for each of the gate's words its kind never shows."""
+    carried = [key for key in GATE_TEXT_KEYS if str(cfg.get(key) or "").strip()]
+    read = GATE_TEXT_READ[gate]
+    if not read:
+        return [(key, f"A {gate.value} gate reads no words.") for key in carried]
+    unshown = [(key, _GATE_WORDS_GO[gate]) for key in carried if key not in read]
+    if read == {"prompt", "message"} and {"prompt", "message"} <= set(carried):
+        # The ask shows its `prompt`, and its `message` only when it has no `prompt`.
+        unshown.append(("message", "The ask shows its `message` only when it has no `prompt`."))
+    return unshown
+
+
+def _add(res: ValidationResult, code: str, msg: str, path: str = "", sev: str = SEVERITY_ERROR):
+    res.issues.append(Issue(code=code, message=msg, path=path, severity=sev))
+
+
+def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
+    """Validate a parsed node tree. Never raises."""
+    res = ValidationResult()
+    nodes = walk(root)
+
+    if len(nodes) > _MAX_NODES:
+        _add(
+            res,
+            "WF_SPEC_TOO_LARGE",
+            f"spec has {len(nodes)} nodes; the cap is {_MAX_NODES}",
+            "root",
+        )
+
+    ids_seen: dict[str, str] = {}
+    for path, node in nodes:
+        depth = path.count(".")
+        if depth > _MAX_DEPTH:
+            _add(res, "WF_SPEC_TOO_DEEP", f"nesting exceeds {_MAX_DEPTH}", path)
+
+        # Duplicate ids break binding resolution — `{{nodes.x.output}}` becomes ambiguous.
+        if node.id:
+            if node.id in ids_seen:
+                _add(
+                    res,
+                    "WF_DUPLICATE_NODE_ID",
+                    f"node id {node.id!r} is already used at {ids_seen[node.id]}",
+                    path,
+                )
+            else:
+                ids_seen[node.id] = path
+
+        _validate_shape(res, path, node, tree=dict(nodes))
+        _validate_bindings(res, path, node, strict=strict)
+
+    _validate_binding_targets(res, nodes, ids_seen)
+    levels = _kahn_levels(res, nodes, ids_seen)
+    # ONE edge list, three rules and one scheduler over it: the ordering rule asks whether the
+    # producer can be ordered first, the output-contract rule whether the path the reader takes
+    # through its output can exist, the `needs` rule whether a hand-written `needs` agrees with
+    # what the bindings already say — and `tick.ordering_for` re-reads the same derivation to
+    # admit work. Deriving it twice is the defect all three rules exist to remove.
+    edges = dep_ordering_edges(nodes, ids_seen)
+    unreadable = _validate_recorded_outputs(res, dict(nodes), edges)
+    _validate_dep_ordering(res, [edge for edge in edges if edge not in unreadable])
+    _validate_branch_reads(res, dict(nodes), edges)
+    _validate_output_contract(res, nodes, edges)
+    _validate_needs(res, edges)
+    if res.ok:
+        res.levels = levels
+    return res
+
+
+def _in_reapable_parallel(path: str, tree: dict[str, Node]) -> bool:
+    """Is this node inside a `parallel` that can reap it?
+
+    `join: any` or a met-able `quorum`, AND at least one non-watcher sibling to be the leg that
+    finishes. A parallel of nothing but watchers can never satisfy its own join, so it is just
+    as immortal as a bare loop.
+    """
+    matches = list(re.finditer(r"\.children\[\d+\]", path))
+    if not matches:
+        return False
+    parent_path = path[: matches[-1].start()]
+    parent = tree.get(parent_path)
+    if parent is None or parent.kind != NodeKind.PARALLEL:
+        return False
+    join = str((parent.config or {}).get("join", "all") or "all")
+    if join not in (JoinMode.ANY.value, JoinMode.QUORUM.value):
+        return False
+    return any(
+        not (
+            c.kind == NodeKind.LOOP
+            and str((c.config or {}).get("mode", "") or "") == LoopMode.UNTIL_CANCELLED.value
+        )
+        for c in parent.children
+    )
+
+
+def _has_wait(node: Node) -> bool:
+    """Does this subtree contain a `wait`? Subtree, not direct child: the wait is normally
+    inside the watcher body's `sequence`, which is the usual watcher shape."""
+    return any(n.kind == NodeKind.WAIT for _p, n in walk(node))
+
+
+def _positive_int(raw: Any) -> bool:
+    return isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+
+
+def _validate_shape(
+    res: ValidationResult, path: str, node: Node, *, tree: dict[str, Node] | None = None
+) -> None:
+    """Kind-specific structural requirements.
+
+    `tree` is the whole path→node map, needed by the rules that are about a node's RELATIONSHIP
+    to the spec around it — a watcher's reapability depends on its parent's join mode, which is
+    unknowable from the node alone.
+    """
+    kind = node.kind
+    cfg = node.config or {}
+
+    on_error = cfg.get("on_error")
+    if on_error not in (None, "") and on_error not in {member.value for member in OnError}:
+        # Read by any step's failure (`tick.fails_the_run`): an unknown value behaved as the
+        # default, so a step its author meant to end the run let what followed it run.
+        _add(
+            res,
+            "WF_BAD_ON_ERROR",
+            f"unknown on_error {on_error!r} — a step's on_error is null_continue (the steps after "
+            "it still run) or fail_run (its failure ends the run)",
+            path,
+        )
+
+    if kind in (NodeKind.SEQUENCE, NodeKind.PARALLEL):
+        if not node.children:
+            _add(res, "WF_EMPTY_CONTAINER", f"{kind.value} has no children", path)
+        if kind == NodeKind.PARALLEL:
+            raw_join = str(cfg.get("join", "all") or "all")
+            try:
+                join = JoinMode(raw_join)
+            except ValueError:
+                _add(res, "WF_BAD_JOIN", f"unknown join mode {raw_join!r}", path)
+                join = JoinMode.ALL
+            if join == JoinMode.QUORUM:
+                n = cfg.get("quorum")
+                if not isinstance(n, int) or n < 1 or n > max(1, len(node.children)):
+                    _add(
+                        res,
+                        "WF_BAD_QUORUM",
+                        f"quorum must be an int in 1..{len(node.children)}",
+                        path,
+                    )
+            # `needs` is no longer sibling-scoped. The reason the restriction gave —
+            # "cross-container edges would make the tree a graph and break the frontier's
+            # locality" — stopped holding once ordering is DERIVED from bindings: the frontier
+            # already resolves every producer against the whole (global) state map, so a
+            # cross-container edge is honoured, not refused. Existence is checked globally in
+            # `_validate_binding_targets`; whether the edge can be HONOURED is `_validate_needs`.
+
+    elif kind == NodeKind.FOREACH:
+        if node.body is None:
+            _add(res, "WF_MISSING_BODY", "foreach has no body", path)
+        if not cfg.get("items"):
+            _add(res, "WF_MISSING_ITEMS", "foreach needs an `items` binding", path)
+        raw = str(cfg.get("on_item_error", "skip") or "skip")
+        try:
+            ItemErrorPolicy(raw)
+        except ValueError:
+            _add(res, "WF_BAD_ITEM_ERROR", f"unknown on_item_error {raw!r}", path)
+
+    elif kind == NodeKind.LOOP:
+        if node.body is None:
+            _add(res, "WF_MISSING_BODY", "loop has no body", path)
+        raw_mode = str(cfg.get("mode", "counted") or "counted")
+        try:
+            mode = LoopMode(raw_mode)
+        except ValueError:
+            _add(res, "WF_BAD_LOOP_MODE", f"unknown loop mode {raw_mode!r}", path)
+            mode = LoopMode.COUNTED
+        if mode == LoopMode.COUNTED:
+            n = cfg.get("n")
+            if not isinstance(n, int) or n < 1:
+                _add(res, "WF_BAD_LOOP_COUNT", "counted loop needs a positive `n`", path)
+        elif mode == LoopMode.UNTIL and not cfg.get("condition"):
+            _add(res, "WF_MISSING_CONDITION", "until loop needs a `condition`", path)
+        elif mode == LoopMode.UNTIL_DRY:
+            streak = cfg.get("streak", 1)
+            if not isinstance(streak, int) or streak < 1:
+                _add(res, "WF_BAD_STREAK", "until_dry needs a positive `streak`", path)
+        elif mode == LoopMode.UNTIL_CANCELLED:
+            # A watcher has no self-terminating condition, so SOMETHING outside it must be able
+            # to stop it. `reap_watchers` does that only inside a `join: any`/`quorum` parallel;
+            # anywhere else the loop is immortal and the run never completes — a silent hang,
+            # which is the worst outcome for an unattended run.
+            if not _in_reapable_parallel(path, tree or {}) and not cfg.get("max_iterations"):
+                _add(
+                    res,
+                    "WF_UNREAPABLE_WATCHER",
+                    "until_cancelled needs either a `join: any`/`quorum` parallel sibling to "
+                    "reap it or a `max_iterations` cap — otherwise the run never ends",
+                    path,
+                )
+            body = node.body
+            if body is not None and not _has_wait(body):
+                # A watcher with no wait in its body spins as fast as the model answers, which
+                # burns a whole budget in minutes. The one long-run failure that is expensive
+                # rather than merely slow.
+                _add(
+                    res,
+                    "WF_WATCHER_NO_WAIT",
+                    "until_cancelled body has no `wait` — it will cycle as fast as the model "
+                    "responds and exhaust the run budget",
+                    path,
+                )
+        # A loop MAY declare a `SupervisorPolicy`. It is authoring-time validated here, and
+        # the engine reads it through loop convergence.
+        if "supervisor" in cfg:
+            _validate_supervisor(res, path, cfg.get("supervisor"))
+
+    elif kind == NodeKind.BRANCH:
+        if not cfg.get("on"):
+            _add(res, "WF_MISSING_ON", "branch needs an `on` binding", path)
+        if not node.cases:
+            _add(res, "WF_EMPTY_BRANCH", "branch has no cases", path)
+        # Case coverage: when the author declares the enum, every value needs a case
+        # (or a default). Unmatched-at-runtime is a typed BindingError, and catching it
+        # at validation time is much cheaper than mid-run.
+        enum = cfg.get("enum")
+        if isinstance(enum, list) and enum:
+            missing = [str(v) for v in enum if str(v) not in node.cases]
+            if missing and node.default_case is None:
+                _add(
+                    res,
+                    "WF_BRANCH_COVERAGE",
+                    f"no case for {', '.join(missing)} and no default",
+                    path,
+                )
+
+    elif kind in LLM_KINDS:
+        if not cfg.get("prompt"):
+            _add(res, "WF_MISSING_PROMPT", f"{kind.value} needs a `prompt`", path)
+        tier = cfg.get("model_tier")
+        if tier is not None and tier not in ("reasoning", "standard", "fast"):
+            _add(
+                res,
+                "WF_BAD_MODEL_TIER",
+                f"model_tier {tier!r} must be reasoning|standard|fast",
+                path,
+            )
+
+    elif kind == NodeKind.TRANSFORM:
+        # Either form is a transform: an `expr` binding, or a `skeleton` artifact whose stored
+        # body IS the template (the render transform). Requiring `expr`
+        # unconditionally would make the skeleton form unauthorable — and inlining a whole
+        # dashboard body into a spec is exactly the layout/data split the skeleton exists to keep.
+        if not cfg.get("expr") and not cfg.get("skeleton"):
+            _add(
+                res,
+                "WF_MISSING_EXPR",
+                "transform needs an `expr` binding (or a `skeleton` artifact to render)",
+                path,
+            )
+
+    elif kind == NodeKind.VISUALIZE:
+        # The agency-free data→genui primitive: its input is a
+        # `data` binding, not a `prompt` (it is pinned to the reasoning axis, so no
+        # model_tier either). Missing `data` fails at run time with an unhelpful binding
+        # error, so catch the authoring mistake here.
+        if not cfg.get("data"):
+            _add(res, "WF_MISSING_DATA", "visualize needs a `data` binding", path)
+
+    elif kind == NodeKind.ACTION:
+        if not cfg.get("provider"):
+            _add(res, "WF_MISSING_PROVIDER", "action needs a `provider`", path)
+        elif "with" not in cfg and "config" not in cfg:
+            # The engine reads a provider's arguments from `config.with` (`dispatch_action`).
+            # Arguments written FLAT beside `provider` reach the provider as an empty config, and
+            # it then reports its own required field missing — for a value that is visibly right
+            # there in the spec. Caught here because the run-time symptom points at the provider
+            # rather than at the authoring mistake, and because everything downstream of the
+            # failed action then fails on an unresolved binding, burying the cause. The keys the
+            # engine reads on the step itself (`_ACTION_STEP_KEYS`: its `on_error`, `retry`, …)
+            # are not arguments, and moving one into `with` would stop the engine reading it.
+            extras = [k for k in cfg if k not in _ACTION_STEP_KEYS]
+            if extras:
+                # Arguments ARE present, just in the wrong place — the run would fail, so this is
+                # an error naming exactly what to move.
+                _add(
+                    res,
+                    "WF_ACTION_ARGS_NOT_NESTED",
+                    "action arguments go under `config.with` — move "
+                    + ", ".join(sorted(extras))
+                    + " into it",
+                    path,
+                )
+            else:
+                # No arguments at all: legitimate for a provider that needs none, so a warning
+                # rather than a refusal.
+                _add(
+                    res,
+                    "WF_ACTION_NO_ARGS",
+                    "action has no `config.with` — fine if the provider needs no arguments",
+                    path,
+                    SEVERITY_WARNING,
+                )
+        written = run_identity_in_payload(cfg)
+        if written:
+            _add(
+                res, "WF_PAYLOAD_RUN_IDENTITY", f"This step {run_identity_sentence(written)}", path
+            )
+        if refused := authored_refusal(cfg):
+            _add(res, "WF_ARGUMENT_RUN_IDENTITY", f"This step {refused}", path)
+
+    elif kind == NodeKind.WAIT:
+        seal = cfg.get("seal")
+        if seal is not None and not isinstance(seal, dict):
+            _add(res, "WF_BAD_SEAL", "wait `seal` must be an object", path)
+            seal = None
+        if isinstance(seal, dict):
+            # One mistake, one issue. An empty `seal: {}` previously reported three
+            # (missing-wait + bad-seal + no-flush), and three issues for one typo is how a
+            # validation report stops being read.
+            if not _positive_int(seal.get("threshold")) and not _positive_int(seal.get("tokens")):
+                _add(
+                    res,
+                    "WF_BAD_SEAL",
+                    "buffer seal needs a positive `threshold` (items) or `tokens`",
+                    path,
+                )
+            elif not _positive_int(seal.get("flush_stale_after_secs")):
+                # Without a stale flush, a slow trickle never seals: the buffer sits below
+                # threshold indefinitely and the synthesis the watcher exists for never runs.
+                # Nothing errors — the watcher just quietly does nothing, forever.
+                _add(
+                    res,
+                    "WF_SEAL_NO_FLUSH",
+                    "buffer seal has no `flush_stale_after_secs` — a trickle of items would "
+                    "never reach the threshold and never synthesize",
+                    path,
+                    SEVERITY_WARNING,
+                )
+        elif not (cfg.get("duration_secs") or cfg.get("until_ts")):
+            _add(res, "WF_MISSING_WAIT", "wait needs duration_secs, until_ts or seal", path)
+
+    elif kind == NodeKind.GATE:
+        raw = str(cfg.get("kind", "") or "")
+        try:
+            gate = GateKind(raw)
+        except ValueError:
+            _add(res, "WF_BAD_GATE_KIND", f"unknown gate kind {raw!r}", path)
+            gate = None
+        if gate in (GateKind.VERIFY_COMMAND, GateKind.VERIFY_SCRIPT) and not cfg.get("verify"):
+            _add(res, "WF_MISSING_VERIFY", f"{raw} gate needs a `verify` block", path)
+        if gate == GateKind.LADDER:
+            criteria = cfg.get("criteria")
+            if not isinstance(criteria, list) or not criteria:
+                _add(
+                    res,
+                    "WF_MISSING_CRITERIA",
+                    "ladder gate needs a non-empty `criteria` list",
+                    path,
+                )
+        if gate == GateKind.JUDGE:
+            prompt = cfg.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                _add(res, "WF_MISSING_PROMPT", "judge gate needs a non-empty `prompt`", path)
+        if gate == GateKind.EXPRESSION and not cfg.get("expr"):
+            _add(res, "WF_MISSING_EXPR", "expression gate needs an `expr`", path)
+        for key, why in _unshown_gate_text(gate, cfg) if gate is not None else ():
+            _add(
+                res,
+                "WF_GATE_TEXT_UNSHOWN",
+                f"This gate's `{key}` is never shown to anyone. {why}",
+                path,
+                SEVERITY_WARNING,
+            )
+
+    elif kind == NodeKind.SUBWORKFLOW:
+        ref = str(cfg.get("ref", "") or "")
+        if not ref:
+            _add(res, "WF_MISSING_REF", "subworkflow needs a `ref`", path)
+        else:
+            base = ref.split("@", 1)[0]
+            if not valid_name(base):
+                _add(res, "WF_BAD_REF", f"subworkflow ref {ref!r} is not a valid name", path)
+
+
+def run_identity_in_payload(config: dict[str, Any]) -> list[str]:
+    """The keys an action step's `payload` writes, as authored, that say whose work the step is
+    (`engine.RUN_IDENTITY_KEYS`). Only the engine sets those, from the run executing the step, so
+    a template that writes one is refused rather than quietly overridden: its author learns the
+    value was never theirs. A payload bound whole (`"{{nodes.x.output}}"`) names no keys here, and
+    the engine sets the run's over whatever it resolves to."""
+    from personalclaw.workflows.engine import RUN_IDENTITY_KEYS
+
+    payload = config.get("payload")
+    return [key for key in RUN_IDENTITY_KEYS if isinstance(payload, dict) and key in payload]
+
+
+def run_identity_sentence(keys: list[str]) -> str:
+    """What a step whose payload writes *keys* is told, after its subject: at save, "This step …",
+    and at run start, the step by name (`run_start.admit_step_identities`)."""
+    names = [f"`{key}`" for key in keys]
+    named = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    that, says, it = (
+        ("that key", "it says", "it") if len(names) == 1 else ("those keys", "they say", "them")
+    )
+    return (
+        f"sets {named} in its payload. The engine sets {that} from the run that executes the "
+        f"step, since {says} whose work the step is, so a template cannot: remove {it} from the "
+        "step's payload"
+    )
+
+
+def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
+    """Authoring-time validation of a loop's `SupervisorPolicy` declaration.
+
+    The closed field set IS the contract: an UNKNOWN top-level field is an error, while a
+    missing one is tolerated by the parser's defaults. Bad enum VALUES are flagged too, each
+    against the vocabulary that already owns it (reused, never re-minted). This is a pure
+    authoring check — nothing here reads a parsed policy, and the engine is unchanged.
+    Imported lazily so `validator` stays import-cheap and cycle-free.
+    """
+    # Local import: keeps the declaration module (and its transitive loop/judge imports) off
+    # `validator`'s import path.
+    from personalclaw.workflows.supervisor_policy import (
+        CONVERGENCE_FIELDS,
+        DONE_SIGNALS,
+        FAILURE_CLASS_VALUES,
+        HITL_POSTURE_VALUES,
+        LADDER_RUNG_VALUES,
+        POLICY_FIELDS,
+        SUPERVISOR_MODEL_TIERS,
+    )
+
+    if not isinstance(raw, dict):
+        _add(res, "WF_SUPERVISOR_NOT_OBJECT", "supervisor must be an object", path)
+        return
+    for key in raw:
+        if key not in POLICY_FIELDS:
+            _add(res, "WF_SUPERVISOR_UNKNOWN_FIELD", f"unknown supervisor field {key!r}", path)
+    tier = raw.get("judge_model_tier")
+    if tier is not None and str(tier) not in SUPERVISOR_MODEL_TIERS:
+        _add(
+            res,
+            "WF_SUPERVISOR_BAD_TIER",
+            f"judge_model_tier {tier!r} must be reasoning|standard|fast",
+            path,
+        )
+    ladder = raw.get("escalation_ladder")
+    if isinstance(ladder, list):
+        for rung in ladder:
+            if str(rung) not in LADDER_RUNG_VALUES:
+                _add(res, "WF_SUPERVISOR_BAD_RUNG", f"unknown escalation rung {rung!r}", path)
+    mutations = raw.get("failure_mutations")
+    if isinstance(mutations, dict):
+        for cls in mutations:
+            if str(cls) not in FAILURE_CLASS_VALUES:
+                _add(
+                    res,
+                    "WF_SUPERVISOR_BAD_FAILURE_CLASS",
+                    f"unknown failure class {cls!r}",
+                    path,
+                )
+    hitl = raw.get("hitl_posture")
+    if hitl is not None and str(hitl) not in HITL_POSTURE_VALUES:
+        _add(res, "WF_SUPERVISOR_BAD_HITL", f"hitl_posture {hitl!r} must be afk|hitl", path)
+    # The done-ness block. Checked here and not only in the parser because the parser is
+    # deliberately tolerant — it falls back to the default signal, which means a mistyped
+    # `signal` would otherwise ship as "this loop has no point-in-time done check" with nothing
+    # said. That is the one failure this block must not have: silent, and about completion.
+    if "convergence" in raw:
+        _validate_convergence(res, path, raw.get("convergence"), CONVERGENCE_FIELDS, DONE_SIGNALS)
+
+
+def _validate_convergence(
+    res: ValidationResult,
+    path: str,
+    raw: Any,
+    convergence_fields: frozenset[str],
+    done_signals: frozenset[str],
+) -> None:
+    """Authoring-time validation of a ``supervisor.convergence`` block.
+
+    The vocabularies are passed in rather than imported again: ``_validate_supervisor`` already
+    paid the lazy import, and re-importing here would be a second copy of the same contract.
+    """
+    if not isinstance(raw, dict):
+        _add(
+            res,
+            "WF_SUPERVISOR_CONVERGENCE_NOT_OBJECT",
+            "supervisor.convergence must be an object",
+            path,
+        )
+        return
+    for key in raw:
+        if key not in convergence_fields:
+            _add(
+                res,
+                "WF_SUPERVISOR_UNKNOWN_CONVERGENCE_FIELD",
+                f"unknown supervisor.convergence field {key!r}",
+                path,
+            )
+    signal = raw.get("signal")
+    if signal is not None and str(signal) not in done_signals:
+        _add(
+            res,
+            "WF_SUPERVISOR_BAD_DONE_SIGNAL",
+            (f"convergence signal {signal!r} must be one of " f"{'|'.join(sorted(done_signals))}"),
+            path,
+        )
+
+
+def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: bool) -> None:
+    """Parse every binding and apply the untrusted-origin lint."""
+    for key, value in (node.config or {}).items():
+        # The hand-rolled-fence lint (#3112). Keyed on the VALUE TEXT, not on a binding root, so
+        # it fires for the `nodes.*` interpolations `_UNTRUSTED_ROOTS` cannot reach. An ERROR for
+        # the same reason WF_UNFENCED_UNTRUSTED is: a literal tag pair looks exactly as protective
+        # as the real fence in review and provides none of it.
+        if key in _PROMPT_KEYS and isinstance(value, str):
+            lowered = value.lower()
+            if any(marker in lowered for marker in _HANDROLLED_FENCE_MARKERS):
+                _add(
+                    res,
+                    "WF_HANDROLLED_FENCE",
+                    (
+                        f"{key!r} writes the <untrusted_content> fence as literal text — a "
+                        "hand-written fence neutralises neither an embedded close marker nor a "
+                        "chat-template role token. Delete the tags and pipe the value through "
+                        "`| fenced(...)` (any shape) or `| fenced_sources` (retrieved knowledge)"
+                    ),
+                    path,
+                )
+        for expr in refs_in(value):
+            # Every pipe call is parsed by resolution's own grammar (`bindings.parse_pipe`), so a
+            # spec that validates is one whose pipes evaluate. Checking only the NAME is how
+            # `rich-ingest` shipped `| default([])`: the name is real, the argument is not a
+            # literal, and every resolution of it failed.
+            for raw_pipe in [p.strip() for p in expr.split("|")[1:]]:
+                name = raw_pipe.split("(", 1)[0].strip()
+                if name and name not in PIPES:
+                    _add(res, "WF_UNKNOWN_PIPE", f"unknown pipe {name!r}", path)
+                    continue
+                try:
+                    parse_pipe(raw_pipe)
+                except BindingError as exc:
+                    fix = f" — {exc.remediation}" if exc.remediation else ""
+                    _add(res, "WF_BAD_PIPE", f"{exc} (in {{{{{expr}}}}}){fix}", path)
+
+            head = expr.split("|")[0].strip()
+            root_seg = head.split(".")[0].strip()
+
+            # The untrusted-origin lint. An ERROR, not a warning: this is the
+            # mechanical seam that keeps trigger payloads from reaching a prompt
+            # unfenced, and advisory-only would leave it to author discipline.
+            if key in _PROMPT_KEYS and root_seg in _UNTRUSTED_ROOTS:
+                pipes = {p.split("(", 1)[0].strip() for p in expr.split("|")[1:]}
+                if not (pipes & _SANITIZING_PIPES):
+                    _add(
+                        res,
+                        "WF_UNFENCED_UNTRUSTED",
+                        (
+                            f"{root_seg!r} is untrusted input flowing into {key!r} "
+                            "unsanitized — add a sanitization pipe "
+                            "(fenced/fenced_sources/xml_escape/truncate/json)"
+                        ),
+                        path,
+                    )
+
+            if (
+                strict
+                and root_seg
+                not in (
+                    "inputs",
+                    "nodes",
+                    "item",
+                    "iter",
+                    "last",
+                    "run",
+                )
+                and not head.startswith("secret:")
+                and root_seg not in _UNTRUSTED_ROOTS
+            ):
+                if head.startswith("block:"):
+                    # A shared block reference that was never resolved. Reported as
+                    # ITSELF rather than as an unknown binding root: the two are resolved at
+                    # different times (blocks at authoring, bindings at run), so "not a known
+                    # source" sends the author looking for a node that was never the problem.
+                    # Reaching the validator at all means the resolve step was skipped or the
+                    # block does not exist — both worth naming precisely.
+                    _add(
+                        res,
+                        "WF_UNRESOLVED_BLOCK",
+                        f"shared block reference {head!r} was not resolved — the block may not "
+                        "exist, or this spec bypassed the authoring path that substitutes them",
+                        path,
+                        SEVERITY_WARNING,
+                    )
+                else:
+                    _add(
+                        res,
+                        "WF_UNKNOWN_BINDING_ROOT",
+                        f"binding root {root_seg!r} is not a known source",
+                        path,
+                        SEVERITY_WARNING,
+                    )
+
+    # Inline secret-shaped values: a literal key in a spec would be persisted
+    # to the journal and later read by the flywheel.
+    for key, value in (node.config or {}).items():
+        if isinstance(value, str) and _looks_like_secret(value):
+            _add(
+                res,
+                "WF_INLINE_SECRET",
+                f"{key!r} looks like an inline credential — use {{{{secret:KEY}}}}",
+                path,
+            )
+
+
+def _looks_like_secret(value: str) -> bool:
+    """Delegates to `secrets.py`, the ONE credential-shape list.
+
+    This function used to carry its own prefix tuple. Two lists of vendor key shapes
+    inevitably drift — one gets a new provider and the other silently stops catching it —
+    and "which lint runs where" becomes unanswerable. The shapes live in `secrets.py`
+    (the documented provider-boundary keep) and both the save-time lint and this
+    validator read them from there.
+    """
+    from personalclaw.workflows.secrets import looks_like_credential
+
+    v = value.strip()
+    if " " in v:
+        return False
+    return looks_like_credential(v)
+
+
+def _validate_binding_targets(
+    res: ValidationResult, nodes: list[tuple[str, Node]], ids: dict[str, str]
+) -> None:
+    """Every `{{nodes.<id>…}}` and every `needs` entry must name a node that exists.
+
+    A typo in a binding is a run that fails at ready-time with a BindingError; catching it
+    now is free.
+
+    `needs` is resolved against the WHOLE spec, not against the enclosing
+    `parallel`'s siblings. The sibling-only rule this replaces refused a cross-container edge
+    outright, on the grounds that it "would make the tree a graph and break the frontier's
+    locality" — but the frontier now honours a derived ordering edge between any two nodes, so
+    the graph is global by construction and the only thing left to check here is that the
+    target EXISTS. Whether the edge can be HONOURED is `_validate_needs`' job.
+    """
+    for path, node in nodes:
+        for dep in node_deps(node.config or {}):
+            if dep not in ids:
+                _add(
+                    res,
+                    "WF_UNKNOWN_NODE_REF",
+                    f"binding references unknown node id {dep!r}",
+                    path,
+                )
+        for need in node.needs:
+            if need not in ids:
+                _add(
+                    res,
+                    "WF_UNKNOWN_NEEDS",
+                    f"needs {need!r} names no node in this spec",
+                    path,
+                )
+
+
+#: A `DepEdge` derived from a `{{nodes.<producer>…}}` reference — dataflow.
+EDGE_BINDING = "binding"
+#: A `DepEdge` derived from a hand-written `needs` — ordering the author asserted, which may
+#: or may not correspond to any dataflow.
+EDGE_NEEDS = "needs"
+
+
+@dataclass(frozen=True)
+class DepEdge:
+    """One ordering edge between two nodes, and whether the engine can honour it.
+
+    ONE list carries both origins: a `{{nodes.<producer>…}}` binding and a
+    hand-written `needs` are the same relation seen from two sides, and deriving them
+    separately is precisely the two-edge-lists defect this plan exists to remove. Every
+    consumer — the ordering rule, the contract rule, the `needs` cross-check and the
+    frontier's admission gate — reads this one list and filters on `origin`.
+
+    Materialized as a value rather than turned straight into an issue, because a rule that
+    examined no edges is indistinguishable from a rule that examined many and liked them
+    all — both report nothing. Only a caller that can count the edges considered can tell
+    the two apart, which is what the vacuity floor in the tests does.
+    """
+
+    reader_path: str
+    #: The reader's author-facing id, or `""` — `id` is optional on every node.
+    reader_id: str
+    producer_path: str
+    producer_id: str
+    #: Can the engine hold the reader until the producer is terminal? False only when the
+    #: spec's own structure makes that impossible (see `_ordering_verdict`).
+    ordered: bool
+    #: The satisfying structure when `ordered`, the contradiction when not.
+    reason: str
+    #: The distinct paths this reader takes THROUGH the producer's output, as segment
+    #: tuples: `{{nodes.p.output.a.b}}` → `("a", "b")`, a bare `{{nodes.p.output}}` → `()`.
+    #: Empty overall when the binding never reaches `output` at all (`{{nodes.p.artifact}}`
+    #: is a dependency but not an output read, and `output_contract` says nothing about it).
+    #: Always empty for an `EDGE_NEEDS` edge — a `needs` reads nothing.
+    output_reads: tuple[tuple[str, ...], ...] = ()
+    #: `EDGE_BINDING` or `EDGE_NEEDS`.
+    origin: str = EDGE_BINDING
+
+
+def _parent_slots(nodes: list[tuple[str, Node]]) -> dict[str, tuple[str, str, int, str]]:
+    """child path → (parent path, slot, child index, case label).
+
+    Derived from the walk output rather than by splitting the path strings back apart: a
+    `cases[<label>]` label is author-supplied and may itself contain a dot or a bracket, so
+    parsing a path is not safe. Child paths are re-derived exactly as `walk` derives them,
+    which keeps the two constructions from drifting.
+    """
+    out: dict[str, tuple[str, str, int, str]] = {}
+    for path, node in nodes:
+        for i, child in enumerate(node.children):
+            out[f"{path}.children[{i}]"] = (path, "children", i, "")
+        if node.body is not None:
+            out[f"{path}.body"] = (path, "body", -1, "")
+        for label, _case in node.cases.items():
+            out[f"{path}.cases[{label}]"] = (path, "cases", -1, label)
+        if node.default_case is not None:
+            out[f"{path}.default"] = (path, "default", -1, "default")
+    return out
+
+
+def _chain(path: str, parents: dict[str, tuple[str, str, int, str]]) -> list[str]:
+    """`[path, parent, …, root]`. Bounded by `_MAX_DEPTH`-ish tree height in practice, and
+    by the visited set against a malformed map."""
+    out = [path]
+    seen = {path}
+    cur = path
+    while cur in parents:
+        cur = parents[cur][0]
+        if cur in seen:  # pragma: no cover — defensive; `walk` cannot produce a cycle
+            break
+        seen.add(cur)
+        out.append(cur)
+    return out
+
+
+def _slot_label(slot: tuple[str, str, int, str]) -> str:
+    """How an author would point at this slot in the spec."""
+    _parent, kind, index, label = slot
+    if kind == "children":
+        return f"child {index}"
+    if kind == "cases":
+        return f"case {label!r}"
+    if kind == "default":
+        return "the default case"
+    return "the body"
+
+
+def _needs_reaches(parent: Node, from_idx: int, to_idx: int) -> bool:
+    """Does child `from_idx` transitively `needs` child `to_idx` of this parallel?
+
+    Only the parallel's DIRECT children are consulted, because that is exactly what
+    admission consults (`tick._visit_parallel` gates on `child.needs`). A `needs` declared
+    anywhere else is inert, and treating it as an ordering edge here would make the
+    validator promise something the scheduler does not deliver.
+    """
+    by_id = {c.id: i for i, c in enumerate(parent.children) if c.id}
+    if not parent.children[to_idx].id:
+        return False  # nothing can `needs` an anonymous child
+    seen = {from_idx}
+    stack = [from_idx]
+    while stack:
+        for need in parent.children[stack.pop()].needs:
+            nxt = by_id.get(need)
+            if nxt is None or nxt in seen:
+                continue
+            if nxt == to_idx:
+                return True
+            seen.add(nxt)
+            stack.append(nxt)
+    return False
+
+
+def _ordering_verdict(
+    reader_path: str,
+    producer_path: str,
+    tree: dict[str, Node],
+    parents: dict[str, tuple[str, str, int, str]],
+) -> tuple[bool, str]:
+    """CAN the engine hold `reader_path` until `producer_path` is terminal?
+
+    The comparison happens at the DIVERGENCE POINT — the lowest common ancestor — and
+    between the two branches of it that contain the reader and the producer, not between
+    the two nodes themselves. That is what makes "an earlier sibling within an enclosing
+    `sequence`" mean what an author expects: a producer buried inside an earlier sibling
+    (in a `parallel`, a `foreach` body, a `branch` case) is still terminal when that
+    sibling is, because a container completes only after its children do.
+
+    **The question this answers is wider than it was.** It used to be "does the spec ALREADY order
+    the producer first", where the only orderings that counted were container order and a
+    sibling `needs` — so two concurrent legs of a `parallel` were unordered and the author had
+    to hand-write the edge. The frontier now enforces the derived edge itself
+    (`tick.ordering_for`), so concurrency is no longer a refusal: the reader simply waits.
+    What remains False is the set of shapes where NO amount of waiting helps, because the
+    structure itself contradicts the edge — the producer encloses or is enclosed by the
+    reader, a `sequence` runs it after the reader, or a `branch` makes the two exclusive.
+    Those are the deadlocks, and refusing them at authoring time is the whole point.
+
+    Deliberately NOT decided here: whether the producer actually RAN. A producer inside a
+    taken-or-not `branch` case is orderable either way; the frontier resolves the liveness
+    half from state at run time by skipping a reader whose producer went SKIPPED.
+    """
+    if reader_path == producer_path:
+        return False, "the binding reads the reader's own output"
+
+    r_chain = _chain(reader_path, parents)
+    p_chain = _chain(producer_path, parents)
+    if producer_path in r_chain:
+        return False, (
+            f"it ENCLOSES the reader ({producer_path}), and a container's output is not "
+            "available until after the children that produce it"
+        )
+    if reader_path in p_chain:
+        return False, f"it runs INSIDE the reader ({producer_path}), so it cannot precede it"
+
+    r_index = {p: i for i, p in enumerate(r_chain)}
+    lca = ""
+    p_branch = producer_path
+    for cur in p_chain[1:]:
+        if cur in r_index:
+            lca = cur
+            break
+        p_branch = cur
+    if not lca:  # pragma: no cover — both chains end at `root`, so an LCA always exists
+        return False, "the reader and the producer are in unrelated trees"
+    r_branch = r_chain[r_index[lca] - 1]
+
+    parent = tree.get(lca)
+    p_slot, r_slot = parents[p_branch], parents[r_branch]
+    kind = parent.kind if parent is not None else None
+    both_children = p_slot[1] == "children" and r_slot[1] == "children"
+
+    if kind is NodeKind.SEQUENCE and both_children:
+        if p_slot[2] < r_slot[2]:
+            return True, f"the sequence at {lca} runs child {p_slot[2]} before child {r_slot[2]}"
+        return False, (
+            f"the sequence at {lca} runs it AFTER the reader (child {p_slot[2]} vs child "
+            f"{r_slot[2]}) — move it before the reader"
+        )
+
+    if kind is NodeKind.PARALLEL and both_children:
+        assert parent is not None
+        if _needs_reaches(parent, r_slot[2], p_slot[2]):
+            return True, f"a `needs` chain inside the parallel at {lca}"
+        # Concurrent legs of a parallel. This used to be a refusal telling the author
+        # to hand-write `needs` — and it could only ever be satisfied by an edge between the
+        # parallel's DIRECT children, which is why a diamond whose legs rejoin inside nested
+        # containers was inexpressible. The frontier holds the reader on this edge now, so the
+        # parallel's concurrency is a fact about the container, not about the edge.
+        return True, (
+            f"the ordering edge holds the reader until it finishes, across the concurrent "
+            f"legs of the parallel at {lca}"
+        )
+
+    if kind is NodeKind.BRANCH:
+        return False, (
+            f"the branch at {lca} runs {_slot_label(p_slot)} and {_slot_label(r_slot)} "
+            "exclusively — only one of the two ever runs"
+        )
+
+    return False, (
+        f"nothing can order {_slot_label(p_slot)} before {_slot_label(r_slot)} in the "
+        f"{kind.value if kind else 'node'} at {lca}"
+    )
+
+
+def _output_reads(config: dict[str, Any]) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """producer id → the distinct paths this config reads under that producer's `output`.
+
+    Built on `bindings.refs_in`, the same scan `node_deps` is built on, so the paths and the
+    dependency set cannot disagree about which producers a node reads — the whole point of
+    hanging this off `DepEdge` rather than deriving a second reference list.
+
+    A bare `{{nodes.p.output}}` yields the EMPTY tuple: it is a read, but there is no path
+    to check against a contract. A ref that never reaches `output` yields nothing at all.
+    """
+    out: dict[str, list[tuple[str, ...]]] = {}
+    for expr in refs_in(config):
+        head = expr.split("|")[0].strip()
+        segs = [s for s in head.split(".") if s]
+        if len(segs) < 3 or segs[0] != "nodes" or segs[2] != "output":
+            continue
+        paths = out.setdefault(segs[1], [])
+        path = tuple(segs[3:])
+        if path not in paths:  # the same ref may appear under several config keys
+            paths.append(path)
+    return {pid: tuple(paths) for pid, paths in out.items()}
+
+
+def dep_ordering_edges(nodes: list[tuple[str, Node]], ids: dict[str, str]) -> list[DepEdge]:
+    """THE ordering graph: every binding-derived dependency plus every declared `needs`.
+
+    Uses `bindings.node_deps` — the same derivation the resume cache, the stale-inputs
+    check and the mutation cascade use — so this rule cannot disagree with them about what
+    a binding depends on. A reference to an unknown id is skipped: `WF_UNKNOWN_NODE_REF`
+    (and `WF_UNKNOWN_NEEDS`) already own that, and reporting both would make one typo two
+    errors.
+
+    Both origins land in ONE list because there is one relation here, not two. The
+    engine used to keep a hand-maintained `needs` list for admission and a binding graph for
+    everything else, with nothing checking they agreed; that disagreement is what the ordering
+    rule made visible and what this deletes. `frontier()` consumes this same list, so a reader
+    cannot be admitted under one notion of "ordered first" while the validator checked another.
+    """
+    parents = _parent_slots(nodes)
+    tree = dict(nodes)
+    out: list[DepEdge] = []
+    for path, node in nodes:
+        config = node.config or {}
+        reads = _output_reads(config)
+        for dep in sorted(node_deps(config)):
+            producer_path = ids.get(dep)
+            if producer_path is None:
+                continue
+            ordered, reason = _ordering_verdict(path, producer_path, tree, parents)
+            out.append(
+                DepEdge(path, node.id, producer_path, dep, ordered, reason, reads.get(dep, ()))
+            )
+        for need in node.needs:
+            producer_path = ids.get(need)
+            if producer_path is None:
+                continue
+            ordered, reason = _ordering_verdict(path, producer_path, tree, parents)
+            out.append(DepEdge(path, node.id, producer_path, need, ordered, reason, (), EDGE_NEEDS))
+    return out
+
+
+def dep_edges_for_root(root: Node) -> list[DepEdge]:
+    """`dep_ordering_edges` for a whole tree — the shape a caller outside the validator has.
+
+    Mirrors `validate_node_tree`'s first-wins id map, so an inspection and a validation
+    cannot disagree about which node a duplicated id names (the duplicate itself is
+    `WF_DUPLICATE_NODE_ID`'s business).
+    """
+    nodes = walk(root)
+    ids: dict[str, str] = {}
+    for path, node in nodes:
+        if node.id and node.id not in ids:
+            ids[node.id] = path
+    return dep_ordering_edges(nodes, ids)
+
+
+def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
+    """Refuse a binding whose producer is not ordered before its reader.
+
+    The engine keeps two edge lists and nothing checked they agree. Admission reads
+    `needs` and container order only (`tick._visit_parallel`); bindings are a separate
+    graph feeding the resume cache, the stale-inputs check and the mutation cascade. So a
+    spec could bind `{{nodes.x.output}}` from a node that runs beside — or before — `x`,
+    and the run died at ready-time with *"binding failed: check the referenced node id and
+    field exist"* pointing the author at an id that was perfectly correct. Locally
+    plausible, globally wrong, and only discoverable by running it.
+
+    The rule added no runtime behaviour — the check existed purely so the disagreement was a
+    typed authoring-time refusal instead of a mid-run failure. The disagreement itself is gone
+    now that the frontier consumes this very list.
+
+    Runs AFTER `_kahn_levels` and stays quiet when a cycle was found: on a cyclic graph the
+    only advice this rule can give ("order the producer first") is the advice that closes
+    the loop, so `WF_CYCLE` is both the truer fact and the one an author must fix first.
+
+    **What reaches this rule is narrower now.** The frontier now holds a reader until the
+    producers its bindings name are terminal, so "they run concurrently" is no longer an
+    unordered edge — it is an edge the scheduler honours. What is left is the set of
+    structural contradictions no wait can resolve, where the run would hang instead of
+    failing at ready-time. The rule did not become weaker; the engine grew the guarantee the
+    rule used to have to demand from the author. `EDGE_NEEDS` edges are `_validate_needs`'
+    business, not this rule's.
+    """
+    if any(i.code == "WF_CYCLE" for i in res.issues):
+        return
+    for edge in edges:
+        if edge.ordered or edge.origin != EDGE_BINDING:
+            continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        _add(
+            res,
+            "WF_UNORDERED_DEP",
+            (
+                f"{reader} binds {{{{nodes.{edge.producer_id}…}}}}, but nothing guarantees "
+                f"{edge.producer_id!r} has finished when {reader} is admitted: {edge.reason}"
+            ),
+            edge.reader_path,
+        )
+
+
+def _validate_recorded_outputs(
+    res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
+) -> set[DepEdge]:
+    """Refuse a binding that reads a node which records no output (`models.NO_OUTPUT_KINDS`), and a
+    field read of a fan-out, whose output is a list.
+
+    A `sequence` or `parallel` runs the steps inside it and has no output of its own,
+    so a `{{nodes.<id>…}}` naming one can never resolve: the reader met "unresolved reference"
+    mid-run, after everything before it had spent its tokens. The kinds come from the one
+    definition the engine records outputs by, so a read this accepts is one a run can resolve: a
+    `loop` records its last cycle's output, a `branch` its routing and what its taken case
+    produced (which fields a read may name is `_validate_branch_reads`'), and a `foreach` the list
+    of what its items produced. This used to accept a read
+    of any node while the engine recorded no loop's output, so three bundled templates failed at
+    the step after their loop. Refused under the code an unresolvable read already carries, and
+    returned so the ordering rule does not also advise moving a producer that will never produce
+    anything to read.
+    """
+    unreadable: set[DepEdge] = set()
+    for edge in edges:
+        producer = tree.get(edge.producer_path)
+        if edge.origin != EDGE_BINDING or producer is None:
+            continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        if producer.kind is NodeKind.FOREACH:
+            # A fan-out records a LIST, one entry per item that gave a result: an index or a
+            # pipe over it resolves, a field name never does.
+            named = [read for read in edge.output_reads if read and not read[0].isdigit()]
+            if named:
+                unreadable.add(edge)
+                _add(
+                    res,
+                    "WF_UNSATISFIABLE_OUTPUT_REF",
+                    (
+                        f"{reader} reads {{{{nodes.{edge.producer_id}.output."
+                        f"{'.'.join(named[0])}}}}}, but {edge.producer_id!r} is a foreach, whose "
+                        "output is the list of what each of its items produced, so it has no "
+                        f"field {named[0][0]!r}. Read the list (`| map('{named[0][0]}')` takes "
+                        "that field from each entry), or an entry by its index"
+                    ),
+                    edge.reader_path,
+                )
+            continue
+        if producer.kind not in NO_OUTPUT_KINDS:
+            continue
+        unreadable.add(edge)
+        _add(
+            res,
+            "WF_UNSATISFIABLE_OUTPUT_REF",
+            (
+                f"{reader} reads {{{{nodes.{edge.producer_id}…}}}}, but {edge.producer_id!r} is a "
+                f"{producer.kind.value}, which records no output of its own, so the binding can "
+                "never resolve. Read the step inside it whose output you need"
+            ),
+            edge.reader_path,
+        )
+    return unreadable
+
+
+def _produced_keys(node: Node) -> frozenset[str] | None:
+    """The fields an output of `node` can carry, or None when that is not known when the spec is
+    saved.
+
+    Known only where the engine, not a model or a provider, gives the output its shape: a
+    transform's object (its own keys) or its text (no fields), a stage that declares no schema
+    (`{"result": <its text>}`, `stage_settlement._settled_stage_output`), and a sequence, parallel
+    or fan-out of such steps (what they produce, layered as `node_bindings.subtree_output` reads
+    them). `required_artifacts` adds the `artifacts` the engine's gate writes onto an object. An
+    answer a model shapes, a provider's result, a gate's record, a loop's or a branch's output:
+    None, so nothing is refused on a guess.
+    """
+    cfg = node.config or {}
+    gated = frozenset({"artifacts"}) if cfg.get("required_artifacts") else frozenset()
+    if node.kind is NodeKind.TRANSFORM and not cfg.get("skeleton"):
+        expr = cfg.get("expr")
+        if isinstance(expr, dict):
+            return frozenset(str(key) for key in expr) | gated
+        if isinstance(expr, str) and whole_ref(expr) is None:
+            return frozenset()
+        return None
+    if node.kind is NodeKind.STAGE:
+        schema = cfg.get("schema")
+        if (isinstance(schema, dict) and schema) or cfg.get("judge_contract"):
+            return None
+        return frozenset({"result"}) | gated
+    if node.kind in NO_OUTPUT_KINDS or node.kind is NodeKind.FOREACH:
+        # A fan-out's own record is skipped where a subtree is layered (`_accumulated_outputs`),
+        # so what a case holding one produces is what its items' steps produce.
+        parts = [_produced_keys(child) for child in node.child_nodes()]
+        known = [part for part in parts if part is not None]
+        return frozenset().union(*known) if len(known) == len(parts) else None
+    return None
+
+
+#: A branch's output, as an author reads it (`node_bindings.record_branch_outputs`).
+_BRANCH_OUTPUT = '{"case": <the case it took>, "produced": <what that case produced>}'
+
+
+def _case_name(label: str | None) -> str:
+    return "the default case" if label is None else f"case {label!r}"
+
+
+def _fields(keys: frozenset[str]) -> str:
+    return ", ".join(sorted(keys)) or "no fields"
+
+
+def _listing(cases: list[tuple[str | None, frozenset[str]]]) -> str:
+    """`lookup: angles, depth; default: note` — what each named case produces."""
+    return "; ".join(
+        f"{'default' if label is None else label}: {_fields(keys)}" for label, keys in cases
+    )
+
+
+def _validate_branch_reads(
+    res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
+) -> None:
+    """Refuse a read of a branch's output that the branch, or a case it can take, never produces.
+
+    A branch's output is `{"case": <the case it took>, "produced": <what that case produced>}`
+    (`node_bindings.record_branch_outputs`), so a field beside those two is never there, and the
+    natural slip is reading the case's own field straight off the branch: the sentence names the
+    read that works. Under `produced`, a case whose output is known when the spec is saved
+    (`_produced_keys`) is held to it: a field it does not carry fails every time that case is
+    taken, and a `| default(…)` pipe cannot save it, since the path is walked before any pipe runs.
+    A case whose output a model or a provider shapes is held to no list, so this refuses only what
+    is certain. Refused under the code an unresolvable read already carries. An edge the ordering
+    rule refuses (a read from inside the branch's own case) is that rule's alone.
+    """
+    for edge in edges:
+        branch = tree.get(edge.producer_path)
+        if edge.origin != EDGE_BINDING or not edge.ordered or branch is None:
+            continue
+        if branch.kind is not NodeKind.BRANCH:
+            continue
+        cases: list[tuple[str | None, Node]] = list(branch.cases.items())
+        if branch.default_case is not None:
+            cases.append((None, branch.default_case))
+        known = [
+            (label, keys) for label, case in cases if (keys := _produced_keys(case)) is not None
+        ]
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        for read in edge.output_reads:
+            if not read or read[0] == "case" or read == ("produced",):
+                continue
+            ref = f"{{{{nodes.{edge.producer_id}.output.{'.'.join(read)}}}}}"
+            if read[0] != "produced":
+                fixed = f"{{{{nodes.{edge.producer_id}.output.produced.{'.'.join(read)}}}}}"
+                _add(
+                    res,
+                    "WF_UNSATISFIABLE_OUTPUT_REF",
+                    (
+                        f"{reader} reads {ref}, but {edge.producer_id!r} is a branch, whose output "
+                        f"is {_BRANCH_OUTPUT}, so it never has {read[0]!r}. Read what the case "
+                        f"produced as {fixed}"
+                    ),
+                    edge.reader_path,
+                )
+                continue
+            field = read[1]
+            lacking = [(label, keys) for label, keys in known if field not in keys]
+            if not lacking:
+                continue
+            if len(lacking) == len(cases):
+                found = (
+                    f"no case produces {field!r} ({_listing(lacking)}) — so the read can never "
+                    "resolve. Give the cases that field, or read one they produce"
+                )
+            elif len(lacking) == 1:
+                label, keys = lacking[0]
+                found = (
+                    f"{_case_name(label)} produces no {field!r} (it produces {_fields(keys)}) — so "
+                    "the read fails whenever that case is taken. Give that case the field too, or "
+                    "read it inside the case that produces it"
+                )
+            else:
+                names = " and ".join(_case_name(label) for label, _keys in lacking)
+                found = (
+                    f"{names} produce no {field!r} ({_listing(lacking)}) — so the read fails "
+                    "whenever one of them is taken. Give those cases the field too, or read it "
+                    "inside the case that produces it"
+                )
+            _add(
+                res,
+                "WF_UNSATISFIABLE_OUTPUT_REF",
+                (
+                    f"{reader} reads {ref}, but {edge.producer_id!r} is a branch, whose `produced` "
+                    f"is what the case it took produced, and {found}"
+                ),
+                edge.reader_path,
+            )
+
+
+def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:
+    """Check a hand-written `needs` AGAINST the derived set instead of trusting it.
+
+    `needs` used to be the engine's only admission input and was refused unless it named a
+    sibling of the same `parallel`. Now that ordering is derived from bindings, a `needs` has
+    exactly one job left: to express ordering that is NOT dataflow — a lock, an external
+    side-effect sequence, "publish only after the announcement went out". Two things follow.
+
+    **A `needs` the structure cannot honour is an ERROR.** `needs: ["later"]` on the first
+    child of a `sequence` that runs `later` third is not an ordering, it is a contradiction:
+    the frontier would hold the reader for a producer the sequence will not start until the
+    reader finishes, and the run hangs. This used to be invisible — `needs` outside a
+    `parallel` was inert, so the author's declared ordering silently did nothing at all.
+    Honouring it globally is what turns that dead declaration into either a real edge or a
+    real error, and the error is much the better of the two.
+
+    **A `needs` the bindings ALREADY imply is a WARNING.** `needs: ["a"]` on a node whose own
+    config reads `{{nodes.a.output}}` is a second edge list one entry long: it restates what
+    the binding says, and the two can now only ever drift apart. Deleting it changes nothing
+    about the schedule, which is what makes this the safe half to report.
+
+    **Why not the opposite warning.** A warning on a `needs` ABSENT from the derived set would
+    flag it as "either real non-dataflow ordering or a stale edge". But absence is now the
+    field's ONLY legitimate use, so that warning would fire on every correct `needs` in the
+    tree while carrying no way to say "yes, I meant it". The output-contract warning in this
+    same file was scoped for exactly that reason: a rule that fires on the normal case is how
+    an author learns to skim validator output. The origin
+    tag is on every `DepEdge`, so an inspection surface can still show which `needs` carry no
+    dataflow without spending the author's attention on it at every save.
+
+    Censused before shipping: ZERO of the bundled templates declare a `needs` at all, so both
+    the error and the warning have measured volume zero on the shipped library.
+    """
+    cyclic = any(i.code == "WF_CYCLE" for i in res.issues)
+    # Exact reader→producer pairs only. A `needs` on a CONTAINER whose child happens to bind
+    # the producer is not redundant — it holds the container's other children back too, which
+    # the child's own derived edge does not — so containment must not count here.
+    derived = {
+        (e.reader_path, e.producer_path) for e in edges if e.origin == EDGE_BINDING and e.ordered
+    }
+    for edge in edges:
+        if edge.origin != EDGE_NEEDS:
+            continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        if not edge.ordered:
+            if not cyclic:
+                _add(
+                    res,
+                    "WF_UNSATISFIABLE_NEEDS",
+                    (
+                        f"{reader} declares needs {edge.producer_id!r}, but that edge can never "
+                        f"be honoured: {edge.reason}"
+                    ),
+                    edge.reader_path,
+                )
+        elif (edge.reader_path, edge.producer_path) in derived:
+            _add(
+                res,
+                "WF_REDUNDANT_NEEDS",
+                (
+                    f"{reader} declares needs {edge.producer_id!r} and also binds "
+                    f"{{{{nodes.{edge.producer_id}…}}}} — the binding already orders it, so the "
+                    "`needs` can go; keep `needs` for ordering that is not dataflow"
+                ),
+                edge.reader_path,
+                SEVERITY_WARNING,
+            )
+
+
+@dataclass(frozen=True)
+class ContractRead:
+    """One path taken through a producer's output, judged against that producer's contract.
+
+    Materialized as a value for the same reason `DepEdge` is: a rule that resolved NOTHING
+    against a real contract reports exactly what a rule that resolved fifty satisfiable
+    paths reports — silence. Only a caller that can count the reads whose `guaranteed` is
+    non-`None` can tell the two apart, which is what the vacuity floor in the tests does.
+    """
+
+    reader_path: str
+    #: The reader's author-facing id, or `""` — `id` is optional on every node.
+    reader_id: str
+    producer_id: str
+    producer_path: str
+    #: Segments after `output`; never empty (a bare `output` read has no path to judge).
+    path: tuple[str, ...]
+    #: Does the producer declare an `output_contract` at all?
+    declared: bool
+    #: The keys the contract GUARANTEES, or `None` when it makes no key-level promise.
+    guaranteed: tuple[str, ...] | None
+    #: `False` only when a key-level promise exists and this path's first segment is not in
+    #: it. Unknowable-therefore-allowed is `True`, so the error path can never be the
+    #: default.
+    satisfiable: bool
+
+
+def _declared_contracts(nodes: list[tuple[str, Node]]) -> dict[str, dict[str, Any]]:
+    """node id → its `output_contract`. First id wins, mirroring `validate_node_tree`'s id
+    map, so a duplicated id resolves to the same node in both (the duplicate itself is
+    `WF_DUPLICATE_NODE_ID`'s business)."""
+    out: dict[str, dict[str, Any]] = {}
+    for _path, node in nodes:
+        contract = (node.config or {}).get("output_contract")
+        if node.id and isinstance(contract, dict) and contract and node.id not in out:
+            out[node.id] = contract
+    return out
+
+
+def _guaranteed_keys(contract: dict[str, Any]) -> tuple[str, ...] | None:
+    """The keys a contract PROMISES will be present, or `None` when it promises none.
+
+    Both halves are required, matching `engine.check_output_contract` exactly:
+    `required_keys` on its own is the shape `batch_compile.schema_to_contract` emits for a
+    schema that declared no `type` (`required` present, `must_be_json` absent) — an
+    under-declared contract, not a wrong binding. Refusing on it would refuse the author
+    who described their output least, which is the opposite of the intent.
+    """
+    if not contract.get("must_be_json"):
+        return None
+    required = contract.get("required_keys")
+    if not isinstance(required, list) or not required:
+        return None
+    return tuple(str(k) for k in required)
+
+
+def output_contract_reads(
+    nodes: list[tuple[str, Node]], edges: list[DepEdge]
+) -> list[ContractRead]:
+    """Every `{{nodes.<id>.output.<path>}}` read, resolved against its producer's contract.
+
+    Only the FIRST segment is judged. `required_keys` is a promise about the top level of an
+    object and says nothing about what lives inside `output.findings`, so checking deeper
+    would mean inventing nesting vocabulary the engine cannot enforce — the one thing this
+    check must not do.
+    """
+    contracts = _declared_contracts(nodes)
+    out: list[ContractRead] = []
+    for edge in edges:
+        contract = contracts.get(edge.producer_id)
+        guaranteed = _guaranteed_keys(contract) if contract is not None else None
+        for path in edge.output_reads:
+            if not path:  # a bare `output` read — nothing to resolve
+                continue
+            out.append(
+                ContractRead(
+                    reader_path=edge.reader_path,
+                    reader_id=edge.reader_id,
+                    producer_id=edge.producer_id,
+                    producer_path=edge.producer_path,
+                    path=path,
+                    declared=contract is not None,
+                    guaranteed=guaranteed,
+                    satisfiable=guaranteed is None or path[0] in guaranteed,
+                )
+            )
+    return out
+
+
+def contract_reads_for_root(root: Node) -> list[ContractRead]:
+    """`output_contract_reads` for a whole tree — the shape a caller outside the validator
+    has. Mirrors `dep_edges_for_root`, including its first-wins id map."""
+    nodes = walk(root)
+    ids: dict[str, str] = {}
+    for path, node in nodes:
+        if node.id and node.id not in ids:
+            ids[node.id] = path
+    return output_contract_reads(nodes, dep_ordering_edges(nodes, ids))
+
+
+def _validate_output_contract(
+    res: ValidationResult, nodes: list[tuple[str, Node]], edges: list[DepEdge]
+) -> None:
+    """Cross-check `output_contract` against the bindings that READ it.
+
+    `engine.check_output_contract` is a good gate that runs before any binding resolves, and
+    it only ever looks at the producer. The reader was checked independently and the edge
+    between them never at all: a spec could bind `{{nodes.a.output.summary}}` where `a`'s
+    own contract guarantees `{"findings"}`, and the first symptom was `_walk_path` raising
+    *"unresolved reference at 'summary'"* mid-run. Note that a `| default(…)` pipe does NOT
+    rescue it — `_walk_path` raises before any pipe runs — so an unsatisfiable path is a
+    dead run, which is why it is an ERROR.
+
+    An unordered edge and an unsatisfiable path are reported TOGETHER when both
+    hold, unlike the unknown-id case the ordering rule suppresses: a typo'd id is one defect
+    wearing two hats, whereas ordering and key-correctness are two independent fixes.
+
+    **The warning is scoped to specs that use contracts, and that choice is worth
+    naming.** Censused over the bundled library: 19 templates, 18 of them carrying 145
+    distinct `.output` reads (100 at a sub-path), and ZERO declaring an `output_contract`. An
+    unconditional warning would therefore fire 77 times across 18 of 19 shipped templates
+    (49 with the sub-path scoping alone) — every template warning on every validation, which
+    is how an author learns to skim past validator output. It would also red
+    `test_it_validates_STRICTLY`, whose stated contract is that a bundled template ships no
+    warning at all. So the warning fires only where the author has already adopted the
+    mechanism — a spec with at least one `output_contract` somewhere, the shape
+    `batch_compile` emits — and names the producer they left out. Measured volume on the
+    shipped library: zero. Contracts arriving in the library later turn it on for exactly
+    the templates that gained them.
+    """
+    reads = output_contract_reads(nodes, edges)
+    spec_uses_contracts = bool(_declared_contracts(nodes))
+
+    # producer id → (its path, [(reader label, dotted path) …]) for the aggregate warning.
+    missing: dict[str, tuple[str, list[str]]] = {}
+    for read in reads:
+        reader = repr(read.reader_id) if read.reader_id else read.reader_path
+        dotted = ".".join(read.path)
+        if not read.satisfiable:
+            assert read.guaranteed is not None  # `satisfiable` is True when it is None
+            _add(
+                res,
+                "WF_UNSATISFIABLE_OUTPUT_REF",
+                (
+                    f"{reader} reads {{{{nodes.{read.producer_id}.output.{dotted}}}}}, but "
+                    f"{read.producer_id!r} declares output_contract.required_keys "
+                    f"{list(read.guaranteed)} — {read.path[0]!r} is not among the keys it "
+                    "guarantees, so the binding cannot resolve"
+                ),
+                read.reader_path,
+            )
+        elif not read.declared and spec_uses_contracts:
+            _, readers = missing.setdefault(read.producer_id, (read.producer_path, []))
+            entry = f"{reader} reads output.{dotted}"
+            if entry not in readers:
+                readers.append(entry)
+
+    for producer_id, (producer_path, readers) in missing.items():
+        _add(
+            res,
+            "WF_UNCONTRACTED_OUTPUT_REF",
+            (
+                f"{producer_id!r} declares no output_contract, so nothing checks the paths "
+                f"read from it: {'; '.join(readers)}"
+            ),
+            producer_path,
+            SEVERITY_WARNING,
+        )
+
+
+def _kahn_levels(
+    res: ValidationResult, nodes: list[tuple[str, Node]], ids: dict[str, str]
+) -> list[list[str]]:
+    """Group node ids into DATA-dependency levels, and detect cycles.
+
+    Edges come from BINDINGS (`{{nodes.a.output}}`) and from `needs` only. This is not a
+    schedule: container semantics (a `sequence` running children in order, a `loop`
+    repeating its body) are the frontier's job, so a container with no
+    bindings correctly lands in level 0 beside nodes it structurally precedes.
+
+    The purpose here is narrower and worth keeping narrow — reject a spec whose data
+    dependencies are cyclic BEFORE it can deadlock a run, and give an author a rough
+    concurrency picture. Reading these levels as an execution order would be wrong.
+    """
+    deps: dict[str, set[str]] = {nid: set() for nid in ids}
+    for path, node in nodes:
+        if not node.id:
+            continue
+        for dep in node_deps(node.config or {}):
+            if dep in ids:
+                deps[node.id].add(dep)
+        for need in node.needs:
+            if need in ids:
+                deps[node.id].add(need)
+
+    levels: list[list[str]] = []
+    remaining = dict(deps)
+    resolved: set[str] = set()
+    while remaining:
+        ready = sorted(n for n, d in remaining.items() if not (d - resolved))
+        if not ready:
+            cyc = sorted(remaining)
+            _add(
+                res,
+                "WF_CYCLE",
+                f"dependency cycle among: {', '.join(cyc)}",
+                ids.get(cyc[0], "root") if cyc else "root",
+            )
+            return []
+        levels.append(ready)
+        resolved.update(ready)
+        for n in ready:
+            remaining.pop(n, None)
+    return levels
+
+
+def validate_spec(spec: dict[str, Any], *, strict: bool = False) -> ValidationResult:
+    """Validate a raw spec dict — the entry point for authoring tools.
+
+    Parsing is part of validation: an unknown node kind or an absent root is reported as
+    an issue rather than propagated as an exception, because the caller is usually
+    handing the result straight back to an LLM author.
+    """
+    res = ValidationResult()
+    if not isinstance(spec, dict):
+        _add(res, "WF_NOT_AN_OBJECT", "spec must be a JSON object")
+        return res
+
+    name = str(spec.get("name", "") or "")
+    if name and not valid_name(name):
+        _add(
+            res,
+            "WF_BAD_NAME",
+            "name must be lowercase alphanumeric with hyphens, 1-63 chars",
+        )
+
+    root_raw = spec.get("root")
+    if not isinstance(root_raw, dict):
+        _add(res, "WF_MISSING_ROOT", "spec needs a `root` node")
+        return res
+
+    try:
+        root = Node.from_dict(root_raw)
+    except ValueError as exc:
+        _add(res, "WF_UNKNOWN_NODE_KIND", str(exc), "root")
+        return res
+    except BindingError as exc:  # pragma: no cover — defensive
+        _add(res, "WF_BAD_BINDING", str(exc), "root")
+        return res
+
+    _validate_loop_intake(res, spec)
+    _validate_budget(res, spec)
+    tree_res = validate_node_tree(root, strict=strict)
+    res.issues.extend(tree_res.issues)
+    _validate_wip_invariant(res, spec, root)
+    res.levels = tree_res.levels if res.ok else []
+    return res
+
+
+def _validate_budget(res: ValidationResult, spec: dict[str, Any]) -> None:
+    """The caps a run of this workflow starts with and pauses at (``defaults.budget``).
+
+    A cap that is not a number of 0 or more is an error: a run cannot be held to it, and the
+    definition model cannot read it, so a saved one would drop out of every listing. A key that
+    names no cap is a warning, since it holds nothing: a mistyped cap would otherwise ship as no
+    cap at all with nothing said. A ``_has_`` presence flag is the save path's own to restore
+    (`secrets.reinject_secrets`), and is passed over."""
+    from personalclaw.workflows import run_budget
+
+    defaults = spec.get("defaults")
+    if not isinstance(defaults, dict) or "budget" not in defaults:
+        return
+    raw = defaults["budget"]
+    if why := run_budget.unreadable(raw):
+        _add(res, "WF_BAD_BUDGET", f"defaults.{why}", "defaults.budget")
+        return
+    for key in raw or {}:
+        if key not in run_budget.CAPS and not str(key).startswith("_has_"):
+            _add(
+                res,
+                "WF_BUDGET_UNKNOWN_CAP",
+                f"defaults.budget has no cap called {key!r}, so it holds nothing: its caps are "
+                "max_tokens and max_cost",
+                "defaults.budget",
+                SEVERITY_WARNING,
+            )
+
+
+def _validate_loop_intake(res: ValidationResult, spec: dict[str, Any]) -> None:
+    """Authoring-time validation of the `loop_field` input markers.
+
+    Checked here and not only in `loop_aliases.template_intake` because that reader is tolerant on
+    the same terms as every parser in `supervisor_policy` — it drops what it cannot use. A dropped
+    marker means the launch door cannot find the template's task input, and the failure surfaces as
+    a REFUSAL TO LAUNCH a kind the author believed they had just ported. That is the wrong place to
+    learn about a typo, so the spelling is reported where it was written.
+
+    Two shapes, because each has a different silent outcome:
+
+    * an unknown value — the marker is inert. `loop_field: "tsak"` reads as "this template declares
+      no task input", which is indistinguishable from a template that never tried.
+    * two inputs claiming the SAME column — the reader keeps one, decided by dict order, so which
+      of the two receives the user's task depends on the order they happen to be written in.
+    """
+    from personalclaw.workflows.loop_aliases import LOOP_INTAKE_FIELDS
+
+    declared = spec.get("inputs")
+    if not isinstance(declared, dict):
+        return
+    claimed: dict[str, str] = {}
+    for name, meta in declared.items():
+        if not isinstance(meta, dict) or "loop_field" not in meta:
+            continue
+        field = str(meta.get("loop_field") or "").strip().lower()
+        if field not in LOOP_INTAKE_FIELDS:
+            _add(
+                res,
+                "WF_INPUT_BAD_LOOP_FIELD",
+                (
+                    f"input {name!r} declares loop_field {meta.get('loop_field')!r}, which must be "
+                    f"one of {'|'.join(sorted(LOOP_INTAKE_FIELDS))}"
+                ),
+                "inputs",
+            )
+            continue
+        if field in claimed:
+            _add(
+                res,
+                "WF_INPUT_DUPLICATE_LOOP_FIELD",
+                (
+                    f"inputs {claimed[field]!r} and {name!r} both declare loop_field {field!r} — "
+                    "only one input can receive it"
+                ),
+                "inputs",
+            )
+            continue
+        claimed[field] = str(name)
+
+
+def _validate_wip_invariant(res: ValidationResult, spec: dict[str, Any], root: Node) -> None:
+    """Refuse a spec that declares WIP=1 and also declares a wider fan-out.
+
+    `single_active_feature` is a RUN-level invariant, so the runtime enforces it whatever a
+    `foreach` says for itself (see `tick._visit_foreach`). That leaves one bad outcome:
+    a template that reads `max_concurrency: 3` while the engine runs it one at a time. A
+    reader believes the template, so the contradiction is refused HERE rather than silently
+    clamped at runtime — an author who wants three at a time has to drop the invariant, and
+    an author who wants the invariant has to stop claiming three.
+    """
+    from personalclaw.workflows.execution_hints import from_runtime_hints
+
+    if not from_runtime_hints(spec.get("runtime_hints")).single_active_feature:
+        return
+    for path, node in walk(root):
+        if node.kind is not NodeKind.FOREACH:
+            continue
+        raw = (node.config or {}).get("max_concurrency")
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            continue
+        if raw > 1:
+            _add(
+                res,
+                "WF_WIP_CONTRADICTION",
+                (
+                    f"`single_active_feature` declares WIP=1, but this foreach declares "
+                    f"max_concurrency={raw} — the engine will run one item at a time, so the "
+                    "declaration is false. Drop one of the two."
+                ),
+                path,
+            )

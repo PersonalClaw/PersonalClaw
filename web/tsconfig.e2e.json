@@ -1,0 +1,42 @@
+{
+  // The Playwright specs and their own config. Both were outside BOTH existing programs —
+  // `tsconfig.json` is `include: ["src"]`, `tsconfig.sw.json` covers only the service
+  // worker — so `npm run typecheck` never read a single spec and a type error in one
+  // shipped silently. It had: the first run of this program found a real defect in
+  // `walkthrough.spec.ts`, where a skip message read `.skip` off the recipe instead of off
+  // the result, so every skip reason printed `undefined` rather than the reason the recipe
+  // supplied. That is the class of bug a spec-less typecheck cannot catch, and it is why
+  // specs belong in a program: a spec is the only executable statement of what a surface
+  // must do.
+  //
+  // A separate PROGRAM rather than a widened `include`, because the specs are not Vite
+  // inputs and resolve the Playwright runner's types rather than the app's. It is chained
+  // into `npm run typecheck` exactly as `tsconfig.sw.json` already is, so all three
+  // programs share one command and one gate.
+  // `playwright.config.ts` is here because it is the specs' own config and shares their
+  // types. The other two root-level tool configs, `vite.config.ts` and `vitest.config.ts`,
+  // are ALSO unchecked by every program and are deliberately still out: adding them was
+  // measured at three pre-existing errors (two `TS7016`s in `vite.config.ts` for untyped
+  // `./scripts/*.mjs` imports, one `TS2769` in `vitest.config.ts`), and fixing those means
+  // changing how the build and the test runner are configured — a different concern with a
+  // different blast radius. Both are recorded in
+  // `tests/test_web_typecheck_covers_every_spec.py`'s exclusion table so the remaining gap
+  // is named and reviewable rather than silent.
+  "extends": "./tsconfig.json",
+  "include": ["e2e", "playwright.config.ts"],
+  // `a11y.spec.ts` is the ONE spec still outside the gate, and the reason is a duplicate
+  // dependency rather than anything in the file. Two copies of `playwright-core` resolve in
+  // this tree — `node_modules/playwright-core` at 1.62.1 (hoisted only to satisfy
+  // `@axe-core/playwright`'s `playwright-core >= 1.0.0` peer) and
+  // `node_modules/playwright/node_modules/playwright-core` at 1.63.0 (what `@playwright/test`
+  // actually runs). So `AxeBuilder({ page })` is handed a `Page` from 1.63.0 where it
+  // declares one from 1.62.1, and TypeScript reports five structurally-identical
+  // `TS2322`s at the five construction sites.
+  //
+  // `npm dedupe` collapses the two to a single 1.63.0 and clears all five — measured — but
+  // it rewrites `package-lock.json` by 2880 insertions and 3997 deletions, which is a
+  // dependency-resolution change with a blast radius far wider than a typecheck program and
+  // belongs in its own change. Named here rather than left as a silent gap: a gate that
+  // cannot fire, left undocumented, reads as coverage it does not provide.
+  "exclude": ["e2e/a11y.spec.ts"]
+}

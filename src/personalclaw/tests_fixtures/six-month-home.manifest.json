@@ -1,0 +1,152 @@
+{
+  "_comment": "Committed expectations for the six-month-home fixture. Regenerate with scripts/generate_six_month_home_fixture.py against PersonalClaw 0.1.3. tests/test_state_survival.py asserts against THIS file, never against counts re-derived from the fixture.",
+  "fixture": "six-month-home",
+  "generated_at": "2026-07-14T09:32:11+00:00",
+  "stores": {
+    "config_json": {
+      "count": 29,
+      "last_touched_version": "0.1.3",
+      "named_record": {
+        "observe_max_messages": 250,
+        "observe_ttl_hours": 96,
+        "timezone": "America/Los_Angeles"
+      },
+      "path": "config.json",
+      "top_level_keys": [
+        "agent",
+        "agents",
+        "agents_routing",
+        "auth",
+        "auto_update",
+        "dashboard",
+        "default_agent",
+        "durability",
+        "feedback",
+        "guardrails",
+        "hooks",
+        "inbound",
+        "inbox",
+        "learning",
+        "legibility",
+        "loops",
+        "memory",
+        "memory_stores",
+        "observe_max_messages",
+        "observe_ttl_hours",
+        "resilience",
+        "security",
+        "session",
+        "skills",
+        "snapshot_dir",
+        "timezone",
+        "tools",
+        "workflows"
+      ]
+    },
+    "entity_settings": {
+      "count": 2,
+      "files": [
+        "inbox.json",
+        "notifications.json"
+      ],
+      "named_record": {
+        "entity": "inbox",
+        "settings": {
+          "auto_cleanup_enabled": false,
+          "retention_days": 400
+        }
+      },
+      "path": "entity_settings"
+    },
+    "knowledge_db": {
+      "count": 3,
+      "count_sql": "SELECT COUNT(*) FROM items",
+      "named_record": {
+        "id": "5a1d0c74-0b8e-4d21-9f36-2c7ab4e10d55",
+        "item_type": "note",
+        "title": "Backup rotation I actually follow"
+      },
+      "path": "workspace/knowledge/knowledge.db",
+      "records": [
+        {
+          "id": "5a1d0c74-0b8e-4d21-9f36-2c7ab4e10d55",
+          "item_type": "note",
+          "title": "Backup rotation I actually follow"
+        },
+        {
+          "id": "7c93f2ab-61d4-4e08-8a72-19be5d3c4f60",
+          "item_type": "note",
+          "title": "Why the reading queue kept growing"
+        },
+        {
+          "id": "9e04b71c-2f56-4a93-b1d8-63ca70e2851f",
+          "item_type": "bookmark",
+          "title": "A filesystem checklist worth rereading"
+        }
+      ]
+    },
+    "loops": {
+      "count": 1,
+      "count_sql": "SELECT COUNT(*) FROM loops",
+      "named_record": {
+        "id": "3f8a1c07",
+        "name": "Backup rotation that reports on itself",
+        "plan_phases": [
+          "measure",
+          "close",
+          "verify"
+        ],
+        "status": "complete",
+        "success_criteria": "A restore diffed clean, with the diff visible in the monthly report."
+      },
+      "path": "loop/loops.db"
+    },
+    "memory_db": {
+      "count": 5,
+      "count_sql": "SELECT COUNT(*) FROM semantic_memory",
+      "episodic_count": 2,
+      "keys": [
+        "pref.digest_delivery_hour",
+        "pref.summary_length",
+        "project.homelab_backup_tiers",
+        "user.timezone_habit",
+        "lesson.verify_before_reporting_success"
+      ],
+      "named_record": {
+        "key": "pref.digest_delivery_hour",
+        "value": "07:00 local, before the first meeting, never in the evening"
+      },
+      "path": "memory.db"
+    },
+    "memory_markdown": {
+      "count": 4,
+      "files": [
+        "workspace/memory/history/2026-03-02.md",
+        "workspace/memory/history/2026-07-11.md",
+        "workspace/memory/preferences.md",
+        "workspace/memory/projects.md"
+      ],
+      "named_record": {
+        "contains": "A bulleted summary of a bulleted source is a copy",
+        "file": "workspace/memory/preferences.md"
+      },
+      "path": "workspace/memory"
+    },
+    "run_history": {
+      "count": 5,
+      "named_record": {
+        "error": "connection refused after 3 attempts",
+        "job_id": "monthly-offsite-verify",
+        "run_id": "b72f9d18c604",
+        "status": "failure",
+        "summary": "off-site target unreachable; nothing was written"
+      },
+      "path": "cron-history",
+      "per_job": {
+        "monthly-offsite-verify": 3,
+        "weekly-reading-digest": 2
+      }
+    }
+  },
+  "written_by_release": "0.1.3"
+}

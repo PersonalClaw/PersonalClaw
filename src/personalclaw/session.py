@@ -1,0 +1,2424 @@
+"""Session manager — maps channel thread_ts to LLM provider sessions.
+
+Each channel thread gets its own ModelProvider instance. Sessions are
+cleaned up after idle timeout (default 30 min).
+
+Warm session pool: ``start_pool()`` pre-spawns ACP agent processes so
+``get_or_create()`` returns instantly.  After handing out a warm session,
+a replacement is created in the background to maintain the target count.
+
+A session keeps every turn it is sent, so PersonalClaw's own chores never run in one: a
+chat's title, follow-ups, suggestions, a folder's icon, history compression and memory
+consolidation are each one fresh call (``chores.run_chore``). A heartbeat task runs in a
+session of its own that ends with it (``heartbeat_tasks_provider.task_session_key``).
+
+At the Settings threshold (``session.autocompact_pct``, 90% of the context window by default) a
+session whose runtime compacts its own conversation is left to do it: the native loop while its
+own passes still free space, and an agent CLI whose app declares that the CLI compacts itself
+(``register_acp_cli_entry(compacts_itself=True)``). Nothing here can compact a conversation an
+agent CLI holds, so any other session is restarted, in the background so no answer waits for it:
+its runtime is ended, the next turn starts a fresh one from the conversation's own history, and
+the conversation is told so, and why (``set_restart_callback``).
+
+Circuit breaker: after 5 consecutive failures on a session, the session
+is force-reset instead of retrying forever.
+
+Per-session semaphore: serializes prompts on the same session key so
+concurrent channel messages on the same thread don't interleave.
+
+Process Sweep Architecture
+--------------------------
+Four mechanisms clean up processes. They are complementary — not redundant.
+
+1. ``cleanup_orphaned_sessions()`` — **startup + shutdown only**.
+   Reads ``session_pids.txt`` (bare sandbox root PIDs from the previous
+   gateway run). Validates each with ``_is_managed_agent_process``, kills descendants
+   bottom-up, then kills the root. Truncates the file afterward.
+   *Cannot be replaced by the periodic sweep* because sandbox roots are
+   independent processes with no idle timeout — they survive indefinitely
+   unless explicitly killed.
+
+2. ``_cleanup_orphaned_mcp_servers()`` — **periodic** (every ~5 min).
+   Reads ``agent_pids.txt`` (child:parent pairs). Kills children whose parent
+   is confirmed dead. PPid-based reuse guard prevents killing recycled PIDs.
+   Also prunes dead bare PIDs. *Depends on (1)* — children are only orphaned
+   after their sandbox root is killed.
+
+3. ``_expire_idle()`` — **periodic** (every ``timeout_secs / 6``, at least 1 min).
+   Kills sessions idle for >``timeout_secs`` (default 60 min), and ``dashboard:``
+   sessions whose chat no longer exists, via ``provider.shutdown()`` → SIGKILL
+   process tree. Idle counts from the last ``release()``, and a session a turn
+   holds is never reaped: the turn ends by its own bounds. Which chats exist is
+   asked of the dashboard at each sweep (``register_dashboard_sessions``).
+
+"""
+
+import asyncio
+import logging
+import os
+import signal
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable, Collection
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from personalclaw import session_keys, shutdown_event
+from personalclaw.cancellation import cancel_and_wait
+from personalclaw.config import AppConfig
+from personalclaw.config.loader import default_workspace_dir
+from personalclaw.llm.base import CancelOutcome, ModelProvider
+from personalclaw.session_map import SessionMap as SessionMap  # noqa: F401
+from personalclaw.session_pid import (
+    _cleanup_orphaned_mcp_servers,
+    _collect_active_pids,
+    _kill_confirmed_and_writeback,
+    _periodic_pid_sweep,
+    _sync_kill_provider,
+)
+from personalclaw.session_pid import _track_child_pids as _track_child_pids  # noqa: F401
+from personalclaw.session_pid import _track_pid as _track_pid  # noqa: F401
+from personalclaw.session_pid import _track_session_pid as _track_session_pid  # noqa: F401
+from personalclaw.session_pid import _untrack_child_pids as _untrack_child_pids  # noqa: F401
+from personalclaw.session_pid import _untrack_pid as _untrack_pid  # noqa: F401
+from personalclaw.session_pid import _untrack_session_pid as _untrack_session_pid  # noqa: F401
+from personalclaw.session_pid import (  # noqa: F401
+    cleanup_orphaned_sessions as cleanup_orphaned_sessions,
+)
+from personalclaw.session_pid import (
+    tie_to_session,
+)
+from personalclaw.stats import Stats
+
+logger = logging.getLogger(__name__)
+
+_MAX_POOL = 10
+# Hard ceiling on total live descendant processes across all pool slots.
+# Each pooled ACP agent can spawn ~20 MCP servers; without a bound,
+# _MAX_POOL × 20 = 200 processes, enough to hang a laptop.  This cap
+# prevents replenishment when the live process count is already high.
+_MAX_POOL_PROCESSES = 150
+
+
+# Context usage at which a turn's log line is a warning. What happens to the session itself is
+# decided at the Settings threshold, `context_compaction.autocompact_pct()`.
+_CONTEXT_WARN_PCT = 70.0
+
+# Circuit breaker: force-reset after this many consecutive failures
+_CIRCUIT_BREAKER_THRESHOLD = 5
+
+
+# Type alias for provider factory — accepts optional session key
+ProviderFactory = Callable[..., ModelProvider]
+
+StopOutcome = Literal["soft", "hard", "idle"]
+
+
+async def _fire_session_end(key: str, reason: str, session: "_Session") -> None:
+    """Fire `SessionEnd`. Declared, selectable in the hook UI, fired by nothing until
+    now.
+
+    `reason` distinguishes the three real endings this module has — `removed` (resumable: tab close,
+    agent switch, idle kill), `destroyed` (permanent) and `shutdown` — because a cleanup hook that
+    cannot tell them apart either runs on every tab close or misses the case it was written for.
+
+    Fired AFTER the provider is shut down, so a hook observing the end cannot race the teardown it
+    is observing. Never raises: a session must still close when a hook script is broken.
+
+    `turns` comes from `prompt_count`, the field `_Session` actually carries. Measured: a first pass
+    read `session.messages`, which does not exist here (that lives on the dashboard's session
+    object), so every fire would have reported `turns=0` — a plausible number that is always wrong,
+    which is worse than an absent field.
+    """
+    from personalclaw.triggers.lifecycle_fire import fire, session_end_payload
+
+    await fire(
+        session_end_payload(
+            session_key=key,
+            reason=reason,
+            turns=int(getattr(session, "prompt_count", 0) or 0),
+        )
+    )
+
+
+def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
+    """The directory an ACP CLI will actually be spawned in — never an ambient one.
+
+    An explicit per-session ``cwd`` wins. With none, the default is
+    ``default_workspace_dir()``, whose empty return is a REFUSAL rather than an "unknown":
+    it means the resolved workspace root is either not a usable directory or is a
+    sensitive (credential) location, so it declines to name one. That refusal must not be
+    laundered, in either of the two available directions:
+
+    * Passing the empty string on is what this fixes. ``AcpProcess`` does
+      ``Path(work_dir)``, and ``Path("")`` is ``Path(".")``, so the CLI got spawned in
+      whatever directory the GATEWAY happens to be running in — a repo checkout, ``/``, or
+      whatever a service manager set — and every file it wrote landed somewhere the user
+      cannot find. Same family as the real-home escape: a containment decision falling
+      through to an ambient value.
+    * Substituting ``workspace_root()`` (the standardised definition) would be worse in
+      the case that actually reaches here, because that is the very path the sensitivity
+      check rejected. It would spawn the CLI inside a credential directory.
+
+    So this refuses, loudly, at the last point that can still stop the spawn. A wrong cwd
+    is unrecoverable from the user's side (they cannot find the files); an error naming the
+    missing workspace is.
+    """
+    from personalclaw.acp.errors import AcpWorkspaceUnresolved
+
+    explicit = str(cwd or "").strip()
+    if explicit:
+        return Path(explicit)
+    default = str(default_workspace_dir() or "").strip()
+    if default:
+        return Path(default)
+    logger.warning(
+        "Refusing to spawn an ACP CLI: no usable workspace resolved "
+        "(PERSONALCLAW_WORKSPACE=%r) — the directory it would otherwise inherit is the "
+        "gateway's own cwd %r",
+        os.environ.get("PERSONALCLAW_WORKSPACE", ""),
+        os.getcwd(),
+    )
+    raise AcpWorkspaceUnresolved(
+        "No usable workspace directory resolved, so there is no safe folder to run this "
+        "agent CLI in. Starting it in the gateway's own working directory is refused — "
+        "files it writes would land somewhere you cannot find. Set a workspace root "
+        "(PERSONALCLAW_WORKSPACE, or the workspace directory in Settings), or give this "
+        "chat its own working directory. The configured root is either missing or a "
+        "sensitive location that is never used as a workspace."
+    )
+
+
+#: Policies under which a runtime that gates its own tools (the native one) never asks at all
+#: (`agents/native/runtime.py` `_requires_approval`). Each is a grant, so each is bounded by the
+#: operator ceiling before a session is given one (`approval_grants`, rule 2).
+_WAIVING_POLICIES = frozenset({"auto", "yolo", "acceptEdits"})
+
+
+def _meter_agent_turns(provider: Any, axis: str, *, unmetered: bool = False) -> None:
+    """Hand *provider* the axis it was acquired on when it makes its own model calls (an agent CLI:
+    ``acp.spend``), so its turns are metered on a metered axis — unless a person answers the
+    session (``unmetered``: an Attended loop's, ``loop.posture``), whose spend is its owner's. A
+    native runtime's calls are its inner model's, which the resolution seam already meters the same
+    way; it has no setter."""
+    setter = getattr(provider, "set_spend_axis", None)
+    if callable(setter):
+        setter("" if unmetered else axis)
+
+
+#: What a request says about who answers the runtime it builds, whose spend that runtime is, and
+#: whether its owner let its agent CLI approve its own calls. A cached runtime built for other
+#: answers is rebuilt rather than reused: a loop's Mode can change between its runs, its owner can
+#: take that permission back between two turns, and a runtime keeps all three from when it was
+#: built.
+_POSTURE_KEYS = ("unattended", "unmetered", "self_approval")
+
+
+def _built_posture(asked: dict[str, Any]) -> dict[str, bool]:
+    """The posture a runtime built from *asked* (``get_or_create``'s factory arguments) has: what
+    it names of :data:`_POSTURE_KEYS`, and the factory's default (no) for what it does not."""
+    return {k: bool(asked.get(k)) for k in _POSTURE_KEYS}
+
+
+def _posture_moved(sess: "_Session", asked: dict[str, Any]) -> bool:
+    """Whether *asked* names a posture other than the one *sess*'s runtime was built for. Only what
+    the request names is compared, and a runtime with no recorded posture (one ``get_or_create``
+    did not build) has none to compare."""
+    built = sess.built_posture
+    return bool(built) and any(k in asked and built[k] != bool(asked[k]) for k in _POSTURE_KEYS)
+
+
+def _bounded_policy(policy: str, *, key: str) -> str:
+    """*policy*, unless it waives asking and the operator ceiling does not permit that: then ``""``.
+
+    Every session's policy is set here or in :meth:`SessionManager.set_approval_policy`, whoever
+    grants it — a chat's Trust or YOLO, a loop, the planner, a subagent's spawn — so this is the
+    one place a runtime's own "never ask" is bounded. The refusal is audited by the check.
+    """
+    if policy not in _WAIVING_POLICIES:
+        return policy
+    from personalclaw import approval_grants
+
+    if approval_grants.stands(
+        approval_grants.SESSION_POLICY, caller=key, subject=f"policy={policy}"
+    ):
+        return policy
+    return ""
+
+
+def _policy_of(source: Callable[[], str]) -> str:
+    """What a live approval source says now; ``""`` (asking) when it cannot say."""
+    try:
+        return str(source() or "")
+    except Exception:  # noqa: BLE001 - fail toward asking
+        logger.warning("approval source failed; asking", exc_info=True)
+        return ""
+
+
+def _push_approval_policy(
+    provider: Any, policy: str, source: Callable[[], str] | None = None
+) -> None:
+    """Hand a session's approval policy to a provider that gates tools ITSELF (the native runtime).
+
+    🔴 ``get_or_create(approval_policy=...)`` used to record the policy on the session RECORD only.
+    ``set_approval_policy`` pushed to the provider; creation did not. So a native subagent spawned
+    with an explicit ``auto`` grant — an unattended loop stage, a scheduled run-prompt — ran with
+    the runtime's own policy EMPTY, and with ``unattended`` set the runtime answers every tool that
+    needs approval with "needs approval but the run is unattended — auto-declined". Measured
+    2026-09-25 and again here: a General loop's worker was granted, then had ``write_file`` and
+    ``bash`` declined one by one, and reported it could not create the file. An ACP provider
+    enforces approval through its own protocol path and has no setter, so it is untouched by this.
+
+    Only the approval PROMPT is affected: the runtime's deny-list, sensitive-path, read-only and
+    task-mode gates run before it regardless, and the policy has already been bounded by the
+    operator's governance ceiling (:func:`_bounded_policy`).
+
+    A ``source`` is read at every decision instead (``approval_grants``, rule 1): a runtime that
+    takes one (``set_approval_source``) asks it per call, so a grant revoked mid-run stops waiving
+    the next call; one that takes only a fixed policy gets what the source says now.
+    """
+    if source is not None:
+        source_setter = getattr(provider, "set_approval_source", None)
+        if callable(source_setter):
+            source_setter(source)
+            return
+        policy = _policy_of(source)
+    if not policy:
+        return
+    setter = getattr(provider, "set_approval_policy", None)
+    if callable(setter):
+        setter(policy)
+
+
+def _resolution_moved(provider: Any) -> bool:
+    """Whether what a cached runtime's model was resolved from no longer holds.
+
+    A native runtime records it when it is built (``resolved_from``,
+    ``provider_bridge.ResolutionBasis``): the Settings → Models chains it read and the provider
+    entry it serves from. A rebind or an edit of that instance moves it, and the session is then
+    rebuilt at its next acquire. Any other runtime (an ACP CLI runs its own model) records none,
+    and never moves.
+    """
+    basis = getattr(provider, "resolved_from", None)
+    return basis is not None and not basis.holds()
+
+
+def _axis_moved(provider: Any, asked: dict[str, Any]) -> bool:
+    """Whether the turn *asked* acquires a cached runtime for resolves its model on another use
+    case than the runtime was built on: a chat's folder that starts or stops being the workspace
+    (Settings moves the workspace) moves it between the Chat chain and Code & tools
+    (``chat_utils.chat_model_axis``). A change of the chat's own folder lets its runtime go before
+    any of this is asked (``running_turn.to_folder``).
+
+    Asked of a native runtime only (``resolved_from``, ``provider_bridge.ResolutionBasis``), and
+    only when the request names an axis; an agent CLI runs its own model and never moves.
+    """
+    basis = getattr(provider, "resolved_from", None)
+    if basis is None or "model_axis" not in asked:
+        return False
+    return not basis.serves(str(asked.get("model_axis") or ""))
+
+
+def _mode_asked(asked: dict[str, Any]) -> str | None:
+    """The operating mode a request asks its agent CLI to be in (``acp_mode``: the task mode's
+    Plan, the agent's own mode), ``""`` for the CLI's default, or ``None`` when it names none."""
+    return str(asked.get("acp_mode") or "") if "acp_mode" in asked else None
+
+
+async def _hold_to_its_mode(sess: "_Session", asked: dict[str, Any]) -> None:
+    """Tell the agent CLI *sess* holds the operating mode the turn *asked* acquires it for, when it
+    is not the one last asked of it.
+
+    An agent CLI is told its mode when its session opens, and keeps it: a chat switched from Plan
+    back to Agent ran its next turn in the CLI's planning mode, where it changes nothing, and one
+    opened in Agent and switched to Plan was never put in it. So a reused runtime is told before
+    the turn's prompt goes out. Only when the request names a mode (a chat's turn does), and only
+    of a runtime that has one to be told (an agent CLI; the native runtime holds the task mode
+    itself, ``SessionManager.set_task_mode``). What the CLI is told never widens what it may do:
+    the host's task-mode gate and its permission clamp hold either way. A CLI that cannot be told
+    keeps the mode it has, and is asked again at the next turn.
+    """
+    mode = _mode_asked(asked)
+    if mode is None or mode == sess.asked_mode:
+        return
+    from personalclaw.agents.provider import AgentProvider
+
+    provider = sess.provider
+    if not isinstance(provider, AgentProvider) or not hasattr(provider, "set_mode"):
+        return
+    try:
+        await provider.set_mode(mode)
+    except Exception:  # noqa: BLE001 - the host gate holds the mode; the next turn asks again
+        logger.warning("could not tell the agent CLI its operating mode %r", mode, exc_info=True)
+        return
+    sess.asked_mode = mode
+
+
+def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
+    """Why *sess*'s cached runtime cannot answer the turn *asked* (``get_or_create``'s factory
+    arguments) acquires it for, or ``""`` when it can."""
+    if sess.forgotten:
+        return "the conversation it holds was let go"
+    if sess.definition_stale:
+        return "its agent was edited"
+    if _resolution_moved(sess.provider):
+        return "what its model was resolved from changed"
+    if _axis_moved(sess.provider, asked):
+        return "the use case its model is chosen from changed"
+    if _posture_moved(sess, asked):
+        return "who answers it or whose spend it is changed"
+    return ""
+
+
+def _why_restarted(provider: ModelProvider) -> str:
+    """Why a session over the context threshold is restarted rather than compacted, as the
+    restart notice says it (``SessionManager.set_restart_callback``).
+
+    Asked only of a runtime that does not compact itself (``compacts_automatically`` False). The
+    native loop owns its history, so it answers False only once its own passes stopped helping;
+    any other runtime keeps its conversation where nothing here can compact it. ``is True``, so a
+    test double's truthy attribute cannot read as an in-process loop."""
+    if getattr(provider, "compacts_in_process", False) is True:
+        return "compacting its context no longer frees enough room"
+    return "PersonalClaw cannot compact this agent's context"
+
+
+def _record_runner_lease(runtime_id: str, holder: str) -> None:
+    """Record that session *holder* started a chat on the external runner *runtime_id*.
+
+    The lease is what Settings → Agents reads to say who holds which runner, and a holder that
+    goes quiet past ``agent.runner_idle_release_secs`` is released. It is written when a chat's
+    ACP runtime actually starts — the one moment a session takes a runner — and a same-holder
+    re-record renews it, which is what keeps a reconnect after a connection death from reading
+    as someone else's hold. Best-effort by contract: the lease is an observable record, so an
+    advisory file that cannot be written must never fail the chat that started.
+    """
+    if not runtime_id.startswith("acp:") or not holder:
+        return
+    try:
+        from personalclaw.agents import runner_lifecycle
+
+        granted, reason = runner_lifecycle.claim_runner(runtime_id, holder)
+        if granted is None:
+            logger.debug("runner lease not recorded for %s (%s)", runtime_id, reason)
+    except Exception:
+        logger.debug("runner lease record failed for %s", runtime_id, exc_info=True)
+
+
+@dataclass
+class _Session:
+    provider: ModelProvider
+    last_used: float = field(default_factory=time.monotonic)
+    #: Whether the next turn to acquire this runtime is told it is new, and so sends it the
+    #: message that opens its conversation: the agent's instructions, the safety rules, the
+    #: standing context and the conversation's history. The acquisition that reads it takes it,
+    #: and a turn that sends its model nothing gives it back (``hand_back_opening``), so the
+    #: opening stays with the runtime until a message carries it.
+    is_new: bool = True
+    #: The runtime was built by loading its saved conversation (an agent CLI's ``session/load``):
+    #: the turn that opens it hands over no history, which the agent already holds.
+    resumed: bool = False
+    prompt_count: int = 0
+    consecutive_failures: int = 0
+    semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
+    approval_policy: str = ""  # "" (interactive) | "auto" (auto-approve all tools)
+    #: Read at each decision in place of ``approval_policy`` when set (a subagent's grants,
+    #: `SubagentManager._policy_source`), so what this session may approve follows the settings.
+    approval_source: Callable[[], str] | None = None
+    agent: str = ""  # ACP agent name used for this session
+    # Channel message queue: FIFO of (msg_ts, text, kwargs) waiting for the semaphore
+    queue: deque[tuple[str, str, dict]] = field(default_factory=deque)
+    # Queue-steering: mid-turn messages in `steer` mode buffer here and the
+    # native loop drains them at the next model boundary (vs `queue` = followup).
+    steers: deque[str] = field(default_factory=deque)
+    # Set by the dispatcher for the duration of a turn when that turn's runtime
+    # actually exposes the drain seam (`set_steer_source`). Buffering against a
+    # turn with no drain path is a silent permanent drop — `steers` is cleared
+    # ONLY by `drain_steers`, whose sole caller is the native-runtime lambda — so
+    # `add_steer` refuses unless this is True.
+    steer_drains: bool = False
+    # Set when this session's last turn was cancelled via soft-stop.
+    # ACP agent discards cancelled turns from its conversation log, so callers
+    # must re-inject the cancelled turn (user prompt + partial assistant) as a
+    # preamble on the next prompt. One-shot: consumers clear after use.
+    prev_turn_cancelled: bool = False
+    # Set of msg_ts values cancelled (message deleted while processing)
+    cancelled: set[str] = field(default_factory=set)
+    # The agent this session runs was edited after its runtime was built (model, triggers,
+    # system prompt). The runtime is rebuilt at the next acquire — after a turn already running
+    # finishes, never under it — so an open chat or room answers its next turn as the agent
+    # now reads. See ``SessionManager.mark_agent_stale``.
+    definition_stale: bool = False
+    # The conversation this runtime holds was let go (``SessionManager.forget_conversation``): it
+    # answers no further turn, and nothing writes the id that resumes it back to the session map.
+    forgotten: bool = False
+    # Who answers this runtime and whose spend it is, as the request that built it said
+    # (:data:`_POSTURE_KEYS`): a runtime keeps both from when it was built, so a request naming
+    # others gets a runtime built for them (:func:`_posture_moved`).
+    built_posture: dict[str, bool] = field(default_factory=dict)
+    # The operating mode last asked of its agent CLI (:func:`_mode_asked`), by the request it was
+    # acquired for or a turn since; ``None`` while none has named one. A turn asking another tells
+    # the CLI before its prompt goes out (:func:`_hold_to_its_mode`).
+    asked_mode: str | None = None
+
+
+class SessionManager:
+    """Thread-keyed LLM provider pool with warm session pre-spawning."""
+
+    def has_session(self, key: str) -> bool:
+        """Return ``True`` if an active session exists for *key*."""
+        return key in self._sessions
+
+    def get_provider(self, key: str) -> ModelProvider | None:
+        """Return the LLM provider for *key*, or ``None``."""
+        sess = self._sessions.get(key)
+        return sess.provider if sess else None
+
+    def mark_new(self, key: str) -> None:
+        """Force the next turn for *key* to be treated as a NEW conversation.
+
+        Used after an ACP session is reset to a fresh ``session/new`` (which
+        wipes the agent's conversation context) so the chat runner re-injects
+        the agent system prompt + context onto the fresh session instead of
+        sending a bare follow-up the contextless agent can't act on.
+        """
+        sess = self._sessions.get(key)
+        if sess is not None:
+            sess.is_new, sess.resumed = True, False
+
+    def hand_back_opening(self, key: str, provider: ModelProvider) -> None:
+        """The turn holding *key*'s runtime *provider* was told it is new and sent it no message
+        (a slash command the runtime runs itself, a refusal, a stop before the prompt), so the
+        opening it took stays owed: the next turn to acquire the runtime is told it is new, and
+        resumed when it was built by loading its saved conversation (``_Session.is_new``).
+
+        Named by its *provider* so a turn whose runtime was replaced under it gives nothing to the
+        one that replaced it. A caller that sends its message right after acquiring never needs it.
+        """
+        sess = self._sessions.get(key)
+        if sess is not None and sess.provider is provider:
+            sess.is_new = True
+
+    def get_pid(self, key: str) -> int | None:
+        """Return the ACP agent PID for a session, or None."""
+        sess = self._sessions.get(key)
+        if not sess:
+            return None
+        try:
+            return sess.provider.client._pid  # type: ignore[attr-defined]
+        except AttributeError:
+            return None
+
+    def __init__(
+        self,
+        cfg: AppConfig,
+        provider_factory: ProviderFactory | None = None,
+    ):
+        self._cfg = cfg
+        self._provider_factory = provider_factory
+        self._sessions: dict[str, _Session] = {}
+        self._lock = asyncio.Lock()
+        self._start_sem = asyncio.Semaphore(4)  # max 4 concurrent cold-starts
+        self._cleanup_task: asyncio.Task | None = None
+        # Sessions being restarted at the context threshold (``_restart_session``): a turn that
+        # asks for one of them is given a fresh runtime, never the one being ended.
+        self._restarting: set[str] = set()
+        self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        self._on_restarted: Callable[[str, float, str], Awaitable[None]] | None = None
+        # Fired with the session key just before an idle session is reset,
+        # so a consumer (the consolidator) can extract skills from the ending
+        # session. Wired at gateway startup to consolidator.consolidate_session.
+        self._on_session_expire: Callable[[str], Awaitable[object]] | None = None
+        # End what a stopped turn started: its subagents, its batch runs and what they wait on.
+        # Registered by the dashboard state (`started_work.end_turn`). A callback rather than a
+        # hard reference because that state already depends on this class — the arrow cannot
+        # point both ways, and a stop that cannot reach a spawned subagent is a stop that only
+        # looks like one. Returns how many subagents it reached.
+        self._stop_children: Callable[[str], Awaitable[int]] | None = None
+        # End a stopped turn's pending approvals. Registered by the dashboard state, for the
+        # same reason as `_stop_children`: it depends on this class, not the other way round.
+        # Returns how many were ended.
+        self._on_turn_stop: Callable[[str], int] | None = None
+        # The sessions whose turn was stopped (`stop_turn`) and that no turn has taken since
+        # (`get_or_create`): nothing more runs for such a turn (`turn_stopped`).
+        self._stopped_turns: set[str] = set()
+        self._pool_started = False
+        self._session_map = SessionMap()
+        # Which chats exist, asked at each sweep (`register_dashboard_sessions`). None until the
+        # dashboard registers: nothing is taken for a closed chat before then.
+        self._dashboard_chats: Callable[[], Collection[str]] | None = None
+
+        # ── Warm Pool ──
+        self._pool_size: int = min(_MAX_POOL, max(0, cfg.session.pool_size))
+        if cfg.session.pool_size > _MAX_POOL:
+            logger.warning(
+                "pool_size %d exceeds max %d, clamping", cfg.session.pool_size, _MAX_POOL
+            )
+        self._pool_agent: str = cfg.session.pool_agent or cfg.default_agent
+        self._pool_ttl_secs: int = max(0, cfg.session.pool_ttl_secs)
+        # Default cwd used by pool processes — matches the workspace-dir
+        # fallback in chat_handlers so sessions that didn't pick an explicit
+        # project can still claim from the pool.
+        self._pool_cwd: str = default_workspace_dir()
+        # Queue stores (provider, spawn_time) tuples for TTL tracking
+        self._warm_pool: asyncio.Queue[tuple[ModelProvider, float]] = asyncio.Queue()
+        self._pool_fill_lock = asyncio.Lock()
+        self._pool_health_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._pool_sweep_pids: set[int] = set()  # PIDs temporarily out of queue during health sweep
+
+    async def reload_provider_factory(self) -> None:
+        """Reload provider factory from current config (after provider switch)."""
+        cfg = AppConfig.load()
+        stale: list[tuple[str, Any]] = []
+        async with self._pool_fill_lock:
+            async with self._lock:
+                self._cfg = cfg
+                self._provider_factory = cfg.create_provider_factory()
+                self._pool_size = min(_MAX_POOL, max(0, cfg.session.pool_size))
+                self._pool_agent = cfg.session.pool_agent or cfg.default_agent
+                self._pool_cwd = default_workspace_dir()
+                # Drain warm pool
+                while not self._warm_pool.empty():
+                    try:
+                        provider, _ = self._warm_pool.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    try:
+                        await provider.shutdown()
+                    except Exception:
+                        logger.debug("Failed to shut down stale pool provider", exc_info=True)
+                # Clear all existing sessions (they use the old provider)
+                stale = list(self._sessions.items())
+                self._sessions.clear()
+        # Shut down old sessions outside locks to avoid blocking
+        for key, sess in stale:
+            try:
+                await sess.provider.shutdown()
+            except Exception:
+                logger.debug(
+                    "Failed to shut down session %s on provider switch", key, exc_info=True
+                )
+        # Reset pool state so start_pool() actually refills
+        self._pool_started = False
+        if self._pool_health_task and not self._pool_health_task.done():
+            self._pool_health_task.cancel()
+            self._pool_health_task = None
+        await self.start_pool()
+        logger.info(
+            "Provider factory reloaded: provider=%s, cleared %d sessions",
+            cfg.agent.provider,
+            len(stale),
+        )
+
+    async def start_pool(self) -> None:
+        """Start the warm pool: ``session.pool_size`` agent processes kept ready, filled and
+        health-checked in the background.
+
+        Chat sessions cold-start on first message via get_or_create().
+        """
+        if self._pool_started or not self._provider_factory:
+            return
+
+        # Prune stale session map entries on startup
+        self._session_map.prune()
+        self._pool_started = True
+
+        if self._pool_size:
+            t = asyncio.create_task(self._fill_warm_pool())
+            self._background_tasks.add(t)
+            t.add_done_callback(self._background_tasks.discard)
+            self._pool_health_task = asyncio.create_task(self._pool_health_loop())
+            self._background_tasks.add(self._pool_health_task)
+            self._pool_health_task.add_done_callback(self._background_tasks.discard)
+
+    # ── Warm Pool ──
+
+    async def _fill_warm_pool(self) -> None:
+        """
+        Spawn providers up to ``_pool_size`` and enqueue them.
+        Pool fill stops on first failure and does not retry until next claim.
+        Also respects _MAX_POOL_PROCESSES to prevent total descendant count
+        from growing unbounded.
+        """
+        if not self._pool_size or not self._provider_factory:
+            return
+        async with self._pool_fill_lock:
+            while self._warm_pool.qsize() < self._pool_size:
+                # Bound total live processes: count descendants across all
+                # pooled slots and refuse to spawn if the ceiling is hit.
+                pool_pids = self._pool_pids()
+                if pool_pids:
+                    from personalclaw.acp.transport import _get_child_pids
+
+                    total_procs = len(pool_pids)
+                    for ppid in pool_pids:
+                        total_procs += len(_get_child_pids(ppid))
+                    if total_procs >= _MAX_POOL_PROCESSES:
+                        logger.warning(
+                            "Warm pool: %d live processes >= ceiling %d, skipping spawn",
+                            total_procs,
+                            _MAX_POOL_PROCESSES,
+                        )
+                        break
+                p = None
+                try:
+                    p = self._provider_factory(
+                        "",
+                        agent=self._pool_agent or None,
+                        cwd=self._pool_cwd or None,
+                    )
+                    async with self._start_sem:
+                        await p.start()
+                    self._warm_pool.put_nowait((p, time.monotonic()))
+                    p = None  # successfully enqueued — nothing to clean up
+                    logger.info(
+                        "Warm pool: spawned process (pool=%d/%d agent=%s)",
+                        self._warm_pool.qsize(),
+                        self._pool_size,
+                        self._pool_agent or "default",
+                    )
+                except Exception:
+                    logger.warning("Warm pool: failed to spawn process", exc_info=True)
+                    break
+                finally:
+                    if p is not None:
+                        try:
+                            await p.shutdown()
+                        except Exception:
+                            pass
+                        except BaseException:
+                            _sync_kill_provider(p)
+                            raise
+
+    def _claim_from_pool(self, agent: str | None) -> tuple[ModelProvider, float] | None:
+        """Try to claim a pre-warmed provider if the agent matches.
+        Deny-by-default: normalize both sides and positively compare.
+        None/empty agent means "use default" → promoted to pool_agent.
+        """
+        if self._warm_pool.empty():
+            return None
+        requested = agent if agent else (self._pool_agent or "")
+        pool = self._pool_agent or ""
+        if requested != pool:
+            return None
+        try:
+            return self._warm_pool.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    async def _open_acp_concurrent(
+        self,
+        key: str,
+        channel_id: str | None,
+        agent: str | None,
+        model: str | None,
+        cwd: str | None,
+        extra_factory_kwargs: dict[str, Any],
+    ) -> "ModelProvider | None":
+        """Open a session on a SHARED per-runtime AcpConnection when concurrent
+        sessions are enabled (double-gated). Returns ``None`` when the gate is off or the
+        runtime isn't an ``acp:<cli>`` (caller falls back to the one-session path)."""
+        provider_kind = str(extra_factory_kwargs.get("provider_kind") or "")
+        if not provider_kind.startswith("acp:"):
+            return None
+        # Bound before the try so the handler at the bottom can name it.
+        from personalclaw.acp.errors import AcpWorkspaceUnresolved
+
+        try:
+            from personalclaw.acp.connection_pool import get_acp_pool
+            from personalclaw.llm.acp_agent import (
+                options_compacts_itself,
+                options_env,
+                options_session_meta,
+            )
+            from personalclaw.llm.acp_session_provider import concurrent_sessions_enabled
+            from personalclaw.llm.registry import get_default_registry
+
+            entry = get_default_registry().get_entry(provider_kind)
+            options = dict(entry.options or {})
+            dialect = options.get("dialect")
+            if not concurrent_sessions_enabled(str(dialect) if dialect else None):
+                return None
+            pool = get_acp_pool()
+            if pool is None:
+                return None
+            command = options.get("command")
+            if not isinstance(command, list) or not command:
+                return None
+            sfd = options.get("session_files_dir")
+            from pathlib import Path as _Path
+
+            # Never an ambient directory: an unresolvable workspace refuses the spawn
+            # instead of inheriting the gateway's cwd. Always a Path — the old fallback
+            # branch handed ``open_session`` a bare ``str`` (and ``""`` at that).
+            effective_cwd = _resolve_acp_spawn_cwd(cwd)
+            provider = await pool.open_session(
+                provider_kind,
+                cwd=effective_cwd,
+                command=[str(c) for c in command],
+                dialect=str(dialect) if dialect else None,
+                session_files_dir=_Path(str(sfd)) if sfd else None,
+                sandbox_mode=str(options.get("sandbox_mode") or "auto"),
+                extra_env=options_env(options) or None,
+                session_meta=options_session_meta(options) or None,
+                session_key=key,
+                channel_id=channel_id,
+                model=model or "",
+                agent_name=agent or "",
+                compacts_itself=options_compacts_itself(options),
+            )
+            if provider is None:
+                return None
+            # Specialize live (persona / model / mode / effort): the shared connection was
+            # opened generic, so a session needing a non-default mode must apply it here.
+            from personalclaw.agents.provider import AgentProvider
+
+            if isinstance(provider, AgentProvider):
+                if agent:
+                    await provider.set_agent(agent)
+                if model:
+                    await provider.set_model(model)
+                # The owner's permission BEFORE the mode: the session opens without it, and the
+                # permission gate clamps a self-approving mode straight back to the host-authority
+                # one, so a loop allowed to approve its own calls would silently stay asking.
+                if hasattr(provider, "set_self_approval"):
+                    provider.set_self_approval(bool(extra_factory_kwargs.get("self_approval")))
+                _mode = str(extra_factory_kwargs.get("acp_mode") or "")
+                if _mode and hasattr(provider, "set_mode"):
+                    await provider.set_mode(_mode)
+                _effort = str(extra_factory_kwargs.get("reasoning_effort_override") or "")
+                if _effort and hasattr(provider, "set_reasoning_effort"):
+                    await provider.set_reasoning_effort(_effort)
+            logger.info("Opened concurrent ACP session for %s (runtime=%s)", key, provider_kind)
+            return provider
+        except AcpWorkspaceUnresolved:
+            # NOT a "try the other path" failure. Returning None here would fall through
+            # to the one-session path, which resolves the SAME workspace and would spawn
+            # in the same wrong place — moving the containment escape instead of stopping
+            # it. The user gets the error naming the missing workspace.
+            raise
+        except Exception:
+            logger.debug(
+                "ACP concurrent open_session failed for %s — falling back", key, exc_info=True
+            )
+            return None
+
+    async def _drain_and_claim(self, agent: str | None) -> ModelProvider | None:
+        """Claim a live, non-stale provider from the warm pool."""
+        discarded = False
+        claimed = self._claim_from_pool(agent)
+        while claimed is not None:
+            provider, spawn_time = claimed
+            # Check TTL (0 = disabled)
+            age = time.monotonic() - spawn_time
+            if self._pool_ttl_secs and age > self._pool_ttl_secs:
+                logger.warning(
+                    "Warm pool: %.0fs old provider exceeds TTL %ds, discarding",
+                    age,
+                    self._pool_ttl_secs,
+                )
+                discarded = True
+                try:
+                    await provider.shutdown()
+                except Exception:
+                    pass
+                except BaseException:
+                    _sync_kill_provider(provider)
+                    raise
+                claimed = self._claim_from_pool(agent)
+                continue
+            # Check liveness — use process-level check, not is_alive/is_responsive
+            # which has a 600s stale-activity threshold.  Pool processes are
+            # expected to be idle (no I/O after init) so the stale check would
+            # falsely discard healthy processes after ~10 min.
+            alive = hasattr(provider, "is_process_alive") and provider.is_process_alive()
+            if not alive:
+                rc = provider.exit_code if hasattr(provider, "exit_code") else None
+                logger.warning(
+                    "Warm pool: claimed provider is dead (returncode=%s), discarding", rc
+                )
+                discarded = True
+                try:
+                    await provider.shutdown()
+                except Exception:
+                    pass
+                except BaseException:
+                    _sync_kill_provider(provider)
+                    raise
+                claimed = self._claim_from_pool(agent)
+                continue
+            return provider
+        # No healthy provider found — replenish if we discarded any
+        if discarded:
+            self._schedule_replenish()
+        return None
+
+    def _schedule_replenish(self) -> None:
+        """Fire-and-forget task to refill the warm pool after a claim."""
+        if not self._pool_size:
+            return
+        t = asyncio.create_task(self._fill_warm_pool())
+        self._background_tasks.add(t)
+        t.add_done_callback(self._background_tasks.discard)
+
+    def _pool_pids(self) -> set[int]:
+        """Return PIDs of all providers currently in the warm pool (non-destructive peek)."""
+        pids: set[int] = set()
+        # Drain and re-enqueue to peek without losing entries
+        items: list[tuple[ModelProvider, float]] = []
+        while not self._warm_pool.empty():
+            try:
+                entry = self._warm_pool.get_nowait()
+                items.append(entry)
+            except asyncio.QueueEmpty:
+                break
+        for provider, spawn_time in items:
+            pid = getattr(getattr(provider, "client", None), "_pid", None)
+            if isinstance(pid, int):
+                pids.add(pid)
+            self._warm_pool.put_nowait((provider, spawn_time))
+        pids.update(self._pool_sweep_pids)
+        return pids
+
+    _POOL_HEALTH_INTERVAL = 30  # seconds between health sweeps
+
+    async def _pool_health_loop(self) -> None:
+        """Periodically sweep the warm pool, discard dead/expired providers, and refill."""
+        while True:
+            await asyncio.sleep(self._POOL_HEALTH_INTERVAL)
+            try:
+                if not self._pool_size:
+                    continue
+                qsize = self._warm_pool.qsize()
+                if not qsize:
+                    continue
+                logger.debug(
+                    "Pool health: sweeping %d providers (target=%d, ttl=%ds)",
+                    qsize,
+                    self._pool_size,
+                    self._pool_ttl_secs,
+                )
+                # Drain entire queue, keep healthy entries, discard the rest
+                healthy: list[tuple[ModelProvider, float]] = []
+                to_shutdown: list[ModelProvider] = []
+                now = time.monotonic()
+                try:
+                    for _ in range(qsize):
+                        try:
+                            provider, spawn_time = self._warm_pool.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        age = now - spawn_time
+                        pid = getattr(getattr(provider, "client", None), "_pid", None)
+                        if isinstance(pid, int):
+                            self._pool_sweep_pids.add(pid)
+                        if self._pool_ttl_secs and age > self._pool_ttl_secs:
+                            logger.warning(
+                                "Pool health: %.0fs old provider (pid=%s) exceeds TTL %ds, discarding",  # noqa: E501
+                                age,
+                                pid,
+                                self._pool_ttl_secs,
+                            )
+                            to_shutdown.append(provider)
+                            continue
+                        try:
+                            alive = (
+                                hasattr(provider, "is_process_alive")
+                                and provider.is_process_alive()
+                            )
+                        except Exception:
+                            alive = False
+                        if not alive:
+                            rc = provider.exit_code if hasattr(provider, "exit_code") else None
+                            logger.warning(
+                                "Pool health: dead provider (pid=%s, returncode=%s, age=%.0fs), discarding",  # noqa: E501
+                                pid,
+                                rc,
+                                age,
+                            )
+                            to_shutdown.append(provider)
+                            continue
+                        logger.debug("Pool health: provider pid=%s alive (age=%.0fs)", pid, age)
+                        healthy.append((provider, spawn_time))
+                finally:
+                    # Re-enqueue survivors first, then shut down dead providers.
+                    # This avoids an empty-queue window where _drain_and_claim()
+                    # would fall back to cold start.  Sweep PIDs are cleared in
+                    # a nested finally so they can't go stale regardless of how
+                    # we exit.
+                    #
+                    # CancelledError during shutdown is handled by falling back
+                    # to _sync_kill_provider — a synchronous killpg that does
+                    # not require the event loop.  This prevents leaked orphans
+                    # under KeepAlive daemons that never restart.
+                    try:
+                        for entry in healthy:
+                            self._warm_pool.put_nowait(entry)
+                        for p in to_shutdown:
+                            try:
+                                await p.shutdown()
+                            except asyncio.CancelledError:
+                                _sync_kill_provider(p)
+                            except Exception:
+                                pass
+                    finally:
+                        self._pool_sweep_pids.clear()
+                removed = qsize - len(healthy)
+                if removed:
+                    logger.info(
+                        "Pool health: removed %d dead/expired, %d healthy remain",
+                        removed,
+                        len(healthy),
+                    )
+                    self._schedule_replenish()
+                else:
+                    logger.debug("Pool health: all %d providers healthy", len(healthy))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Pool health sweep failed")
+
+    def context_info(self) -> list[dict[str, object]]:
+        """Return context usage for all active sessions."""
+        from personalclaw.agents.provider import AgentProvider
+
+        result: list[dict[str, object]] = []
+        for key, sess in self._sessions.items():
+            pct = sess.provider.context_usage_pct()
+            model = "unknown"
+            agent = ""
+            if isinstance(sess.provider, AgentProvider):
+                model = sess.provider.agent_model or "auto"
+                agent = sess.provider.agent_name or ""
+                if model == "auto" and agent and agent != "personalclaw":
+                    model = self._resolve_agent_model(agent)
+                model = model or "auto"
+            # Human-readable name
+            if key.startswith("dashboard:"):
+                name = f"Chat ({key.split(':', 1)[1]})"
+            else:
+                name = key
+            result.append(
+                {
+                    "key": key,
+                    "name": name,
+                    "model": model,
+                    "agent": agent,
+                    # ``None`` (JSON null), never 0.0, when the provider measured
+                    # nothing — the surface must omit the number, not invent one.
+                    "context_pct": None if pct is None else round(pct, 1),
+                    "prompts": sess.prompt_count,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _resolve_agent_model(agent: str) -> str:
+        """Resolve model from agent config file. Cached at class level."""
+        if not hasattr(SessionManager, "_agent_model_cache"):
+            SessionManager._agent_model_cache = {}  # type: ignore[attr-defined]
+        cache = SessionManager._agent_model_cache  # type: ignore[attr-defined]
+        if agent in cache:
+            return cache[agent]
+        try:
+            import json as _json
+
+            from personalclaw.agent import agents_dir
+
+            for af in agents_dir().glob("*.json"):
+                try:
+                    ad = _json.loads(af.read_text(encoding="utf-8"))
+                except (ValueError, OSError):
+                    continue
+                if ad.get("name") == agent or af.stem == agent:
+                    model = ad.get("model", "auto")
+                    cache[agent] = model
+                    return model
+        except Exception:
+            pass
+        cache[agent] = "auto"
+        return "auto"
+
+    @staticmethod
+    def _guard_unattended_runner(
+        key: str, agent: str | None, extra_factory_kwargs: dict[str, Any]
+    ) -> None:
+        """Refuse an unattended run on an external ACP runner whose adapter is not verified,
+        when ``agents.unattended_requires_verified_adapter`` says so (read now). Raises
+        :class:`~personalclaw.agents.runners.UnverifiedAdapterError`."""
+        from personalclaw.agents.runners import guard_unattended_spawn, runtime_id_for_agent
+        from personalclaw.guardrails.policy import is_unattended_session
+
+        runtime_id = str(extra_factory_kwargs.get("provider_kind") or "")
+        if not runtime_id.startswith("acp"):
+            runtime_id = runtime_id_for_agent(agent)
+        unattended = bool(extra_factory_kwargs.get("unattended")) or is_unattended_session(key)
+        guard_unattended_spawn(runtime_id, unattended=unattended)
+
+    async def get_or_create(
+        self,
+        key: str,
+        agent: str | None = None,
+        channel_id: str | None = None,
+        approval_policy: str = "",
+        model: str | None = None,
+        cwd: str | None = None,
+        extra_env: dict[str, str] | None = None,
+        *,
+        approval_source: Callable[[], str] | None = None,
+        **extra_factory_kwargs: Any,
+    ) -> tuple[ModelProvider, bool, bool]:
+        """Return ``(ModelProvider, is_new, resumed)`` for *key*, creating if needed.
+
+        ``is_new`` is True for the turn that is to send the runtime the message that opens its
+        conversation: the one this call built the runtime for, or the next one after a turn that
+        sent it nothing (:meth:`hand_back_opening`). It is read once this call holds the
+        runtime's permit, so it is what the turn before left.
+
+        ``resumed`` is True when the session was restored via ACP session/load
+        (ACP agent has full native history — skip thread history injection), for as long as it
+        is new.
+
+        For new sessions, tries the warm pool first for instant startup.
+        If the session is being restarted at the context threshold, creates a fresh one.
+        Acquires the per-session semaphore before returning — caller MUST
+        call ``release(key)`` when done. That permit is a new turn's, so a Stop of the turn before
+        it no longer holds once it is returned (:meth:`turn_stopped`).
+
+        Args:
+            agent: Optional agent name for ``session/set_mode``.  Non-default
+                agents skip the warm pool (cold start only).
+            model: Optional model override for the session.
+            approval_source: Read at each approval decision instead of ``approval_policy``
+                (:func:`_push_approval_policy`), for a session whose grants follow the settings.
+        """
+        approval_policy = _bounded_policy(approval_policy, key=key)
+
+        # Fast path: existing session — hold lock only briefly
+        stale_provider = None
+        # A live existing session to return; its per-session semaphore is acquired
+        # AFTER the global lock is released (see below). Acquiring it under the lock
+        # would deadlock every other get_or_create: if that session is mid-turn its
+        # semaphore is held, so `await acquire()` would block while holding _lock.
+        reuse: tuple[ModelProvider, "_Session"] | None = None
+        try:
+            async with self._lock:
+                if key in self._sessions and key not in self._restarting:
+                    sess = self._sessions[key]
+                    # If the provider's process died (crash, SIGKILL, etc.),
+                    # remove the stale entry so we fall through to cold-start
+                    # with is_new=True — ensuring full context re-injection.
+                    # Use process-level check, not is_alive() which has a 600s
+                    # stale-activity threshold that falsely kills idle sessions.
+                    if hasattr(sess.provider, "is_process_alive"):
+                        _alive = sess.provider.is_process_alive()
+                    else:
+                        _alive = sess.provider.is_alive()
+                    if not _alive:
+                        logger.warning("Session %s has dead provider — removing stale entry", key)
+                        stale_provider = sess.provider
+                        del self._sessions[key]
+                        # Preserve session_map entry: the ACP agent session
+                        # files survive on disk, enabling lossless resume
+                        # via session/load on the next get_or_create().
+                    if _alive:
+                        # The runtime is reused for whatever agent the caller names: a door
+                        # that hands a conversation to another agent retires its runtime
+                        # first (`running_turn.rebind`), so a live one here was built for the
+                        # agent the conversation runs. Subagent keys are unique per spawn.
+                        sess.last_used = time.monotonic()
+                        # Defer the (potentially blocking) semaphore acquire until
+                        # after the lock is released — do NOT await it here.
+                        reuse = (sess.provider, sess)
+
+                if reuse is None:
+                    if not self._provider_factory:
+                        raise RuntimeError("No provider factory configured")
+
+                    factory = self._provider_factory
+        finally:
+            # Kill orphaned child processes (MCP servers, ACP agent children)
+            # outside the lock — shutdown() may involve signals/waitpid.
+            if stale_provider is not None:
+                try:
+                    await stale_provider.shutdown()
+                except Exception:
+                    logger.warning("Failed to shut down stale provider for %s", key, exc_info=True)
+
+        # Reuse an existing live session: acquire its per-session semaphore OUTSIDE
+        # the global lock (a mid-turn session holds it, so this can block — which
+        # must never happen under _lock, or all other get_or_create calls wedge).
+        provider: "ModelProvider | None"
+        if reuse is not None:
+            provider, sess = reuse
+            await sess.semaphore.acquire()
+            # The adapter-verification gate below guards the runners this call CREATES; a
+            # runner already running is reused past it, so turning the flag on did not reach an
+            # unattended run on a runner launched before (`approval_grants`, rule 1). The same
+            # gate, read now, for the reuse too.
+            try:
+                self._guard_unattended_runner(key, agent, extra_factory_kwargs)
+            except BaseException:
+                sess.semaphore.release()
+                raise
+            stale = _rebuild_reason(sess, extra_factory_kwargs)
+            if not stale:
+                try:
+                    await _hold_to_its_mode(sess, extra_factory_kwargs)
+                except BaseException:
+                    sess.semaphore.release()
+                    raise
+                self._stopped_turns.discard(key)
+                was_new, sess.is_new = sess.is_new, False
+                return provider, was_new, was_new and sess.resumed
+            # The agent was edited while this runtime was cached, or what its model was resolved
+            # from moved (a rebind in Settings → Models, an edit or removal of the instance it
+            # serves from), or the conversation it holds was let go. Checked AFTER the permit is
+            # held, so a turn that was running when the change landed finished on what it started
+            # with, and this one — the first to start after — gets a runtime built from how things
+            # now read. The session map is kept, as for a dead provider, so an ACP runtime resumes
+            # its conversation and a native chat restores its own; a conversation let go has no id
+            # left in it to resume from.
+            sess.semaphore.release()
+            await self._drop_session(key, sess)
+            logger.info("Session %s: %s — rebuilding its runtime", key, stale)
+            return await self.get_or_create(
+                key,
+                agent=agent,
+                channel_id=channel_id,
+                approval_policy=approval_policy,
+                model=model,
+                cwd=cwd,
+                extra_env=extra_env,
+                approval_source=approval_source,
+                **extra_factory_kwargs,
+            )
+
+        # ── Unattended adapter-verification gate ──
+        # Past this line the call CREATES a runner — it claims a warm/pooled process,
+        # opens a session on a shared ACP connection, or cold-starts one. When the spawn
+        # is UNATTENDED and the resolved runtime is an external ACP runner, the
+        # ``agents.unattended_requires_verified_adapter`` flag requires that runner's
+        # adapter to have verified provenance — so background work can never launch an
+        # `npx -y` fetch-at-launch or an adapter that changed underneath its install.
+        # Placed HERE, above all three creation branches, because a gate on only one of
+        # them is a gate with two holes.
+        #
+        # Unattendedness is DERIVED from the session key via the guardrail layer's own
+        # classifier, not taken on trust from the caller. Only ``subagent.py`` passes
+        # ``unattended=True``; the cron parent session, a heartbeat task, loop-cycle
+        # workers, the inbox/side sweeps, channel deliveries and sessionless trigger
+        # dispatches all arrive here without it — unattended kinds (``session_keys``) that a
+        # kwarg-only gate silently let through. One vocabulary, no per-caller opt-in: the
+        # kwarg is still honoured (it names a spawn the key cannot describe), but it is
+        # no longer the only way to be seen as unattended.
+        self._guard_unattended_runner(key, agent, extra_factory_kwargs)
+
+        # Check session map for resume — only for long-lived sessions
+        resume_sid: str | None = None
+        is_stateless = session_keys.is_stateless(key)
+        if not is_stateless:
+            resume_sid = self._session_map.get(key)
+
+        # Try warm pool first (no resume — pooled processes have no prior session)
+        logger.info(
+            "Pool decision: key=%s resume_sid=%s model=%s agent=%s pool_size=%d pool_qsize=%d cwd=%s pool_cwd=%s",  # noqa: E501
+            key,
+            resume_sid,
+            model,
+            agent,
+            self._pool_size,
+            self._warm_pool.qsize(),
+            cwd,
+            self._pool_cwd,
+        )
+        # Only bypass pool for cwd if it's a user-chosen project that differs
+        # from the default workspace dir (which pool processes already use).
+        cwd_blocks_pool = bool(cwd and cwd != self._pool_cwd)
+        pooled = (
+            None
+            if resume_sid or is_stateless or not self._pool_size or cwd_blocks_pool or extra_env
+            else await self._drain_and_claim(agent)
+        )
+        if pooled is not None:
+            provider = pooled
+            try:
+                # Re-key pooled provider with actual session parameters via the
+                # AgentProvider capability surface (set_session_key/set_model) so
+                # any stateful runtime — ACP or native — claims cleanly.
+                from personalclaw.agents.provider import AgentProvider
+
+                if isinstance(provider, AgentProvider):
+                    provider.set_session_key(key, channel_id)
+                    # Its agent CLI's tool server was started before any chat, so it learns the
+                    # one it now serves from this tie, whichever surface claimed it.
+                    tie_to_session(provider.pid, key)
+                    # Switch model post-claim if caller requested non-default
+                    if model:
+                        _pool_model = (
+                            self._resolve_agent_model(self._pool_agent)
+                            if self._pool_agent
+                            else None
+                        )
+                        if model and _pool_model and model != _pool_model:
+                            await provider.set_model(model)
+                            logger.info("Pool post-claim: switched model to %s", model)
+                logger.info(
+                    "Claimed warm-pool process for %s (agent=%s)", key, agent or self._pool_agent
+                )
+                self._schedule_replenish()
+            except (asyncio.CancelledError, Exception):
+                _sync_kill_provider(provider)
+                raise
+        else:
+            # When concurrent sessions are enabled for this (proven-concurrent) ACP
+            # runtime and there is no resume to honor, open a session on the runtime's
+            # SHARED connection — spawned for the first chat that needs it, never ahead of
+            # one. Gated (both flags off → this returns None and we fall through to the
+            # one-session cold start below).
+            provider = None
+            if not resume_sid and not is_stateless:
+                provider = await self._open_acp_concurrent(
+                    key, channel_id, agent, model, cwd, extra_factory_kwargs
+                )
+
+            if provider is None:
+                # Cold start: start provider OUTSIDE the lock so other sessions
+                # can proceed in parallel.  Semaphore limits concurrent cold-starts
+                # to avoid CPU saturation from multiple ACP agent processes.
+                # On resume, use the CWD stored in session_map so CC CLI finds
+                # its conversation in the correct project directory.
+                effective_cwd = cwd
+                if not effective_cwd and resume_sid:
+                    stored_cwd = self._session_map.get_cwd(key)
+                    if stored_cwd and Path(stored_cwd).is_dir():
+                        effective_cwd = stored_cwd
+                        logger.info("Resume CWD override for %s: %s", key, stored_cwd)
+                provider = factory(
+                    key,
+                    agent=agent,
+                    channel_id=channel_id,
+                    model_override=model,
+                    cwd=effective_cwd,
+                    extra_env=extra_env,
+                    **extra_factory_kwargs,
+                )
+                # Set resume ID before start() triggers _initialize_session
+                if resume_sid:
+                    from personalclaw.agents.provider import AgentProvider
+
+                    if isinstance(provider, AgentProvider):
+                        provider.set_resume(resume_sid)
+                        logger.info("Attempting session/load for %s (sid=%s)", key, resume_sid)
+                async with self._start_sem:
+                    try:
+                        await provider.start()
+                    except (asyncio.CancelledError, Exception):
+                        # Provider process may have spawned before the cancel/error —
+                        # shut it down so it doesn't leak.  Use synchronous kill as
+                        # a last resort since asyncio.shield is unreliable during
+                        # cancellation (the awaited future raises CancelledError
+                        # immediately, leaving shutdown fire-and-forget).
+                        _sync_kill_provider(provider)
+                        raise
+
+        # Everything after start() must be wrapped so that a CancelledError
+        # between start() and session registration doesn't orphan the process.
+        # Invariant: by here provider is set — a warm-pool process, a session on a
+        # shared ACP connection, or cold-started via factory() above.
+        assert provider is not None
+        # Every one of those three doors, the same way: an agent runtime that makes its own
+        # model calls is told the axis it was acquired on, so its turns are metered when the
+        # axis is. A claimed pool process was built for no axis at all.
+        _meter_agent_turns(
+            provider,
+            str(extra_factory_kwargs.get("model_axis") or ""),
+            unmetered=bool(extra_factory_kwargs.get("unmetered")),
+        )
+        registered = False
+        try:
+            # Check if session was resumed
+            resumed = False
+            from personalclaw.agents.provider import AgentProvider
+
+            if isinstance(provider, AgentProvider):
+                resumed = provider.resumed
+
+            race_loser: "_Session | None" = None
+            async with self._lock:
+                # Re-check: another coroutine may have created this key while we
+                # were starting the provider (race on same key).
+                if key in self._sessions and key not in self._restarting:
+                    # Another task won the race — shut down our provider, use theirs.
+                    await provider.shutdown()
+                    sess = self._sessions[key]
+                    sess.last_used = time.monotonic()
+                    if approval_policy or approval_source is not None:
+                        sess.approval_policy = approval_policy
+                        sess.approval_source = approval_source
+                        _push_approval_policy(sess.provider, approval_policy, approval_source)
+                    if agent:
+                        sess.agent = agent
+                    # Defer the (possibly blocking) semaphore acquire until after
+                    # the lock is released — the winner's session may be mid-turn.
+                    race_loser = sess
+                else:
+                    sess = _Session(
+                        provider=provider,
+                        is_new=False,
+                        resumed=resumed,
+                        approval_policy=approval_policy,
+                        approval_source=approval_source,
+                        agent=agent or "",
+                        built_posture=_built_posture(extra_factory_kwargs),
+                        asked_mode=_mode_asked(extra_factory_kwargs),
+                    )
+                    _push_approval_policy(provider, approval_policy, approval_source)
+                    self._sessions[key] = sess
+                    logger.info(
+                        "New session: %s agent=%s resumed=%s (total=%d)",
+                        key,
+                        agent or "personalclaw",
+                        resumed,
+                        len(self._sessions),
+                    )
+
+                    # Save session mapping for long-lived sessions. session_id is an
+                    # AgentProvider capability (ACP: the CLI's session UUID; native:
+                    # its own id) — read it through the public accessor.
+                    _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
+                    if not is_stateless and isinstance(provider, AgentProvider):
+                        sid = provider.session_id
+                        if sid:
+                            self._session_map.set(key, sid, cwd=_cwd_str)
+
+                    if self._cleanup_task is None or self._cleanup_task.done():
+                        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
+                    # Freshly-created semaphore (count 1, never held) — acquire is
+                    # instant and cannot block, so it's safe under the lock.
+                    await sess.semaphore.acquire()
+                    Stats().inc_session_created()
+
+                    result = (provider, True, resumed)
+                    registered = True
+        except BaseException:
+            # CancelledError or any other exception after provider.start()
+            # succeeded — provider is running but never registered.  Kill it.
+            _sync_kill_provider(provider)
+            raise
+
+        # Race-loser reuse: acquire the winner's per-session semaphore OUTSIDE the
+        # lock (it may be mid-turn) so we never block other get_or_create callers.
+        if race_loser is not None:
+            await race_loser.semaphore.acquire()
+            self._stopped_turns.discard(key)
+            was_new, race_loser.is_new = race_loser.is_new, False
+            return race_loser.provider, was_new, was_new and race_loser.resumed
+
+        if registered:
+            _record_runner_lease(str(extra_factory_kwargs.get("provider_kind") or ""), key)
+        self._stopped_turns.discard(key)
+        return result
+
+    async def reset(self, key: str) -> None:
+        """Kill and recreate a session (context overflow recovery)."""
+        async with self._lock:
+            session = self._sessions.pop(key, None)
+        if session:
+            await self._shut_down_removed(key, session)
+
+    async def _shut_down_removed(self, key: str, session: "_Session") -> None:
+        """Shut down *session*'s runtime, already taken out of ``_sessions``, and make sure its
+        process tree is gone. The session map is left as it is, for a later resume."""
+        # Capture PID and child tree before shutdown clears them
+        client = getattr(session.provider, "_client", None)
+        raw_pid = getattr(client, "_pid", None) if client else None
+        # CC provider: PID from long-lived _proc or ephemeral _active_proc
+        if raw_pid is None:
+            _cc_proc = getattr(session.provider, "_proc", None)
+            if _cc_proc is not None and _cc_proc.returncode is None:
+                raw_pid = _cc_proc.pid
+        if raw_pid is None:
+            _cc_proc = getattr(session.provider, "_active_proc", None)
+            if _cc_proc is not None and _cc_proc.returncode is None:
+                raw_pid = _cc_proc.pid
+        pid = raw_pid if isinstance(raw_pid, int) else None
+        raw_children = getattr(client, "_child_pids", None) if client else None
+        child_pids: dict[int, int | None] = (
+            dict(raw_children) if isinstance(raw_children, dict) else {}
+        )
+        if pid:
+            # Lazy import to avoid circular dependency with acp.client
+            from personalclaw.acp.client import (
+                _get_child_pids,
+                _get_start_time,
+                _kill_escaped_children,
+            )
+
+            # Snapshot child tree before shutdown.  PIDs may be recycled
+            # between snapshot and kill, but _kill_escaped_children uses
+            # start-time comparison to skip recycled PIDs safely.
+            for p in _get_child_pids(pid):
+                if p not in child_pids:
+                    child_pids[p] = _get_start_time(p)
+        await session.provider.shutdown()
+        # Verify process is actually dead; force-kill entire tree if not
+        if pid:
+            try:
+                os.kill(pid, 0)
+                # Still alive after shutdown — force kill process group
+                logger.warning("Reset %s: PID %d survived shutdown, force-killing", key, pid)
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # dead as expected
+            except OSError:
+                pass
+            # Sweep children in different PGIDs (MCP servers) even when
+            # root is dead — children in separate process groups may
+            # outlive the root.
+            if child_pids:
+                try:
+                    _kill_escaped_children(child_pids)
+                except Exception:
+                    logger.exception("Reset %s: child sweep failed", key)
+        logger.debug("Reset session: %s (pid=%s)", key, pid)
+
+    def check_context_usage(self, key: str, provider: ModelProvider) -> float | None:
+        """Count a turn, read its context usage, and restart the session over the threshold.
+
+        The threshold is ``session.autocompact_pct`` as config.json reads now — the same value
+        the native loop compacts its own history at, so one setting governs both. A runtime
+        that compacts itself (``compacts_automatically``) is left to do so: the native loop
+        while its own passes still help, and an agent CLI its app declares compacts its own
+        conversation. A restart would throw away what it keeps: the loop's history, the CLI's
+        session with the results of every tool call in it. Any other session is restarted
+        (:meth:`_restart_session`), since nothing else frees its context.
+
+        Returns the context usage percentage immediately — never blocks — or ``None`` when
+        the provider measured none. An unmeasured session is neither restarted nor logs a
+        percentage: there is no percentage to act on.
+        """
+        from personalclaw.context_compaction import autocompact_pct
+
+        pct = provider.context_usage_pct()
+
+        # Count the session's prompts: its SessionEnd `turns`, its row in the context list
+        session = self._sessions.get(key)
+        if session:
+            session.prompt_count += 1
+
+        if pct is None:
+            return None
+        if pct >= autocompact_pct():
+            if provider.compacts_automatically:
+                logger.info("Session %s context at %.0f%% — it compacts its own history", key, pct)
+            else:
+                self._trigger_restart(key, pct, _why_restarted(provider))
+        elif pct >= _CONTEXT_WARN_PCT:
+            logger.warning("Session %s context at %.0f%%", key, pct)
+        else:
+            logger.info("Session %s context at %.0f%%", key, pct)
+        return pct
+
+    def set_restart_callback(self, cb: Callable[[str, float, str], Awaitable[None]] | None) -> None:
+        """Register what tells a conversation its session was restarted at the context threshold.
+
+        The callback receives the session key, the context usage that crossed the threshold
+        and why the session was restarted rather than compacted (:func:`_why_restarted`), and
+        runs once the old runtime has ended. The dashboard registers the one notice
+        (``DashboardState.wire_session_restart_callback``), said in the conversation and on the
+        channel thread it is linked to.
+        """
+        if self._on_restarted is not None and cb is not None:
+            logger.warning("Restart callback already registered; replacing existing handler")
+        self._on_restarted = cb
+
+    def set_session_expire_callback(self, cb: Callable[[str], Awaitable[object]] | None) -> None:
+        """Register a callback fired with the session key just before an idle
+        session is reset. The consolidator wires this to ``consolidate_session``
+        so an ending session gets one last skill-extraction pass before its
+        transcript is reset.
+        """
+        self._on_session_expire = cb
+
+    def _trigger_restart(self, key: str, pct: float, reason: str) -> None:
+        if key in self._restarting:
+            logger.info("Session %s restart already in progress", key)
+            return
+        logger.warning("Session %s context at %.0f%%: restarting it, %s", key, pct, reason)
+        self._restarting.add(key)
+        t = asyncio.create_task(self._restart_session(key, pct, reason))
+        self._background_tasks.add(t)
+        t.add_done_callback(self._background_tasks.discard)
+
+    async def _restart_session(self, key: str, pct: float, reason: str) -> None:
+        """End a session whose context crossed the threshold and that cannot compact itself.
+
+        The conversation's next turn starts a fresh runtime, and the conversation's own history
+        restores it: the turns that were said, not the results of earlier tool calls. The stored
+        session id is forgotten, so neither that turn nor a start after an idle reap or a gateway
+        restart loads back the session this one replaced, which holds the full context the
+        restart exists to leave. A channel link stays: deleting the whole entry stopped a channel
+        chat's answers reaching the channel.
+        """
+        try:
+            async with self._lock:
+                session = self._sessions.pop(key, None)
+            if session:
+                self._session_map.forget_session_id(key)
+                await session.provider.shutdown()
+                logger.info("Restarted session %s at %.0f%% of its context window", key, pct)
+                if self._on_restarted is not None:
+                    try:
+                        await self._on_restarted(key, pct, reason)
+                    except Exception:
+                        logger.exception("Restart callback failed for %s", key)
+        except Exception:
+            logger.exception("Session restart failed for %s", key)
+        finally:
+            self._restarting.discard(key)
+
+    def mark_agent_stale(self, *names: str, unnamed: bool = False) -> list[str]:
+        """Mark every live session running one of ``names`` to rebuild its runtime at its next turn.
+
+        Called after an agent is edited or deleted. A runtime copies the agent's model and its
+        triggers when it is built, and an open chat or room kept that runtime until it sat idle
+        past ``session.timeout_secs`` (an hour by default) or the gateway restarted — so it
+        answered with the old definition while the Agents page and the room's member list showed
+        the new one. Marking rather than tearing
+        down: a turn running right now finishes on the definition it started with, and the next
+        acquire (``get_or_create``) builds a fresh runtime. Returns the keys marked.
+
+        ``names`` are the values a session records as its agent: the profile name (chat and rooms
+        pass it), and for an ACP agent its ``provider_agent``. ``unnamed`` also marks the sessions
+        that record NO agent — a chat on the default agent — for an edit of the default agent.
+        """
+        wanted = {n for n in names if n}
+        if unnamed:
+            wanted.add("")
+        if not wanted:
+            return []
+        cache = getattr(SessionManager, "_agent_model_cache", None)
+        if isinstance(cache, dict):
+            for name in wanted:
+                cache.pop(name, None)
+        marked: list[str] = []
+        for key, sess in list(self._sessions.items()):
+            if sess.agent in wanted:
+                sess.definition_stale = True
+                marked.append(key)
+        return marked
+
+    def forget_conversation(self, key: str) -> None:
+        """Let go of the conversation *key*'s runtime holds, so the next turn of *key* starts one.
+
+        A runtime keeps its own copy of every turn it answered: the in-process loop its message
+        history, an agent CLI its session, and the session record the id that loads that session
+        back and a stopped turn waiting to be sent again. Clearing what a chat shows reaches none
+        of them, so this runtime answers no further turn: the next acquire builds a fresh one
+        (after a turn already running on it finishes, never under it, as for an edited agent). The
+        id is forgotten now, so neither that acquire nor a start after an idle reap or a restart
+        loads the conversation back. A channel link stays (``SessionMap.forget_session_id``).
+
+        Synchronous, so a caller can let a conversation go and start the turn that replaces it in
+        one step, with nothing able to start a turn on *key* in between.
+        """
+        sess = self._sessions.get(key)
+        if sess is not None:
+            sess.forgotten = True
+        self._session_map.forget_session_id(key)
+
+    async def _drop_session(self, key: str, sess: "_Session") -> None:
+        """Retire ``sess`` from ``key`` so the next acquire builds a fresh runtime; keeps the map.
+
+        No session-end hooks: the conversation continues on the rebuilt runtime, exactly as it
+        does after a dead provider is replaced.
+        """
+        async with self._lock:
+            if self._sessions.get(key) is sess:
+                del self._sessions[key]
+        try:
+            await sess.provider.shutdown()
+        except Exception:
+            logger.warning("Failed to shut down the replaced runtime for %s", key, exc_info=True)
+
+    async def remove(self, key: str) -> None:
+        """Shut down a session but preserve session_map for future resume.
+
+        Use when the session can be revived later (tab close, agent switch,
+        idle kill).  The ACP agent session files remain on disk, so
+        ``session/load`` can restore the full conversation losslessly.
+        """
+        async with self._lock:
+            session = self._sessions.pop(key, None)
+        if session:
+            await session.provider.shutdown()
+            logger.info("Removed session (map preserved): %s", key)
+            await _fire_session_end(key, "removed", session)
+
+    async def destroy(self, key: str) -> None:
+        """Permanently destroy a session — no resume possible.
+
+        Use for irreversible actions: permanent history deletion, bulk
+        clear, or error recovery where the session state is corrupt.
+        """
+        async with self._lock:
+            session = self._sessions.pop(key, None)
+        try:
+            if session:
+                await session.provider.shutdown()
+        finally:
+            self._session_map.delete(key)
+            logger.info("Destroyed session (map deleted): %s", key)
+            if session:
+                await _fire_session_end(key, "destroyed", session)
+
+    async def close_all(self) -> None:
+        """Shut down every session (called on shutdown)."""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+
+        # Cancel background spawn tasks (may be blocked in _INIT_TIMEOUT waits), and wait for them
+        # a bounded time: one cancelled while it starts an agent's process may never leave.
+        # _pool_health_task is included via _background_tasks registration.
+        await cancel_and_wait(list(self._background_tasks), what="background agent starts")
+        self._background_tasks.clear()
+
+        # Drain warm pool — shut down pre-spawned processes
+        pool_providers: list[ModelProvider] = []
+        while not self._warm_pool.empty():
+            try:
+                provider, _ = self._warm_pool.get_nowait()
+                pool_providers.append(provider)
+            except asyncio.QueueEmpty:
+                break
+
+        async with self._lock:
+            # Save session mappings before killing processes
+            from personalclaw.agents.provider import AgentProvider
+
+            for key, sess in self._sessions.items():
+                _cwd_str = (
+                    str(sess.provider._work_dir) if hasattr(sess.provider, "_work_dir") else ""
+                )
+                if isinstance(sess.provider, AgentProvider) and not sess.forgotten:
+                    sid = sess.provider.session_id
+                    if sid and not session_keys.is_stateless(key):
+                        self._session_map.set(key, sid, cwd=_cwd_str)
+
+            sessions = dict(self._sessions)
+            self._sessions.clear()
+
+        async def _close_one(provider: ModelProvider) -> None:
+            try:
+                await provider.shutdown()
+            except Exception:
+                pass
+
+        all_providers = [s.provider for s in sessions.values()] + pool_providers
+        if not all_providers:
+            return
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*[_close_one(p) for p in all_providers], return_exceptions=True),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            # Do NOT defer to "next startup" — under a KeepAlive daemon the
+            # gateway may run for days without restarting.  Synchronously kill
+            # any surviving provider process groups now.
+            logger.warning(
+                "Timeout closing %d sessions — force-killing survivors", len(all_providers)
+            )
+            for p in all_providers:
+                _sync_kill_provider(p)
+        logger.info("All sessions closed (active=%d)", len(sessions))
+        # One `SessionEnd` per session, with `reason=shutdown`. Deliberately AFTER the gather rather
+        # than inside `_close_one`: the shutdown path is already bounded by a 5s timeout, and firing
+        # hooks inside that budget would let a slow hook script eat the time the providers need to
+        # exit cleanly. A hook that misses a shutdown is recoverable; an orphaned agent process is
+        # what the timeout exists to prevent.
+        for key, sess in sessions.items():
+            await _fire_session_end(key, "shutdown", sess)
+
+    # ── Circuit breaker ──
+
+    def record_success(self, key: str) -> None:
+        """Reset consecutive failure counter on success."""
+        session = self._sessions.get(key)
+        if session:
+            session.consecutive_failures = 0
+
+    async def record_failure(self, key: str) -> bool:
+        """Increment failure counter. Returns True if circuit tripped (session reset)."""
+        session = self._sessions.get(key)
+        if not session:
+            return False
+        session.consecutive_failures += 1
+        if session.consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            logger.error(
+                "Circuit breaker tripped for %s (%d consecutive failures) — resetting",
+                key,
+                session.consecutive_failures,
+            )
+            await self.reset(key)
+            return True
+        return False
+
+    # ── Per-session semaphore ──
+
+    def release(self, key: str, *, cleanup: bool = False) -> None:
+        """Release the per-session semaphore acquired by ``get_or_create``.
+
+        The session's idle time starts here, when its turn lets it go: the idle sweep measures
+        from ``last_used``, and a turn that ran for most of the timeout must not leave it reaped
+        a moment after the turn ends.
+
+        If *cleanup* is True and the key is a subagent session, schedule
+        best-effort deletion of the provider's on-disk session files.
+        """
+        session = self._sessions.get(key)
+        if session:
+            if cleanup and session_keys.SUBAGENT.names(key):
+                try:
+                    session_id = session.provider.session_id
+                    if session_id:
+                        asyncio.ensure_future(self._safe_cleanup(session.provider, session_id))
+                except Exception:
+                    logger.debug("Failed to get session_id for cleanup", exc_info=True)
+            session.last_used = time.monotonic()
+            session.semaphore.release()
+
+    async def _safe_cleanup(self, provider: ModelProvider, session_id: str) -> None:
+        """Best-effort session file cleanup."""
+        try:
+            await provider.cleanup_session(session_id)
+            logger.debug("Cleaned up session files for %s", session_id)
+        except Exception:
+            logger.warning("Failed to clean up session files for %s", session_id, exc_info=True)
+
+    # ── Message queue (channel thread serialization) ──
+
+    def enqueue(
+        self, key: str, msg_ts: str, text: str, *, force: bool = False, **kwargs: object
+    ) -> bool:
+        """Append a message to the session queue. Returns True if queued (session busy).
+
+        If *force* is True, queue even when the semaphore isn't locked yet
+        (covers the startup race where a task exists but hasn't acquired the lock).
+        """
+        session = self._sessions.get(key)
+        if not session:
+            return False
+        if force or session.semaphore.locked():
+            session.queue.append((msg_ts, text, kwargs))
+            return True
+        return False
+
+    def dequeue(self, key: str) -> tuple[str, str, dict] | None:
+        """Pop the next queued message, skipping cancelled ones."""
+        session = self._sessions.get(key)
+        if not session:
+            return None
+        while session.queue:
+            msg_ts, text, kwargs = session.queue.popleft()
+            if msg_ts not in session.cancelled:
+                return msg_ts, text, kwargs
+            session.cancelled.discard(msg_ts)
+        return None
+
+    def add_steer(self, key: str, text: str) -> bool:
+        """Buffer a mid-turn steering message. Returns True only when the
+        message will actually reach the running turn; False means the caller must
+        queue it instead.
+
+        Both conditions are required, and the second one is the fix for a real
+        silent-drop bug:
+
+        * a turn must be in-flight (the semaphore is held) — otherwise there is
+          nothing to steer and the message belongs in the normal queue;
+        * that turn's runtime must expose the drain seam (``steer_drains``, set by
+          the dispatcher via :meth:`set_steer_drains`). ``steers`` is cleared ONLY
+          by :meth:`drain_steers`, whose sole caller is the native runtime's pull
+          lambda, so buffering against an ACP-backed turn dropped the message
+          permanently AND grew the deque without bound — while the HTTP caller was
+          told ``{"steered": true}``.
+        """
+        session = self._sessions.get(key)
+        if not session or not text.strip():
+            return False
+        if not session.semaphore.locked():
+            return False  # nothing in-flight to steer — caller queues normally
+        if not session.steer_drains:
+            return False  # no drain path this turn — caller queues (never buffer blind)
+        session.steers.append(text.strip())
+        return True
+
+    def set_steer_drains(self, key: str, value: bool) -> list[str]:
+        """Declare whether the CURRENT turn on *key* can drain steers. Returns the steers
+        that were still buffered when the turn ended (empty in every other case).
+
+        Called by the dispatcher: True when it wires ``set_steer_source`` for this
+        turn, False when the turn ends (so a steer sent between turns is queued
+        rather than buffered against a runtime that is no longer pulling).
+
+        The RETURN is the fix for the second half of the silent drop. The buffer
+        still has to be emptied at turn end — a steer aimed at a finished answer must not
+        surface inside an unrelated later turn — but emptying it and telling nobody meant a
+        message the user was shown as accepted disappeared with no trace anywhere. Handing
+        the remainder back makes the dispatcher, not this method, decide how to surface it.
+        """
+        session = self._sessions.get(key)
+        if session is None:
+            return []
+        session.steer_drains = bool(value)
+        if value:
+            return []
+        stranded = [s for s in session.steers if s]
+        session.steers.clear()
+        return stranded
+
+    def drain_steers(self, key: str) -> list[str]:
+        """Pop all buffered steering messages for a session (the loop's pull source)."""
+        session = self._sessions.get(key)
+        if not session or not session.steers:
+            return []
+        out = list(session.steers)
+        session.steers.clear()
+        return out
+
+    def cancel_queued(self, key: str, msg_ts: str) -> bool:
+        """Remove a queued message or mark an in-flight message as cancelled.
+
+        Returns True if the msg_ts was found in the queue and removed.
+        Returns False if not queued (may be in-flight — added to cancelled set).
+        """
+        session = self._sessions.get(key)
+        if not session:
+            return False
+        for i, (ts, _, _) in enumerate(session.queue):
+            if ts == msg_ts:
+                del session.queue[i]
+                return True
+        # Not in queue — only mark cancelled if something is actually in-flight
+        if session.semaphore.locked():
+            session.cancelled.add(msg_ts)
+        return False
+
+    def is_cancelled(self, key: str, msg_ts: str) -> bool:
+        """Check if a message was cancelled (deleted while processing)."""
+        session = self._sessions.get(key)
+        if not session:
+            return False
+        if msg_ts in session.cancelled:
+            session.cancelled.discard(msg_ts)
+            return True
+        return False
+
+    def clear_queue(self, key: str) -> None:
+        """Clear all queued messages and cancelled set for a session."""
+        session = self._sessions.get(key)
+        if session:
+            session.queue.clear()
+            session.cancelled.clear()
+
+    async def is_provider_alive(self, key: str) -> bool | None:
+        """Return True/False for provider liveness, or None if no session exists."""
+        async with self._lock:
+            sess = self._sessions.get(key)
+        if sess is None:
+            return None
+        # Use process-level check, not is_alive() which has a 600s
+        # stale-activity threshold that falsely kills idle sessions.
+        if hasattr(sess.provider, "is_process_alive"):
+            return sess.provider.is_process_alive()
+        return sess.provider.is_alive()
+
+    def get_approval_policy(self, key: str) -> str:
+        """Return the approval policy for a session as it stands now, or empty string."""
+        session = self._sessions.get(key)
+        if session is None:
+            return ""
+        if session.approval_source is not None:
+            return _policy_of(session.approval_source)
+        return session.approval_policy
+
+    def get_agent(self, key: str) -> str:
+        """Return the agent name for a session, or empty string."""
+        session = self._sessions.get(key)
+        return session.agent if session else ""
+
+    def set_approval_policy(self, key: str, policy: str) -> None:
+        """Set the approval policy for an existing session, bounded by the operator ceiling.
+
+        An explicit policy replaces a live source the session had (:func:`_push_approval_policy`).
+        """
+        session = self._sessions.get(key)
+        if session:
+            policy = _bounded_policy(policy, key=key)
+            old = session.approval_policy
+            session.approval_policy = policy
+            session.approval_source = None
+            # Push to the provider if it gates tools itself (native runtime);
+            # ACP enforces approval via its own protocol path and has no setter.
+            prov_set = getattr(session.provider, "set_approval_policy", None)
+            if callable(prov_set):
+                prov_set(policy)
+            if old != policy:
+                from personalclaw.sel import sel
+
+                sel().log_tool_invocation(
+                    session_key=key,
+                    source="session",
+                    tool_name="set_approval_policy",
+                    outcome=policy or "default",
+                    metadata={"old_policy": old, "new_policy": policy},
+                )
+
+    def set_task_mode(self, key: str, mode: str) -> None:
+        """Push the task mode (agent/ask/plan/build) to a session's provider.
+
+        The task-mode tool gate must hold regardless of approval, so the native
+        runtime enforces it in _guard_and_invoke. This forwards the mode to the
+        provider when it supports the gate (native); ACP runtimes are gated in the
+        dashboard permission handler instead (they have no such setter)."""
+        session = self._sessions.get(key)
+        if session:
+            prov_set = getattr(session.provider, "set_task_mode", None)
+            if callable(prov_set):
+                prov_set(mode or "agent")
+
+    # ── Channel thread linking (persisted via SessionMap) ──
+
+    def set_channel_link(
+        self, key: str, thread_ts: str, channel_id: str | None, *, channel_provider: str = ""
+    ) -> None:
+        """Link a session to a channel thread, on the channel *channel_provider* names, where its
+        answers go; an empty *thread_ts* unlinks it. Persists to session map."""
+        self._session_map.set_channel_link(
+            key, thread_ts, channel_id, channel_provider=channel_provider
+        )
+
+    def get_channel_link(self, key: str) -> tuple[str | None, str | None]:
+        """Return (thread_ts, channel_id) for a session."""
+        return self._session_map.get_channel_link(key)
+
+    def get_channel_provider(self, key: str) -> str:
+        """The channel a session's thread is on, as its link names it, or ``""``."""
+        return self._session_map.get_channel_provider(key)
+
+    def get_session_for_thread(self, thread_ts: str) -> str | None:
+        """Return the session key linked to a channel thread, or None."""
+        return self._session_map.get_session_for_thread(thread_ts)
+
+    # Convenience aliases over the channel-link helpers
+    async def set_channel(self, key: str, channel_id: str) -> None:
+        """Update only the channel id of a session's channel link, keeping its thread_ts and the
+        channel it is on."""
+        thread_ts, _ = self.get_channel_link(key)
+        self.set_channel_link(
+            key, thread_ts or "", channel_id, channel_provider=self.get_channel_provider(key)
+        )
+
+    def get_channel(self, key: str) -> str | None:
+        """Return the channel ID for a session key, or None."""
+        _, channel_id = self.get_channel_link(key)
+        return channel_id
+
+    # ── Additional session map helpers ──
+
+    def find_key_by_sid(self, sid: str) -> str | None:
+        return self._session_map.find_key_by_sid(sid)
+
+    def delete_session_map_entry(self, key: str) -> None:
+        self._session_map.delete(key)
+
+    async def set_thread(self, key: str, thread_ts: str) -> None:
+        """Update only the thread_ts of a session's channel link, keeping its channel."""
+        _, channel_id = self.get_channel_link(key)
+        self.set_channel_link(
+            key, thread_ts, channel_id, channel_provider=self.get_channel_provider(key)
+        )
+
+    def get_thread(self, key: str) -> str | None:
+        """Return the channel thread_ts for a session key, or None."""
+        thread_ts, _ = self.get_channel_link(key)
+        return thread_ts
+
+    # ── Cancel ──
+
+    async def cancel_current(self, key: str, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
+        """Cancel the in-flight operation for *key* without destroying the session."""
+        session = self._sessions.get(key)
+        if not session:
+            return "no_turn"
+        outcome = await session.provider.cancel(wait_ack_timeout=wait_ack_timeout)
+        logger.info("Cancelled in-flight operation for %s: %s", key, outcome)
+        return outcome
+
+    def turn_stopped(self, key: str) -> bool:
+        """Whether the turn of *key* was stopped (:meth:`stop_turn`) and no turn has taken the
+        session since (:meth:`get_or_create`). Nothing more runs for such a turn: a call its agent
+        CLI still makes of PersonalClaw's tools is answered as not made (``mcp_core``)."""
+        return key in self._stopped_turns
+
+    def register_child_stopper(self, stopper: Callable[[str], Awaitable[int]]) -> None:
+        """Register the callback :meth:`stop_turn` uses to end what a session's turn started."""
+        self._stop_children = stopper
+
+    def register_turn_stop_hook(self, hook: Callable[[str], int]) -> None:
+        """Register what :meth:`stop_turn` tells FIRST: the turn's pending approvals are over."""
+        self._on_turn_stop = hook
+
+    def _end_turn_approvals(self, key: str) -> None:
+        """Fail-open like `_stop_spawned_children`: the user pressed stop on the turn itself."""
+        if self._on_turn_stop is None:
+            return
+        try:
+            self._on_turn_stop(key)
+        except Exception:
+            logger.warning("stop_turn: ending pending approvals failed for %s", key, exc_info=True)
+
+    async def _stop_spawned_children(self, key: str) -> int:
+        """End what the turn of *key* started. Returns how many subagents that reached.
+
+        Fail-open: a child that will not die must not prevent the parent's own turn
+        from stopping — the user pressed stop on the parent.
+        """
+        if self._stop_children is None:
+            return 0
+        try:
+            stopped = await self._stop_children(key)
+        except Exception:
+            logger.warning("stop_turn: stopping spawned children failed for %s", key, exc_info=True)
+            return 0
+        # Report the count inward so it lands on the turn's stop record: this sweep is
+        # the one part of a stop the provider cannot observe for itself.
+        if stopped:
+            session = self._sessions.get(key)
+            note = getattr(getattr(session, "provider", None), "note_subagents_stopped", None)
+            if note is not None:
+                try:
+                    note(stopped)
+                except Exception:
+                    logger.debug("stop_turn: recording subagent count failed", exc_info=True)
+        return stopped
+
+    async def stop_turn(
+        self,
+        key: str,
+        *,
+        force: bool = False,
+        preserve_queue: bool = False,
+        on_soft: Callable[[], Awaitable[None]] | None = None,
+        on_hard: Callable[[], Awaitable[None]] | None = None,
+    ) -> StopOutcome:
+        """Cooperative stop with kill fallback.
+
+        Sequence:
+          1. nothing more runs for the turn (:meth:`turn_stopped`)
+          2. clear_queue(key)  — unless preserve_queue (the /interrupt path)
+          3. if force: end the turn's approvals and what it started, then hard kill
+          4. else: send session/cancel; its approvals and what it started end once the
+             runtime has heard of the stop, while the cancel waits up to budget
+             - acked → call on_soft hook → return "soft"
+             - timeout/error → fall through to hard kill
+             - no_turn → return "idle"
+          5. hard kill: reset(key) → on_hard → "hard"
+
+        The runner a session keeps between turns (an agent CLI's process) survives a soft stop:
+        the agent acknowledged the cancel, so the session's next turn reuses it. A hard stop
+        kills it, and nothing replaces it until a turn needs one — the next turn's
+        ``get_or_create`` starts it, built from that turn's own request. Starting one here
+        ahead of any turn left an idle process running for a chat nobody went back to, and
+        built it from the stopped turn's request rather than the next one's.
+
+        ``preserve_queue=True`` (the /interrupt verb) skips the queue clear so the
+        run_chat finally-block dequeue immediately picks up the next queued
+        message. ``/stop`` keeps the default (clears the queue).
+        """
+        # Before anything else: from here nothing more runs for this turn (`turn_stopped`), so a
+        # call its agent makes while the stop is under way is refused rather than run.
+        self._stopped_turns.add(key)
+        session = self._sessions.get(key)
+        if not session:
+            # No runtime to tell, so its approvals end at once (see below for why they end).
+            self._end_turn_approvals(key)
+            return "idle"
+
+        if not preserve_queue:
+            self.clear_queue(key)
+        # The order of what follows is the stop's, step for step:
+        #
+        # 1. The runtime hears of the stop first: the first step of `provider.cancel` below marks
+        #    its turn stopped before it waits for anything. The approvals the turn waits on, ended
+        #    next, wake it with a refusal, and an agent CLI told nothing yet read that refusal as
+        #    her Deny: one whose refusal ends its turn was carried on, a prompt sent after her Stop.
+        # 2. Then the turn's approvals end. A turn parked on an approval is waiting on a future, not
+        #    on the provider, so the provider's cancel is acknowledged while the turn stays parked —
+        #    and its approval stayed listed everywhere, answerable, resuming a turn the user had
+        #    stopped. Ending them wakes the turn, which leaves through the path any refused call
+        #    takes.
+        # 3. Then what the turn started is ended: its spawned subagents and batch runs are WORK it
+        #    started, so a stop reaches them too. Before this, stopping a turn that had fanned out
+        #    left every child running: they kept burning tokens, kept holding their worktrees, and
+        #    later delivered results into a session the user had already stopped. What it started
+        #    is read from the turn's record, and is told the turn was stopped (`started_work`),
+        #    before the turn the approvals woke can end and take its record with it.
+        #
+        # Steps 2 and 3 are queued now and run as soon as step 1 has done its part, in that order
+        # and before the woken turn takes another step; the children then die beside the
+        # provider's soft-stop budget rather than ahead of it.
+        asyncio.get_running_loop().call_soon(self._end_turn_approvals, key)
+        children = asyncio.ensure_future(self._stop_spawned_children(key))
+        budget: float = self._cfg.agent.soft_stop_budget_secs
+
+        if not force:
+            outcome = await session.provider.cancel(wait_ack_timeout=budget)
+            logger.debug("stop_turn: provider.cancel outcome=%r for %s", outcome, key)
+            await children
+            if outcome == "acked":
+                # ACP agent discards cancelled turns from its conversation log,
+                # so the next prompt must re-inject the cancelled turn context — but only
+                # for a provider that DROPPED it. The native loop keeps the stopped turn in
+                # its own history, and re-injecting it there sent the stopped message twice.
+                session.prev_turn_cancelled = (
+                    getattr(session.provider, "keeps_cancelled_turns", False) is not True
+                )
+                if on_soft:
+                    try:
+                        await on_soft()
+                    except Exception:
+                        logger.warning("on_soft hook failed for %s", key, exc_info=True)
+                return "soft"
+            if outcome == "no_turn":
+                return "idle"
+            # timeout or error → escalate to hard kill
+
+        await children
+        await self.reset(key)
+        if on_hard:
+            try:
+                await on_hard()
+            except Exception:
+                logger.warning("on_hard hook failed for %s", key, exc_info=True)
+        return "hard"
+
+    @property
+    def count(self) -> int:
+        return len(self._sessions)
+
+    async def drain_all_providers(self) -> list:
+        """Pop all sessions and return their providers. Thread-safe."""
+        providers = []
+        async with self._lock:
+            keys = list(self._sessions.keys())
+            for key in keys:
+                sess = self._sessions.pop(key, None)
+                if sess:
+                    providers.append(sess.provider)
+        return providers
+
+    async def drain_warm_pool(self) -> list:
+        """Drain all pre-spawned providers from the warm pool.
+
+        Returns providers for the caller to shut down. Must be called
+        when MCP config changes so stale pool processes (which loaded
+        the old config at spawn time) are discarded.
+        """
+        drained = []
+        while not self._warm_pool.empty():
+            try:
+                provider, _ = self._warm_pool.get_nowait()
+                drained.append(provider)
+            except asyncio.QueueEmpty:
+                break
+        if drained:
+            logger.info("Drained %d provider(s) from warm pool", len(drained))
+        return drained
+
+    # ── Idle cleanup ──
+
+    async def _cleanup_loop(self) -> None:
+        timeout = self._cfg.session.timeout_secs
+        # Defensive clamp: the dashboard validator allows 0 (disable
+        # sentinel) but also accepts 1–59 syntactically. Any positive
+        # value below 60 would cause _expire_idle() to aggressively reap
+        # active sessions, which is never the intent. Clamp such values
+        # up to the minimum of 60.
+        if 0 < timeout < 60:
+            logger.warning(
+                "session.timeout_secs=%d is below minimum 60; clamping to 60",
+                timeout,
+            )
+            timeout = 60
+        idle_sweep_enabled = timeout > 0
+        if not idle_sweep_enabled:
+            logger.info(
+                "Idle session sweep disabled (session.timeout_secs=%d); "
+                "MCP/PID sweeps still run at default cadence",
+                timeout,
+            )
+        # When idle sweep is disabled we still run the maintenance sweeps
+        # (orphaned MCP servers, leaked ACP agent PIDs, deniedCommands) on a
+        # fixed cadence so operators who set timeout_secs=0 don't also lose
+        # process hygiene.
+        interval = max(timeout // 6, 60) if idle_sweep_enabled else 300
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+                return  # shutdown signaled
+            except asyncio.TimeoutError:
+                pass  # normal wake-up
+            if idle_sweep_enabled:
+                await self._expire_idle(timeout)
+
+            # Sweep MCP servers orphaned by crashed/expired sessions
+            try:
+                mcp_killed = _cleanup_orphaned_mcp_servers()
+                if mcp_killed:
+                    logger.info("Periodic sweep: cleaned %d orphaned MCP servers", mcp_killed)
+            except Exception:
+                pass
+
+            # Sweep ACP agent processes tracked in session_pids.txt
+            # but no longer in self._sessions or self._warm_pool (leaked by
+            # failed reset/shutdown).  Warm pool PIDs are included in the
+            # active set to prevent healthy pooled processes from being
+            # killed as orphans.
+            # Offloaded to a thread to avoid blocking the event loop with
+            # os.kill, subprocess calls, and file I/O.
+            try:
+                active_pids, ok = _collect_active_pids(self._sessions)
+                active_pids.update(self._pool_pids())
+                if ok:
+                    my_gw_pid = os.getpid()
+                    # Phase 1 (thread): identify dead entries and orphan candidates.
+                    # No killing happens here — keeps blocking I/O off the event loop.
+                    killed_or_dead, candidates = await asyncio.to_thread(
+                        _periodic_pid_sweep, my_gw_pid, active_pids
+                    )
+                    # Phase 2a (event loop): re-check candidates against
+                    # live sessions and warm pool.  Deny-by-default: if any
+                    # PID extraction fails, skip the kill phase (still prune
+                    # dead entries).
+                    confirmed: list[int] = []
+                    if candidates:
+                        current_pids, phase2_safe = _collect_active_pids(self._sessions)
+                        current_pids.update(self._pool_pids())
+                        if phase2_safe:
+                            confirmed = [pid for pid in candidates if pid not in current_pids]
+                    # Phase 2b (thread): kill confirmed orphans + writeback.
+                    # Keeps blocking I/O (subprocess, fcntl.flock) off the
+                    # event loop.
+                    if confirmed or killed_or_dead:
+                        orphan_killed = await asyncio.to_thread(
+                            _kill_confirmed_and_writeback, my_gw_pid, confirmed, killed_or_dead
+                        )
+                        if orphan_killed:
+                            logger.warning(
+                                "Periodic sweep: killed %d orphaned ACP agent processes",
+                                orphan_killed,
+                            )
+            except Exception:
+                logger.debug("Orphan PID sweep failed", exc_info=True)
+
+    def register_dashboard_sessions(self, chats: Callable[[], Collection[str]]) -> None:
+        """Register how the sweep learns which chats exist: *chats* answers the ``dashboard:``
+        keys of every chat the dashboard holds now, and the sweep asks it each time it runs.
+
+        Asked when needed rather than told after the fact. A list the dashboard pushed from the
+        routes that create and delete a chat was stale for every chat made anywhere else — the
+        channel door, a scheduled prompt, Investigate — and the sweep reaped such a chat's runtime
+        in the middle of its turn.
+        """
+        self._dashboard_chats = chats
+
+    def _existing_dashboard_chats(self) -> Collection[str] | None:
+        """The ``dashboard:`` keys of the chats that exist now, or None when that is not known:
+        no dashboard registered its chats, or they could not be read. Reaping ends a
+        conversation's runtime, so a sweep that cannot tell which chats exist takes none for
+        closed (fail-closed on the destructive side)."""
+        if self._dashboard_chats is None:
+            return None
+        try:
+            return self._dashboard_chats()
+        except Exception:
+            logger.warning(
+                "Idle sweep: the chat list could not be read; no chat is taken for closed",
+                exc_info=True,
+            )
+            return None
+
+    async def _expire_idle(self, timeout_secs: int) -> None:
+        now = time.monotonic()
+        chats = self._existing_dashboard_chats()
+        # (key, the session as the sweep judged it, its last use then, whether its chat is gone)
+        expired: list[tuple[str, _Session, float, bool]] = []
+        total_checked = 0
+        async with self._lock:
+            for key, sess in self._sessions.items():
+                if session_keys.CHANNEL.names(key):
+                    continue
+                # A loop's own sessions (its workers and its planner) are headless and
+                # long-running: a single cycle can fan out to subagents and run well past the
+                # idle-sweep window. They are not dashboard chat tabs, so the "tab closed →
+                # orphan" heuristic must never reap them, and an idle sweep must not either: their
+                # lifecycle is the loop watchdog's (unresponsive / loop-exhaustion), and reaping
+                # one mid-turn kills the cycle in flight (and its subagents) before it can record a
+                # finding.
+                if session_keys.is_loop_work(key):
+                    continue
+                total_checked += 1
+                # A turn holds this runtime. It is not idle, and it ends by its own bounds (the
+                # runtime's request and approval timeouts, the turn's own), never by the sweep:
+                # reaping it here ended the turn with no answer. A chat deleted mid-turn stops
+                # its turn itself; the sweep takes the runtime once the turn lets it go.
+                if sess.semaphore.locked():
+                    continue
+                idle = now - sess.last_used > timeout_secs
+                orphaned = (
+                    session_keys.DASHBOARD.names(key) and chats is not None and key not in chats
+                )
+                if idle or orphaned:
+                    expired.append((key, sess, sess.last_used, orphaned))
+        if expired:
+            logger.warning("Idle sweep: %d checked, %d expired", total_checked, len(expired))
+        elif total_checked:
+            logger.debug("Idle sweep: %d checked, 0 expired", total_checked)
+        for key, sess, seen_last_used, is_orphan in expired:
+            # Give the ending session one last auto-skill-extraction pass
+            # BEFORE reset wipes its transcript. Only for genuinely-idle sessions
+            # (an orphaned tab-closed session is the same conversation a still-open
+            # tab may resume; the idle poll already covers it). Never let a
+            # consolidation failure block the cleanup that frees the session.
+            if not is_orphan and self._on_session_expire is not None:
+                try:
+                    await self._on_session_expire(key)
+                except Exception:
+                    logger.warning("on_session_expire failed for %s", key, exc_info=True)
+            # Judged unused, then taken out only if it still is. A turn that started on it since
+            # (the consolidation above can take a while) bumped its last use under this lock, and
+            # it keeps its runtime. The session map is kept either way, so the next acquire can
+            # resume an ACP agent's conversation from its session file.
+            async with self._lock:
+                if (
+                    self._sessions.get(key) is not sess
+                    or sess.semaphore.locked()
+                    or sess.last_used != seen_last_used
+                ):
+                    logger.info("Idle sweep: %s was taken up again before it was reaped", key)
+                    continue
+                del self._sessions[key]
+            if is_orphan:
+                logger.warning("Expiring orphaned dashboard session (session gone): %s", key)
+            else:
+                logger.warning("Expiring idle session: %s", key)
+            Stats().inc_session_cleaned()
+            await self._shut_down_removed(key, sess)

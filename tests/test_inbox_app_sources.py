@@ -1,0 +1,281 @@
+"""An app-declared ``inbox`` provider must become a real, resolvable message source.
+
+Before this, ``inbox`` was served by an ``EntitySeamHandler``: the manifest
+factory RAN at enable-time and its instance was discarded, and resolution read only
+the ``personalclaw.message_source_providers`` entry-point group — which an installed
+app cannot contribute to. So a manifest declaring ``{"type": "inbox", ...}`` validated,
+installed clean, and then did nothing (the declared-but-dead class).
+
+Driven here with a real ``MessageSourceProvider`` fixture app written to disk and put
+through the actual install → enable → poll → disable path, plus the poll catalog's
+precedence and the phantom-source check that deregistration is real.
+"""
+
+from __future__ import annotations
+
+import json
+import textwrap
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from personalclaw.apps import app_manager, manager
+
+APP_NAME = "fixture-inbox-app"
+# Deliberately NOT the app name: the registry keys by the provider's own source_name
+# (what an inbox item records and what a reply to it is routed by).
+SOURCE_NAME = "fixture-inbox"
+
+
+@pytest.fixture(autouse=True)
+def _isolate(tmp_path, monkeypatch):
+    """Never touch the real home: PERSONALCLAW_HOME for anything that resolves it at
+    runtime, plus the import-bound ``config_dir`` references (stores bind it at import)."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    # Fresh provider registry per test so registrations don't leak.
+    from personalclaw.providers import registry as reg
+
+    monkeypatch.setattr(reg, "_registry", None, raising=False)
+    from personalclaw.inbox_providers import registry as app_sources
+
+    app_sources._sources.clear()
+    yield tmp_path
+    app_sources._sources.clear()
+
+
+_INBOX_PROVIDER_PY = textwrap.dedent('''
+    from personalclaw.inbox_providers.base import IncomingMessage, MessageSourceProvider
+
+    class FixtureInboxSource(MessageSourceProvider):
+        """A source whose factory closes over app config — so it CANNOT be rebuilt
+        from a class the way the entry-point path rebuilds one."""
+
+        def __init__(self, config=None):
+            self.config = config or {}
+
+        @property
+        def source_name(self):
+            return "fixture-inbox"
+
+        async def poll(self, watched_channels, checkpoints, user_id):
+            msg = IncomingMessage(
+                id="m1",
+                channel_id="CFIX",
+                channel_name="#fixture",
+                text="hello from the app source",
+                sender_id="U9",
+                sender_name="App User",
+                timestamp=1700000000.0,
+            )
+            return [msg], {"CFIX": "1700000000.0"}
+
+        async def send_reply(self, channel_id, text, thread_ts=None):
+            return True
+
+        async def add_reaction(self, channel_id, ts, emoji):
+            return True
+
+        async def get_channel_history(self, channel_id, oldest, limit=200):
+            return []
+
+        async def resolve_user_name(self, user_id):
+            return "App User"
+
+    def create_provider(config=None):
+        return FixtureInboxSource(config)
+''')
+
+
+def _inbox_app(tmp_path: Path) -> Path:
+    d = tmp_path / "src" / APP_NAME
+    d.mkdir(parents=True)
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": APP_NAME,
+                "version": "1.0.0",
+                "displayName": "Fixture Inbox",
+                "description": "provider-only inbox fixture",
+                "provider": {
+                    "type": "inbox",
+                    "implementation": "provider:create_provider",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (d / "provider.py").write_text(_INBOX_PROVIDER_PY, encoding="utf-8")
+    return d
+
+
+# ── end-to-end: declare → enable → resolve → message flows → disable → gone ──
+
+
+@pytest.mark.asyncio
+async def test_app_inbox_source_resolves_and_a_message_flows(tmp_path):
+    """The whole point: an app's declared source is polled BY ITS source_name and a
+    message it polls lands in the inbox through the generic InboxService path, attributed
+    to that source. Fails without ``InboxTypeHandler`` — the seam has nothing to find."""
+    from personalclaw.inbox import InboxState, InboxStore
+    from personalclaw.inbox_providers import polled_source, polled_sources
+    from personalclaw.inbox_providers.registry import list_source_names
+    from personalclaw.inbox_service import InboxService
+
+    res = app_manager.install(_inbox_app(tmp_path), confirm=True)
+    assert res.ok, res.error
+
+    # install() registers + enables providers → the source is live under source_name.
+    assert list_source_names() == [SOURCE_NAME]
+    provider = polled_source(SOURCE_NAME)
+    assert provider is not None and provider.source_name == SOURCE_NAME
+    # The INSTANCE the factory built (it closes over app config) — not a rebuilt class.
+    assert type(provider).__name__ == "FixtureInboxSource"
+    assert provider is polled_source(SOURCE_NAME)
+
+    # A message flows through the GENERIC path (no vendor knowledge in InboxService).
+    store = InboxStore()
+    svc = InboxService(state=InboxState(), store=store, sources=polled_sources, user_name="Alex")
+    await svc._poll_once()
+    items = list(store.items.values())
+    assert len(items) == 1, [i.message for i in items]
+    assert items[0].message == "hello from the app source"
+    assert items[0].source == SOURCE_NAME
+    assert items[0].can_reply is True
+
+    # disable → the source is GONE (no phantom still being polled).
+    assert app_manager.disable(APP_NAME)
+    assert list_source_names() == []
+    assert polled_source(SOURCE_NAME) is None
+
+    # re-enable restores it (symmetric round trip)
+    assert app_manager.enable(APP_NAME)
+    restored = polled_source(SOURCE_NAME)
+    assert restored is not None and restored.source_name == SOURCE_NAME
+
+
+@pytest.mark.asyncio
+async def test_uninstall_leaves_no_phantom_source(tmp_path):
+    """A disabled/uninstalled app must not stay in the poll catalog — otherwise the
+    inbox goes on polling a source that is gone."""
+    from personalclaw.inbox_providers.registry import get_source
+
+    res = app_manager.install(_inbox_app(tmp_path), confirm=True)
+    assert res.ok, res.error
+    assert get_source(SOURCE_NAME) is not None
+
+    assert app_manager.force_uninstall(APP_NAME)
+    assert get_source(SOURCE_NAME) is None
+
+
+def test_bundled_filesystem_inbox_is_a_live_consumer_of_this_path():
+    """The mechanism is not fixture-only: the SHIPPED ``filesystem-inbox`` native app
+    declares ``type: inbox``, so its factory's instance is what the real handler
+    registers, and the drop folder the inbox polls while ``inbox.enabled`` is on.
+    (The provider is stateless, so sharing that instance is equivalent to building a
+    fresh one from the entry-point class — the earlier behaviour.)"""
+    import json as _json
+
+    from personalclaw.inbox_providers.filesystem_source import create_provider
+    from personalclaw.providers.loader import BUNDLED_DIR
+
+    manifest = _json.loads((BUNDLED_DIR / "filesystem-inbox" / "app.json").read_text())
+    assert manifest["provider"]["type"] == "inbox"
+    assert create_provider().source_name == "filesystem"
+
+
+def test_inbox_uses_a_real_handler_not_a_seam():
+    """``inbox`` graduated from EntitySeamHandler → InboxTypeHandler; a seam no-op would
+    silently drop the instance the seam now needs."""
+    from personalclaw.providers.registry import (
+        EntitySeamHandler,
+        InboxTypeHandler,
+        get_provider_registry,
+    )
+
+    handler = get_provider_registry()._type_handlers["inbox"]
+    assert isinstance(handler, InboxTypeHandler)
+    assert not isinstance(handler, EntitySeamHandler)
+
+
+# ── the poll catalog: app instances first, then entry points no app took, never native ──
+
+
+class _StubSource:
+    """Stands in for an entry-point-discovered CLASS (that path yields types)."""
+
+    _name = "stub"
+
+    @property
+    def source_name(self) -> str:
+        return self._name
+
+    def polling_enabled(self) -> bool:
+        return True
+
+
+class _NativeStub(_StubSource):
+    _name = "native"
+
+
+class _EntryPointFixture(_StubSource):
+    _name = SOURCE_NAME
+
+
+def test_app_instance_beats_entry_point_class(monkeypatch):
+    """Both paths can carry the same name; the app-contributed instance wins so an
+    installed app actually takes its source_name."""
+    import personalclaw.inbox_providers as ip
+    from personalclaw.inbox_providers.registry import register_source
+
+    monkeypatch.setattr(ip, "_cache", {SOURCE_NAME: _EntryPointFixture})
+    monkeypatch.setattr(ip, "_builtin_instances", {})
+    app_instance = _EntryPointFixture()
+    register_source(app_instance)
+
+    catalog = ip.source_catalog()
+    assert [s for s, _ in catalog] == [app_instance], "the entry-point class shadowed the app"
+
+
+def test_an_entry_point_no_app_took_is_listed_and_native_never_is(monkeypatch):
+    import personalclaw.inbox_providers as ip
+
+    monkeypatch.setattr(ip, "_cache", {SOURCE_NAME: _EntryPointFixture, "native": _NativeStub})
+    monkeypatch.setattr(ip, "_builtin_instances", {})
+    catalog = ip.source_catalog()
+    assert [(type(s), polled) for s, polled in catalog] == [(_EntryPointFixture, True)]
+    assert catalog[0][0] is ip.source_catalog()[0][0], "a built-in was rebuilt every tick"
+
+
+def test_app_source_registry_rejects_a_nameless_source():
+    """source_name is the key; an empty one would create an unaddressable phantom."""
+    from personalclaw.inbox_providers.registry import register_source
+
+    class _Nameless(_StubSource):
+        _name = ""
+
+    with pytest.raises(ValueError):
+        register_source(_Nameless())
+
+
+def test_handler_register_deregister_round_trips():
+    """Direct handler round trip (the KnowledgeTypeHandler pattern): registered by
+    source_name, kept with the app it came from, and gone, app and all, after deregister."""
+    from personalclaw.inbox_providers.registry import app_of, get_source, list_source_names
+    from personalclaw.providers.registry import InboxTypeHandler
+
+    handler = InboxTypeHandler()
+    inst = _EntryPointFixture()
+    handler.register(SimpleNamespace(name="fixture-inbox-app"), inst)
+    assert list_source_names() == [SOURCE_NAME]
+    assert get_source(SOURCE_NAME) is inst
+    assert app_of(SOURCE_NAME) == "fixture-inbox-app"
+
+    handler.deregister(None, inst)
+    assert list_source_names() == []
+    assert app_of(SOURCE_NAME) == ""

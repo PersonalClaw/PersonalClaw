@@ -1,0 +1,813 @@
+"""App Platform REST API + backend reverse-proxy.
+
+HTTP-level coverage over the /api/apps routes: install from a local path,
+list/get, enable/disable, config get/put (validated against configSchema),
+uninstall-preview, dangerous-install refused, and the reverse-proxy round-trip
+to a real app backend subprocess.
+"""
+
+from __future__ import annotations
+
+import json
+import textwrap
+from contextlib import asynccontextmanager
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from personalclaw.apps import backend_runtime, manager
+from personalclaw.apps.secret_fields import SECRET_MASK
+from personalclaw.dashboard.handlers.apps import register_app_routes
+
+
+@asynccontextmanager
+async def _client(tmp_path):
+    from personalclaw import inbox as _inbox
+    from personalclaw.apps import catalog as _catalog
+    from personalclaw.providers import entity_routes as _er
+
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+        # catalog / entity_routes / inbox each bind config_dir at import into their own
+        # namespace; patch those too so the update-surfacing read path (local
+        # sources + notified high-water mark + inbox fallback) stays in the sandbox.
+        patch.object(_catalog, "config_dir", return_value=tmp_path),
+        patch.object(_er, "config_dir", return_value=tmp_path),
+        patch.object(_inbox, "config_dir", return_value=tmp_path),
+    ):
+        # Fresh supervisor per test so backend processes don't leak between tests.
+        backend_runtime._supervisor = backend_runtime.BackendSupervisor()
+        # The request boundary the dashboard runs these routes behind: it is what turns a
+        # request-shape refusal (`source` missing or not a string) into the 400 wire envelope.
+        from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+        app = web.Application(middlewares=[request_boundary_middleware()])
+        register_app_routes(app)
+        async with TestClient(TestServer(app)) as client:
+            try:
+                yield client
+            finally:
+                backend_runtime.get_backend_supervisor().stop_all()
+
+
+async def _consented_install(client, source: str):
+    """Install ``source`` the way the consent dialog does: review it with
+    ``POST /api/apps/preview``, then echo the review's ``consent`` digest back. A bare
+    ``POST /api/apps`` never installs anything any more — it answers 409 with the review."""
+    review = await client.post("/api/apps/preview", json={"source": source})
+    assert review.status == 200, await review.text()
+    token = (await review.json())["consent"]
+    return await client.post("/api/apps", json={"source": source, "consent": token})
+
+
+async def _save_config(client, name: str, values: dict):
+    """Save an app's settings the way Configure does: over the revision of the config it read.
+    The PUT replaces the whole file, so it names the copy it replaces
+    (`personalclaw/stale_write.py`)."""
+    revision = (await (await client.get(f"/api/apps/{name}/config")).json())["revision"]
+    return await client.put(
+        f"/api/apps/{name}/config", json=values, headers={"If-Match": f'"{revision}"'}
+    )
+
+
+def _app_src(
+    tmp_path: Path,
+    name: str,
+    *,
+    version="1.0.0",
+    subdir="src",
+    setup=None,
+    backend=None,
+    files=None,
+    platform=None,
+    quality=None,
+) -> str:
+    d = tmp_path / subdir / name
+    d.mkdir(parents=True)
+    mani = {
+        "name": name,
+        "version": version,
+        "displayName": name.title(),
+        "description": f"{name} fixture",
+    }
+    if setup:
+        mani["setup"] = setup
+    if backend:
+        mani["backend"] = backend
+    if platform:
+        mani["platform"] = platform
+    # `None` means "declare no quality block at all", which is a DIFFERENT
+    # fixture from `{}` — the wire must be able to tell them apart.
+    if quality is not None:
+        mani["quality"] = quality
+    (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
+    for rel, content in (files or {}).items():
+        p = d / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return str(d)
+
+
+@pytest.mark.asyncio
+async def test_install_list_get(tmp_path):
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        r = await _consented_install(client, src)
+        assert r.status == 201, await r.text()
+        body = await r.json()
+        assert body["ok"] and body["name"] == "notes"
+
+        r = await client.get("/api/apps")
+        apps = (await r.json())["apps"]
+        assert any(a["name"] == "notes" and a["enabled"] for a in apps)
+
+        r = await client.get("/api/apps/notes")
+        got = await r.json()
+        assert got["manifest"]["name"] == "notes"
+        assert got["installed"]["version"] == "1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_list_hasconfig_from_provider_settings_schema(tmp_path):
+    """GET /api/apps `hasConfig` must be true for a PROVIDER app whose settings live
+    under provider.settingsSchema (not setup.configSchema) — regression for the bug
+    where such apps (native-vector-memory/tasks/skills/notifications) reported
+    hasConfig=false so the Apps UI hid their Configure action."""
+    async with _client(tmp_path) as client:
+        # A provider app with settings under provider.settingsSchema, NO setup.configSchema.
+        d = tmp_path / "src" / "cfgprov"
+        d.mkdir(parents=True)
+        (d / "app.json").write_text(
+            json.dumps(
+                {
+                    "name": "cfgprov",
+                    "version": "1.0.0",
+                    "displayName": "Cfg Prov",
+                    "description": "provider-schema fixture",
+                    "provider": {
+                        "type": "tool",
+                        "implementation": "provider:create_provider",
+                        "settingsSchema": {
+                            "type": "object",
+                            "properties": {"threshold": {"type": "number"}},
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (d / "provider.py").write_text(
+            "def create_provider(config=None):\n    return None\n", encoding="utf-8"
+        )
+        r = await _consented_install(client, str(d))
+        assert r.status == 201, await r.text()
+
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "cfgprov")
+        assert row["hasConfig"] is True, "provider.settingsSchema must make hasConfig true"
+        assert row["isProvider"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_hasconfig_false_without_any_schema(tmp_path):
+    """A plain app with neither setup.configSchema nor provider.settingsSchema → hasConfig false."""
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "noconf")
+        await _consented_install(client, src)
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "noconf")
+        assert row["hasConfig"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_carries_the_declared_quality_block(tmp_path):
+    """GET /api/apps must surface the DECLARED quality axes so the Library card
+    can badge them. Without this leg the block would validate, round-trip and be
+    verified in CI while never reaching a single pixel."""
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "badged", quality={"tested": True, "designSystem": "legacy"})
+        await _consented_install(client, src)
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "badged")
+        assert row["quality"] == {"tested": True, "designSystem": "legacy"}
+        # Per-axis, not per-block: `a11y` was never declared, so it must not appear —
+        # a defaulted `a11y: false` here would put a miss badge on a silent app.
+        assert "a11y" not in row["quality"]
+
+
+@pytest.mark.asyncio
+async def test_list_reports_no_quality_block_for_an_app_that_declares_none(tmp_path):
+    """The other half of the honesty: an app that declared NOTHING must arrive with
+    an empty block, never a synthesised all-false one. `{}` is what makes the card
+    render no badges; `{"tested": false, …}` would render a row of misses the app never
+    signed up for."""
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "quiet")
+        await _consented_install(client, src)
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "quiet")
+        assert row["quality"] == {}
+        # …and the two shapes are genuinely distinguishable on the wire.
+        src2 = _app_src(tmp_path, "honest-miss", subdir="src2", quality={"tested": False})
+        await _consented_install(client, src2)
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        assert next(a for a in apps if a["name"] == "honest-miss")["quality"] == {"tested": False}
+
+
+@pytest.mark.asyncio
+async def test_client_install_returns_200_with_one_liner(tmp_path):
+    """The platform gate: an installMode=client app is NOT server-installable — the
+    handler must return 200 (a valid client-install DIRECTIVE, not a 400 bad-request)
+    with needs_client_install + the copy-paste one-liner, and must NOT commit it."""
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path,
+            "clientapp",
+            platform={
+                "os": ["macos", "linux"],
+                "installMode": "client",
+                "clientInstall": {
+                    "shell": "curl -fsSL https://example.invalid/i.sh | sh",
+                    "postInstall": "open ~/Applications/X.app",
+                },
+            },
+        )
+        r = await client.post("/api/apps", json={"source": src})
+        assert r.status == 200, await r.text()  # directive, not a 400 bad-request
+        body = await r.json()
+        assert body["ok"] is False
+        assert body["needs_client_install"] is True
+        assert body["client_install"]["shell"] == "curl -fsSL https://example.invalid/i.sh | sh"
+        # NOT committed to the live tree
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        assert not any(a["name"] == "clientapp" for a in apps)
+
+
+@pytest.mark.asyncio
+async def test_install_missing_source_400(tmp_path):
+    async with _client(tmp_path) as client:
+        r = await client.post("/api/apps", json={})
+        assert r.status == 400
+        r = await client.post("/api/apps", json={"source": "/no/such/dir"})
+        assert r.status == 400
+
+
+@pytest.mark.asyncio
+async def test_dangerous_install_refused(tmp_path):
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "evil", files={"scripts/x.sh": "rm -rf / --no-preserve-root\n"})
+        r = await client.post("/api/apps", json={"source": src})
+        assert r.status == 400
+        body = await r.json()
+        assert not body["ok"] and body["scan"]["verdict"] == "dangerous"
+
+
+@pytest.mark.asyncio
+async def test_enable_disable(tmp_path):
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        await _consented_install(client, src)
+        assert (await client.post("/api/apps/notes/disable")).status == 200
+        assert not (await (await client.get("/api/apps/notes")).json())["installed"]["enabled"]
+        assert (await client.post("/api/apps/notes/enable")).status == 200
+        assert (await (await client.get("/api/apps/notes")).json())["installed"]["enabled"]
+
+
+@pytest.mark.asyncio
+async def test_config_get_put_validated(tmp_path):
+    schema = {
+        "type": "object",
+        "properties": {
+            "apiKey": {"type": "string"},
+            "maxItems": {"type": "integer"},
+        },
+        "required": ["apiKey"],
+    }
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes", setup={"configSchema": schema})
+        await _consented_install(client, src)
+
+        # empty config initially; schema returned
+        r = await client.get("/api/apps/notes/config")
+        body = await r.json()
+        assert body["config"] == {} and body["schema"]["required"] == ["apiKey"]
+
+        # invalid: wrong type + missing required
+        r = await _save_config(client, "notes", {"maxItems": "lots"})
+        assert r.status == 400
+
+        # valid
+        r = await _save_config(client, "notes", {"apiKey": "sk-1", "maxItems": 10})
+        assert r.status == 200
+        assert (await client.get("/api/apps/notes/config")).status == 200
+        body = await (await client.get("/api/apps/notes/config")).json()
+        # `apiKey` is credential-NAMED, so it lives in the credential store though the schema
+        # never declared it sensitive — and the read-back masks it rather than resolving it.
+        assert body["config"] == {"apiKey": SECRET_MASK, "maxItems": 10}
+        assert body["_secret_set"] == ["apiKey"]
+
+        # unknown key rejected
+        r = await _save_config(client, "notes", {"apiKey": "x", "bogus": 1})
+        assert r.status == 400
+
+
+@pytest.mark.asyncio
+async def test_sensitive_config_field_is_write_only(tmp_path):
+    """A field marked x-meta.sensitive is WRITE-ONLY over the API: GET masks
+    the stored secret (never returns it in the clear) + flags it in _secret_set; a
+    PUT carrying the mask sentinel (or empty) keeps the stored secret rather than
+    clobbering it; a real new value overwrites it."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
+        await _consented_install(client, src)
+
+        # set a real secret + a normal field
+        r = await _save_config(client, "sec", {"api_key": "fake-key-1", "endpoint": "https://x"})
+        assert r.status == 200
+        put_body = await r.json()
+        # the PUT response must NOT echo the raw secret back
+        assert put_body["config"]["api_key"] != "fake-key-1"
+        assert "api_key" in put_body["_secret_set"]
+
+        # GET masks the secret (raw value never leaves the backend) but keeps endpoint
+        body = await (await client.get("/api/apps/sec/config")).json()
+        assert body["config"]["api_key"] != "fake-key-1"
+        assert body["config"]["api_key"]  # a non-empty mask sentinel
+        assert body["config"]["endpoint"] == "https://x"
+        assert body["_secret_set"] == ["api_key"]
+        mask = body["config"]["api_key"]
+
+        # PUT the mask sentinel back (with a changed endpoint) → secret PRESERVED
+        r = await _save_config(client, "sec", {"api_key": mask, "endpoint": "https://y"})
+        assert r.status == 200
+
+        # confirm the stored secret is still the real one (as the app itself reads it)
+        from personalclaw.providers.settings import ProviderSettings
+
+        raw = ProviderSettings.load("sec")
+        assert raw["api_key"] == "fake-key-1"  # NOT overwritten by the sentinel
+        assert raw["endpoint"] == "https://y"  # normal field updated
+
+        # a genuinely new secret value DOES overwrite
+        r = await _save_config(client, "sec", {"api_key": "fake-key-2", "endpoint": "https://y"})
+        assert r.status == 200
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-2"
+
+
+@pytest.mark.asyncio
+async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(tmp_path):
+    """``GET /api/apps/{name}`` serves the SAME stored config as ``.../config``.
+
+    The test above has pinned the write-only rule on ``/config``, and this route —
+    two functions away in the same module, reading the same file, honouring the same flag —
+    returned the secret verbatim anyway. Not a hypothetical surface: it is exactly what
+    ``api.app(name)`` fetches. Found by a derived census
+    (``test_provider_instance_secrets.py``) rather than by inspection, which is the whole
+    argument for deriving the population instead of listing the routes.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
+        await _consented_install(client, src)
+        r = await _save_config(client, "sec", {"api_key": "fake-key-3", "endpoint": "https://x"})
+        assert r.status == 200, await r.text()
+
+        raw = await (await client.get("/api/apps/sec")).text()
+        assert (
+            "fake-key-3" not in raw
+        ), "the app detail route handed out the stored secret while /config masked it"
+        body = json.loads(raw)
+        assert body["config"]["api_key"] == SECRET_MASK
+        assert body["config"]["endpoint"] == "https://x", "a normal field still passes through"
+        assert body["_secret_set"] == ["api_key"]
+
+        # …and the stored value is untouched.
+        from personalclaw.providers.settings import ProviderSettings
+
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-3"
+
+
+@pytest.mark.asyncio
+async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path):
+    """A reference resolves only against its own owner's credentials, so a save that names a
+    key another owner holds — a Secrets-panel credential, another app's token — is refused
+    with 400 and the sentence that says what to do, and nothing reaches the disk. On main the
+    save was accepted, and the app's settings then resolved the other owner's value."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref, ref_key
+    from personalclaw.providers.settings import ProviderSettings
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
+    async with _client(tmp_path) as client:
+        await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
+        save_credential("VAULT_FIXTURE_KEY", "ghp-vault-value-never-an-apps")
+        ProviderSettings.save("other-app", {"bot_token": "fake-bot-token-other-app-value"})
+        other_file = tmp_path / "apps" / "other-app" / "data" / "config.json"
+        others = ref_key(json.loads(other_file.read_text(encoding="utf-8"))["bot_token"])
+        config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
+
+        for key, whose in (
+            ("VAULT_FIXTURE_KEY", "a credential in Settings → Secrets"),
+            (others, "another app's credential"),
+        ):
+            r = await _save_config(
+                client, "sec", {"api_key": make_ref(key), "endpoint": "https://x"}
+            )
+            text = await r.text()
+            assert r.status == 400, text
+            message = json.loads(text)["error"]
+            assert f"API Key refers to {make_ref(key)}, {whose}." in message, message
+            assert "It belongs to a different owner, so Sec cannot use it." in message
+            assert (
+                "Store the key under Sec instead: type the key itself — not a reference — into "
+                "API Key on Sec's Configure page." in message
+            ), message
+            assert "ghp-vault-value" not in text and "fake-bot-token-other-app-value" not in text
+            assert not config_file.exists(), "a refused save reached the disk"
+
+        # The supported path: type the key itself, and it is stored under this app.
+        r = await _save_config(
+            client, "sec", {"api_key": "fake-key-typed-here", "endpoint": "https://x"}
+        )
+        assert r.status == 200, await r.text()
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-typed-here"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_in_a_field_the_schema_does_not_call_secret_is_masked(tmp_path):
+    """No read-back hands out a resolved value: a reference is masked whatever its field is
+    called. On main the route resolved it and returned the stored credential in the clear."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    schema = {"type": "object", "properties": {"endpoint": {"type": "string"}}}
+    async with _client(tmp_path) as client:
+        await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
+        ProviderSettings.save("sec", {"api_key": "fake-key-own-app-value-123"})
+        config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
+        ref = json.loads(config_file.read_text(encoding="utf-8"))["api_key"]
+        config_file.write_text(json.dumps({"endpoint": ref}), encoding="utf-8")
+
+        for route in ("/api/apps/sec/config", "/api/apps/sec"):
+            raw = await (await client.get(route)).text()
+            assert (
+                "fake-key-own-app-value-123" not in raw
+            ), f"{route} handed out a resolved reference"
+            body = json.loads(raw)
+            assert body["config"] == {"endpoint": SECRET_MASK}
+            assert body["_secret_set"] == ["endpoint"]
+
+        # …and the mask a form sends back keeps the reference rather than storing the dots.
+        r = await _save_config(client, "sec", {"endpoint": SECRET_MASK})
+        assert r.status == 200, await r.text()
+        assert json.loads(config_file.read_text(encoding="utf-8")) == {"endpoint": ref}
+
+
+@pytest.mark.asyncio
+async def test_config_route_rejects_traversal_name_cleanly(tmp_path):
+    """A path-escaping {name} on the config route must 404 cleanly (the manifest
+    check treats an invalid name as not-installed), NOT surface app_dir's guard
+    ValueError as a 500."""
+    async with _client(tmp_path) as client:
+        for bad in ["..%2F..%2Fetc", "..%2F..%2F..%2Fevil"]:
+            r = await client.get(f"/api/apps/{bad}/config")
+            assert r.status == 404, f"{bad} → {r.status} (want clean 404, not 500)"
+            r2 = await client.put(f"/api/apps/{bad}/config", json={"x": 1})
+            assert r2.status == 404, f"PUT {bad} → {r2.status}"
+
+
+@pytest.mark.asyncio
+async def test_config_falls_back_to_provider_settings_schema(tmp_path):
+    # A provider app declares its settings under provider.settingsSchema (not
+    # setup.configSchema); the config UI/API must surface + validate against it.
+    import json as _json
+
+    async with _client(tmp_path) as client:
+        d = tmp_path / "src" / "wiki"
+        d.mkdir(parents=True)
+        (d / "app.json").write_text(
+            _json.dumps(
+                {
+                    "name": "wiki",
+                    "version": "1.0.0",
+                    "displayName": "Wiki",
+                    "description": "x",
+                    "provider": {
+                        "type": "search",
+                        "implementation": "provider:create_provider",
+                        "settingsSchema": {
+                            "type": "object",
+                            "properties": {
+                                "lang": {"type": "string"},
+                                "timeout_secs": {"type": "integer"},
+                            },
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (d / "provider.py").write_text(
+            "def create_provider(config=None):\n    return object()\n", encoding="utf-8"
+        )
+        await _consented_install(client, str(d))
+
+        # schema surfaced from provider.settingsSchema (NOT empty)
+        body = await (await client.get("/api/apps/wiki/config")).json()
+        assert set(body["schema"].get("properties", {})) == {"lang", "timeout_secs"}
+
+        # validated against it: valid saves, wrong type rejected
+        assert (
+            await _save_config(client, "wiki", {"lang": "en", "timeout_secs": 20})
+        ).status == 200
+        assert (await _save_config(client, "wiki", {"timeout_secs": "slow"})).status == 400
+
+
+@pytest.mark.asyncio
+async def test_uninstall_deactivates_force_removes(tmp_path):
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        await _consented_install(client, src)
+        r = await client.get("/api/apps/notes/uninstall-preview")
+        body = await r.json()
+        assert r.status == 200 and "dependencies" in body
+        # The preview reports the app's data/ facts so the confirm dialogs can name the
+        # trade. `present` and `entries` are separate: install mints an EMPTY data/.
+        assert body["data"]["present"] is True and body["data"]["entries"] == 0, body["data"]
+        # Plain DELETE = deactivate: still installed (present), but disabled.
+        assert (await client.delete("/api/apps/notes")).status == 200
+        got = await client.get("/api/apps/notes")
+        assert got.status == 200
+        assert (await got.json())["installed"]["enabled"] is False
+        # force=1 = real removal → gone (404 afterwards).
+        assert (await client.delete("/api/apps/notes?force=1")).status == 200
+        assert (await client.get("/api/apps/notes")).status == 404
+
+
+@pytest.mark.asyncio
+async def test_remove_rung_removes_the_app_and_keeps_its_data(tmp_path):
+    """``DELETE ?remove=1`` — the middle rung over HTTP (issue #2541).
+
+    The app must be GONE (404, not merely disabled) and the data it wrote must come
+    back on reinstall. Both halves, because "removed" without "data kept" is the
+    force-uninstall this rung exists to be an alternative to.
+    """
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        assert (await _consented_install(client, src)).status == 201
+
+        from personalclaw.apps import manager as app_store
+
+        (app_store.app_dir("notes") / "data" / "note.md").write_text("kept\n", encoding="utf-8")
+
+        r = await client.delete("/api/apps/notes?remove=1")
+        assert r.status == 200
+        payload = await r.json()
+        assert payload["removed"] is True and payload["forced"] is False, payload
+        assert payload["dataPreserved"] is True, payload
+        # Gone, not deactivated.
+        assert (await client.get("/api/apps/notes")).status == 404
+
+        # Reinstall through the same endpoint a user would, and read the note back.
+        assert (await _consented_install(client, src)).status == 201
+        assert (app_store.app_dir("notes") / "data" / "note.md").read_text(
+            encoding="utf-8"
+        ) == "kept\n"
+
+
+@pytest.mark.asyncio
+async def test_force_wins_when_a_request_asks_for_both_rungs(tmp_path):
+    """``?force=1&remove=1`` WIPES. Two contradictory promises ⇒ honour the confirmed one.
+
+    Honouring the weaker flag would silently keep data a caller explicitly asked to
+    destroy, and the reinstall would resurrect it.
+    """
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        assert (await _consented_install(client, src)).status == 201
+
+        from personalclaw.apps import manager as app_store
+
+        (app_store.app_dir("notes") / "data" / "doomed.md").write_text("bye\n", encoding="utf-8")
+
+        r = await client.delete("/api/apps/notes?force=1&remove=1")
+        assert r.status == 200
+        payload = await r.json()
+        assert payload["forced"] is True and payload["removed"] is False, payload
+        assert (await client.get("/api/apps/notes")).status == 404
+
+        assert (await _consented_install(client, src)).status == 201
+        assert not (
+            app_store.app_dir("notes") / "data" / "doomed.md"
+        ).exists(), "data survived a request that asked for the destructive rung"
+
+
+@pytest.mark.asyncio
+async def test_proxy_404_when_not_installed(tmp_path):
+    async with _client(tmp_path) as client:
+        r = await client.get("/apps/ghost/api/ping")
+        assert r.status == 404
+
+
+@pytest.mark.asyncio
+async def test_ui_asset_served_and_traversal_guarded(tmp_path):
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
+        )
+        assert (await _consented_install(client, src)).status == 201
+        r = await client.get("/apps/widget/ui/index.js")
+        assert r.status == 200
+        assert "mount" in await r.text()
+        assert r.headers["Content-Type"].startswith("text/javascript")
+        # path traversal is rejected
+        assert (await client.get("/apps/widget/ui/../app.json")).status == 404
+        # disabled app serves no UI
+        await client.post("/api/apps/widget/disable")
+        assert (await client.get("/apps/widget/ui/index.js")).status == 403
+
+
+@pytest.mark.asyncio
+async def test_ui_asset_sibling_prefix_dir_is_rejected(tmp_path):
+    """Regression for #791: a sibling dir sharing the ``ui`` prefix (``ui.bak``)
+    must NOT pass containment. The old ``str(target).startswith(str(ui_root))``
+    check omitted the trailing separator, so ``.../ui.bak/secret.js`` slipped
+    through; ``is_relative_to`` rejects it while a real ``ui/`` asset still serves.
+
+    The handler is called directly because the HTTP client (yarl) normalizes the
+    ``..`` segment client-side before it reaches the route, so the containment
+    guard can only be exercised with an un-normalized ``tail``.
+    """
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers.apps import api_app_ui_asset
+
+    async def _get(name: str, tail: str) -> web.StreamResponse:
+        req = make_mocked_request("GET", f"/apps/{name}/ui/{tail}")
+        req._match_info = {"name": name, "tail": tail}
+        return await api_app_ui_asset(req)
+
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
+        )
+        assert (await _consented_install(client, src)).status == 201
+        # Drop a SIBLING dir that shares the ``ui`` prefix into the installed app dir.
+        installed_ui_bak = manager.app_dir("widget") / "ui.bak"
+        installed_ui_bak.mkdir()
+        (installed_ui_bak / "secret.js").write_text("SECRET_SIBLING\n", encoding="utf-8")
+        # A legitimate asset inside ui/ still serves.
+        assert (await _get("widget", "index.js")).status == 200
+        # The sibling escaping ui/ is rejected by real path containment.
+        assert (await _get("widget", "../ui.bak/secret.js")).status == 404
+
+
+@pytest.mark.asyncio
+async def test_backend_proxy_round_trip(tmp_path, monkeypatch):
+    # The install starts the backend, so the suite's guard against spawning app backends
+    # (PERSONALCLAW_SKIP_APP_BACKENDS, which every platform start honours) is lifted —
+    # safe here because _client() isolates config_dir to tmp_path.
+    monkeypatch.delenv("PERSONALCLAW_SKIP_APP_BACKENDS", raising=False)
+    # A real Python backend: an http.server that echoes the path on /health and /ping.
+    backend_py = textwrap.dedent("""
+        import json, os
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"path": self.path}).encode())
+            def log_message(self, *a): pass
+        HTTPServer(("127.0.0.1", int(os.environ["PORT"])), H).serve_forever()
+    """)
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path,
+            "svc",
+            backend={"entryPoint": "backend/server.py", "type": "python", "healthCheck": "/health"},
+            files={"backend/server.py": backend_py},
+        )
+        r = await _consented_install(client, src)
+        assert r.status == 201, await r.text()
+
+        # Backend was launched on install; poll until the proxy gets through.
+        import asyncio
+
+        got = None
+        for _ in range(50):
+            resp = await client.get("/apps/svc/api/ping")
+            if resp.status == 200:
+                got = await resp.json()
+                break
+            await asyncio.sleep(0.1)
+        assert got is not None, "backend never became reachable through the proxy"
+        assert got["path"] == "/ping"
+
+        # Disabling the app stops the backend → proxy 403 (disabled) or 502.
+        await client.post("/api/apps/svc/disable")
+        resp = await client.get("/apps/svc/api/ping")
+        assert resp.status in (403, 502)
+
+
+@pytest.mark.asyncio
+async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
+    # Regression: enabled apps' backend subprocesses don't survive a gateway
+    # restart; startup (app_runtime.start_installed, the one load) relaunches them
+    # so the reverse-proxy is live without a manual re-enable.
+    # This test exercises the startup launcher itself, so the global test guard
+    # (PERSONALCLAW_SKIP_APP_BACKENDS, set in conftest) must be lifted — safe
+    # here because _client() isolates config_dir to tmp_path.
+    monkeypatch.delenv("PERSONALCLAW_SKIP_APP_BACKENDS", raising=False)
+    backend_py = textwrap.dedent("""
+        import json, os
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True}).encode())
+            def log_message(self, *a): pass
+        HTTPServer(("127.0.0.1", int(os.environ["PORT"])), H).serve_forever()
+    """)
+    import asyncio
+
+    from personalclaw.apps import app_runtime
+
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path,
+            "svc2",
+            backend={"entryPoint": "backend/server.py", "type": "python"},
+            files={"backend/server.py": backend_py},
+        )
+        assert (await _consented_install(client, src)).status == 201
+        # Simulate a gateway restart: drop the supervisor (kills tracked procs).
+        backend_runtime.get_backend_supervisor().stop_all()
+        backend_runtime._supervisor = backend_runtime.BackendSupervisor()
+        assert backend_runtime.get_backend_supervisor().get("svc2") is None
+        # Startup relaunch brings the enabled app's backend back.
+        started = app_runtime.start_installed()
+        assert "svc2" in started
+        got = None
+        for _ in range(50):
+            resp = await client.get("/apps/svc2/api/ping")
+            if resp.status == 200:
+                got = await resp.json()
+                break
+            await asyncio.sleep(0.1)
+        assert got == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_apps_list_flags_available_update(tmp_path, monkeypatch):
+    """End to end over HTTP: install v1.0.0, register a local source carrying a
+    v1.1.0 copy, and GET /api/apps → the installed app is flagged updateAvailable with
+    the newer latestVersion (computed on the read path, no polling)."""
+    # Neutralize the always-present first-party default source so this test's source set
+    # is exactly the one it adds (env → nonexistent dir disables the default).
+    monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "no-first-party"))
+    from personalclaw.apps import catalog
+
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes", version="1.0.0")
+        assert (await _consented_install(client, src)).status == 201
+
+        # No newer source yet → no update flagged.
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        notes = next(a for a in apps if a["name"] == "notes")
+        assert notes["updateAvailable"] is False and notes["latestVersion"] == ""
+
+        # A local source now carries a NEWER copy of the same app.
+        newer = _app_src(tmp_path, "notes", version="1.1.0", subdir="newer-src")
+        catalog.add_local_source(str(Path(newer).parent))
+
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        notes = next(a for a in apps if a["name"] == "notes")
+        assert notes["updateAvailable"] is True
+        assert notes["latestVersion"] == "1.1.0"
+        # Where it was found — the Update dialog starts from it rather than an empty field.
+        assert notes["latestSource"] == str(Path(newer))

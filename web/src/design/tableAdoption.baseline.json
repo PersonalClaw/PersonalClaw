@@ -1,0 +1,13 @@
+{
+  "rawTableFiles": [
+    "chat/toolRenderers/primitives.tsx",
+    "files/browse/FilePreviews.tsx",
+    "learning/BenchmarkPanel.tsx",
+    "learning/JudgeBenchPanel.tsx",
+    "learning/RetrievalBenchPanel.tsx",
+    "learning/StudiesPanel.tsx",
+    "settings/RoutingPanel.tsx",
+    "tools/ToolOutput.tsx",
+    "triggers/WeekGridView.tsx"
+  ]
+}

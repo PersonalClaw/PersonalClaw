@@ -1,0 +1,819 @@
+"""``knowledge-health`` and ``knowledge-consolidate`` — the store's maintenance actions.
+
+Two providers, split by COST rather than by topic, because that split is what makes a
+maintenance cadence affordable:
+
+**`knowledge-health`** is zero-token and deterministic. Stubs, orphans, broken internal
+citations, items missing from the search index, past-expiry probes. Cheap enough to run on
+every write, which is the only cadence that catches a problem before something builds on it.
+
+**`knowledge-consolidate`** plans and applies the clustering pass. It is expensive, so it is
+gated (min-hours, min-new-material, contention) and it defaults to a DRY RUN: the plan is the
+artifact, and applying it is a separate explicit act.
+
+Both report rather than enforce. A health finding is a fact about the store, not a verdict on
+it — an orphan may be the only record of something, and a template that auto-deleted orphans
+would destroy exactly the knowledge nobody happened to link.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from typing import Any
+
+from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.knowledge import consolidation
+from personalclaw.tool_providers.base import RiskLevel
+
+logger = logging.getLogger(__name__)
+
+#: Cap on ids echoed back per finding category. A store with 4000 stubs does not need 4000 ids
+#: in a workflow output — it needs the count and a sample, and the full list is one query away.
+MAX_REPORTED_IDS = 50
+
+
+class KnowledgeHealthActionProvider(ActionProvider):
+    """Deterministic store health. Zero tokens.
+
+    ``action_config`` shape::
+
+        {"fix_index": false}   # re-sync search-index entries found missing
+    """
+
+    @property
+    def name(self) -> str:
+        return "knowledge-health"
+
+    @property
+    def display_name(self) -> str:
+        return "Check Knowledge Health"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: a deterministic report over the store, which it does not change."""
+        return RiskLevel.SAFE
+
+    async def execute(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        timeout: int = 30,
+    ) -> ActionResult:
+        started = time.monotonic()
+        cfg = action_config or {}
+
+        try:
+            store = _open_store()
+        except Exception as exc:  # pragma: no cover — environmental
+            return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
+
+        items = _load_items(store)
+        if not items:
+            # An empty store is HEALTHY, not broken. Reporting a problem here would make a fresh
+            # install look damaged, and the maintenance cadence would start by crying wolf.
+            payload = {
+                "report": consolidation.HealthReport().to_dict(),
+                "item_count": 0,
+                "note": "the store is empty — nothing to check",
+            }
+            return ActionResult(
+                success=True,
+                stdout=json.dumps(payload, ensure_ascii=False),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        report = consolidation.check_health(
+            items,
+            known_ids={i.id for i in items},
+            indexed_ids=_indexed_ids(store),
+            expired_ids=_expired_ids(store),
+        )
+
+        repaired: list[str] = []
+        if _truthy(cfg.get("fix_index")) and report.unindexed:
+            repaired = _reindex(store, report.unindexed)
+
+        payload = {
+            "report": _capped(report.to_dict()),
+            "counts": {
+                "stubs": len(report.stubs),
+                "orphans": len(report.orphans),
+                "broken_citations": len(report.broken_citations),
+                "expired": len(report.expired),
+                "unindexed": len(report.unindexed),
+            },
+            "item_count": len(items),
+            "clean": report.clean,
+            "reindexed": repaired,
+        }
+        return ActionResult(
+            success=True,
+            stdout=json.dumps(payload, ensure_ascii=False),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+class KnowledgeGapsActionProvider(ActionProvider):
+    """Find entities the store keeps referencing but has never written down. Zero tokens.
+
+    ``action_config`` shape::
+
+        {"min_mentions": 3}
+
+    A separate provider rather than a `knowledge-retrieve` call with a clever query: the first
+    draft of the gap-healing template passed `min_mentions` AS the search query, which reads
+    plausibly in a spec and searches the store for the string "3". The phantom-hub question is
+    not a search — it is a set difference between what items REFERENCE and what items EXIST.
+    """
+
+    @property
+    def name(self) -> str:
+        return "knowledge-gaps"
+
+    @property
+    def display_name(self) -> str:
+        return "Find Knowledge Gaps"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: a set difference over the store, which it does not change."""
+        return RiskLevel.SAFE
+
+    async def execute(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        timeout: int = 30,
+    ) -> ActionResult:
+        started = time.monotonic()
+        cfg = action_config or {}
+
+        try:
+            store = _open_store()
+        except Exception as exc:  # pragma: no cover — environmental
+            return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
+
+        items = _load_items(store)
+        hubs = consolidation.phantom_hubs(
+            items,
+            mentions=_wikilink_mentions(items),
+            min_mentions=_int(cfg.get("min_mentions"), 3),
+        )
+        payload = {
+            "gaps": hubs[:MAX_REPORTED_IDS],
+            "count": len(hubs),
+            "excerpts": {
+                h["entity"]: _excerpts_for(items, h["referrers"], h["entity"]) for h in hubs[:10]
+            },
+            "note": (
+                "These are candidates for PROPOSALS, not writes. A drafted entry nobody reviewed "
+                "becomes a citable source for the next draft."
+            ),
+        }
+        return ActionResult(
+            success=True,
+            stdout=json.dumps(payload, ensure_ascii=False),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+class KnowledgeConsolidateActionProvider(ActionProvider):
+    """Plan (and optionally apply) a consolidation pass.
+
+    ``action_config`` shape::
+
+        {
+            "apply": false,          # default DRY RUN — the plan is the artifact
+            "min_new_items": 5,
+            "min_hours": 6,
+            "min_cluster_size": 5,
+            "summaries": [           # cluster_index -> the synthesized text, when applying
+                {"cluster": 0, "title": "…", "content": "…", "summary": "…"}
+            ]
+        }
+
+    Two calls by design: one to plan (so a `stage` can synthesize each cluster), one to apply
+    with the summaries. A single call would have to make the model call itself, which would put
+    an LLM inside an action provider — the one thing the action/stage split exists to prevent.
+    """
+
+    @property
+    def name(self) -> str:
+        return "knowledge-consolidate"
+
+    @property
+    def display_name(self) -> str:
+        return "Consolidate Knowledge"
+
+    async def execute(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        timeout: int = 60,
+    ) -> ActionResult:
+        started = time.monotonic()
+        cfg = action_config or {}
+
+        try:
+            store = _open_store()
+        except Exception as exc:  # pragma: no cover — environmental
+            return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
+
+        cfg_min_hours, cfg_min_cluster = _config_gate_defaults()
+        items = _load_items(store)
+        unprocessed = [i for i in items if not i.consolidated and not i.is_archived]
+        unattended = _is_unattended(ctx)
+        hours_since_last = _hours_since_last_pass(store)
+        if unattended:
+            # Only the unattended tick is held back by its own last dry run. The owner's
+            # consolidation, opened from the panel or a workflow, reads only the applied passes.
+            hours_since_last = min(hours_since_last, _hours_since_unattended_dry_run())
+        gate = consolidation.check_gates(
+            unprocessed=len(unprocessed),
+            hours_since_last=hours_since_last,
+            lock_held=False,
+            min_new_items=_int(cfg.get("min_new_items"), consolidation.MIN_NEW_ITEMS),
+            # The USER'S floor is the default; an explicit `min_hours` on the node overrides it.
+            # That order is the whole point: `knowledge.consolidate_min_hours` was a settable knob
+            # with no reader anywhere, so a user who widened the floor in Settings changed nothing
+            # and a workflow that never mentions `min_hours` silently ran on the module constant.
+            min_hours=float(_int(cfg.get("min_hours"), cfg_min_hours)),
+        )
+        if not gate:
+            # A DECLINED pass is a success with a reason, not a failure: "there was nothing worth
+            # doing" is the normal outcome of a frequent cadence, and failing the node would make
+            # a healthy schedule look broken every time it ran.
+            payload = {"ran": False, "reason": gate.reason, "backlog": gate.backlog}
+            return ActionResult(
+                success=True,
+                stdout=json.dumps(payload, ensure_ascii=False),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        plan = consolidation.plan_consolidation(
+            items,
+            vector_of=_vector_lookup(store),
+            # Same precedence as `min_hours` above, and the same bug before it:
+            # `knowledge.consolidate_min_cluster` had no reader either.
+            min_size=_int(cfg.get("min_cluster_size"), cfg_min_cluster),
+        )
+
+        summaries = cfg.get("summaries")
+        if not _truthy(cfg.get("apply")) or not isinstance(summaries, list) or not summaries:
+            if unattended:
+                _record_unattended_dry_run()
+            payload = {
+                "ran": True,
+                "applied": False,
+                "sat_out": len(plan.sat_out),
+                "plan": plan.to_dict(),
+                "doctrine": consolidation.CONSOLIDATION_DOCTRINE,
+                "prompts": [
+                    {"cluster": index, "prompt": consolidation.synthesis_prompt(cluster)}
+                    for index, cluster in enumerate(plan.clusters)
+                ],
+            }
+            return ActionResult(
+                success=True,
+                stdout=json.dumps(payload, ensure_ascii=False),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        applied, issues = await _apply(store, plan, summaries, ctx)
+        return ActionResult(
+            success=True,
+            stdout=json.dumps(
+                {
+                    "ran": True,
+                    "applied": True,
+                    "sat_out": len(plan.sat_out),
+                    "summaries_written": applied,
+                    "issues": issues,
+                    "plan": plan.to_dict(),
+                },
+                ensure_ascii=False,
+            ),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+#: `[[Wikilink]]` references inside item bodies. The store's own growth frontier is written in
+#: these: a name five items link to is something the store believes matters and has never
+#: recorded.
+_WIKILINK_RE = re.compile(r"\[\[([^\[\]|]{2,80})(?:\|[^\]]*)?\]\]")
+
+
+def _wikilink_mentions(items: list[consolidation.Item]) -> dict[str, list[str]]:
+    """entity → the ids of items referencing it."""
+    out: dict[str, list[str]] = {}
+    for item in items:
+        if item.is_archived:
+            continue
+        for match in _WIKILINK_RE.finditer(item.text):
+            entity = match.group(1).strip()
+            if entity:
+                out.setdefault(entity, []).append(item.id)
+    return out
+
+
+def _excerpts_for(
+    items: list[consolidation.Item], referrer_ids: list[str], entity: str
+) -> list[str]:
+    """The sentences that mention an entity, so a draft is grounded in what the store SAYS.
+
+    Without excerpts the drafting model has only a name, and a model given a bare name writes
+    what it already believes about it — which is exactly the invention this template exists to
+    avoid.
+    """
+    by_id = {i.id: i for i in items}
+    needle = entity.lower()
+    out: list[str] = []
+    for rid in referrer_ids[:5]:
+        item = by_id.get(rid)
+        if item is None:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", item.text):
+            if needle in sentence.lower():
+                out.append(f"[{rid}] {sentence.strip()[:300]}")
+                break
+    return out
+
+
+# ── store access ──
+
+
+def _load_items(store: Any) -> list[consolidation.Item]:
+    """Every item, with its inbound-relation count.
+
+    The relation count comes from a GROUP BY rather than a per-item query: on a 4000-item store
+    the per-item form is 4000 queries for a number the database can produce in one, and the
+    health pass is supposed to be the cheap tier.
+    """
+    try:
+        inbound: dict[str, int] = {
+            str(r["target_item_id"]): int(r["n"])
+            for r in store.db.execute(
+                "SELECT target_item_id, COUNT(*) AS n FROM item_relations GROUP BY target_item_id"
+            )
+        }
+    except Exception:
+        # No relations table yet (or an older store): every item reads as an orphan, which would
+        # make the whole report noise. Better to report NO orphans than to report all of them.
+        logger.debug("item_relations unavailable — skipping orphan detection", exc_info=True)
+        inbound = {}
+
+    out: list[consolidation.Item] = []
+    try:
+        rows = list(
+            store.db.execute(
+                "SELECT id, kind, title, summary, content, logical_key, content_hash, "
+                "updated_at, is_archived, file_metadata FROM items"
+            )
+        )
+    except Exception:
+        logger.warning("could not read knowledge items", exc_info=True)
+        return []
+    for row in rows:
+        item = consolidation.Item.from_row(row)
+        # `inbound` is empty when the table is missing; a sentinel of 1 keeps every item out of
+        # the orphan list rather than putting all of them in it.
+        item.inbound_relations = inbound.get(item.id, 0 if inbound else 1)
+        out.append(item)
+    return out
+
+
+def _indexed_ids(store: Any) -> set[str] | None:
+    """Item IDS present in the FTS index, or None when the index cannot be read.
+
+    `items_fts` is keyed by ROWID, not by the item's text id, so this joins back through `items`.
+    Comparing the two directly marked every single item unindexed — a report claiming seven
+    problems on a healthy seven-item store, which is how a maintenance report stops being read.
+
+    None rather than an empty set when unreadable, for the same reason: an unreadable index would
+    otherwise report the entire store as broken.
+    """
+    try:
+        rows = list(
+            store.db.execute("SELECT i.id AS id FROM items_fts f JOIN items i ON i.rowid = f.rowid")
+        )
+    except Exception:
+        logger.debug("items_fts unreadable — skipping index consistency", exc_info=True)
+        return None
+    return {str(r["id"]) for r in rows}
+
+
+def _expired_ids(store: Any) -> set[str]:
+    try:
+        rows = list(
+            store.db.execute(
+                "SELECT id FROM items WHERE expires_at != '' AND expires_at < ?",
+                (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),),
+            )
+        )
+    except Exception:
+        return set()
+    return {str(r["id"]) for r in rows}
+
+
+def _reindex(store: Any, item_ids: list[str]) -> list[str]:
+    """Re-sync specific rows into the FTS index.
+
+    Delete-then-insert per row, never `'rebuild'`: the store's own docstring records that a
+    rebuild against a stale content target WIPES THE INDEX AND REPORTS SUCCESS.
+    """
+    done: list[str] = []
+    for item_id in item_ids[:MAX_REPORTED_IDS]:
+        try:
+            rows = list(
+                store.db.execute("SELECT rowid, title, content FROM items WHERE id = ?", (item_id,))
+            )
+            if not rows:
+                continue
+            row = rows[0]
+            # By ROWID and with the index's own column set — an insert keyed on the text id
+            # writes an entry no search will ever match, which is worse than the gap it was
+            # repairing because the report then says it is fixed.
+            store.db.execute(
+                "INSERT INTO items_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+                (row["rowid"], row["title"] or "", row["content"] or "", ""),
+            )
+            store.db.commit()
+            done.append(item_id)
+        except Exception:
+            logger.warning("could not reindex %s", item_id, exc_info=True)
+    return done
+
+
+def _hours_since_last_pass(store: Any) -> float:
+    """Hours since the most recent consolidated item was written.
+
+    A very large number when nothing has ever been consolidated, so a first pass is never gated
+    on a timestamp that does not exist.
+    """
+    try:
+        rows = list(
+            store.db.execute(
+                "SELECT updated_at FROM items WHERE file_metadata LIKE '%\"consolidated\": true%' "
+                "ORDER BY updated_at DESC LIMIT 1"
+            )
+        )
+    except Exception:
+        return 10_000.0
+    if not rows or not rows[0]["updated_at"]:
+        return 10_000.0
+    # Read as the library writes it: an ISO instant with its offset (`personalclaw.instants`).
+    # A fixed `…:SSZ` pattern matched no stamp the library has ever written, so every pass read
+    # the "never" answer and the floor held nothing back.
+    from datetime import datetime
+
+    from personalclaw.instants import as_instant
+
+    try:
+        stamp = datetime.fromisoformat(as_instant(str(rows[0]["updated_at"]))).timestamp()
+    except (TypeError, ValueError):
+        return 10_000.0
+    return max(0.0, (time.time() - stamp) / 3600.0)
+
+
+def _vector_lookup(store: Any) -> consolidation.VectorLookup | None:
+    """A lookup of an item's STORED vector by id, or None when no embedding model is selected.
+
+    The vectors ingest already wrote, never a fresh embedding: a pass that embedded every item
+    on every run sent whole documents to the model once per comparison, and a document the model
+    refused as too long was sent again on every run. So this makes no model call at all. An
+    item's own vector is used when it has one, otherwise the mean of its chunk vectors, and only
+    vectors the embedding model selected NOW wrote are read (the fingerprint predicates), because
+    a cosine across two models means nothing. Per item rather than the whole library at once:
+    the planner asks only for the items one pass can cluster, which is bounded.
+    """
+    from personalclaw.knowledge.embedder import bytes_to_floats
+    from personalclaw.knowledge.embedding_fingerprint import (
+        FRESH_PREDICATE,
+        ITEM_FRESH_PREDICATE,
+        active_fingerprint,
+    )
+
+    fingerprint = active_fingerprint()
+    if fingerprint is None:
+        return None
+    params = fingerprint.params
+
+    def vector_of(item_id: str) -> list[float] | None:
+        try:
+            own = store.db.execute(
+                "SELECT embedding FROM items WHERE id = ? "  # noqa: S608 - constant predicate
+                f"AND embedding IS NOT NULL AND {ITEM_FRESH_PREDICATE}",
+                (item_id, *params),
+            ).fetchone()
+            if own is not None and own["embedding"]:
+                vector = bytes_to_floats(own["embedding"])
+                if vector:
+                    return vector
+            chunks = [
+                bytes_to_floats(r["embedding"])
+                for r in store.db.execute(
+                    "SELECT c.embedding AS embedding FROM chunks c "  # noqa: S608
+                    f"WHERE c.item_id = ? AND c.embedding IS NOT NULL AND {FRESH_PREDICATE}",
+                    (item_id, *params),
+                )
+                if r["embedding"]
+            ]
+        except Exception:
+            # An unreadable row is an item without a vector for this pass, not a failed pass.
+            logger.debug("stored vector unreadable for %s", item_id, exc_info=True)
+            return None
+        chunks = [c for c in chunks if c and len(c) == len(chunks[0])] if chunks else []
+        if not chunks:
+            return None
+        return [sum(column) / len(chunks) for column in zip(*chunks)]
+
+    return vector_of
+
+
+#: Where the unattended dry run records when it last ran, under the PersonalClaw home.
+_UNATTENDED_STATE_FILENAME = "knowledge_consolidation.json"
+
+#: The provenance `_pass_context` gives an unattended maintenance run, which is the only run the
+#: unattended stamp holds back.
+_UNATTENDED_SOURCE = "graph_maintenance"
+
+
+def _unattended_state_path() -> Any:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _UNATTENDED_STATE_FILENAME
+
+
+def _is_unattended(ctx: ActionContext) -> bool:
+    payload = ctx.payload if isinstance(ctx.payload, dict) else {}
+    return payload.get("source") == _UNATTENDED_SOURCE
+
+
+def _hours_since_unattended_dry_run() -> float:
+    """Hours since the unattended dry run last ran, or a very large number when it never has.
+
+    A dry run marks nothing consolidated, so `_hours_since_last_pass` alone never closes the
+    min-hours gate for the unattended tick, and the tick re-planned the whole store every time
+    anything was written. Fails open: a missing or unreadable stamp lets the next pass run, which
+    costs one plan, never a held-back owner.
+    """
+    from datetime import datetime
+
+    from personalclaw.instants import as_instant
+
+    try:
+        raw = json.loads(_unattended_state_path().read_text(encoding="utf-8"))
+        stamp = datetime.fromisoformat(as_instant(str(raw["last_dry_run"]))).timestamp()
+    except FileNotFoundError:
+        return 10_000.0
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("consolidation dry-run stamp unreadable; treating as never", exc_info=True)
+        return 10_000.0
+    return max(0.0, (time.time() - stamp) / 3600.0)
+
+
+def _record_unattended_dry_run() -> None:
+    from personalclaw.atomic_write import atomic_write
+    from personalclaw.instants import utc_now_iso
+
+    try:
+        atomic_write(
+            _unattended_state_path(),
+            json.dumps({"last_dry_run": utc_now_iso()}, indent=2) + "\n",
+        )
+    except Exception:  # noqa: BLE001 - losing the stamp costs one extra plan, never a pass
+        logger.warning("consolidation dry-run stamp not written", exc_info=True)
+
+
+async def _apply(
+    store: Any, plan: consolidation.ConsolidationPlan, summaries: list[Any], ctx: ActionContext
+) -> tuple[int, list[str]]:
+    """Write each cluster's summary and ARCHIVE its inputs.
+
+    Archive, never delete, and never for a protected item. `plan_consolidation` already excluded
+    protected items from clustering; the check is repeated here because this is the function that
+    actually writes, and a guarantee enforced only upstream is one refactor away from being gone.
+    """
+    written = 0
+    issues: list[str] = []
+    for entry in summaries:
+        if not isinstance(entry, dict):
+            issues.append("summary entry is not an object")
+            continue
+        index = _int(entry.get("cluster"), -1)
+        if not (0 <= index < len(plan.clusters)):
+            issues.append(f"no cluster at index {index}")
+            continue
+        cluster = plan.clusters[index]
+        content = str(entry.get("content", "") or "")
+        if not content.strip():
+            issues.append(f"cluster {index}: empty summary, nothing written")
+            continue
+        meta = consolidation.summary_metadata(cluster, summary_chars=len(content))
+        try:
+            await _write_summary(entry, cluster, meta, ctx)
+            for item in cluster.items:
+                if item.protected:
+                    issues.append(f"{item.id}: protected, left unarchived")
+                    continue
+                _archive(store, item.id, meta)
+            written += 1
+        except Exception as exc:
+            logger.warning("consolidation apply failed for cluster %s", index, exc_info=True)
+            issues.append(f"cluster {index}: {exc}")
+    return written, issues
+
+
+async def _write_summary(
+    entry: dict, cluster: consolidation.Cluster, meta: dict, ctx: ActionContext
+) -> None:
+    """Write the consolidated item THROUGH `knowledge-persist`, not with raw SQL.
+
+    Reusing the persist provider was not a style choice — hand-rolling the INSERT here missed
+    the NOT NULL `item_type` column (the write failed outright), and would also have skipped the
+    FTS sync, the idempotency check, and the provenance ref that provider already gets right.
+    Two writers to one table means every fix to one of them has to be remembered for the other.
+    """
+    from personalclaw.action_providers.knowledge_persist_provider import (
+        KnowledgePersistActionProvider,
+    )
+
+    title = str(entry.get("title", "") or cluster.items[0].title)
+    result = await KnowledgePersistActionProvider().execute(
+        {
+            "kind": "insight",
+            "title": title,
+            "content": str(entry.get("content", "") or ""),
+            "summary": str(entry.get("summary", "") or ""),
+            # Its own inputs ARE its citations, so the item can never read as unsourced.
+            "citations": [f"item:{i}" for i in cluster.ids],
+            "lineage": meta,
+            "tags": ["consolidated"],
+        },
+        ctx,
+    )
+    if not result.success:
+        raise RuntimeError(result.error or "persist refused the consolidated item")
+
+
+def _archive(store: Any, item_id: str, meta: dict) -> None:
+    """Demote an original, with a back-reference to the summary that replaced it.
+
+    The back-reference is what makes this reversible: without it an archived item is
+    indistinguishable from one archived for any other reason, and the merge cannot be undone.
+    """
+    rows = list(store.db.execute("SELECT file_metadata FROM items WHERE id = ?", (item_id,)))
+    existing = _json(rows[0]["file_metadata"]) if rows else {}
+    existing["archived_reason"] = "consolidated"
+    existing["summary_of"] = meta.get("parent_ids", [])
+    existing["reflection_count"] = _int(existing.get("reflection_count"), 0) + 1
+    store.db.execute(
+        "UPDATE items SET is_archived = 1, file_metadata = ? WHERE id = ?",
+        (json.dumps(existing, ensure_ascii=False), item_id),
+    )
+    store.db.commit()
+
+
+def _capped(report: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in report.items():
+        out[key] = value[:MAX_REPORTED_IDS] if isinstance(value, list) else value
+    return out
+
+
+def _json(raw: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _truthy(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("true", "1", "yes")
+
+
+def _int(raw: Any, fallback: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        try:
+            return int(str(raw).strip())
+        except (TypeError, ValueError):
+            return fallback
+    return int(raw)
+
+
+def _config_gate_defaults() -> tuple[int, int]:
+    """`(consolidate_min_hours, consolidate_min_cluster)` from the user's config.
+
+    Falls back to the module constants on ANY failure, and never raises. An action must not die
+    because a config file is mid-write or a field went away: the constants are the same values
+    the dataclass defaults to, so a fallback degrades to today's behaviour rather than to a
+    different one. Read per call rather than cached because Settings can PATCH both knobs while
+    the gateway runs, and a cadence that honoured the value from boot would look inert again.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        knowledge = AppConfig.load().knowledge
+        return (
+            _int(
+                getattr(knowledge, "consolidate_min_hours", None),
+                consolidation.MIN_HOURS_BETWEEN_PASSES,
+            ),
+            _int(
+                getattr(knowledge, "consolidate_min_cluster", None),
+                consolidation.MIN_CLUSTER_SIZE,
+            ),
+        )
+    except Exception:
+        logger.debug("knowledge config unreadable; using consolidation constants", exc_info=True)
+        return consolidation.MIN_HOURS_BETWEEN_PASSES, consolidation.MIN_CLUSTER_SIZE
+
+
+def _open_store() -> Any:
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+    # Through `knowledge_db_path`, never a locally composed path. Composing it here
+    # produced `<home>/knowledge/knowledge.db` while the dashboard reads
+    # `<home>/workspace/knowledge/knowledge.db`, so workflow-persisted knowledge landed in a
+    # second database the UI could never see — with no error on either side.
+    return KnowledgeStore(db_path=str(knowledge_db_path()))
+
+
+# ── the maintenance-host entry point ──
+
+
+def _pass_context() -> ActionContext:
+    """The `ActionContext` a maintenance tick runs under.
+
+    `event` is EMPTY on purpose. `ActionContext.event` documents itself as "one of the names
+    defined in `personalclaw.hooks.HOOK_EVENTS`", and no hook fired this — the dirty watermark
+    did. Borrowing a real event name (`session_start`, `task_complete`) to fill the field would
+    make a templated action interpolate `$EVENT` into a lifecycle moment that never happened.
+    `payload` carries the provenance instead, in the same key the persist provider already reads
+    node identity from.
+    """
+    return ActionContext(
+        event="",
+        context="knowledge graph maintenance",
+        payload={"source": "graph_maintenance", "pass": "knowledge_consolidation"},
+    )
+
+
+def run_consolidation_pass(*, batch_size: int = 0) -> int:
+    """Run the consolidation pass through the PROVIDER and report what it found.
+
+    Registered `batched=False`: one call per tick over the whole store, so the return value is a
+    REPORT, not a backlog. A store with three standing clusters returns 3 on every tick; a host
+    that read that as remaining work would re-sweep it once per allowed sub-batch forever.
+    `batch_size` is accepted to satisfy the host's `Callable[..., int]` and is deliberately
+    unused for that reason.
+
+    Returns the number of clusters the pass identified, 0 when the gate DECLINED (a normal
+    outcome of a frequent cadence, not an error) and 0 on any failure. Never raises: a pass that
+    throws costs the whole tick, including the other passes registered beside it.
+
+    🔴 **Dry run. This does NOT apply.** `_apply` writes a model-authored summary and then
+    ARCHIVES every input item, and no config knob authorises that without a user present.
+    Applying also needs one model call per cluster, so an unattended tick would spend unbounded
+    tokens on work nobody asked for. Going through `KnowledgeConsolidateActionProvider.execute`
+    rather than calling `plan_consolidation` directly is the substantive part: `execute` is where
+    `check_gates` lives, so the min-hours and min-cluster knobs are finally honoured on a cadence
+    instead of only when a human opens a panel. The previous pass bypassed `execute` and therefore
+    bypassed the gate entirely.
+    """
+    import asyncio
+
+    provider = KnowledgeConsolidateActionProvider()
+
+    try:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            result = asyncio.run(provider.execute({}, _pass_context()))
+        else:
+            # A running loop means we are NOT on the host's worker thread, and this pass has no
+            # non-blocking form. Deliberately not the `ThreadPoolExecutor` bridge used by
+            # `EmbeddingProvider.get_embed_fn`: `with ThreadPoolExecutor() as pool` calls
+            # `shutdown(wait=True)` on exit, which blocks for the task's full duration even
+            # after `future.result(timeout=...)` has raised — so that shape defeats its own
+            # timeout. Reporting nothing done is honest; wedging a tick would not be.
+            logger.warning("consolidation pass skipped: called from a running event loop")
+            return 0
+    except Exception:
+        logger.warning("consolidation pass failed", exc_info=True)
+        return 0
+
+    if not result.success:
+        logger.debug("consolidation pass declined: %s", result.error)
+        return 0
+
+    payload = _json(result.stdout)
+    if not payload.get("ran"):
+        # The gate said "not yet". A success with a reason, and 0 work done.
+        return 0
+    clusters = payload.get("plan", {}).get("clusters")
+    return len(clusters) if isinstance(clusters, list) else 0

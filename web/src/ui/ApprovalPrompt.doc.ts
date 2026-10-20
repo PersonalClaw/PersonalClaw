@@ -1,0 +1,45 @@
+import type { UiDoc } from './uiDoc'
+
+const doc: UiDoc = {
+  name: 'ApprovalPrompt',
+  keywords: ['approval', 'permission', 'consent', 'tool', 'gate', 'alert', 'security', 'companion', 'chat'],
+  description:
+    'The one renderer for "the agent is blocked waiting on your permission". Two surfaces ask that question — the in-chat card (a transcript segment with the chat-scoped trust vocabulary) and the phone companion at #/companion (the GET /api/approvals queue with approve/reject) — and they differ in their DATA and their ACTION VOCABULARY, not in what a permission prompt looks like or how it is announced. So the shell lives here once and each surface supplies an adapter. Announcement contract, identical on both: role=group named for the tool (several prompts can pend at once), plus an inner role=alert so arrival interrupts, because the agent is halted until it is answered.',
+  props: [
+    { name: 'tool', description: 'The tool awaiting permission. Also the group\'s accessible name ("Permission needed to run <tool>") so a screen-reader user knows which prompt they are in.' },
+    { name: 'args', description: "The tool's arguments, raw. `compact` shows them on one mono line beside the tool name, cut at a word, with the whole input a click away (Show all); `roomy` shows ALL of them in a wrapped, scrollable block — on a phone the arguments ARE the decision, so truncating them would hide what is being consented to." },
+    { name: 'purpose', description: "Why the agent wants to run it, when the provider supplied a reason. Rendered as a dimmed line under the arguments." },
+    { name: 'source', description: "Where the call came from, in the registry's words (`PendingApproval.source_label`: `loop “Fix the README”`, `workflow “deep-research” · step “sweep”`). Rendered as \"From …\" under the purpose. Pass it on every surface that is not the work that asked (the run page passes it for the step; the asking chat's own transcript does not)." },
+    { name: 'sourceHref', description: "Where that work opens, for a surface that lists approvals from everywhere (Mission Control, To triage, the Inbox). The source then becomes a link named \"Open <source>\"." },
+    { name: 'badge', description: "Optional chip beside the 'Permission needed' heading — the chat surface passes its risk indicator here. Purely informational; it never gates." },
+    { name: 'meta', description: 'Context block under the arguments — the chat passes its blast-radius chips (what the call can touch, established facets only), the companion passes how long it has waited and what it can touch. Omit whatever the surrounding surface already supplies (the chat transcript supplies the session).' },
+    { name: 'scope', description: 'Optional block between the brief and the action row: how far the answer should reach. The chat passes its remember-scope picker here (it can persist a standing grant); the companion passes nothing, because its queue posts approve/reject only. A slot, not a shared control — the caller owns the wording of every promise it makes about what gets remembered, and nothing here may be auto-selected beyond the narrowest option.' },
+    { name: 'choices', description: 'The answers offered, in order, least-privilege first. Each is { key, label, icon, tone?, name?, approves?, busy?, onClick }. Pass `name` whenever several prompts can pend at once, so the composed name ("Allow Bash") replaces an ambiguous bare verb. Mark the one choice that approves with `approves`: it is the choice ⌘Enter (Ctrl+Enter elsewhere) presses while focus is inside the prompt, its tooltip shows that key, and it is the one a second confirmation holds back. Return the request from `onClick`, resolving `true` once the answer landed: until it settles nothing more is sent, once it landed the prompt stays decided while it is still on the page (one request per decision, Deny included), and anything else (a rejection, `false`) leaves the prompt answerable.' },
+    { name: 'confirms', description: "The second confirmations the approval row names (`PendingApproval.confirms`, decoded with `confirmsOf`): `deletes`, `outside_workspace`, `sends`, `spends`, `undeclared`. Non-empty: the approving choice first says what the call would do and asks once more, and nothing is sent before that confirm: a second press of the approving choice (a double-click, a held Enter on it) only asks again. Escape steps back from it and decides nothing. Pass what the row says; never work it out from the tool's name." },
+    { name: 'density', description: "'compact' (default) for the chat column and the code cockpit: inline margins, an argument line cut at a word with the whole input on demand, 28px action pills. 'roomy' for the phone: full arguments, a metadata block, and 44px action targets for a thumb." },
+    { name: 'className', description: 'Extra classes on the card shell — for layout only (no raw hex/px; the token-lint ratchet fails the build otherwise).' },
+  ],
+  bestPractices: [
+    { guidance: true, description: 'Mark exactly one choice `approves` and pass the row\'s `confirms`. The prompt then owns the approval key: ⌘Enter acts only while focus is inside this prompt, never from a text field, a dialog over it, or a hidden card, and a held key sends one request. Enter alone on the card and Escape never decide; Enter or Space on a focused button presses that button, as a click does, and ⌘Enter is the only key that approves from elsewhere in the card. Decline stays a button with no key.' },
+    { guidance: false, description: 'Do not move focus onto the prompt or its approving choice when it arrives, and do not bind a key of your own to any choice. Arrival never moves focus onto an approval action, and every approval key lives in the keymap (`app/keymap.ts`).' },
+    { guidance: true, description: 'Render this rather than a new card whenever a surface asks for tool permission. Two renderers for one security concept is exactly the drift this kit exists to prevent — a wording or announcement fix would otherwise land on one surface only.' },
+    { guidance: true, description: 'Give every choice a `name` on a QUEUE surface. One card per pending approval means N buttons labelled "Allow", which announce identically in the accessibility tree; the composed name is what distinguishes them.' },
+    { guidance: true, description: "Set `busy` on the choices of a prompt whose answer is in flight, so a decision cannot be submitted twice. It is natively disabled and marked aria-busy — the deliberate exception to the soft-off contract, since there is no reason a user could act on." },
+    { guidance: false, description: 'Do not put an sr-only span inside a choice to carry its name — it is concatenated into the accessible name alongside the visible verb. Use `name`, which becomes aria-label and replaces it.' },
+    { guidance: false, description: 'Do not give an approve choice the `primary` tone on a surface whose job is to make someone weigh a decision. A solid primary fill reads as "this is the action to take", which is advocacy — the chat card passes no tone for Allow for exactly that reason. (The companion still does, and should be revisited with it.)' },
+    { guidance: false, description: "Do not truncate `args` before passing them at 'roomy' density. The phone surface deliberately shows the whole payload; the caller trimming it re-introduces the hidden-consent problem the density exists to fix." },
+  ],
+  anatomy: [
+    'motion.div role=group, warn-tinted card (aria-label names the tool)',
+    'aria-hidden ShieldQuestion',
+    'role=alert "Permission needed" + optional badge',
+    "tool name + arguments (a mono line cut at a word, with Show all opening the whole input, at 'compact'; wrapped scrollable block at 'roomy')",
+    'optional purpose line',
+    'optional "From <source>" line, a link when sourceHref is given',
+    'optional meta block',
+    'optional scope block (the chat\'s remember-scope picker + the promise it makes)',
+    'action row of choice pills (danger = the deny edge; a tone is optional and the chat card deliberately passes none for Allow, so the prompt never reads as a recommendation)',
+  ],
+}
+
+export default doc

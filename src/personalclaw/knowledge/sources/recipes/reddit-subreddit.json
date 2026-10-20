@@ -1,0 +1,16 @@
+{
+  "id": "reddit-subreddit",
+  "displayName": "Subreddit posts",
+  "description": "New posts in one subreddit. Reddit serves an RSS feed for any listing, so this needs no page parsing.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://(?:www\\.|old\\.|new\\.)?reddit\\.com/r/(?P<subreddit>[A-Za-z0-9][A-Za-z0-9_]*)/?(?:[^?#]*)?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste a subreddit URL such as https://www.reddit.com/r/rust.",
+  "spec": {
+    "preset": "rss",
+    "url": "https://www.reddit.com/r/{{subreddit}}/.rss"
+  },
+  "tags": ["news", "community"]
+}

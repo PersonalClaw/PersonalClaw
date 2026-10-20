@@ -1,0 +1,572 @@
+import { useEffect, useState } from 'react'
+import { toneChipSkin } from '../../design/accent'
+import { fvs } from '../../design/fontWeight'
+import { Sparkles, Send, Check, XCircle, BellOff, Star, ExternalLink, RotateCcw, Filter } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
+import { InvestigateButton } from '../../ui/InvestigateButton'
+import { Markdown } from '../../ui/Markdown'
+import { InlineLoadError } from '../../ui/ListScaffold'
+import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui/forms'
+import { api, ApiError, type InboxItem, type InboxClassification, type InboxDrafting, type SkillProposalDetail } from '../../lib/api'
+import { acceptedLabel } from '../skills/skillMeta'
+import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, isOpen, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
+import { InboxMessageBody } from './ForeignContent'
+import { InboxAttachments } from './InboxAttachments'
+import { WorkflowGateActions } from './WorkflowGateActions'
+import { DraftNotices, WordCount, OpenAnswers, openAnswers, openAnswersReason } from './DraftNotices'
+import { DeniedCallRerun } from './DeniedCallRerun'
+import { InboxSection as Section } from './InboxSection'
+import { TriggerParkActions } from './TriggerParkActions'
+import { BridgeConfirmActions } from './BridgeConfirmActions'
+import { SomeoneNewActions } from './SomeoneNewActions'
+import { TrustFolderButton } from '../triggers/HeldBackNote'
+import { ApprovalDecision } from '../../app/ApprovalDecision'
+import { mirroredApprovalId } from '../../lib/attentionLanes'
+import { invalidateKeys } from '../../lib/data'
+import { TextLink } from '../../ui/TextLink'
+import { BUSY_REASON } from '../../ui/unavailable'
+
+/** Inbox item triage panel: the full message + thread context, the triage
+ *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
+ *  and triage actions. Sending a reply depends on the source provider supporting
+ *  it (filesystem/Slack-bot don't here) — Send is shown but gated.
+ *  `sortingHeld` is why the background sorter is sending nothing now ('' while it may): what an
+ *  unsorted message says while it waits. */
+export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, navigate }: { item: InboxItem; owner?: string; sortingHeld?: string; onChanged: () => void; navigate: (path: string) => void }) {
+  // Re-seeded when another item is shown, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(item.draft ?? '', item.id)
+  // What she says the reply should contain. Kept for Regenerate; another item starts empty.
+  const [said, setSaid] = useSyncedDraft('', item.id)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  // What the last Generate draft in this view stood on, and why it wrote nothing when it didn't.
+  const [drafting, setDrafting] = useState<InboxDrafting | null>(null)
+  const [draftErr, setDraftErr] = useState('')
+  const cm = verdictMeta(item)
+  const cf = confMeta(item.confidence)
+
+  useEffect(() => { setErr(''); setDraftErr(''); setDrafting(null) }, [item.id])
+
+  async function patch(body: Record<string, unknown>, tag: string) {
+    setBusy(tag); setErr('')
+    try {
+      await api.updateInboxItem(item.id, body)
+      // Dismissing a PROPOSAL row answers the proposal server-side (issue 409: the two stores must
+      // not report one queue twice), so the Skills page's cached list has to go with it.
+      if (body.status === 'dismissed' && item.refs?.skill_proposal) {
+        invalidateKeys('skill-proposals'); invalidateKeys('skill-proposals-count')
+      }
+      onChanged()
+    }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Update failed') } finally { setBusy(null) }
+  }
+  async function generate() {
+    setBusy('draft'); setErr(''); setDraftErr('')
+    try {
+      const r = await api.draftInboxReply(item.id, said.trim())
+      setDrafting(r.drafting)
+      // A question for her, or a message it judged needs no reply, writes nothing: what she has
+      // in the box stays as it is.
+      if (!r.drafting.question) setDraft(r.item.draft ?? '')
+      onChanged()
+    }
+    catch (e) { setDrafting(null); setDraftErr(e instanceof Error ? e.message : 'Draft failed') } finally { setBusy(null) }
+  }
+  async function send() {
+    if (!draft.trim()) { setErr('Write a reply first'); return }
+    setBusy('send'); setErr('')
+    try { await api.sendInboxReply(item.id, draft.trim()); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Send failed') } finally { setBusy(null) }
+  }
+  async function fav() {
+    setBusy('fav'); setErr('')
+    try { await api.favoriteInboxItem(item.id, !item.favorited); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Favorite failed') } finally { setBusy(null) }
+  }
+  // Undo a verification filter. The server fires the withheld notification exactly
+  // once on the FILTERED→PENDING edge, so a double-click can't double-notify.
+  async function restore() {
+    setBusy('restore'); setErr('')
+    try { await api.restoreInboxItem(item.id); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Restore failed') } finally { setBusy(null) }
+  }
+  // A message the sorter could not sort goes out again with its next batch.
+  async function sortAgain() {
+    setBusy('sort'); setErr('')
+    try { await api.sortInboxItem(item.id); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : "Couldn't send it to be sorted again") } finally { setBusy(null) }
+  }
+
+  const dirtyDraft = draft !== (item.draft ?? '')
+  // The places the draft still leaves for her answer: what goes to the sender must not hold one.
+  const leftOpen = openAnswers(draft).length
+  const canReply = item.can_reply ?? false
+  // Handled, replied or dismissed: the row is done, so the panel shows what became of it, not the
+  // controls that would do it again. Send stayed offered after a reply went out (the row read
+  // Handled while the panel still asked for one), and Mark handled on a handled row did nothing.
+  // Reopen is the way back to both.
+  const settled = isSettled(item.status)
+  const repliedAt = item.replied_at && item.replied_at > 0 ? item.replied_at : 0
+  // A non-channel item (needs_input, proposal, …) was never triaged by the AI layer and has
+  // no channel to reply into. Showing it a classification verdict, a Reclassify control, a
+  // thumbs pair, a draft box or Mute thread would all be controls over something that does
+  // not exist — and the thumbs would attribute a judgment no prompt ever made.
+  const channelBacked = isChannelItem(item)
+  const composerOpen = channelBacked && canReply && !settled
+  const km = kindMeta(item.item_kind)
+  const target = refTarget(item)
+  // A workflow gate is answerable in place (below), which changes what the deep link is for. A
+  // gate's row names the step it waits at (`workflow_node`); the row a loop's end leaves names
+  // only the run, and it has no answer here, so it gets the deep link instead of a dead form.
+  const answerableGate = item.item_kind === 'needs_input' && !!item.refs?.workflow && !!item.refs?.workflow_node
+  // A trigger's action that stopped for you (`triggers.parks`) — answerable here too.
+  const triggerPark = item.item_kind === 'needs_input' && !!item.refs?.trigger_park
+  // A control-bridge action a local agent asked for, which only you confirm — answerable here.
+  const bridgeConfirmation = item.item_kind === 'needs_input'
+    && item.refs?.source === 'control_bridge' && !!item.refs?.confirmation
+  // Someone new, held by a channel that sends as you: answered here, with Reply, Pair or Ignore.
+  // Ignore is the row's Dismiss, so the triage bar does not offer that twice.
+  const someoneNew = !!item.refs?.someone_new
+  // A pending approval's row (`refs.approval`, the registry id): answered here, where it says a run
+  // is waiting for your decision. A trigger's run asks with no chat behind it, so this is the only
+  // place on the row that can answer it.
+  const approvalId = mirroredApprovalId(item)
+  // A project folder an automation's run was held to reading in (`guardrails/project_trust.py`):
+  // answered here with Trust, while it is still open.
+  const trustFolder = item.refs?.guardrail === 'project_trust' && typeof item.refs?.dir === 'string'
+    && item.refs.dir && !settled ? item.refs.dir : ''
+
+  return (
+    <div className="flex flex-col gap-l">
+      {/* triage verdict — the classification is an AI judgment: thumbs attribute
+          to the prompt that made it. Digest items judge the digest instead. */}
+      <div className="flex flex-wrap items-center gap-s">
+        {channelBacked ? (
+          <>
+            <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
+            {cf && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>}
+            {/* Thumbs only on a judgment a prompt made: the server names its producer
+                (`feedback_producers`), and names none for a message not sorted yet, a verdict she
+                set herself or an agent gave with its post. Rating any of those would file feedback
+                against a classification the model never produced, so they are hidden rather than
+                shown inert, like every other gated control on this page. */}
+            {item.source === 'digest' ? (
+              item.confidence !== 'user' && item.feedback_producers?.digest && (
+                <FeedbackThumbs targetKind="inbox_digest" targetId={item.id}
+                  producer={item.feedback_producers.digest}
+                  snapshot={{ classification: item.classification }} />
+              )
+            ) : item.feedback_producers?.classification && (
+              <FeedbackThumbs targetKind="inbox_classification" targetId={item.id}
+                producer={item.feedback_producers.classification}
+                snapshot={{ classification: item.classification, confidence: item.confidence }} />
+            )}
+          </>
+        ) : (
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
+        )}
+        <span data-type="body-s" className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
+        {/* Investigate: open a chat pre-loaded with this item's full
+            context (fenced, ask mode) — "what does this message need from me?" */}
+        <InvestigateButton kind="inbox_item" id={item.id} backLink="#/inbox" />
+      </div>
+
+      {/* A message with no verdict says why: the sorter could not sort it (and it can go again),
+          or it waits for the sorter, which may itself be waiting. A handled message is not sorted,
+          so it waits for nothing. */}
+      {channelBacked && !cm.sorted && isOpen(item.status) && (
+        item.classify_error ? (
+          <div data-testid="sort-failed" className="flex flex-wrap items-center gap-s">
+            <p data-type="body-s" className="text-on-surface-low">{item.classify_error}</p>
+            <Button size="sm" variant="secondary" onClick={sortAgain} loading={busy === 'sort'} disabled={!!busy} disabledReason={BUSY_REASON}><RotateCcw size={14} /> Sort again</Button>
+          </div>
+        ) : (
+          <p data-type="body-s" className="text-on-surface-low">{sortingHeld || 'Waiting for the background model to sort it.'}</p>
+        )
+      )}
+
+      {/* Provenance. For a channel item that's sender + #channel; for a non-channel item
+          the "sender" is the emitting subsystem, so showing it twice (as sender AND as
+          "via X") plus a fake #channel would be three labels for one fact. */}
+      <div data-type="body-s" className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low">
+        {channelBacked && <span className="text-on-surface" style={fvs(600)}>{item.sender_name || item.sender_id}</span>}
+        {channelBacked && channelLabel(item) && <span>{channelLabel(item)}</span>}
+        <span data-type="caption" className="inline-flex items-center rounded-pill bg-surface-high px-2 h-5 text-on-surface-var">via {sourceLabel(item.source)}</span>
+        {item.created_at && <span>{relPast(item.created_at)}</span>}
+      </div>
+
+      {/* the message — FENCED + LABELLED when it is another owner's. `InboxMessageBody`
+          renders it plain for the owner's own item, so a solo install is unchanged. */}
+      <div data-type="body-m" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed"><InboxMessageBody item={item} owner={owner} /></div>
+
+      {/* What the message came with: named, typed and sized, each kept one to download. */}
+      <InboxAttachments item={item} />
+
+      {/* thread context */}
+      {(item.thread_context?.length ?? 0) > 0 && (
+        <Section label={`Thread context · ${item.thread_context!.length}`}>
+          <div className="flex flex-col gap-2">
+            {item.thread_context!.map((t, i) => (
+              <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
+                <div data-type="caption" className="text-on-surface-var mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
+                <div data-type="body-s" className="text-on-surface-low leading-relaxed">{t.text}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Where the reply composer is open, what its draft stood on is said in it, by the draft. */}
+      {item.context_summary && !composerOpen && (
+        <Section label="Context the agent used">
+          <p data-type="body-s" className="text-on-surface-var leading-relaxed italic">{item.context_summary}</p>
+        </Section>
+      )}
+
+      {/* A proposal is ANSWERABLE here — that's the point of folding it in. Approving from
+          the inbox runs the same accept path the skills page uses, so there is one
+          installation code path, not a second one that could drift. */}
+      {item.item_kind === 'proposal' && item.refs?.skill_proposal && (
+        <ProposalActions pid={item.refs.skill_proposal} onChanged={onChanged} navigate={navigate} />
+      )}
+
+      {/* A workflow gate is answerable here too, for the same reason: a row whose
+          only action is "go somewhere else" is a notification with extra steps. Renders the
+          SAME typed-ask component the run view uses, so there is one form implementation. */}
+      {answerableGate && (
+        <Section label="Waiting on you">
+          <WorkflowGateActions
+            runId={item.refs!.workflow!}
+            nodeId={item.refs?.workflow_node}
+            onChanged={onChanged}
+            navigate={navigate}
+          />
+        </Section>
+      )}
+
+      {/* A trigger's action that stopped for you (`triggers.parks`), answered at the trigger. */}
+      {triggerPark && (
+        <Section label="Waiting on you">
+          <TriggerParkActions item={item} onChanged={onChanged} />
+        </Section>
+      )}
+
+      {/* A tool call waiting on your approval (`dashboard/approval_state.py`). Read live, so a row
+          whose approval already ended says so instead of offering a decision nothing awaits. */}
+      {approvalId && (
+        <Section label="Approval">
+          <ApprovalDecision approvalId={approvalId} onDecided={onChanged}
+            ended={item.status === 'expired' ? String(item.refs?.ended ?? '') : ''} />
+        </Section>
+      )}
+
+      {/* A project folder in Preview (`guardrails/project_trust.py`): Trust is the answer it asks
+          for. The row settles once the folder is trusted (`approval_state._decision_stands`). */}
+      {trustFolder && (
+        <Section label="Waiting on you">
+          <TrustFolderButton folder={trustFolder} onTrusted={onChanged} busy={!!busy} />
+        </Section>
+      )}
+
+      {/* A control-bridge action waiting for your confirmation (`inbound/bridge.py`). */}
+      {bridgeConfirmation && (
+        <Section label="Waiting on you">
+          <BridgeConfirmActions item={item} onChanged={onChanged} />
+        </Section>
+      )}
+
+      {/* Someone new (`native_source.hold_from_someone_new`): nothing went to them. Once the row
+          is settled, only a pairing is left to say. */}
+      {someoneNew && (!settled || !!item.refs?.paired) && (
+        <Section label="Someone new">
+          <SomeoneNewActions item={item} onChanged={onChanged} busy={!!busy}
+            onIgnore={() => patch({ status: 'dismissed' }, 'dismiss')} />
+        </Section>
+      )}
+
+      {/* A call denied without an answer — the one next step it really has (ask the chat
+          again, run its trigger again, run its workflow step again), or how its retry ended. */}
+      <DeniedCallRerun item={item} navigate={navigate} onChanged={onChanged} />
+
+      {/* Deep link — for a non-channel item this REPLACES the reply machinery as the
+          primary action: the answer to "a loop needs your input" is to go to the loop.
+          Skipped for anything answerable in place above (proposals, workflow gates): the
+          in-place form already offers the run as its fallback, and two "go there" buttons for
+          one row reads as two different destinations. */}
+      {!channelBacked && target && item.item_kind !== 'proposal' && !answerableGate && !triggerPark && !bridgeConfirmation && (
+        <Section label="Source">
+          <Button size="sm" variant="secondary" onClick={() => navigate(target)}>
+            <ExternalLink size={14} /> {refLabel(item)}
+          </Button>
+        </Section>
+      )}
+
+      {/* Reclassify + draft are CHANNEL-message machinery: classification is the triage
+          layer's verdict on an incoming message, and a draft is a reply to a sender. A
+          needs_input item has neither, so these are hidden rather than shown inert. */}
+      {channelBacked && (
+        <>
+          <Section label="Reclassify">
+            {/* One patch, both fields: the new verdict is the USER's, so the model's
+                confidence in the verdict it replaced must not survive the override —
+                'Noise · High confidence' would borrow machine certainty for a human call. */}
+            <Segmented ariaLabel="Reclassify" options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
+              value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification, confidence: 'user' }, 'class')} />
+          </Section>
+
+          {/* drafted reply — the draft is an AI judgment: thumbs attribute to the
+              prompt that wrote it, and only while the row says one did (a draft she wrote or
+              edited names none). Only shown once a draft exists.
+              Issue 621: composing is gated by canReply like SENDING always was — the
+              composer ran the model and badged the row on items whose Send is
+              permanently disabled. Same doctrine as the needs_input comment
+              above: hidden rather than shown inert. A legacy draft saved before
+              the gate still displays (it exists), with why it cannot be sent. */}
+          {settled && repliedAt ? (
+            <Section label="Your reply">
+              <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface whitespace-pre-wrap">{item.draft}</div>
+              <p data-type="caption" className="mt-1.5 inline-flex items-center gap-xs text-on-surface-low"><Send size={12} aria-hidden /> Sent {relPast(repliedAt)}.</p>
+            </Section>
+          ) : settled ? (
+            item.draft ? (
+              <Section label="Drafted reply">
+                <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
+              </Section>
+            ) : null
+          ) : canReply ? (
+            <Section label="Drafted reply"
+              right={item.draft && item.feedback_producers?.draft ? (
+                <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
+                  producer={item.feedback_producers.draft}
+                  snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
+              ) : undefined}>
+              <div className="flex flex-col gap-s">
+                {repliedAt > 0 && <p data-type="caption" className="text-on-surface-low">You replied {relPast(repliedAt)}. A reply sent now goes out as another one.</p>}
+                {/* What the draft should contain, in her words, and the button that drafts from
+                    them: one action, so they sit together, the button directly under the field.
+                    The bound matches `DRAFT_INSTRUCTIONS_MAX_CHARS`. */}
+                <div className="flex flex-col gap-xs" data-testid="draft-ask">
+                  <Field label="What should the reply say?">
+                    <TextArea value={said} onChange={setSaid} rows={2} size="sm" maxLength={2000}
+                      placeholder="Optional — e.g. accept, and give my abstract from Talks/outline.md" />
+                  </Field>
+                  <div>
+                    <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
+                  </div>
+                </div>
+                <DraftNotices error={draftErr} drafting={drafting}
+                  summary={drafting ? drafting.summary : (item.draft ? item.context_summary ?? '' : '')} />
+                <div className="flex flex-col gap-xs">
+                  <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
+                  {draft.trim() && <WordCount text={draft} limit={drafting?.word_limit ?? null} />}
+                  <OpenAnswers text={draft} />
+                </div>
+                <div className="flex flex-wrap items-center gap-s">
+                  {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} loading={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
+                  <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim() || leftOpen > 0}
+                    disabledReason={!draft.trim() ? 'Write a reply first' : leftOpen ? openAnswersReason(leftOpen) : undefined}><Send size={14} /> Send reply</Button>
+                </div>
+              </div>
+            </Section>
+          ) : item.draft ? (
+            <Section label="Drafted reply">
+              <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
+              <p data-type="caption" className="mt-1.5 text-on-surface-low">This item&rsquo;s source doesn&rsquo;t support replies (notifications are read-only), so this saved draft can&rsquo;t be sent.</p>
+            </Section>
+          ) : null}
+        </>
+      )}
+
+      {err && <FieldError>{err}</FieldError>}
+
+      {/* A withheld item explains itself and offers the one recovery — Restore
+          re-fires the suppressed notification, so a false positive is never a silent drop. */}
+      {item.status === 'filtered' && (
+        <div data-type="body-s" className="flex flex-wrap items-center gap-s rounded-md border border-outline-variant/40 px-m py-s">
+          <Filter size={14} style={{ color: 'var(--color-warn)' }} />
+          <span className="text-on-surface-low">A second-opinion check flagged this claim, so its notification was withheld. Restore to deliver it.</span>
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} loading={busy === 'restore'} disabled={!!busy}><RotateCcw size={14} /> Restore
+          </Button>
+        </div>
+      )}
+      {verifyNote(item) && (
+        <p data-type="caption" className="flex items-center gap-1.5 text-on-surface-low">
+          <Filter size={12} aria-hidden style={{ color: 'var(--color-warn)' }} />{verifyNote(item)}
+        </p>
+      )}
+
+      {/* triage actions */}
+      <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/40 pt-l">
+        {settled ? (
+          <Button size="sm" variant="secondary" onClick={() => patch({ status: 'seen' }, 'reopen')} loading={busy === 'reopen'} disabled={!!busy} disabledReason={BUSY_REASON}><RotateCcw size={14} /> Reopen</Button>
+        ) : (
+          <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy} disabledReason={BUSY_REASON}><Check size={14} /> Mark handled</Button>
+        )}
+        {item.status !== 'dismissed' && !(someoneNew && !settled) && <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>}
+        {/* Mute thread writes to the muted-THREADS set, keyed off a channel thread id. A
+            non-channel item has no thread, so the button would silently do nothing. */}
+        {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy} disabledReason={BUSY_REASON}><BellOff size={14} /> Mute thread</Button>}
+        {/* Favorite toggle — a strong engagement signal (boosts this channel/sender
+            in the ranking when engagement ranking is enabled) + a persisted star. Uses the
+            dedicated /favorite endpoint so the signal is recorded, not just the flag set. */}
+        <Button size="sm" variant="ghost" onClick={fav} disabled={!!busy} disabledReason={BUSY_REASON}>
+          <Star size={14} className={item.favorited ? 'fill-current text-warning' : ''} />
+          {item.favorited ? 'Favorited' : 'Favorite'}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Accept / reject a skill proposal from its inbox row.
+ *
+ *  Loads the FULL proposal (the list summary truncates the procedure at 280 chars) because
+ *  approving something whose body you can't read is not a review. Runs the same
+ *  accept/reject endpoints the skills page uses — one installation path, not a second one
+ *  that could drift from it. */
+function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged: () => void; navigate: (path: string) => void }) {
+  const [detail, setDetail] = useState<SkillProposalDetail | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [gone, setGone] = useState(false)
+  // What the decision DID, once it has been made. The accept response's `{name, version}` used to
+  // be discarded, so a successful install said nothing at all — see `act()`.
+  const [done, setDone] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    let alive = true
+    setErr(''); setLoadErr(null); setGone(false); setDetail(null); setDone('')
+    api.skillProposalDetail(pid)
+      .then((d) => { if (alive) setDetail(d) })
+      // 🔴 THIS CAUGHT EVERYTHING AND CALLED IT "already answered" (#532). A 404 does mean the
+      // proposal was answered elsewhere (the skills page, another tab) and saying so plainly is
+      // right — but a 500, a timeout or an offline gateway landed in the same branch, and the
+      // panel then told the user their decision had been made when nothing of the sort had
+      // happened. The proposal is still pending and still needs them; the most confident possible
+      // way to say the opposite of what happened.
+      //
+      // `act()` below has discriminated on exactly this for the WRITE path since #283 ("a 500 is a
+      // real failure and the proposal is still pending"). The read path is the same distinction,
+      // thirty lines up, and now makes it the same way.
+      .catch((e) => {
+        if (!alive) return
+        if (e instanceof ApiError && e.status === 404) { setGone(true); return }
+        setLoadErr(e)
+      })
+    return () => { alive = false }
+  }, [pid, reloadKey])
+
+  // ── A DECISION HAS TO SAY WHAT IT DID (#283) ───────────────────────────────────────────────
+  //
+  // This modelled only `busy` and `err`, so a successful install was indistinguishable from
+  // having clicked nothing: the `{ok, name, version}` payload was thrown away, no confirmation
+  // appeared, and — because the buttons were gated on `!!busy` alone — Install stayed clickable.
+  // The second click reached the endpoint, which 409s (the first accept consumed the proposal),
+  // and the raw `no proposal '<id>'` landed in the error slot below. One success state fixes all
+  // of it: the confirmation names the skill, and it REPLACES the buttons, so the re-click that
+  // produced the 409 is not merely discouraged, it is unreachable.
+  //
+  // The inbox item's own status needs no client-side nudge — the server moves it to a terminal
+  // status on the way out (`skills/proposals.py:_resolve_inbox_item`, called by `accept()` and
+  // `reject()`), and `onChanged()` re-reads the item, so the row stops claiming attention.
+  async function act(kind: 'accept' | 'reject') {
+    setBusy(kind); setErr('')
+    try {
+      if (kind === 'accept') {
+        const r = await api.acceptSkillProposal(pid)
+        setDone(acceptedLabel(r.name, r.version))
+      } else {
+        await api.rejectSkillProposal(pid)
+        setDone('Rejected')
+      }
+      // The decision lands here but the COLLECTION is read on two other surfaces — the Skills page's
+      // "Proposals (N)" badge and its proposals list. `onChanged()` only refreshes this inbox item, so
+      // both of those kept describing a proposal that no longer needs deciding.
+      invalidateKeys('skill-proposals', true)
+      onChanged()
+    } catch (e) {
+      // Answered somewhere else between load and click (the Skills page, another tab): accept 409s
+      // and reject 404s. That is the same stale row the load path already names, so it reads as
+      // "already answered" rather than leaking the server's sentence into the error slot.
+      if (e instanceof ApiError && (e.status === 409 || e.status === 404)) { setGone(true); return }
+      setErr(e instanceof Error ? e.message : `${kind} failed`)
+    } finally { setBusy(null) }
+  }
+
+  // Our OWN decision first: it is the more specific account of the same terminal state, and the
+  // only one that can name the skill. (`gone` is set by the load effect, which keys on `[pid]` and
+  // does not re-run after `act()`, so in practice only one of the two is ever set.)
+  if (done) {
+    return (
+      <Section label="Proposal">
+        <p data-type="body-s" className="flex flex-wrap items-center gap-1.5 text-on-surface-low">
+          <Check size={14} style={{ color: 'var(--color-ok)' }} /> {done}
+          {' '}<TextLink onClick={() => navigate('skills')}>Open Skills</TextLink>
+        </p>
+      </Section>
+    )
+  }
+  if (gone) {
+    return (
+      <Section label="Proposal">
+        <p data-type="body-s" className="text-on-surface-low">
+          This proposal was already answered. <TextLink onClick={() => navigate('skills')}>Open Skills</TextLink>
+        </p>
+      </Section>
+    )
+  }
+  return (
+    <Section label={detail?.kind === 'refine' ? 'Refine a skill' : 'New skill'}>
+      {loadErr ? (
+        // The other half of the discrimination above. With the catch-all gone a failed read leaves
+        // `detail` null, and "Loading the proposal…" would be a spinner that never resolves — the
+        // same silence in a different costume. The proposal is still PENDING, so this states the
+        // read failed and offers the retry that can still reach a decision.
+        <InlineLoadError what="this proposal" error={loadErr} onRetry={() => setReloadKey((k) => k + 1)} />
+      ) : detail === null ? (
+        <p data-type="body-s" className="text-on-surface-low">Loading the proposal…</p>
+      ) : (
+        <div className="flex flex-col gap-m">
+          <div data-type="body-s" className="flex flex-wrap items-center gap-x-m gap-y-1">
+            <span className="text-on-surface" style={fvs(600)}>{detail.slug}</span>
+            {detail.refine_target && <span className="text-on-surface-low">refines {detail.refine_target}</span>}
+            {detail.triggers && <span className="text-on-surface-low">triggers: {detail.triggers}</span>}
+          </div>
+          {/* The full procedure — the thing actually being approved. Rendered markdown has
+              no focusable content of its own, so without a tab stop a keyboard user cannot
+              scroll it: measured 1285px of 1541px hidden below the fold on a real item
+              (WCAG 2.1.1; axe scrollable-region-focusable, serious). That is the text
+              someone is being asked to approve, so it has to be readable without a mouse.
+              Same resolution as the kanban columns and the shell-denylist list. */}
+          <div data-type="body-s" className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface"
+            tabIndex={0} role="group" aria-label="Procedure">
+            <Markdown>{detail.procedure_md}</Markdown>
+          </div>
+          {/* Provenance is a FENCED excerpt of the driving trace: untrusted text rendered
+              for review only, so it stays visually distinct from the procedure above. */}
+          {detail.source_excerpt && (
+            <details>
+              <summary data-type="caption" className="cursor-pointer text-on-surface-low">Why this was proposed</summary>
+              <pre tabIndex={0} role="group" aria-label="Why this was proposed" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low" data-type="caption">{detail.source_excerpt}</pre>
+            </details>
+          )}
+          <div className="flex flex-wrap items-center gap-s">
+            <Button size="sm" onClick={() => act('accept')} loading={busy === 'accept'} disabled={!!busy}><Check size={14} /> Install skill
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => act('reject')} disabled={!!busy} disabledReason={BUSY_REASON}>
+              <XCircle size={14} /> Reject
+            </Button>
+            {/* Editing before approving lives on the skills page, which has the editor. */}
+            <Button size="sm" variant="ghost" onClick={() => navigate('skills')} disabled={!!busy} disabledReason={BUSY_REASON}>
+              <ExternalLink size={14} /> Edit first
+            </Button>
+          </div>
+          {err && <FieldError>{err}</FieldError>}
+        </div>
+      )}
+    </Section>
+  )
+}

@@ -1,0 +1,105 @@
+# Build context is the repo root:
+#   docker build -f deploy/docker/Dockerfile.web .
+
+# ── Stage 1: build SPA ───────────────────────────────────────────────────────
+# The SPA is static files, the same on every architecture, so this stage runs once, on the
+# machine doing the build (`--platform=$BUILDPLATFORM`), and the runtime stage below copies the
+# files in for each target. Built for arm64 under emulation, the gateway image's identical stage
+# stalled in vite's chunk rendering until the release's image time limit. Only this stage builds
+# on the build platform, and only its built files (/app/web/dist) leave it: every stage whose
+# output runs in the image builds for the target. tests/test_docker_single_container.py holds
+# each of these.
+# node:24.22.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:429bdfbc204b4eabc6438e6d34e4e9d8dd2ca1df8289bcd78cdd3c5db387b7a5
+#   linux/arm64 sha256:5b12456322560dcf9342f7339662bccf8c5665cf0732a8ec8363687aa93c5277
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS builder
+
+WORKDIR /app
+
+# npm-workspaces install: the ONLY lockfile lives at the repo root (web/ and
+# desktop/ carry none — npm/cli#4828), so `npm ci` must run from the root with
+# the target workspace's package.json present. The `desktop` workspace is NOT
+# copied — it's excluded by .dockerignore and `--workspace=web` doesn't need it
+# (verified: npm ci resolves web's tree from the root lock alone). Manifests
+# first for layer caching.
+COPY package.json package-lock.json ./
+COPY web/package.json web/
+
+# THE ROOT `postinstall` HOOK RUNS HERE AND ITS SCRIPT HAS TO BE PRESENT. `package.json`
+# declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci` invokes it — and
+# `scripts/` was not copied, so npm died with `exit code 2` on a missing file and this image
+# could not be built at all. The script is already WRITTEN for this case: its header names
+# "Docker build context" among the not-a-dev-clone paths and it exits 0 at the
+# `git rev-parse --is-inside-work-tree` guard (`.git` is dockerignored). It was never given
+# the chance. Copying it is therefore the fix rather than `--ignore-scripts`, which would
+# also suppress the dependency postinstalls the SPA build needs (esbuild's, notably).
+#
+# This broke AFTER the last release, which is why no green check ever showed it: `v0.1.3`
+# carried only `hooks:install`, and `postinstall` arrived later in #1030 (194bf9988).
+# `release.yml` is the ONLY workflow that builds this file, it has not run since that tag, and
+# it uses the same `context: .`, so the next release would have failed here.
+COPY scripts/install_git_hooks.sh scripts/
+
+RUN npm ci --workspace=web --prefer-offline
+
+# THE SPA IMPORTS FILES FROM OUTSIDE `web/`: data the backend reads too, kept in one file both
+# sides import. `web/src/lib/scanFindings.ts` imports `src/personalclaw/scan_rule_gloss.json`
+# and `web/src/ui/composer/duplex.ts` imports `src/personalclaw/voice/phrases.json`, each by a
+# relative path that resolves to /app/src/personalclaw/… from WORKDIR /app. Without them the
+# build cannot resolve those imports and fails. Each lands where its import resolves, and before
+# the build. (The build is `vite build` alone: the image is typechecked by the job that gates it,
+# `release.yml`'s `build`, and on a pull request by ci.yml's `web`.)
+#
+# This list is the web build's complete set of reads outside `web/` (node_modules aside, which
+# `npm ci` installs). tests/test_web_image_stage_parity.py holds it to that in both images: it
+# resolves every import under `web/` and fails on a read no COPY here brings in, and on a COPY
+# here that nothing reads. A missing one otherwise surfaces only when an image is built, after
+# every pull-request check is green: `release.yml` and the single-container workflow are the
+# only builders of these stages.
+COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
+
+# Copy full web source and build
+COPY web/ web/
+
+# vite on this SPA needs more than node's default (~2 GiB) old-space heap;
+# without this the in-container build dies with "JavaScript heap out of memory"
+# even when the container itself has plenty of RAM.
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# nginx:1.27-alpine (1.27.5), as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:62223d644fa234c3a1cc785ee14242ec47a77364226f1c811d2f669f96dc2ac8
+#   linux/arm64 sha256:63ffc0d1f14e4082b832c6a42e606e9a0384a526f16ddd720af7c1f018f2f7c4
+FROM mirror.gcr.io/library/nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS runtime
+
+# Copy built SPA (vite outputs to web/dist under the workspace root)
+COPY --from=builder /app/web/dist /usr/share/nginx/html
+
+# Mark this as a container install. The gateway's
+# detect_install_kind() reads PERSONALCLAW_INSTALL_KIND and only the BACKEND
+# container runs that Python process — but set it here too so every container in
+# the deployment self-identifies consistently (e.g. `docker exec … env`).
+ENV PERSONALCLAW_INSTALL_KIND=container
+
+# Install our proxy-aware config as a TEMPLATE. The official nginx image's
+# entrypoint (20-envsubst-on-templates.sh) renders /etc/nginx/templates/*.template
+# into /etc/nginx/conf.d/ at container start, substituting ${NGINX_LOCAL_RESOLVERS}
+# (auto-detected from the container's /etc/resolv.conf by 15-local-resolvers.envsh).
+# This lets nginx re-resolve the gateway hostname at runtime so a recreated
+# gateway container's new IP is picked up without a proxy restart.
+# Remove the stock default.conf so only our rendered config is served.
+COPY deploy/docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+RUN rm -f /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.bak
+
+# openssl for the self-signed cert; cert-generation hook runs before envsubst.
+RUN apk add --no-cache openssl
+COPY deploy/docker/10-self-signed-cert.sh /docker-entrypoint.d/10-self-signed-cert.sh
+RUN chmod +x /docker-entrypoint.d/10-self-signed-cert.sh
+
+EXPOSE 80 443
+
+# Health check hits the plain-HTTP /healthz so it never has to trust the
+# self-signed cert.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:80/healthz > /dev/null || exit 1

@@ -1,0 +1,215 @@
+"""Filesystem rewind — ``/rewind-to-turn N``.
+
+**Naming, because "rewind" is already taken.** ``chat_regenerate``'s ``rewind: true``
+(edit-resend) rewinds the TRANSCRIPT. This module rewinds the FILES and
+nothing else — hence ``chat_file_rewind``. The two never share state.
+
+The deliberate other half of :mod:`personalclaw.dashboard.chat_undo`. ``/undo`` rolls back
+the CONVERSATION and says in its own response that files written were not reverted; this
+rolls back the FILES and does not touch the transcript. Keeping them separate is the point:
+the transcript is the record of what happened, and a rewind that erased it would destroy the
+evidence a user needs to decide whether the rewind was right.
+
+Two routes, because a destructive action needs a readable preview before anything is written:
+
+* ``GET  /api/chat/sessions/{session}/rewind?turn=N`` — read-only preview: exactly which
+  files would be restored, deleted, or (honestly) *not* restored because they were never
+  captured, with a unified diff per file and current-vs-restored hashes; and every file that
+  changed after turn N with no backup (a shell command's change, an agent CLI's edit made
+  without asking), which the rewind leaves as it is.
+* ``POST /api/chat/sessions/{session}/rewind {turn, confirm: true}`` — apply. Without
+  ``confirm: true`` this returns ``409 confirmation_required`` **and the preview**, so a
+  client that forgets the flag gets the preview rather than a surprise write.
+
+Naming the files with no backup walks the chat's folder, so the preview is read in a worker
+thread. The restore itself is not: it reads only the backups, and it runs on the event loop as
+one step, where no turn can start part way through and write a file it is replacing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from aiohttp import web
+
+from personalclaw import turn_checkpoints
+from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
+from personalclaw.sel import sel
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_session(request: web.Request, operation: str):
+    """(session, error_response): 404 for an unknown session, 403 for one the app did not start.
+
+    The 403 is here for the PREVIEW. The rewind itself is a write, which the permission middleware
+    already held to the app's own conversations (``ROUTE_AUTHZ``'s ``owns``); the preview is a
+    read, which the route table does not govern, and it lists the files the conversation touched.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    request_app = request.get("app", "")
+    if not session:
+        return None, json_error("not_found", message=f"no such session: {name}", status=404)
+    if request_app and session.created_by_app != request_app:
+        sel().log_api_access(
+            caller=request_app,
+            operation=operation,
+            outcome="denied",
+            source="app_isolation",
+            resources=f"session={name}",
+            error="app does not own this session",
+        )
+        return None, json_error("forbidden", message="app does not own this session", status=403)
+    return session, None
+
+
+def _turn_arg(raw: object) -> tuple[int, web.Response | None]:
+    if raw is None or raw == "":
+        return 0, json_error(
+            "invalid_turn", message="turn is required (an integer >= 0)", status=400
+        )
+    # `True` is an int in Python; a JSON `true` for a turn number is a client bug, not
+    # turn 1, so it is refused rather than coerced.
+    if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+        return 0, json_error("invalid_turn", message="turn must be an integer", status=400)
+    try:
+        turn = int(raw)
+    except (TypeError, ValueError):
+        return 0, json_error("invalid_turn", message="turn must be an integer", status=400)
+    if turn < 0:
+        return 0, json_error("invalid_turn", message="turn must be an integer >= 0", status=400)
+    return turn, None
+
+
+def _resumed_preview(session_key: str, turn: int) -> tuple[dict, turn_checkpoints.RewindPreview]:
+    """Finish any rewind that died between staging and commit, then read the preview: one that
+    ran first would diff against a half-committed tree. A worker thread's work (it walks)."""
+    resumed = turn_checkpoints.resume_incomplete_rewind(session_key)
+    return resumed, turn_checkpoints.preview_rewind(session_key, turn)
+
+
+def _left_as_they_are(pv: turn_checkpoints.RewindPreview) -> int:
+    """How many files the preview names as changed with no backup, which a rewind leaves."""
+    return sum(
+        1
+        for f in pv.files
+        if f.action == "not_captured" and f.reason in turn_checkpoints.UNBACKED_REASONS
+    )
+
+
+async def api_chat_session_rewind_preview(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/{session}/rewind?turn=N — what a rewind would do. Read-only."""
+    session, err = _resolve_session(request, "chat.session_rewind_preview")
+    if err is not None:
+        return err
+    turn, terr = _turn_arg(request.query.get("turn"))
+    if terr is not None:
+        return terr
+    resumed, pv = await asyncio.to_thread(_resumed_preview, session.key, turn)
+    payload = pv.to_dict()
+    payload["resumed"] = resumed["resumed"]
+    payload["notice"] = (
+        "Filesystem only. This does NOT rewind the conversation — the transcript stays as "
+        "the record of what happened. Use /undo for that."
+    )
+    return web.json_response(payload)
+
+
+async def api_chat_session_rewind(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/rewind — restore files to the end of turn N.
+
+    Body: ``{turn: int, confirm: bool}``. ``confirm`` must be ``true``; anything else
+    returns 409 with the preview attached.
+    """
+    session, err = _resolve_session(request, "chat.session_rewind")
+    if err is not None:
+        return err
+    request_app = request.get("app", "")
+
+    body: dict = {}
+    if request.body_exists:
+        try:
+            parsed = await request.json()
+        except Exception:
+            return json_error("invalid_body", message="invalid JSON body", status=400)
+        if isinstance(parsed, dict):
+            body = parsed
+    turn, terr = _turn_arg(body.get("turn"))
+    if terr is not None:
+        return terr
+
+    # Never rewind under a live turn: the agent may be mid-write, and replacing a file it
+    # is about to read produces a state neither side asked for.
+    if getattr(session, "running", False):
+        return json_error(
+            "turn_running", message="cannot rewind while a turn is running", status=409
+        )
+
+    _resumed, pv = await asyncio.to_thread(_resumed_preview, session.key, turn)
+    if not confirm_granted(body):
+        return json_error(
+            "confirmation_required",
+            message="a rewind overwrites files on disk — resend with confirm: true",
+            status=409,
+            preview=pv.to_dict(),
+        )
+    # Asked again: a turn could have started while the preview was read.
+    if getattr(session, "running", False):
+        return json_error(
+            "turn_running", message="cannot rewind while a turn is running", status=409
+        )
+
+    # From here to the response on the event loop, so no turn starts part way through. The
+    # restore reads its backups as it runs, never the preview read above.
+    res = turn_checkpoints.apply_rewind(session.key, turn)
+    sel().log_api_access(
+        caller=request_app or "dashboard",
+        operation="chat.session_rewind",
+        outcome="success" if res.ok else "failure",
+        source="dashboard",
+        resources=(
+            f"session={session.key},to_turn={turn},"
+            f"restored={len(res.restored)},deleted={len(res.deleted)}"
+        ),
+        error="; ".join(res.errors)[:400],
+    )
+    payload = res.to_dict()
+    payload["turn"] = turn
+    payload["preview"] = pv.to_dict()
+    partial = sum(1 for f in pv.files if f.reason == turn_checkpoints.CHANGED_BEFORE_BACKUP)
+    left = _left_as_they_are(pv)
+    payload["notice"] = (
+        f"Restored {len(res.restored)} file(s) to their state at the end of turn {turn}"
+        + (
+            f", {partial} of them only as far as a later backup, because something with no "
+            "backup changed them first"
+            if partial
+            else ""
+        )
+        + ". "
+        + (
+            f"{left} file(s) that changed after turn {turn} with no backup were left as they "
+            "are. "
+            if left
+            else ""
+        )
+        + "The conversation was NOT rewound."
+        + (
+            " The files' previous contents were themselves checkpointed as turn "
+            f"{res.safety_turn}, so this rewind is reversible."
+            if res.safety_turn > 0
+            else ""
+        )
+    )
+    if not res.ok:
+        payload["error"] = {
+            "code": "rewind_incomplete",
+            "message": "; ".join(res.errors)[:400] or "rewind did not complete",
+        }
+        return web.json_response(payload, status=500)
+    return web.json_response(payload)

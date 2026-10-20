@@ -1,0 +1,2702 @@
+"""The state inventory — one manifest of everything that matters.
+
+Every durability mechanism (snapshot, export, and later shard/sync/drills) reads
+THIS instead of carrying its own allowlist. That is the whole point: the previous
+design had `snapshot.CORE_FILES` and `portability.EXPORT_EXCLUDE` maintained by
+hand, and they had already drifted — nine real store directories were covered by
+neither. A declarative manifest plus :func:`audit_home` (which fails on any
+unclaimed path) makes that class of bug impossible to reintroduce silently.
+
+Each entry declares four things that matter to a backup:
+
+* **kind** — how to read/write it safely. ``sqlite`` in particular must never be
+  raw-copied while the gateway holds it open; see :func:`sqlite_entries`.
+* **domain** — the user-facing grouping. Snapshot components are exactly the
+  domains, so ``VALID_COMPONENTS`` is derived, never typed twice.
+* **secret** — never leaves this machine, in any export or sync.
+* **credential** — a secret whose content IS credential values (API keys, tokens, the
+  session-signing key). Never captured by a snapshot either: a snapshot is a file that gets
+  copied to a USB stick or a cloud drive, and a plaintext key inside one is a leaked key.
+  Settings files carry ``{{secret:…}}`` references instead (``config.secret_refs``), so a
+  restore onto this machine resolves them; a restore onto a wiped one asks for the keys again.
+* **derived** — an index/cache rebuilt from authoritative state. Excluded from
+  shards and exports; restoring it is at best wasted bytes and at worst a
+  corrupt index paired with a newer store.
+
+``merge`` is declared here but consumed by later sessions (restore --mode merge,
+shard sync); it is part of the entry's identity, so it belongs in the manifest
+rather than being bolted on later. A store a sync merges by id carries its deletes
+whatever deletes a record (``durability.ancestors``), so no entry declares them.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from personalclaw.record_files import Shape
+
+logger = logging.getLogger(__name__)
+
+# ── the vocabularies ────────────────────────────────────────────────────────
+
+# How an entry is stored — determines the safe read/write mechanism.
+KIND_JSON_ENTITY_DIR = "json_entity_dir"  # one JSON file per entity
+KIND_JSON_FILE = "json_file"  # a single JSON document
+KIND_JSONL_APPEND = "jsonl_append"  # append-only log
+KIND_SQLITE = "sqlite"  # a database — NEVER raw-copy while live
+KIND_TREE = "tree"  # an opaque file tree
+KINDS = (KIND_JSON_ENTITY_DIR, KIND_JSON_FILE, KIND_JSONL_APPEND, KIND_SQLITE, KIND_TREE)
+
+# User-facing grouping. Snapshot components ARE these (plus "everything").
+DOMAIN_MEMORY = "memory"
+DOMAIN_KNOWLEDGE = "knowledge"
+DOMAIN_WORK = "work"
+DOMAIN_AUTOMATION = "automation"
+DOMAIN_PLATFORM = "platform"
+DOMAIN_CONFIG = "config"
+DOMAIN_SECURITY = "security"
+DOMAINS = (
+    DOMAIN_MEMORY,
+    DOMAIN_KNOWLEDGE,
+    DOMAIN_WORK,
+    DOMAIN_AUTOMATION,
+    DOMAIN_PLATFORM,
+    DOMAIN_CONFIG,
+    DOMAIN_SECURITY,
+)
+
+# How two copies of an entry reconcile (consumed by restore-merge + sync).
+MERGE_UNION_BY_ID = "union_by_id"
+MERGE_LWW = "lww_by_updated_at"
+MERGE_APPEND_DEDUP = "append_dedup"
+MERGE_SQLITE_ATTACH_IGNORE = "sqlite_attach_ignore"
+MERGE_REPLACE_ONLY = "replace_only"
+MERGES = (
+    MERGE_UNION_BY_ID,
+    MERGE_LWW,
+    MERGE_APPEND_DEDUP,
+    MERGE_SQLITE_ATTACH_IGNORE,
+    MERGE_REPLACE_ONLY,
+)
+
+
+@dataclass(frozen=True)
+class StateEntry:
+    """One declared piece of PersonalClaw's state."""
+
+    id: str
+    kind: str
+    path: str  # relative to the home directory
+    domain: str
+    merge: str
+    secret: bool = False  # never leaves this machine
+    credential: bool = False  # holds credential VALUES — not even a snapshot captures it
+    # Configuration that can carry a credential, or a reference to one: its shard is rewritten as
+    # soon as a write lands (`durability.export_follow`) rather than at the next hourly export, so
+    # a definition that is removed or rewritten (an MCP server, a provider, a hook) leaves the
+    # export at once instead of up to an hour later.
+    exported_on_write: bool = False
+    derived: bool = False  # rebuildable index/cache — excluded from exports
+    # One machine's own account of itself — what it spent, what it last ran, which notices it
+    # sent, the legacy files it imported once — and what ran on it: its workflow runs and loops.
+    # A snapshot, a backup and an export carry it; a sync never does, and never merges another
+    # machine's into it: merged, each machine's counters were the other's to overwrite, and once
+    # both had moved every pull was a conflict to review.
+    machine_local: bool = False
+    # Paths inside `path` (globs, relative to it) with the same rule, for an entity directory
+    # whose other files do sync: `agents/personalclaw.json`, the agent runtime config this home
+    # rebuilds from its own configuration, which holds what its owner allowed here. A merge
+    # restore and an import leave these files as they are too (`reconcile.bring_in_folder`): each
+    # is rebuilt or measured again here.
+    machine_local_within: tuple[str, ...] = field(default_factory=tuple)
+    # Whether a merge restore or an import takes an archive's copy in. False for the records of
+    # what ran on one machine, a workflow run, an autonomous loop or an agent, which the start
+    # picks up and drives: another home's, taken in, was resumed here, a second time and on this
+    # machine's files. And False for the counters that are one machine's account of itself — its
+    # spend, its tool and savings counters, its scheduler marks, the due-date notices it sent —
+    # which a merge added to this machine's. A replace restore still brings them back with the
+    # whole home, holding what was in flight (`snapshot._hold_what_was_in_flight`).
+    merged_in: bool = True
+    # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
+    # undeclared-DB audit cannot match them by exact path and must accept the whole subtree. Opt-in
+    # per entry, NOT inferred from `kind`: exempting every tree would blind the audit to a DB nested
+    # in `loop/` or `workspace/`, which is the hazard it exists to catch.
+    db_container: bool = False
+    help: str = ""  # operator-facing description
+    # Sub-paths inside `path` that are themselves derived (indexes, caches,
+    # git-owned working copies). Relative to `path`; glob syntax allowed.
+    derived_within: tuple[str, ...] = field(default_factory=tuple)
+    # Where this entry keeps a database once per key (home-relative globs, one ``*`` per path
+    # segment). A snapshot and an export copy each through the sqlite backup API, and the
+    # undeclared-database audit counts it declared (`partition_paths`). For a ``sqlite`` store,
+    # each is this store kept as well as at `path` — the same kind, domain and merge — and a merge
+    # restore merges it as it merges `path`: every memory partition keeps its own memory database.
+    # For a ``tree``, each is a database inside it, which a merge restore and an import take by the
+    # tree's own rule, whole and only where the home has none: an installed app keeps its own.
+    partitions: tuple[str, ...] = field(default_factory=tuple)
+    # For a ``sqlite`` store whose tables its stores make one by one as each is first used: how this
+    # version opens a database file of it, given its path, as all of them open it — every table
+    # made, and each table the store numbers given the identities its rows merge by
+    # (`numbered_rows.give_identity`). A merge restore, an import and a folder sync open both
+    # databases this way before merging one into the other (`snapshot._merge_sqlite_attach`), so
+    # an archive or a machine on an earlier version merges by the same identities, and a table this
+    # home has not used yet takes the other's rows. ``None``: both are merged as they are.
+    open_database: Callable[[Path], None] | None = None
+    # For a ``json_file`` that holds user records (a list of them, or a document holding one):
+    # where they are (`record_files.Shape`). A sync (`reconcile.reconcile_entry`), a restore's merge
+    # and an import (`reconcile.bring_in`) take another machine's in one record at a time — by its
+    # ``id``, each with its own conflict and common ancestor — and write the file through its one
+    # lock, which the store's own writes hold too. Reconciled as ONE row, the file a home already
+    # had won whole, and another machine's records reached only a home that had none. ``None``: the
+    # file is one row.
+    records: Shape | None = None
+    # How a peer's row (for a ``records`` store, each record) comes into this store, for a store
+    # whose rows also hold what is ONE home's: what happened to them there, or the owner's yes
+    # there. Applied to every peer row but a tombstone by every path one arrives by: the sync's
+    # merge (`reconcile.reconcile_entry`), a restore's merge and an import (`reconcile.bring_in`),
+    # and a conflict resolved with the other machine's version or a drafted merge of a row this
+    # home no longer has (`reconcile.take_in`). `None`: a peer's row arrives as the peer wrote it.
+    arrives: Callable[[dict], dict] | None = None
+    # What of a row two homes compare, for the same stores: the part a person makes, without what
+    # is one home's. Conflict detection and the common ancestors read it (`conflicts.compared`),
+    # so a run, a switch or a yes in one home is never an edit to review. `None`: the whole row.
+    compared: Callable[[dict], dict] | None = None
+    # What follows in this home from an edit another machine made to a row it has, which a sync
+    # takes in (`reconcile._edited_there`), and the conflict review when a person takes the other
+    # machine's version or a drafted merge (`reconcile.take_in`): called with this home's row and
+    # the row with the peer's edit taken in (`merge.forward`: what two homes compare is the
+    # peer's, the rest stays this home's), and returns the row to write. An automation's grant
+    # keeps only what its edited action still runs as it ran here, and a new cadence re-arms its
+    # next fire. `None`: the row with the edit taken in, as it is.
+    edit_arrives: Callable[[dict, dict], dict] | None = None
+    # What a row another machine wrote is like here, in the words the conflict review shows before
+    # and after a person takes the other machine's version: ``arrival`` for one this home does not
+    # have (``arrives``), ``edit_arrival`` for another machine's edit to one it has, which the
+    # review takes in as a sync takes one in (``edit_arrives``). ``""``: as the other machine wrote
+    # it.
+    arrival: str = ""
+    edit_arrival: str = ""
+
+
+def _open_learning_log(path: Path) -> None:
+    """A learning log, opened as every store that keeps a table in it opens it
+    (``learning.staging.open_log``)."""
+    from personalclaw.learning.staging import open_log
+
+    open_log(path)
+
+
+def _trigger_arrives(row: dict) -> dict:
+    """One automation from a peer's ``triggers.json``, as this home takes it in
+    (``triggers.store.arrived_from_another_home``, the rule every path one arrives by applies)."""
+    from personalclaw.triggers.store import arrived_from_another_home
+
+    return arrived_from_another_home(row)
+
+
+def _trigger_compared(row: dict) -> dict:
+    """What two homes compare of an automation (``triggers.store.what_it_is``)."""
+    from personalclaw.triggers.store import what_it_is
+
+    return what_it_is(row)
+
+
+def _trigger_edit_arrives(here: dict, edited: dict) -> dict:
+    """An automation this home has, with another machine's edit taken in
+    (``triggers.store.edit_arrived_from_another_home``)."""
+    from personalclaw.triggers.store import edit_arrived_from_another_home
+
+    return edit_arrived_from_another_home(here, edited)
+
+
+def _hook_arrives(row: dict) -> dict:
+    """One hook from a peer's ``hooks.json``, as this home takes it in
+    (``hooks.hook_arrived_from_another_home``)."""
+    from personalclaw.hooks import hook_arrived_from_another_home
+
+    return hook_arrived_from_another_home(row)
+
+
+def _hook_compared(row: dict) -> dict:
+    """What two homes compare of a hook (``hooks.hook_what_it_is``)."""
+    from personalclaw.hooks import hook_what_it_is
+
+    return hook_what_it_is(row)
+
+
+def _hook_edit_arrives(here: dict, edited: dict) -> dict:
+    """A hook this home has, with another machine's edit taken in
+    (``hooks.hook_edit_arrived_from_another_home``)."""
+    from personalclaw.hooks import hook_edit_arrived_from_another_home
+
+    return hook_edit_arrived_from_another_home(here, edited)
+
+
+def _report_arrives(row: dict) -> dict:
+    """One standing research report from a peer, as this home takes it in
+    (``knowledge.research_reports.arrived_from_another_home``)."""
+    from personalclaw.knowledge.research_reports import arrived_from_another_home
+
+    return arrived_from_another_home(row)
+
+
+def _report_compared(row: dict) -> dict:
+    """What two homes compare of a research report (``research_reports.what_it_is``)."""
+    from personalclaw.knowledge.research_reports import what_it_is
+
+    return what_it_is(row)
+
+
+def _workflow_definition(row: dict) -> dict | None:
+    """What *row* — one file of ``workflows/``, as the entity-dir exporter names it — holds when it
+    is a definition (``defs/<name>/workflow``): the one file a run here starts from. ``None`` for
+    any other file: a run's own record. (A version snapshot never syncs: each machine keeps its
+    own history, ``machine_local_within``.)"""
+    parts = str(row.get("id", "")).split("/")
+    data = row.get("data")
+    if len(parts) == 3 and parts[0] == "defs" and parts[2] == "workflow" and isinstance(data, dict):
+        return data
+    return None
+
+
+def _workflow_compared(row: dict) -> dict:
+    """What two homes compare of a workflow file, and all that one from another machine brings: a
+    definition without the step keys that loosen whether a step's agent asks
+    (``automation_posture.workflow_what_it_is``); any other file as it is."""
+    from personalclaw.automation_posture import workflow_what_it_is
+
+    definition = _workflow_definition(row)
+    return row if definition is None else {**row, "data": workflow_what_it_is(definition)}
+
+
+def _workflow_edit_arrives(here: dict, edited: dict) -> dict:
+    """A workflow definition this home has, with another machine's edit taken in
+    (``automation_posture.workflow_edit_arrived``)."""
+    from personalclaw.automation_posture import workflow_edit_arrived
+
+    mine, theirs = _workflow_definition(here), _workflow_definition(edited)
+    if mine is None or theirs is None:
+        return edited
+    return {**edited, "data": workflow_edit_arrived(mine, theirs)}
+
+
+def _with_exclusions(agent: dict, exclude: Any) -> dict:
+    """*agent*, an agent file's document, with ``managedToolPolicy.exclude`` — the tools its
+    sessions are kept from — set to *exclude*, or taken out when it is ``None``; a policy left
+    empty is taken out with it."""
+    policy = agent.get("managedToolPolicy")
+    policy = {k: v for k, v in policy.items() if k != "exclude"} if isinstance(policy, dict) else {}
+    if exclude is not None:
+        policy["exclude"] = exclude
+    out = {k: v for k, v in agent.items() if k != "managedToolPolicy"}
+    if policy:
+        out["managedToolPolicy"] = policy
+    return out
+
+
+def _agent_compared(row: dict) -> dict:
+    """What two homes compare of an agent file: all of it but the tools its sessions are kept
+    from (``managedToolPolicy.exclude``), which are each machine's own."""
+    data = row.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("managedToolPolicy"), dict):
+        return row
+    return {**row, "data": _with_exclusions(data, None)}
+
+
+def _agent_edit_arrives(here: dict, edited: dict) -> dict:
+    """An agent file this home has, with another machine's edit taken in: the tools it is kept
+    from stay as they are here, so no machine gives an agent here a tool back."""
+    mine, theirs = here.get("data"), edited.get("data")
+    if not isinstance(mine, dict) or not isinstance(theirs, dict):
+        return edited
+    policy = mine.get("managedToolPolicy")
+    held = policy.get("exclude") if isinstance(policy, dict) else None
+    return {**edited, "data": _with_exclusions(theirs, held)}
+
+
+def _inbox_compared(row: dict) -> dict:
+    """What two homes compare of an inbox item (``inbox.item_what_it_is``)."""
+    from personalclaw.inbox import item_what_it_is
+
+    return item_what_it_is(row)
+
+
+def _views_split(document: Any) -> list | None:
+    """The records ``dashboard_views.json`` holds, in its order: each user view, then each tile
+    pinned to a view (a preset's included), as ``{"id": "view:<view id>", "view"}`` and
+    ``{"id": "tile:<view id>:<ref>", "view_id", "tile"}`` — a tile is told apart by the view it is
+    on and what it shows. One the file holds with nothing to tell it by, a view with no id or a
+    tile with no ref, comes as a record with no id, which a merge leaves where it is. None for a
+    document that is not the store's (``dashboard.views_store``)."""
+    if not isinstance(document, dict):
+        return None
+    views, overlay = document.get("views", []), document.get("overlay", {})
+    if not isinstance(views, list) or not isinstance(overlay, dict):
+        return None
+    out: list = []
+    for view in views:
+        vid = view.get("id") if isinstance(view, dict) else None
+        out.append(
+            {"id": f"view:{vid}", "view": view} if isinstance(vid, str) and vid else {"view": view}
+        )
+    for view_id, tiles in overlay.items():
+        for tile in tiles if isinstance(tiles, list) else []:
+            ref = tile.get("ref") if isinstance(tile, dict) else None
+            record: dict = {"view_id": view_id, "tile": tile}
+            if isinstance(ref, str) and ref:
+                record = {"id": f"tile:{view_id}:{ref}", **record}
+            out.append(record)
+    return out
+
+
+def _views_join(base: Any, records: list) -> dict:
+    """``dashboard_views.json`` — *base*, or a new one — holding *records* (:func:`_views_split`'s)
+    in their order: each view among the views, each tile in the overlay of the view it is on, and
+    every view's overlay where *base* keeps it. The rest of *base* stays as it is."""
+    doc = dict(base) if isinstance(base, dict) else {}
+    old = doc.get("overlay")
+    overlay: dict = {key: [] for key in old} if isinstance(old, dict) else {}
+    views: list = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if "view" in record:
+            views.append(record["view"])
+        elif "tile" in record:
+            overlay.setdefault(str(record.get("view_id", "")), []).append(record["tile"])
+    doc["views"] = views
+    doc["overlay"] = overlay
+    return doc
+
+
+# ── the manifest ────────────────────────────────────────────────────────────
+# Grounded in what actually exists under a real home (verified 2026-07-28 against
+# both a fresh dev home and a long-lived real one), NOT in what the code's old
+# allowlists claimed. Entries are declared even when the store is usually absent —
+# an entry for a missing path is harmless; a missing entry for a present path is
+# the bug this manifest exists to prevent.
+
+INVENTORY: tuple[StateEntry, ...] = (
+    # ── memory ──
+    StateEntry(
+        id="memory_db",
+        kind=KIND_SQLITE,
+        path="memory.db",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="semantic facts, episodes, lessons, memory events",
+        # 🔴 Memory is partitioned by working directory (`config.loader.memory_dir_for_cwd`), and a
+        # partition keeps what its sessions learn in its own database, where its vector store and
+        # its full-text index share one file (`context._attach_vector_store`). The name is the top
+        # level's DERIVED index's, but the rows are this store's — a project's facts and
+        # episodes, held nowhere else — so the partition database is this entry, not
+        # `memory_index_db`. Undeclared, no snapshot carried it (the tree copy skips every
+        # database), a replace restore moved it aside with `workspace/` and did not bring it back,
+        # and Doctor was right to say it was in no snapshot.
+        partitions=("workspace/_ext/*/memory_index.db",),
+    ),
+    StateEntry(
+        id="memory_index_db",
+        kind=KIND_SQLITE,
+        path="memory_index.db",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="memory search index (rebuilt from memory.db)",
+    ),
+    StateEntry(
+        id="memory_faiss",
+        kind=KIND_TREE,
+        path="memory.faiss",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="vector index (rebuilt from embeddings)",
+    ),
+    StateEntry(
+        id="memory_ids",
+        kind=KIND_JSON_FILE,
+        path="memory.ids.json",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="vector index id map (rebuilt with the index)",
+    ),
+    # 🔴 UNCLAIMED. `audit_home()` reported `memory-vault/` the moment a
+    # user turned the vault on, and the synthetic eight-path fixture the audit tests
+    # build never contains it — a declared guard that could not see the store.
+    #
+    # NOT `derived=True`, even though `POST /api/memory/vault/sync` rebuilds the whole
+    # vault from `memory.db`. In `two_way` mode a page may hold an edit the human made
+    # and the sync has not read back yet, and that edit exists NOWHERE else — dropping
+    # it from the backup as "rebuildable" would lose the one thing in here that is not.
+    #
+    # Restoring it is safe *because of* `source_hash`: every page carries a hash of its
+    # own body, so a restored page that still matches is recognized as an untouched
+    # projection and simply re-rendered from whatever the store now says. Only a page
+    # whose body diverges from its hash — a real, unsynced human edit — is read back.
+    # A stale vault therefore cannot push old text over newer memory unless the human
+    # genuinely typed that text and never synced; and that write rides `vault_edit`
+    # through the WAL, so `undo_event` restores the prior value.
+    #
+    # `replace_only`: a markdown tree has no per-record identity to merge by. The path
+    # is the DEFAULT `memory.vault_path`; a vault relocated elsewhere in the home is
+    # the user putting their state outside the manifest's reach, same as any absolute
+    # path.
+    StateEntry(
+        id="memory_vault",
+        kind=KIND_TREE,
+        path="memory-vault",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="readable markdown vault (browsable memory; may hold unsynced edits)",
+    ),
+    # ── knowledge ──
+    StateEntry(
+        id="knowledge_db",
+        kind=KIND_SQLITE,
+        path="workspace/knowledge/knowledge.db",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="knowledge items, entities, extractions",
+    ),
+    StateEntry(
+        id="knowledge_files",
+        kind=KIND_TREE,
+        path="workspace/knowledge/files",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="original uploaded documents behind knowledge items",
+    ),
+    StateEntry(
+        id="lexicon_db",
+        kind=KIND_SQLITE,
+        path="workspace/lexicon/lexicon.db",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="learned vocabulary / term lexicon",
+    ),
+    # 🔴 The annotation layer over the documents above — comments anchored to a passage of
+    # a file, artifact or planning doc. Declared here because it USED to be undeclarable:
+    # the layer was one `localStorage` key in the browser, so there was no server-side
+    # state to name, and a snapshot could not carry what the server never saw (#429).
+    # `knowledge` rather than `work`: an annotation travels with the document it is about,
+    # and "Export knowledge" is the button a user presses to get their documents out.
+    StateEntry(
+        id="doc_comments",
+        kind=KIND_JSON_FILE,
+        path="doc_comments.json",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="comments anchored to file, artifact and planning-doc passages",
+        records=Shape(key="comments", bare=True),
+    ),
+    # ── work ──
+    StateEntry(
+        id="tasks",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="tasks",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="tasks, task lists, and task comments",
+    ),
+    StateEntry(
+        id="projects",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="projects",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="projects and their briefs/context",
+        # Worktrees are git-owned checkouts, re-creatable from the repo.
+        derived_within=("*/worktrees",),
+    ),
+    StateEntry(
+        id="loops_db",
+        kind=KIND_SQLITE,
+        path="loop/loops.db",
+        domain=DOMAIN_WORK,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="autonomous run records",
+        # 🔴 Synced or merged in, another machine's running loop was a row here that the loop
+        # watchdog's first poll re-arms (`loop.watchdog._boot_sweep`): the loop ran a second time,
+        # on this machine, with the workspace and the trust its owner gave it there. A loop's
+        # records stay on the machine that ran it, as a workflow run's do.
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="loop",
+        kind=KIND_TREE,
+        path="loop",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="autonomous run findings, verdicts, per-run files",
+        # loops.db is its own entry (it needs the sqlite backup API, not a copy).
+        derived_within=("loops.db",),
+        # Each loop's own files, which stay with its records (`loops_db`).
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="artifacts",
+        kind=KIND_TREE,
+        path="artifacts",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="saved artifacts and their version history",
+    ),
+    StateEntry(
+        id="sessions",
+        kind=KIND_JSONL_APPEND,
+        path="sessions",
+        domain=DOMAIN_WORK,
+        merge=MERGE_APPEND_DEDUP,
+        help="chat transcripts",
+    ),
+    # A TREE rather than `jsonl_append` like its `sessions` sibling, because the directory is
+    # mixed: `rooms/index.json` is one document of room records and members, while each
+    # `rooms/<id>/` holds that room's `transcript.jsonl` plus any archive an earlier
+    # version's size rotation left behind. `union_by_id` is the room id, which IS the
+    # directory name. Nothing here is `derived_within`: a rotated archive segment is the
+    # only remaining copy of the transcript lines it holds, so excluding it would lose the
+    # older half of a long-running room while appearing to back the room up.
+    StateEntry(
+        id="rooms",
+        kind=KIND_TREE,
+        path="rooms",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="agent room records, members, and shared transcripts",
+    ),
+    StateEntry(
+        id="subagents",
+        kind=KIND_TREE,
+        path="subagents",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="subagent run records",
+        # Each agent's running state — its task, its process id, its turns — on the machine that
+        # ran it, and each spawn's still waiting to start. The start settles every folder with no
+        # tombstone as an agent the last gateway left running, and kills a live process under its
+        # recorded pid that started before the agent did: another machine's folder, merged in,
+        # names a process of this machine's that holds the same pid. It starts a waiting spawn
+        # again, or asks for it again (`subagent_waiting`), work another machine's folder would
+        # repeat here. A replace restore brings them back settled
+        # (`subagent_persistence.settle_restored`).
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="uploads",
+        kind=KIND_TREE,
+        path="uploads",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="files uploaded through chat",
+    ),
+    # One folder per Inbox row, holding the files its message came with (`attachments.keep`),
+    # which the row lists and the Inbox offers to download. Travels with the rows in inbox.json.
+    StateEntry(
+        id="attachments",
+        kind=KIND_TREE,
+        path="attachments",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="the files Inbox messages came with, one folder per message",
+    ),
+    StateEntry(
+        id="code",
+        kind=KIND_TREE,
+        path="code",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="code-loop working checkouts",
+        derived=True,  # git-owned clones, re-creatable from their remotes
+    ),
+    # The turn-bound file checkpoint store — pre-edit copies of workspace files so
+    # /rewind-to-turn can restore them. Declared so `audit_home()` claims the path the moment
+    # a session records its first backup.
+    #
+    # `derived=True` for the same reason as `code` above, and NOT because it is rebuildable
+    # (it is not — the prior bytes exist nowhere else once the agent has overwritten them).
+    # It is machine-LOCAL by construction: every manifest entry is an ABSOLUTE host path, so
+    # the tree is meaningless in another home, and a restore that re-planted it would drop
+    # copies of one machine's workspace into another's. It is also a live-session safety net
+    # pruned with the session (`turn_checkpoints.prune_session`), so travelling it would ship
+    # up to `checkpoints.max_mb` per session of file bodies that the workspace itself still
+    # holds authoritatively.
+    #
+    # Credential material is excluded at CAPTURE time, not here:
+    # `turn_checkpoints.NEVER_CAPTURE_GLOBS` means a `.env` body never enters the tree, so
+    # this entry is not the thing keeping secrets out of an export.
+    StateEntry(
+        id="turn_checkpoints",
+        kind=KIND_TREE,
+        path="checkpoints",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        help="pre-edit file backups behind /rewind-to-turn (machine-local, session-scoped)",
+        derived=True,
+    ),
+    # ── automation ──
+    # 🔴 THE trigger store, and it was never declared here. `triggers/store.py` opens with
+    # "`triggers.json` — the one trigger store … absorbing crons.json / hooks.json /
+    # event_triggers.json / autonudge config", and it is hand-listed in BOTH `snapshot.py` and
+    # `portability.py` — each with a comment about the round trip that lost it. So it travels, but
+    # nothing inventory-derived could see it: it was invisible to `home_is_populated`, to the
+    # ratchet, and to every projection built on the inventory.
+    #
+    # `audit_home()` WOULD have flagged it — verified, it reports `triggers.json` as unclaimed on a
+    # home that has one. Both real homes audited clean because neither migrated to the store
+    # yet, so the guard was right and the population was the gap. That is the same
+    # fixture-versus-reality shape the real-home audit itself was about.
+    StateEntry(
+        id="triggers",
+        kind=KIND_JSON_FILE,
+        path="triggers.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
+        help="the one trigger store (automations, event triggers, hooks)",
+        # Synced one automation at a time. A peer's arrive switched off, with nothing of what
+        # happened to them there and no grant its owner gave there: its armed fires, run counts,
+        # health, alert dedupe and yes are the peer's, not this home's.
+        records=Shape(key="triggers", bare=True),
+        arrives=_trigger_arrives,
+        compared=_trigger_compared,
+        edit_arrives=_trigger_edit_arrives,
+        arrival=(
+            "An automation from another machine arrives switched off, without what happened to it "
+            "there. Switching it on here asks first for what it runs."
+        ),
+        edit_arrival=(
+            "The automation stays switched on or off as it is here, with what happened to it here. "
+            "What you allowed it to run stays allowed only where it still runs the same; anything "
+            "it runs differently asks you first."
+        ),
+    ),
+    StateEntry(
+        id="crons",
+        kind=KIND_JSON_FILE,
+        path="crons.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="scheduled jobs (legacy; imported into triggers.json once per home at boot)",
+        machine_local=True,
+    ),
+    # 🔴 The script-cron store, and it was never declared here. `schedule_script.py` requires
+    # every zero-token script job to live under `crons/` ("no escape"), and `triggers.json` —
+    # which travels — references those scripts by path. So a restore reproduced the trigger and
+    # lost its script: the automation survived as a row and broke as a behavior. Self-QA seeds a
+    # script cron on first boot, which is how `audit_home()` caught it — EVERY fresh home reported
+    # "1 unclaimed path(s)" and the dashboard strip opened coral on a box minutes old. The audit
+    # was honest (the store really was in no snapshot); this entry is the fix, not the alarm.
+    StateEntry(
+        id="cron_scripts",
+        kind=KIND_TREE,
+        path="crons",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="script-cron files (the scripts + configs triggers.json script jobs execute)",
+    ),
+    # The self-QA companion's own data dir. The commit-watch cursor moved here when the
+    # watch stopped being a `crons/` script: an in-process module keeps companion state with the
+    # companion. Declared rather than ignored because the cursor is what makes a restore quiet --
+    # without it the first fire on a restored home sees every commit in the repo as new.
+    StateEntry(
+        id="selfqa",
+        kind=KIND_TREE,
+        path="selfqa",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_LWW,
+        help="self-QA companion state (the commit-watch last-seen head)",
+    ),
+    StateEntry(
+        id="hooks",
+        kind=KIND_JSON_FILE,
+        path="hooks.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
+        help="lifecycle triggers",
+        # A hook runs on every prompt or tool call it matches, so one from a peer arrives as an
+        # automation does: switched off, with no grant and nothing of what happened to it there.
+        records=Shape(key="hooks"),
+        arrives=_hook_arrives,
+        compared=_hook_compared,
+        edit_arrives=_hook_edit_arrives,
+        arrival=(
+            "A hook from another machine arrives switched off, without what happened to it there. "
+            "Switching it on here asks first for what it runs."
+        ),
+        edit_arrival=(
+            "The hook stays switched on or off as it is here, with what happened to it here. What "
+            "you allowed it to run stays allowed only where it still runs the same; anything it "
+            "runs differently asks you first."
+        ),
+    ),
+    StateEntry(
+        id="event_triggers",
+        kind=KIND_JSON_FILE,
+        path="event_triggers.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        # Nothing writes it any more: an older home's copy is imported into `triggers.json` at
+        # the next boot, once per home, and renamed `.imported-<date>`
+        # (`triggers/legacy_import.py`).
+        help="legacy data-event triggers, imported into triggers.json once per home at boot",
+        machine_local=True,
+    ),
+    StateEntry(
+        id="autonudge",
+        kind=KIND_JSON_FILE,
+        path="autonudge.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_LWW,
+        help="legacy auto-nudge loops, imported into triggers.json once per home at start",
+        machine_local=True,
+    ),
+    StateEntry(
+        id="cron_history",
+        kind=KIND_JSONL_APPEND,
+        path="cron-history",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_APPEND_DEDUP,
+        help="scheduled-run history",
+    ),
+    StateEntry(
+        id="workflows",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="workflows",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="workflows and SOPs",
+        # A step's `approval_mode: auto` or `capability: mutating` is the owner's yes, given where
+        # the save shows it, so another machine's is not this one's: a definition from another
+        # machine arrives without them, and its edit keeps this home's only on the steps it left
+        # as they were (`automation_posture.workflow_what_it_is`, `workflow_edit_arrived`).
+        compared=_workflow_compared,
+        arrives=_workflow_compared,
+        edit_arrives=_workflow_edit_arrives,
+        arrival=(
+            "A workflow from another machine arrives with every step asking before it acts and "
+            "without write access, whatever the other machine allowed its steps. Allowing either "
+            "here asks you first."
+        ),
+        edit_arrival=(
+            "What you allowed the workflow's steps here — acting without asking, write access — "
+            "stays only on the steps the other machine left as they were; a step it changed asks "
+            "you first."
+        ),
+        # The template nudges' counters and the session's candidate templates: this machine's
+        # own account of its chats. And each workflow's version history (`workflows.versions`):
+        # what an automation here may run, saved by whom here, with the steps allowed here.
+        # Another machine's would run here as written, with its owner's saves read as this one's.
+        machine_local_within=("template_nudges.json", "template_candidates.json", "versions/*"),
+    ),
+    # ── platform ──
+    StateEntry(
+        id="skills",
+        kind=KIND_TREE,
+        path="skills",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="installed and authored skills",
+        derived_within=(".skill_embeddings.json",),
+    ),
+    StateEntry(
+        id="agents",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="agents",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
+        help="agent definitions",
+        # `personalclaw.json` is the agent CLI's runtime config, which each home rebuilds from its
+        # own configuration and keeps as the base of the next rebuild
+        # (`agent.rebuild_agent_config`): the tools it runs without asking and the servers it
+        # starts are what this home's owner allowed. Another machine's would have run here as
+        # written. An agent FILE syncs, and its `approval_mode` does nothing until the owner here
+        # adds the agent, which asks first for a looser one
+        # (`dashboard.handlers.agents._do_agents_sync`).
+        machine_local_within=("personalclaw.json",),
+        # An agent file's `managedToolPolicy.exclude` keeps tools from its sessions, and it synced
+        # as written: another machine that dropped an exclusion gave the agent the tool back here.
+        # The list is each machine's own. An agent another machine makes arrives with its list;
+        # another machine's edit leaves the list here as it is. (Merged as a set that only grows,
+        # an exclusion taken off anywhere came back from the other machine, so none could be; and
+        # compared as written, two machines that disagreed on it never agreed again, so every
+        # later edit was a conflict to review.)
+        compared=_agent_compared,
+        edit_arrives=_agent_edit_arrives,
+    ),
+    StateEntry(
+        id="prompts",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="prompts",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="saved prompts",
+    ),
+    StateEntry(
+        id="themes",
+        # A custom theme is saved server-side by `POST /api/themes` into
+        # `config_dir()/themes/<slug>.json`, and this inventory did not know the directory
+        # existed — so `personalclaw snapshot` dropped every theme the user authored, and a
+        # restore came back without them (#647). That matters more than an ordinary coverage
+        # gap because the pre-1.0 release notes tell users to run `personalclaw snapshot`
+        # BEFORE upgrading: the one command positioned as the safety net did not cover this.
+        #
+        # `json_entity_dir` + union-by-id, matching `prompts` and `agents`: one JSON file per
+        # slug, and two homes that each authored a theme should end up with both rather than
+        # one clobbering the other.
+        kind=KIND_JSON_ENTITY_DIR,
+        path="themes",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="custom colour themes saved from Settings > Design",
+    ),
+    StateEntry(
+        id="prompt_snippets",
+        # A folder of snippet files, one each, as `prompts` is: a folder store, so a backup's export
+        # and a sync carry every file of it. Declared a tree, neither did.
+        kind=KIND_JSON_ENTITY_DIR,
+        path="prompt_snippets",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="prompt snippets injected into system prompts",
+    ),
+    StateEntry(
+        id="styles",
+        # Your own reply styles, one Markdown file each (`styles/<name>.md`, `reply_style`),
+        # written from Settings > Agent defaults. A folder store like `prompt_snippets`, so a
+        # backup's export and a sync carry every file of it, and two homes that each wrote a style
+        # keep both.
+        kind=KIND_JSON_ENTITY_DIR,
+        path="styles",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="your own reply styles written in Settings > Agent defaults",
+    ),
+    StateEntry(
+        id="apps",
+        kind=KIND_TREE,
+        path="apps",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="installed app copies (their data/ holds real state)",
+        # Each app's `.app_secret` is the HMAC key its backend proxy verifies — key material,
+        # minted afresh (`apps.app_secret.mint_app_secret`) each time the backend starts. It
+        # rode every snapshot and every export inside this tree; nothing is lost by leaving it
+        # out, and a copy that travels is a key that lets its holder sign as the gateway.
+        #
+        # Each app's `venv/` is the Python environment its sidecar runs in, with the engine Install
+        # engine put there (`sdk.sidecar.sidecar_venv_dir`): gigabytes, built for this machine's
+        # OS, CPU and Python. It rode every snapshot without its interpreter (the capture skips
+        # links), and a restore brought back its package receipt, so Install engine re-made the
+        # interpreter and skipped pip: the engine read as installed with another machine's
+        # packages. Left behind, a restored app has no engine and offers Install engine. A bundle
+        # never ships a `venv` (`supply_chain.NEVER_INSTALLED_NAMES`), so one at any depth here
+        # was built on this machine, and the `.{name}.rollback` copy of an update matches too.
+        derived_within=("*/.app_secret", "*/venv"),
+        # Each app's own databases, in the `data/` folder its backend writes, or parked at
+        # `.{name}.data` by a keep-data uninstall. A backend holds its database open in WAL mode,
+        # and undeclared, a snapshot copied the file as bytes without its log and an export left
+        # it out. A merge restore and an import take one as they take the rest of an app's data:
+        # whole where this home has none, and where it has one this home's stays as it is, since
+        # an app's tables are the app's own to merge (`durability.sqlite_files`).
+        partitions=("apps/*/data/*.db", "apps/.*.data/*.db"),
+    ),
+    StateEntry(
+        id="extensions",
+        kind=KIND_TREE,
+        path="extensions",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="provider instances and per-use-case settings",
+    ),
+    StateEntry(
+        id="entity_settings",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="entity_settings",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="per-entity user settings",
+    ),
+    # 🔴 `dashboard_views.json` shipped and was never declared, so `audit_home()`
+    # reports it the moment a user pins a tile — the exact drift this manifest exists to catch,
+    # found by declaring the store next to it.
+    StateEntry(
+        id="dashboard_views",
+        kind=KIND_JSON_FILE,
+        path="dashboard_views.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="composable-home views and their pinned artifact tiles",
+        # Each view, and each tile pinned to a view, is a record of its own: a tile pinned on
+        # another machine arrives in a view this one pins to as well. A tile's refresh reaches
+        # only the read-only, zero-token data providers (`tile_refresh.DATA_PROVIDERS`), so it
+        # carries no grant to anything that writes or spends, and arrives as it is.
+        records=Shape(split=_views_split, join=_views_join),
+    ),
+    # A TREE, not a `jsonl_append`, even though its leaves are JSONL: on disk it is one
+    # DIRECTORY per tile (`dashboard_tiles/<view>__<slug>/events.jsonl`). Declaring the leaf kind
+    # is the shape `sessions` got wrong — the generic per-file tree copy is the right executor
+    # either way, and a line-dedup merge across a directory-per-tile store would be the wrong one.
+    StateEntry(
+        id="dashboard_tile_ledger",
+        kind=KIND_TREE,
+        path="dashboard_tiles",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="per-tile chatless-refresh ledger (freshness, cost, per-source outcomes)",
+    ),
+    StateEntry(
+        id="models",
+        kind=KIND_TREE,
+        path="models",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived=True,  # re-downloadable weights; enormous
+        help="downloaded local model weights (re-downloadable)",
+    ),
+    StateEntry(
+        id="acp_adapters",
+        kind=KIND_TREE,
+        path="acp-adapters",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,  # installed CLI adapters, re-installable
+        help="installed ACP CLI adapters (re-installable)",
+    ),
+    StateEntry(
+        id="workspace",
+        kind=KIND_TREE,
+        path="workspace",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="the agent workspace (memory markdown, scratch files)",
+        # The knowledge store lives inside workspace/ but is its own entry.
+        derived_within=("knowledge",),
+    ),
+    StateEntry(
+        id="screenshots",
+        kind=KIND_TREE,
+        path="screenshots",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="captured screenshots",
+    ),
+    StateEntry(
+        id="crashes",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="crashes",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="crash artifacts (rotated)",
+    ),
+    # The offline eval store (matrices, the append-only
+    # results.tsv ledger; studies/benchmarks/trust arrive in later changes). Harness
+    # mechanics, so DOMAIN_PLATFORM; a file tree, so KIND_TREE + union-by-id like the
+    # other tree stores (loop, artifacts, skills). Not derived: the evidence is the
+    # point of backup, not a rebuildable index.
+    #
+    # 🔴 The exclusion the note deferred is wired here: `studies/*/locked`
+    # holds hidden validation answer keys that are "never rendered into any worker session's
+    # prompt, bindings, or workspace" — and an export archive handed to an agent is the
+    # longest way round to exactly that. Now that `evals/studies/<id>/locked/` has a writer
+    # (`evals/store.write_locked_check`), the control has something to protect.
+    #
+    # `derived_within` is the field with a live reader on every path that copies this tree
+    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`: the export, the
+    # snapshot, the hourly shard export and a restore), so declaring it here excludes the
+    # answer keys from the portability export AND from snapshots. The
+    # snapshot half is a deliberate consequence, not an oversight: an answer key belongs on
+    # one machine, and the cost — a REGISTERED-but-unrun study restored from a snapshot has
+    # lost its checks — is caught loudly rather than silently, because `studies.run_study`
+    # REFUSES a study whose registration declares checks it cannot load.
+    #
+    # `benchmarks/bakeoff` is excluded for the same reason and by the same mechanism: it
+    # holds redacted excerpts of the user's OWN traffic, captured only while an off-by-
+    # default flag is on. Those excerpts are scored once and expire, so the export/snapshot
+    # cost of dropping them is nil (re-enable capture to refill), while carrying a redacted
+    # slice of real inputs off the machine is a leak the flag's own privacy posture forbids.
+    StateEntry(
+        id="evals",
+        kind=KIND_TREE,
+        path="evals",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived_within=("studies/*/locked", "benchmarks/bakeoff"),
+        help=(
+            "offline eval substrate: scenario library, matrices, pinned results ledger, "
+            "pre-registered studies (their hidden locked/ checks never leave this machine)"
+        ),
+    ),
+    # 🔴 The ten paths `audit_home()` reports on a REAL home. The guard was correct and had
+    # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store
+    # added after the manifest was written could not fail it. `learning.db`,
+    # `session_search.db`, `spend.json`, `model_calls.jsonl` and `inbox.json` were absent from a
+    # real
+    # archive.
+    StateEntry(
+        id="learning_db",
+        kind=KIND_SQLITE,
+        path="learning.db",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the learning staging log and usage counters",
+        # 🔴 A memory partition keeps the evidence its lessons stand on beside its own memory
+        # database (`VectorMemoryStore._lesson_evidence_store`): a lesson with none reads "no
+        # recorded observation yet" and leaves the prompt, so the partition's lessons are only
+        # whole with this file. It is the partition's, not the home's: a global lesson has the same
+        # key in every partition, and one file would let a reversal in one void the rule in the
+        # others. Undeclared, no snapshot carried it, and Doctor read "undeclared databases".
+        partitions=("workspace/_ext/*/learning.db",),
+        # Its stores number their rows, and nothing else in a capture, a pass or a journal entry
+        # names it: merged by number, another home's row was dropped wherever this home had used
+        # its number. Each row has an identity, given when the log is opened.
+        open_database=_open_learning_log,
+    ),
+    StateEntry(
+        id="inbox",
+        kind=KIND_JSON_FILE,
+        path="inbox.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="native inbox items",
+        records=Shape(key="items"),
+        # Where an item is in its triage, and what this machine drafted or decided about it, are
+        # this machine's: two homes compare what came in (`inbox.item_what_it_is`), so reading an
+        # item here and there is never an edit to review. An item carries no grant: acting on one
+        # asks here, as it does for any other.
+        compared=_inbox_compared,
+    ),
+    StateEntry(
+        id="spend",
+        kind=KIND_JSON_FILE,
+        path="spend.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="per-day model spend (drives the budget caps)",
+        machine_local=True,
+        # 🔴 A merge restore took in the days this home had no spend for, and copied the whole
+        # file into a home without one: another machine's dollars counted against this machine's
+        # budget caps. Each machine's spend is its own, in a merge and an import too.
+        merged_in=False,
+    ),
+    StateEntry(
+        # Per-project Trust/Preview decisions keyed by resolved dir. Every record here is a grant
+        # (Trust runs a project's scripts), and a yes is given on the machine where the owner was
+        # shown what runs, so another machine's never arrives by a sync: a sync leaves the file as
+        # it is. A restore brings a missing one back, as it brings any whole store.
+        id="project_trust",
+        kind=KIND_JSON_FILE,
+        path="project_trust.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-project Trust/Preview decisions (Preview → read-only project-script execution)",
+    ),
+    StateEntry(
+        id="model_calls",
+        kind=KIND_JSONL_APPEND,
+        path="model_calls.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="one line per model-call attempt",
+    ),
+    StateEntry(
+        # One bounded line per best-of-N call
+        # ({ts,n,criteria_digest,winner_idx,score_spread,tokens_total} — no prompt or
+        # candidate text). DERIVED, which is what "snapshot-excluded" means here: it is
+        # telemetry-of-self for the learning/eval feed, reconstructible in spirit and
+        # worthless to restore, so it is claimed (audit_home sees it) but never backed up.
+        id="sampling_outcomes",
+        kind=KIND_JSONL_APPEND,
+        path="sampling_outcomes.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="one bounded line per best-of-N sampling call (did sampling help?)",
+    ),
+    StateEntry(
+        # The per-turn cost/token ledger. Derived =
+        # reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not
+        # irreplaceable user content, so export/retention treats it as disposable.
+        id="usage_ledger",
+        kind=KIND_JSONL_APPEND,
+        path="usage",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="per-turn token + cost ledger (usage/turns.jsonl)",
+    ),
+    # Both index stores declare themselves disposable in their own docstrings — session_search
+    # "holds no truth of its own … better rebuilt than restored", codegraph re-parses on mtime — so
+    # they are DERIVED, which keeps them out of `backup_entries()` while still being claimed. Not
+    # declaring them at all was the bug; declaring them as state would ship a 10552-entry cache in
+    # every snapshot.
+    StateEntry(
+        id="session_search_db",
+        kind=KIND_SQLITE,
+        path="session_search.db",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="FTS index over transcripts (rebuilt by reindex_session)",
+    ),
+    # The chat list's record of each transcript's metadata line, so a gateway that has just
+    # started lists without opening every transcript. Derived: each entry counts only while its
+    # transcript is unchanged, and a missing file is rebuilt by the next listing.
+    StateEntry(
+        id="session_listing",
+        kind=KIND_JSON_FILE,
+        path="session_listing.json",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="the chat list's record of each transcript's metadata line (rebuilt on listing)",
+    ),
+    # A DIRECTORY of per-workspace databases (`codegraph/<workspace-key>.db`), not one file — so
+    # `kind` is a tree and the DB check needs the glob below rather than an exact path. Derived: the
+    # index re-parses on mtime, and a real home had 5478 of these.
+    StateEntry(
+        id="codegraph",
+        kind=KIND_TREE,
+        path="codegraph",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        db_container=True,
+        help="per-workspace symbol index (re-parsed on mtime)",
+    ),
+    # 🔴 A live DB inside a `tree` entry — precisely the hazard the undeclared-DB check exists to
+    # catch ("it gets filesystem-copied while open in WAL mode"). `workflows` is declared
+    # `json_entity_dir`, so its run ledger was being tree-copied rather than staged through the safe
+    # backup API. Declaring it routes it to `_safe_copy_db` and excludes it from the tree copy.
+    StateEntry(
+        id="workflow_runs_db",
+        kind=KIND_SQLITE,
+        path="workflows/runs.db",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the workflow run ledger",
+        # 🔴 Synced or merged in, another machine's live run was a row here that the watchdog
+        # adopts within a poll and resumes from its journal (`workflows.watchdog._poll_once`): the
+        # run executed a second time, on this machine's files, with the posture its steps had
+        # there. And the attach-merge never updates a row, so a run the other machine finished
+        # stayed running here. A run's records stay on the machine that ran it.
+        machine_local=True,
+        merged_in=False,
+    ),
+    # Each run's own folder: its spec, state, journal, checkpoints and outputs. Its own entry so it
+    # takes the ledger's rule rather than syncing as files of `workflows/`.
+    StateEntry(
+        id="workflow_runs",
+        kind=KIND_TREE,
+        path="workflows/runs",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="each workflow run's spec, state, journal and outputs",
+        machine_local=True,
+        merged_in=False,
+    ),
+    # A named workspace: a working folder runs share, on this machine. Another machine's files,
+    # merged in, would appear in the folder a run here is working in.
+    StateEntry(
+        id="workflow_workspaces",
+        kind=KIND_TREE,
+        path="workflows/workspaces",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="named workflow workspaces: working folders runs share on this machine",
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="knowledge_root_db",
+        kind=KIND_SQLITE,
+        path="knowledge/knowledge.db",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the home-level knowledge store",
+    ),
+    StateEntry(
+        id="agent_metadata",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="agent-metadata",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="per-agent metadata records",
+        # A runner's health and capabilities as a Check and a handshake MEASURED them on this
+        # machine (`agents.runners`): another machine's CLI is not this one's, and a second opinion
+        # picks the runner it fires by this reading.
+        machine_local_within=("*.runner.json",),
+    ),
+    StateEntry(
+        id="learning_proposals",
+        kind=KIND_TREE,
+        path="learning",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_UNION_BY_ID,
+        help="staged learning proposals awaiting review",
+    ),
+    StateEntry(
+        id="durability_state",
+        kind=KIND_JSON_FILE,
+        path="durability_state.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="the durability scheduler's own last-run state",
+        machine_local=True,
+        # Another machine's marks, copied into a home without its own, read as backups this
+        # machine had just taken, so its first snapshot waited out their interval.
+        merged_in=False,
+    ),
+    StateEntry(
+        id="folders",
+        kind=KIND_JSON_FILE,
+        path="folders.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="folder organization",
+        records=Shape(),
+    ),
+    StateEntry(
+        id="tags",
+        kind=KIND_JSON_FILE,
+        path="tags.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="tag vocabulary",
+        records=Shape(),
+    ),
+    StateEntry(
+        id="tool_usage",
+        kind=KIND_JSON_FILE,
+        path="tool_usage.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="tool usage counters",
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="tokenjuice_savings",
+        kind=KIND_JSON_FILE,
+        path="tokenjuice_savings.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="context-savings ledger",
+        machine_local=True,
+        merged_in=False,
+    ),
+    StateEntry(
+        id="feedback",
+        kind=KIND_JSONL_APPEND,
+        path="feedback.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="thumbs feedback on AI judgments",
+    ),
+    StateEntry(
+        id="notifications",
+        kind=KIND_JSONL_APPEND,
+        path="notifications.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="notification history",
+    ),
+    StateEntry(
+        id="task_due_notices",
+        kind=KIND_JSON_FILE,
+        path="task_due_notices.json",
+        domain=DOMAIN_PLATFORM,
+        # Which notices THIS machine sent: each machine announces on its own, so another
+        # machine's record neither syncs nor merges in. A missing entry costs one repeated
+        # reminder, and entries expire on their own.
+        merge=MERGE_LWW,
+        help="which task due dates have had their notice (tasks/due_notices.py)",
+        machine_local=True,
+        merged_in=False,
+    ),
+    # ── config ──
+    StateEntry(
+        id="config",
+        kind=KIND_JSON_FILE,
+        path="config.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
+        help="the main configuration document",
+    ),
+    StateEntry(
+        id="autonomy_rungs",
+        kind=KIND_JSON_FILE,
+        path="autonomy_rungs.json",
+        domain=DOMAIN_CONFIG,
+        # Every rung here is a grant: an action type that runs without asking. A yes is given on
+        # the machine where the owner was shown what runs, so another machine's never arrives by
+        # a sync, which leaves the file as it is; merged, a grant and a demotion for one action
+        # type were two contradictory decisions, and the one that won could be the grant the
+        # other machine had withdrawn. A restore brings a missing one back, as it brings any
+        # whole store.
+        merge=MERGE_REPLACE_ONLY,
+        help="earned-autonomy rung grants and demotion history",
+    ),
+    StateEntry(
+        id="autonomy_reversals",
+        kind=KIND_JSON_FILE,
+        path="autonomy_reversals.json",
+        domain=DOMAIN_CONFIG,
+        # The undo of an action that ran here without asking, under a rung granted here: another
+        # machine's is for an action that ran there, so a sync leaves the file as it is, with
+        # the grants beside it. Offering an undo for something already undone, or never done
+        # here, is the one wrong answer this store can give.
+        merge=MERGE_REPLACE_ONLY,
+        help="undo handles for actions that ran at the auto-with-undo rung",
+    ),
+    StateEntry(
+        id="active_models",
+        kind=KIND_JSON_FILE,
+        path="active_models.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-use-case model bindings",
+    ),
+    StateEntry(
+        id="active_search_providers",
+        kind=KIND_JSON_FILE,
+        path="active_search_providers.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="search provider bindings",
+    ),
+    StateEntry(
+        id="voice_profiles",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="voice_profiles",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_UNION_BY_ID,
+        help="voice profiles: records, reference audio, locked clips, consent recordings",
+        # A generation-history clip is disposable render output (bounded LRU, re-derived
+        # by simply speaking again) — a backup should not carry it. The reference clip,
+        # the locked clip and the consent recording ARE authoritative user content and
+        # stay covered: losing them loses the voice and its provenance.
+        derived_within=("*/history",),
+    ),
+    StateEntry(
+        id="voice_bindings",
+        kind=KIND_JSON_FILE,
+        path="voice_bindings.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-surface voice profile bindings (channel/agent/client + default)",
+    ),
+    StateEntry(
+        id="active_prompts",
+        kind=KIND_JSON_FILE,
+        path="active_prompts.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="active prompt selections",
+    ),
+    StateEntry(
+        id="tool_prefs",
+        kind=KIND_JSON_FILE,
+        path="tool_prefs.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="disabled tools and providers",
+    ),
+    StateEntry(
+        id="mcp",
+        kind=KIND_JSON_FILE,
+        path="mcp.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
+        help="MCP server configuration",
+    ),
+    StateEntry(
+        id="session_map",
+        kind=KIND_JSON_FILE,
+        path="session_map.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,  # maps to provider-side session ids; machine-local
+        help="provider session id map (machine-local)",
+    ),
+    # Earlier versions of `personalclaw setup` saved the checkout the working directory was in, and
+    # the CLI took it as the install's project dir. Nothing writes or reads it now (the project dir
+    # is the checkout the running package comes from), but homes still carry one, so it stays
+    # claimed: an unclaimed path is a Doctor failure (`audit_home`), and this one is harmless.
+    StateEntry(
+        id="project_dir",
+        kind=KIND_JSON_FILE,
+        path="project_dir",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="a project directory pointer earlier versions saved; nothing reads it now",
+    ),
+    StateEntry(
+        id="workspace_dir",
+        kind=KIND_JSON_FILE,
+        path="workspace_dir",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="the bound workspace directory pointer",
+    ),
+    # ── security (secrets: never exported, never synced) ──
+    StateEntry(
+        id="sel_hmac_key",
+        kind=KIND_TREE,
+        path="sel_hmac.key",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="audit-log HMAC key",
+    ),
+    StateEntry(
+        id="telemetry_salt",
+        kind=KIND_TREE,
+        path="telemetry_salt",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="local hashing salt",
+    ),
+    StateEntry(
+        id="local_secret",
+        kind=KIND_TREE,
+        path=".local_secret",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="gateway session-token secret",
+    ),
+    StateEntry(
+        id="env",
+        kind=KIND_TREE,
+        path=".env",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="provider credentials",
+    ),
+    # The rollback snapshot: the pre-migration `.env`, kept only while the
+    # `credentials_to_keychain` move is still reversible. Claimed here for two reasons —
+    # `audit_home()` fails on any unclaimed path, and `secret=True` is what puts it in
+    # `portability.EXPORT_EXCLUDE` (a projection of this set), so the one file that holds a
+    # second plaintext copy of every credential cannot ride out in an export — and, with
+    # `credential=True`, not in a snapshot either.
+    StateEntry(
+        id="env_pre_keychain",
+        kind=KIND_TREE,
+        path=".env.pre-keychain",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="pre-migration .env snapshot (rollback source for the keychain move)",
+    ),
+    StateEntry(
+        id="credentials",
+        kind=KIND_TREE,
+        path="credentials",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="the credential store",
+    ),
+    # The gateway's OWN auth store: the argon2id login hash (`credentials.py`), the 2FA
+    # enrolment (`enrollment.py`) and device pairing codes (`pairing.py`) all resolve into
+    # `config_dir() / "auth"`. Declared late (#130), and the cost of the omission was not a
+    # missing backup but a FALSE ALARM: `audit_home()` is wired as the `durability.inventory`
+    # Doctor probe, so an undeclared real directory turned the health strip coral
+    # (`worst: "durability"`, `unclaimed: ["auth/"]`) the moment the owner set a password or
+    # paired a device — the ordering hazard of wiring a probe before the manifest is complete.
+    #
+    # `secret=True`, NOT `IGNORED`. The distinction the neighbours already draw: `machine_id`,
+    # `session_key` and `sessions.json` are IGNORED because they are per-install IDENTITY, and
+    # carrying them would let a restored copy masquerade as the machine it came from. This is
+    # the owner's own login store, which travels with the owner — so it is EXCLUDED from
+    # exports (via the `secret` projection) but CAPTURED by snapshots on purpose, because a
+    # restore that silently dropped the login would lock a user out of their own gateway. It
+    # holds a password HASH, not a credential value, so it is not `credential=True` (the TOTP
+    # secret itself lives in `.env`, which is). Declared as the
+    # whole tree rather than per-file: the pair/enrol code files are short-lived and expire on
+    # their own, and claiming only `credentials.json` would leave the directory unclaimed and
+    # the probe coral, which is the bug.
+    StateEntry(
+        id="auth",
+        kind=KIND_TREE,
+        path="auth",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
+    ),
+    # The owner's yes to what runs as them (`owner_grants`): each MCP server's definition, each
+    # agent hook script, each heartbeat task, each callback. Machine-local: a yes is given where
+    # the owner was shown what runs, so what a restore or a sync brings from another machine waits
+    # for a yes here. One book per kind, and each book's lock file, in the one tree.
+    StateEntry(
+        id="owner_grants",
+        kind=KIND_TREE,
+        path="grants",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="what you allowed to run as you: MCP servers, hooks, heartbeat tasks, callbacks",
+    ),
+    # The callbacks an agent registered for an outside system to post results to
+    # (`webhook_callbacks.py`, #3725): each one's id and the context its unattended turn starts
+    # from. The owner's yes to each lives in `grants/` above, so a restore brings the registrations
+    # back registered-and-waiting until that store says otherwise. Replace-only for the same reason
+    # as the grants: one small document, and a callback merged in from another machine without its
+    # grant would only be a registration nobody answered there.
+    StateEntry(
+        id="webhook_callbacks",
+        kind=KIND_JSON_FILE,
+        path="webhook_callbacks.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="callbacks an agent registered so an outside system can hand it results later",
+    ),
+    # 🔴 #2217 — the credential DESCRIPTORS an older release kept (`llm/credentials.py`
+    # `CREDENTIALS_FILE`). Nothing writes it any more: the gateway moves it into the credential
+    # store at boot and deletes it (`move_credentials_file`), and it stays on a home only while
+    # the Doctor lists a value in it that could not be moved. Declared so `audit_home()` claims
+    # it while it exists. A descriptor can hold an inline `value`, and no credential value
+    # travels in an archive (`credential=True`, see the module docstring). `merge` cannot fire
+    # for it either way — shards are built from `export_entries()`, which drops secrets.
+    #
+    # Distinct from the `credentials` TREE two entries up: that is the keychain-backed store,
+    # this is the top-level `credentials.json` descriptor file, and `claim_for` is
+    # longest-prefix over path SEGMENTS, so `credentials` never claimed `credentials.json`.
+    StateEntry(
+        id="provider_credentials",
+        kind=KIND_JSON_FILE,
+        path="credentials.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="an older release's credential descriptors, until they move into the store",
+    ),
+    StateEntry(
+        id="security_events",
+        kind=KIND_JSONL_APPEND,
+        path="security_events.jsonl",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_APPEND_DEDUP,
+        help="the security event log (audit trail)",
+    ),
+    # The log's rotated files (`sel._ARCHIVE_DIR`): the live file rotates here by size and they
+    # stay for the log's retention. Declared so a snapshot carries the whole retained trail, not
+    # only its newest file — the manual rotate's archive sat beside the log unclaimed, and a
+    # settings validation found it missing from snapshots. Each file is immutable once rotated,
+    # so a restore adds the ones that are absent and never overwrites one that is present.
+    StateEntry(
+        id="security_events_archive",
+        kind=KIND_TREE,
+        path="sel_archive",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_UNION_BY_ID,
+        help="rotated security event log files, kept for the log's retention",
+        # The rotation's cross-process lock: state of THIS process tree, not of the trail.
+        derived_within=(".rotate.lock",),
+    ),
+    # The client registry EXPORTS: it holds an integration's
+    # label and bindings, which a user restoring a home expects back, and losing it
+    # silently means every external client stops working after a restore with no
+    # indication why. It carries token HASHES only, so it is not `secret=True` —
+    # the tokens themselves live in the credential store, which is already excluded.
+    # A client here is a grant: its token's hash lets whoever holds the token in, to what its
+    # bindings reach. A grant is given on the machine where the owner was shown it, so another
+    # machine's client never arrives by a sync, which leaves the file as it is; synced, the token
+    # an owner gave one machine's integration would open this one too. Nor by a merge restore or
+    # an import (`merged_in=False`): an archive is a file anyone can hand the dashboard, and its
+    # client registry would be a working credential planted by whoever chose the token behind
+    # the hash. A replace restore, run with the gateway stopped, still brings the whole home back.
+    StateEntry(
+        id="inbound_clients",
+        kind=KIND_JSON_FILE,
+        path="inbound_clients.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        merged_in=False,
+        help="inbound access clients: labels, bindings and token hashes (never tokens)",
+    ),
+    # How long each integration token works, keyed by the token's SHA-256 —
+    # never the token. EXPORTS beside the client registry it describes, for the same
+    # reason: a home restored without it records every configured token as new, and gives
+    # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything. Left as it
+    # is by a sync, a merge restore and an import, with the clients it describes.
+    StateEntry(
+        id="inbound_tokens",
+        kind=KIND_JSON_FILE,
+        path="inbound_tokens.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        merged_in=False,
+        help="when each integration token was issued and stops working, by hash (never tokens)",
+    ),
+    # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports while still being
+    # CLAIMED — an undeclared file under
+    # the home fails `audit_home()`, so leaving it out entirely would report the
+    # request trail as unmanaged drift the first time anyone calls an inbound surface.
+    # It is a local request trace, trimmed at 2× cap, and its security-relevant lines
+    # are mirrored into `security_events.jsonl`, which DOES export.
+    StateEntry(
+        id="inbound_audit",
+        kind=KIND_JSONL_APPEND,
+        path="inbound_audit.jsonl",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="per-request inbound trace (local; security events also go to the SEL)",
+    ),
+    # ── #2217: the stores the static census pinned as debt, each decided at its own
+    # call site. Fifteen of the twenty-one were determinate — the write shape names the
+    # `kind`, and an already-declared store with the SAME shape names the `merge`, so
+    # none of these is a guess. The ones left pinned then — the two kill switches, the two
+    # push stores and the digest queue — are decided in the block that closes this manifest.
+    StateEntry(
+        id="app_messages",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="app_messages",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="app-to-app broker queues, one JSON per target app",
+    ),
+    StateEntry(
+        id="chat_plans",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="chat_plans",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="plan-mode walkthrough sessions, one JSON per chat",
+    ),
+    # A nested `{"rows": {topic_key: {...}}}` document, NOT a list of id-keyed rows, so
+    # `replace_only` rather than `lww_by_updated_at`: the per-row `updated_at` inside
+    # `rows` is not the row identity the merge engine keys on, and pointing an id-keyed
+    # merge at this shape is exactly the mis-declaration #2217 warns about. It is also
+    # not derived — the raw signals are never stored, only this decayed fold, so the
+    # file IS the authority and a lost copy cannot be rebuilt.
+    StateEntry(
+        id="engagement",
+        kind=KIND_JSON_FILE,
+        path="engagement.json",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-topic engagement weights with half-life decay",
+    ),
+    # A DIRECTORY of `<channel_id>.jsonl` append streams — the same shape as
+    # `cron-history` above, which is why the kind is `jsonl_append` on a directory path
+    # rather than a tree.
+    StateEntry(
+        id="channel_history",
+        kind=KIND_JSONL_APPEND,
+        path="history",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="observe-mode channel message buffers, one JSONL per channel",
+    ),
+    # `inbox/incoming/*.json` is core's drop seam for a local producer (a mail fetcher,
+    # a channel bridge). `incoming/processed/` is where the provider MOVES a file it has
+    # already ingested, so it is spent-fuel rather than state: declared `derived_within`
+    # so the drop directory is backed up without the archive growing every file the
+    # provider ever read. Distinct from the `inbox` ENTRY above, which is `inbox.json`.
+    StateEntry(
+        id="inbox_dropbox",
+        kind=KIND_TREE,
+        path="inbox",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived_within=("incoming/processed",),
+        help="filesystem inbox source: JSON files dropped in inbox/incoming/",
+    ),
+    # One dict of polling cursors plus the user's dismissed/muted sets — a document, not
+    # id-keyed rows, so `replace_only` for the same reason as `engagement.json`. The
+    # dismissed/muted sets are real user decisions, which is why this is declared at all
+    # rather than treated as a cursor cache.
+    StateEntry(
+        id="inbox_state",
+        kind=KIND_JSON_FILE,
+        path="inbox_state.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="inbox polling cursors plus dismissed/muted items",
+    ),
+    StateEntry(
+        id="onboarding",
+        kind=KIND_TREE,
+        path="onboarding",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="onboarding import ledger and staged documents",
+    ),
+    # 🔴 NOT `IGNORED` as export output, which is what `packs/*.pclaw` looks like at a
+    # glance and would have been the wrong call: this directory also holds the INSTALLED
+    # PACKS LEDGER (`packs/installed.json`) and the fingerprint rejections
+    # (`packs/fingerprint_rejections.json`), both authoritative — "which packs are
+    # installed" cannot be rebuilt from anything else. So the store is declared and only
+    # the genuinely rebuildable parts are `derived_within`: the built `.pclaw` archives
+    # (re-exportable from the live stores), the `.installing/` scratch dir, and
+    # `staged/` (re-stageable from the source pack).
+    StateEntry(
+        id="packs",
+        kind=KIND_TREE,
+        path="packs",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived_within=("*.pclaw", ".installing", "staged"),
+        help="installed-pack ledger, fingerprint rejections, and built pack archives",
+    ),
+    # A bare JSON LIST of absolute project paths — no ids, so no id-keyed merge can
+    # apply. `config` + `replace_only` follows `project_dir`/`workspace_dir`, the two
+    # other entries that record this machine's filesystem layout.
+    StateEntry(
+        id="recent_projects",
+        kind=KIND_JSON_FILE,
+        path="recent_projects.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="most-recently-opened project directories (capped at 10)",
+    ),
+    # A bare list of `ReportDefinition` rows each carrying `id`: a sync, a restore's merge and an
+    # import take them in one at a time, by id.
+    StateEntry(
+        id="research_reports",
+        kind=KIND_JSON_FILE,
+        path="research_reports.json",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="standing research report definitions, cadences and watermarks",
+        records=Shape(),
+        # A report runs unattended on its cadence, spending a model call each time, so one from
+        # another machine arrives as an automation does: switched off, without what happened to
+        # it there (its runs, their errors, how far they read).
+        arrives=_report_arrives,
+        compared=_report_compared,
+        arrival=(
+            "A report from another machine arrives switched off, without what happened to it "
+            "there."
+        ),
+        edit_arrival=(
+            "The report stays switched on or off as it is here, with what happened to it here."
+        ),
+    ),
+    StateEntry(
+        id="runners",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="runners",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
+        help="bring-your-own agent runner definitions, one JSON per runner id",
+        # A definition names the CLI PersonalClaw runs, so it runs only once this home's owner
+        # allowed what it runs, sealed to it (`agents.runner_grants`, machine-local): one from
+        # another machine, and another machine's edit to one, waits for the owner here.
+        arrival=(
+            "The runner's CLI runs here only after you allow what it runs: Allow, on the runner in "
+            "Settings → Agent defaults."
+        ),
+        edit_arrival=(
+            "If the other machine's version changes what the runner runs, its CLI runs here only "
+            "after you allow the new definition: Allow, on the runner in Settings → Agent "
+            "defaults."
+        ),
+    ),
+    # The LEGACY MCP store (`settings/mcp.json`). `mcp.json` became canonical; every
+    # release since folded this file in at start and emptied it, so on a home that has run
+    # one it is a husk, and nothing reads it now (a server still in it is named by the
+    # Doctor, `tools.legacy_mcp_settings`). Declared rather than ignored because a husk costs
+    # nothing and a file that still holds servers holds the only copy of them.
+    StateEntry(
+        id="legacy_mcp_settings",
+        kind=KIND_TREE,
+        path="settings",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="legacy settings/mcp.json (no longer read; the Doctor names a server left in it)",
+    ),
+    StateEntry(
+        id="sources",
+        kind=KIND_TREE,
+        path="sources",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="watched sources: saved queries, digest cursor and the event stream",
+    ),
+    StateEntry(
+        id="surfaces",
+        kind=KIND_TREE,
+        path="surfaces",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="user-authored surface overlay files",
+    ),
+    # ── the stores a week of normal use found in NO snapshot ──
+    # After a power user's week `audit_home()` named the rotated audit log, `incident.json`,
+    # `routing_stats.json`, `trigger-idle/` and `capture/` as unclaimed — and the census that
+    # was meant to catch a new store before it shipped could not see four of them: each was
+    # spelled a way its regexes did not know (`Path(config_dir()) / …`, a home on the fallback
+    # branch of `x if base_dir else config_dir()`, a home passed as a parameter into another
+    # module, a directory the SEL resolves itself). The census now reads the syntax tree and
+    # found these; every one is decided here, beside its reason, and none is left pinned. (The
+    # fifth, the audit log's rotated files, is `security_events_archive` above.)
+    #
+    # The incident switch and the browse switch: `{active, reason,
+    # started_at}`, set by a human to stop unattended work. Captured, because the other answer
+    # is the destructive one: a restore that dropped `active: true` would silently resume every
+    # cron, hook and trigger a human had deliberately stopped. A restored stop is visible — the
+    # incident banner on every page, the browse mirror's stop state — with its release one click
+    # away, which is the fail-closed direction this codebase takes for every safety control.
+    # `replace_only`: the sync cycle skips it, so stopping one machine never stops another.
+    StateEntry(
+        id="incident",
+        kind=KIND_JSON_FILE,
+        path="incident.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="incident mode: a human-set stop on all unattended work",
+    ),
+    StateEntry(
+        id="browse_kill",
+        kind=KIND_JSON_FILE,
+        path="browse_kill.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="the browse kill switch: a human-set stop on unattended browsing",
+    ),
+    # The operator's trust root: the governance ceiling (`guardrails/ceiling.py`) and the
+    # computer-use keystone (`computer_use/enable_state.py`). An operator writes these by hand
+    # and the agent cannot. A restore that lost `ceiling.json` would be a silent privilege
+    # escalation — an absent ceiling reads as OPEN_CEILING, so every unattended action would
+    # run wider than the operator declared — which is the one outcome the ceiling's own loader
+    # refuses to fall back to for an unreadable file.
+    StateEntry(
+        id="governance",
+        kind=KIND_TREE,
+        path="governance",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="the operator's governance ceiling and computer-use keystone",
+    ),
+    # The fold behind Settings → Routing & Efficiency and the learned policy's sample counts.
+    # NOT derived, although `personalclaw doctor --rebuild-routing-stats` refolds it: the
+    # rebuild reads `model_calls.jsonl`, which is capped and rotated, so it recovers the
+    # retained tail and not the history — and nothing refolds on read, so a restore without it
+    # left the view blank and the learned policy below its sample floor.
+    StateEntry(
+        id="routing_stats",
+        kind=KIND_JSON_FILE,
+        path="routing_stats.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-route call outcomes behind routing telemetry and the learned policy",
+    ),
+    # The three routing decisions the user makes by hand: the policy
+    # table (mode, pin, order — `CORE_FILES["config"]` already staged it, and nothing claimed
+    # it), the proposal queue with its rejection ledger (a rejection is what stops the same
+    # finding re-nagging), and the price overlay a user writes when a rate drifts.
+    StateEntry(
+        id="routing_policy",
+        kind=KIND_JSON_FILE,
+        path="routing_policy.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-use-case routing mode, pin and manual order",
+    ),
+    StateEntry(
+        id="routing_proposals",
+        kind=KIND_JSON_FILE,
+        path="routing_proposals.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="pending routing proposals and the ones you rejected",
+    ),
+    # The capture sessions: external coding agents' turns, screened for
+    # credentials and fenced AT INGESTION (`inbound/capture_store.py`), which the learning
+    # passes mine. User state in the same sense as `sessions`, and exported like it: the bytes
+    # on disk carry no credential by construction.
+    StateEntry(
+        id="capture_sessions",
+        kind=KIND_TREE,
+        path="capture",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="captured sessions from your external coding agents (credentials redacted)",
+    ),
+    # The idle trigger's sidecar (`triggers/idle_poll.py`): `cycle_count` is what enforces a
+    # trigger's `max_cycles`, and the legacy `autonudge.json` loops were migrated INTO these
+    # files — so a restore without them resets every bounded nudge loop to a fresh budget.
+    # `replace_only`: counters of runs on THIS machine, which the sync cycle must not merge.
+    # Its three sibling sidecars are in IGNORED, for a reason that does not hold here.
+    StateEntry(
+        id="trigger_idle",
+        kind=KIND_TREE,
+        path="trigger-idle",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="idle-trigger cycle counts (what enforces max_cycles)",
+    ),
+    # User-authored agent overrides beside the bundled agent (`agent.py`): the system-prompt
+    # override, the `agent.json` field overrides, and the hook scripts directory.
+    StateEntry(
+        id="agent_prompt_override",
+        kind=KIND_TREE,
+        path="prompt.md",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="your override of the agent's system prompt",
+    ),
+    StateEntry(
+        id="agent_overrides",
+        kind=KIND_JSON_FILE,
+        path="agent.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
+        help="your overrides of the agent's settings",
+    ),
+    StateEntry(
+        id="agent_hooks",
+        kind=KIND_TREE,
+        path="hooks",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="your agent hook scripts",
+    ),
+    # The knowledge projection, the direct twin of `memory_vault`: NOT derived for the same
+    # reason — in `two_way` mode a page may hold an edit the owner made and the sync has not
+    # read back, which exists nowhere else. The path is the DEFAULT `knowledge.vault_path`.
+    StateEntry(
+        id="knowledge_vault",
+        kind=KIND_TREE,
+        path="knowledge-vault",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_REPLACE_ONLY,
+        help="readable markdown vault of your knowledge (may hold unsynced edits)",
+    ),
+    # Notifications a rule routes to the morning digest are written HERE and nowhere else
+    # (`DashboardState.notify` returns before the history append), so until the digest runs this
+    # file is the only copy of them. `replace_only` is the answer to the question the census
+    # pin left open — whether a restore should resume a drained queue: never by union. The
+    # drain is read-then-truncate, so an `append_dedup` merge would re-queue notes the live
+    # home already digested; `replace_only` restores the queue into a home that has none and
+    # leaves an existing one alone.
+    StateEntry(
+        id="digest_queue",
+        kind=KIND_JSONL_APPEND,
+        path="digest_queue.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="notifications waiting for the next digest",
+    ),
+    # Which Morning triage digest each chat channel's DM last received
+    # (`proactive.channel_reply`), so a reply typed there answers that digest's run and no other.
+    # It names this machine's workflow runs, so it has their posture: one machine's account of
+    # what it sent, never synced or merged in, and brought back whole by a replace restore with
+    # the runs it names. Lost, a reply there reaches the chat as any message does.
+    StateEntry(
+        id="digest_channels",
+        kind=KIND_JSON_FILE,
+        path="digest_channels.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="the Morning triage digest each chat channel's DM last received",
+        machine_local=True,
+        merged_in=False,
+    ),
+    # The deliveries this machine's doors already took (`personalclaw.received`): each channel
+    # message and named webhook delivery, as a digest of its identity and when it arrived, so a
+    # delivery made again, after a restart too, runs nothing. One machine's account of what its
+    # own receivers took in: another machine's, merged in, would refuse messages this machine never
+    # saw, so it is never synced or merged in, and a replace restore brings it back whole. Lost, a
+    # delivery made again in the next week runs again.
+    StateEntry(
+        id="received",
+        kind=KIND_JSONL_APPEND,
+        path="received.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="the channel messages and webhook deliveries already received, kept a week",
+        machine_local=True,
+        merged_in=False,
+    ),
+    # Kanban columns over tags (`DashboardState.save_tag_boards`): a bare list of `id` rows,
+    # the same shape as its `tags.json` neighbour, so the same merge, one record at a time.
+    StateEntry(
+        id="tag_boards",
+        kind=KIND_JSON_FILE,
+        path="tag_boards.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="tag board columns",
+        records=Shape(),
+    ),
+    # Per-project dismissals of surfaced packs: a dismissal is a decision, and losing it
+    # re-proposes everything the user already said no to.
+    StateEntry(
+        id="surfacing_dismissals",
+        kind=KIND_TREE,
+        path="surfacing",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="packs you dismissed, per project",
+    ),
+    # The scratchpad scan's per-line decisions, keyed by content hash. Without them a restored
+    # home re-surfaces every line the scan already turned into a task or dismissed.
+    StateEntry(
+        id="planning_scratchpad_seen",
+        kind=KIND_TREE,
+        path="planning",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        help="what the scratchpad scan has already decided, per line",
+    ),
+    # The connector catalog is seeded from a bundled set and then extended by the user, and an
+    # existing file is never re-seeded — so the extensions exist only here.
+    StateEntry(
+        id="connector_catalog",
+        kind=KIND_JSON_FILE,
+        path="connector_catalog.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
+        help="the connector catalog packs resolve against, with your additions",
+    ),
+    # The monthly usage recap's idempotency mark, the same kind of bookkeeping as
+    # `durability_state.json`: without it a restore in the first week of a month sends the
+    # recap again.
+    StateEntry(
+        id="usage_recap_sent",
+        kind=KIND_JSON_FILE,
+        path="usage_recap_sent.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="which monthly usage recaps were already sent",
+    ),
+    # The pre-vector-memory lessons file, read once by `migrate_from_markdown` and never
+    # deleted. Declared for the window `legacy_mcp_settings` names: a home that has not run the
+    # migration holds its lessons ONLY here, and the backup the release notes ask for must not
+    # drop them.
+    StateEntry(
+        id="legacy_lessons",
+        kind=KIND_JSONL_APPEND,
+        path="lessons.jsonl",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="legacy lessons file (migrated into memory on first run)",
+    ),
+    # Deliberately EXCLUDED, like `credentials.json`: a web-push subscription (its endpoint plus
+    # the `auth` secret) and a relay device token are each a capability to deliver to one
+    # device, and a snapshot is a file that gets copied off the machine. They are also bound to
+    # the VAPID keypair in the credential store, which no snapshot carries, so a restored copy
+    # on a wiped machine could not send anyway. The device re-subscribes when it next connects.
+    StateEntry(
+        id="push_subscriptions",
+        kind=KIND_JSON_FILE,
+        path="push_subscriptions.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="web-push subscriptions for your devices (re-created when a device reconnects)",
+    ),
+    StateEntry(
+        id="push_relay_tokens",
+        kind=KIND_JSON_FILE,
+        path="push_relay_tokens.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="native push relay device tokens (re-registered when a device reconnects)",
+    ),
+)
+
+
+# Paths under the home that are deliberately NOT state: run-time scratch, logs,
+# lock files, caches, and the backup output itself. Anything here is skipped by
+# the claims-everything audit; anything NOT here and not claimed FAILS it, which
+# is how a newly added store gets caught instead of silently dodging backup.
+IGNORED: tuple[str, ...] = (
+    "snapshots",  # backup output — never backed up recursively
+    "outbox",  # sync staging
+    # The sync root: the pull cursor's per-peer high-water marks, the outbox's delivery
+    # obligations, and the conflict review queue — all MACHINE-LOCAL. Carrying them
+    # into a snapshot would make a restored copy claim another machine's cursor position, and a
+    # conflict is *this* machine's unresolved decision (both versions durably persist in the
+    # shared store, so the queue is bookkeeping, not the only copy of anything).
+    # Declaring it instead would export the queue into the very shards a pull rewrites
+    # mid-cycle — a self-referential synced store.
+    "sync",
+    "shards",  # shard export output
+    # Time-travel's git repositories. IGNORED, not declared: this history is
+    # LOCAL-ONLY by design — one writer per mechanism, and the shard/sync layer is
+    # the cross-machine story. Declaring it would put a git object database into
+    # every export and every transport, and restoring it onto a second machine
+    # would graft one machine's undo history onto another's live tree.
+    "state-history",
+    "locks",  # runtime lock files
+    "__pycache__",
+    "*.log",
+    "*.log.*",
+    "*.pid",
+    "*.lock",
+    "*.bak",
+    "*-wal",  # sqlite sidecars: checkpointed, never copied standalone
+    "*-shm",
+    "*.tmp",
+    ".DS_Store",
+    "session_pids.txt",
+    "session_pids.lock",
+    "agent_pids.txt",
+    "doctor",  # remediation run ledger (regenerated)
+    ".git",
+    # 🔴 MACHINE-LOCAL, and deliberately ignored rather than declared. A snapshot is
+    # portable: it is restored onto another machine, or the same one after a wipe, and each of these
+    # identifies or authenticates THIS install. Carrying them would either re-plant a credential
+    # (`session_key`, `sessions.json` hold live auth material) or make two installs claim one
+    # identity (`machine_id` is what `durability/shards.py` stamps shards with, so a restored copy
+    # would masquerade as the machine it came from). Ignored, not `secret=True`: they must not
+    # travel
+    # at all, whereas a secret entry is captured on purpose so a backup can restore the credential
+    # store.
+    "session_key",
+    "sessions.json",
+    "machine_id",
+    # The id this home's namespace in the OS keychain is named from
+    # (`config.credentials.keychain_service`). MACHINE-LOCAL identity for the same reason as
+    # `machine_id`: it names which of this machine's keychain items are this home's, so a copy
+    # planted by a restore or an import would make two homes one namespace, each reading,
+    # overwriting and deleting the other's secrets. A home restored or made from an archive names
+    # its own on its first keychain write.
+    "keychain_namespace",
+    # 🔴 The per-site browser profiles (`browse/profiles/<site_slug>/`). IGNORED for the
+    # SAME reason as `session_key`/`sessions.json` directly above, and deliberately NOT a
+    # `secret=True` entry, because those two postures differ in exactly the way that matters here:
+    # a secret entry is EXCLUDED from exports but CAPTURED by snapshots on purpose, so a backup can
+    # restore the credential store. A Chrome `user-data-dir` holds the cookies that ARE the
+    # authentication, and a snapshot is restored onto another machine — or handed to someone
+    # debugging — so capturing one plants a live logged-in session on a host the user never signed
+    # in from. The rule is explicit: "never backed up by snapshot/portability
+    # (credentials), never exported". That is this list, not the secret set. The profiles are also
+    # unbounded in size and trivially re-creatable by signing in again, so nothing is lost.
+    "browse",
+    # The installed apps' Python packages (`apps/app_python.py`): a pip `--prefix` rebuilt from
+    # the apps' own manifests. IGNORED, not declared, because it is a function of two things a
+    # restore does not carry over — the manifests (restored with `apps/`) and the INTERPRETER
+    # (its layout is keyed by the Python version, and its wheels are built for one platform). A
+    # restored copy would be at best redundant and at worst extension modules compiled for
+    # another machine's Python; the boot-time repair (`app_manager.repair_app_packages`)
+    # reinstalls from the manifests instead. It is also unbounded in size (PyTorch alone is ~1
+    # GB), and a dependency may ship a `.db` file that is data, not a store this gateway holds
+    # open — which the undeclared-database audit would otherwise report.
+    "app-python",
+    # What the installers PersonalClaw runs keep (`_installer.installer_cache_env`): npm's cache,
+    # which npm cannot run without, and the temp folder pip, uv and npm run with. Kept in the home
+    # so none of it lands in the user's own `~/.npm` or temp folder, and ignored because it is a
+    # cache: a missing one is refilled on the next run, and restoring one is pointless. A specific
+    # name, not `cache`, because an ignored name is ignored at every depth and would hide a
+    # database in any folder called `cache`.
+    "installer-cache",
+    # The home's own tmux server socket (`tmux_substrate.server_flags`), which the home's
+    # persistent terminals and durable workers run in. MACHINE-LOCAL and process-scoped: a
+    # snapshot cannot carry a socket, and a restored home starts its own server on first use.
+    "tmux.sock",
+    # The home's claim (`gateway_base.LOCK_FILE`): the lock its gateway holds for as long as it
+    # runs, so no second gateway starts on the home. MACHINE-LOCAL and process-scoped: what a
+    # lock means is the process holding it, which no copy carries, so a restored copy means
+    # nothing. An empty file, never moved or deleted while a gateway may hold it.
+    "gateway.lock",
+    # The cache an earlier release's update check kept of GitHub's "Latest" release. Nothing
+    # writes or reads it now (the check resolves over the releases list below), but a home that
+    # ran such a release still holds one, and it carries nothing a restore needs.
+    "update_check.json",
+    # The releases-LIST cache: the ETag-cached, offline-tolerant releases view the update check
+    # and every apply resolve against, refetched on the next poll. Ignored because it carries no
+    # unique truth, so a restored stale release list is worse than the empty one the next check
+    # refills.
+    "update_releases.json",
+    # The run-state file (`self_update._RUN_STATE_FILENAME`): the version this install
+    # was running the last time a gateway started. MACHINE-LOCAL, and the one update file
+    # here whose restored copy would be actively WRONG rather than merely stale. It is the
+    # input `record_running_version` compares the running version against to derive
+    # `updates.last_version`, so a snapshot taken on 0.2.0 and restored onto a 0.1.3 install
+    # would make the next startup record `last_version = 0.2.0` and the Updates panel offer
+    # "Roll back to v0.2.0" — an UPGRADE, i.e. the exact mis-offer rollback must avoid.
+    # Omitted, `record_running_version` writes nothing on that first run and makes no offer
+    # until it observes a real version change, which is the honest answer.
+    "update_run.json",
+    # 🔴 #2906 — the per-day usage/spend fold (`routing/usage.py`). Ignored, not
+    # declared, for the SAME reason as the two update caches directly above: it is a DERIVED
+    # fold carrying no unique truth. `routing.usage.refresh` refolds it from scratch out of
+    # sources that ARE declared — `usage/turns.jsonl` (`usage_ledger`), `model_calls.jsonl`
+    # (`model_calls`) and `spend.json` (`spend`) — and `GET /api/usage` calls that on read, so
+    # a deleted `usage_stats.json` self-heals (`handlers/usage.py`). It is written at first boot,
+    # so leaving it neither claimed nor ignored made `audit_home()` report "1 unclaimed path" and
+    # turned the doctor/health strip coral on every fresh install. A snapshot restoring a stale
+    # copy is worse than the empty one the next read refolds.
+    "usage_stats.json",
+    # The tool-description vectors tool retrieval ranks with (`agents.native.tool_vectors`). A
+    # cache: every vector is recomputed from the tool catalog the gateway loads, a missing file is
+    # refilled in the background, and a restored one would be another machine's catalog embedded
+    # with what may be another model. It is kept across restarts so a restart embeds nothing that
+    # has not changed.
+    "tool_embeddings.json",
+    "fixture.yaml",  # test-fixture marker written by `--seed`
+    # The rendered run-prompt (`LOOP_MD_NAME`). Not state: it is re-rendered from the loop's own
+    # declared inputs on every run, so a restored copy would only ever be a stale duplicate of
+    # something the next run overwrites. Recorded HERE, where every other "deliberately not
+    # state" decision lives, rather than only in the census's own exception list — that list
+    # held a second copy of eight of these rows, and a decision kept in two places is a decision
+    # that can disagree with itself. `audit_home()` reads IGNORED and could not see it at all
+    # while it lived only in the test (#2217).
+    "loop.md",
+    # 🔴 #2539 — the socket this gateway bound, plus the pid that bound it
+    # (`gateway_base.RUNTIME_FILE`). MACHINE-LOCAL and process-lifetime-scoped: it is written
+    # after bind, removed on shutdown, and it is the record every child resolves its API base
+    # from. Carrying it into a snapshot is the precise shape of the bug it exists to fix — a
+    # restored home would hand its children a port another instance bound, which is how a tool
+    # call reaches a stranger's gateway. Ignored rather than declared for the same reason as
+    # `machine_id`: it must not travel at all, and it is regenerated on the next bind.
+    "gateway.runtime.json",
+    # 🔴 #2217 — the control bridge's discovery file (`inbound.bridge.DISCOVERY_FILENAME`).
+    # The DIRECT twin of `gateway.runtime.json` directly above, and ignored on the identical
+    # argument: it records the OS-assigned ephemeral port this process bound plus the actions
+    # digest, `remove_discovery()` deletes it on shutdown, and `_write_discovery` rewrites it
+    # on the next boot. Restoring it would point an external agent at a port nothing is
+    # listening on — its own comment already says "a stale file pointing at a dead port is
+    # worse than none", which is the whole decision.
+    "control_bridge.json",
+    # 🔴 #2217 — knowledge's maintenance cadence bookkeeping (`knowledge/maintenance.py`):
+    # when each pass last ran, so the tick knows what is stale. Ignored on the same argument
+    # as `doctor` above — regenerated run bookkeeping carrying no unique truth. The worst a
+    # missing copy costs is one maintenance pass running sooner than it needed to; a RESTORED
+    # stale copy is worse, because it claims passes ran that this home never ran.
+    "graph_maintenance.json",
+    # When knowledge consolidation's unattended dry run last ran
+    # (`action_providers/knowledge_maintain_provider.py`), so the maintenance tick does not
+    # re-plan the whole library on every write. Ignored on the same argument as
+    # `graph_maintenance.json` directly above: run bookkeeping with no unique truth. A missing
+    # copy costs one extra plan on the next tick (its reader treats a missing stamp as never
+    # run); a restored copy claims a dry run this home never ran and holds the tick back.
+    "knowledge_consolidation.json",
+    # 🔴 #2217 — `session_pid_<pid>.txt`, written per ACP agent PID so an MCP tool can hand
+    # the spawn API its session key (`dashboard/chat_runner.py`, globbed by `mcp_core.py`).
+    # Process-lifetime and pid-keyed, exactly like `session_pids.txt` and `agent_pids.txt`
+    # above, and a restored file names a pid that belongs to some other process on the target
+    # machine. Found by the census only AFTER it learned to read an f-string path: spelled
+    # `config_dir() / f"session_pid_{pid}.txt"`, it had been counted as the unresolved
+    # identifier `f` and therefore never checked, so `audit_home()` reported one unclaimed
+    # path per ACP agent on every real home that had run a chat — the live Doctor probe going
+    # coral for a file nobody had decided about.
+    #
+    # The glob is `session_pid_*` and not `session_pid_*.txt` on purpose: it has to match both
+    # the real on-disk name (`session_pid_4711.txt`) AND the static prefix the census resolves
+    # an f-string path to (`session_pid_`). A `.txt` suffix would cover the first and silently
+    # miss the second, which is the shape of gap this row exists to close.
+    "session_pid_*",
+    # 🔴 #2217 — the autonudge stop sentinel (`dashboard/handlers/autonudge.py`). Normally it
+    # lands in the session's own working directory, but when there is no cwd and no workspace
+    # root it falls back to `config_dir()`, so a home CAN accumulate `.stop-<session>` markers.
+    # A sentinel whose whole meaning is "a stop was requested for this running loop" is
+    # lifetime-scoped scratch in the same family as `locks` and `*.lock` above, and a restored
+    # one would ask a fresh machine to stop a loop that does not exist on it. The SECOND
+    # location the census surfaced only after it learned to follow a home bound to a local name
+    # (`base = config_dir()` … `base / f".stop-{key}"`) — it had been invisible to every
+    # spelling the scan knew.
+    ".stop-*",
+    # 🔴 #3473 — the per-store disk-footprint series (`durability/footprint.py`). It is a
+    # MEASUREMENT of this machine's filesystem, not user state: `measure()` re-reads bytes-on-disk
+    # for every declared store off this same manifest, and the maintenance tick records a fresh
+    # sample on its own cadence. The only content a restore could not reproduce is the TREND, and
+    # that is exactly what must not travel — a snapshot is restored onto another machine or the same
+    # one after a wipe, where those byte counts describe a filesystem that no longer exists, so
+    # `growth()` would read the ends of a window straddling the restore and report a rate that never
+    # happened. The module's own rule is that a single sample "deliberately reports NO rate rather
+    # than a fabricated zero"; a foreign series fabricates something worse than a zero, because it
+    # looks like real history. Ignored rather than `derived=True` on an entry for the same reason as
+    # `usage_stats.json` above: a derived entry is still CLAIMED, and there is nothing here worth
+    # claiming — the next tick writes the only sample that is true of this machine.
+    "footprint.json",
+    # 🔴 #3473 — the trigger claim store (`triggers/claims.py`). Pure RUNTIME COORDINATION, and the
+    # one row in this list where restoring the path would be actively harmful rather than merely
+    # stale. A claim answers "which trigger is running RIGHT NOW" and names `owner_pid`, the process
+    # that granted it and is doing the work. Restored onto any machine, every pid in it is dead or
+    # belongs to an unrelated process — and because expiry is read-time, not swept, the claim reads
+    # as LIVE until `max_duration_secs` elapses. For that window `overlap: skip` suppresses fires
+    # that should happen and `is_running` asserts a run that does not exist, which is precisely the
+    # single-flight failure `claims.py` was written to fix, reintroduced by a backup. `reaper
+    # .terminalize_orphans` consumes `orphaned_ids` at boot to clear exactly these, so a restore
+    # that re-plants them manufactures work for the reaper in the best case. Nothing is lost:
+    # high-churn sidecar state whose whole meaning is "a process on THIS machine holds this
+    # trigger", the same posture as `locks` and `*.lock` above.
+    "trigger-claims",
+    # The regenerate retake records (`artifacts/retakes.py`): which images the answer being
+    # regenerated RIGHT NOW made, so the replayed turn saves its image as their next version. One
+    # turn's scratch, closed when the turn ends and named for the gateway process that opened it;
+    # restored anywhere it names a dead process and is discarded unread. Nothing is lost.
+    "retakes",
+    # The task lease sidecars (`workflows/pool.py`): the claim-store argument above, for tasks.
+    # A lease names the worker renewing it once a minute, and a restored one would show a task as
+    # claimed by a worker that does not exist until it expired. The module's own contract is that
+    # a sidecar "can be deleted to force-release without touching user data".
+    "task_leases",
+    # The trigger dispatch spool and its retry hold (`triggers/dispatch.py`): fires parked for
+    # seconds until a loop drains them. `dispatch.py` already recorded this decision in prose —
+    # "high-churn runtime bookkeeping that is meaningless once restored" — and a restored spool
+    # would re-deliver fires the pre-restore home already delivered. The row makes the audit
+    # honour the decision the code made.
+    "trigger-spool.jsonl",
+    "trigger-spool-hold.json",
+    # The restart review (`triggers/review.py`): the runs THIS home missed or had interrupted,
+    # waiting for a decision. Restored anywhere else it would offer to run, late, slots the
+    # pre-restore home already decided about — the storm the "review, don't auto-run" exists to
+    # prevent, arriving by backup. Nothing is lost: the history rows record what happened.
+    "trigger-review.json",
+    # A trigger's open question (`triggers/parks.py`): its action stopped for a person on THIS
+    # machine — browse at a sign-in page, in a browser profile `browse` above keeps out of every
+    # snapshot. Restored elsewhere, its Approve would run the action against a profile that was not
+    # carried, which stops at the same page and asks again. Nothing is lost without it: the history
+    # row says the run waited, and the trigger's next run that stops asks afresh.
+    "trigger_parks",
+    # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
+    # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
+    # look records what it sees and fires nothing, a view binding refreshes on its next render —
+    # so a restore without them costs nothing, while a restored stale file or web cursor re-fires
+    # every change the pre-restore home already acted on. That is what separates them from
+    # `trigger-idle/`, which IS declared: its `cycle_count` enforces a `max_cycles` budget, and a
+    # re-seed there would hand every bounded loop a fresh one.
+    "trigger-watch",
+    "trigger-web-watch",
+    "trigger-view",
+    # A legacy automation file is renamed `<name>.imported-<date>` once its rows are in
+    # `triggers.json` (`triggers/legacy_import.py`: `crons.json`, `event_triggers.json`,
+    # `autonudge.json`); `<name>.migrated` is the name an earlier build gave the same copy. What
+    # remains is a pre-import copy of state that now lives elsewhere — the same category as `*.bak`.
+    "*.imported-*",
+    "*.migrated",
+    # A memory database SQLite reported damaged, moved aside whole so a new one could start in its
+    # place (`memory.MemoryStore`): `memory_index.db.broken-<UTC instant>` beside where it was, and
+    # the files SQLite kept beside it. Never deleted, and never opened or written to again by
+    # PersonalClaw, so it is not live state any store keeps: the home's own copy is a damaged
+    # search index, rebuilt from the memory files, and a working folder's copy holds memories no
+    # store has any more. The Doctor's memory check names each one until the owner removes it,
+    # which is where a set-aside copy is reported, rather than here as a path nothing claims.
+    # The same mark is on the copy kept of a store file that could not be read
+    # (`record_files.SET_ASIDE_MARK`): `triggers.json.broken-<UTC instant>` and its kind, beside
+    # the file, which stays where it is and is never written over until it can be read. A copy of
+    # what the file held then, not what any store keeps now; the Doctor names it
+    # (`automations.store`, `durability.store_files`).
+    "*.broken-*",
+    # The record that this home already settled what an earlier release left OUTSIDE it on this
+    # machine (`outside_home.settle_previous_locations`: skills copied home from ~/.agents/skills,
+    # a saved pointer to the old default workspace dropped). It describes THIS machine's leftovers,
+    # so it must not travel: a restore onto another machine settles that machine's own, once.
+    ".outside-home-settled.json",
+    # The incremental shard export's change cursor (`durability/shards.dirty_entries`).
+    # MACHINE-LOCAL like `sync` and `shards` above: a cursor restored from another export would make
+    # the next incremental export skip exactly what changed since.
+    ".shard-state.json",
+    # A replace-restore's copy of what it replaced (`snapshot.py`, `pre-restore-<timestamp>/`), kept
+    # beside the home so the restore can be undone. Backing it up would nest the previous home
+    # inside every later snapshot, and a snapshot is itself the way back.
+    "pre-restore-*",
+)
+
+
+# ── projections (the point: everything derives from the manifest) ───────────
+
+
+def all_entries() -> tuple[StateEntry, ...]:
+    return INVENTORY
+
+
+def by_id(entry_id: str) -> StateEntry | None:
+    return next((e for e in INVENTORY if e.id == entry_id), None)
+
+
+def domains() -> tuple[str, ...]:
+    """The domains actually present in the manifest, in declaration order."""
+    seen: list[str] = []
+    for entry in INVENTORY:
+        if entry.domain not in seen:
+            seen.append(entry.domain)
+    return tuple(seen)
+
+
+def entries_for_domain(domain: str) -> tuple[StateEntry, ...]:
+    return tuple(e for e in INVENTORY if e.domain == domain)
+
+
+def backup_entries(*, include_derived: bool = False) -> tuple[StateEntry, ...]:
+    """Entries a SNAPSHOT should capture.
+
+    Credential VALUES are not (``credential=True``): an archive gets copied off the machine,
+    and a key inside it has left with it. The settings that USE those credentials still travel,
+    as ``{{secret:…}}`` references. Other secret entries are captured on purpose — the audit
+    log's HMAC key, so a restore into a wiped home can still verify the audit rows it imports.
+    Derived indexes are skipped unless asked for, since they rebuild and a stale index paired
+    with a newer store is worse than none."""
+    return tuple(e for e in INVENTORY if not e.credential and (include_derived or not e.derived))
+
+
+def stays_here(entry: StateEntry, row_id: str) -> bool:
+    """Whether the row *row_id* of *entry* — an entity directory's file, named as its exporter
+    names it: the path under the directory, without ``.json`` for a JSON file — is one a sync
+    never carries (``StateEntry.machine_local_within``)."""
+    from fnmatch import fnmatchcase
+
+    return any(
+        fnmatchcase(row_id, glob) or fnmatchcase(f"{row_id}.json", glob)
+        for glob in entry.machine_local_within
+    )
+
+
+def append_only_folder(entry: StateEntry) -> bool:
+    """Whether *entry* is an append-only store that is a folder of files, one per chat, job or
+    channel (``sessions/``, ``cron-history/``, ``history/``). Its rows, read as one stream, name no
+    file to go back to, so a sync neither sends them nor takes another machine's in: a pull wrote
+    them into a file per year beside the store's own, a chat or a job named for the year."""
+    return entry.kind == KIND_JSONL_APPEND and not Path(entry.path).suffix
+
+
+def export_entries() -> tuple[StateEntry, ...]:
+    """Entries a PORTABLE EXPORT may contain — the projection that replaces
+    `portability.EXPORT_EXCLUDE`: neither secrets (they must never leave the
+    machine) nor derived data (rebuildable)."""
+    return tuple(e for e in INVENTORY if not e.secret and not e.derived)
+
+
+def shard_entries() -> tuple[StateEntry, ...]:
+    """Entries the shard export carries (``durability.shards``): an export's, but the folders of
+    files (``KIND_TREE``), which only a snapshot holds whole."""
+    return tuple(e for e in export_entries() if e.kind != KIND_TREE)
+
+
+def secret_paths() -> tuple[str, ...]:
+    return tuple(e.path for e in INVENTORY if e.secret)
+
+
+def sqlite_entries() -> tuple[StateEntry, ...]:
+    """Every database in the manifest. Callers MUST copy these with the sqlite
+    backup API rather than a filesystem copy: the gateway holds them open in WAL
+    mode, so a raw copy can capture a torn page set. This projection is what
+    fixed the live `knowledge.db` raw-copy hazard — it was outside the old
+    hand-written allowlist and got tree-copied."""
+    return tuple(e for e in INVENTORY if e.kind == KIND_SQLITE)
+
+
+def _parts(rel: str) -> tuple[str, ...]:
+    """Home-relative path split into its meaningful segments."""
+    return tuple(p for p in rel.replace("\\", "/").split("/") if p and p != ".")
+
+
+def _matches_partition(rel: str, glob: str) -> bool:
+    """Whether home-relative *rel* is a path *glob* names, segment for segment (so a ``*`` never
+    spans a folder)."""
+    parts, want = _parts(rel), _parts(glob)
+    return len(parts) == len(want) and all(fnmatch.fnmatchcase(p, w) for p, w in zip(parts, want))
+
+
+def partition_entry(rel: str) -> StateEntry | None:
+    """The store whose partition the home-relative path *rel* is (`StateEntry.partitions`)."""
+    for entry in INVENTORY:
+        if any(_matches_partition(rel, glob) for glob in entry.partitions):
+            return entry
+    return None
+
+
+def partition_paths(home: Path) -> list[str]:
+    """Home-relative paths of every store partition on disk under *home*, sorted: the databases
+    a snapshot, an export and a restore copy beside the entries' own paths."""
+    found: set[str] = set()
+    for entry in INVENTORY:
+        for glob in entry.partitions:
+            for path in home.glob(glob):
+                if path.is_file() and not path.is_symlink():
+                    found.add(path.relative_to(home).as_posix())
+    return sorted(found)
+
+
+def is_ignored(rel: str) -> bool:
+    """Whether a home-relative path is deliberately not state."""
+    parts = _parts(rel)
+    for pattern in IGNORED:
+        for part in parts:
+            if fnmatch.fnmatch(part, pattern):
+                return True
+    return False
+
+
+def claim_for(rel: str) -> StateEntry | None:
+    """The entry claiming a home-relative path, or None.
+
+    Longest path match wins, so a nested store claims its own subtree even when
+    an ancestor entry also exists (``workspace/knowledge/knowledge.db`` belongs
+    to ``knowledge_db``, not to ``workspace``).
+    """
+    parts = _parts(rel)
+    best: StateEntry | None = None
+    best_depth = -1
+    for entry in INVENTORY:
+        ep = _parts(entry.path)
+        if len(ep) <= len(parts) and tuple(parts[: len(ep)]) == ep and len(ep) > best_depth:
+            best, best_depth = entry, len(ep)
+    return best
+
+
+def claims_within(rel: str) -> bool:
+    """Does any entry declare a path INSIDE the directory *rel*?
+
+    A directory whose CONTENTS are declared is accounted for by them: ``knowledge/`` holds only
+    ``knowledge/knowledge.db``, and :func:`claim_for` is longest-prefix, so it names the child
+    without naming the parent. Reporting the parent as unclaimed would demand a redundant
+    wrapper entry for every nested store.
+    """
+    prefix = "/".join(_parts(rel)) + "/"
+    return any(e.path.startswith(prefix) for e in INVENTORY)
+
+
+def is_accounted(rel: str) -> bool:
+    """Is this home-relative path claimed by an entry, or deliberately ignored?
+
+    🔴 THE ONE QUESTION, ASKED ONCE. The inventory accounts for a path two ways — an entry
+    CLAIMS it, or :data:`IGNORED` deliberately excludes it — and :func:`audit_home` has always
+    honoured both. The static census over the source tree
+    (``tests/test_durability_inventory_census.py``) re-derived a NARROWER version that read only
+    the claims, plus its own hand-written copy of eight of IGNORED's rows.
+
+    Two consequences, both measured (#2217). Five locations resolved the *correct* way for
+    machine-local state — ``session_key``, ``sessions.json``, ``update_check.json``,
+    ``update_releases.json``, ``doctor``, each ignored with a written argument — were still
+    reported as undeclared debt, inflating the gap the issue reports. And because the census's
+    stale-pin ratchet could only notice a pin that became *declared*, the debt set could shrink
+    by declaring and never by ignoring, so those five could never be retired.
+
+    Exported so the census asks the inventory rather than modelling it: a second spelling of
+    "accounted for" is the same class of bug as the duplicated allowlist it replaces.
+    """
+    return is_ignored(rel) or claim_for(rel) is not None or claims_within(rel)
+
+
+@dataclass
+class AuditResult:
+    """What :func:`audit_home` found."""
+
+    unclaimed: list[str] = field(default_factory=list)
+    claimed: int = 0
+    ignored: int = 0
+    # Databases found on disk that no `sqlite` entry declares. These are the
+    # dangerous kind of gap: an undeclared DB inside a `tree` entry gets
+    # filesystem-copied while the gateway holds it open in WAL mode.
+    undeclared_dbs: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.unclaimed and not self.undeclared_dbs
+
+
+def audit_home(home: Path) -> AuditResult:
+    """Assert every top-level path under ``home`` is claimed or ignored.
+
+    This is the guard that keeps the manifest honest: when a new store directory
+    appears and nobody declared it, this reports it and the test that calls it
+    fails — which is precisely how nine directories silently escaped backup
+    before the inventory existed.
+
+    Scans the top level plus one level inside each unclaimed directory, which is
+    enough to name the offending store without walking a huge tree.
+    """
+    result = AuditResult()
+    if not home.is_dir():
+        return result
+    for child in sorted(home.iterdir()):
+        rel = child.name
+        if is_ignored(rel):
+            result.ignored += 1
+            continue
+        if claim_for(rel) is not None:
+            result.claimed += 1
+            continue
+        # A directory whose CONTENTS are declared is claimed by them — see `claims_within`, which
+        # the static census now shares rather than re-deriving (#2217).
+        if child.is_dir() and claims_within(rel):
+            result.claimed += 1
+            continue
+        result.unclaimed.append(rel + ("/" if child.is_dir() else ""))
+
+    # Every *.db on disk must be declared as a sqlite entry, wherever it lives.
+    # A database nested inside a `tree` entry is the exact hazard this check
+    # exists to close: it gets filesystem-copied while open in WAL mode.
+    declared = {e.path for e in sqlite_entries()}
+    # A store can be a DIRECTORY of databases rather than one file — `codegraph/<workspace-key>.db`,
+    # of which a real home held 5478, so an exact-path compare can never match them and the check
+    # drowns in thousands of rows (the same over-reporting failure once fixed in the coverage
+    # ratchet).
+    #
+    # 🔴 But my first version exempted every `tree`/`derived` prefix, which BLINDED the check to the
+    # exact hazard it exists for: driven, a surprise DB inside the `loop` and `workspace` trees was
+    # no longer reported. A DB nested in a tree entry is the dangerous case — it gets
+    # filesystem-copied while open in WAL mode. So the exemption is opt-in per entry
+    # (`db_container=True`), naming the stores whose whole content IS databases.
+    declared_trees = tuple(e.path + "/" for e in INVENTORY if e.db_container)
+    for db in _db_files(home):
+        rel_db = db.relative_to(home).as_posix()
+        if is_ignored(rel_db) or rel_db in declared or partition_entry(rel_db) is not None:
+            continue
+        if rel_db.startswith(declared_trees):
+            continue
+        # Read from the file, last, once the path has not already answered: one SQLite reads as a
+        # database, or an empty one, which SQLite opens as an empty database. A file of the
+        # user's merely named `.db` is not one.
+        if _a_database(db):
+            result.undeclared_dbs.append(rel_db)
+    return result
+
+
+def _db_files(home: Path) -> list[Path]:
+    """Every ``*.db`` file under *home*, never descending into an IGNORED directory.
+
+    The same answer as ``home.rglob("*.db")`` filtered by :func:`is_ignored` — a database under
+    an ignored segment is dropped from the report either way — but the walk no longer costs a
+    visit to every file of trees that can hold tens of thousands (the app packages under
+    ``app-python``, browser profiles, git object stores), none of which it could report.
+    """
+    import os
+
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(home):
+        rel_dir = Path(dirpath).relative_to(home)
+        dirnames[:] = [d for d in dirnames if not is_ignored((rel_dir / d).as_posix())]
+        found.extend(Path(dirpath) / f for f in filenames if f.endswith(".db"))
+    return sorted(found)
+
+
+def _a_database(path: Path) -> bool:
+    """Whether *path* is a database file: one SQLite reads as a database, or an empty regular
+    file, which SQLite opens as an empty one (never a link's target)."""
+    import stat
+
+    from personalclaw.durability.sqlite_files import is_database
+
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and (info.st_size == 0 or is_database(path))

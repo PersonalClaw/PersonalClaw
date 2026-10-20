@@ -1,0 +1,20 @@
+# The native projects are GENERATED, never committed.
+#
+# `cap add ios` / `cap add android` copy a template out of `@capacitor/{ios,android}` and then
+# `cap sync` rewrites parts of it from `capacitor.config.json` and the installed plugins. A
+# committed copy is a fork of that template that drifts silently from the Capacitor version in
+# `package.json` — the whole class of bug where a store build works from an old checkout and
+# nowhere else. Regenerate them with `npm run add:ios` / `npm run add:android` (see README.md).
+/ios/
+/android/
+
+# CocoaPods and Gradle output, in case a platform dir is generated somewhere unexpected.
+Pods/
+.gradle/
+local.properties
+
+# Xcode / Android Studio local state
+*.xcuserstate
+xcuserdata/
+*.iml
+.idea/

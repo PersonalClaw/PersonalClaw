@@ -1,0 +1,319 @@
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
+import { api } from '../../lib/api'
+import type {
+  PendingApproval, DashboardStatus, InboxItem, SkillProposal,
+  Loop, TaskItem, ScheduleRun, DiscoverResponse,
+} from '../../lib/api'
+
+// ── Dashboard live feed ────────────────────────────────────────────────────
+// ONE shell-level source of truth for the whole dashboard: a single WebSocket
+// subscription (precedent: useApprovalToasts / NotificationBell) plus a set of
+// visibility-gated polls. Widgets CONSUME this context — no widget opens its own
+// socket or poll, so N widgets share one connection and one refresh cadence.
+//
+// The socket doesn't carry every widget's payload; like NotificationBell it uses
+// WS envelopes as a SIGNAL to refetch the relevant slice immediately (so an
+// approval or inbox item appears without waiting for the next poll tick), while
+// the polls keep slower-moving data (loops, tasks, schedule, status) fresh.
+
+/** The slices whose "have we read this yet" answer a consumer actually uses. Deliberately not every
+ *  slice: an unread flag nobody reads is the dead-guard shape this file's `*Err` note already
+ *  rejects for the same reason. */
+export type ReadSlice =
+  | 'approvals' | 'inbox' | 'proposals' | 'loops' | 'tasks' | 'schedule'
+
+/** Nothing read yet — the honest starting position, and the one this file used to lack. */
+const NOTHING_READ: Record<ReadSlice, boolean> = {
+  approvals: false, inbox: false, proposals: false, loops: false, tasks: false, schedule: false,
+}
+
+export interface DashboardLiveData {
+  approvals: PendingApproval[]
+  inbox: InboxItem[]
+  proposals: SkillProposal[]
+  /** The three triage lanes' own read failures, each distinct from an empty lane. ActionCenter
+   *  merges approvals+inbox+proposals into one queue; without these a swallowed lane silently
+   *  under-reports (a missing PENDING TOOL APPROVAL reads as "all clear"). Same shape and reason as
+   *  `discoverErr` below. */
+  approvalsErr: unknown
+  inboxErr: unknown
+  proposalsErr: unknown
+  loops: Loop[]
+  /** The loops read's own failure. Active work renders it with a Retry: without it a failed read
+   *  left `[]` behind and the band said "No active work" over loops it never saw. */
+  loopsErr: unknown
+  tasks: TaskItem[]
+  /** The tasks lane's own read failure, distinct from a lane that is genuinely empty. `HeroPulse`
+   *  renders tasks ready as a number on the app's first screen, and `[]` is what a swallowed
+   *  rejection leaves behind — so without this the hero would state "0 tasks ready" as fact when
+   *  nothing was read. Same shape and the same reason as `approvalsErr` above and
+   *  `discoverErr` below.
+   *
+   *  `schedule`/`status` swallow: no consumer reads their failure, and an unread error field is
+   *  the dead-guard shape the repo's rails already reject. The hero stopped badging unread
+   *  notifications, which wait on nobody; the notifications read went with that pill, and the
+   *  shell's bell makes its own. */
+  tasksErr: unknown
+  schedule: ScheduleRun[]
+  /** The archive split, straight from the server. `didIds` are the fires that DID
+   *  something; everything else was held by a gate. Kept beside the rows rather than re-derived in
+   *  each widget: `is_inert` is the backend's rule and a second copy would drift the moment a new
+   *  `skipped_*` outcome lands. */
+  scheduleDidIds: string[]
+  scheduleSuppressed: number
+  /** The gateway's status. Home reads one field of it, `yolo`, so a YOLO session stays in sight.
+   *  The host metrics and the Doctor rollup are Settings › System's (`settings/SystemLive`), and
+   *  Home reads neither. */
+  status: DashboardStatus | null
+  /** The curated Discover tips for the dashboard section + hub, or an empty
+   *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
+  discover: DiscoverResponse | null
+  /** The tips read's own failure. Distinct from `discover: null`, which also means "not polled
+   *  yet" — and critically distinct from `enabled: false`, because the slot's off-branch names a
+   *  SETTING. Without this the consumer cannot tell a dead endpoint from a user's own choice, and
+   *  the only sentence it has to say is about the choice. Same shape and same reason as
+   *  `doctorErr` in `settings/SystemLive`. */
+  discoverErr: unknown
+  /** Which slices have completed at least one read ATTEMPT — success **or** failure.
+   *
+   *  🔴 THE FAILED CASE WAS CONVERGED AND THE NOT-YET-READ CASE WAS NEVER MODELLED. Every `*Err`
+   *  above starts at `null` and is set to `null` again on success, so `*Err === null` meant BOTH
+   *  "this read succeeded" and "this read has never been attempted". Combined with arrays that seed
+   *  to `[]`, the dashboard's FIRST FRAME asserted emptiness as fact: `HeroPulse` stated
+   *  "0 loops running · 0 approvals waiting · 0 tasks ready · 0 inbox · 0 unread", and four widgets
+   *  rendered their empty states — two of them pitching a create flow ("New task", "New trigger") to
+   *  someone whose tasks and triggers simply had not arrived yet.
+   *
+   *  🔑 `HeroPulse` ALREADY CARRIES THE DOCTRINE THIS COMPLETES, in its own words: *"A COUNT IS A
+   *  CLAIM, AND `0` IS THE MOST REASSURING ONE THIS STRIP CAN MAKE… `null` means 'not read'."* It
+   *  implemented only the FAILED half of "not read". This is the other half.
+   *
+   *  🪤 AND IT CANNOT BE FOLDED INTO `*Err` — that was the tempting one-line version. Seeding the
+   *  err fields with a truthy "unread" sentinel would fix every count for free, because consumers
+   *  already write `err ? null : n`. But the two states must render DIFFERENTLY: an unread lane is
+   *  neutral and silent, while a FAILED lane earns an error row and a Retry (`ActionCenter` renders
+   *  exactly that). A sentinel would make the first frame claim a fault nobody has measured — the
+   *  mirror of the bug, and the same mistake `HeroPulse` warns about when it keeps the unknown pill
+   *  NEUTRAL rather than styling it as an alarm. */
+  read: Readonly<Record<ReadSlice, boolean>>
+  /** Re-run ONE triage lane's read — the Retry beside its failure row. Per-lane, so retrying a
+   *  failed approvals read doesn't refetch a healthy inbox. */
+  retryApprovals: () => void
+  retryInbox: () => void
+  retryProposals: () => void
+  retryLoops: () => void
+  /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
+   *  feed (propose-don't-write: this hides, never enables). */
+  dismissDiscoverTip: (id: string) => void
+  /** Force an immediate refetch of every slice (e.g. after an inline action). */
+  refreshAll: () => void
+}
+
+const DashboardLiveContext = createContext<DashboardLiveData | null>(null)
+
+/** Consume the shared dashboard live feed. Throws if used outside the provider,
+ *  so a widget can never silently render stale/empty data. */
+export function useDashboardLive(): DashboardLiveData {
+  const ctx = useContext(DashboardLiveContext)
+  if (!ctx) throw new Error('useDashboardLive must be used within <DashboardLiveProvider>')
+  return ctx
+}
+
+// Poll cadences (ms), for the slices the gateway does NOT signal. A slice whose every change
+// arrives as a frame (approvals, the Inbox) is not polled at all: it is read on
+// mount, on its frame, and after a socket drop — polling it as well is what put an idle Home tab
+// at 428 requests in 3 minutes (measured, day 8). Both polls also back off while nobody is using
+// the tab (`useVisiblePoll`).
+const FAST_POLL = 8000
+const SLOW_POLL = 20000
+
+export function DashboardLiveProvider({ children }: { children: ReactNode }) {
+  const [approvals, setApprovals] = useState<PendingApproval[]>([])
+  const [inbox, setInbox] = useState<InboxItem[]>([])
+  const [proposals, setProposals] = useState<SkillProposal[]>([])
+  // Per-lane read failures for the three triage-queue lanes (ActionCenter merges them into one
+  // list). Paired with the arrays above the way `discoverErr` pairs with its slice:
+  // an array left at its last-good value cannot say "this lane failed to load", so a swallowed
+  // approvals/inbox/proposals read used to vanish into ActionCenter's "All clear" — hiding, e.g.,
+  // a pending TOOL APPROVAL. Tracked so the queue tells a failed lane from an empty one, and retries.
+  const [approvalsErr, setApprovalsErr] = useState<unknown>(null)
+  const [inboxErr, setInboxErr] = useState<unknown>(null)
+  const [proposalsErr, setProposalsErr] = useState<unknown>(null)
+  const [loops, setLoops] = useState<Loop[]>([])
+  const [loopsErr, setLoopsErr] = useState<unknown>(null)
+  const [tasks, setTasks] = useState<TaskItem[]>([])
+  const [schedule, setSchedule] = useState<ScheduleRun[]>([])
+  const [scheduleDidIds, setScheduleDidIds] = useState<string[]>([])
+  const [scheduleSuppressed, setScheduleSuppressed] = useState(0)
+  const [status, setStatus] = useState<DashboardStatus | null>(null)
+  // The counted tasks lane's own failure — see the type's note: `[]` is what a swallowed
+  // rejection leaves, and HeroPulse turns it into a number on the first screen.
+  const [tasksErr, setTasksErr] = useState<unknown>(null)
+  const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
+  const [discoverErr, setDiscoverErr] = useState<unknown>(null)
+
+  // Individual slice loaders — each swallows errors (a dead endpoint must not
+  // blank the whole dashboard) and no-ops if the component has unmounted.
+  // The effect sets alive=true on mount and false on cleanup — this handles
+  // React strict mode's double-mount cycle correctly (the second mount resets it).
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const guard = <T,>(set: (v: T) => void) => (v: T) => { if (alive.current) set(v) }
+
+  const [read, setRead] = useState<Record<ReadSlice, boolean>>(NOTHING_READ)
+  /** Mark a slice as attempted. Called from `.finally()`, which is precisely "the attempt finished"
+   *  — one call site per loader covering the success and failure branches together.
+   *
+   *  🪤 RETURNS THE SAME OBJECT once a slice is already marked. Without that identity check, every
+   *  8s poll would hand `read` a fresh object, change the context value, and re-render every
+   *  dashboard consumer on every tick — a steady render storm to answer a question that stops
+   *  changing after the first load. */
+  const markRead = useCallback((s: ReadSlice) => {
+    if (!alive.current) return
+    setRead((r) => (r[s] ? r : { ...r, [s]: true }))
+  }, [])
+
+  // 🔴 The three triage lanes surface their own read failures (like `loadDiscover`/`loadDoctor`
+  // below) instead of swallowing. `catch(() => {})` left each array at its last-good value, so a
+  // failed read was indistinguishable from an empty lane — and ActionCenter folded that into "All
+  // clear — nothing waiting on you", the one sentence that must never appear over a swallowed
+  // PENDING TOOL APPROVAL. A later failure keeps the last-good rows (this only assigns on success);
+  // the cold case surfaces the error so the lane can say it failed and offer a retry.
+  const loadApprovals = useCallback(() => {
+    api.approvals().then((d) => { guard(setApprovals)(d); guard(setApprovalsErr)(null) }).catch((e) => guard(setApprovalsErr)(e))
+      .finally(() => markRead('approvals'))
+  }, [markRead])
+  const loadInbox = useCallback(() => {
+    api.inboxOpen().then((d) => { guard(setInbox)(d); guard(setInboxErr)(null) }).catch((e) => guard(setInboxErr)(e))
+      .finally(() => markRead('inbox'))
+  }, [markRead])
+  const loadProposals = useCallback(() => {
+    api.skillProposals().then((d) => { guard(setProposals)(d.proposals); guard(setProposalsErr)(null) }).catch((e) => guard(setProposalsErr)(e))
+      .finally(() => markRead('proposals'))
+  }, [markRead])
+  const loadLoops = useCallback(() => {
+    api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e))
+      .finally(() => markRead('loops'))
+  }, [markRead])
+  const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)).finally(() => markRead('tasks')) }, [markRead])
+  // 🔴 Keeps the archive split, which this call discarded. The backend has returned
+  // `did_ids`/`suppressed` and the API types declared them — but the widget still saw only
+  // `d.runs`, so a minutely trigger inside quiet hours filled all six visible rows with identical
+  // "gate" entries and the ONE fire that ran (at index 7) never appeared. Measured. The user reads
+  // that as "nothing has run", which is the exact failure the split exists to prevent.
+  const loadSchedule = useCallback(() => {
+    api.triggersHistory(12).then((d) => {
+      guard(setSchedule)(d.runs ?? [])
+      guard(setScheduleDidIds)(d.did_ids ?? [])
+      guard(setScheduleSuppressed)(d.suppressed ?? 0)
+    }).catch(() => {}).finally(() => markRead('schedule'))
+  }, [markRead])
+  const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
+  // 🔴 `catch(() => {})` left `discover` null, and the dashboard's Discover slot renders
+  // "Discover tips are off." for `!discover` — so a dead endpoint (and every millisecond before
+  // the first read lands) impersonated a SETTING THE USER NEVER TOUCHED. Measured on an empty home
+  // with the read aborted: the slot said "Discover tips are off." while `#/discover`, on the very
+  // same rejection, said "Couldn't load your tips" with a Retry. Same story as `settings/SystemLive`'s
+  // `loadDoctor`.
+  const loadDiscover = useCallback(() => {
+    api.discover().then((d) => { guard(setDiscover)(d); guard(setDiscoverErr)(null) })
+      .catch((e) => guard(setDiscoverErr)(e))
+  }, [])
+  // Dismiss persists server-side; on success refetch so the tip drops from the
+  // feed (or the "explored everything" empty state shows).
+  // The refetch was already gated on success — only the failure was silent, so the tip simply stayed
+  // put with nothing said and the click read as doing nothing at all.
+  const dismissDiscoverTip = useCallback(async (id: string) => {
+    if (!(await reportingWrite('dismiss that tip', () => api.dismissDiscoverTip(id)))) return
+    loadDiscover()
+  }, [loadDiscover])
+
+  const refreshAll = useCallback(() => {
+    loadApprovals(); loadInbox(); loadProposals(); loadLoops()
+    loadTasks(); loadSchedule(); loadStatus(); loadDiscover()
+  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadDiscover])
+
+  // Coalesce high-frequency work/status signals. `work_phase`/`sessions` fire on
+  // every turn lifecycle change — during active streaming that's many events/sec, and a
+  // running turn's phase is said again every fifteen seconds —
+  // and `update_progress` steps through the self-update pipeline (its step DISPLAY
+  // is the shell-level UpdateProgressOverlay; here it's only a status-refetch nudge).
+  // Debounce the loops+status refetch so a burst collapses into one call (~600ms
+  // after it settles) instead of a storm.
+  const workDebounce = useRef<number | undefined>(undefined)
+  const refreshWork = useCallback(() => {
+    if (workDebounce.current) clearTimeout(workDebounce.current)
+    workDebounce.current = window.setTimeout(() => { loadLoops(); loadStatus() }, 600)
+  }, [loadLoops, loadStatus])
+  useEffect(() => () => { if (workDebounce.current) clearTimeout(workDebounce.current) }, [])
+
+  // A burst of frames for one slice is ONE re-read, shortly after the first frame: "Dismiss all"
+  // moves every row and says so once per row, and a close also reads its notifications, so a
+  // 37-row sweep was 37 reads of the Inbox and more of the bell. The first frame schedules the
+  // read and the rest of the burst joins it.
+  const soonTimers = useRef<Map<string, number>>(new Map())
+  const soon = useCallback((slice: string, load: () => void) => {
+    if (soonTimers.current.has(slice)) return
+    soonTimers.current.set(slice, window.setTimeout(() => { soonTimers.current.delete(slice); load() }, 150))
+  }, [])
+  useEffect(() => () => { for (const timer of soonTimers.current.values()) clearTimeout(timer) }, [])
+
+  // ONE socket for the whole dashboard. Envelopes are refetch SIGNALS: route each
+  // type to the slice it affects so a change lands immediately, not next poll.
+  const onMessage = useCallback((m: WsMessage) => {
+    const t = m.type
+    // A pending approval is one registry entry with an Inbox row raised and closed alongside it,
+    // so BOTH frames move both slices. `approval_resolved` is what takes an answered (or expired)
+    // approval off Home at once — without it the count and To triage kept a decided approval up
+    // to the next poll, offering Approve/Reject on a call that had already been answered.
+    if (t === 'approval' || t === 'approval_resolved') { soon('approvals', loadApprovals); soon('inbox', loadInbox) }
+    else if (t.startsWith('inbox')) soon('inbox', loadInbox)
+    // The gateway's refresh hint: a loop started, paused, stopped or was deleted (`loops`); a task
+    // was written (`tasks`); an automation changed (`crons`) or ran (`cron_history`). `history` is
+    // the CHAT history, and the run feed below is not.
+    else if (t === 'refresh') {
+      const kinds = refreshKinds(m)
+      // A run-backed loop IS a workflow run, so a run changing status (`workflow_runs`, the
+      // workflow watchdog's hint) moves its loop too.
+      if (kinds.includes('loops') || kinds.includes('workflow_runs')) soon('loops', loadLoops)
+      if (kinds.includes('tasks')) soon('tasks', loadTasks)
+      if (kinds.includes('crons') || kinds.includes('cron_history')) soon('schedule', loadSchedule)
+    }
+    // Loop / run progress + session lifecycle nudges refresh the work + status views
+    // (debounced — these can fire rapidly during streaming).
+    else if (t === 'update_progress' || t === 'work_phase' || t === 'sessions' || t.startsWith('subagent')) {
+      refreshWork()
+    }
+  }, [soon, loadApprovals, loadInbox, loadLoops, loadTasks, loadSchedule, refreshWork])
+
+  useChatSocket(
+    onMessage,
+    refreshAll,                              // reopened after a drop → catch up on everything
+    // NOTE: no onStatus callback — the WS is used for push-signal routing only.
+    // Gateway connectivity is surfaced by the shell's SystemWidget dot (a live
+    // /api/system poll), so the dashboard feed doesn't track link state itself.
+  )
+
+  // Initial load once, then visibility-gated polls (pause when the tab is hidden) for the slices
+  // nothing signals. `immediate: false`: `refreshAll` IS the first read, and each poll firing on
+  // mount as well fetched every endpoint twice before the page had painted.
+  useEffect(() => { refreshAll() }, [refreshAll])
+  useVisiblePoll(loadLoops, FAST_POLL, { immediate: false })
+  useVisiblePoll(() => {
+    loadProposals(); loadTasks(); loadSchedule(); loadStatus(); loadDiscover()
+  }, SLOW_POLL, { immediate: false })
+
+  const value: DashboardLiveData = {
+    approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,
+    loopsErr, tasksErr, read,
+    loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
+    status,
+    discover, discoverErr,
+    retryApprovals: loadApprovals, retryInbox: loadInbox, retryProposals: loadProposals, retryLoops: loadLoops,
+    dismissDiscoverTip, refreshAll,
+  }
+  return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
+}

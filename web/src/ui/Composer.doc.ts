@@ -1,0 +1,66 @@
+import type { UiDoc } from './uiDoc'
+
+// Doc object for Composer — the one configurable chat/prompt input. Authored:
+// keywords, prose, per-prop descriptions, Do/Don't, anatomy. Prop type/required
+// are DERIVED from Composer.tsx (ComposerProps) at build time — never restate them.
+const doc: UiDoc = {
+  name: 'Composer',
+  keywords: ['composer', 'input', 'chat', 'prompt', 'editor', 'send', 'mic', 'attach', 'markdown', 'textarea'],
+  description:
+    'The one configurable message composer — used by Chat and the goal composer. A surface sheet wrapping a live-markdown editor (CodeMirror, not a <textarea>) that auto-grows to a user-resizable max, an inline pill cluster ([+] · agent-and-model · approval · reply style; the agent-and-model pill\u2019s menu carries the reasoning effort for a model that declares levels), and a right-hand action cluster (optimize · mic · send/stop/steer/queue). The `controls` prop is the single seam that picks which pills and "+"-menu items appear; drag-and-drop file attach, a pasted screenshot as an attachment, its focus ring and ↑/↓ history recall come built in. A focused composer shows the plain 2px coral ring every input gets; under Claw Arcade, the identity that keeps the decorative light (web/DESIGN.md §7), it wakes instead with an animated gradient ring, a coral rim and a spring rise, on focus and on drag-over.',
+  props: [
+    { name: 'value', description: 'The current draft text (controlled).' },
+    { name: 'onChange', description: 'Fires with the new draft on every edit.' },
+    { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
+    { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop, a stop square with a thin arc turning round it (design/motion\'s sweep(); no arc under reduced motion), or to Steer or Queue with a typed draft.' },
+    { name: 'phase', description: 'The running turn\'s phase (lib/workPhase), null until the gateway says one. The Stop control reads it as the agent orb does: its arc holds still where it is while the turn waits on the owner (an approval or a question) and turns on from there when the turn runs again. Left out, the arc turns for as long as the turn streams.' },
+    { name: 'processing', description: 'One-shot pre-send processing (e.g. the goal analyze pass) → a spinning send button with no stop/queue affordance.' },
+    { name: 'onStop', description: 'Called from the Stop button to abort the running turn.' },
+    { name: 'placeholder', description: "Editor placeholder (default 'Ask anything')." },
+    { name: 'controls', description: 'The single configurability seam — booleans picking which pills + "+"-menu items surface (agent/model/approval/reasoning/attach/mic/optimize/slash). Chat enables most; the goal composer enables only send+optimize.' },
+    { name: 'data', description: 'Real agent/model/provider option sets feeding the agent-and-model pill; a model\u2019s `efforts` are the levels its effort row lists.' },
+    { name: 'selection', description: 'Current selections (agent/model/approval/reasoning) the pills reflect — wired to the session by the host.' },
+    { name: 'onSelect', description: 'Fires with a partial selection patch when a pill changes agent/model/approval/reasoning.' },
+    { name: 'onAttach', description: 'Receives picked, dropped or pasted files — required (with controls.attach) to enable the "+" attach button, drag-and-drop, and pasting a screenshot.' },
+    { name: 'onOpenPrompts', description: 'Opens the saved-prompt palette; when set, the "+" menu offers "Saved prompts".' },
+    { name: 'plusMenuExtra', description: 'Host-owned extra items at the bottom of the "+" menu (e.g. Auto-nudge); receives `close` to dismiss the menu on action.' },
+    { name: 'onFocusChange', description: 'Notified when the editor gains/loses focus (drives the host layout and the focus aura around the composer).' },
+    { name: 'mentionProject', description: 'Workspace dir scoping the @-mention file search.' },
+    { name: 'onMentionFile', description: 'Notified when a file is picked via @-mention (host records the path for send).' },
+    { name: 'onMentionKnowledge', description: 'Notified when a knowledge item is picked via @-mention (host records the id).' },
+    { name: 'onLargePaste', description: 'Large-paste handler — host collapses it to an attachment + inline marker; return true to consume the paste.' },
+    { name: 'onOptimize', description: 'Optimizes the current draft via the prompt optimizer (host swaps `value`); also bound to ⌘↵.' },
+    { name: 'optimizing', description: 'True while an optimize round-trip is in flight → spinner + disabled optimize button.' },
+    { name: 'history', description: 'Prior user messages oldest→newest, for ↑/↓ history recall in an empty draft.' },
+    { name: 'onRecall', description: 'Called as ↑/↓ brings back history[index]; returns the text to show for it. A host that keeps the blocks pasted into a message restores them here, renumbering markers that would meet a block the draft holds.' },
+    { name: 'onTranscribe', description: 'Transcribes a recorded audio blob to text — required (with controls.mic) to enable voice input.' },
+    { name: 'onMicError', description: 'Reports a voice-input failure (mic blocked / no STT) so the host can surface it.' },
+    { name: 'handsFree', description: 'Hands-free voice loop config (phrase lists + mute-while-speaking) — with onHandsFreeSubmit it adds the hands-free toggle beside the mic.' },
+    { name: 'onHandsFreeSubmit', description: 'Receives the accumulated dictation once a confirmation phrase fires the turn; required for the hands-free toggle to appear.' },
+    { name: 'screenShare', description: 'Screen-context sharing state + toggle, owned by the HOST because the header sharing chip must outlive the composer\u2019s scroll. available:false (the OFF-by-default config flag) renders no control at all; a non-empty disabledReason renders it disabled carrying that reason.' },
+    { name: 'replyStyle', description: 'Reply style \u2014 the per-conversation style of the agent\u2019s replies (Default, Plain, Terse, Conversational). `effective`/`source` arrive already RESOLVED by the backend, which owns the single statement of the resolution order (this conversation, then the agent, then the platform default); the picker displays them and never re-derives it. Absent \u2192 no control, which is what the goal composer (no conversation) gets.' },
+    { name: 'canQueue', description: 'When true, a draft can be sent while a turn runs instead of being dropped.' },
+    { name: 'canSteer', description: 'Whether the running turn takes a draft in: true shows "Steer — send into the running turn", false shows "Queue — sent when this turn ends". Follows what the host says of the turn it shows.' },
+    { name: 'sendHeldReason', description: 'Why a ready draft cannot be sent yet — a file it carries is still uploading. Non-empty → the Send button is off and carries it as its reason; Enter still hands the draft to onSend so the host refuses it with this sentence where the user is looking. A steer into a running turn is not held.' },
+    { name: 'hostPills', description: 'Pills the host owns, drawn in the toolbar after the built-in ones — a choice that belongs to what the host creates rather than to a conversation (the loop composer\'s "Runs on").' },
+    { name: 'contextPct', description: '0–100 context-window usage for the bound session → ring on the agent-and-model pill. Omit it (undefined) when the backend reported no measurement — the pill shows a plain dot whose title says why (see `contextWindow`), never a fabricated 0%. 100 means the context is full (including a provider that silently truncated the prompt); the value never exceeds 100 and never falls as the prompt grows.' },
+    { name: 'contextWindow', description: 'The window (tokens) the gateway said the bound model is served with, alongside its last reading: `null` = no window is declared or served (the dot then names the Settings field that declares one), `undefined` = nothing said yet. Only read while `contextPct` is undefined, to say why there is no ring.' },
+    { name: 'servedModel', description: 'The model the bound chat\'s latest turn was answered by and how it was chosen (`{ model, chosen }`, e.g. "from your Code & tools chain"), as the turn\'s record names it. On Auto the agent-and-model pill names it ("Auto · <model>"), with the whole sentence in its title. Omit it before any turn has named a model.' },
+    { name: 'autoChain', description: 'The Settings → Models chain the bound chat\'s turns run on while the pill is on Auto ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the Auto row names. Omit it when the host does not know; an agent CLI\'s Auto names no chain.' },
+    { name: 'minChars', description: 'Minimum trimmed length before Send enables (default 1); the goal composer sets ≥20 so the button stays visibly disabled, not a silent no-op.' },
+    { name: 'openModelSignal', description: 'Monotonic counter — incrementing opens the agent-and-model pill (drives the "/model" GUI slash command).' },
+    { name: 'openAgentSignal', description: 'Monotonic counter — incrementing opens the agent-and-model pill (drives the "/agent" GUI slash command).' },
+    { name: 'openReasoningSignal', description: 'Monotonic counter — incrementing opens the agent-and-model pill with its effort levels shown (drives the "/effort" GUI slash command).' },
+  ],
+  bestPractices: [
+    { guidance: true, description: 'Reach for Composer for any chat/prompt input rather than hand-rolling a <textarea> — the send/stop/steer/queue state machine, mic-to-text, resize, @-mentions, history recall, and drag-drop attach all come built in.' },
+    { guidance: true, description: 'Use `controls` as the single configurability seam — enable only the pills a surface needs (Chat enables most; the goal composer just send + optimize) rather than forking the component.' },
+    { guidance: true, description: 'Feed the pills real options via `data` + `selection`/`onSelect` so they reflect the bound session; pass `contextPct` to show context-window pressure on the agent-and-model pill.' },
+    { guidance: true, description: 'Set `minChars` when a longer draft is required so Send reads as visibly disabled rather than silently no-opping (the goal composer needs ≥20 to plan).' },
+    { guidance: false, description: 'Do not enable controls.attach or controls.mic without also passing onAttach / onTranscribe — the affordance only appears when its handler exists.' },
+    { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
+  ],
+  anatomy: ['outer motion.div (Claw Arcade: focus / drag-over lift + scale spring)', 'conic-gradient ring glow (Claw Arcade only: surges + breathes on drag-over)', 'surface sheet (pill↔sheet radius morph; the plain 2px coral focus ring outside Claw Arcade)', 'drag-and-drop attach overlay (AnimatePresence)', 'top-center resize handle grip', 'MarkdownInput (CodeMirror live-markdown editor)', 'pill cluster row ([+] menu · agent-and-model · approval · reply style)', 'action cluster (optimize · mic · send/stop/steer/queue, with the Stop control\'s turning arc while a turn runs)', 'hidden file input'],
+}
+
+export default doc

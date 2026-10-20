@@ -1,0 +1,250 @@
+"""SDK: the model (LLM) provider ABC + the generic LLM infrastructure a model app
+builds on.
+
+Stable re-exports of the provider-agnostic LLM machinery — the ``ModelProvider`` ABC
++ event/stream types, the capability descriptors, the provider registry (so an app
+registers its type + capability factory), the credential type, the streaming-tag
+splitter, the context-window lookup, and ``OpenAIProvider`` (the canonical OpenAI-wire
+client that any OpenAI-COMPATIBLE endpoint app — vllm, together, groq, … — subclasses).
+
+An app imports these, not core internals, so core can evolve underneath it. This is
+generic infra: openai/anthropic/bedrock/vllm are all implementations built on it (they
+ship pre-installed for a working out-of-box system, but are architecturally identical
+to any installed model app). Ollama is the one model provider that stays core-native
+(it owns model download/management), so it is not built on this surface.
+"""
+
+# The context gauge, promoted for the same reason: a provider app that reports
+# ``context_usage_pct`` is making the same measurement core's adapters make, and the two
+# rules it has to get right are not obvious enough to re-derive per app — an unresolvable
+# window reports NOTHING rather than a percentage of a fallback, and the numerator has to
+# be checked against the prompt that was SENT, because a runtime that truncates silently
+# reports a count that FALLS as the context grows (#3405 / #3406).
+from personalclaw.context_gauge import (  # noqa: F401
+    ContextGauge,
+    prompt_text_chars,
+)
+
+# ``PromptExceedsWindow`` is the refusal a provider raises when the user's own message cannot fit
+# the window it serves, BEFORE any work is done. Promoted rather than re-declared per app because
+# its two properties are core's, not the app's: the native loop never blind-retries it (its
+# failure mode is non-retryable), and the chat surface shows its sentence verbatim — the same
+# sentence core's own budget check composes for the same situation. ``FailureMode`` comes with it
+# because the refusal's ``mode`` field is one: an app that catches the refusal and reads why is
+# naming that enum. ``FirstTokenTimeout`` is its sibling for a request that timed out before the
+# first byte of the answer: core composes the sentence (it names the instance's own timeout
+# setting), and the native loop does not resend the identical request.
+from personalclaw.guardrails.failure import (  # noqa: F401
+    FailureMode,
+    FirstTokenTimeout,
+    PromptExceedsWindow,
+)
+from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
+from personalclaw.llm.base import (  # noqa: F401
+    EVENT_COMPLETE,
+    EVENT_TEXT_CHUNK,
+    EVENT_THINKING_CHUNK,
+    EVENT_TOOL_CALL,
+    CancelOutcome,
+    LLMEvent,
+    ModelProvider,
+)
+from personalclaw.llm.branded_specs import BrandedProviderSpec  # noqa: F401
+
+# What a model app's factory reads from its build kwargs — the per-call sampling temperature and
+# the output cap — so it is read ONE way. Five first-party apps each copied these lines
+# (PersonalClawApps #124).
+from personalclaw.llm.build_kwargs import output_cap, per_call_temperature  # noqa: F401
+from personalclaw.llm.capabilities import (  # noqa: F401
+    Capability,
+    ProviderCapability,
+    StructuredOutput,
+)
+from personalclaw.llm.catalog import (  # noqa: F401
+    ConnectionResult,
+    ModelCatalog,
+    ModelDiscoveryError,
+    ModelInfo,
+    ModelManager,
+    PullProgress,
+    infer_capabilities,
+    openai_compatible_list_models,
+)
+from personalclaw.llm.credentials import Credential  # noqa: F401
+
+# The requests a provider has open, so its ``cancel()`` can close one mid-flight: an HTTP model
+# client relays its stream through it (`InFlightRequests.relay`), and Stop, Pause and an incident
+# hold then end the request instead of waiting for it to return.
+from personalclaw.llm.inflight import InFlightRequests  # noqa: F401
+
+# The two supported inference-PROTOCOL clients — the standards PersonalClaw speaks,
+# not provider-specific. A model-provider app declares which protocol it speaks +
+# how it authenticates/configures: an OpenAI-compatible endpoint app (openai, vllm,
+# lmstudio, together, …) builds on OpenAIProvider; an Anthropic-compatible one builds
+# on AnthropicProvider. (A provider with a distinct wire, e.g. Bedrock's Converse API,
+# owns its own client in its app.)
+from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
+
+# ``CACHE_HINT_KEY`` rides alongside ``PromptCache`` because an app whose provider owns
+# its OWN wire (Bedrock's Converse API) must READ the neutral marker to translate it —
+# core never learns that vendor's cache syntax. Core's own tests/rails/test_apps_import_boundary.py
+# names this the prescribed fix: "If a symbol isn't on the SDK yet, the fix is to PROMOTE it
+# to a personalclaw.sdk submodule instead of reaching around the boundary."
+# ``VOLATILE_KEY`` is the same app's other half: the marker on the runtime's per-turn system
+# note, which such a wire carries on the request's last user turn (its definition is the whole
+# placement contract, for every kind of wire).
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache  # noqa: F401
+from personalclaw.llm.registry import (  # noqa: F401
+    CredentialMissing,
+    ProviderEntry,
+    ProviderRegistry,
+    ProviderResolutionError,
+    get_default_registry,
+    own_model,
+    require_model,
+)
+
+# How a provider that reads its own wire reads it: a stream that ends before the event its
+# protocol ends an answer with was cut off, never complete. The rule lives in core so every
+# adapter keeps it the same way: what an adapter emits only once its answer has ended (its tool
+# calls, its terminal event) is never emitted for a cut stream, and the turn says it was cut off.
+from personalclaw.llm.stream_end import until_terminal  # noqa: F401
+from personalclaw.llm.stream_tags import (  # noqa: F401
+    CHANNEL_CLOSE,
+    CHANNEL_OPEN,
+    KIND_OUTSIDE,
+    Segment,
+    StreamingTagSplitter,
+    make_think_splitter,
+)
+
+# Media-model catalog contribution: the OpenAI-compatible image PROTOCOL client is
+# core, but WHICH concrete models a vendor serves (OpenAI's gpt-image-1/dall-e-*) is
+# vendor data the provider's app contributes here, keyed by provider type. A catalog
+# names no default: a media call names its model. See personalclaw.media_catalogs.
+from personalclaw.media_catalogs import (  # noqa: F401
+    MediaCatalog,
+    MediaModel,
+    register_media_catalog,
+)
+
+# ``declared_context_window`` rides alongside ``model_context_window`` because a provider
+# app that serves a LOCAL runtime has to answer both halves of the same question: what did
+# this binding DECLARE as its served window (the operator's ``context_window`` option), and
+# what should it fall back to when nothing was declared. An app popping the option itself and
+# hand-rolling the coercion would drift from core's rule about what counts as a declaration
+# (``True`` is not a window; ``0`` means undeclared), so the coercion is promoted, not copied.
+from personalclaw.model_windows import (  # noqa: F401
+    declared_context_window,
+    model_context_window,
+)
+
+# Media-capability config scanners — the app-owned extension point a model app
+# calls at import to contribute per-capability adapters (image/video/stt/embedding)
+# for its provider WITHOUT core knowing the vendor. See personalclaw.providers.media_scanners.
+from personalclaw.providers.media_scanners import register_scanner  # noqa: F401
+
+# ``register_branded_app`` is the one name here that a SIBLING SDK module owns rather than
+# core. Re-exported so an app uses the single stable ``personalclaw.sdk.model`` path. This is
+# a plain top-of-file import and MUST stay one: ``sdk.provider_helpers`` imports its core
+# machinery straight from ``personalclaw.llm.*``, so the edge runs one way only. Reversing
+# that (importing ``sdk.model`` from ``provider_helpers``) reinstates a module-scope cycle in
+# which whichever module is imported first from a cold interpreter decides whether the SDK
+# loads at all. tests/test_sdk_import_cycle.py drives both orders and fails if it comes back.
+from personalclaw.sdk.provider_helpers import register_branded_app  # noqa: F401
+
+# How a stream that passes another one on reads it, and how a reader that stops before a
+# stream's end reads it: inside ``closing_stream``, so the stream beneath is closed the moment
+# its reader stops rather than whenever the interpreter collects it.
+from personalclaw.turn_streams import closing_stream  # noqa: F401
+
+__all__ = [
+    "ModelProvider",
+    "LLMEvent",
+    "CancelOutcome",
+    # What a provider's `cancel()` closes: the requests it relays (the bundled `ollama-models`).
+    "InFlightRequests",
+    # A provider whose stream passes another one on reads it inside this, so closing its own
+    # stream closes the one beneath (the bundled `ollama-models` and `bundled-chat`).
+    "closing_stream",
+    # A provider that reads its own wire reads it through this, so a stream cut before its
+    # answer ended raises instead of reading as complete (`ollama-models`, `bedrock-models`).
+    "until_terminal",
+    "EVENT_COMPLETE",
+    "EVENT_TEXT_CHUNK",
+    "EVENT_THINKING_CHUNK",
+    "EVENT_TOOL_CALL",
+    "Capability",
+    "ProviderCapability",
+    # The GRADED native-structured-output claim a model app advertises on its
+    # ProviderCapability. Exported because a provider that supports server-side schema
+    # enforcement has to name the enum member, and the bundled `ollama-models` app was
+    # reconstructing it as `type(ProviderCapability.__dataclass_fields__[...].default)` —
+    # which yields the right object at runtime but is unreadable, untypeable (mypy sees
+    # `type[Any] | type[Literal[_MISSING_TYPE.MISSING]]`), and exactly the "reach around
+    # the boundary" the native capability contract tells you to fix by promoting the symbol.
+    "StructuredOutput",
+    "PromptCache",
+    "CACHE_HINT_KEY",
+    # A provider whose wire has no system turn inside the conversation (Anthropic Messages,
+    # Bedrock Converse) carries the runtime's per-turn note on the request's last user turn,
+    # never as a turn of its own (`bedrock-models`).
+    "VOLATILE_KEY",
+    "Credential",
+    "get_default_registry",
+    "ProviderEntry",
+    "ProviderResolutionError",
+    "CredentialMissing",
+    # The one answer to "which model does an instance serve when nothing names one"
+    # (`ProviderEntry.own_model` is the same answer for an entry), and the check a wire client
+    # makes before it sends: a request never names no model, and a client never picks one.
+    "own_model",
+    "require_model",
+    # #3511: the RETURN types of the two published accessors above.
+    # `get_default_registry() -> ProviderRegistry` is the pool a model app registers into, and
+    # every typed thing it hands back (`ModelCatalog`, `ProviderEntry`, `ProviderCapability`)
+    # was already exported here — the container they come out of was the one name missing.
+    "ProviderRegistry",
+    "KIND_OUTSIDE",
+    "make_think_splitter",
+    # `make_think_splitter() -> StreamingTagSplitter`, whose `feed()`/`flush()` return
+    # `Segment`s. A provider app that splits thinking tags off its own stream has to name the
+    # segments to read `KIND_OUTSIDE` off them, which is the reason `KIND_OUTSIDE` is here.
+    "StreamingTagSplitter",
+    "Segment",
+    # The reasoning-channel markers the splitter recognizes: a provider whose server splits one
+    # reasoning channel across two fields has to see whether the first one left it open.
+    "CHANNEL_OPEN",
+    "CHANNEL_CLOSE",
+    "model_context_window",
+    "declared_context_window",
+    "per_call_temperature",
+    "output_cap",
+    "ContextGauge",
+    "prompt_text_chars",
+    "PromptExceedsWindow",
+    "FirstTokenTimeout",
+    "FailureMode",
+    "OpenAIProvider",
+    "AnthropicProvider",
+    # Catalog / management / connectivity axis (Settings → Models discovery).
+    "ModelCatalog",
+    "ModelManager",
+    "ModelInfo",
+    "ConnectionResult",
+    # A catalog that could not obtain a list RAISES this (ModelCatalog.list_models's
+    # contract) — "0 models" and "could not ask" are different answers.
+    "ModelDiscoveryError",
+    "PullProgress",
+    "infer_capabilities",
+    "openai_compatible_list_models",
+    # Branded/generic protocol-provider app helpers (see sdk.provider_helpers).
+    "BrandedProviderSpec",
+    "register_branded_app",
+    # Media-model catalog contribution (stt/tts/image vendor catalogs).
+    "MediaCatalog",
+    "MediaModel",
+    "register_media_catalog",
+    # Media-capability config scanner registration (app-owned extension point).
+    "register_scanner",
+]

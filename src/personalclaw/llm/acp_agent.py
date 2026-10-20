@@ -1,0 +1,1170 @@
+"""Generic ACP-over-stdio agent provider.
+
+Spawns an external CLI that speaks the open Agent Client Protocol
+(JSON-RPC 2.0 over stdio) and translates ACP events into ``LLMEvent``s.
+
+This module is vendor-neutral: it knows nothing about specific ACP agent CLIs,
+hardcoded internal binary discovery paths, or any specific bot-name
+branding. The launch command is supplied by the caller (typically a
+``ProviderEntry``'s ``options.command``); ``claude`` is one possible
+backend, [Zed's ACP-compliant agents](https://github.com/zed-industries/agent-client-protocol)
+are another.
+
+Capabilities are negotiated through the ACP ``initialize`` handshake:
+``declared_capabilities`` reflects the capability set declared by the
+spawned agent in its initialize response.
+"""
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from personalclaw.acp.client import AcpClient
+from personalclaw.acp.errors import AcpError
+from personalclaw.acp.outcomes import AcpToolOutcomesMixin
+from personalclaw.acp.spend import AcpTurnMeter
+from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
+from personalclaw.agents.provider import AgentProvider
+from personalclaw.llm.base import (
+    CancelOutcome,
+    LLMEvent,
+    ModelProvider,
+)
+from personalclaw.llm.capabilities import Capability, ProviderCapability
+from personalclaw.llm.registry import (
+    ProviderEntry,
+    ProviderResolutionError,
+    get_default_registry,
+)
+from personalclaw.turn_streams import closing_stream
+
+if TYPE_CHECKING:
+    from personalclaw.agents.provider import DiscoveredAgent, ReadinessStatus
+
+logger = logging.getLogger(__name__)
+
+
+# The ``initialize`` handshake advertises CLIENT_NAME ("personalclaw") as the
+# client identity. The ACP *agent* (the session/set_mode modeId) has NO
+# vendor-neutral default — it is a per-session choice, and an unselected agent
+# means "use the CLI's own built-in default" (empty agent → dialect skips
+# activation). There is deliberately no fabricated default agent name.
+
+#: What an installed ACP CLI that nobody has started reads as. Only starting it can say whether
+#: it speaks ACP and is signed in, and PersonalClaw starts another agent's CLI only when the user
+#: asks for that: the Test on its card.
+UNTESTED_DETAIL = (
+    "Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers)."
+)
+
+
+def options_sandbox_mode(options: dict) -> str:
+    """The OS path-sandbox mode an ``acp:<cli>`` entry declares (default ``auto``).
+
+    Every path that spawns the CLI from an entry's ``options`` must read the mode
+    through here: the readiness probe (the Test a user starts) and the runtime
+    factory. They used to decide for themselves, so only the factory honoured a
+    declared mode. That is not a cosmetic split: a bundle that declares
+    ``self_sandboxing`` (``sandbox_mode="off"``, because the CLI applies its own OS
+    sandbox and the host's cannot nest inside it) got the wrap anyway on the probe,
+    so the provider card reported a dead runtime that in fact worked the moment a
+    real turn went through the factory.
+    """
+    return str(options.get("sandbox_mode") or "auto")
+
+
+def options_sandbox(options: dict) -> str:
+    """The sandbox tier an ``acp:<cli>`` entry declares its CLI runs in (default ``none``).
+
+    The tier a session of the CLI gets when its start names none (the factory below), and the
+    tier a second opinion asking the CLI runs it in (``proposer.backends``): read in one place, so
+    no start of an agent the owner set up to run sandboxed runs it on the host instead.
+    """
+    return str(options.get("sandbox") or "").strip() or "none"
+
+
+def options_env(options: dict) -> dict[str, str]:
+    """What an ``acp:<cli>`` entry adds to its CLI's environment.
+
+    The values its app computed (``env``: a config folder, an engine path) and, from the
+    gateway's own environment, each variable its app declared the CLI reads to pick a provider,
+    a region or a model (``env_passthrough``), when it is set; a computed value wins over the
+    gateway's for the same name. Never a credential (`sandbox.declared_env`). Read through here
+    by every path that spawns the CLI from an entry, like :func:`options_sandbox_mode`: the
+    readiness probe, the runtime factory and a concurrent session's shared connection.
+    """
+    from personalclaw.sandbox import declared_env
+
+    raw = options.get("env") or {}
+    env = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+    names = options.get("env_passthrough") or []
+    if isinstance(names, (list, tuple)):
+        passed = declared_env([str(n) for n in names], site="acp-agent")
+        env = {**passed, **env}
+    return env
+
+
+def options_session_meta(options: dict) -> dict:
+    """The ``_meta`` an ``acp:<cli>`` entry's app declared for its CLI's sessions
+    (``register_acp_cli_entry(session_meta=...)``), or ``{}``. Read through here by every path
+    that opens a session from an entry, like :func:`options_env`: the readiness probe, the
+    runtime factory and a concurrent session's shared connection."""
+    meta = options.get("session_meta")
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
+def options_compacts_itself(options: dict) -> bool:
+    """Whether an ``acp:<cli>`` entry's app declared that its CLI compacts its own conversation
+    (``register_acp_cli_entry(compacts_itself=True)``). Read through here by every path that
+    opens a session from an entry, like :func:`options_session_meta`: the runtime factory and a
+    concurrent session's shared connection. Only a declared ``True`` counts: a session whose
+    runtime is not known to compact itself is restarted at the threshold rather than left to
+    overflow."""
+    return options.get("compacts_itself") is True
+
+
+class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentProvider):
+    """Generic ACP-over-stdio agent runtime.
+
+    Spawns the configured ``command`` as a subprocess, completes the open
+    ACP ``initialize`` handshake, and translates ACP events into
+    ``LLMEvent``s. The underlying protocol layer is
+    :class:`personalclaw.acp.client.AcpClient`; this provider stays vendor-
+    neutral and does not reach into that layer for agent-specific
+    knobs.
+
+    Implements both axes during the introduce-alongside transition: it is an
+    :class:`~personalclaw.llm.base.ModelProvider` (the surface the factory/bridge
+    return today) and an :class:`~personalclaw.agents.provider.AgentProvider`
+    (the stateful-runtime axis the SessionManager probes for session/pid/resume
+    capabilities via ``isinstance``). The native loop is the second
+    ``AgentProvider``.
+    """
+
+    @property
+    def provider_id(self) -> str:
+        """Runtime id: the CONFIGURED ``acp:<cli>`` entry name; basename as fallback.
+
+        The configured entry name is the runtime the USER picked
+        (``acp:claude-code``). The launch-command basename is an inference that
+        names the *adapter* instead (``acp:claude-agent-acp``, or ``acp:npx``
+        under the npx fallback — see
+        :func:`personalclaw.acp_bundles._register.register_acp_cli_entry`, which
+        already notes that basename inference is untrustworthy), so it is only
+        the fallback for a provider constructed without a runtime id.
+
+        This is the same value :attr:`AcpSessionProvider.provider_id` returns and
+        the entry name a Test hands :meth:`agents_from_snapshot` as
+        ``options["runtime_id"]`` — one runtime id, three call sites in agreement.
+
+        The ``acp:`` prefix is an invariant, not decoration: consumers split on
+        it (the not-gateable registry lookup in
+        ``dashboard/chat_runner.py``, ``agents.registry``'s family resolver), so
+        a configured name missing it is prefixed rather than passed through.
+        """
+        configured = self._runtime_id.strip()
+        if configured:
+            return configured if configured.startswith("acp:") else f"acp:{configured}"
+        cli = Path(self._command[0]).name if self._command else "agent"
+        return f"acp:{cli}"
+
+    @classmethod
+    def presence(cls, options: dict) -> "ReadinessStatus":
+        """What is known about the configured ACP CLI WITHOUT starting it.
+
+          * no ``command`` configured → ``error``
+          * adapter binary not on PATH → ``not_found``
+          * a declared delegate engine CLI (``options.requires_executable``) is
+            absent → ``not_found`` (see below)
+          * otherwise → ``untested``: the CLI is installed, and only starting it can
+            say whether it speaks ACP and is signed in. That start is
+            :meth:`probe_readiness`, which runs only when the user asks for it.
+
+        Nothing is run: ``shutil.which`` and the declared engine path are file-system
+        reads. Every listing (``/api/agent-providers``, ``personalclaw doctor``) answers
+        from this plus the user's last Test (``agents/runtime_tests.py``).
+        """
+        import shutil
+
+        from personalclaw.acp.cli_resolve import adapter_install_state, is_npx_fallback
+        from personalclaw.agents.provider import ReadinessStatus
+
+        command = options.get("command")
+        if not isinstance(command, list) or not command:
+            return ReadinessStatus(
+                ready=False, state="error", detail="no options.command configured"
+            )
+        command = [str(part) for part in command]
+
+        bin_path = shutil.which(command[0])
+        if not bin_path:
+            return ReadinessStatus(
+                ready=False,
+                state="not_found",
+                detail=f"'{command[0]}' not found on PATH",
+            )
+
+        # Delegate-engine gate. Some ACP adapters (claude-agent-acp, codex-acp)
+        # are thin protocol shims that run via ``npx`` and hand the actual model
+        # turn to a SEPARATE engine CLI. The ACP ``initialize`` handshake
+        # succeeds without that engine, so a passing handshake is NOT proof the
+        # runtime can serve a turn. When a bundle declares ``requires_executable``
+        # (vendor knowledge — which adapter delegates to what), enforce it here
+        # so the absent engine surfaces as ``not_found`` up front instead of a
+        # hollow ``ready`` that dies on the first prompt. The engine is satisfied
+        # when the bundle resolved a path (forwarded via its env var) OR it is
+        # live-resolvable on the daemon PATH right now.
+        requires = options.get("requires_executable")
+        if isinstance(requires, dict):
+            label = str(requires.get("label") or "engine")
+            declared_path = str(requires.get("path") or "").strip()
+            engine = declared_path or shutil.which(label) or ""
+            if not engine:
+                env_var = str(requires.get("env_var") or "").strip()
+                hint = f" (set {env_var} or install it)" if env_var else ""
+                return ReadinessStatus(
+                    ready=False,
+                    state="not_found",
+                    detail=(
+                        f"ACP adapter present but its engine CLI '{label}' was "
+                        f"not found{hint} — the adapter delegates the model turn "
+                        f"to it, so the runtime cannot serve without it."
+                    ),
+                )
+
+        detail = UNTESTED_DETAIL
+        # Where enabling the app again installs the adapter, the runtime's adapter row says it is
+        # missing (with Retry, and why when an install failed), so this does not say it twice.
+        if is_npx_fallback(command) and adapter_install_state(command) is None:
+            detail += " Its adapter is not installed here, so a Test fetches it with npx first."
+        return ReadinessStatus(ready=False, state="untested", detail=detail)
+
+    @classmethod
+    async def probe_readiness(cls, options: dict) -> "ReadinessStatus":
+        """START the configured ACP CLI once and report whether it is usable.
+
+        Only for an action the user took to test this runtime — the Test on its card
+        (``POST /api/agent-providers/{id}/test``) or ``personalclaw doctor
+        --start-agent-clis``. Nothing else calls it: a listing answers from
+        :meth:`presence`.
+
+        Resolution order:
+          * :meth:`presence` says it cannot start (no command, CLI or engine absent)
+            → that answer, and nothing is started
+          * the ``npx -y`` adapter fallback with no Node >= 20 → ``not_found``
+          * spawn + ACP ``initialize`` + one bare ``session/new`` succeed → ``ready``
+            (:meth:`probe_handshake` — no MCP servers, no session setup verbs), with
+            that session's snapshot in ``session_snapshot`` for discovery
+          * handshake fails with an auth/login signal → ``needs_login`` (with a
+            best-effort ``login_command`` argv for the Sign-in terminal)
+          * any other failure → ``error``
+        """
+        from personalclaw.agents.provider import ReadinessStatus
+
+        present = cls.presence(options)
+        if present.state != "untested":
+            return present
+        command = [str(part) for part in options["command"]]
+
+        # Adapter-provisioning gate. When the launch argv is the ``npx -y <pkg>``
+        # last resort (the adapter isn't installed on disk — auto-provisioning
+        # either wasn't run or couldn't find a new-enough Node), that path only
+        # works under a Node the adapter supports (>= 20). If NO such Node exists
+        # on this machine, npx would die with EBADENGINE — so report a clean,
+        # actionable ``not_found`` up front instead of spawning npx and surfacing
+        # a raw fetch/engine stack trace. When a Node >= 20 IS present, npx is a
+        # supported cold path (see the timeout budget below) — let it proceed.
+        # (Here and not in :meth:`presence`: finding that Node runs ``node --version``.)
+        from personalclaw.acp.cli_resolve import is_npx_fallback, resolve_node_ge
+
+        if is_npx_fallback(command) and not resolve_node_ge():
+            return ReadinessStatus(
+                ready=False,
+                state="not_found",
+                detail=(
+                    "ACP adapter is not installed and cannot be auto-provisioned: "
+                    "no Node >= 20 found (the adapter needs it). Install Node >= 20, "
+                    "install the adapter, or set the bundle's *_ACP_BIN override."
+                ),
+            )
+
+        provider = cls(
+            command=command,
+            cwd=options.get("cwd"),
+            env=options_env(options),
+            # The probe MUST use the configured dialect — otherwise it handshakes
+            # with the default protocol shape and an adapter expecting a
+            # different one (e.g. claude/codex int protocolVersion) rejects it
+            # with -32602, masking a perfectly-installed CLI as "error".
+            dialect=options.get("dialect"),
+            # The probe spawns the real CLI, so it must honour the entry's declared
+            # sandbox mode. Omitting it defaulted to ``auto`` and wrapped a
+            # self-sandboxing CLI the host cannot nest around — the probe then
+            # reported a runtime as dead that the factory would have started fine.
+            sandbox_mode=options_sandbox_mode(options),
+            # The probe's bare session is a session too: opened without the app's
+            # declaration, it would load what the app's sessions are kept from.
+            session_meta=options_session_meta(options),
+        )
+        # A cold start can be slow on desktop: claude-code-acp runs via an
+        # ``npx`` fetch on first use, and a version-manager-shimmed CLI has its
+        # own warm-up — both can exceed a few seconds before the ACP
+        # ``initialize`` even begins. A 10s budget made authenticated-but-slow
+        # CLIs probe as timed-out and (worse) get mislabeled needs_login. Use a
+        # realistic cold-start budget. The probe runs only when the user asked for it
+        # (see the docstring) — /api/agent-providers answers from presence + last Test.
+        probe_timeout = float(options.get("probe_timeout_secs") or 45)
+        try:
+            await asyncio.wait_for(provider.probe_handshake(), timeout=probe_timeout)
+            caps = sorted(provider.declared_capabilities)
+            # Copied BEFORE the shutdown, which clears it: the agents this runtime offers are
+            # read from this one run instead of starting it a second time to ask.
+            snapshot = dict(provider.session_snapshot or {})
+            await provider.shutdown()
+            return ReadinessStatus(
+                ready=True,
+                state="ready",
+                detail=f"initialize OK (caps: {', '.join(caps) or 'none'})",
+                session_snapshot=snapshot,
+            )
+        except Exception as exc:  # noqa: BLE001 - probe summarizes any failure
+            # How the process ended and what it said last, read BEFORE shutting down: the
+            # shutdown's kill would read as the exit, and ``teardown()`` clears the stderr
+            # deque. A process on its way out is given a moment to finish (and to flush its
+            # last lines); one that answered a refusal and lives on reads as running.
+            try:
+                exit_code = await provider.client.wait_exit(1.0)
+                stderr_tail = provider.client.stderr_tail()
+            except Exception:  # noqa: BLE001 - diagnostics must never mask the failure
+                exit_code, stderr_tail = None, ""
+            try:
+                await provider.shutdown()
+            except Exception:
+                pass
+            msg = str(exc).lower()
+            timed_out = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+
+            # ACP CLIs that require interactive auth surface it via an explicit
+            # initialize error ("not logged in", "authenticate", "unauthorized"
+            # — codex returns "Authentication required"). Detect that generically
+            # (no vendor-specific string) and route to Sign-in.
+            #
+            # A bare *timeout* with NO auth signal is NOT proof of "not signed
+            # in" — on desktop a cold ``npx`` fetch or a shimmed-CLI warm-up can
+            # simply outrun the probe budget even when the CLI is fully
+            # authenticated. Reporting those as ``needs_login`` is exactly what
+            # made an authenticated CLI / claude-code show a false Sign-in
+            # prompt + "not available". So a timeout gets its own ``timeout``
+            # state (retryable), keeping the bundle's ``login_command`` attached
+            # only as an optional fallback action — never asserting the user is
+            # unauthenticated.
+            login_signals = ("log in", "login", "logged in", "authenticat", "unauthor", "sign in")
+            declared = options.get("login_command")
+            has_login_cmd = isinstance(declared, list) and bool(declared)
+            signalled = any(sig in msg for sig in login_signals)
+
+            # Sign-in runs the CLI interactively (without the ACP/stdio flags
+            # that suppress the TUI). Prefer the bundle-declared login argv (e.g.
+            # ``claude /login``) — the vendor knows its own auth verb; the core
+            # never names it. Fall back to bare invocation of the adapter binary.
+            login_cmd = [str(p) for p in (declared or [])] if has_login_cmd else [command[0]]
+
+            if signalled:
+                return ReadinessStatus(
+                    ready=False,
+                    state="needs_login",
+                    detail=f"agent requires sign-in: {exc}",
+                    login_command=login_cmd,
+                )
+            if timed_out:
+                return ReadinessStatus(
+                    ready=False,
+                    state="timeout",
+                    detail=(
+                        f"handshake timed out after {probe_timeout:.0f}s (cold start "
+                        "may be slow — retry; sign in only if the agent needs auth)"
+                    ),
+                    login_command=login_cmd,
+                )
+            # A child that dies during startup writes its cause to STDERR and nothing
+            # to stdout, so ``exc`` names no cause either way: an ``AcpProcessDied``
+            # broken pipe if the child is already gone when ``initialize`` writes to
+            # its stdin, or a bare ``ACP stdout EOF`` if the read that follows is what
+            # first observes the death. So the failure is said with how the process ended
+            # and its last output, and with what to check.
+            detail = _test_failure_detail(
+                exc,
+                program=Path(command[0]).name,
+                engine=_engine_label(options),
+                exit_code=exit_code,
+                stderr_tail=stderr_tail,
+            )
+            runtime = str(options.get("runtime_id") or "") or Path(command[0]).name
+            logger.warning("Test of ACP runtime %s failed: %s", runtime, detail)
+            return ReadinessStatus(ready=False, state="error", detail=detail)
+
+    @classmethod
+    def agents_from_snapshot(cls, options: dict, snapshot: dict) -> list["DiscoveredAgent"]:
+        """Map a raw ``session/new`` snapshot to ``DiscoveredAgent`` rows.
+
+        Pure (no spawn): the dialect normalizes the vendor shape, then we apply the
+        runtime-scoped id + display name. Its input is the one session a user's Test
+        opened (:attr:`ReadinessStatus.session_snapshot`), so reading a runtime's agents
+        never starts it a second time. The model-override list is attached to every
+        agent of the runtime (it offers the same models whichever persona is active)."""
+        from personalclaw.acp.dialect import get_dialect
+        from personalclaw.agents.provider import DiscoveredAgent
+
+        runtime_id = str(options.get("runtime_id") or "").strip() or "acp"
+        runtime_label = str(options.get("runtime_label") or "").strip() or (
+            runtime_id.split(":", 1)[-1] if ":" in runtime_id else runtime_id
+        )
+        dialect = get_dialect(options.get("dialect"))
+        result = dialect.normalize_discovery(snapshot or {})
+        # Persist the capability matrix into the runner catalog. This is the ONE place where a
+        # runner's models/modes/efforts arrive normalized off the wire, so it is the only honest
+        # source for the Settings → Agents capability chips: a runner with no recorded matrix
+        # renders as unknown rather than as an assumed-uniform set.
+        try:
+            from personalclaw.agents.runners import record_capabilities
+
+            record_capabilities(
+                runtime_id,
+                models=list(result.models),
+                modes=[str(a.get("id") or "") for a in result.agents if a.get("id")],
+                # supported_efforts rows are the backend's VERBATIM option dicts
+                # ({"value", "label", …}); the catalog stores the ids the composer
+                # applies, so read `value` rather than stringifying the whole dict.
+                efforts=[
+                    str(e.get("value") or "")
+                    for e in result.supported_efforts
+                    if isinstance(e, dict) and e.get("value")
+                ],
+            )
+        except Exception:  # noqa: BLE001 - catalog persistence never breaks discovery
+            logger.debug("runner capability persist failed for %s", runtime_id, exc_info=True)
+        # Reasoning effort is a per-turn SETTING now, so a runtime exposes ONE
+        # agent (default-dialect personas still map 1:1 to availableModes). The
+        # backend's declared effort options ride along as supported_efforts for the
+        # composer's reasoning control — no effort-agent variants in the picker.
+        supported_efforts = list(result.supported_efforts)
+        agents: list[DiscoveredAgent] = []
+        for a in result.agents:
+            use_prefix = bool(a.get("use_runtime_prefix"))
+            label = str(a.get("label") or "")
+            if use_prefix:
+                name = runtime_label if not label else f"{runtime_label} ({label})"
+            else:
+                name = label or str(a.get("id") or runtime_label)
+            raw_id = str(a.get("id") or "")
+            disc_id = f"{runtime_id}/{raw_id}" if raw_id else runtime_id
+            agents.append(
+                DiscoveredAgent(
+                    id=disc_id,
+                    name=name,
+                    runtime=runtime_id,
+                    description=str(a.get("description") or ""),
+                    provider_agent=str(a.get("provider_agent") or ""),
+                    reasoning_effort=str(a.get("reasoning_effort") or ""),
+                    models=list(result.models),
+                    supported_efforts=supported_efforts,
+                )
+            )
+        return agents
+
+    def __init__(
+        self,
+        *,
+        command: list[str],
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        model: str | None = None,
+        agent_name: str = "",
+        capability_flags: dict[str, bool] | None = None,
+        session_key: str | None = None,
+        channel_id: str | None = None,
+        sandbox_mode: str = "auto",
+        sandbox: str = "none",
+        session_files_dir: Path | None = None,
+        dialect: str | None = None,
+        mode: str = "",
+        reasoning_effort: str = "",
+        unattended: bool = False,
+        self_approval: bool = False,
+        runtime_id: str = "",
+        session_meta: dict | None = None,
+        compacts_itself: bool = False,
+    ) -> None:
+        if not command:
+            raise ValueError("AcpAgentProvider requires a non-empty command list")
+        self._command: list[str] = list(command)
+        # What this runtime's app declared about its CLI (``options_compacts_itself``): read by the
+        # session manager at the context threshold, through ``compacts_automatically``.
+        self._compacts_itself: bool = bool(compacts_itself)
+        # The CONFIGURED runtime id (the ``acp:<cli>`` ProviderEntry name) this
+        # provider was built for. Read by ``provider_id``; empty falls back to
+        # basename inference. See that property for why the configured value wins.
+        self._runtime_id: str = runtime_id or ""
+        # Per-CLI ACP protocol dialect, selected by the bundle (the ``<cli>`` of
+        # ``acp:<cli>``). Resolved to a strategy object the vendor-neutral client
+        # delegates its handshake/permission divergences to. None → default
+        # (default-dialect) shape.
+        self._dialect_id: str | None = dialect
+        self._cwd: Path | None = Path(cwd) if cwd is not None else None
+        self._env: dict[str, str] = dict(env or {})
+        self._model: str | None = model
+        self._agent_name: str = agent_name
+        self._capability_flags: dict[str, bool] = dict(capability_flags or {})
+        self._session_key: str | None = session_key
+        self._channel_id: str | None = channel_id
+        self._sandbox_mode: str = sandbox_mode
+        # Sandbox provider name — the isolation backend the ACP process launches through.
+        # Threaded into the client → transport; ``none`` is the always-available default.
+        self._sandbox: str = sandbox or "none"
+        # Permission/operating mode for adapters with a separate mode axis (Zed:
+        # default/acceptEdits/plan/dontAsk/bypassPermissions). Empty for the default dialect
+        # (no separate mode axis) and for native default behaviour.
+        self._mode: str = mode or ""
+        # Per-turn reasoning effort — one of the backend's declared effort options
+        # (verbatim); applied via the dialect's set_effort_request. Empty = default.
+        self._reasoning_effort: str = reasoning_effort or ""
+        # Unattended run: nobody is watching this session, so nobody can answer
+        # the agent's own questions (``AcpClient._owner_answers``). Its calls still ask the host,
+        # which fails a permission request no grant answers fast, with its reason, instead of
+        # parking the turn on a human.
+        self._unattended: bool = bool(unattended)
+        # The owner let this work's CLI approve its own calls (``agent_cli_self_approval``): the
+        # one input that lets the client forward a self-approving mode.
+        self._self_approval: bool = bool(self_approval)
+        self._session_files_dir: Path | None = (
+            Path(session_files_dir) if session_files_dir is not None else None
+        )
+
+        # Negotiated capability set, populated after ``start()`` completes
+        # the ACP ``initialize`` handshake. Empty until then.
+        self._negotiated_capabilities: frozenset[str] = frozenset()
+
+        # The provider holds the protocol-level client. The client is
+        # vendor-neutral with respect to its API surface; backend-specific
+        # session-files behavior is opted in via ``session_files_dir``.
+        from personalclaw.acp.dialect import get_dialect
+
+        self._client: AcpClient = AcpClient(
+            work_dir=self._cwd,
+            model=self._model,
+            agent=self._agent_name,
+            sandbox_mode=self._sandbox_mode,
+            sandbox=self._sandbox,
+            session_key=self._session_key,
+            channel_id=self._channel_id,
+            extra_env=self._env or None,
+            command=self._command,
+            session_files_dir=self._session_files_dir,
+            dialect=get_dialect(self._dialect_id),
+            mode=self._mode,
+            reasoning_effort=self._reasoning_effort,
+            unattended=self._unattended,
+            self_approval=self._self_approval,
+            session_meta=session_meta,
+        )
+
+    # ── Lifecycle ────────────────────────────────────────────────────
+
+    @property
+    def client(self) -> AcpClient:
+        """Expose the underlying protocol client (for is_ready / readiness checks)."""
+        return self._client
+
+    def steer_capable(self) -> bool:
+        """Whether a mid-turn message reaches the turn this provider is running.
+
+        ACP backends differ, and the honest default is No: a `session/prompt` sent
+        while a turn generates may be serviced, queued, or clobbered depending on
+        the CLI. Only a dialect that declares ``supports_mid_turn_prompt`` (proven
+        by a live spike) opts in; everything else routes to the visible queue rather
+        than pretending to steer.
+        """
+        from personalclaw.acp.dialect import get_dialect
+
+        try:
+            return bool(get_dialect(self._dialect_id).supports_mid_turn_prompt)
+        except Exception:  # pragma: no cover — defensive; a bad id yields the default
+            return False
+
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
+        """Arm the ACP tool-boundary steer drain. Returns whether a drain is now
+        armed — the dispatcher records THAT and never the declaration.
+
+        This is the method whose absence made ``steer_capable()`` inert: a dialect could
+        declare mid-turn support and the dispatcher's ``hasattr(client, "set_steer_source")``
+        gate still found nothing to wire, so the steer routed to the queue no matter what the
+        dialect said. Refusal now comes from the seam itself (a non-declaring dialect answers
+        False), not from the method being missing."""
+        return self._client.set_steer_source(pull)
+
+    def undelivered_steers(self) -> list[str]:
+        """Steers this turn pulled but never wrote to the CLI (empty on the happy path).
+        Read by the dispatcher at turn end so an undeliverable steer is visible."""
+        return self._client.undelivered_steers()
+
+    @property
+    def asks_through_elicitation(self) -> bool:
+        """Whether the agent puts its questions to the user through this host
+        (``AcpClient.asks_through_elicitation``)."""
+        return bool(getattr(self._client, "asks_through_elicitation", False))
+
+    def set_question_handler(self, handler: "Callable[[dict], Awaitable[dict]] | None") -> None:
+        """Arm what answers the agent's questions to the user (``AcpSession``)."""
+        self._client.set_question_handler(handler)
+
+    async def start(self) -> None:
+        """Spawn the configured command and run the ACP ``initialize`` handshake.
+
+        After this returns, :attr:`declared_capabilities` reflects the
+        capability set declared by the spawned agent in its ACP
+        ``initialize`` response.
+        """
+        await self._client.ensure_ready()
+        self._snapshot_capabilities()
+
+    async def probe_handshake(self) -> None:
+        """The readiness probe's handshake: spawn, ``initialize``, one bare session.
+
+        :meth:`start` sets up a chat session — core MCP servers (a ``personalclaw mcp-core``
+        child each), agent activation, model/mode/effort verbs, an MCP-init drain — none of
+        which a probe that sends no prompt needs. See :meth:`AcpClient.probe_handshake`.
+        """
+        await self._client.probe_handshake()
+        self._snapshot_capabilities()
+
+    def _snapshot_capabilities(self) -> None:
+        # Snapshot the negotiated capabilities. ``AcpClient`` records the
+        # full ``agentCapabilities`` dict from the initialize response.
+        # We surface it as a vendor-neutral ``frozenset[str]`` keyed by
+        # capability name; downstream consumers can look up specific
+        # boolean flags via ``client._agent_capabilities`` if they need
+        # the raw shape.
+        agent_caps = getattr(self._client, "_agent_capabilities", None) or {}
+        names: set[str] = set()
+        if isinstance(agent_caps, dict):
+            for key, value in agent_caps.items():
+                if isinstance(value, bool):
+                    if value:
+                        names.add(str(key))
+                else:
+                    # Non-boolean entries (sub-objects, version strings, ...)
+                    # are surfaced by name so callers can still introspect
+                    # what was declared.
+                    names.add(str(key))
+        self._negotiated_capabilities = frozenset(names)
+
+    async def shutdown(self) -> None:
+        """Send ACP shutdown, drain stdio, and reap the subprocess."""
+        await self._client.shutdown()
+
+    @property
+    def declared_capabilities(self) -> frozenset[str]:
+        """Capabilities declared by the spawned agent in its ACP ``initialize`` response.
+
+        Empty until :meth:`start` completes the handshake. The router
+        consults this set (or the static :class:`ProviderCapability`
+        descriptor for the ``acp_agent`` type) to decide whether the
+        entry can serve a use case.
+        """
+        return self._negotiated_capabilities
+
+    @property
+    def session_snapshot(self) -> dict:
+        """The live session's raw ``session/new`` response (modes / models /
+        configOptions), or ``{}`` before start. :meth:`probe_readiness` copies it before
+        it shuts the CLI down, so a Test reads the agents it offers from the same run."""
+        return self._client.session_snapshot
+
+    # ── Streaming and events ─────────────────────────────────────────
+
+    @staticmethod
+    def _to_llm_event(e: Any) -> LLMEvent:
+        # The ACP→neutral translation lives in acp/adapter.py (the only place
+        # that knows both AcpEvent and the neutral AgentEvent shapes).
+        from personalclaw.acp.adapter import acp_event_to_agent_event
+
+        return acp_event_to_agent_event(e)
+
+    async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        # Procedural-memory signal: a new turn starts with a clean accumulator,
+        # then every event is folded in. See acp/outcomes.py for why the reset is here.
+        # On a metered axis the turn is metered (acp/spend.py): admitted before the prompt
+        # goes out against the spend ceilings, and charged at its end.
+        self._outcome_accumulator.begin_turn()
+        turn = self._events(self._client.stream_events(message))
+        async with closing_stream(self._metered(turn, prompt=message)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
+
+    async def _events(self, frames: AsyncIterator[Any]) -> AsyncIterator[LLMEvent]:
+        async with closing_stream(frames) as turn:
+            async for e in turn:
+                yield self._to_llm_event(e)
+
+    @property
+    def supports_native_commands(self) -> bool:
+        """Read off the ACP handshake (see ``AcpConnection.supports_native_commands``) —
+        NOT assumed from the fact that this provider implements ``stream_command``."""
+        return bool(getattr(self._client, "supports_native_commands", False))
+
+    async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
+        self._outcome_accumulator.begin_turn()
+        turn = self._events(self._client.stream_command(command))
+        async with closing_stream(self._metered(turn, prompt=command)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
+
+    async def approve_tool(self, request_id: str | int) -> None:
+        await self._client.approve_tool(request_id)
+
+    async def reject_tool(self, request_id: str | int) -> None:
+        await self._client.reject_tool(request_id)
+
+    def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
+        """The agent's option a Deny of *request_id* was answered with (see AcpSession)."""
+        return self._client.refusal_answer(request_id)
+
+    def deny_outcome(self, request_id: str | int) -> str:
+        """What a Deny of the pending *request_id* would do (see AcpSession)."""
+        return self._client.deny_outcome(request_id)
+
+    async def start_fresh_turn_session(self) -> None:
+        """Start a fresh agent session on the live process (see AcpClient)."""
+        await self._client.start_fresh_turn_session()
+
+    def context_usage_pct(self) -> float | None:
+        return self._client.last_prompt_stats.context_pct
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """Whether the CLI compacts its own conversation when its context fills, as this
+        runtime's app declared (``register_acp_cli_entry(compacts_itself=True)``).
+
+        True keeps the session manager from restarting the session at the Settings threshold:
+        the CLI's own compaction keeps the session going, with the results of its earlier tool
+        calls. False, the default for a CLI its app says nothing about, is a session that is
+        restarted there, because nothing in this process can compact a conversation the CLI
+        holds."""
+        return self._compacts_itself
+
+    async def compact(self, context: str = "") -> None:
+        """Trigger a native ``/compact`` slash command on the spawned agent.
+
+        Behavior is protocol-level (the open ACP ``commands/execute`` path)
+        rather than vendor-specific. When ``context`` is provided, it is
+        truncated to keep the prompt bounded.
+        """
+        if context:
+            prompt = context[:4000] if len(context) > 4000 else context
+            await self._client.send_command(
+                f"/compact Preserve this session context in the summary:\n{prompt}"
+            )
+        else:
+            await self._client.send_command("/compact")
+
+    async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
+        """Cancel in-flight operation via ACP ``session/cancel``."""
+        if not self._client.has_active_turn():
+            logger.debug("provider.cancel: no active turn, skip")
+            return "no_turn"
+        try:
+            await self._client.cancel_session()
+        except AcpError:
+            logger.debug("provider.cancel: cancel_session raised AcpError", exc_info=True)
+            return "error"
+        if wait_ack_timeout <= 0:
+            # Fire-and-forget: cancel notification sent, caller does not
+            # wait for the agent's ack. Return "acked" optimistically so
+            # callers that don't care about confirmation stay happy. Any
+            # caller that needs a real ack MUST pass a positive timeout.
+            logger.debug("provider.cancel: wait_ack_timeout=0, returning acked")
+            return "acked"
+        try:
+            reason = await self._client.wait_turn_done(timeout=wait_ack_timeout)
+            logger.debug("provider.cancel: wait_turn_done returned reason=%r", reason)
+            if reason in (STOP_REASON_CANCELLED, STOP_REASON_END_TURN):
+                return "acked"
+            logger.debug("Unexpected stop reason after cancel: %r", reason)
+            return "timeout"
+        except asyncio.TimeoutError:
+            logger.debug("provider.cancel: wait_turn_done timed out after %.1fs", wait_ack_timeout)
+            return "timeout"
+
+    async def wait_for_compaction(self, timeout: float = 120.0) -> dict:
+        """Wait for compaction completed/failed after stream ends."""
+        return await self._client.wait_for_compaction(timeout)
+
+    def is_alive(self) -> bool:
+        return self._client.is_responsive()
+
+    def is_process_alive(self) -> bool:
+        """True if the underlying OS process has not exited (ignores I/O staleness)."""
+        return self._client.is_process_alive()
+
+    @property
+    def exit_code(self) -> int | None:
+        """Process exit code, or None if still running."""
+        return self._client.exit_code
+
+    def touch_activity(self) -> None:
+        self._client.touch_activity()
+
+    def set_workspace(self, path: Path) -> None:
+        self._cwd = Path(path)
+        # The protocol client is the source of truth for the spawned
+        # subprocess's cwd; keep it in sync with the provider-level view.
+        self._client._work_dir = self._cwd
+
+    @property
+    def workspace(self) -> str:
+        """The folder the agent CLI was started in, where its commands run: the protocol client's,
+        which an unbound session takes from the configured workspace."""
+        return str(self._client._work_dir)
+
+    def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
+        """Rebind this provider to a different logical session.
+
+        Updates the session-scoped filesystem identifier the spawned
+        agent uses to namespace its on-disk session files. Implemented
+        by delegating to :meth:`AcpClient.rekey`, which is safe to call
+        whether or not the agent process has started yet. ``channel_id``
+        rebinds the channel in the same call (warm-pool claim path).
+        """
+        self._session_key = session_key
+        self._channel_id = channel_id
+        self._client.rekey(session_key, channel_id)
+
+    def set_channel(self, channel_id: str | None) -> None:
+        """Rebind the channel id (collab room) without changing the session key."""
+        self._channel_id = channel_id
+
+    async def set_model(self, model: str) -> None:
+        """Switch the active model on the running agent (post-pool-claim)."""
+        await self._client.set_model(model)
+
+    async def set_agent(self, agent: str) -> None:
+        """Switch the active agent/persona on the running connection (post-pool-
+        claim). The default dialect issues ``session/set_mode``; Zed adapters no-op."""
+        await self._client.set_agent(agent)
+
+    async def set_mode(self, mode: str) -> None:
+        """Switch the permission/operating mode on the running connection (post-
+        pool-claim). Zed adapters issue ``set_config_option`` (configId=mode);
+        the default dialect no-ops. MUST follow :meth:`set_model`."""
+        await self._client.set_mode(mode)
+
+    async def set_reasoning_effort(self, effort: str) -> None:
+        """Apply the per-turn reasoning effort on the running connection (Zed:
+        ``set_config_option`` configId=effort; default dialect no-ops). The value
+        is the backend's own declared effort option — no translation. MUST follow
+        :meth:`set_model`."""
+        self._reasoning_effort = effort or ""
+        await self._client.set_effort(effort or "")
+
+    def set_resume(self, session_id: str) -> None:
+        """Set the ACP session id to resume before ``start()`` initializes."""
+        self._client.set_resume_session_id(session_id)
+
+    @property
+    def resumed(self) -> bool:
+        """True if the last ``start()`` resumed an existing ACP session."""
+        return bool(getattr(self._client, "resumed", False))
+
+    @property
+    def agent_model(self) -> str:
+        """The model the wrapped client is configured with (for context table)."""
+        return self._client._model or ""
+
+    @property
+    def agent_name(self) -> str:
+        """The agent name the wrapped client is configured with."""
+        return self._client._agent or ""
+
+    @property
+    def pid(self) -> int | None:
+        """The spawned agent process PID, or None."""
+        return getattr(self._client, "_pid", None)
+
+    @property
+    def session_id(self) -> str:
+        """Return the spawned ACP agent's session UUID."""
+        return self._client._session_id if self._client and self._client._session_id else ""
+
+    # ``cleanup_session`` intentionally inherits the no-op default from
+    # :class:`ModelProvider`. Filesystem cleanup of agent-specific session
+    # files is the protocol layer's responsibility and is wired through
+    # :mod:`personalclaw.subagent_persistence`. Keeping the provider free of
+    # any hardcoded path keeps internal binary discovery
+    # paths and vendor-specific defaults out of the provider boundary.
+
+
+# ── Capability descriptor ────────────────────────────────────────────────
+#
+# An ``acp_agent`` is a generic JSON-RPC stdio agent. The static descriptor
+# advertises the protocol-level capability surface the wrapper exposes
+# (chat, code-tools with approval, streaming); per-spawn capabilities are
+# negotiated through the ACP ``initialize`` handshake and surfaced via
+# :attr:`AcpAgentProvider.declared_capabilities`. Embedding and vision are
+# off by default — agents that support them can declare so during
+# initialize and a follow-up router task can route those use cases
+# accordingly.
+ACP_AGENT_CAPABILITY = ProviderCapability(
+    type="acp_agent",
+    capabilities=frozenset(
+        {
+            Capability.CHAT,
+            Capability.CODE_TOOLS,
+            Capability.STREAMING,
+            Capability.TOOL_APPROVAL,
+            Capability.PLANNING,
+            Capability.SUMMARIZATION,
+        }
+    ),
+    supports_streaming=True,
+    supports_tools=True,
+    supports_embeddings=False,
+    supports_vision=False,
+    max_context_tokens=0,  # agent-dependent (negotiated at initialize time)
+    notes=(
+        "Generic ACP-over-stdio agent; spawn command supplied via "
+        "options.command. Per-spawn capabilities are negotiated through "
+        "the ACP initialize handshake."
+    ),
+)
+
+
+def _engine_label(options: dict) -> str:
+    """The program an adapter hands the turn to, as its bundle declares it
+    (``requires_executable``), or "" for a CLI that is its own engine."""
+    requires = options.get("requires_executable")
+    return str(requires.get("label") or "").strip() if isinstance(requires, dict) else ""
+
+
+def _test_failure_detail(
+    exc: BaseException, *, program: str, engine: str, exit_code: int | None, stderr_tail: str
+) -> str:
+    """A failed Test, said whole: what failed (an agent's refusal in its own words,
+    :class:`~personalclaw.acp.errors.AcpRequestError`), how its program ended and what it said
+    last, and what to check. The program an adapter drives is named when its bundle declares it:
+    a refusal that comes from there is most often that program and the adapter being out of step.
+    """
+    from personalclaw.acp.errors import exit_words, last_output_words
+
+    parts = [f"handshake failed: {exc}"]
+    if exit_code:
+        parts.append(exit_words(program, exit_code, stderr_tail))
+    elif stderr_tail:
+        parts.append(last_output_words(stderr_tail))
+    if engine and engine != program:
+        parts.append(
+            f"Check that {engine} runs on its own and is a version {program} supports, "
+            "then Test again."
+        )
+    else:
+        parts.append(f"Check that {program} runs on its own and is up to date, then Test again.")
+    return ". ".join(p.rstrip(". ") for p in parts[:-1]) + ". " + parts[-1]
+
+
+# ── Factory ──────────────────────────────────────────────────────────────
+
+
+def _factory(
+    *,
+    entry: ProviderEntry,
+    session_key: str | None = None,
+    **kwargs: object,
+) -> ModelProvider:
+    """Construct an :class:`AcpAgentProvider` from a :class:`ProviderEntry`.
+
+    Reads launch parameters from ``entry.options``:
+
+    * ``command`` — required, the full launch argv.
+    * ``cwd`` — optional working directory.
+    * ``env`` — optional extra environment variables.
+    * ``env_passthrough`` — optional names of the gateway's variables the CLI reads to pick
+      its provider, region or model (:func:`options_env`).
+    * ``agent_name`` — optional ACP agent/persona (the session/set_mode
+      modeId), set by the per-session ``agent`` kwarg. Empty (the default)
+      means no activation message — the CLI uses its own built-in default.
+    * ``capability_flags`` — optional dict of extra ACP initialize hints.
+    * ``sandbox_mode`` — optional OS-level sandbox mode.
+    * ``session_files_dir`` — optional on-disk session-files directory
+      for agents (e.g. claude) that persist tool results to JSONL.
+    * ``session_meta`` — optional ``_meta`` every session/new + session/load carries
+      (:func:`options_session_meta`).
+    * ``compacts_itself`` — the app's declaration that its CLI compacts its own conversation
+      (:func:`options_compacts_itself`).
+    * ``channel_id`` — optional channel id passed via env.
+
+    The credential, if declared on the entry, is currently not consumed —
+    ACP agents authenticate themselves (e.g. claude auth). The
+    parameter is reserved for future ACP backends that require explicit
+    credentials.
+    """
+    options = dict(entry.options or {})
+
+    command_value = options.get("command")
+    if not isinstance(command_value, list) or not command_value:
+        raise ProviderResolutionError(
+            f"acp_agent provider entry {entry.name!r} requires a non-empty "
+            f"options.command list (got {type(command_value).__name__})"
+        )
+    command = [str(part) for part in command_value]
+
+    # Working directory is PER SESSION, exactly like the agent/model/mode/effort axes
+    # below: the bridge threads ``session.workspace_dir`` here as the ``cwd`` kwarg, and
+    # it must win over the entry-level default. Reading ONLY options.cwd dropped it, so
+    # every profile-bound turn on this path spawned its CLI in AcpClient's fallback
+    # directory instead of the workspace the session is bound to — defeating
+    # PERSONALCLAW_HOME / dev-home / test-fixture isolation for that session.
+    cwd_value = str(kwargs.get("cwd") or "").strip() or options.get("cwd")
+    cwd: Path | None = Path(str(cwd_value)) if cwd_value else None
+
+    env = options_env(options)
+
+    # Agent selection is PER SESSION, not a property of the global acp:<cli>
+    # runtime entry. The provider bridge passes the user's chosen agent as the
+    # ``agent`` kwarg (the ACP modeId for session/set_mode — e.g. a persona-style
+    # agent like "gpu-dev"); it must win over the entry-level default. Without this the
+    # modeId never reaches the client and every session runs the agent's
+    # built-in default — selecting an ACP agent in PersonalClaw would silently
+    # do nothing.
+    #
+    # Falls back to EMPTY (not a fabricated name): ACP has no global default
+    # agent, so an unselected agent means "let the CLI use its own built-in
+    # default" — the dialect skips set_mode for an empty agent. Forwarding the
+    # native brand here would send a modeId no ACP backend defines (the default dialect errors
+    # ``Mode 'PersonalClaw' not found``).
+    agent_name = (
+        str(kwargs.get("agent") or "").strip() or str(options.get("agent_name") or "").strip()
+    )
+
+    # Model is likewise per session. The bridge maps the session's
+    # ``model_override`` to the ``model`` kwarg; honor it over the entry's
+    # default model hint so a user's model pick (or "auto") binds at spawn —
+    # before the first prompt — rather than only via a post-start set_model.
+    model = str(kwargs.get("model") or "").strip() or entry.model
+
+    # Permission/operating mode — a per-session axis distinct from the agent
+    # (Zed adapters: default/acceptEdits/plan/dontAsk/bypassPermissions). The
+    # bridge threads the session's chosen mode as the ``acp_mode`` kwarg. Empty
+    # → adapter default. Dialects without a separate mode axis (the default dialect) ignore it.
+    mode = str(kwargs.get("acp_mode") or "").strip() or str(options.get("mode") or "").strip()
+
+    # Per-turn reasoning effort — the bridge threads the session's chosen effort as
+    # ``reasoning_effort_override`` (one of the backend's declared effort options,
+    # verbatim). Empty → adapter default; dialects without an effort axis ignore it.
+    reasoning_effort = str(kwargs.get("reasoning_effort_override") or "").strip()
+
+    # Unattended run: nobody can answer the agent's own questions. Absent/false →
+    # an ordinary interactive session.
+    unattended = bool(kwargs.get("unattended", False))
+    # The owner let this work's CLI approve its own calls (``agent_cli_self_approval``), which
+    # the bridge threads only to an agent CLI. Absent/false → the clamp: this flag is the ONLY
+    # thing that widens the mode gate, so the safe value is the default.
+    self_approval = bool(kwargs.get("self_approval", False))
+
+    capability_flags_value = options.get("capability_flags") or {}
+    capability_flags: dict[str, bool] = (
+        {str(k): bool(v) for k, v in capability_flags_value.items()}
+        if isinstance(capability_flags_value, dict)
+        else {}
+    )
+
+    sandbox_mode = options_sandbox_mode(options)
+
+    # Sandbox PROVIDER, distinct from sandbox_MODE above: the mode is the OS path-sandbox
+    # level; the provider is the isolation backend (``none`` builtin, or an installed container
+    # tier). The bridge threads a per-session choice as the ``sandbox`` kwarg; falls back to the
+    # entry option, else ``none``.
+    sandbox = str(kwargs.get("sandbox") or "").strip() or options_sandbox(options)
+
+    session_files_dir_value = options.get("session_files_dir")
+    session_files_dir: Path | None = (
+        Path(str(session_files_dir_value)) if session_files_dir_value else None
+    )
+
+    # Channel id is PER SESSION for the same reason cwd/agent/model/mode above are:
+    # the bridge threads the session's channel as a kwarg, and it must win over the
+    # entry-level default (an ``acp:<cli>`` runtime entry belongs to no channel).
+    channel_id_value = str(kwargs.get("channel_id") or "").strip() or options.get("channel_id")
+    channel_id: str | None = str(channel_id_value) if channel_id_value else None
+
+    # Resolve credential through the credential store, if one is wired.
+    # Currently informational — see docstring.
+    if entry.credential:
+        store = kwargs.get("credential_store")
+        if store is not None:
+            try:
+                store.resolve(entry.credential)  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug(
+                    "acp_agent entry %r credential %r not resolvable; ignoring",
+                    entry.name,
+                    entry.credential,
+                )
+
+    dialect_value = options.get("dialect")
+    dialect: str | None = str(dialect_value) if dialect_value else None
+
+    return AcpAgentProvider(
+        command=command,
+        cwd=cwd,
+        env=env,
+        model=model,
+        agent_name=agent_name,
+        capability_flags=capability_flags,
+        session_key=session_key,
+        channel_id=channel_id,
+        sandbox_mode=sandbox_mode,
+        sandbox=sandbox,
+        session_files_dir=session_files_dir,
+        dialect=dialect,
+        mode=mode,
+        reasoning_effort=reasoning_effort,
+        unattended=unattended,
+        self_approval=self_approval,
+        session_meta=options_session_meta(options),
+        compacts_itself=options_compacts_itself(options),
+        # The CONFIGURED runtime id, so ``provider_id`` names the runtime the user
+        # picked (``acp:claude-code``) instead of inferring it from the launch
+        # command's basename (``acp:claude-agent-acp``, or ``acp:npx`` under the npx
+        # fallback). GET /api/agent-providers already reports ``entry.name`` as the
+        # row's provider_id; this brings the built provider into agreement.
+        runtime_id=entry.name,
+    )
+
+
+# ── Registration ─────────────────────────────────────────────────────────
+#
+# Register on import so ``import personalclaw.llm.acp_agent`` (and
+# ``import personalclaw.llm``) wires the type into the default
+# registry. The ``try``/``except`` makes the registration idempotent
+# against module reload in tests; the registry itself remains strict and
+# rejects duplicate types in normal use.
+try:
+    get_default_registry().register_type(ACP_AGENT_CAPABILITY, _factory)
+except ProviderResolutionError:
+    logger.debug("acp_agent provider type already registered with default registry")
+
+
+# Also register on the AgentProvider runtime axis under the ``acp`` family, so
+# the discovery/readiness layer (GET /api/agent-providers) can resolve any
+# ``acp:<cli>`` runtime id to this class. Distinct from the ModelProvider
+# ``register_type`` above — that wires the *factory* the bridge uses today;
+# this wires the *class* the agent-runtime registry exposes for selection.
+try:
+    from personalclaw.agents.registry import register_agent_provider
+
+    register_agent_provider("acp", AcpAgentProvider)
+except Exception:  # pragma: no cover - defensive against import-order edge cases
+    logger.debug("could not register acp AgentProvider family", exc_info=True)

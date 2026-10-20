@@ -1,0 +1,1865 @@
+"""Shared pytest configuration and fixtures."""
+
+import asyncio
+import functools
+import importlib
+import inspect
+import itertools
+import os
+import re
+import shutil
+import sys
+import types
+from pathlib import Path
+
+import native_omp_guard
+import pycache_guard
+import pytest
+import random_order
+import real_home_guard
+import run_facts
+import shard_list
+import state_leak_guard
+from hypothesis import HealthCheck, settings
+
+# ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
+# FIRST STATEMENT AFTER THE IMPORTS, DELIBERATELY. Point this interpreter's bytecode
+# cache at a fresh per-run directory *before* anything a mutation could touch is
+# imported — `personalclaw`, `harness`, the test modules, and pytest's own rewritten
+# test bytecode all resolve their cache through the prefix this sets. Without it
+# CPython validates a `.pyc` on `(int(mtime), size)`, so a same-length edit made
+# inside one second — the exact shape of a mutation-testing cycle — runs the PREVIOUS
+# bytecode and reports a result for code that is not on disk. `-B` does not fix that
+# (it stops the interpreter WRITING a cache, not reading one). Nothing enforced this
+# before, so no past "N mutations caught" claim was self-certifying; from here the run
+# enforces the bytecode half — an interrupted run that leaves its mutation ON DISK is a
+# different defect this cannot see (#2710). Rationale, measurements, the rejected
+# alternative and the three files outside the rail: tests/pycache_guard.py. Proof that
+# it works: tests/test_pycache_guard.py.
+PYCACHE_PREFIX = pycache_guard.activate()
+
+# ── Real-home guard ─────────────────────────────────────────────────────
+# SECOND, and before `personalclaw` is first imported: from here on, every open, sqlite
+# connect, directory creation or listing, rename and delete aimed under the developer's real
+# `~/.personalclaw` is refused — in any thread — and charged to the test that made it, which
+# fails by name. Mechanism, attribution rules and what it cannot see: tests/real_home_guard.py.
+real_home_guard.GUARD.install()
+
+# The environment rail's logic (`_a_test_leaves_the_environment_as_it_found_it` below), imported
+# once the bytecode-cache rail is active so that its own bytecode is under it.
+env_guard = importlib.import_module("env_guard")
+
+# ── A running gateway's address stays out ───────────────────────────────
+# Before `personalclaw` is first imported: the port, session, address and tokens a shell carries
+# for a running gateway are taken out of this process's environment, so no test, xdist worker or
+# child reaches that gateway by inheriting them. Which names and why: tests/env_guard.py. Proof:
+# tests/test_a_test_never_inherits_a_running_gateways_address.py.
+env_guard.forget_the_gateway()
+
+# ── Port guard ──────────────────────────────────────────────────────────
+# From here on a connection to a server this process did not start is refused before it is made:
+# a local model server's port (Ollama's 11434 among them) at any address unless this process is
+# listening on it (a test's own fake), and any port on this machine this process has not opened
+# itself. The test that asked fails by name (`_no_test_reaches_a_server_it_did_not_start`).
+# Mechanism and what it cannot see: tests/port_guard.py, which installs it as it is imported.
+port_guard = importlib.import_module("port_guard")
+
+# ── The machine's git configuration, and its credential helpers, stay out ─────────
+# From here on every test's git runs with no system configuration, a global git file of the test's
+# own (`_a_git_configuration_of_its_own`) and an empty `credential.helper` on its command line, and
+# a git that could still sign in with a helper of the machine's own (a Mac's `osxkeychain`: the
+# owner's real keychain) is refused before it starts, and the test that started it fails by name
+# (`_no_test_signs_git_in_with_the_machines_helper`). A core whose git would still name one stops
+# the run here. Mechanism and what it cannot see: tests/git_helper_guard.py, which installs it as
+# it is imported. Proof: tests/test_no_test_git_reaches_the_machines_credential_helper.py.
+git_helper_guard = importlib.import_module("git_helper_guard")
+
+# ── The machine's container runtime stays out ───────────────────────────
+# From here on a container runtime, or the VM one runs in, that a test starts (docker, finch,
+# podman, nerdctl, limactl and the rest) is refused before it starts unless the run sets
+# PERSONALCLAW_TEST_CONTAINER_RUNTIME=1, which CI does: the test that started it fails by name
+# (`_no_test_drives_the_container_runtime_unasked`), and a module whose import started one fails its
+# collection. A test that drives one asks `container_runtime.require()` first, which skips it and
+# says why, and the run's summary lists those skips (`pytest_terminal_summary`). Mechanism and what
+# it cannot see: tests/container_runtime.py. Proof: tests/test_container_runtime_census.py.
+container_runtime = importlib.import_module("container_runtime")
+
+# ── The programs a test starts keep their files in the test's own folder ─
+# black's cache, npm's cache and logs, mise's cache and state, a shell's history, and what the
+# libraries PersonalClaw loads are told (`personalclaw.library_env`): each set for the test's own
+# folder and home by `_each_program_keeps_its_files_in_the_tests_folder`, and for a folder of the
+# run's own before anything is collected (`pytest_configure`). Mechanism and what it cannot move:
+# tests/tool_homes.py. Proof: tests/test_a_tests_programs_keep_their_files_in_its_folder.py.
+tool_homes = importlib.import_module("tool_homes")
+
+# ── The security marker's census ────────────────────────────────────────
+# Which modules must carry `pytest.mark.security`, read from their source. The CI contract row
+# (`tests/rails/test_ci_contract.py`) fails on one that does not, and a run where that row ran
+# prints how many modules and items carry it (`pytest_terminal_summary`). Rule:
+# tests/security_census.py.
+security_census = importlib.import_module("security_census")
+
+# ── The quarantine ──────────────────────────────────────────────────────
+# The one way a known failure is waived: an entry of tests/quarantine.toml, capped at 10, with an
+# issue, an assignee and an expiry at most 30 days out (#3947). A list that breaks a rule stops the
+# run before any test; a quarantined test still runs, and its failure is recorded, not red
+# (`pytest_configure`). Rules: tests/quarantine.py. Its guard, which reads the list on its own,
+# fails every other expected-failure waiver: a source `xfail` mark, `pytest.xfail()`, or a
+# quarantine that waives more than it lists. Mechanism: tests/waiver_guard.py.
+quarantine = importlib.import_module("quarantine")
+waiver_guard = importlib.import_module("waiver_guard")
+
+# ── The fixture-cost report ─────────────────────────────────────────────
+# `--fixture-costs` times each fixture's own setup and teardown, in wall and CPU time, and writes
+# reports/fixture-costs.json, merged across xdist workers. Mechanism: tests/fixture_costs.py.
+fixture_costs = importlib.import_module("fixture_costs")
+
+#: What `pytest_configure` set for collection, put back by `pytest_unconfigure`.
+_PUT_THE_PROGRAMS_BACK: list = []
+
+# ── Imported-checkout provenance rail (#2634) ──────────────────────────
+# An editable install points at a mutable working tree. In a git worktree, that can make
+# pytest import ``personalclaw`` from the shared checkout while collecting tests from this
+# checkout, producing plausible results for the wrong branch. Import only after the
+# bytecode-cache rail above is active, then require the package root to belong to the
+# checkout whose conftest pytest loaded. Editable installs remain valid when they point
+# inside this same checkout.
+_INVOKING_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PERSONALCLAW = importlib.import_module("personalclaw")
+_IMPORTED_PACKAGE_ROOT = Path(_PERSONALCLAW.__file__).resolve().parent
+if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
+    raise RuntimeError(
+        "pytest imported personalclaw from outside the invoking repository root:\n"
+        f"  imported package root: {_IMPORTED_PACKAGE_ROOT}\n"
+        f"  invoking repository root: {_INVOKING_REPO_ROOT}"
+    )
+
+# ── The machine's keychain stays out ────────────────────────────────────
+# The OS keychain is the machine's, not a home's. A scratch home keeps the store to that home's
+# own namespace there, but the store still writes the machine's keychain and deletes from it
+# whenever `keyring` is importable, and a test that stands in the default home would read the
+# developer's own secrets and mirror them into this process's environment. So the suite runs
+# with it OFF, from before the first test module is collected —
+# the switch the apps suite throws too (`personalclaw.sdk.testing.keychain_off`). A test of the
+# keychain seam itself stands a stub in with `keychain_stub.stand_in`, the only way back on.
+# Proof: tests/test_the_suite_never_reaches_the_machines_keychain.py.
+_CREDENTIALS = importlib.import_module("personalclaw.config.credentials")
+_LET_THE_KEYCHAIN_BACK_IN = _CREDENTIALS.keychain_off()
+
+
+#: ``Path.home()`` as the run started, before any test could repoint it. The real-home guard
+#: takes the real home from the user database instead, so the two differ when the run starts with
+#: a ``$HOME`` of its own (a job ``tools/ci/run.py`` starts); a test chose a home when it moved
+#: away from THIS one.
+_STARTING_HOME = Path.home()
+
+
+def _caller_chose_a_home() -> bool:
+    """Whether the home was chosen explicitly: ``$PERSONALCLAW_HOME`` set (to anything, the
+    real home included), or ``$HOME``/``Path.home()`` repointed. Only an UNCHOSEN home is
+    redirected — see ``_isolate_real_home_writers`` for why an explicit choice passes through."""
+    return bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != _STARTING_HOME
+
+
+#: Numbers each test's home within this process's own temporary folder (an xdist worker has one
+#: of its own), so a home is named without making anything.
+_TEST_HOME_NUMBERS = itertools.count()
+
+#: Numbers each test's ``tmp_path`` within this process's own temporary folder.
+_TMP_PATH_NUMBERS = itertools.count()
+
+
+class _LoadedModules:
+    """The loaded modules that hold a given name, worked out again only when ``sys.modules``
+    changed.
+
+    Two autouse fixtures re-point a function some modules bound at import: the home resolvers
+    (``_isolate_real_home_writers``) and the provider registry's accessor
+    (``_restore_provider_registry``). Walking every loaded module for them cost about 2 ms each per
+    test once a worker had imported its share of the suite (some 6,500 modules), and copying
+    ``sys.modules`` to walk it set off a garbage collection in nearly every test.
+
+    So the modules that hold a name are found once and kept until ``sys.modules`` changes.
+    "Changes" is the dictionary's own equality: the same names, each bound to the SAME module
+    object. A count is not enough, because popping one module and importing another keeps the
+    length. Nor are the names, because a module popped and imported again
+    (``_forget_apps_registered_elsewhere`` pops app modules, and many tests pop one to import it
+    afresh) comes back as a new object under its old name, with a binding of its own that nothing
+    has re-pointed. Comparing the two dictionaries copies nothing and allocates nothing.
+
+    What the fixtures check in every test is each holder's CURRENT value, never a remembered one:
+    a test's patches are undone at its teardown, and ``importlib.reload`` runs a module's imports
+    again into the same object, so each holder is looked at again every time. What this cannot
+    see is a module that gains one of the names after it was loaded while ``sys.modules`` stays
+    the same; no module of ours assigns these names at run time.
+
+    The comparison is made once per test setup, by whichever fixture asks first, and the other
+    reuses it (``pytest_runtest_setup`` numbers each setup). Even with nothing copied, comparing
+    6,500 entries cost 0.16-0.29 ms, and each fixture used to make its own. A module first imported
+    by a fixture set up between the two is seen at the next test's setup instead. What such a
+    module bound may already be this test's guard rather than the real function (the home
+    resolver is patched before most fixtures are set up), and a module first imported inside a
+    test binds that test's guard too; ``_isolate_real_home_writers`` tells its guards apart from
+    the real function and re-points them at the next test. The app modules loaded at setup
+    (``apps``) are kept on the same version."""
+
+    def __init__(self) -> None:
+        self._seen: dict | None = None
+        self._version = 0
+        self._looked = 0
+        self._holders: dict[str, tuple[int, list]] = {}
+        self._apps: tuple[int, frozenset[str]] = (0, frozenset())
+
+    def _look(self) -> None:
+        """Compare ``sys.modules`` with the last snapshot, once per test setup."""
+        if self._seen is not None and self._looked == _THIS_SETUP:
+            return
+        self._looked = _THIS_SETUP
+        if self._seen is None or sys.modules != self._seen:
+            self._seen = dict(sys.modules)
+            self._version += 1
+
+    def apps(self) -> frozenset[str]:
+        """The app bundles' modules (``_APP_MODULE_PREFIX``) loaded as this test is set up."""
+        self._look()
+        if self._apps[0] != self._version:
+            loaded = frozenset(n for n in self._seen or {} if n.startswith(_APP_MODULE_PREFIX))
+            self._apps = (self._version, loaded)
+        return self._apps[1]
+
+    def holding(self, label: str, names: tuple[str, ...], prefixes: tuple[str, ...]) -> list:
+        """``(name, module)`` for each loaded module under *prefixes* whose own namespace holds
+        one of *names*. *label* names the caller, whose list is kept between calls."""
+        self._look()
+        kept = self._holders.get(label)
+        if kept is None or kept[0] != self._version:
+            found = []
+            for name, module in self._seen.items():
+                if module is None or not (
+                    name.startswith(prefixes)
+                    or str(getattr(module, "__name__", "")).startswith(prefixes)
+                ):
+                    continue
+                namespace = getattr(module, "__dict__", None) or {}
+                if any(held in namespace for held in names):
+                    found.append((name, module))
+            kept = (self._version, found)
+            self._holders[label] = kept
+        return kept[1]
+
+
+#: The one record of loaded modules that both re-pointing fixtures share.
+_LOADED_MODULES = _LoadedModules()
+
+#: Numbers each test's setup, so the two re-pointing fixtures share one look at ``sys.modules``.
+_SETUPS = itertools.count(1)
+_THIS_SETUP = 0
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):  # noqa: ARG001 — hook signature
+    """A new test's setup is starting: the next look at ``sys.modules`` compares again."""
+    global _THIS_SETUP
+    _THIS_SETUP = next(_SETUPS)
+
+
+# No module resolves the home at IMPORT (`tests/test_importing_personalclaw_touches_no_home.py`
+# holds that line), so collection needs no home of its own: `_isolate_real_home_writers` below
+# redirects an unchosen home for each TEST, and a resolution that happens outside every test (an
+# orphaned thread, a first import between tests) reaches the real home, where the guard refuses
+# it and names who did it. That is deliberate: a quarantine for those would hide them.
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--fixture-costs",
+        action="store_true",
+        default=False,
+        help="time each fixture's own setup and teardown and write reports/fixture-costs.json "
+        "(tests/fixture_costs.py)",
+    )
+    # A CI shard's file list (`python -m tools.ci shards list`): collect only those files.
+    shard_list.addoption(parser)
+    # --strict-state and its allowlist: a test that leaves process-global state (#3949).
+    state_leak_guard.addoption(parser)
+    # --random-order-seed: the modules, and the tests within each, in a seeded order (#3949).
+    random_order.addoption(parser)
+
+
+def pytest_configure(config):
+    shard_list.configure(config)
+    random_order.configure(config)
+    # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
+    run_facts.configure(config)
+    if config.getoption("--fixture-costs"):
+        config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
+    config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+    config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
+    config.pluginmanager.register(
+        state_leak_guard.Plugin(config, listening=lambda: frozenset(port_guard.GUARD.own_ports())),
+        _STATE_LEAK_PLUGIN,
+    )
+    config.pluginmanager.register(security_census.Reporter(), "security-census")
+    waiver_guard.register(config, _INVOKING_REPO_ROOT)
+    quarantine.configure(config, _INVOKING_REPO_ROOT)
+    config.pluginmanager.register(source_index.WarmUp(), "source-index-warm-up")
+    # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's
+    # downloads folder, which every worker shares: pytest's own cache folder in the checkout, or the
+    # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
+    grammars = tool_homes.downloads(config, tool_homes.GRAMMARS)
+    _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
+
+
+def pytest_ignore_collect(collection_path, config):
+    """With ``--shard-list``, a test file the shard's list does not name is never imported."""
+    return shard_list.ignore_collect(collection_path, config)
+
+
+def pytest_collection_finish(session):
+    shard_list.collection_finish(session)
+
+
+def pytest_sessionfinish(session):
+    shard_list.session_finish(session)
+
+
+def pytest_unconfigure(config):
+    _LET_THE_KEYCHAIN_BACK_IN()
+    git_helper_guard.close()
+    container_runtime.GUARD.undo()
+    while _PUT_THE_PROGRAMS_BACK:
+        _PUT_THE_PROGRAMS_BACK.pop()()
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Say which tests did not drive this machine's container runtime, and how to let them: a skip
+    alone is one letter in a progress line, and these are the tests that prove the images. And,
+    only in a run where the CI contract row checked the security marker, how many modules and test
+    items carry it, so a set that shrinks shows in review (`tests/security_census.py`)."""
+    census = terminalreporter.config.stash.get(security_census.CENSUS_LINE, None)
+    if census:
+        terminalreporter.write_sep("-", "security marker census")
+        terminalreporter.write_line(census)
+    source_index.report(terminalreporter)
+    shard_list.report(terminalreporter)
+    skipped = container_runtime.skipped_without_the_opt_in(
+        terminalreporter.stats.get("skipped", [])
+    )
+    if not skipped:
+        return
+    terminalreporter.write_sep(
+        "-", f"{len(skipped)} test(s) that drive this machine's container runtime were skipped"
+    )
+    terminalreporter.write_line(f"Set {container_runtime.OPT_IN}=1 to run them:")
+    for nodeid in skipped:
+        terminalreporter.write_line(f"  {nodeid}")
+
+
+# NOTE: this suite is standalone — it must collect + pass on a clone of this
+# package alone, with NO sibling apps/ directory. Channel/provider seams are
+# exercised against in-tree fakes (tests/fakes.py); tests of app-INTERNAL
+# behavior (slack_runtime, the ollama provider module) live with their apps
+# (apps/slack-channel/tests/, apps/ollama-models/tests/). Workspace-layout
+# tests (apps import-boundary lint, ACP bundles, web-tools app wiring) skip
+# themselves when apps/ is absent.
+
+# ── Hypothesis profiles ─────────────────────────────────────────────────
+# Default (CI): fast iteration.  Run ``HYPOTHESIS_PROFILE=thorough make build test``
+# for deeper coverage.
+settings.register_profile(
+    "default", max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None
+)
+settings.register_profile("thorough", max_examples=100)
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
+
+_HAS_GIT = shutil.which("git") is not None
+
+requires_git = pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+
+_WORKFLOWS_TEST_TIMEOUT_SECONDS = 46
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give workflow tests a measured ceiling without replacing an explicit one."""
+    for item in items:
+        if (
+            item.path.name.startswith("test_workflows_")
+            and item.get_closest_marker("timeout") is None
+        ):
+            item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
+
+
+# ── The source index warms outside every test's timeout ─────────────────
+# A tree rail reads the source tree through tests/source_index.py, which walks the four roots and
+# parses the package once per worker. That costs seconds, so it must not land inside the first
+# rail's own time limit: pytest-timeout arms its timer in its `pytest_runtest_protocol` wrapper,
+# and `tryfirst` puts this wrapper outside that one, so the walk runs before the timer starts. A
+# worker that runs no tree rail never builds the index. Proof: tests/rails/test_source_index.py.
+source_index = importlib.import_module("source_index")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _a_modules_own_caches_end_with_its_tests(request):
+    """Clear what a test module cached for its own tests (``functools.cache``, ``lru_cache``) once
+    its tests have run.
+
+    A tree rail parses the whole package once and caches it, which is right for its own tests and
+    wrong for the rest of the run: the module stays imported, so each cache stays alive until the
+    worker exits, and four coverage workers that each kept every rail's tree outgrew a 16 GB
+    runner. Cleared here, a worker holds one rail's tree at a time. A cache the module imported is
+    its owner's, and is left alone.
+    """
+    yield
+    module = request.module
+    for value in list(vars(module).values()):
+        if (
+            getattr(value, "__module__", None) == module.__name__
+            and not isinstance(value, type)
+            and callable(getattr(value, "cache_clear", None))
+        ):
+            value.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _a_test_leaves_the_environment_as_it_found_it(request):
+    """Fail the test that changed a ``PERSONALCLAW_*`` variable and did not give it back, and give
+    it back, so the next test starts from the environment this one did.
+
+    It is set up before ``monkeypatch`` in every test (the ``monkeypatch`` below requests it), and
+    so torn down after ``monkeypatch.undo()`` has run: what it compares is what the test leaves
+    once every registered change is undone. Mechanism and what it cannot see: tests/env_guard.py.
+    """
+    before = env_guard.snapshot()
+    yield
+    leaked = env_guard.give_back(before)
+    if leaked:
+        pytest.fail(env_guard.leak_message(request.node.nodeid, leaked), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_reaches_a_server_it_did_not_start():
+    """Fail the test that tried to connect to a server it did not start. The connection itself was
+    refused before it was made: tests/port_guard.py."""
+    yield
+    refused = port_guard.GUARD.take()
+    if refused:
+        pytest.fail(port_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_signs_git_in_with_the_machines_helper():
+    """Fail the test that started a git that could sign in with a credential helper of the
+    machine's own. The git itself was refused before it started: tests/git_helper_guard.py."""
+    yield
+    refused = git_helper_guard.GUARD.take()
+    if refused:
+        pytest.fail(git_helper_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_drives_the_container_runtime_unasked():
+    """Fail the test that started a container runtime in a run that did not opt in. The runtime
+    itself was refused before it started: tests/container_runtime.py."""
+    yield
+    refused = container_runtime.GUARD.take()
+    if refused:
+        pytest.fail(container_runtime.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _a_git_configuration_of_its_own(monkeypatch):
+    """This test's own global git file, in place of the developer's ``~/.gitconfig``: git makes it
+    on the first write, so a test that never writes one leaves nothing behind. A fixture that needs
+    a global setting of its own (an ssh stand-in) writes it to the file ``GIT_CONFIG_GLOBAL``
+    names, or points ``GIT_CONFIG_GLOBAL`` at its own."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", git_helper_guard.own_global_config())
+
+
+@pytest.fixture
+def monkeypatch(_a_test_leaves_the_environment_as_it_found_it, monkeypatch):
+    """pytest's own ``monkeypatch``, set up after the environment rail so it is undone before the
+    rail looks.
+
+    A fixture set up earlier is torn down later. A fixture a ``usefixtures`` mark names is set up
+    ahead of every autouse fixture, so without this one that takes ``monkeypatch`` (the
+    ``vendor_default`` of test_a_media_call_names_its_model.py does) would set it up before the
+    rail, and every ``PERSONALCLAW_*`` variable set through it afterwards, by the test or by the
+    autouse fixtures here, would still be set when the rail compared, and read as a leak.
+    """
+    return monkeypatch
+
+
+@pytest.fixture
+def unset_env(monkeypatch):
+    """``unset_env("KEY", …)``: each key unset for this test, and given back as it was afterwards,
+    even when the code under test sets it (``env_guard.unset``)."""
+    return functools.partial(env_guard.unset, monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_event_loop():
+    """Ensure a current event loop exists for code that constructs asyncio
+    primitives (e.g. Semaphore) at import/init time outside a running loop."""
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+@pytest.fixture(autouse=True)
+def _forbid_second_openmp_runtime(request):
+    """Torch-free-core rail (#3324): fail the test that makes ``torch`` resident.
+
+    Two libomp.dylib copies in one process abort it the next time faiss enters a
+    parallel region — i.e. the next episodic-write dedup `search` — which xdist
+    then reports as `worker 'gwN' crashed` against whatever unrelated test held
+    the worker. Blaming the *transition* absent→resident is what names the real
+    culprit; a presence check would red every later test in the poisoned worker
+    instead. Rationale, the measured mask that hides the abort, and why this is a
+    rail rather than a one-line import fix: tests/native_omp_guard.py. Proof that
+    it fires: tests/test_native_omp_guard.py.
+    """
+    before = native_omp_guard.resident(sys.modules)
+    yield
+    new = tuple(m for m in native_omp_guard.resident(sys.modules) if m not in before)
+    if new:
+        pytest.fail(native_omp_guard.explain(new, request.node.nodeid), pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def _meminfo_with_memory_to_spare(tmp_path_factory) -> Path:
+    """A ``/proc/meminfo`` saying 64 GiB are available (:func:`_a_host_with_memory_to_spare`)."""
+    meminfo = tmp_path_factory.getbasetemp() / "meminfo-with-memory-to-spare"
+    meminfo.write_text("MemTotal: 67108864 kB\nMemAvailable: 67108864 kB\n", encoding="utf-8")
+    return meminfo
+
+
+@pytest.fixture(autouse=True)
+def _a_host_with_memory_to_spare(_meminfo_with_memory_to_spare, monkeypatch):
+    """Every test runs on a host with memory to spare for a subagent.
+
+    A spawn refuses below ``agent.spawn_min_memory_gb`` of free memory, and on Linux it reads that
+    from ``/proc/meminfo`` at the instant it spawns: what the suite's other workers and the
+    children they started hold then, nothing the test did. Measured: one Linux run refused the
+    spawns of twelve tests with "only 3.1 GB memory available (need 4 GB)", and each passed
+    alone. macOS has no ``/proc/meminfo``, which reads as unknown, so the same tests never met
+    the floor there. So the host's own reading is this fixture's file, on every platform; the
+    floor still compares it with the configured minimum. The floor's own tests read a meminfo
+    they wrote (``path=``) or stand in a low reading, as before.
+
+    pytest sets up a conftest's autouse fixtures of one scope in the order of their names, and
+    this name sorts before ``_isolate_real_home_writers``: a first import of
+    ``personalclaw.subagent`` here happens before the home is redirected, so the home resolvers
+    it binds are the ones that fixture re-points in every test.
+    """
+    from personalclaw import subagent
+
+    read = subagent.check_memory_available
+    params = inspect.signature(read).parameters
+    host = params["path"].default
+
+    @functools.wraps(read)
+    def check(min_gb: float = params["min_gb"].default, path: str = host) -> tuple[bool, float]:
+        return read(
+            min_gb=min_gb, path=str(_meminfo_with_memory_to_spare) if path == host else path
+        )
+
+    monkeypatch.setattr(subagent, "check_memory_available", check)
+
+
+@pytest.fixture
+def tmp_path(request, tmp_path_factory) -> Path:
+    """pytest's ``tmp_path`` in constant time: ``t<N>-<test name>`` in the run's temporary folder.
+
+    pytest's own fixture names its folder with ``mktemp()``, which scans and sorts the whole
+    temporary folder on every call, so a test's setup grew slower with every test its worker had
+    already run. This one numbers the folder from a counter instead. It is still a direct child of
+    ``getbasetemp()`` (tests read ``tmp_path.parent`` as that folder), still honours
+    ``--basetemp``, is unique per worker process, and still carries the test's name, so a failing
+    test's folder can be found. Every folder is kept, as pytest's default retention keeps them."""
+    name = re.sub(r"\W", "_", request.node.name)[:30]
+    path = tmp_path_factory.getbasetemp() / f"t{next(_TMP_PATH_NUMBERS)}-{name}"
+    path.mkdir(mode=0o700)
+    return path
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
+    """Make an UNSPECIFIED home mean a per-test tmp dir instead of the developer's
+    real ``~/.personalclaw``.
+
+    The hazard, measured rather than assumed: a plain
+    ``pytest -k "project or memory or knowledge or recall"`` appended **44,402 bytes** of
+    `artifact_save`/`tool_invocation` rows to the user's real
+    ``~/.personalclaw/security_events.jsonl`` and created/rewrote 62 more real-home entries
+    (`tasks/*.json`, `codegraph/*.db`, `workspace/_ext/*/memory/*.md`, `prompts/`,
+    `prompt_snippets/`, `learning.db`, `session_search.db`, `tokenjuice_savings.json`, …).
+    Thirteen distinct writer families, and every one of them reached the real home through
+    ``config.loader.config_dir()`` (153 call sites) — or through SEL's own resolver, a second
+    seam this fixture had to patch too until SEL was made to ask ``config_dir()`` like
+    everything else. Patching thirteen subsystems one at a time would have been thirteen
+    fixtures guarding one seam, and the fourteenth subsystem would leak again.
+
+    So this redirects that seam, and ONLY when the caller expressed no preference:
+
+    * ``$PERSONALCLAW_HOME`` set (to anything, **including the real home**) → pass through
+      untouched. Several rails deliberately point it at the real home and assert a refusal
+      (``test_cli_gateway_flags``'s ``--approval yolo`` rails, ``test_seed``'s main-home
+      rails); redirecting an explicit choice would make those rails vacuous.
+    * ``$HOME``/``Path.home()`` repointed by the test → pass through untouched. That test
+      already isolated itself, and its assertions read back from *its* home.
+    * neither → the resolution would be the real home purely by default. Redirect.
+
+    Deliberately NOT done, both previously rejected in this repo and re-rejected here:
+    a global ``$PERSONALCLAW_HOME`` for pytest jobs (removed once already: it takes
+    precedence over ``Path.home()`` inside ``config_dir``, so it defeats the tests that
+    assert env precedence and the ones that assert the default resolution), and a blanket
+    ``Path.home`` patch (it breaks the tests that assert the real-home safety rails —
+    seed, loop validation — and it would also silently redefine the unrelated
+    ``Path.home()/".aws"`` and ``Path.home()/".ssh"`` paths that the artifact/task
+    sensitivity tests assert on).
+
+    What a fixture CANNOT reach: a home resolved into a module-level constant at import time.
+    The real-home rail this suite used to run caught 147 real-home entries still landing in
+    ``subagents/`` after this fixture was in place, because ``subagent_persistence`` froze
+    ``config_dir() / "subagents"`` at first import — before any fixture exists. Every such
+    constant is now a call-time resolver, and
+    ``tests/test_importing_personalclaw_touches_no_home.py`` fails on a new one. A thread that
+    outlives its test is the other shape this fixture cannot reach, because the patch is undone
+    under it — ``tests/real_home_guard.py`` names the test that started it.
+
+    Ordering matters: this fixture is declared BEFORE ``_reset_sel_singleton`` so it is set
+    up first and torn down LAST. The singleton is cleared around every test, so the next
+    ``sel()`` call constructs a fresh ``SecurityEventLog`` — and that construction must
+    still find the redirected ``config_dir``, or the leak comes straight back.
+
+    ONE resolver is redirected: ``resolve_config_dir()``, where the home is, which creates
+    nothing. The loader's own ``config_dir()`` is that resolver's answer, made (0700) the first
+    time it is asked for, so it follows the redirect without a patch of its own, and so does every
+    module that bound it at import. Redirecting only ``config_dir()``, as this fixture once did,
+    left every path built from the resolver pointing at the real home, and a child process
+    handed one made it where no in-process guard can see: the namespace sandbox's launcher, whose
+    owner-only
+    fence names the home it holds, created an empty real ``~/.personalclaw`` from four tests of
+    ``test_sandbox_argv.py``. A call that names its own environment asks about another process's
+    home (a gateway run elsewhere), and is answered by the rule as it asked. A test that patches
+    ``config.loader.config_dir`` to name its own home moves the resolver as well: the path
+    helpers ask where the home is without making it, and they answer inside that test's home.
+
+    The folder around the home (``pclaw-home-<n>``) is made by the loader as the home's parent,
+    with the default mode; only the home itself is 0700. That is safe only because the folder
+    holding it, the run's base temporary folder, is 0700 and the current user's own, which
+    ``tests/test_an_unchosen_home_holds_every_seams_files.py`` asserts.
+    """
+    import personalclaw.config.loader as config_loader
+
+    # This test's own folder, which holds its home and the folders the programs it starts write
+    # in (`_each_program_keeps_its_files_in_the_tests_folder`). A name, made only when something
+    # writes there: most tests never resolve an unspecified home, and `resolve_config_dir()` must
+    # not make the home it names, nor a folder to hold it. So it is not `mktemp()`, which makes the
+    # folder it numbers: a test that watches every `mkdir` saw one appear when a path check asked
+    # where the home is.
+    root = tmp_path_factory.getbasetemp() / f"pclaw-home-{next(_TEST_HOME_NUMBERS)}"
+
+    def tmp_home() -> Path:
+        return root / "home"
+
+    original_config_dir = config_loader.config_dir
+    original_resolve_config_dir = config_loader.resolve_config_dir
+
+    def guarded_resolve_config_dir(env=None) -> Path:
+        if env is not None:
+            return original_resolve_config_dir(env)
+        if config_loader.config_dir is not original_config_dir:
+            # The test named its home by patching `config_dir`, and that is where the home is
+            # too: every path in the home (`config_path`, `env_path`, `apps_dir`) is worked out
+            # from this resolver, which creates nothing, and each one follows that choice. Ahead
+            # of the environment, so a test that also sets one still has ONE home.
+            return config_loader.config_dir()
+        if _caller_chose_a_home():
+            return original_resolve_config_dir(env)
+        return tmp_home()
+
+    monkeypatch.setattr(config_loader, "resolve_config_dir", guarded_resolve_config_dir)
+    # `from ... import resolve_config_dir` at module scope binds the function object into the
+    # importing module, where patching the loader can never reach it (`cli` today). Re-point
+    # every binding of THAT function object — identity-matched, so nothing else is touched.
+    # A module-scope `config_dir` binding needs nothing: it is the loader's own, which asks the
+    # resolver above. The modules that hold the name are found again only when `sys.modules`
+    # changed (`_LoadedModules`).
+    #
+    # The loader itself is skipped: it holds the resolver in its own namespace, so the walk would
+    # re-point it too, and the patch above would then be a second way of doing the same thing that
+    # no test could tell was missing. The patch alone redirects the loader, and the walk alone
+    # redirects the modules that bound a copy; each is proved by dropping it.
+    #
+    # A module first imported (or popped and imported again) inside an earlier test bound that
+    # test's guard, because the loader was patched while it ran, and no teardown recorded it. That
+    # guard still answers its own test's home, so it is put back to the original first, outside
+    # `monkeypatch`, and then re-pointed like every other copy: teardown leaves it the original,
+    # as if it had been imported at collection. A guard is known by its code object, which every
+    # test's guard shares; a Mock or MagicMock a test put in the slot has another (or none), so it
+    # is left alone. Only this fixture's guards are put back: a module first imported while a
+    # test had installed a resolver of its own keeps that one (no test does so today).
+    for _, module in _LOADED_MODULES.holding("home", ("resolve_config_dir",), ("personalclaw",)):
+        if module is config_loader:
+            continue
+        bound = module.__dict__.get("resolve_config_dir")
+        if (
+            isinstance(bound, types.FunctionType)
+            and bound.__code__ is guarded_resolve_config_dir.__code__
+        ):
+            module.resolve_config_dir = bound = original_resolve_config_dir
+        if bound is original_resolve_config_dir:
+            monkeypatch.setattr(module, "resolve_config_dir", guarded_resolve_config_dir)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def _each_program_keeps_its_files_in_the_tests_folder(_isolate_real_home_writers, monkeypatch):
+    """Point what each program a test starts writes (black's cache, npm's cache and logs, mise's
+    cache and state, a shell's history) into the test's own folder, and tell the libraries
+    PersonalClaw loads what every ``personalclaw`` command tells them, for the test's own home.
+
+    The code map's grammars stay where the run keeps them (``tool_homes.grammar_env``): a test of
+    its own would download them again. A test that drives ``cli.main()`` sets the library settings
+    in ``os.environ`` itself, and teardown puts back what was there before this fixture set them.
+    Mechanism: tests/tool_homes.py."""
+    root = _isolate_real_home_writers
+    library = tool_homes.library_env_for(root / "home")
+    for name in tool_homes.GRAMMAR_SETTINGS:
+        # The run's own value, registered all the same: a test that drives `cli.main()` changes it.
+        library[name] = os.environ[name]
+    for name, value in {**tool_homes.program_env(root / "programs"), **library}.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture(autouse=True)
+def _the_library_guard_stays_with_its_test():
+    """A test that drives ``cli.main()`` installs the import hook that holds huggingface_hub to the
+    egress guard (``net.libraries.install``). It is taken out again, so a later test in the worker
+    imports the library the way that test arranges, not the way an earlier one left it."""
+    before = list(sys.meta_path)
+    yield
+    sys.meta_path[:] = before
+
+
+#: Where the package under test "runs from" unless a test places it: a wheel's copy in this
+#: interpreter's ``site-packages``. Only its shape is read, so nothing needs to exist there.
+_WHEEL_PACKAGE_DIR = Path(sys.prefix) / "lib" / "site-packages" / "personalclaw"
+
+
+@pytest.fixture(autouse=True)
+def _package_runs_from_a_wheel(monkeypatch):
+    """The running ``personalclaw`` is a wheel's copy, unless a test puts it in a checkout.
+
+    ``self_update.source_checkout()`` reads the install from where the package was imported
+    from, and this suite imports it from the checkout it tests. Left alone, every test would be
+    a git install of that checkout, and an update path a test forgot to mock would run ``git
+    fetch`` and ``git checkout`` on the developer's own tree. A test that wants a git install
+    builds a checkout under ``tmp_path`` and points ``self_update._package_dir`` at its
+    ``src/personalclaw`` (last patch wins). Nothing is created: a ``site-packages`` path is not
+    a checkout whether or not it exists."""
+    monkeypatch.setattr("personalclaw.self_update._package_dir", lambda: _WHEEL_PACKAGE_DIR)
+
+
+@pytest.fixture
+def package_in_checkout(monkeypatch):
+    """Run ``personalclaw`` from a source checkout: ``package_in_checkout(root)`` lays out
+    ``root/pyproject.toml`` and ``root/src/personalclaw``, adds a ``.git`` directory
+    (``git="dir"``), a worktree's ``.git`` file (``git="file"``) or none (``git=""``), and makes
+    ``root/src/personalclaw`` the directory the package was imported from. Returns *root*."""
+
+    def _place(root: Path, *, git: str = "dir") -> Path:
+        package = root / "src" / "personalclaw"
+        package.mkdir(parents=True, exist_ok=True)
+        if not (root / "pyproject.toml").exists():
+            (root / "pyproject.toml").write_text("[project]\nname = 'personalclaw'\n")
+        if git == "dir":
+            (root / ".git").mkdir(exist_ok=True)
+        elif git == "file":
+            (root / ".git").write_text("gitdir: /somewhere/.git/worktrees/x\n")
+        monkeypatch.setattr("personalclaw.self_update._package_dir", lambda: package)
+        return root
+
+    return _place
+
+
+@pytest.fixture
+def environment_made_by(tmp_path_factory, monkeypatch):
+    """``environment_made_by(tool)``: PersonalClaw runs from an environment that *tool* made.
+
+    The record is the one every installer leaves in a distribution's metadata, its ``INSTALLER``
+    file (``uv sync``, ``uv pip install`` and ``uv tool install`` write ``uv``, pip and pipx
+    ``pip``), so it is a real one: a ``personalclaw`` distribution saying *tool*, earlier on
+    ``sys.path`` than the installed one and therefore the one ``importlib.metadata`` reads.
+    *requires* and *extras* are its ``Requires-Dist`` and ``Provides-Extra`` lines, and the
+    packages named in *installed* are installed beside it."""
+
+    def _made_by(
+        tool: str,
+        *,
+        requires: tuple[str, ...] = (),
+        extras: tuple[str, ...] = (),
+        installed: tuple[str, ...] = (),
+    ) -> None:
+        site = tmp_path_factory.mktemp("site-packages")
+        lines = ["Metadata-Version: 2.1", "Name: personalclaw", "Version: 0.0.1"]
+        lines += [f"Provides-Extra: {extra}" for extra in extras]
+        lines += [f"Requires-Dist: {requirement}" for requirement in requires]
+        info = site / "personalclaw-0.0.1.dist-info"
+        info.mkdir()
+        (info / "METADATA").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (info / "INSTALLER").write_text(f"{tool}\n", encoding="utf-8")
+        for name in installed:
+            other = site / f"{name.replace('-', '_')}-1.0.dist-info"
+            other.mkdir()
+            (other / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n", encoding="utf-8"
+            )
+        monkeypatch.syspath_prepend(str(site))
+
+    return _made_by
+
+
+@pytest.fixture
+def git_over_ssh(tmp_path_factory, monkeypatch):
+    """``git_over_ssh(repo)`` is an ``ssh://`` URL that reaches the local repository *repo*.
+
+    PersonalClaw's git refuses a remote at a local path (``net.git.git_argv``), so a test that
+    fetches from a repository it made reaches it the way an owner reaches a server: over ssh, with
+    an ssh command of the owner's own (``core.sshCommand``). Here that command is a stand-in that
+    runs, on this machine, the git command a server would run. It is set in a scratch global git
+    file (``GIT_CONFIG_GLOBAL``), which the test's own git and PersonalClaw's both read."""
+    home = tmp_path_factory.mktemp("home-with-an-ssh-stand-in")
+    stand_in = home / "ssh-stand-in"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        "# git asks whether this is OpenSSH with -G. Saying no makes it pass only the host\n"
+        "# and the command to run there.\n"
+        '[ "$1" = "-G" ] && exit 1\n'
+        'exec /bin/sh -c "$2"\n',
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o755)
+    (home / ".gitconfig").write_text(f"[core]\n\tsshCommand = {stand_in}\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    return lambda repo: f"ssh://example.invalid{Path(repo).resolve()}"
+
+
+@pytest.fixture(autouse=True)
+def _reset_trust_mode():
+    """Reset the process-global YOLO/auto-approve trust state around every test.
+
+    ``personalclaw.trust_mode`` is a deliberate process singleton (one auto-approve
+    posture per gateway). Tests that flip it must not leak into the next test, so we
+    force it OFF before and after each test.
+
+    Its list of switch-off callbacks is put back as the test found it, too, and before the
+    closing switch-off, so no callback a finished test registered runs again. Every
+    ``DashboardState`` registers one (a gateway makes one state, for its whole life), and a
+    state a test made used to stay registered, and alive, for the rest of its worker: each
+    later switch-off ran every earlier test's callback over the sessions that test had left
+    in its state. One left a mock session, whose mock key the callback's session-key rule
+    (``constants.dashboard_key_from_file_form``) strips forever; the worker's memory grew
+    until the kernel killed it, or the test ran out of time.
+    """
+    import personalclaw.trust_mode as _tm
+
+    _tm._TRUST.disable()
+    registered = list(_tm._TRUST._on_disable)
+    yield
+    _tm._TRUST._on_disable[:] = registered
+    _tm._TRUST.disable()
+
+
+@pytest.fixture(autouse=True)
+def _reset_model_call_breakers():
+    """Reset the process-global model-call circuit breakers around every test.
+
+    ``guardrails.breaker`` keeps one breaker per provider name for the gateway's
+    lifetime (in-process by design — a restart resetting it is acceptable for a
+    single-user gateway). Under pytest-xdist a breaker tripped OPEN by one test
+    would otherwise refuse calls in a later test in the same worker, so clear the
+    registry before + after each test — the same discipline as the SEL singleton.
+
+    Also clears the ``guardrails.autonomy`` action-type registry, which is
+    process-global for the same reason: a rung ladder registered by one test would
+    otherwise decide ``resolve_rung`` in the next one. And the chores no model answered
+    (``owed_chores``): one owed by a test would be tried, against that test's state, by the next
+    test's heartbeat.
+    """
+    from personalclaw.guardrails.autonomy import reset_action_types
+    from personalclaw.guardrails.breaker import reset_breakers
+    from personalclaw.guardrails.budgets import reset_meter
+    from personalclaw.guardrails.ceiling import reset_ceiling, reset_clamp_reports
+    from personalclaw.guardrails.incident import reset_incident_mirror
+    from personalclaw.owed_chores import reset_owed
+
+    reset_owed()
+    reset_breakers()
+    reset_meter()
+    reset_incident_mirror()
+    reset_action_types()
+    # The governance ceiling is read once per PROCESS and cached (that caching is the
+    # no-mid-run-widening property). Under xdist a ceiling written by one test's tmp_path
+    # would otherwise bound every later test in the same worker, and the clamp-report
+    # dedup would swallow the second test's SEL assertion.
+    reset_ceiling()
+    reset_clamp_reports()
+    yield
+    reset_owed()
+    reset_breakers()
+    reset_meter()
+    reset_incident_mirror()
+    reset_action_types()
+    reset_ceiling()
+    reset_clamp_reports()
+
+
+@pytest.fixture(autouse=True)
+def _reset_context_engine_breakers():
+    """Reset the context engine's process-global timeout counters around every test.
+
+    ``context_engine`` keeps two module-level consecutive-timeout counters — one for
+    active recall, one for the push reflex — that latch their feature OFF for the rest of
+    the process once they reach 3. That is correct for a gateway (a slow memory store
+    shouldn't be retried on every turn) and wrong for a test session: under xdist, three
+    timeouts anywhere in a worker would silently disable recall/push for every later test
+    in that worker, and the symptom would be an empty block rather than an error. Same
+    discipline as the model-call breakers above.
+    """
+    import personalclaw.context_engine as ce
+
+    ce._recall_consecutive_timeouts = 0
+    ce._push_consecutive_timeouts = 0
+    yield
+    ce._recall_consecutive_timeouts = 0
+    ce._push_consecutive_timeouts = 0
+
+
+@pytest.fixture(autouse=True)
+def _reset_memory_store_cache():
+    """Empty ``context``'s process-wide cache of memory stores around every test.
+
+    ``ContextBuilder`` keeps each memory store it opens in ``context._memory_stores`` so a live
+    gateway reuses one per folder, and the learning cleanup (``learning.composed_text.settle``)
+    walks every cached store. In a test session the cache outlives the test that filled it, while
+    ``_close_sqlite_connections`` closes that store's database when the test ends, so a later
+    test in the same worker walked a closed store and failed on its first query. Cleared, not
+    snapshot-restored, for the reason ``_reset_session_restrictions`` gives: outside a live
+    gateway the correct state is empty.
+    """
+    import personalclaw.context as ctx
+
+    ctx._memory_stores.clear()
+    yield
+    ctx._memory_stores.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_restrictions():
+    """Clear the process-global per-session memory-restriction registry around every test.
+
+    ``session_restrictions`` keeps two module-level ``OrderedDict``s (``_temporary`` /
+    ``_incognito``) — one process-wide registry of which session keys are incognito or
+    temporary, by design (a restriction set on a live gateway must outlive the turn that
+    set it). It is a cross-test hazard under xdist for the same reason as the singletons
+    above: a test that ``mark_incognito``/``mark_temporary``s a key and does not clear it
+    leaks that key into whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix: several tests
+    reuse the key ``"k"``, and ``test_session_restrictions.TestSessionRestrictions`` clears
+    the registry only in ``setup_method`` (before each test, never after) — so once it has
+    run ``test_incognito``/``test_temporary`` on a worker, ``"k"`` stays restricted, and
+    ``test_session_search``'s ``test_persistent_mode_indexes_normally`` then sees
+    ``index_session("k", …, "persistent")`` refused (``is_restricted`` True) and reds. Same
+    discipline as ``_reset_channel_delivery_registry``: cleared, not snapshot-restored,
+    because outside a live gateway the correct state is empty.
+    """
+    import personalclaw.session_restrictions as sr
+
+    sr._temporary.clear()
+    sr._incognito.clear()
+    yield
+    sr._temporary.clear()
+    sr._incognito.clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_personalclaw_logging():
+    """Snapshot + restore the gateway's logging around every test.
+
+    Process-global logging mutations leak across tests and are invisible in isolation but
+    deterministic-per-schedule in an xdist mix — the same shape as the resets above:
+
+    * ``cli.main()`` (exercised by every ``test_cli_*`` that calls it) runs the CLI's
+      logging setup, which attaches the console and a ``gateway.log`` file handler to the
+      ROOT logger as the log's sinks (``log_sinks.attach``) and sets the root's level;
+    * ``dashboard.handlers.updates.install_log_ring_handler`` (every dashboard app a test
+      builds) attaches the Diagnostics ring the same way;
+    * ``dashboard.handlers.updates.apply_log_level`` / the ``agent.log_level`` PATCH set
+      the level LIVE (``log_sinks.set_level``: the root logger's level and the sinks' rule).
+
+    None restores. Left behind, a root at WARNING drops every later observability test's
+    own DEBUG/INFO records before ``caplog`` sees them (e.g.
+    ``test_channel_inbound_drop_reporting``), and every ``cli.main`` test would leave one more
+    open ``gateway.log`` handle on the root. Sharding exposed this: a leaker and a victim
+    that used to sit in different halves of one long serial run now land on the same worker
+    in the same shard.
+
+    So the root logger's level and the sinks' level are put back, and every sink ADDED to
+    the root during the test is removed and closed — only sinks (``log_sinks``' filter on
+    them), never ``caplog``'s own handlers, which pytest attaches and removes itself.
+    Each ``personalclaw.*`` logger's level, ``propagate`` and ``disabled`` are also snapshotted
+    (the whole namespace, not a name list — the same reason the registry guards above snapshot
+    rather than enumerate) and put back where they differ, and logging's cache is cleared once
+    after; any descendant created during the test is reset to ``NOTSET``, and handlers a
+    test added to the ``personalclaw`` logger itself removed.
+
+    And logging's lock is given back if this thread still holds it once the levels are restored.
+    Python 3.12 releases it without a ``finally`` in the cache clear every ``setLevel`` makes
+    (``Manager._clear_cache``), so the suite's timeout, landing there in this teardown, left the
+    lock held for good, and every later test in that worker whose thread logged hung (2026-10-15:
+    a timed-out teardown, then three failed tests, one stuck for seven minutes). Nothing holds the
+    lock across a teardown on purpose.
+    """
+    import logging
+
+    from personalclaw import log_sinks
+
+    def _pclaw_loggers() -> dict[str, logging.Logger]:
+        out: dict[str, logging.Logger] = {}
+        for name, obj in list(logging.Logger.manager.loggerDict.items()):
+            if (name == "personalclaw" or name.startswith("personalclaw.")) and isinstance(
+                obj, logging.Logger
+            ):
+                out[name] = obj
+        return out
+
+    root = logging.getLogger("personalclaw")
+    # Each logger's level, propagate and disabled, put back only where they differ, and the
+    # cache cleared once, after. Restoring every logger with setLevel cleared logging's cache
+    # once per logger, and each clear walks every logger: with every module imported (873
+    # personalclaw loggers of 994) one teardown took about 270 ms, where restoring what changed
+    # takes under 1.
+    state_before = {
+        name: (lg.level, lg.propagate, lg.disabled) for name, lg in _pclaw_loggers().items()
+    }
+    state_before["personalclaw"] = (root.level, root.propagate, root.disabled)
+    handlers_before = list(root.handlers)
+    top = logging.getLogger()
+    top_level_before = top.level
+    sinks_level_before = log_sinks.level()
+    sinks_before = [h for h in top.handlers if log_sinks._FILTER in h.filters]
+
+    yield
+
+    try:
+        for name, lg in _pclaw_loggers().items():
+            before = state_before.get(name)
+            if before is None:
+                # Created during the test: its level goes back to NOTSET, as it always has.
+                if lg.level != logging.NOTSET:
+                    lg.level = logging.NOTSET
+                continue
+            if (lg.level, lg.propagate, lg.disabled) != before:
+                lg.level, lg.propagate, lg.disabled = before
+        added = [h for h in root.handlers if h not in handlers_before]
+        for handler in added:
+            root.removeHandler(handler)
+        log_sinks.set_level(sinks_level_before)
+        # The root logger's setLevel, which always runs after the restore above, clears logging's
+        # cache, so no logger keeps an answer it cached during the test.
+        top.setLevel(top_level_before)
+        for handler in list(top.handlers):
+            if log_sinks._FILTER in handler.filters and handler not in sinks_before:
+                log_sinks.detach(handler)
+                added.append(handler)
+        for handler in added:
+            try:
+                handler.close()
+            except Exception:  # pragma: no cover - close() is best-effort cleanup
+                pass
+    finally:
+        lock = logging._lock  # type: ignore[attr-defined]
+        while lock._is_owned():
+            lock.release()
+
+
+@pytest.fixture(autouse=True)
+def _reset_sel_singleton():
+    """Reset the process-global Security Event Log singleton around every test.
+
+    ``SecurityEventLog`` is a ``__new__``-based singleton whose ``__init__`` no-ops
+    once ``_initialized`` — so the FIRST test to touch ``sel()`` pins ``_dir`` to its
+    own home, and every later test in the same worker inherits that stale path. Under
+    ``pytest-xdist`` which test lands first per worker varies, so SEL-reading/asserting
+    tests (doctor STT, ACP-died recovery, auto-skill audit, …) failed nondeterministically.
+    Clearing the class-level state before + after each test gives every test a fresh SEL
+    bound to its own isolated home — the same discipline as ``_reset_trust_mode`` above.
+    """
+    from personalclaw.sel import SecurityEventLog as _SEL
+
+    def _clear() -> None:
+        _SEL._instance = None
+        _SEL._initialized = False
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_model_roots(monkeypatch):
+    """Make the bound-model-deletion incident unreproducible BY CONSTRUCTION.
+
+    ``local_models/layouts.py`` is the one seam every download probe and the single
+    deletion sweep go through, so wrapping its entry points for the whole suite is enough
+    to state the invariant structurally: **no fs-touching test can reach a real model dir
+    or cache root — only ``tmp_path``.** The incident was a real delete against a real HF
+    cache root; the convention "always pass tmp_path" was already in force when it
+    happened, which is exactly why this is a fixture and not a review note.
+
+    Scoped to the NAMED real roots (see ``real_model_root_guard.FORBIDDEN_SUBPATHS``)
+    rather than to all of ``$HOME``: a developer's checkout usually lives under ``$HOME``,
+    so a blanket home-rejection would fire on an ordinary relative path and get disabled.
+    Detection is a separate module so it can be driven against a fake root and proven to
+    fire (``tests/test_local_model_root_guard.py``) — the same reason the real-home guard
+    keeps its detection in ``real_home_guard``.
+
+    The reach is ONE attribute lookup deep, which is the rail's one soft edge: a module-level
+    ``from ...layouts import delete_all_layouts`` captures the unwrapped object before this
+    fixture ever runs. Each original is recorded in ``real_model_root_guard.ORIGINALS`` so
+    that shape is testable rather than assumed, and a companion rail
+    (``test_no_test_module_import_binds_a_guarded_layouts_name``) keeps the suite from
+    growing one.
+    """
+    import real_model_root_guard
+
+    from personalclaw.local_models import layouts
+
+    for fn_name in real_model_root_guard.GUARDED_FUNCTIONS:
+        original = getattr(layouts, fn_name, None)
+        if original is None:  # pragma: no cover — a renamed entry point must be re-listed
+            raise AssertionError(
+                f"layouts.{fn_name} no longer exists; update GUARDED_FUNCTIONS so the "
+                f"model-root rail keeps covering every cache-root entry point."
+            )
+
+        real_model_root_guard.ORIGINALS[fn_name] = original
+
+        def _guarded(cache_root, *args, _original=original, _name=fn_name, **kwargs):
+            real_model_root_guard.assert_safe(_name, cache_root)
+            return _original(cache_root, *args, **kwargs)
+
+        monkeypatch.setattr(layouts, fn_name, _guarded)
+
+
+@pytest.fixture(autouse=True)
+def _reset_knowledge_store_singleton():
+    """Drop the process-wide ``KnowledgeStore`` between tests.
+
+    ``knowledge.get_knowledge_store()`` memoizes one store in a module global, resolved
+    from ``config_dir()`` on FIRST use — so the first test in a worker to touch it pins
+    every later test in that worker to the first test's tmp home. Found by driving, not
+    reading: once :func:`_close_sqlite_connections` began closing what each test opened,
+    ``test_inbound_mcp.py::TestToolBehavior::test_empty_stores_answer_honestly`` failed
+    with ``Cannot operate on a closed database`` — it had been searching an EARLIER
+    test's knowledge DB all along and passing only because that DB happened not to
+    contain its query string. Clearing the global gives each test its own store, the
+    same discipline as ``_reset_sel_singleton``.
+    """
+    import personalclaw.knowledge as knowledge_pkg
+
+    def _clear() -> None:
+        knowledge_pkg._store = None
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _close_sqlite_connections(monkeypatch):
+    """Close every SQLite connection a test opens, at that test's teardown.
+
+    Measured on this tree before the fixture: one full suite run printed **1,596**
+    ``ResourceWarning: unclosed database in <sqlite3.Connection …>`` lines, attributed
+    to **95 test files** — knowledge, memory, durability, codegraph, learning, lexicon,
+    session-search, snapshot, loop. The shape is the same everywhere and it is not one
+    store's bug: a fixture builds a store, returns it, and nothing ever calls
+    ``close()``, so the connection survives the test and is finalized whenever a later
+    ``gc.collect()`` gets to it (the warning is raised from pytest's own
+    ``unraisableexception`` plugin, i.e. attributed to a *bystander* test). Every
+    connection held that way is a live OS handle and a WAL reader on a tmp dir the test
+    is done with, and under ``-n auto`` each worker accumulates its own backlog.
+
+    Closing them one fixture at a time would be ~95 edits guarding one seam, and the
+    96th store would leak again — the same argument :func:`_isolate_real_home_writers`
+    makes about ``config_dir()``. So this wraps the seam every store shares: the
+    ``connect`` of the sqlite driver module. Both bindings are patched: the one
+    ``sqlite_compat`` resolved, which every module under ``src/`` opens its databases
+    through (``pysqlite3`` where that wheel is installed, so patching only the stdlib would
+    miss them all), and the stdlib module, which tests that open a database of their own
+    still import.
+
+    Deliberately NOT done: closing on a weak reference (a connection already collected
+    has already warned), and swallowing every teardown error. ``ProgrammingError`` is
+    the one documented case that is not this fixture's business — a connection opened
+    with the default ``check_same_thread=True`` inside a worker thread may only be
+    closed by that thread — and it is the ONLY exception passed over.
+
+    This fixture alone did NOT reach zero: 12 warnings survived, from five production
+    sites using ``with sqlite3.connect(...)``, whose context manager ends the
+    TRANSACTION and leaves the connection open — and which, being opened inside worker
+    threads, are exactly the ``ProgrammingError`` case above. Those five were fixed at
+    source with ``contextlib.closing`` and are now held there by
+    ``test_sqlite_compat.py::test_no_production_site_uses_a_bare_with_on_a_connection``.
+    """
+    import sqlite3 as stdlib_sqlite3
+
+    from personalclaw import sqlite_compat
+
+    drivers = {id(stdlib_sqlite3): stdlib_sqlite3, id(sqlite_compat.sqlite3): sqlite_compat.sqlite3}
+    opened: list = []
+
+    for driver in drivers.values():
+        real_connect = driver.connect
+
+        def tracking_connect(*args, _real=real_connect, **kwargs):
+            conn = _real(*args, **kwargs)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(driver, "connect", tracking_connect)
+
+    programming_errors = tuple(d.ProgrammingError for d in drivers.values())
+
+    yield
+
+    # A background thread a test started — the session search indexer, which a gateway's
+    # `_init_heartbeat` starts — stops before the connections it may be using are closed under
+    # it: closing one mid-statement on another thread crashed the interpreter (measured).
+    from personalclaw import session_search
+
+    session_search.INDEXER.reset()
+    for conn in opened:
+        try:
+            conn.close()
+        except programming_errors:
+            pass
+    opened.clear()
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto-set PERSONALCLAW_DISABLE_LIVE_WRITES for the whole suite.
+
+    Live, hard-to-reverse writes (deleting a downloaded model, a non-GET egress to
+    a non-loopback host) are refused with a typed error under this flag. PClaw was
+    already bitten by exactly this: a destructive test with no models-dir
+    monkeypatch deleted the user's real bound local model. A test that GENUINELY
+    exercises a live-write path opts out explicitly
+    (``monkeypatch.delenv('PERSONALCLAW_DISABLE_LIVE_WRITES', raising=False)``) —
+    making the intent to write real state visible, never accidental."""
+    monkeypatch.setenv("PERSONALCLAW_DISABLE_LIVE_WRITES", "1")
+
+
+@pytest.fixture(autouse=True)
+def _startup_environment_unrecorded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ``personalclaw`` command records the ``PATH`` and ``TMPDIR`` it started with, and
+    every child it builds an environment for gets those (``env.gateway_env``). A test that drives
+    ``cli.main()`` would leave its record to every test after it in the worker, whose children
+    would then run on that test's ``PATH`` and ``TMPDIR`` instead of their own. Unrecorded here,
+    so each test's children see what the test set, and teardown puts back what was there."""
+    from personalclaw import env
+
+    monkeypatch.setattr(env, "_startup", env._NOT_RECORDED)
+
+
+@pytest.fixture(autouse=True)
+def _no_acp_provision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never auto-provision (npm-install) ACP adapters during tests — provisioning
+    is a real network + filesystem side effect (writes to the managed prefix under
+    the user's home). Bundles that would otherwise install an adapter fall back to
+    the npx-fallback argv, which is exactly what the resolution tests assert on."""
+    monkeypatch.setenv("PERSONALCLAW_ACP_NO_PROVISION", "1")
+
+
+@pytest.fixture(autouse=True)
+def _no_app_child_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never spawn (or orphan-reap) the user's REAL app child processes from a test.
+    Any test that reaches an app load — startup's load_all_extensions() walks every
+    installed app through it — against the real config dir would otherwise launch
+    backends for the user's installed apps, and its reaper killed the live gateway's
+    backends once. Every start the platform makes honours the flag (a load's,
+    ``backend_runtime.start_app_backend``, and each watchdog's), so a test that needs
+    an app's backend or worker running clears it in its own fixture; tests that drive
+    the supervisor directly (test_app_api) are unaffected by it.
+
+    The SAME boot block also starts the app-WORKER watchdog, whose sweep spawns,
+    stops and PPID-reaps a second family of children. worker_runtime declares the
+    matching escape hatch and says of it "set by a harness that must not have app
+    workers spawned underneath it" — and nothing set it: the flag had exactly one
+    mention in the repo, its own definition. Latent only because no app on disk
+    declares `backgroundTasks` yet, so today's sweep finds nothing to spawn; the day
+    one does, an unflagged suite would drive the real home's workers from a daemon
+    thread that outlives the test that started it. test_app_worker_runtime drives the
+    sweep on purpose and clears this flag in its own fixture."""
+    monkeypatch.setenv("PERSONALCLAW_SKIP_APP_BACKENDS", "1")
+    monkeypatch.setenv("PERSONALCLAW_SKIP_APP_WORKERS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure git commits succeed in environments without a global git identity."""
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Test")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "Test")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+
+
+@functools.cache
+def _real_registry_accessor() -> object:
+    """The provider registry's accessor, read at the first test's setup, before any test ran."""
+    from personalclaw.llm import registry
+
+    return registry.get_default_registry
+
+
+#: Where our own modules live in ``sys.modules``: the package, its app bundles (loaded under a
+#: namespaced name, ``apps.native_contract.namespaced_module_name``) and the test modules.
+_OUR_MODULES = ("personalclaw", "_pclaw_app_", "test_")
+
+
+def _put_back_the_registry_accessor() -> None:
+    """Every module of ours that binds ``get_default_registry`` binds the real one again.
+
+    ``personalclaw.llm.registry`` defines the only function of that name anywhere in this
+    repository, so in our modules any other value there, unless the module defines it itself, is
+    a replacement a test left behind.
+    """
+    real = _real_registry_accessor()
+    holders = _LOADED_MODULES.holding("registry accessor", ("get_default_registry",), _OUR_MODULES)
+    for name, module in holders:
+        bound = module.__dict__.get("get_default_registry")
+        if bound is None or bound is real or getattr(bound, "__module__", None) == name:
+            continue
+        module.get_default_registry = real
+
+
+#: Where an app bundle's modules live in ``sys.modules``: ``_pclaw_app_<app>__<module>``
+#: (``apps.native_contract.namespaced_module_name``).
+_APP_MODULE_PREFIX = "_pclaw_app_"
+
+
+def _app_modules() -> set[str]:
+    return {name for name in sys.modules if name.startswith(_APP_MODULE_PREFIX)}
+
+
+def _forget_apps_registered_elsewhere(registry: object, loaded_before: set[str]) -> None:
+    """Take out of ``sys.modules`` every app first imported during the test whose provider type the
+    process-wide *registry* does not have.
+
+    An app registers its provider type once, when its module first runs, into whichever registry
+    the accessor returns then, and the module stays cached for the worker's life. Run while a test
+    had swapped the registry, or replaced its accessor, the type went into that registry and left
+    with it: every later test on the worker that loads the app gets the cached module and finds no
+    loaded app providing the type (measured: an Ollama entry at localhost priced as unpriced, and
+    its prompt scanned as one leaving the machine, after a test that booted the gateway on a
+    registry of its own). Forgotten, the app's next import registers its type where it belongs.
+    Only apps this test first imported: an earlier one may be held by a test module, and a second
+    copy of its classes is the failure the ``acp_agent`` reload caused.
+    """
+    from personalclaw.llm.capabilities import ProviderCapability
+
+    known = getattr(registry, "_capabilities", None)
+    if not isinstance(known, dict):
+        return
+    for name in sorted(_app_modules() - loaded_before):
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        declared = [v.type for v in vars(module).values() if isinstance(v, ProviderCapability)]
+        if any(type_ not in known for type_ in declared):
+            app = name[: name.index("__") + 2]
+            for sibling in _app_modules() - loaded_before:
+                if sibling.startswith(app):
+                    sys.modules.pop(sibling, None)
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_registry() -> object:
+    """Undo any provider-registry ENTRY a test registers into the process-global singleton, and
+    restore the singleton ITSELF if a test reset or swapped it.
+
+    `get_default_registry()` is a module-level singleton, so an entry a test registers outlives it
+    and lands in whatever test shares the worker next. Snapshot-and-restore rather than a list of
+    known names: three separate files leak (`test_can_resolve_use_case`, `test_provider_resolution_
+    unify`, `test_provider_create_bedrock`), each under names of its own, and a name list silently
+    stops covering the next one added.
+
+    Measured symptoms — both deterministic in an xdist mix, both invisible in isolation, both in
+    files with nothing to do with provider resolution:
+
+    * a leaked CHAT-capable entry makes `workflows.preflight`'s `can_resolve_use_case` probe
+      succeed, so `test_workflows_api.py`'s preflight-422 test got a 202 — a workflow run STARTED
+      because another file had left a model provider behind;
+    * a leaked `acp_agent` entry made `cli_doctor` exit 1 in `test_cli.py`.
+
+    The singleton IDENTITY is restored too, and this is what the sharded suite exposed. Provider
+    modules register their TYPES at IMPORT time — `personalclaw.llm.__init__` eager-imports
+    `acp_agent`, wiring the `acp_agent` type — and those modules are then cached in `sys.modules`.
+    So a test that calls `reset_default_registry()` / `set_default_registry(...)` (several do, in
+    their own autouse fixtures: `test_capture_proxy`, `test_capture_client_upstream`,
+    `test_scripted_provider_binding`, `test_evals_cell_provider`, `test_seed_local_model`) swaps in
+    a FRESH, TYPELESS registry that the cached modules never re-populate — and the next test on
+    the worker then dies with `unknown provider type 'acp_agent'`. It was invisible until #2720
+    sharded the suite: with fewer xdist workers a resetting test and
+    `test_provider_resolution_unify`'s `acp_agent` cases land on the same worker in sequence.
+    Restoring the original object (which still carries its import-time type registrations) heals
+    it; the `is` check makes the restore a no-op for a test that already put the singleton back
+    itself. An app bundle the test first imported while a swap was in place registered its type
+    into the registry that was thrown away, and its module stays cached: it is forgotten here
+    (`_forget_apps_registered_elsewhere`), so its next import registers the type in the original.
+    Registered TYPES on the original are still left alone
+    (there is no `unregister_type`, so a mutation that would drop a type can only be a reset/swap,
+    which this catches): `register_type` is how a test simulates an installed provider app, it is
+    idempotent, and a type with no entry resolves nothing.
+
+    And every test STARTS with the real ACCESSOR in every module of ours that binds it. Many tests
+    replace the accessor itself (`monkeypatch.setattr("personalclaw.llm.registry.
+    get_default_registry", lambda: registry)`), and undoing that restores only the registry
+    module's own name: a module first imported while it was replaced bound the replacement
+    (`from personalclaw.llm.registry import get_default_registry`) and kept it. Measured:
+    `test_a_named_model_is_said_not_swapped` was the first on its worker to import
+    `personalclaw.sdk.model` and `sdk.provider_helpers` that way, so every provider app loaded
+    later on the worker registered its type into that test's private registry, and
+    `test_best_of_n_provider_outage` then read "type 'ollama', which no loaded app provides" in all
+    fifteen tests, in an order where it came after. `test_images_reach_the_model` and
+    `test_a_pasted_image_is_read_only_when_its_text_is_sent` did the same to the SDK, and
+    `test_inert_surface_baseline` then found `sdk.model.ProviderRegistry` inert: the accessor whose
+    signature returns it was the other test's lambda. Put back at the NEXT test's setup, because
+    this fixture's own teardown runs before the test's monkeypatches are undone.
+    """
+    from personalclaw.llm import registry as _registry_mod
+
+    _put_back_the_registry_accessor()
+    original = _registry_mod.get_default_registry()
+    entries = getattr(original, "_entries", None)
+    before = set(entries) if isinstance(entries, dict) else set()
+    apps_before = _LOADED_MODULES.apps()
+    yield
+    if _registry_mod.get_default_registry() is not original:
+        _registry_mod.set_default_registry(original)
+    _forget_apps_registered_elsewhere(original, apps_before)
+    entries = getattr(original, "_entries", None)
+    if isinstance(entries, dict):
+        for name in set(entries) - before:
+            entries.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_channel_delivery_registry() -> object:
+    """Drop any channel-delivery handle a test registers into the process-global registry.
+
+    `channel_delivery` keys one handle per provider in a module-level dict (the writers are channel
+    transports reaching core through `GatewayServices`; the readers are both the gateway and the
+    dashboard, which is why it is not owned by either object — see #959). So a test that installs a
+    fake outlives itself and lands in whatever test shares the worker next.
+
+    Measured while landing that change: three `test_gateway.py` tests went red only in a mix —
+    `test_services_initially_none` asserts a fresh orchestrator has NO delivery, and a leaked
+    handle from an approval test makes the registry answer one. Cleared rather than
+    snapshot-restored, because unlike the provider registries nothing legitimately pre-registers a
+    channel at import time: outside a live gateway the correct state is empty. The receivers core
+    runs (``channel_transports._receivers``) and the gateway binding they run on
+    (``channel_transports._binding``, which holds a test's event loop) are the same kind of
+    process-global and are reset with it — a binding left behind would schedule the next test's
+    registry changes onto a closed loop.
+    """
+    from personalclaw import channel_transports
+    from personalclaw.channel_delivery import register
+
+    register(None)
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
+    yield
+    register(None)
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_action_services() -> object:
+    """Forget the gateway services a test's gateway wired (``action_services._services``).
+
+    A gateway publishes its dashboard state and workflow supervisor there when it starts
+    (``start_dashboard``), and the native agent's workflow tools read the chat they work for from
+    that state, as they read the supervisor they start runs on. A test that starts a gateway left
+    them behind, so the next test in the worker found a dead gateway's state, where its own chat is
+    not held, and its agent's call was refused as one for a chat whose mode cannot be read.
+    Cleared rather than restored, as the channel registry is: outside a live gateway nothing is
+    wired, and a test that needs services wires its own.
+    """
+    from personalclaw.action_providers import services
+
+    services._services = None
+    yield
+    services._services = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_app_restart_reasons() -> object:
+    """Forget every app's restart reason a test left behind.
+
+    ``app_runtime`` keeps why an app needs a gateway restart (a package it replaced while loaded,
+    a thread its previous version left running) in memory on purpose: in the product, a restart
+    is the one thing that clears it. Across tests the app NAMES repeat (``demo-app``) while each
+    test has its own home, so a reason one test earned would make the next test's clean update
+    report ``restart_required``. ``app_code``'s record of what an app's code registered is left
+    alone: a later unload of the same name taking back what an earlier test left is the isolation
+    the registries it covers otherwise lack.
+    """
+    from personalclaw.apps import app_runtime
+
+    app_runtime._restart.clear()
+    yield
+    app_runtime._restart.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_provider_measurement_boards() -> object:
+    """Forget every provider availability and connection answer a test measured.
+
+    Both boards (`providers/availability.py`, `providers/connection.py`) are process-wide memo
+    tables keyed by provider NAME, which every test reuses (`ollama`, `openrouter`, …). An
+    answer measured against one test's fixture home would otherwise be served to the next test
+    on the worker as a cached fact about its own. A check still in flight belongs to the
+    finished test's event loop, which cancels it. No test's check starts the real availability
+    child unless the test asked for it (:func:`_no_real_availability_probe`).
+    """
+    yield
+    from personalclaw.providers.availability import reset_availability_board
+    from personalclaw.providers.connection import reset_connection_board
+
+    reset_availability_board()
+    reset_connection_board()
+
+
+@pytest.fixture
+def real_availability_probe() -> None:
+    """Let this test's availability board start the real probe child.
+
+    For the tests of the probe itself, which plant the app they measure in their own home."""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_availability_probe(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test starts the real availability probe unless it asks to (``real_availability_probe``).
+
+    The board measures a provider app by starting ``personalclaw availability-probe <app>``, a
+    child that imports the app and runs its hook: the test's home, but a real process running real
+    app code. A test that boots the dashboard (its startup warms the board), lists providers or
+    finishes an install started one without meaning to, and left it to the loop's teardown to
+    cancel. On Python 3.12 a cancel that lands while the child's pipes connect is never woken, so
+    that teardown can hang until the test times out.
+
+    So a board on the real probe command settles what it was asked as ``unknown`` and starts
+    nothing, as it does when the child cannot start. A board a test gave a child of its own
+    (``argv_for``) still starts that child.
+    """
+    if "real_availability_probe" in request.fixturenames:
+        return
+    from personalclaw.providers import availability
+
+    real_command = availability.probe_argv
+    real_probe = availability.AvailabilityBoard._probe
+
+    async def _probe(board: availability.AvailabilityBoard, names: list[str]) -> None:
+        if board._argv_for is not real_command:
+            await real_probe(board, names)
+            return
+        board._settle(names, set(), "The availability check does not run in tests.")
+
+    monkeypatch.setattr(availability.AvailabilityBoard, "_probe", _probe)
+
+
+@pytest.fixture(autouse=True)
+def _restore_workflow_def_registry() -> object:
+    """Undo any workflow DEF provider a test registers into the process-global registry.
+
+    `workflows.defs` holds a module-level provider dict, so a test that registers one leaks it into
+    whatever test shares the worker next. `test_workflows_grill_protocol.py` calls
+    `register_bundled_provider()` (18 bundled templates) and never removes it, which makes
+    `test_workflows_api.py`'s `test_listing_is_empty_with_no_providers` see 18 instead of 0 and
+    `test_save_then_list_then_get` see 19 instead of 1 — deterministically for a given xdist
+    distribution, and invisible when either file runs alone. Reproduced on a clean tree, so it is
+    pre-existing; ANY change to the suite's test count can surface or hide it.
+
+    Snapshot-and-restore rather than a name list, for the reason the provider-registry guard above
+    records: a list stops covering the next name someone adds.
+    """
+    from personalclaw.workflows import defs as _defs
+
+    before = set(_defs.list_providers())
+    yield
+    for name in set(_defs.list_providers()) - before:
+        _defs.unregister_provider(name)
+
+
+@pytest.fixture(autouse=True)
+def _restore_tool_provider_registry() -> object:
+    """Snapshot + restore the process-global TOOL-provider registry around every test.
+
+    `tool_providers.registry` holds who serves each tool name as well as which providers are
+    registered: a registered provider CLAIMS its names, and a later one offering a claimed name is
+    refused. So a provider a test leaves registered (the gateway's start-up path registers every
+    bundled one and never unregisters them, by design) would not just linger in the next test's
+    surface, it would hold that test's names and refuse the provider under test. Whole dicts,
+    snapshotted and restored, for the reason the fixture below records.
+    """
+    from personalclaw.tool_providers import registry as _tool_registry
+
+    names = ("_providers", "_provider_app", "_registrations", "_claims")
+    before = {name: dict(getattr(_tool_registry, name)) for name in names}
+    yield
+    for name, saved in before.items():
+        live = getattr(_tool_registry, name)
+        live.clear()
+        live.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _restore_knowledge_provider_registry() -> object:
+    """Snapshot + restore the process-global KNOWLEDGE-SOURCE provider registry around every test.
+
+    `knowledge_providers.registry` keeps ONE module-level dict of source providers keyed by name
+    (`register_provider`/`unregister_provider` mutate it in place). It is the enrolment set the
+    Sources UI and `KnowledgeStore.create_source` read to decide which `watched-*` kinds may be
+    offered, and a cross-test hazard of the same class as `_restore_provider_registry` above: an
+    entry a test registers outlives it and lands in whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix, and the leak #2720's
+    sharding exposed on shard 1: `dashboard.server`'s API-server STARTUP path registers the three
+    core source providers (`DirSourceProvider`/`FeedSourceProvider`/`WebSourceProvider` — the
+    `watched-dir`/`watched-feed`/`watched-page` kinds) and never unregisters them (a gateway
+    registers once for its lifetime, by design). So once a worker has run any test that boots that
+    startup path, the registry stays populated, and `test_knowledge_sources_api.py`'s
+    `test_a_kind_with_no_enrolled_provider_is_not_offered` — which enrols NOTHING and asserts the
+    offered kinds are `[]` — then sees those three and reds. (`test_knowledge_sources_api`'s own
+    `registered` fixture already tears down what IT registers; this covers the startup path and any
+    other leaker.)
+
+    Snapshot-and-restore the whole dict rather than a name list, for the reason the guards above
+    record: a list silently stops covering the next name someone adds. The pre-test state is empty
+    today, so this reduces to dropping leaked entries after each test, but snapshotting keeps it
+    correct if a legitimate import-time registration is ever added.
+    """
+    from personalclaw.knowledge_providers import registry as _kp_registry
+
+    before = dict(_kp_registry._providers)
+    yield
+    _kp_registry._providers.clear()
+    _kp_registry._providers.update(before)
+
+
+@pytest.fixture(autouse=True)
+def _restore_pipeline_node_registry() -> object:
+    """Snapshot + restore the process-global INGESTION-NODE registry around every test.
+
+    `knowledge.pipeline.registry.NODE_REGISTRY` is one module-level dict keyed by
+    `(node_type, backend)`, and `register_node` mutates it in place — the same class of
+    cross-test hazard as the registry guards above. What made this one worse is that the
+    leak was *known* and worked around three times instead of fixed once: two test modules
+    carry comments explaining that "`NODE_REGISTRY` is process-global and another test
+    module registers its own `ocr` stub into it", and one of them popped the leaked
+    `("ocr", "stub")` / `("vision", "stub")` keys from inside an unrelated test body. That
+    cleanup reasoned "each executor test registers its own stubs immediately before use, so
+    removing them here cannot affect any other test" — true only for one worker running one
+    file in order, which is not how this suite runs: `--dist worksteal` hands tests
+    to workers greedily, so the registering test and the
+    popping test routinely land on different workers and the stubs escape the file entirely.
+
+    Measured on clean `origin/main`, deterministic, two tests, `-n0` — no xdist needed to
+    show it once the order is forced:
+
+        pytest tests/test_knowledge_pipeline.py::test_executor_conditional_branch_taken \\
+               tests/test_knowledge_searchability.py::test_an_image_only_pdf_persists_a_named_failure_not_done
+
+    The second test asserts an image-only scan cannot ingest to `done`, and it got `done`
+    with `content == "O"` and `node_phases.ocr == "done"` — literally the text of
+    `_StubNode("ocr", text="O")` registered by the first. The same leak is what made
+    `test_knowledge_pipeline::test_runner_records_skip_reason_on_partial` see `done` instead
+    of `partial`: its premise is "no model → the ocr node skips", and a stub node declares
+    `uses_use_case = None`, so it runs no matter what the model bindings say. Both failures
+    showed up on CI shard 2 of PRs whose diffs cannot own them (one has no Python at all),
+    which is the tell that the polluter is a third file sharing the shard.
+
+    Snapshot-and-restore the whole dict rather than dropping a list of known keys, for the
+    reason the guards above record: a key list silently stops covering the next stub someone
+    registers.
+
+    `ensure_nodes_registered()`'s `_REGISTERED` memo is rewound WITH the dict, and that pair
+    is the whole subtlety here. Core's backends are not registered at import time — they land
+    the first time some test calls `ensure_nodes_registered()`, which then latches the memo.
+    Rewinding the dict alone therefore un-registers core's own nodes permanently for that
+    worker, because the next `ensure_nodes_registered()` sees the latch and returns early:
+    measured, `test_runner_records_skip_reason_on_partial` went to `failed` (nothing ran at
+    all) and `test_runner_synthesizes_descriptor_for_textless_image` lost its exif dimensions.
+    Restoring both together means the registry and the memo that describes it can never
+    disagree — the registry is left exactly as the test found it, never emptied.
+    """
+    from personalclaw.knowledge import pipeline as _pipeline
+    from personalclaw.knowledge.pipeline import registry as _node_registry
+
+    before = dict(_node_registry.NODE_REGISTRY)
+    before_registered = _pipeline._REGISTERED
+    yield
+    _node_registry.NODE_REGISTRY.clear()
+    _node_registry.NODE_REGISTRY.update(before)
+    _pipeline._REGISTERED = before_registered
+
+
+@pytest.fixture(autouse=True)
+def _restore_local_model_registry() -> object:
+    """Snapshot + restore the process-global LOCAL-MODEL provider registry around every test.
+
+    `local_models.registry` keeps TWO module-level dicts keyed by app name — `_providers` and the
+    parallel `_capabilities` — and `register_provider` mutates both in place. It is the enrolment
+    set every download card, `/api/models/available`, `resilience.doctor`, `local_models.residency`
+    and `routing.policy` read, and the same class of cross-test hazard as the four guards above.
+    It is worse than most because its writer is a GATEWAY BOOT path rather than a test fake: a
+    gateway registers each `type: model` app once for its lifetime and never unregisters (by
+    design — `ModelTypeHandler._register_local`), so a single test that boots a dashboard leaves
+    every native model app enrolled for the rest of the worker's life.
+
+    Measured on this tree, deterministic, `-n0`, no xdist needed once the order is forced:
+
+        pytest tests/test_gateway_boot_provider_sync.py tests/test_onboarding_state.py
+
+    `test_boot_replays_config_providers_before_any_startup_hook` boots `start_dashboard`, which
+    enrols the native `bundled-chat` app. `test_onboarding_state.py`'s
+    `test_chat_download_offer_names_the_size_and_retires_once_it_is_downloaded` then registers a
+    fake local provider and asserts `GET /api/onboarding` names IT — and got `bundled-chat`,
+    because the route walks the registry in registration order and the leaked app was already
+    there. That reads exactly like a provider-boundary hole in the route (an app name in a core
+    payload), which is the expensive part: the route names no app, the registry did. Same
+    signature on CI shard 4 of #3441 — 1 failed, 8906 passed, in a diff that cannot own it.
+
+    Snapshot-and-restore both dicts rather than dropping a list of known names, for the reason the
+    guards above record: a name list silently stops covering the next app someone bundles.
+    """
+    from personalclaw.local_models import registry as _local_models
+
+    providers = dict(_local_models._providers)
+    capabilities = dict(_local_models._capabilities)
+    yield
+    _local_models._providers.clear()
+    _local_models._providers.update(providers)
+    _local_models._capabilities.clear()
+    _local_models._capabilities.update(capabilities)
+
+
+@pytest.fixture(autouse=True)
+def _restore_notification_kinds() -> object:
+    """Snapshot + restore the process-global notification-kind registry around every test.
+
+    Loading an app registers the proposal kinds its manifest declares
+    (`apps.app_runtime.load` → `proposals_contract.register_app_proposal_kinds`), and installing
+    one loads it, so a test that installs an app declaring `permissions.proposals` leaves
+    `app:<name>/proposal:<suffix>` in `notification_kinds._REGISTRY` for the rest of its worker's
+    life: nothing uninstalls a test's app. `test_notification_kinds.py`'s wire-vocabulary rail
+    then reads that app's kind as one the backend emits and the display map cannot label.
+    Measured, deterministic at `-n0`:
+
+        pytest tests/test_inbox_app_proposals.py tests/test_notification_kinds.py
+
+    failed `test_every_emittable_kind_has_a_frontend_row` with `['proposal:draft']`, and
+    `test_apps_cannot_post_into_your_chats.py` leaves the same pair.
+
+    Snapshot-and-restore rather than dropping known names, for the reason the guards above
+    give; restored in place, since the registry's readers hold the module's own dict.
+    """
+    from personalclaw import notification_kinds
+
+    before = dict(notification_kinds._REGISTRY)
+    yield
+    notification_kinds._REGISTRY.clear()
+    notification_kinds._REGISTRY.update(before)
+
+
+#: The name ``state_leak_guard.Plugin`` is registered under, in ``pytest_configure``.
+_STATE_LEAK_PLUGIN = "state-leak-guard"
+
+
+@pytest.fixture(autouse=True)
+def _a_test_leaves_process_state_as_it_found_it(
+    request,
+    _reset_trust_mode,
+    _reset_model_call_breakers,
+    _reset_context_engine_breakers,
+    _reset_memory_store_cache,
+    _reset_session_restrictions,
+    _restore_personalclaw_logging,
+    _reset_sel_singleton,
+    _reset_knowledge_store_singleton,
+    _restore_provider_registry,
+    _reset_channel_delivery_registry,
+    _reset_action_services,
+    _reset_app_restart_reasons,
+    _reset_provider_measurement_boards,
+    _restore_workflow_def_registry,
+    _restore_tool_provider_registry,
+    _restore_knowledge_provider_registry,
+    _restore_pipeline_node_registry,
+    _restore_local_model_registry,
+    _restore_notification_kinds,
+):
+    """Name the test that leaves a fenced registry changed, read before its fence restores it.
+
+    It requests every snapshot-and-restore fence, so each is set up before it and torn down after
+    it: what it reads after the test is what the test left in each registry, before the fence puts
+    it back. Such a change is recorded as ``fenced`` and never fails while its fence stands. The
+    state no fence restores (threads, the working directory, signal handlers, child processes,
+    listening sockets) is read around the test's whole setup and teardown by the plugin's own hooks,
+    once ``monkeypatch`` and every fixture have given back what they changed. Report mode writes
+    ``reports/state-leaks.json``; ``--strict-state`` fails the leaker unless
+    ``tests/state_leak_allowlist.toml`` names it. Rules: tests/state_leak_guard.py.
+    """
+    guard = request.config.pluginmanager.get_plugin(_STATE_LEAK_PLUGIN).guard
+    fenced = guard.fenced_before()
+    yield
+    guard.fenced_after(fenced)
+
+
+@pytest.fixture
+def ollama_app():
+    """The bundled Ollama app's provider type, registered as the gateway registers it at start.
+
+    Whether a model runs on this machine is what its entry's type declares
+    (``ProviderCapability.hosts_model``) together with where it sends, so an ``ollama`` entry is a
+    model here only once its type is registered: a test that configures one asks for this rather
+    than relying on an earlier test on its worker having loaded the app."""
+    from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
+
+    return load_bundle_module(NATIVE_DIR / "ollama-models", "ollama-models", "provider")
+
+
+# (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
+# reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
+
+
+def pytest_sessionstart(session):
+    """Torch-free-core rail, the one case no per-test transition can attribute: a hazard
+    module already resident before the first test, imported by a plugin or by conftest
+    itself. Checked in EVERY process — each xdist worker carries its own sys.modules, and
+    it is a worker that aborts."""
+    pre_resident = native_omp_guard.resident(sys.modules)
+    if pre_resident:
+        raise RuntimeError(native_omp_guard.explain(pre_resident, "session start"))

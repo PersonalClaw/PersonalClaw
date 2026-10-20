@@ -1,0 +1,1256 @@
+"""Investigate Anywhere — one chat-with-context primitive for every entity row.
+
+Every entity row gets an **investigate** affordance that opens a chat pre-loaded
+with that entity's full context. One shared primitive:
+
+* a per-kind **resolver registry** — the owning module registers a pure-read
+  function that composes an :class:`InvestigateContext` (typed envelope: kind, id,
+  title, snapshot, back-link, suggested agent + task mode, opening prompt) from
+  its own store. A client can't forge a snapshot — composition is server-side.
+* ``POST /api/investigate`` creates a fresh chat session in ``ask`` mode (read-only
+  investigation — propose-don't-write), stages the envelope on the session, and
+  returns the session key.
+* at the session's FIRST turn, ``chat_runner._inject_investigate_context`` prepends
+  the envelope to the model-bound message — ``fence_untrusted`` wrapped, DATA not
+  instructions — exactly like the knowledge/attachment injections. The user's
+  visible message stays clean, and the user always fires the first turn.
+
+Soul guardrails: resolvers are PURE READS (investigating never mutates the
+entity); the envelope always passes ``fence_untrusted`` before reaching a prompt;
+no surface grows its own bespoke "chat about this" wiring.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import logging
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from personalclaw.loop import files as loop_files
+from personalclaw.security import redact_for_display
+
+logger = logging.getLogger(__name__)
+
+# Snapshot cap: a huge entity must not blow the first turn's budget. Truncation
+# is VISIBLE (the notice line) so the model knows it saw a partial snapshot.
+_SNAPSHOT_CAP = 8_192
+_TRUNCATE_NOTICE = "\n…[snapshot truncated — open the source surface for the full entity]"
+
+
+@dataclass
+class InvestigateContext:
+    """The typed envelope one investigate action stages onto a chat session."""
+
+    kind: str  # registry key (inbox_item | loop_finding | notification | …)
+    id: str  # entity id within the owning store
+    title: str  # human label for the chat header chip
+    snapshot: str  # composed server-side; capped; fenced at INJECTION (never here)
+    back_link: str  # hash route to the source surface (e.g. "#/loops/abc")
+    suggested_agent: str = ""  # "" = session default
+    suggested_task_mode: str = "ask"  # ask | plan | agent — default ask (read-only)
+    opening_prompt: str = ""  # composer pre-fill (editable, never auto-sent)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# (entity_id, dashboard state) -> envelope | None. Registered by owning modules
+# at import/boot; pure reads only (no store writes) — tested per kind.
+#
+# A resolver may be sync OR async. Several owning stores expose their by-id read
+# only as a coroutine (tasks go through provider indirection; schedule-run detail
+# is lock-guarded), and the alternative — reaching into their private ``_*_sync``
+# back doors — would couple this registry to internals that exist for other
+# reasons. ``resolve`` is async and awaits whatever a resolver returns, so both
+# shapes register the same way and neither kind of store has to change.
+Resolver = Callable[[str, object], Any]
+
+_RESOLVERS: dict[str, Resolver] = {}
+
+
+def register_investigate_resolver(kind: str, fn: Resolver) -> None:
+    """Register the resolver for one entity kind. Last registration wins
+    (idempotent across re-imports); the kind key is the registry's vocabulary."""
+    _RESOLVERS[kind] = fn
+
+
+def known_kinds() -> tuple[str, ...]:
+    return tuple(sorted(_RESOLVERS))
+
+
+async def resolve(kind: str, entity_id: str, state) -> InvestigateContext | None:
+    """Dispatch to the kind's resolver; None = unknown entity. Raises KeyError on
+    an unknown KIND (the route maps it to 400 vs the entity 404). Awaits async
+    resolvers so a store whose by-id read is a coroutine needs no sync back door."""
+    fn = _RESOLVERS[kind]
+    ctx = fn(entity_id, state)
+    if inspect.isawaitable(ctx):
+        ctx = await ctx
+    if ctx is None:
+        return None
+    if len(ctx.snapshot) > _SNAPSHOT_CAP:
+        ctx.snapshot = ctx.snapshot[:_SNAPSHOT_CAP] + _TRUNCATE_NOTICE
+    return ctx
+
+
+# ── Core resolvers (the reference pair) ──────────────────────────────────────
+# Registered here (not in the owning modules) so importing personalclaw.investigate
+# is sufficient — the route handler imports this module, guaranteeing registration
+# without adding import-order coupling to inbox_service/loop startup.
+
+
+async def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | None:
+    """An inbox item: sender/channel/classification + the message body and thread
+    context, and the files the message came with, each with the text read from it. All of it
+    is EXTERNAL text — it rides the snapshot raw here and is fenced once, at injection."""
+    try:
+        svc = getattr(state, "_inbox_svc", None)
+        item = svc.inbox.items.get(entity_id) if svc is not None else None
+    except Exception:  # noqa: BLE001
+        item = None
+    if item is None:
+        return None
+    from personalclaw.inbox import SOURCE_DECLARABLE_KINDS, ItemKind
+
+    lines = [
+        f"Inbox item {item.id}",
+        f"From: {item.sender_name or item.sender_id}",
+        f"Channel: {item.channel_name or item.channel}",
+    ]
+    if (item.item_kind or ItemKind.MESSAGE.value) in SOURCE_DECLARABLE_KINDS:
+        # The triage verdict of a channel message, as the row has it: only a message is sorted,
+        # and one not sorted yet says so rather than quoting a verdict nobody made.
+        if not item.classification:
+            lines.append("Classification: not sorted yet")
+        elif item.confidence:
+            lines.append(f"Classification: {item.classification} (confidence: {item.confidence})")
+        else:
+            lines.append(f"Classification: {item.classification}")
+    else:
+        lines.append(f"Kind: {item.item_kind}")
+    lines.append(f"Status: {item.status}")
+    for turn in (item.thread_context or [])[-8:]:
+        who = str(turn.get("sender_name") or turn.get("sender") or "someone")
+        txt = str(turn.get("text") or "").strip()
+        if txt:
+            lines.append(f"[thread] {who}: {txt}")
+    lines.append(f"Message: {item.message or ''}")
+    if item.draft:
+        lines.append(f"Drafted reply: {item.draft}")
+    if item.attachments:
+        from personalclaw.attachments import raw_reading
+
+        lines.append(f"Attachments:\n{await raw_reading(item.id, item.attachments)}")
+    return InvestigateContext(
+        kind="inbox_item",
+        id=entity_id,
+        title=f"Inbox: {item.sender_name or item.sender_id}",
+        snapshot="\n".join(lines),
+        back_link="#/inbox",
+        opening_prompt="Help me understand this message — what does it need from me?",
+    )
+
+
+def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
+    """A loop finding, addressed ``<loop_id>:<cycle>`` (the FE's target form) or a
+    bare loop id (→ the latest finding). Includes the loop's goal + the finding +
+    that cycle's judge verdict when one exists."""
+    from personalclaw.loop import store as loop_store
+
+    loop_id, _, cycle_s = entity_id.partition(":")
+    loop = loop_store.get(loop_id)
+    if loop is None:
+        return None
+    findings = loop_files.get_findings(loop_id)
+    if not findings:
+        return None
+    finding = None
+    if cycle_s:
+        try:
+            want = int(cycle_s)
+            finding = next((f for f in findings if int(f.get("cycle", -1)) == want), None)
+        except ValueError:
+            finding = None
+    if finding is None:
+        finding = findings[-1]
+    cycle = finding.get("cycle", "?")
+    lines = [
+        f"Loop: {loop.name or loop.id} (kind: {loop.kind}, status: {loop.status})",
+        f"Task: {loop.task}",
+        f"Finding (cycle {cycle}):",
+    ]
+    for key in ("summary", "key_insight", "evidence"):
+        val = str(finding.get(key) or "").strip()
+        if val:
+            lines.append(f"  {key}: {val}")
+    try:
+        verdicts = loop_files.get_verdicts(loop_id)
+        v = next(
+            (v for v in verdicts if v.get("cycle") == finding.get("cycle") and not v.get("gate")),
+            None,
+        )
+        if v:
+            lines.append(
+                f"Judge verdict (cycle {cycle}): done={v.get('done')} "
+                f"quality={v.get('quality_score')} marginal={v.get('marginal_value')} "
+                f"reasoning: {v.get('done_reason') or v.get('reasoning') or ''}"
+            )
+    except Exception:  # noqa: BLE001 — the verdict is enrichment, not a requirement
+        pass
+    return InvestigateContext(
+        kind="loop_finding",
+        id=entity_id,
+        title=f"Finding · {loop.name or loop.id}",
+        snapshot="\n".join(lines),
+        back_link=f"#/loops/{loop_id}",
+        opening_prompt=(
+            "Walk me through this finding — what did the loop discover and does it hold up?"
+        ),
+    )
+
+
+def _cadence(trigger) -> str:
+    """A trigger's cadence in words, via the SHARED describer.
+
+    Delegates to `schedule_view.describe_cadence` rather than reading a `ScheduleDefinition`'s three
+    shapes: that was the legacy job's spelling, and this now receives a store `Trigger`. A second
+    formatter here would drift from the one the rest of the UI renders — the exact reason
+    `describe_cadence` exists.
+    """
+    from personalclaw.triggers import schedule_view as _sv
+
+    try:
+        return _sv.describe_cadence(trigger)
+    except Exception:  # noqa: BLE001 - enrichment text must never fail a snapshot
+        return "?"
+
+
+# ── The attention path: notifications ────────────────────────────────────────
+
+
+def _resolve_notification(entity_id: str, state) -> InvestigateContext | None:
+    """A notification, addressed by its ``ts`` (the id the whole system uses —
+    notifications are plain dicts in ``state._notification_log``, no store class).
+
+    Failure notifications are the richest case and the reason this kind matters:
+    a cron/loop/subagent failure carries the LINK to what failed (``job_id`` /
+    ``loop_id`` / ``session``), so the snapshot resolves that too — the user asks
+    "why did this fail?" and the model already has the run state."""
+    log = list(getattr(state, "_notification_log", None) or [])
+    note = next((n for n in log if str(n.get("ts")) == entity_id), None)
+    if note is None:
+        return None
+    kind = str(note.get("kind") or "info")
+    lines = [
+        f"Notification ({kind}) at {note.get('ts')}",
+        f"Title: {note.get('title') or ''}",
+        f"Read: {'yes' if note.get('acked') else 'no'}",
+        f"Body: {note.get('body') or ''}",
+    ]
+
+    # Follow the failure link. Each of these is best-effort enrichment: a missing
+    # or deleted target still yields a useful notification-only snapshot.
+    job_id = str(note.get("job_id") or "")
+    if job_id:
+        lines.append(f"\nLinked schedule job: {job_id}")
+        try:
+            # The unified store. `state.crons` described only the legacy file, which nothing
+            # has written — so this enrichment was blank for every real automation.
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers.store import TriggerStore
+
+            row = TriggerStore(base_dir=config_dir()).get(job_id)
+            job = row.trigger if row is not None else None
+            if job is not None:
+                lines.append(f"  Name: {job.name}")
+                lines.append(f"  Cadence: {_cadence(job)}")
+                lines.append(f"  Enabled: {job.enabled}")
+                # `health_status` / `last_error_summary` are the store's names for the legacy
+                # `last_status` / `last_error` — `LEGACY_FIELD_MAP` declares both. Reading the old
+                # spellings off a `Trigger` raises AttributeError; driving this is how I found it.
+                lines.append(f"  Health: {job.health_status or '?'}")
+                if job.last_error_summary:
+                    lines.append(f"  Last error: {job.last_error_summary}")
+                # `consecutive_failures` has NO store field: the map says the autopause counter is
+                # derived from fire records, so the run history is where that lives now. Omitted
+                # rather than printed as a fake 0 — a wrong number here reads as "healthy".
+        except Exception:  # noqa: BLE001 — enrichment only
+            logger.debug("notification job enrichment failed", exc_info=True)
+
+    loop_id = str(note.get("loop_id") or "")
+    if loop_id:
+        lines.append(f"\nLinked autonomous run: {loop_id} (kind: {note.get('loop_kind') or '?'})")
+        try:
+            from personalclaw.loop import store as loop_store
+
+            loop = loop_store.get(loop_id)
+            if loop is not None:
+                lines.append(f"  Task: {loop.task}")
+                lines.append(f"  Status: {loop.status} (cycle {getattr(loop, 'cycle', '?')})")
+                findings = loop_files.get_findings(loop_id)
+                if findings:
+                    last = findings[-1]
+                    summary = str(last.get("summary") or "").strip()
+                    if summary:
+                        lines.append(f"  Latest finding (cycle {last.get('cycle')}): {summary}")
+        except Exception:  # noqa: BLE001
+            logger.debug("notification loop enrichment failed", exc_info=True)
+
+    session = str(note.get("session") or note.get("session_key") or "")
+    if session:
+        lines.append(f"\nLinked session: {session}")
+
+    back = "#/notifications"
+    if loop_id:
+        back = f"#/loops/{loop_id}"
+    elif job_id:
+        back = f"#/triggers?open=schedule:{job_id}"
+    failed = kind in ("error", "warning") or "fail" in str(note.get("title") or "").lower()
+    return InvestigateContext(
+        kind="notification",
+        id=entity_id,
+        title=f"Notification: {note.get('title') or kind}",
+        snapshot="\n".join(lines),
+        back_link=back,
+        opening_prompt=(
+            "Why did this fail, and what should I do about it?"
+            if failed
+            else "What is this notification telling me, and does it need anything from me?"
+        ),
+    )
+
+
+# ── Work: tasks ──────────────────────────────────────────────────────────────
+
+
+async def _resolve_task(entity_id: str, state) -> InvestigateContext | None:
+    """A task with the context that makes it answerable: its criteria/plan/notes,
+    where it sits in the Project → list hierarchy, and WHY it's blocked (the
+    dependency reason, resolved against its siblings)."""
+    from personalclaw.tasks.registry import get_task
+
+    task = await get_task(entity_id)
+    if task is None:
+        return None
+    lines = [
+        f"Task {task.id}: {task.title}",
+        f"Status: {getattr(task.status, 'value', task.status)}",
+        f"Priority: {getattr(task.priority, 'value', task.priority)}",
+    ]
+    if task.project:
+        lines.append(f"Project: {task.project}")
+    if task.assignee:
+        lines.append(f"Assignee: {task.assignee}")
+    if task.due:
+        lines.append(f"Due: {task.due}")
+    if task.labels:
+        lines.append(f"Labels: {', '.join(task.labels)}")
+    if task.description:
+        lines.append(f"\nDescription: {task.description}")
+    for criterion in task.exit_criteria or []:
+        lines.append(
+            f"[exit criterion] {criterion.get('description', '')} "
+            f"— {'met' if criterion.get('met') else criterion.get('status', 'open')}"
+        )
+    for step in task.action_plan or []:
+        mark = "x" if step.get("completed") else " "
+        lines.append(f"[plan {step.get('sequence', '?')}] [{mark}] {step.get('content', '')}")
+    for bucket, label in (
+        (task.notes, "note"),
+        (task.research_notes, "research"),
+        (task.execution_notes, "execution"),
+    ):
+        for entry in (bucket or [])[-5:]:
+            content = str(entry.get("content") or "").strip()
+            if content:
+                lines.append(f"[{label}] {content}")
+
+    # Why it's blocked — the derived reason, not just the raw dependency ids.
+    try:
+        from personalclaw.tasks.native import NativeTaskProvider
+        from personalclaw.tasks.reconcile import block_reason
+
+        reason = block_reason(task, NativeTaskProvider()._task_map())
+        if reason.get("is_blocked"):
+            lines.append(f"\nBlocked: {reason.get('message') or ''}")
+            for title in reason.get("blocking_task_titles") or []:
+                lines.append(f"  waiting on: {title}")
+    except Exception:  # noqa: BLE001 — enrichment only
+        logger.debug("task block-reason enrichment failed", exc_info=True)
+
+    return InvestigateContext(
+        kind="task",
+        id=entity_id,
+        title=f"Task: {task.title}",
+        snapshot="\n".join(lines),
+        back_link="#/tasks",
+        opening_prompt="Help me work out how to move this task forward.",
+    )
+
+
+# ── Runs: schedule + trigger ─────────────────────────────────────────────────
+
+
+async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | None:
+    """One schedule run, addressed ``<job_id>:<run_id>`` (a run is only readable
+    through its job's history file, so the id must carry both — same composite
+    shape as ``loop_finding``). A bare job id resolves its most recent run.
+
+    The run is what follows the LAST colon. A job id holds colons of its own (every store id
+    does: ``clock:pack-the-soccer-bag``, ``system:triage:digest``) and a run id never does
+    (`ScheduleRun.run_id`, and the ``fire-``/``skip-``/``interrupted-`` ids the engine writes), so
+    splitting at the first one read every clock schedule's run as job ``clock`` and Investigate
+    found nothing. A bare store id reads the same way (``clock`` / ``pack-the-soccer-bag``), so
+    when that names no run the whole id is taken as the job."""
+    job_part, _, run_part = entity_id.rpartition(":")
+    addresses = [(job_part, run_part)] if job_part else []
+    addresses.append((entity_id, ""))
+    # `ScheduleRunStore` directly + the unified store for the job's metadata. The run half
+    # was always this store — `ScheduleService`'s methods were one-line passthroughs — and
+    # the metadata half came from a legacy file nothing has written.
+    from personalclaw.config.loader import config_dir
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers.store import TriggerStore
+
+    runs = ScheduleRunStore(config_dir())
+    job_id, run = "", None
+    for job_id, run_id in addresses:
+        try:
+            if run_id:
+                run = await runs.get_run(job_id, run_id)
+            else:
+                rows, _total = await runs.list_for_job(job_id, offset=0, limit=1)
+                run = rows[0] if rows else None
+        except Exception:  # noqa: BLE001 — a bad/unsafe job id is an entity miss
+            logger.debug("schedule-run read failed for %s", entity_id, exc_info=True)
+            run = None
+        if run:
+            break
+    if not run:
+        return None
+    _row = TriggerStore(base_dir=config_dir()).get(job_id)
+    job = _row.trigger if _row is not None else None
+    # Masked like every read of the schedule (`schedule_view.MASKED_FIELDS`), prompt included below.
+    # A job no longer in the list is named by the name its run kept.
+    job_name = redact_for_display((job.name if job else run.get("job_name")) or "")
+    job_line = " ".join(
+        part for part in (job_name, "" if job else "(no longer in the list)") if part
+    )
+    lines = [
+        f"Schedule run {run.get('run_id') or '?'} of job {job_id}",
+        f"Job: {job_line}",
+        f"Trigger: {run.get('trigger') or '?'}",
+        f"Status: {run.get('status') or '?'}",
+        f"Duration: {run.get('duration_ms', 0)} ms",
+    ]
+    if job is not None:
+        # The run keeps none of these: they are read from the automation as it is NOW, which
+        # may have been edited since the run fired. So they sit under a line that says so,
+        # rather than reading as what this run ran on.
+        lines.append("The automation as it is now (it may have changed since this run):")
+        lines.append(f"  Cadence: {_cadence(job)}")
+        # The action lives in `workflow`, and its message key differs per provider
+        # (`task_template` for invoke-agent, `message` for run-prompt) — the shared projection is
+        # what resolves that, which is why it is used here rather than a hand-read.
+        from personalclaw.triggers import schedule_view as _sv
+
+        _row_view = _sv.to_schedule_row(job)
+        # `provider` is NESTED under `action` in the wire shape — read it there. Driving this
+        # printed "Action: ?" from a top-level lookup that silently returned None.
+        _provider = str((_row_view.get("action") or {}).get("provider") or "")
+        lines.append(f"  Action: {_provider or '?'}")
+        if _row_view.get("message"):
+            lines.append(f"  Prompt/message: {_row_view['message']}")
+    if run.get("summary"):
+        lines.append(f"\nSummary: {run['summary']}")
+    if run.get("error"):
+        lines.append(f"Error: {run['error']}")
+    if run.get("trace"):
+        lines.append(f"\nTrace:\n{run['trace']}")
+    failed = str(run.get("status") or "") in ("failure", "timeout")
+    return InvestigateContext(
+        kind="schedule_run",
+        id=entity_id,
+        title=f"Run · {job_name or job_id}",
+        snapshot="\n".join(lines),
+        back_link=f"#/triggers?open=schedule:{job_id}",
+        opening_prompt=(
+            "Why did this run fail, and how do I stop it happening again?"
+            if failed
+            else "Walk me through what this run did."
+        ),
+    )
+
+
+async def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | None:
+    """A trigger's run history, addressed ``<kind>:<id>`` (``lifecycle:`` /
+    ``event:``; a bare or ``schedule:`` id is delegated to ``schedule_run``).
+
+    HONEST SCOPE: lifecycle hooks persist aggregate counters only (last run + status +
+    count) — the API's own history endpoint returns empty for them — so for that kind
+    this resolves the hook's LAST-RUN SUMMARY rather than inventing a per-run entity
+    that doesn't exist. A data-event trigger is a row in the one trigger store and
+    records every fire in the run ledger, so its id (``event:<slug>``, the store id)
+    resolves the row plus its most recent run."""
+    kind, _, raw = entity_id.partition(":")
+    if not raw:  # bare id → the schedule convention
+        kind, raw = "schedule", entity_id
+    if kind == "schedule":
+        return None  # use kind="schedule_run" (composite job:run addressing)
+    if kind == "lifecycle":
+        try:
+            from personalclaw.hooks import get_global_hook_store
+
+            store = get_global_hook_store() or getattr(state, "_hook_store", None)
+            hook = store.get(raw) if store is not None else None
+        except Exception:  # noqa: BLE001
+            hook = None
+        if hook is None:
+            return None
+        import datetime as _dt
+
+        last = (
+            _dt.datetime.fromtimestamp(hook.last_run, _dt.timezone.utc).isoformat()
+            if hook.last_run
+            else "never"
+        )
+        # Masked like the lifecycle row the Automations page shows
+        # (`triggers._serialize_lifecycle`).
+        hook_name = redact_for_display(hook.name or "")
+        lines = [
+            f"Lifecycle trigger {hook.id}: {hook_name}",
+            f"Event: {hook.event}",
+            f"Matcher: {redact_for_display(hook.matcher or '') or '(any)'}",
+            f"Action: {hook.provider}",
+            f"Enabled: {hook.enabled}",
+            f"Runs: {hook.run_count}",
+            f"Last run: {last}",
+            f"Last status: {hook.last_status or '?'}",
+            "",
+            "NOTE: lifecycle triggers record aggregate counters only — there is no "
+            "per-run history for this trigger kind, so the above is the latest state, "
+            "not one run's transcript.",
+        ]
+        return InvestigateContext(
+            kind="trigger_run",
+            id=entity_id,
+            title=f"Trigger: {hook_name}",
+            snapshot="\n".join(lines),
+            back_link=f"#/triggers?open=lifecycle:{raw}",
+            opening_prompt=(
+                "Why is this trigger behaving this way?"
+                if hook.last_status in ("error", "timeout", "blocked")
+                else "Explain what this trigger does and when it fires."
+            ),
+        )
+    if kind == "event":
+        return await _resolve_event_trigger(entity_id)
+    return None
+
+
+async def _resolve_event_trigger(trigger_id: str) -> InvestigateContext | None:
+    """A data-event trigger: its store row and the most recent run the ledger holds for it."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.event_triggers import PATTERN_MATCHER
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers import schedule_view as _sv
+    from personalclaw.triggers.store import TriggerStore
+
+    try:
+        row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+    except Exception:  # noqa: BLE001 - an unreadable store is an entity miss
+        row = None
+    if row is None or row.trigger.kind != "event":
+        return None
+    trig = row.trigger
+    spec = dict(trig.spec or {})
+    pattern = str(spec.get("pattern") or "?")
+    field = PATTERN_MATCHER.get(pattern)
+    matcher = (
+        redact_for_display(f"{field} = {spec.get(field)!r}")
+        if field and spec.get(field)
+        else "(every event)"
+    )
+    # Masked like the store row the Automations page shows (`triggers._serialize_store`).
+    trig_name = redact_for_display(trig.name or "")
+    max_fires = int((trig.gates or {}).get("max_fires") or 0)
+    try:
+        runs, total = await ScheduleRunStore(config_dir()).list_for_job(trig.id, offset=0, limit=1)
+    except Exception:  # noqa: BLE001 - the row still has something true to say
+        logger.debug("event-trigger run read failed for %s", trig.id, exc_info=True)
+        runs, total = [], 0
+    last = runs[0] if runs else None
+    lines = [
+        f"Event trigger {trig.id}: {trig_name}",
+        f"Listens to: {spec.get('source') or '?'} events, pattern {pattern}, matching {matcher}",
+        f"Action: {_sv._inline_action(trig).get('provider') or '(none)'}",
+        f"Enabled: {trig.enabled} (state: {trig.state})",
+        f"Fires: {trig.run_count}" + (f" of max {max_fires}" if max_fires else ""),
+        f"Last fired at: {trig.last_fired_at or 'never'}",
+        f"Recorded runs: {total}",
+    ]
+    if last is not None:
+        lines.append(
+            f"Most recent run: {last.get('status') or '?'}"
+            + (f" — {last.get('error')}" if last.get("error") else "")
+        )
+    if row.errors:
+        lines.append(f"Parse error: {row.errors[0].message}")
+    return InvestigateContext(
+        kind="trigger_run",
+        id=trig.id,
+        title=f"Event trigger: {trig_name}",
+        snapshot="\n".join(lines),
+        back_link=f"#/triggers?open={trig.id}",
+        opening_prompt=(
+            "Why is this trigger not working?"
+            if row.errors or (last is not None and last.get("status") == "failure")
+            else "Explain what this trigger watches for and whether it's working."
+        ),
+    )
+
+
+# ── Autonomous runs: one cycle ───────────────────────────────────────────────
+
+
+def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
+    """One CYCLE of an autonomous run, addressed ``<loop_id>:<cycle>``. Where
+    ``loop_finding`` answers "does this conclusion hold up?", this answers "what
+    happened on this iteration?" — the cycle's finding, verdict, and any nudge
+    the user injected, in run context."""
+    from personalclaw.loop import store as loop_store
+
+    loop_id, _, cycle_s = entity_id.partition(":")
+    loop = loop_store.get(loop_id)
+    if loop is None:
+        return None
+    try:
+        want = int(cycle_s) if cycle_s else None
+    except ValueError:
+        want = None
+    findings = loop_files.get_findings(loop_id)
+    if want is None:
+        want = int(findings[-1].get("cycle", 0)) if findings else 0
+    lines = [
+        f"Autonomous run: {loop.name or loop.id} (kind: {loop.kind}, status: {loop.status})",
+        f"Task: {loop.task}",
+        # Derived from the projection already read above; the cached column it replaced is gone.
+        f"Cycle {want} of {len(findings)}",
+    ]
+    finding = next((f for f in findings if int(f.get("cycle", -1)) == want), None)
+    if finding:
+        for key in ("summary", "key_insight", "evidence", "next_step"):
+            val = str(finding.get(key) or "").strip()
+            if val:
+                lines.append(f"  {key}: {val}")
+    else:
+        lines.append("  (no finding recorded for this cycle)")
+    try:
+        verdict = next(
+            (
+                v
+                for v in loop_files.get_verdicts(loop_id)
+                if v.get("cycle") == want and not v.get("gate")
+            ),
+            None,
+        )
+        if verdict:
+            lines.append(
+                f"Judge verdict: done={verdict.get('done')} "
+                f"quality={verdict.get('quality_score')} "
+                f"marginal={verdict.get('marginal_value')}"
+            )
+            reason = verdict.get("done_reason") or verdict.get("reasoning") or ""
+            if reason:
+                lines.append(f"  reasoning: {reason}")
+    except Exception:  # noqa: BLE001
+        logger.debug("loop-cycle verdict enrichment failed", exc_info=True)
+    try:
+        for nudge in loop_files.get_nudges(loop_id):
+            if int(nudge.get("sent_at_cycle", -1)) == want:
+                lines.append(f"[user nudge] {nudge.get('text') or ''}")
+    except Exception:  # noqa: BLE001
+        logger.debug("loop-cycle nudge enrichment failed", exc_info=True)
+    return InvestigateContext(
+        kind="loop_cycle",
+        id=entity_id,
+        title=f"Cycle {want} · {loop.name or loop.id}",
+        snapshot="\n".join(lines),
+        back_link=f"#/loops/{loop_id}",
+        opening_prompt="What happened on this cycle, and did it move the run forward?",
+    )
+
+
+# ── Knowledge ────────────────────────────────────────────────────────────────
+
+
+def _resolve_knowledge_item(entity_id: str, state) -> InvestigateContext | None:
+    """A knowledge item: its content plus what the system derived from it. The
+    body is user/scraped text — it rides the snapshot raw and is fenced once, at
+    injection."""
+    try:
+        store = getattr(state, "knowledge_store", None)
+        item = store.get_item(entity_id) if store is not None else None
+    except Exception:  # noqa: BLE001
+        logger.debug("knowledge read failed for %s", entity_id, exc_info=True)
+        item = None
+    if not item:
+        return None
+    lines = [
+        f"Knowledge item {item.get('id')}: {item.get('title') or '(untitled)'}",
+        f"Type: {item.get('type') or item.get('item_type') or '?'}",
+        f"Status: {item.get('status') or '?'}",
+    ]
+    if item.get("tags"):
+        lines.append(f"Tags: {', '.join(str(t) for t in item['tags'])}")
+    if item.get("url"):
+        lines.append(f"Source URL: {item['url']}")
+    if item.get("file_path"):
+        lines.append(f"File: {item['file_path']}")
+    lines.append(f"Indexed for search: {'yes' if item.get('has_embedding') else 'no'}")
+    if item.get("processing_error"):
+        lines.append(f"Processing error: {item['processing_error']}")
+    from personalclaw.knowledge.pipeline.outcomes import told
+
+    for step in told((item.get("file_metadata") or {}).get("node_phases")):
+        lines.append(f"Step {step}")
+    if item.get("summary"):
+        lines.append(f"\nSummary: {item['summary']}")
+    insights = item.get("insights")
+    if isinstance(insights, dict) and insights:
+        for key, val in list(insights.items())[:8]:
+            lines.append(f"[insight] {key}: {val}")
+    lines.append(f"\nContent:\n{item.get('content') or ''}")
+    return InvestigateContext(
+        kind="knowledge_item",
+        id=entity_id,
+        title=f"Knowledge: {item.get('title') or entity_id}",
+        snapshot="\n".join(lines),
+        # The item route is #/knowledge/item/<id> (KnowledgeSection matches on the
+        # "item" segment) — #/knowledge/<id> falls through to the list.
+        back_link=f"#/knowledge/item/{entity_id}",
+        opening_prompt="Help me think about what's in this — what matters here?",
+    )
+
+
+# ── Memory: records and lessons ──────────────────────────────────────────────
+
+
+def _memory_service(state):
+    """The MemoryService the dashboard itself uses, without the provider-admin
+    side effects (no embed-fn auto-wiring, no standalone-store construction) — a
+    resolver is a pure read."""
+    from personalclaw.memory_service import MemoryService
+
+    mem = getattr(getattr(state, "context_builder", None), "memory", None)
+    store = getattr(mem, "vector_store", None)
+    return MemoryService.over_vector_store(store) if store is not None else None
+
+
+def _resolve_memory_record(entity_id: str, state) -> InvestigateContext | None:
+    """One memory record (semantic key or episodic uuid — one id lookup covers
+    both tables)."""
+    svc = _memory_service(state)
+    if svc is None:
+        return None
+    try:
+        rec = svc.get_record(entity_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("memory record read failed for %s", entity_id, exc_info=True)
+        return None
+    if rec is None:
+        return None
+    lines = [
+        f"Memory record {rec.id}",
+        f"Kind: {getattr(rec.kind, 'value', rec.kind)}",
+        f"Tier: {getattr(rec.tier, 'value', rec.tier)} · scope: "
+        f"{getattr(rec.scope, 'value', rec.scope)}",
+        f"Confidence: {rec.confidence} · importance: {rec.importance}",
+        f"Recalled: {rec.recall_count}× · created {rec.created_at} · updated {rec.updated_at}",
+    ]
+    if rec.source:
+        lines.append(f"Recorded by: {rec.source}")
+    if rec.category:
+        lines.append(f"Category: {rec.category}")
+    if rec.tags:
+        lines.append(f"Tags: {', '.join(str(t) for t in rec.tags)}")
+    if rec.superseded_by:
+        lines.append(f"Superseded by: {rec.superseded_by}")
+    lines.append(f"\nContent: {rec.text or rec.value or ''}")
+    return InvestigateContext(
+        kind="memory_record",
+        id=entity_id,
+        title=f"Memory: {(rec.text or rec.value or entity_id)[:48]}",
+        snapshot="\n".join(lines),
+        back_link="#/settings/memory",
+        opening_prompt="Is this memory still accurate and worth keeping?",
+    )
+
+
+def _resolve_memory_lesson(entity_id: str, state) -> InvestigateContext | None:
+    """A learned lesson, with the provenance that makes "why do you believe this?"
+    answerable: how it was learned, how confident, how often it's been recalled,
+    and its SUPERSESSION CHAIN (lessons are replaced, not deleted — the chain is
+    the real history of how this belief changed).
+
+    Addressable EITHER by the ``lesson.<hash>`` key or by the rule TEXT. The text
+    form matters: ``GET /api/lessons`` returns only ``{rule, category, ts}``, so the
+    frontend never holds the key — and re-deriving the hash client-side would
+    duplicate a server-side identity rule in the browser. Resolving the text here
+    keeps that rule in one place.
+
+    Honest about the limits: a lesson carries no session/episode back-link, so the
+    snapshot says what provenance exists rather than implying a full audit trail."""
+    svc = _memory_service(state)
+    if svc is None:
+        return None
+    try:
+        rec = svc.get_record(entity_id)
+        if rec is None:
+            # Not a key — treat the id as the rule text and match it against the
+            # lesson set (exact first, then prefix, since list rows may be clipped).
+            lessons = svc.get_lessons() or []
+            needle = entity_id.strip()
+
+            def _rule_of(row: dict) -> str:
+                raw = row.get("value_json") or ""
+                try:
+                    import json as _json
+
+                    return str(_json.loads(raw))
+                except Exception:  # noqa: BLE001 — legacy rows stored the bare string
+                    return str(raw)
+
+            hit = next((r for r in lessons if _rule_of(r) == needle), None)
+            if hit is None:
+                hit = next((r for r in lessons if _rule_of(r).startswith(needle)), None)
+            if hit is not None:
+                rec = svc.get_record(str(hit.get("key") or ""))
+    except Exception:  # noqa: BLE001
+        logger.debug("lesson read failed for %s", entity_id, exc_info=True)
+        return None
+    if rec is None:
+        return None
+    rule = rec.text or rec.value or ""
+    lines = [
+        f"Learned lesson {rec.id}",
+        f"Rule: {rule}",
+        "",
+        "Provenance:",
+        f"  How it was learned: {rec.source or 'unknown'}",
+        f"  Confidence: {rec.confidence}",
+        f"  Times recalled: {rec.recall_count}",
+        f"  First recorded: {rec.created_at} · last updated: {rec.updated_at}",
+    ]
+    if rec.category:
+        lines.append(f"  Category: {rec.category}")
+    try:
+        store = getattr(
+            getattr(getattr(state, "context_builder", None), "memory", None), "vector_store", None
+        )
+        chain = store.get_supersession_chain(rec.id) if store is not None else []
+        if len(chain) > 1:
+            lines.append("\nHow this belief changed (supersession chain, oldest first):")
+            for link in chain:
+                val = str(link.get("value_json") or "")
+                lines.append(f"  {link.get('key')}: {val[:200]}")
+    except Exception:  # noqa: BLE001 — enrichment only
+        logger.debug("lesson supersession read failed", exc_info=True)
+    lines.append(
+        "\nNOTE: lessons record how they were learned (the source above) but do not "
+        "link back to the specific conversation that produced them."
+    )
+    return InvestigateContext(
+        kind="memory_lesson",
+        id=entity_id,
+        title=f"Lesson: {rule[:48]}",
+        snapshot="\n".join(lines),
+        back_link="#/settings/memory",
+        opening_prompt="Why do you believe this, and does it still hold?",
+    )
+
+
+# ── Health: doctor findings + crash reports ──────────────────────────────────
+
+
+async def _resolve_doctor_finding(entity_id: str, state) -> InvestigateContext | None:
+    """A Doctor finding, addressed by ``<capability>`` or ``<capability>:<probe_id>``.
+
+    Findings are NOT persisted — they're recomputed by running the capability's
+    probes, so this re-runs them (read-only probes) and picks the row. Includes the
+    remediation preview when the finding offers a fix, so the chat can discuss the
+    fix without applying it (propose-don't-write)."""
+    from personalclaw.resilience.doctor import DoctorContext, run_capability
+
+    capability, _, probe_id = entity_id.partition(":")
+    if not capability:
+        return None
+    try:
+        report = await run_capability(
+            capability, DoctorContext(state=state, port=int(getattr(state, "port", 0) or 0))
+        )
+    except Exception:  # noqa: BLE001 — an unknown capability is an entity miss
+        logger.debug("doctor probe run failed for %s", entity_id, exc_info=True)
+        return None
+    # run_capability returns {capability, ok, probes: [...]} (and `unknown` for a
+    # capability with no registered probes) — not a bare row list.
+    if not isinstance(report, dict) or report.get("unknown"):
+        return None
+    rows: list[dict] = [r for r in (report.get("probes") or []) if isinstance(r, dict)]
+    if not rows:
+        return None
+    row = next((r for r in rows if r.get("id") == probe_id), None) if probe_id else None
+    # No probe named → the whole capability's findings (failures first).
+    picked: list[dict] = [row] if row else sorted(rows, key=lambda r: bool(r.get("ok")))
+    lines = [f"Doctor: {capability}"]
+    for r in picked:
+        lines.append(
+            f"\n[{'OK' if r.get('ok') else 'PROBLEM'}] {r.get('title') or r.get('id')} "
+            f"(probe {r.get('id')}, tier {r.get('tier')})"
+        )
+        if r.get("detail"):
+            lines.append(f"  {r['detail']}")
+        evidence = r.get("evidence")
+        if isinstance(evidence, dict) and evidence:
+            for key, val in list(evidence.items())[:10]:
+                lines.append(f"  evidence · {key}: {str(val)[:400]}")
+        fix_id = r.get("fix_id")
+        if fix_id:
+            lines.append(f"  offered fix: {fix_id}")
+            try:
+                from personalclaw.resilience.fixes import get_fix
+
+                fix = get_fix(fix_id)
+                if fix is not None:
+                    lines.append(f"    {fix.title} — impact: {fix.impact}")
+                    # dry_preview is read-only by contract; apply() is never called. Off the
+                    # loop, as the Doctor routes run it: a preview may read a provider's models.
+                    lines.append(f"    preview: {await asyncio.to_thread(fix.dry_preview)}")
+            except Exception:  # noqa: BLE001
+                logger.debug("fix preview failed for %s", fix_id, exc_info=True)
+        elif r.get("remedy"):
+            # The probe's own "no automatic fix — do this instead", so the chat starts from the
+            # same next step the Doctor row shows rather than inventing one.
+            lines.append(f"  no automatic fix: {r['remedy']}")
+    healthy = all(r.get("ok") for r in picked)
+    return InvestigateContext(
+        kind="doctor_finding",
+        id=entity_id,
+        title=f"Doctor: {capability}",
+        snapshot="\n".join(lines),
+        back_link="#/settings/doctor",
+        opening_prompt=(
+            "Everything here looks healthy — what does this check actually verify?"
+            if healthy
+            else "What's wrong here, and what should I do about it?"
+        ),
+    )
+
+
+def _resolve_crash_report(entity_id: str, state) -> InvestigateContext | None:
+    """A crash artifact, addressed by its filename (``<ts>-<kind>.json``). Carries
+    the exception, the in-flight tool, and recent-turn digests."""
+    from personalclaw.resilience.crashes import read_crash
+
+    try:
+        crash = read_crash(entity_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("crash read failed for %s", entity_id, exc_info=True)
+        return None
+    if not crash:
+        return None
+    exc = crash.get("exception") or {}
+    lines = [
+        f"Crash report {entity_id}",
+        f"Kind: {crash.get('kind')} · at {crash.get('ts')}",
+        f"Version: {crash.get('version')} · uptime {crash.get('uptime_secs')}s",
+        f"Session: {crash.get('session_key') or '(none)'}",
+        f"Active model: {crash.get('active_model') or '?'}",
+        "",
+        f"Exception: {exc.get('type')}: {exc.get('message')}",
+    ]
+    tool = crash.get("in_flight_tool")
+    if isinstance(tool, dict) and tool:
+        lines.append(f"In-flight tool: {tool.get('name')} args={tool.get('args_clipped')}")
+    for turn in crash.get("last_turns") or []:
+        lines.append(f"[recent turn] {turn}")
+    if exc.get("traceback"):
+        lines.append(f"\nTraceback:\n{exc['traceback']}")
+    return InvestigateContext(
+        kind="crash_report",
+        id=entity_id,
+        title=f"Crash: {exc.get('type') or crash.get('kind')}",
+        snapshot="\n".join(lines),
+        back_link="#/settings/doctor",
+        opening_prompt="What caused this crash, and is it likely to happen again?",
+    )
+
+
+# ── Audit: one security-event-log entry ──────────────────────────────────────
+
+# How far back to scan the tail for one entry / its request neighbours. The SEL is
+# an unbounded append-only log with no index, so a read-by-id is a bounded tail
+# scan — stated in the snapshot when the entry isn't found within it.
+_SEL_SCAN = 500
+
+
+def _resolve_audit_event(entity_id: str, state) -> InvestigateContext | None:
+    """One audit (security-event-log) entry by ``event_id``, plus its NEIGHBOURS —
+    the other entries sharing its ``request_id`` (one approval flow) or, failing
+    that, its session. The log is append-only with no index, so this is a bounded
+    tail scan; a miss is reported as "not in the recent window", not as absent."""
+    from personalclaw.sel import sel
+
+    try:
+        entries = sel().recent(limit=_SEL_SCAN)
+    except Exception:  # noqa: BLE001
+        logger.debug("SEL read failed", exc_info=True)
+        return None
+    entry = next((e for e in entries if str(e.get("event_id")) == entity_id), None)
+    if entry is None:
+        return None
+    lines = [
+        f"Audit event {entry.get('event_id')} at {entry.get('timestamp')}",
+        f"Type: {entry.get('event_type')} · outcome: {entry.get('outcome')}",
+        f"Operation: {entry.get('operation')}",
+        f"Caller: {entry.get('caller_identity')} · source: {entry.get('source')}"
+        f" · agent: {entry.get('agent') or '(none)'}",
+    ]
+    if entry.get("tool_kind"):
+        lines.append(f"Tool kind: {entry['tool_kind']}")
+    if entry.get("downstream_service"):
+        lines.append(f"Downstream service: {entry['downstream_service']}")
+    if entry.get("resources"):
+        lines.append(f"Resources: {entry['resources']}")
+    if entry.get("error"):
+        lines.append(f"Error: {entry['error']}")
+    if entry.get("metadata"):
+        lines.append(f"Metadata: {entry['metadata']}")
+
+    # Neighbours: the same approval flow, else the same session.
+    request_id = str(entry.get("request_id") or "")
+    if request_id:
+        siblings = [
+            e
+            for e in entries
+            if str(e.get("request_id")) == request_id and str(e.get("event_id")) != entity_id
+        ]
+        label = f"Same request ({request_id})"
+    else:
+        caller = str(entry.get("caller_identity") or "")
+        siblings = (
+            [
+                e
+                for e in entries
+                if str(e.get("caller_identity")) == caller and str(e.get("event_id")) != entity_id
+            ][:10]
+            if caller
+            else []
+        )
+        label = f"Same session ({caller})"
+    if siblings:
+        lines.append(
+            f"\n{label} — {len(siblings)} related entr" f"{'y' if len(siblings) == 1 else 'ies'}:"
+        )
+        for sib in siblings[:10]:
+            lines.append(
+                f"  {sib.get('timestamp')} {sib.get('event_type')} "
+                f"{sib.get('operation')} → {sib.get('outcome')}"
+            )
+    lines.append(
+        f"\nNOTE: the audit log is append-only with no index; this was read from the "
+        f"most recent {_SEL_SCAN} entries."
+    )
+    denied = str(entry.get("outcome") or "") in ("denied", "rejected", "failed")
+    return InvestigateContext(
+        kind="audit_event",
+        id=entity_id,
+        title=f"Audit: {entry.get('operation') or entry.get('event_type')}",
+        snapshot="\n".join(lines),
+        back_link="#/settings/security",
+        opening_prompt=(
+            "Why was this blocked, and was that the right call?"
+            if denied
+            else "Explain what happened in this audit entry."
+        ),
+    )
+
+
+# ── Artifacts: iterate on a versioned artifact ───────────────────────────────
+
+
+#: The events that cut an artifact's version (a ``referenced`` event names the version it read).
+_VERSION_CUTS = frozenset({"created", "edited", "iterated", "reverted"})
+
+
+def _image_prompt_line(art) -> str:
+    """The snapshot line saying how image artifact *art*'s current version was made: the prompt
+    ``image_generate`` was given for it, read from the chat that made it, or ``""`` when that chat
+    names none (an image saved from a file, a restored version, a chat since deleted).
+
+    A model that edits no image makes the next version from a prompt alone, and this prompt is
+    what tells the agent what the picture shows, so the change can keep everything else."""
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.history import ConversationLog
+    from personalclaw.mcp_artifacts import image_prompt
+
+    cuts = (e for e in art.events if e.type in _VERSION_CUTS and e.version == art.version)
+    made = next(cuts, None)
+    if made is None or made.type == "reverted" or not made.session_id:
+        return ""
+    try:
+        messages = ConversationLog().read_messages(dashboard_history_key(made.session_id))
+    except Exception:  # noqa: BLE001 — an unreadable chat names no prompt
+        logger.debug("chat read failed for artifact %s", art.slug, exc_info=True)
+        return ""
+    found = image_prompt(messages, art.slug, art.version)
+    if found is None:
+        return ""
+    prompt, edited = found
+    if edited:
+        return f"v{art.version} is v{art.version - 1} edited with the prompt: {prompt}"
+    return f"v{art.version} was made from the prompt: {prompt}"
+
+
+async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
+    """An artifact, staged so the agent can ITERATE on it rather than just read it.
+
+    This resolver is the only one that suggests ``agent`` mode. Every other kind
+    stages a read-only investigation, but iterating on an artifact means calling the
+    tool that makes its kind's next version against this one slug (``artifact_update``
+    for text, ``image_generate`` with ``slug`` for an image, …) — and the
+    work legitimately needs the wider toolset too: searching the web, reading
+    knowledge, running commands, investigating the project. A narrower mode would
+    produce a panel where the agent cannot do the thing the panel is for.
+
+    An image's next version is made the way the bound image model can: an edit when it edits
+    images, else a new image from a prompt describing the whole picture, which is why the
+    snapshot carries the prompt the current version was made from.
+
+    Any other kind carries the reading ``artifact_get`` gives (``mcp_artifacts.read_artifact``):
+    its text, a document as the markup its tool writes it from, its first part when it is long,
+    and its base, which the opening prompt names too, so the next version is written over the
+    version the snapshot shows and is refused if the owner saved a newer one meanwhile.
+
+    The body rides the snapshot unfenced and is fenced once at injection, matching every
+    other resolver — an artifact body is agent-authored content, so fencing it twice
+    would corrupt it and fencing it not at all would trust it.
+    """
+    try:
+        from personalclaw.artifacts import registry
+
+        prov = registry.get_provider("native")
+        art = prov.get(entity_id) if prov is not None else None
+    except Exception:  # noqa: BLE001
+        logger.debug("artifact read failed for %s", entity_id, exc_info=True)
+        art = None
+    if art is None:
+        return None
+    from personalclaw.artifacts.models import is_binary_kind, redacted
+    from personalclaw.documents.to_markup import READ_KINDS
+    from personalclaw.mcp_artifacts import (
+        ArtifactTextUnreadable,
+        iterate_instruction,
+        part_end,
+        read_artifact,
+    )
+
+    lines = [
+        f"Artifact `{art.slug}`: {art.name}",
+        f"Kind: {art.kind}",
+        f"Version: v{art.version}",
+    ]
+    if art.description:
+        lines.append(f"Description: {art.description}")
+    if art.tags:
+        lines.append(f"Tags: {', '.join(str(t) for t in art.tags)}")
+    if art.source_path and is_binary_kind(art.kind):
+        # A binary artifact saved from a file is a COPY of its bytes: its versions are its own,
+        # and editing the file changes nothing here.
+        lines.append(f"Saved as a copy of the file: {art.source_path}")
+    elif art.source_path:
+        # A file-backed artifact's real source of truth is the workspace file; the
+        # agent must edit THAT, not the snapshot, or the next read reverts its work.
+        lines.append(f"File-backed — live source: {art.source_path}")
+        if art.live_dirty:
+            lines.append("The live file currently differs from the latest snapshot.")
+    versions = []
+    try:
+        versions = prov.list_versions(art.slug) if prov is not None else []
+    except Exception:  # noqa: BLE001
+        logger.debug("artifact version list failed for %s", art.slug, exc_info=True)
+    if len(versions) > 1:
+        lines.append(f"Existing versions: {', '.join('v' + str(v) for v in versions[-8:])}")
+
+    body = art.content or ""
+    image_edits: bool | None = None
+    if art.kind == "image":
+        from personalclaw.image_gen.registry import active_model_edits
+
+        image_edits = await active_model_edits()
+        made_from = await asyncio.to_thread(_image_prompt_line, art)
+        if made_from:
+            lines.append(made_from)
+    base = ""
+    if is_binary_kind(art.kind) and art.kind not in READ_KINDS:
+        # An image's or a video's body is a raw URL reference, never bytes — putting a data URL
+        # in the snapshot would blow the turn budget for no benefit.
+        lines.append(f"\nBinary artifact; body served at: {body}")
+    else:
+        # The same reading `artifact_get` gives, so the base below is the one the next version is
+        # written over: the owner can edit the artifact in the split view beside this chat, and a
+        # write over a version she saved after this snapshot is refused rather than undoing it.
+        try:
+            read = await asyncio.to_thread(read_artifact, prov, art)
+        except ArtifactTextUnreadable as exc:
+            lines.append(f"\nIts text could not be read: {exc}.")
+        else:
+            base = read.base
+            # Masked as every read of an artifact is, so its offsets are artifact_get's own.
+            shown = redacted(read.text)
+            end = part_end(shown, 0)
+            lines.append(f"Base: {base} (the version below; pass it with the next version)")
+            lines.append(f"\nCurrent content (v{art.version}), {read.form}:\n{shown[:end]}")
+            if end < len(shown):
+                lines.append(
+                    f"[The text goes on past character {end:,} of {len(shown):,}: call "
+                    f"artifact_get with slug='{art.slug}', offset={end} and base='{base}' for the "
+                    "rest.]"
+                )
+            lines += [f"[{note}]" for note in read.leaves_out]
+
+    return InvestigateContext(
+        kind="artifact",
+        id=art.slug,
+        title=f"Artifact: {art.name}",
+        snapshot="\n".join(lines),
+        back_link=f"#/artifacts/{art.slug}",
+        suggested_task_mode="agent",
+        # Names the slug and the tool explicitly: the agent must update THIS artifact
+        # in place (a new version on the same slug), not create a near-duplicate —
+        # which is exactly what a vaguer prompt produces. The tool is the one that makes
+        # THIS kind's next version: naming `artifact_update` for an image is what had a
+        # retried turn file text as the picture's next version. For an image, the way the
+        # bound model takes: naming an edit for a model that edits none had the agent save a
+        # second image instead.
+        opening_prompt=iterate_instruction(art.kind, art.slug, image_edits, base=base),
+    )
+
+
+register_investigate_resolver("inbox_item", _resolve_inbox_item)
+register_investigate_resolver("loop_finding", _resolve_loop_finding)
+register_investigate_resolver("notification", _resolve_notification)
+register_investigate_resolver("task", _resolve_task)
+register_investigate_resolver("schedule_run", _resolve_schedule_run)
+register_investigate_resolver("trigger_run", _resolve_trigger_run)
+register_investigate_resolver("loop_cycle", _resolve_loop_cycle)
+register_investigate_resolver("knowledge_item", _resolve_knowledge_item)
+register_investigate_resolver("memory_record", _resolve_memory_record)
+register_investigate_resolver("memory_lesson", _resolve_memory_lesson)
+register_investigate_resolver("doctor_finding", _resolve_doctor_finding)
+register_investigate_resolver("crash_report", _resolve_crash_report)
+register_investigate_resolver("audit_event", _resolve_audit_event)
+register_investigate_resolver("artifact", _resolve_artifact)

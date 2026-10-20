@@ -1,0 +1,417 @@
+# PersonalClaw build & deploy targets
+
+# The virtualenv lives INSIDE this repo at .venv/ (recreated here during the
+# workspace split — venvs are not relocatable). PyInstaller output stays intra-repo
+# too. Override VENV=... / PYI_BUNDLE_DIR=... if yours differ.
+PYTHON  ?= python3
+UV      ?= uv
+VENV    ?= .venv/bin
+PKG     := src/personalclaw
+TESTS   := tests
+# The self-development harness: repo-inner dev infra beside src/,
+# linted to the same bar. Not shipped in the wheel (packages.find scopes to src/).
+HARNESS := harness
+# Repo-inner dev scripts: linted to the same bar, not shipped (packages.find scopes to src/).
+SCRIPTS := scripts
+# The CI controller code (docs/maintainers/ci.md, "Trust boundary"): typed, under every tool.
+CI_TOOLS := tools/ci
+
+# Docker / Podman / Finch — the runtime is auto-detected (override with COMPOSE=...)
+COMPOSE ?= $(shell \
+	if command -v docker >/dev/null 2>&1; then echo "docker compose"; \
+	elif command -v podman-compose >/dev/null 2>&1; then echo "podman-compose"; \
+	elif command -v finch >/dev/null 2>&1; then echo "finch compose"; \
+	else echo "docker compose"; fi)
+
+COMPOSE_DIR  := deploy/compose
+BASE_FILE    := -f $(COMPOSE_DIR)/compose.yaml
+BUILD_OVERLAY:= $(BASE_FILE) -f $(COMPOSE_DIR)/compose.build.yaml
+PROD_OVERLAY := $(BASE_FILE) -f $(COMPOSE_DIR)/compose.prod.yaml
+DEV_OVERLAY  := $(BUILD_OVERLAY) -f $(COMPOSE_DIR)/compose.dev.yaml
+
+WEB_DIR         := web
+DESKTOP_DIR     := desktop
+PYI_BUNDLE_DIR  := dist/personalclaw-backend
+
+.PHONY: help format lock lint test selection-map check gate test-e2e test-visual build clean harness-validate gates \
+        asset-licenses asset-licenses-built \
+        mutation-check bundled-model sdk-snapshot apps-contract \
+        serve serve-lan serve-fresh serve-web \
+        web-build spa-check backend-build pyinstaller \
+        desktop desktop-dist desktop-dist-linux \
+        docker-build docker-up docker-down docker-logs docker-deploy \
+        dev-up dev-down
+
+## help: list available targets
+help:
+	@grep -E '^##' Makefile | sed 's/^## //'
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+
+## format: auto-format source and tests with black + isort
+format:
+	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+
+## lock: refresh uv.lock from the declared project dependencies
+lock:
+	$(UV) lock
+
+## lint: check formatting, run flake8 and mypy
+# $(SCRIPTS) joins black/isort/flake8 but NOT mypy, and that asymmetry is deliberate: the
+# pre-commit hook has always formatted staged scripts/*.py with black+isort, so a tree this
+# gate called clean was being rewritten underneath it — one isort violation reached an open
+# PR that way. mypy is the one tool scripts/ does not yet pass (26 errors in 6 of 29 files,
+# measured; 13 in generate_inert_surface_baseline.py alone), so adding it here would wire a
+# red gate. Annotating that tree is its own change; until then this line is the honest scope.
+lint:
+	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m mypy $(PKG) $(HARNESS) $(CI_TOOLS)
+	$(PYTHON) scripts/lint_bundled_apps.py $(PYTHON)
+
+## test: run the whole pytest suite, one xdist worker per core, without coverage
+# pytest's own default (pyproject's addopts) is one process, so the suite's parallelism is
+# named here. `-n auto` honours PYTEST_XDIST_AUTO_NUM_WORKERS, which
+# docs/maintainers/local-pytest-determinism.md uses as its local cap. Add --cov=personalclaw
+# to measure coverage.
+#
+# worksteal (greedy per-test work distribution — the fastest balancer). The cross-worker
+# flakiness that once forced loadscope (#8/#10) is FENCED — not closed — by autouse fixtures
+# in tests/conftest.py that snapshot-and-restore process-global state around every test:
+# _reset_sel_singleton (the SecurityEventLog singleton), _isolate_real_home_writers (each
+# test's own home, which holds the cross-process single-flight lock dir),
+# _restore_pipeline_node_registry (the ingestion NODE_REGISTRY) and
+# _restore_local_model_registry (the local-model provider registry) — four of the 40 autouse
+# fixtures there.
+#
+# This is NOT a determinism guarantee and must not be read as one. The set grows as new
+# process-global state is found: #3124 added the third guard AFTER this comment previously
+# declared the class closed, following two CI shards going red on PRs whose diffs could not
+# own them. The fourth arrived the same way — a gateway-boot test enrolling every native model
+# app for the rest of its worker, which reddened an onboarding test one shard over with what
+# looked like an app name leaking into a core payload. So a red local run is not by itself
+# evidence of your own diff — see #684 before assuming it is.
+test:
+	$(PYTHON) -m pytest -n auto --dist worksteal
+
+## selection-map: run the suite under coverage with per-test contexts and write the selection map
+## (tools/ci/selection_map.py) to selection-map/selection-map.json in the git common dir, which
+## every worktree of the clone shares. Exit: the suite's, once the map is written
+# The map is written from a red run too, and the exit then says the suite was red. The database
+# and the children's data files stay beside it, out of the checkout. SELECTION_MAP_ARGS is
+# pytest's (the workers and what to run), SELECTION_MAP_COV what to measure.
+SELECTION_MAP_ARGS ?= -n auto --dist worksteal tests
+SELECTION_MAP_COV ?= personalclaw
+selection-map:
+	@dir="$$(git rev-parse --path-format=absolute --git-common-dir)/selection-map" && \
+	mkdir -p "$$dir" && rm -f "$$dir"/.coverage "$$dir"/.coverage.* && \
+	COVERAGE_FILE="$$dir/.coverage" $(PYTHON) -m pytest --cov=$(SELECTION_MAP_COV) \
+		--cov-context=test --cov-report= $(SELECTION_MAP_ARGS); status=$$?; \
+	$(PYTHON) -m tools.ci selection-map --data "$$dir/.coverage" \
+		--commit "$$(git rev-parse HEAD)" --root "$$(pwd)" --out "$$dir/selection-map.json" \
+		&& exit $$status
+
+## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml), on
+## the working tree as it stands, before a commit: no record, and the exit is the steps' result
+## gate: run the merge tier's catalogue jobs here on the committed tree, leaving a record of each.
+## Exit 0 every planned job ran here and passed, 1 one ran and failed, 2 one could not run on this
+## machine (named in the summary)
+check:
+	$(PYTHON) -m tools.ci run change --working-tree
+
+gate:
+	$(PYTHON) -m tools.ci run merge
+
+## test-e2e: run the BROWSER gate against an isolated gateway (axe-per-route a11y, PWA,
+## visual regression, one real end-to-end chat turn). Deliberately NOT part of `make test`:
+## a bare pytest must stay a fast, offline, browser-free unit run, and this needs a built SPA
+## plus a booted gateway.
+##
+## Offline and credential-free by construction, which is the property worth stating: playwright's
+## own webServer boots the gateway with PERSONALCLAW_HOME under $$TMPDIR (never a real home), so
+## nothing here can touch a user's state. The gateway DOES have a model — the SCRIPTED provider
+## (src/personalclaw/llm/scripted.py), bound as the only providers[] entry and pinned as chat's
+## active model, which is what lets e2e/chat.spec.ts complete a real turn instead of every spec
+## carefully avoiding one. That changes neither property: the scripted provider is deterministic,
+## makes ZERO network calls and needs NO credential, and it refuses to construct unless
+## PERSONALCLAW_SCRIPTED_MODEL_SCRIPT names a script file, so it is inert everywhere the harness
+## has not explicitly opted in. So: still offline, still credential-free, and now also model-bound.
+## Readiness is the PERSONALCLAW_READY line, not a port probe, so the run cannot proceed
+## against a bound-but-unauthenticated gateway.
+##
+## One-time per machine: `npm ci` (from the REPO ROOT — never inside web/, see web-build) and
+## `npx playwright install chromium`. No spec list here on purpose: a new spec joins the gate the
+## moment it lands.
+## Screenshot assertions are IGNORED here, deliberately, and `test-visual` below owns them.
+## Measured on an untouched `main` checkout in this Darwin dev environment: e2e/visual.spec.ts is
+## 28 failed / 11 passed. The baselines are platform-qualified (see snapshotPathTemplate) and have
+## drifted from what this machine renders, which is a real thing to fix but has nothing to do with
+## whether the app is accessible, installable or functional. Folding an always-red suite into the
+## default browser gate would make the gate mean nothing — the failure mode every rail in this repo
+## is written to avoid.
+##
+## MEASURED OFFLINE AND CREDENTIAL-FREE (the property above), Darwin dev machine, 2026-08-26:
+## 484 passed / 8 skipped / 0 failed, 7.8m of Playwright time, 469s wall clock including `npm run
+## build` and both webServer boots. Run with HTTP_PROXY/HTTPS_PROXY/ALL_PROXY pointed at the closed
+## port 127.0.0.1:1 and NO_PROXY=localhost (localhost MUST stay exempt or the harness cannot reach
+## the gateway it just started), and with every provider credential unset from the environment.
+## Egress was DENIED, not merely unused — which is the distinction that makes the number mean
+## something. The gateway's update checker reached for `git fetch` and was refused 537 times over
+## the run, and the gate stayed green anyway. A run where nothing had tried would have proved
+## nothing about being offline; this one proves the app degrades rather than depends.
+test-e2e:
+	cd $(WEB_DIR) && npx playwright test --ignore-snapshots
+
+## test-visual: the visual-regression suite with screenshot assertions ENFORCED. Split out of
+## test-e2e because its baselines are environment-sensitive (28/39 red on a clean main checkout on
+## this dev machine) — run it when you intend to inspect or refresh them (`-u` updates), not as a
+## precondition for every other browser check.
+test-visual:
+	cd $(WEB_DIR) && npx playwright test e2e/visual.spec.ts --project=chromium
+
+## harness-validate: shape-validate + reference-resolve the self-dev harness specs; a warning
+## fails it too, as in CI's static job
+harness-validate:
+	$(PYTHON) -m harness validate --strict
+
+## mutation-check: fail if a mutation run died mid-mutation and left the mutation in the
+## source (#2710). The signal is the on-disk session directory scripts/mutation_harness.py
+## writes BEFORE its first edit, so a SIGKILL — which runs no `finally:` — cannot erase it.
+## `.githooks/pre-commit` runs this too; restore with
+## `python scripts/mutation_harness.py restore`.
+mutation-check:
+	$(PYTHON) scripts/mutation_harness.py check
+
+## gates: run the platform-hardening drift/inert/structural gates (config-baseline,
+## inert-surface, docs-lint, structural-size, structural-import-direction,
+## structural-duplication) and print ONE aggregate table — every failure in a single run
+## (never short-circuits). Exit 0 iff all gates pass. Each gate also has its own pytest
+## ratchet, and every baseline is shrink-only and FORBIDDEN to raise.
+gates:
+	$(PYTHON) scripts/gate_report.py
+
+## asset-licenses: every tracked font, image, binary and fixture has a source, licence and
+## notice in ASSET_LICENSES.json (third-party files are pinned by sha256)
+asset-licenses:
+	$(PYTHON) scripts/check_asset_licenses.py
+
+## asset-licenses-built: the same, plus every font and binary `npm run build` emitted into
+## web/dist (run web-build first)
+asset-licenses-built:
+	$(PYTHON) scripts/check_asset_licenses.py --built-web
+
+## sdk-snapshot: rewrite src/personalclaw/sdk/signatures.json from the live SDK and print what
+## changed. tests/test_sdk_signature_snapshot.py fails until you do, so every SDK change is a
+## reviewed diff; it refuses a parameter whose type changed in place (see the script).
+sdk-snapshot:
+	$(PYTHON) scripts/sdk_signature_snapshot.py
+
+## apps-contract: run the first-party apps' SDK contract checks against this tree — what CI's
+## `apps-contract` job runs on an SDK change. APPS_DIR is a PersonalClawApps checkout; BASE is the
+## ref the change is measured against.
+APPS_DIR ?= ../PersonalClawApps
+BASE ?= origin/main
+apps-contract:
+	$(PYTHON) scripts/apps_sdk_contract.py --apps-dir "$(APPS_DIR)" --base-ref "$(BASE)"
+
+## bundled-model: pre-fetch the default chat model into a home, without a browser
+## Normally users fetch it on first use from the chat screen or Settings > Models, where the
+## size is stated and it can be cancelled. This is for an offline image, a fleet, or a test
+## rig. Needs PERSONALCLAW_HOME (it refuses to guess one) and verifies the sha256 pinned in
+## src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt. NOT a build step: the wheel
+## ships no weight.
+bundled-model:
+	PERSONALCLAW_HOME="$(or $(PERSONALCLAW_HOME),$(CURDIR)/.dev-home)" \
+		$(PYTHON) scripts/fetch_bundled_model.py
+
+## build: the canonical distribution build — clean, locked SPA build, sdist + wheel, both
+## inspected, the wheel rebuilt byte-identical from the sdist, then installed and served
+build:
+	UV=$(UV) $(PYTHON) scripts/verify_wheel.py --build
+
+## clean: remove build artifacts and caches
+clean:
+	rm -rf build/ dist/ *.egg-info src/*.egg-info
+	rm -rf .pytest_cache .mypy_cache .hypothesis .coverage htmlcov
+	rm -rf $(PKG)/static/dist $(WEB_DIR)/dist
+	rm -rf $(DESKTOP_DIR)/dist $(DESKTOP_DIR)/backend-dist
+	rm -f $(WEB_DIR)/tsconfig.tsbuildinfo
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -name .DS_Store -delete 2>/dev/null || true
+
+# ── Bare local dev servers (no container runtime, no desktop bundle) ───────────
+# The simplest way to run + debug: plain processes you can curl, tail, and
+# restart directly. PERSONALCLAW_HOME defaults to an isolated ./.dev-home so a
+# dev run never touches your real ~/.personalclaw.
+
+DEV_HOME      ?= $(CURDIR)/.dev-home
+DEV_PORT      ?= 10000
+
+## serve: run ONE gateway process that serves both the API and the built SPA on
+## DEV_PORT (default 10000). Requires a built web/dist (run `make web-build` once,
+## or `make serve-fresh`). Binds to this machine only (127.0.0.1) and skips token
+## auth for its own clients via PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, so nothing
+## else on the network can reach a dev gateway that asks for no token. To reach it
+## from a phone or another computer on the local network, use `make serve-lan`.
+serve:
+	@echo "Dev gateway for home $(DEV_HOME) at http://127.0.0.1:$(DEV_PORT)/ (this machine only; make serve-lan opens it to the local network without a token)"
+	PERSONALCLAW_HOME=$(DEV_HOME) PERSONALCLAW_WORKSPACE=$(DEV_HOME)/workspace \
+		PERSONALCLAW_BIND_HOST=127.0.0.1 \
+		PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 \
+		$(VENV)/personalclaw gateway --no-open --port $(DEV_PORT) --json-ready
+
+## serve-lan: `serve`, opened to the local network on purpose. Binds 0.0.0.0 and SKIPS
+## token auth for local-network clients (loopback + RFC1918/link-local/ULA), so any
+## device on the network reaches the dashboard with no token. (The IP-gated bypass, NOT
+## AUTH_MODE=none, which would force loopback-only; public origins still need a token.)
+serve-lan:
+	@echo "Dev gateway for home $(DEV_HOME) on port $(DEV_PORT), OPEN to every device on the local network with no token"
+	PERSONALCLAW_HOME=$(DEV_HOME) PERSONALCLAW_WORKSPACE=$(DEV_HOME)/workspace \
+		PERSONALCLAW_BIND_HOST=0.0.0.0 \
+		PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 \
+		$(VENV)/personalclaw gateway --no-open --port $(DEV_PORT) --json-ready
+
+## serve-fresh: build the SPA, then `serve` (use after frontend changes).
+serve-fresh: web-build serve
+
+## serve-web: Vite dev server (HMR) on :3100 -- `server.port` in web/vite.config.ts,
+## deliberately not 3000 so it does not collide with other local dev servers. Proxies
+## /api (the /api/ws socket included) and /apps to the gateway on DEV_PORT. Run
+## `make serve` in another shell first. Best for frontend iteration; the gateway is
+## the API/backend.
+serve-web:
+	cd $(WEB_DIR) && PERSONALCLAW_PORT=$(DEV_PORT) npm run dev
+
+# ── Web app & PyInstaller bundle ───────────────────────────────────────────────
+
+## web-build: compile the React SPA (web) into dist/ + link static/dist -> web/dist
+##
+## static/dist is a SYMLINK, not a copy: the gateway serves from
+## $(PKG)/static/dist (dashboard/handlers/core.py _DIST_DIR) while Vite builds to
+## $(WEB_DIR)/dist. Linking (not copying) keeps them a single source of truth so a
+## later `npm run build` is live immediately — matching what the runtime resolver
+## frontend.ensure_dev_dist_symlink() creates. A `cp -R` here would leave a frozen
+## real directory that shadows the runtime symlink and silently serves a stale SPA.
+# Install + build from the WORKSPACE ROOT (never `cd web`): the root package.json
+# owns the npm workspace (web, desktop) and its single package-lock.json. Running
+# npm inside a workspace member trips npm's optional-dependency bug (npm/cli#4828)
+# and skips platform-native binaries (rollup/esbuild/lightningcss) → a broken build.
+web-build:
+	npm ci
+	npm run build --workspace $(WEB_DIR)
+	mkdir -p $(PKG)/static
+	rm -rf $(PKG)/static/dist
+	ln -s ../../../$(WEB_DIR)/dist $(PKG)/static/dist
+	$(PYTHON) scripts/spa_dist_freshness.py stamp
+
+## spa-check: fail when the built SPA is older than the checked-out web/ sources
+spa-check:
+	$(PYTHON) scripts/spa_dist_freshness.py check
+
+## pyinstaller: build a standalone backend bundle in dist/personalclaw-backend/
+pyinstaller: web-build
+	$(VENV)/pyinstaller personalclaw-backend.spec --noconfirm
+
+## backend-build: alias for `pyinstaller`
+backend-build: pyinstaller
+
+# ── Electron desktop app ───────────────────────────────────────────────────────
+
+## desktop: refresh web + backend bundle and stage them for the desktop app
+desktop: pyinstaller
+	rm -rf $(DESKTOP_DIR)/backend-dist
+	mkdir -p $(DESKTOP_DIR)/backend-dist
+	cp -R $(PYI_BUNDLE_DIR) $(DESKTOP_DIR)/backend-dist/
+	npm ci  # workspace root install (see web-build note); covers the desktop member
+
+## desktop-dist: build the macOS .dmg in desktop/dist/, and VERIFY its signature state.
+## Run on macOS — release.yml's `desktop-mac` job is the canonical caller.
+##
+## The app is shipped AD-HOC SIGNED AND NOT NOTARIZED, on purpose
+## (producing the installer does not require a real signature, and one needs a paid Apple
+## Developer account the project has deliberately not bought). Getting to that state took
+## two defects, because each obvious step does something other than what it reads like:
+##
+##   1. "WE ADDED NO SIGNING STEP" IS NOT "THE OUTPUT IS UNSIGNED". electron-builder
+##      AUTO-DISCOVERS an identity from the build machine's login keychain, so a local
+##      build shipped PersonalClaw.app signed with another developer's `Authority=` — an
+##      unrelated third party's identity on a would-be public release artifact — while
+##      this comment claimed the build was unsigned. `CSC_IDENTITY_AUTO_DISCOVERY=false`
+##      below and `"identity": null` in desktop/package.json both stop that. Keep BOTH:
+##      the env var is lost when the build is invoked another way (npm directly, CI, a
+##      future script), the manifest key is lost if someone regenerates it from a
+##      template. DO NOT remove either one to "fix" a signing problem.
+##   2. DISABLING SIGNING DOES NOT LEAVE THE BUNDLE UNSIGNED — it leaves ELECTRON'S STOCK
+##      LINKER SEAL, which declares that sealed resources must be present while sealing
+##      none of Frameworks, the helper apps, app.asar or the PyInstaller backend
+##      (`Identifier=Electron`, `flags=0x20002(adhoc,linker-signed)`, `Sealed
+##      Resources=none`, `Info.plist=not bound`). macOS refuses a DAMAGED signature more
+##      firmly than an absent one, so that build failed to install HARDER than the
+##      foreign-signed one and presented with no name. `desktop/afterPack.js` therefore
+##      ad-hoc re-signs the packed bundle — after electron-builder packs, BEFORE the dmg
+##      is assembled, because a post-dmg step would sign an app the dmg already contains.
+##      Ad-hoc (`--sign -`) needs no identity, keychain or Apple account, so it is not a
+##      reversal of (1). Stripping the signature instead is NOT an option: on Apple
+##      silicon an arm64 bundle with no signature installs and then refuses to launch.
+##
+## The verification below is what makes the signature state OBSERVED rather than assumed.
+## It is not optional and it is not cheap to write correctly: `codesign -dv` is too quiet
+## to ever print `Authority=`, an unsigned app makes codesign EXIT NON-ZERO, and an
+## authority-absence check passes the damaged bundle from (2). See the script's header.
+##
+## Unlike Linux, Gatekeeper DOES consume a signature, and an ad-hoc signature is not a
+## notarized one — so `spctl` still rejects this app and a user must approve it once under
+## System Settings -> Privacy & Security after dragging it to Applications. That is
+## expected, is NOT gated here, and is documented in docs/guides/desktop.md.
+desktop-dist: desktop
+	cd $(DESKTOP_DIR) && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
+	@set -eu; \
+	  n=$$(ls -1d $(DESKTOP_DIR)/dist/*/PersonalClaw.app 2>/dev/null | wc -l | tr -d ' '); \
+	  if [ "$$n" -ne 1 ]; then \
+	    echo "desktop-dist: expected exactly ONE built .app under $(DESKTOP_DIR)/dist/*/, found $$n." >&2; \
+	    echo "desktop-dist: refusing to report the signature gate as passed without an artifact to check." >&2; \
+	    exit 1; \
+	  fi; \
+	  scripts/verify_macos_app_signature.sh "$$(ls -1d $(DESKTOP_DIR)/dist/*/PersonalClaw.app)"
+
+## desktop-dist-linux: build the UNSIGNED Linux AppImage + .deb in desktop/dist/.
+## Run on a Linux host — release.yml's `desktop-linux` job is the canonical caller.
+## No signing step by design: Linux has no OS-level code-signing gate (nothing
+## analogous to Gatekeeper consumes a signature) — see docs/guides/desktop.md.
+desktop-dist-linux: desktop
+	cd $(DESKTOP_DIR) && npm run dist:linux
+
+# ── Container stack (runtime auto-detected; override e.g. COMPOSE="podman-compose") ──
+
+## docker-build: build images locally from the working tree
+docker-build:
+	$(COMPOSE) $(BUILD_OVERLAY) build
+
+## docker-up: start the stack in detached mode (uses published images by default)
+docker-up:
+	$(COMPOSE) $(BASE_FILE) up -d
+
+## docker-down: stop and remove containers (named volumes preserved)
+docker-down:
+	$(COMPOSE) $(BASE_FILE) down
+
+## docker-logs: tail logs from all containers
+docker-logs:
+	$(COMPOSE) $(BASE_FILE) logs -f
+
+## docker-deploy: build images and bring up the prod stack in one shot
+docker-deploy:
+	$(COMPOSE) $(BUILD_OVERLAY) build
+	$(COMPOSE) $(PROD_OVERLAY) up -d
+
+# ── Dev compose stack (builds from the working tree + live source mount) ───────
+
+## dev-up: build from the working tree and start the dev stack with live reload
+dev-up:
+	$(COMPOSE) $(DEV_OVERLAY) up -d --build
+
+## dev-down: stop the dev stack
+dev-down:
+	$(COMPOSE) $(DEV_OVERLAY) down

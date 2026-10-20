@@ -1,0 +1,720 @@
+"""Heuristic route ordering — ``route_refs`` + ``routing_policy.json``.
+
+The router does not pick a model; it **reorders the user's own bindings**. Candidates for a routed
+use case are exactly the refs ``active_models.json`` holds for it — this module never
+invents, adds, or drops one. That is the whole contract, and it is what makes routing safe to
+enable: the worst a bad ordering can do is try the user's second choice first.
+
+**Pure reorder (the load-bearing invariant).** :func:`route_refs` returns a *permutation* of its
+input: same refs, same count, same multiplicity, different order. It is built as a stable sort over
+the input indices precisely so dropping a ref is not expressible, and it re-checks the invariant
+before returning. A reorder that silently dropped a candidate would remove a provider the user
+deliberately configured — the resolution chain would then skip straight past it, and the
+"unresolvable pinned ref RAISES" rule would stop protecting them.
+
+**Deterministic and total.** Every ordering is a stable sort keyed on an integer rank, so
+equal-ranked refs keep their ``active_models.json`` order — the documented tie-break. The same
+inputs therefore produce the same order in every process, with no dependence on dict iteration,
+clock, or set ordering.
+
+**Fail-open, always.** Every input this module reads (``routing_policy.json``, the per-use-case
+settings store, the local-model registry, the provider registry's declared capabilities) is
+observability-grade, not load-bearing. A missing or corrupt read degrades to the next-weaker
+signal and, at worst, to the original order. A routing decision must never fail because a
+telemetry read did: routing changes *order*, never *resolution semantics*. That rule is for
+DECIDING. The Routing tab, which shows the table, and every write, which saves the whole of it,
+read ``routing_policy.json`` strictly (:func:`read_policy`), so an unreadable table is said, and
+never replaced.
+
+Ordering precedence, strongest first:
+
+1. **mode ``off``** (the default) → identity. Routing is opt-in per use case.
+2. **pin** (lever 2) → ``local`` / ``cloud`` / an explicit ref is hoisted first and the
+   heuristic is short-circuited. A user pin is mightier than any policy.
+3. **an explicit table order** for this ``(use_case, query_class)`` → the stored order wins
+   (its ``basis`` records whether a user or a learned proposal decided it). Refs the
+   table doesn't mention keep their original relative order *after* the listed ones, so a
+   newly-bound ref is never lost.
+4. **the heuristic** → local-first, with two class exceptions: ``extract_structured``
+   prefers a candidate declaring structured output, and ``long_reasoning`` demotes a local model
+   whose id exposes a parameter-size hint below :data:`_MIN_LOCAL_REASONING_B`.
+
+Mode ``learned`` is accepted and folded onto the heuristic here: the learned scoring stage is
+:mod:`personalclaw.routing.learned`'s, and the heuristic is its permanent below-confidence-floor
+floor, so a use case already set to ``learned`` behaves as ``heuristic`` rather than erroring or
+silently going off.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any, Callable
+
+from personalclaw.atomic_write import atomic_write
+
+logger = logging.getLogger(__name__)
+
+#: File under the home; small JSON, atomic_write (the universal convention).
+_POLICY_FILE = "routing_policy.json"
+#: Bump when the table's schema changes.
+POLICY_VERSION = 1
+#: The per-use-case routing modes (lever 1). ``off`` is the default everywhere.
+MODES = ("off", "heuristic", "learned")
+#: The key the per-use-case settings store (``use_case_settings/{uc}.json``) holds the mode under.
+#: Routing enablement lives beside the use case's other behavior settings, NOT in config.json —
+#: it is bindings-adjacent state.
+MODE_KEY = "routing_mode"
+#: The key that store holds the pin under, when a pin is set there rather than in the table.
+PIN_KEY = "routing_pin"
+#: A local model below this parameter-size hint (in billions) is demoted for ``long_reasoning``
+#: Only applied when the model id actually exposes a hint — absent one, nothing is demoted.
+_MIN_LOCAL_REASONING_B = 7.0
+#: Parameter-size hint in a model id: "qwen3:8b", "…-13B-instruct", "3.8b".
+_SIZE_HINT = re.compile(r"(\d+(?:\.\d+)?)\s*b(?![a-z0-9])", re.IGNORECASE)
+#: The capability spelling that means "can be asked for schema-constrained JSON" (read from
+#: the existing capability channel — no new channel).
+_STRUCTURED_CAP = "structured_output"
+#: Query classes with an ordering exception (mirrors routing/classifier.py's vocabulary).
+_CLASS_STRUCTURED = "extract_structured"
+_CLASS_LONG_REASONING = "long_reasoning"
+
+
+# ── the store ───────────────────────────────────────────────────────────────────
+
+
+def _policy_path(home: Path) -> Path:
+    return Path(home) / _POLICY_FILE
+
+
+def _empty_policy() -> dict[str, Any]:
+    return {"version": POLICY_VERSION, "classifier_version": 1, "use_cases": {}}
+
+
+class PolicyUnreadable(Exception):
+    """``routing_policy.json`` is there and could not be read. The message names the file and why,
+    and never quotes it."""
+
+
+def _unreadable_policy(path: Path, exc: BaseException | None) -> PolicyUnreadable:
+    if isinstance(exc, OSError):
+        why = (
+            f"it could not be opened ({exc.strerror})" if exc.strerror else "it could not be opened"
+        )
+    elif isinstance(exc, json.JSONDecodeError):
+        why = f"it is not valid JSON (line {exc.lineno}, column {exc.colno})"
+    elif exc is not None:
+        why = "it is not valid JSON"
+    else:
+        why = "it is not a JSON object"
+    return PolicyUnreadable(f"Couldn't read your routing table, {path}: {why}.")
+
+
+def read_policy(home: Path | None = None) -> dict[str, Any]:
+    """Read ``routing_policy.json`` strictly: the table, an empty one when there is no file, and
+    :class:`PolicyUnreadable` when the file is there and cannot be read.
+
+    For the readers that must not guess. The Routing tab shows the table, and a table it could not
+    read is not "no recorded order". Every write is the other: it saves the whole table, so a write
+    over a file it could not read replaced a hand-edited table with one holding only its own
+    change, and the other orders were gone. ``home`` defaults to the live config dir, resolved
+    lazily so this module stays importable without a configured home (and so tests can point it
+    at ``tmp_path``).
+    """
+    if home is None:
+        home = _default_home()
+    if home is None:
+        return _empty_policy()
+    path = _policy_path(home)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _empty_policy()
+    except (OSError, ValueError, RecursionError) as exc:
+        raise _unreadable_policy(path, exc) from exc
+    if not isinstance(data, dict):
+        raise _unreadable_policy(path, None)
+    data.setdefault("version", POLICY_VERSION)
+    data.setdefault("classifier_version", 1)
+    if not isinstance(data.get("use_cases"), dict):
+        data["use_cases"] = {}
+    return data
+
+
+def load_policy(home: Path | None = None) -> dict[str, Any]:
+    """Read ``routing_policy.json`` for a routing DECISION: a missing or unreadable file reads as
+    an empty table, never fatal (the module's fail-open rule). The tab and every write read it
+    with :func:`read_policy` instead, which says when the file could not be read."""
+    try:
+        return read_policy(home)
+    except PolicyUnreadable:
+        logger.debug("routing table unreadable; deciding without it", exc_info=True)
+        return _empty_policy()
+
+
+def save_policy(home: Path, policy: dict[str, Any]) -> None:
+    """Persist the table (atomic_write, stable key order so a diff reads cleanly)."""
+    atomic_write(_policy_path(home), json.dumps(policy, indent=2, sort_keys=True) + "\n")
+
+
+def _default_home() -> Path | None:
+    try:
+        from personalclaw.config import config_dir
+
+        return Path(config_dir())
+    except Exception:  # noqa: BLE001 — no home configured is not a routing failure
+        return None
+
+
+def _use_case_entry(policy: dict[str, Any], use_case: str) -> dict[str, Any]:
+    entry = policy.get("use_cases", {}).get(use_case)
+    return entry if isinstance(entry, dict) else {}
+
+
+# ── the three user levers ───────────────────────────────────────────────────────
+
+
+def _settings_for(use_case: str) -> dict[str, Any]:
+    """The per-use-case behavior settings, fail-open to empty."""
+    try:
+        from personalclaw.providers.use_cases import load_use_case_settings
+
+        got = load_use_case_settings(use_case)
+        return got if isinstance(got, dict) else {}
+    except Exception:  # noqa: BLE001 — settings read is never load-bearing
+        return {}
+
+
+def mode_for(use_case: str, *, home: Path | None = None) -> str:
+    """The routing mode for ``use_case``: one of :data:`MODES`, defaulting to ``off``.
+
+    The per-use-case settings store wins (that is the lever the UI writes); the table's own
+    ``mode`` is the fallback so a hand-edited ``routing_policy.json`` is still honored. An
+    unrecognized value reads as ``off`` — an unknown mode must not silently enable routing.
+    """
+    raw = str(_settings_for(use_case).get(MODE_KEY, "") or "")
+    if raw not in MODES:
+        raw = str(_use_case_entry(load_policy(home), use_case).get("mode", "") or "")
+    return raw if raw in MODES else "off"
+
+
+def pin_for(use_case: str, *, home: Path | None = None) -> str:
+    """The user's pin for ``use_case``: ``"local"`` / ``"cloud"`` / a ``"provider:model"`` ref, or
+    ``""`` when unpinned. The settings store wins over the table, as with the mode."""
+    raw = str(_settings_for(use_case).get(PIN_KEY, "") or "")
+    if not raw:
+        raw = str(_use_case_entry(load_policy(home), use_case).get("pin", "") or "")
+    return raw
+
+
+def master_enabled() -> bool:
+    """The ``routing.enabled`` master switch (config.json). Default/fail-open: False.
+
+    Read here rather than at the seam so the switch is genuinely load-bearing: with it off, no
+    per-use-case mode can route anything, which is what "master" has to mean.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().routing.enabled)
+    except Exception:  # noqa: BLE001 — an unreadable config means routing stays off
+        return False
+
+
+def local_timeout_secs() -> float:
+    """``routing.local_timeout_secs``: the wall clock a local attempt gets before the chain
+    moves on to the next bound ref. Fail-open to the shipped 20s default; a non-positive value
+    reads as "no routing-specific timeout" so the guard keeps its own default."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return max(0.0, float(AppConfig.load().routing.local_timeout_secs))
+    except Exception:  # noqa: BLE001
+        return 20.0
+
+
+def routing_active(use_case: str, *, home: Path | None = None) -> bool:
+    """Whether routing is enabled for ``use_case``: the master switch AND a non-``off`` mode.
+
+    The resolution seam calls this to decide whether to route at all and to stamp the ``routed``
+    provenance on the attempt audit. Fail-open to False: an unreadable config or settings store
+    means "routing off", i.e. exactly the behavior of a machine that never enabled it.
+    """
+    try:
+        return master_enabled() and mode_for(use_case, home=home) != "off"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def table_order(use_case: str, query_class: str, *, home: Path | None = None) -> list[str]:
+    """The explicitly recorded order for ``(use_case, query_class)``, or ``[]`` when the table has
+    no opinion. Every recorded order carries a ``basis`` — see :func:`order_basis`."""
+    classes = _use_case_entry(load_policy(home), use_case).get("classes")
+    if not isinstance(classes, dict):
+        return []
+        # (no table opinion — the heuristic decides)
+    cell = classes.get(query_class)
+    if not isinstance(cell, dict):
+        return []
+    order = cell.get("order")
+    if not isinstance(order, list):
+        return []
+    return [str(r) for r in order if isinstance(r, str)]
+
+
+def order_basis(use_case: str, query_class: str, *, home: Path | None = None) -> dict[str, Any]:
+    """The ``basis`` behind a recorded order — why the table says what it says."""
+    classes = _use_case_entry(load_policy(home), use_case).get("classes")
+    if not isinstance(classes, dict):
+        return {}
+    cell = classes.get(query_class)
+    if not isinstance(cell, dict):
+        return {}
+    basis = cell.get("basis")
+    return basis if isinstance(basis, dict) else {}
+
+
+# ── local / capability classification of a candidate ref ────────────────────────
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+
+def provider_of(ref: str) -> str:
+    """The provider half of a ``"provider:model"`` ref (split on the FIRST colon, mirroring
+    ``stats.ref_of`` — a colon-bearing model id round-trips)."""
+    return str(ref).split(":", 1)[0]
+
+
+def model_of(ref: str) -> str:
+    """The model half of a ``"provider:model"`` ref (``""`` when the ref carries no colon)."""
+    parts = str(ref).split(":", 1)
+    return parts[1] if len(parts) == 2 else ""
+
+
+def is_local_ref(ref: str) -> bool:
+    """Whether ``ref`` names a model served on this machine: its provider entry's type runs its
+    models where its endpoint is, that endpoint is here, and the type does not pass this model on.
+
+    The one rule for "local" (``llm.registry.served_on_this_machine``), the one the rate table
+    prices a local model free by and the model-call guard scans by: what serves the entry, where
+    its endpoint is and where the server answers the ref's MODEL, never what the provider is
+    called. It was decided by the name, matched against the local-model apps', so an Ollama on
+    another machine, which bills and sends prompts off this one, was ordered first as a free local
+    model, and ``LocalOllama`` on this machine, whose name matches no app's, was ordered as cloud.
+    An OpenAI-compatible endpoint on this machine is not local either: a proxy there can answer
+    for a paid cloud API. Nor is a model the Ollama here answers from its cloud.
+
+    Conservative: an entry that names no endpoint, and a name no configured entry has, are CLOUD.
+    Mis-labeling a cloud ref as local would order a paid, off-machine provider ahead of a free
+    on-machine one under a local-first policy — the one direction of error that costs the user
+    money and privacy.
+    """
+    from personalclaw.llm.registry import served_on_this_machine
+
+    return served_on_this_machine(provider_of(ref), model_of(ref))
+
+
+def _structured_providers() -> set[str]:
+    """Normalized provider names whose config entry declares structured output.
+
+    Read from the existing capability channel (``ProviderEntry.declared_capabilities``) without
+    building anything. Fail-open to empty: with no capability information the structured-output
+    exception simply doesn't fire and the plain local-first heuristic stands.
+    """
+    out: set[str] = set()
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        for entry in get_default_registry().list_entries():
+            caps = entry.declared_capabilities or frozenset()
+            for cap in caps:
+                if str(getattr(cap, "value", cap)) == _STRUCTURED_CAP:
+                    out.add(_norm(entry.name))
+                    break
+    except Exception:  # noqa: BLE001 — capability introspection is never load-bearing
+        return set()
+    return out
+
+
+def size_hint_b(ref: str) -> float:
+    """The parameter-size hint (in billions) the model id exposes, or ``0.0`` when it exposes none.
+
+    ``0.0`` means "unknown", NOT "tiny": an unknown size must not get a model demoted, or every
+    model whose id omits a size would be pushed behind one that spells it out.
+    """
+    match = _SIZE_HINT.search(model_of(ref) or str(ref))
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# ── the reorder ─────────────────────────────────────────────────────────────────
+
+
+def _pin_rank(ref: str, pin: str, *, local_refs: frozenset[str]) -> int:
+    """0 for a ref the pin hoists, 1 otherwise. A pin never drops anything — an unmatchable pin
+    (e.g. ``local`` with no local ref bound) ranks everything 1, i.e. leaves the order alone."""
+    if pin == "local":
+        return 0 if ref in local_refs else 1
+    if pin == "cloud":
+        return 0 if ref not in local_refs else 1
+    return 0 if ref == pin else 1
+
+
+def _heuristic_rank(
+    ref: str,
+    query_class: str,
+    *,
+    local_refs: frozenset[str],
+    structured: set[str],
+) -> tuple[int, int]:
+    """The heuristic rank for one ref. Lower sorts earlier; ties fall through to the input order.
+
+    Two components, most specific first:
+
+    * the class exception — ``extract_structured`` hoists a declared structured-output provider;
+      ``long_reasoning`` demotes a local model whose size hint is below the floor (a 1B model is
+      the wrong tool for long reasoning, and trying it first only spends the timeout);
+    * local-first — a local ref is free and private, so it leads.
+    """
+    local = ref in local_refs
+    exception = 0
+    if query_class == _CLASS_STRUCTURED:
+        exception = 0 if _norm(provider_of(ref)) in structured else 1
+    elif query_class == _CLASS_LONG_REASONING and local:
+        hint = size_hint_b(ref)
+        # 0.0 = no hint exposed → no demotion (unknown is not small).
+        exception = 1 if 0.0 < hint < _MIN_LOCAL_REASONING_B else 0
+    return (exception, 0 if local else 1)
+
+
+def _local_refs(refs: list[str]) -> frozenset[str]:
+    """The refs among *refs* served on this machine (:func:`is_local_ref`), asked once per decision
+    so every stage of it ranks by one answer. Any failure reads as none local: cloud is the
+    conservative direction."""
+    try:
+        return frozenset(ref for ref in refs if is_local_ref(ref))
+    except Exception:  # noqa: BLE001 — an unreadable registry means "assume cloud"
+        logger.debug("local-ref classification failed — treating every ref as cloud", exc_info=True)
+        return frozenset()
+
+
+def _learned_order(
+    ordered: list[str],
+    use_case: str,
+    query_class: str,
+    *,
+    home: Path | None = None,
+) -> list[str]:
+    """The learned stage, with everything it needs loaded HERE rather than inside it.
+
+    ``learned.learned_order`` is deliberately pure — no file, config, clock or network — so this
+    is the one place that reads the fold, the three knobs and the price table. Two consequences
+    worth stating: the stage is exactly testable without a home, and a failure in any of these
+    loads degrades to "no opinion" (the input order) instead of failing a resolution.
+
+    The feedback signal is OVERLAID onto the fold rather than folded into ``routing_stats.json``:
+    a judge verdict is not a routing observation, and writing it into the stats file would make
+    the fold's ``feedback`` field mean two different things depending on which writer touched it
+    last. Today the overlay is empty on every real install — no ``judge_verdict`` producer stamps
+    ``(use_case, query_class, ref)`` — so ``_score`` renormalises onto ``success_rate`` alone,
+    which is precisely ``_score``'s declared behaviour when feedback is absent.
+    """
+    from personalclaw.routing import learned as _learned
+    from personalclaw.routing import stats as _stats
+
+    resolved = home if home is not None else _default_home()
+    if resolved is None:
+        return ordered
+    try:
+        fold = _stats.load_stats(resolved)
+    except Exception:  # noqa: BLE001 — a missing/corrupt fold means "no opinion", never a failure
+        return ordered
+
+    _overlay_feedback(fold, use_case, query_class, home=resolved)
+
+    cfg = _routing_knobs()
+    return _learned.learned_order(
+        ordered,
+        use_case=use_case,
+        query_class=query_class,
+        stats=fold,
+        hysteresis=float(cfg["hysteresis"]),
+        cloud_quality_margin=float(cfg["cloud_quality_margin"]),
+        local_refs=_local_refs(ordered),
+        cost_of=_cost_of(resolved),
+        min_samples=int(cfg["min_samples"]),
+    )
+
+
+def _overlay_feedback(fold: dict[str, Any], use_case: str, query_class: str, *, home: Path) -> None:
+    """Write the ledger-derived feedback into the in-memory fold, for this cell only.
+
+    Best-effort: no feedback simply leaves the fold's own values in place.
+    """
+    try:
+        from personalclaw.routing.feedback import feedback_index
+
+        index = feedback_index(home=home)
+    except Exception:  # noqa: BLE001 — the EXT dep is SOFT; the router works with no ledger at all
+        return
+    if not index:
+        return
+    bucket = fold.get("use_cases", {}).get(use_case, {}).get(query_class, {})
+    if not isinstance(bucket, dict):
+        return
+    for ref, row in bucket.items():
+        got = index.get((use_case, query_class, ref))
+        if not got or not isinstance(row, dict):
+            continue
+        feedback, feedback_n = got
+        row["feedback"] = feedback
+        row["feedback_n"] = feedback_n
+
+
+def _routing_knobs() -> dict[str, Any]:
+    """The three learned-stage knobs, fail-open to their declared defaults.
+
+    The defaults are restated here ONLY as the fail-open floor for an unreadable config; the live
+    values come from ``RoutingConfig``. A test pins these literals to the dataclass defaults so
+    the fail-open floor and the declared default cannot drift apart.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        r = AppConfig.load().routing
+        return {
+            "hysteresis": float(r.hysteresis),
+            "cloud_quality_margin": float(r.cloud_quality_margin),
+            "min_samples": int(r.min_samples),
+        }
+    except Exception:  # noqa: BLE001 — an unreadable config must not change the routing decision
+        return {"hysteresis": 0.05, "cloud_quality_margin": 0.10, "min_samples": 5}
+
+
+def _cost_of(home: Path) -> "Callable[[str], float]":
+    """A per-ref cost probe for the learned stage's within-band ordering.
+
+    A fixed nominal token shape, because the stage compares refs against each OTHER — the absolute
+    dollars are irrelevant and a per-call token count is not known at ordering time. Priced by the
+    one pricing function (``rates.price_call``) every dollar is. An unpriced model returns ``inf``
+    rather than ``0.0``: unknown must not read as free, or an unpriced cloud model wins every cost
+    tie.
+    """
+    from personalclaw.routing.rates import price_call
+
+    def probe(ref: str) -> float:
+        provider, _, model = ref.partition(":")
+        try:
+            price = price_call(provider, model, input_tokens=1000, output_tokens=500, home=home)
+        except Exception:  # noqa: BLE001 — an unpriced or unreadable rate is "unknown", not free
+            return float("inf")
+        return float(price.dollars) if price.priced else float("inf")
+
+    return probe
+
+
+def route_refs(
+    use_case: str,
+    query_class: str,
+    refs: list[str],
+    *,
+    home: Path | None = None,
+) -> list[str]:
+    """Reorder ``refs`` — the candidate pool for ``use_case`` — for a ``query_class`` request.
+
+    **Returns a permutation of ``refs``: never a different set, never a different length.** The
+    result is always a stable sort over the input indices, so refs of equal rank keep their
+    ``active_models.json`` order (the documented tie-break) and the same inputs always produce the
+    same output. Fewer than two candidates, or routing off for this use case, returns the input
+    order unchanged.
+
+    Fail-open: any error anywhere in ranking returns ``list(refs)`` untouched.
+    """
+    ordered = list(refs)
+    if len(ordered) < 2:
+        return ordered
+    try:
+        mode = mode_for(use_case, home=home)
+        if mode == "off":
+            return ordered
+
+        local_refs = _local_refs(ordered)
+
+        # Lever 2 — a user pin short-circuits the heuristic entirely. Learned scoring may
+        # keep accumulating under a pin, but it never reorders.
+        pin = pin_for(use_case, home=home)
+        if pin:
+            return _stable_by(ordered, lambda r: (_pin_rank(r, pin, local_refs=local_refs),))
+
+        # Lever 3 / the learned table — an explicitly recorded order wins over the heuristic.
+        # Refs the table doesn't list rank after the listed ones, keeping their relative order, so
+        # a ref bound after the table was written is reordered, never dropped.
+        recorded = table_order(use_case, query_class, home=home)
+        if recorded:
+            index = {ref: i for i, ref in enumerate(recorded)}
+            listed = len(index)
+            return _stable_by(ordered, lambda r: (index.get(r, listed),))
+
+        # Lever 4 — the LEARNED stage. Only for mode ``learned``: ``heuristic`` must keep
+        # behaving exactly as it did, so a use case opts into scoring rather than inheriting it.
+        # Returns the input unchanged whenever the fold cannot decide (no stats file, fewer than
+        # two opinionated refs, a corrupt entry), and then falls through to the heuristic below —
+        # which is what makes "deleting routing_stats.json degrades to heuristic" true by
+        # construction rather than by a catch.
+        if mode == "learned":
+            learned_ranked = _learned_order(ordered, use_case, query_class, home=home)
+            if learned_ranked != ordered:
+                return learned_ranked
+
+        # The heuristic floor. ``learned`` falls through to here when the fold is silent.
+        structured = _structured_providers() if query_class == _CLASS_STRUCTURED else set()
+        return _stable_by(
+            ordered,
+            lambda r: _heuristic_rank(r, query_class, local_refs=local_refs, structured=structured),
+        )
+    except Exception:  # noqa: BLE001 — a routing decision must never fail a resolution
+        logger.debug("route_refs failed for %s/%s — keeping bound order", use_case, query_class)
+        return list(refs)
+
+
+def _stable_by(refs: list[str], key: Any) -> list[str]:
+    """Stable-sort ``refs`` by ``key``, then VERIFY the result is a permutation of the input.
+
+    The sort alone cannot drop a ref, but the check is cheap and the invariant is the contract the
+    rest of resolution leans on ("routing changes order, never resolution semantics"), so it is
+    asserted rather than assumed. A violation degrades to the input order instead of raising.
+    """
+    out = sorted(refs, key=key)
+    if len(out) != len(refs) or sorted(out) != sorted(refs):  # pragma: no cover — defense in depth
+        logger.warning("route_refs produced a non-permutation — keeping bound order")
+        return list(refs)
+    return out
+
+
+# ── writes: the three levers, SEL-audited ───────────────────────────────────────
+
+
+def _sel_policy_change(use_case: str, what: str, value: str) -> None:
+    """SEL-record one policy-table mutation.
+
+    Routing decides which providers see which content, so CHANGING the table is
+    security-relevant — a mode or pin flip can move prompts from a local model to a cloud one.
+    (Routing *decisions* are not SEL events; only changes to the policy are.) Best-effort: an
+    audit failure must not lose the user's edit.
+    """
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller="user",
+            operation=f"routing.{what}",
+            outcome="success",
+            source="routing_policy",
+            resources=f"{use_case}:{value}",
+        )
+    except Exception:  # noqa: BLE001 — audit must never break the write
+        logger.debug("routing policy SEL record failed", exc_info=True)
+
+
+def set_mode(use_case: str, mode: str) -> None:
+    """Set the per-use-case routing mode (lever 1). Raises ValueError on an unknown mode —
+    a write path must reject a bad value loudly rather than silently storing something the read
+    path will treat as ``off``."""
+    if mode not in MODES:
+        raise ValueError(f"unknown routing mode {mode!r} (expected one of {MODES})")
+    from personalclaw.providers.use_cases import load_use_case_settings, save_use_case_settings
+
+    settings = dict(load_use_case_settings(use_case) or {})
+    settings[MODE_KEY] = mode
+    save_use_case_settings(use_case, settings)
+    _sel_policy_change(use_case, "mode", mode)
+
+
+def set_pin(use_case: str, pin: str) -> None:
+    """Set (or clear, with ``""``) the per-use-case pin (lever 2)."""
+    from personalclaw.providers.use_cases import load_use_case_settings, save_use_case_settings
+
+    settings = dict(load_use_case_settings(use_case) or {})
+    if pin:
+        settings[PIN_KEY] = pin
+    else:
+        settings.pop(PIN_KEY, None)
+    save_use_case_settings(use_case, settings)
+    _sel_policy_change(use_case, "pin", pin or "(cleared)")
+
+
+def set_order(
+    use_case: str,
+    query_class: str,
+    order: list[str],
+    *,
+    home: Path | None = None,
+    basis: dict[str, Any] | None = None,
+) -> None:
+    """Record a manual order for ``(use_case, query_class)`` (lever 3).
+
+    The order is stored with a ``basis`` so the table can always explain itself; a hand reorder
+    records ``{"source": "user"}``, which the learned stage may later propose changing but never
+    silently overwrite. Note ``route_refs`` still treats the stored order as a *ranking*,
+    not a filter — a ref that is not in it is ranked last, never dropped.
+
+    The table is read strictly (:func:`read_policy`): one that is there and cannot be read raises
+    :class:`PolicyUnreadable` and nothing is written, because saving would replace it, and every
+    other order in it, with a table holding only this one.
+    """
+    if home is None:
+        home = _default_home()
+    if home is None:
+        raise RuntimeError("no PersonalClaw home configured; cannot persist routing policy")
+    policy = read_policy(home)
+    use_cases = policy.setdefault("use_cases", {})
+    entry = use_cases.setdefault(use_case, {})
+    if not isinstance(entry, dict):
+        entry = {}
+        use_cases[use_case] = entry
+    classes = entry.setdefault("classes", {})
+    if not isinstance(classes, dict):
+        classes = {}
+        entry["classes"] = classes
+    classes[query_class] = {
+        "order": [str(r) for r in order],
+        "basis": dict(basis) if basis else {"source": "user"},
+    }
+    save_policy(home, policy)
+    _sel_policy_change(use_case, "order", f"{query_class}:{','.join(order)}")
+
+
+def order_cell(use_case: str, query_class: str, *, home: Path | None = None) -> dict[str, Any]:
+    """One ``(use_case, query_class)`` cell as the table presents it: its order and the basis
+    behind it — ``{"order": [], "basis": {}}`` when nothing is recorded.
+
+    ONE builder for the cell the Routing tab paints and the cell a reorder replaces, so the
+    revision the tab reads (``api_routing_policy``) and the one the write compares against
+    (``api_routing_policy_put``) are taken from the same form (`personalclaw/stale_write.py`).
+    """
+    return {
+        "order": table_order(use_case, query_class, home=home),
+        "basis": order_basis(use_case, query_class, home=home),
+    }
+
+
+def table_for(use_case: str, *, home: Path | None = None) -> dict[str, Any]:
+    """The inspectable table for one use case: its mode, pin, and every recorded
+    per-class order with the basis behind it. What the read-only Routing tab renders."""
+    entry = _use_case_entry(load_policy(home), use_case)
+    raw_classes = entry.get("classes")
+    classes: dict[str, Any] = raw_classes if isinstance(raw_classes, dict) else {}
+    return {
+        "use_case": use_case,
+        "mode": mode_for(use_case, home=home),
+        "pin": pin_for(use_case, home=home),
+        "classes": {str(cls): order_cell(use_case, str(cls), home=home) for cls in classes},
+    }

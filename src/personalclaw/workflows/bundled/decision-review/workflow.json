@@ -1,0 +1,92 @@
+{
+  "name": "decision-review",
+  "description": "At a logged decision's horizon, put the prediction the user made back in front of them and ask what actually happened — one card, no model call, no nagging.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "knowledge",
+    "decisions"
+  ],
+  "inputs": {
+    "decision_id": {
+      "type": "string",
+      "required": true,
+      "help": "The knowledge item id of the decision being reviewed — `decision_resolve` takes this same id."
+    },
+    "summary": {
+      "type": "string",
+      "required": true,
+      "help": "The decision in one line, as the user recorded it. Quoted back so the card is recognizable without opening anything."
+    },
+    "expectation": {
+      "type": "string",
+      "required": true,
+      "help": "What the user predicted would happen. This is the half of the record that makes the review worth doing."
+    },
+    "confidence": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "The confidence the user stated at the time, 0-1. Shown alongside the expectation because a wrong call at 90% teaches more than a wrong call at 50%."
+    },
+    "review_horizon": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "The horizon this review was scheduled for, as YYYY-MM-DD. Carried so a card delivered late says which date it was meant for."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "knowledge"
+    ],
+    "cost_tier": "free",
+    "why_free": "One notification composed from the trigger's own inputs. There is deliberately no model call: the card quotes the user's own words back, and a summarizer here would paraphrase away the exact expectation the review exists to compare against.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "The 90-day horizon on 'take the contract instead of the salaried role' has arrived — put my stated expectation back in front of me and ask what happened."
+      },
+      {
+        "event": "mutation",
+        "description": "The card is landing while I am mid-quarter and cannot judge the outcome yet — resolve it 'too_early' so the review re-arms once rather than nagging."
+      }
+    ],
+    "keywords": [
+      "decision",
+      "review",
+      "horizon",
+      "outcome",
+      "prediction",
+      "calibration"
+    ],
+    "example_outputs": [
+      "one inbox card quoting the decision, its expectation and its stated confidence, with the id to resolve it against"
+    ],
+    "shapes": [
+      "review"
+    ],
+    "when_not_to_use": "not for logging a decision or capturing its outcome — `log_decision` creates the entry and schedules this review, and `decision_resolve` is what writes the outcome and its lesson"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "deliver",
+        "label": "Put the prediction back in front of the user",
+        "config": {
+          "provider": "notify",
+          "with": {
+            "kind": "info",
+            "title_template": "Decision review: {{inputs.summary}}",
+            "body_template": "You expected: {{inputs.expectation}}\nStated confidence: {{inputs.confidence}}\nHorizon: {{inputs.review_horizon}}\n\nWhat actually happened? Answer in chat and I will record it — the outcome is graded better / as_expected / worse / mixed, or too_early if it is still open. Decision id: {{inputs.decision_id}}"
+          }
+        }
+      }
+    ]
+  }
+}

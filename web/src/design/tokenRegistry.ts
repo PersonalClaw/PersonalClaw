@@ -1,0 +1,217 @@
+// The customization registry — the single declarative source of every tunable
+// UI token. Drives the appearance store (what to persist + apply) and the
+// Appearance settings UI (what to render). Add a token here → it's instantly
+// customizable everywhere. Defaults mirror design/tokens.css.
+
+export type TokenKind = 'color' | 'scalar' | 'select'
+
+/** The backdrop modes (`--bg-style`), in the order the Background control offers them. One
+ *  declaration: the select's options, an identity's backdrop dial and the canvas that draws it
+ *  (`ui/DotGlow`) all read this list. */
+export const BG_STYLES = ['waves', 'still', 'glow', 'none'] as const
+export type BgStyle = (typeof BG_STYLES)[number]
+
+export interface ColorToken {
+  kind: 'color'
+  /** CSS var name set on <html> (overrides @theme defaults). */
+  varName: string
+  label: string
+  group: string
+  /** default hex per mode */
+  dark: string
+  light: string
+}
+
+export interface ScalarToken {
+  kind: 'scalar'
+  varName: string
+  label: string
+  group: string
+  /** default value (mode-independent) */
+  value: number
+  min: number
+  max: number
+  step: number
+  /** unit appended when writing the CSS var ('' for unitless multipliers) */
+  unit?: string
+  /** runtime key (if this scalar also feeds the canvas / motion via runtime.ts) */
+  runtimeKey?: 'glow' | 'animSpeed' | 'waveAmount' | 'surfaceAngle' | 'surfaceDistance' | 'dotSize' | 'dotDensity' | 'bounciness' | 'expressiveness' | 'dragElastic' | 'swipeVelocity' | 'swipeDistance'
+    | 'durationShort' | 'durationEffects' | 'durationMedium' | 'durationLong'
+    | 'durationLoading' | 'durationBeat' | 'durationBreath' | 'durationDrift' | 'statusPulse'
+}
+
+export interface SelectToken {
+  kind: 'select'
+  varName: string
+  label: string
+  group: string
+  value: string
+  options: string[]
+  /** runtime key for non-CSS params the canvas reads */
+  runtimeKey?: 'dotShape' | 'dotPattern'
+}
+
+export type Token = ColorToken | ScalarToken | SelectToken
+
+const c = (varName: string, label: string, group: string, dark: string, light: string): ColorToken =>
+  ({ kind: 'color', varName, label, group, dark, light })
+
+const s = (
+  varName: string, label: string, group: string, value: number,
+  min: number, max: number, step: number, unit = '', runtimeKey?: ScalarToken['runtimeKey'],
+): ScalarToken => ({ kind: 'scalar', varName, label, group, value, min, max, step, unit, runtimeKey })
+
+const sel = (varName: string, label: string, group: string, value: string, options: string[], runtimeKey?: SelectToken['runtimeKey']): SelectToken =>
+  ({ kind: 'select', varName, label, group, value, options, runtimeKey })
+
+export const TOKENS: Token[] = [
+  // ── Brand ──
+  // 🔴 THESE DEFAULTS MIRROR THE BASE SHEET, AND A RAIL HOLDS THEM TO IT. Until the token layers,
+  // `app/appearance.tsx` wrote every registered colour token inline on `<html>` at mount, so these
+  // lines were what a default install painted and `tokens.css` was a pre-hydration fallback — which
+  // is why #3503's retune had to land here and not only in `schemes.ts`. Now the stylesheets paint
+  // (the base sheet, then the active scheme's sheet) and only the owner's own colours ride inline;
+  // these values are what the Appearance panel shows and resets to. `schemeSheets.test.ts` asserts
+  // every one equals what the base sheet resolves to, and `schemeContrast.test.ts` that the
+  // registry, the coral table and the sheet agree.
+  //
+  // The history, because the direction repeats: light primary was once #e85a3f, which under 13px
+  // white button text read 3.52:1 (axe serious on every list page's New-X button); #c8452e fixed
+  // that at 4.83:1 against the BARE ground. #3503 is the same mistake one ground over — a status
+  // chip composites its ink over its own 16% wash, and #c8452e read 3.5229 there. #b12e18 is
+  // 4.5007 on the worst resting tier and 6.42 as a white-text button fill, and stays unmistakably
+  // coral: hue angle and chroma are held in OKLCH, only lightness moved. Emphasis steps darker in
+  // kind by the same delta, so hover still reads as "more". Dark mode was already AA and is untouched.
+  c('--color-primary', 'Primary (coral)', 'Brand', '#ff6b5b', '#b12e18'),
+  c('--color-primary-emphasis', 'Primary emphasis', 'Brand', '#ff9a86', '#8d240b'),
+  c('--color-on-primary', 'On primary', 'Brand', '#3f1008', '#ffffff'),
+  c('--color-primary-container', 'Primary container', 'Brand', '#5a1d12', '#ffe0d6'),
+  c('--color-secondary', 'Secondary (amber)', 'Brand', '#ffb454', '#cf7a23'),
+
+  // ── Surfaces ──
+  c('--color-canvas', 'Canvas', 'Surfaces', '#0f0f0f', '#f0f4f8'),
+  c('--color-surface', 'Surface', 'Surfaces', '#131314', '#ffffff'),
+  c('--color-surface-low', 'Surface low', 'Surfaces', '#1b1b1b', '#f4f6f9'),
+  c('--color-surface-container', 'Surface container', 'Surfaces', '#1e1f20', '#ffffff'),
+  c('--color-surface-high', 'Surface high', 'Surfaces', '#282a2c', '#eef1f5'),
+  c('--color-surface-highest', 'Surface highest', 'Surfaces', '#333537', '#e6eaef'),
+  c('--color-rail', 'Nav rail', 'Surfaces', '#1f1f1f', '#f0f4f8'),
+
+  // ── Content ──
+  c('--color-on-surface', 'Text', 'Content', '#e3e3e3', '#1f1f1f'),
+  c('--color-on-surface-low', 'Text muted', 'Content', '#9a9b9c', '#444746'),
+  c('--color-on-surface-var', 'Text variant', 'Content', '#c4c7c5', '#5f6368'),
+  c('--color-outline', 'Outline', 'Content', '#8e918f', '#8e918f'),
+  c('--color-outline-variant', 'Outline subtle', 'Content', '#444746', '#e1e3e1'),
+
+  // ── Semantic ──
+  // Every value here sits at ≥4.5:1 (WCAG AA small text) BOTH as text on the bare surface and as
+  // text on its own tint — the two ways a status chip/badge renders it. Don't move one without
+  // re-checking both; `design/statusChipContrast.test.ts` sweeps the tint dimension for all 12
+  // schemes × 2 modes, which is the population axe cannot reach (it only ever drives the default).
+  //
+  // 🪤 THIS COMMENT USED TO CLAIM THE TINT WAS ALREADY VERIFIED, AND IT WAS NOT. It said the light
+  // values were checked "as text on their own 14–16% color-mix tint … Verified numerically
+  // (e2e/a11y.spec.ts enforces)". `--color-info` was 4.4992 over its own 16% tint on
+  // `surface-container` in the DEFAULT scheme, which axe reports as a `color-contrast` violation on
+  // `#/tasks?view=cards`, and it was under 4.5 in 13 of 24 scheme × mode combos. The three global
+  // tones did hold (worst 4.52) — only the scheme-retinted one drifted, because a scheme supplies
+  // its own `info` and nothing swept that value on a tinted ground. Both `info` values below are
+  // the nudged ones; the derivation is in `tokens.css` beside `--color-info`.
+  c('--color-ok', 'Success', 'Semantic', '#0ebc5f', '#076e37'),
+  c('--color-warn', 'Warning', 'Semantic', '#ff8d41', '#954c19'),
+  c('--color-danger', 'Danger', 'Semantic', '#f66c66', '#af2f29'),
+  c('--color-info', 'Info', 'Semantic', '#629efe', '#1059bc'),
+
+  // ── Glow & gradient (the wave surface + spark + ring) ──
+  c('--grad-1', 'Gradient 1', 'Glow & gradient', '#c85a48', '#c85a48'),
+  c('--grad-2', 'Gradient 2', 'Glow & gradient', '#ff6b5b', '#e85a3f'),
+  c('--grad-3', 'Gradient 3', 'Glow & gradient', '#ff9a7a', '#e07a54'),
+  c('--grad-4', 'Gradient 4', 'Glow & gradient', '#ffb454', '#cf7a23'),
+  c('--glow-a', 'Glow color A', 'Glow & gradient', '#ff6b5b', '#e85a3f'),
+  c('--glow-b', 'Glow color B', 'Glow & gradient', '#ff9a7a', '#e07a54'),
+  c('--ring-stop-2', 'Focus-ring highlight', 'Glow & gradient', '#fff5f2', '#3f1008'),
+
+  // ── Typography ── (whole-UI scale + typeface; applied to <html> by the
+  //    appearance provider — see app/appearance.tsx)
+  s('--ui-zoom', 'UI zoom', 'Typography', 100, 80, 150, 5, '%'),
+  s('--font-scale', 'Font size', 'Typography', 100, 85, 160, 5, '%'),
+  sel('--font-family', 'Font family', 'Typography', 'dm-sans', ['dm-sans', 'inter', 'mono', 'system']),
+
+  // ── Layout ──
+  // NOTE: --content-width is driven by the Account → Content width PRESET
+  // (Narrow/Default/Full), not a raw slider, so it's intentionally not a tunable
+  // token here.
+  // Density axis (orthogonal to palette + dark/light): appearance.tsx maps this
+  // select to the <html> data-ui attribute, whose tokens.css blocks re-scale the
+  // whole app's spacing/radius (and, for cli, the font family). comfortable = default.
+  sel('--ui-density', 'UI density', 'Layout', 'comfortable', ['comfortable', 'dense', 'cli']),
+
+  // ── Shape ──
+  s('--radius-scale', 'Corner roundness', 'Shape', 1, 0, 2, 0.05),
+
+  // ── 3D surface (the dot wave point-of-view + dots) ──
+  // Master backdrop switch, first in the group so it reads as the mode selector
+  // the rest of the 3D-surface controls tune. 'none' = off, the default: a calm
+  // canvas that paints nothing and asks for no frame (web/DESIGN.md §7). An identity
+  // brings its own backdrop as a dial — Retro Terminal 'still' (the field painted
+  // once, no halo), Claw Arcade 'waves' (the animated breathing dot-wave surface and
+  // its halo). 'glow' = only the soft light hugging the composer, no dot lattice.
+  // DotGlow reads this live from the appearance store.
+  sel('--bg-style', 'Background', '3D surface', 'none', [...BG_STYLES]),
+  s('--surface-angle', 'View angle', '3D surface', 45, 0, 180, 1, '°', 'surfaceAngle'),
+  s('--surface-distance', 'View distance', '3D surface', 1, 0.4, 2.2, 0.05, '', 'surfaceDistance'),
+  s('--dot-size', 'Dot size', '3D surface', 1, 0.3, 9, 0.1, '', 'dotSize'),
+  s('--dot-density', 'Dot density', '3D surface', 1, 0.3, 2, 0.05, '', 'dotDensity'),
+  sel('--dot-shape', 'Dot shape', '3D surface', 'claw', ['circle', 'square', 'diamond', 'star', 'sparkle', 'burst', 'claw'], 'dotShape'),
+  sel('--dot-pattern', 'Arrangement', '3D surface', 'hex', ['grid', 'diamond', 'hex', 'brick'], 'dotPattern'),
+
+  // ── Motion ──
+  s('--anim-speed', 'Animation speed', 'Motion', 1, 0, 2.5, 0.05, '', 'animSpeed'),
+  s('--wave-amount', 'Wave amount', 'Motion', 1, 0, 2.5, 0.05, '', 'waveAmount'),
+  s('--glow', 'Glow amount', 'Motion', 1, 0, 2.5, 0.05, '', 'glow'),
+  // Bounciness/expressiveness: 0 = calm (no overshoot) … 1 = playful (default).
+  // Scales the bounce-tier spring overshoot + shape-morph amount app-wide.
+  s('--bounciness', 'Bounciness', 'Motion', 1, 0, 1, 0.05, '', 'bounciness'),
+  // Expressiveness: the PRIMARY intensity dial (0 = refined/tasteful … 1 = bold/
+  // showpiece). Scales hover-lift, press depth, liquid morph / container-transform,
+  // and the heavy-effect gates (Claw Arcade's button sheen among them) app-wide via
+  // expr()/exprHeavy() in design/motion.ts. Default 0.8 (bold-leaning).
+  s('--expressiveness', 'Expressiveness', 'Motion', 0.8, 0, 1, 0.05, '', 'expressiveness'),
+  // Gesture physics — read by dragElastic()/swipeDismiss() in design/motion.ts.
+  // Elasticity is how far a dragged element stretches past its constraints (0 =
+  // rigid, 1 = loose). The two dismiss thresholds are OR'd: a fast flick OR a slow
+  // deliberate haul both let go. Lower either one to make swipe-away easier.
+  s('--drag-elastic', 'Drag elasticity', 'Motion', 0.9, 0, 1, 0.05, '', 'dragElastic'),
+  // Unit 'px/s' is for the SLIDER's readout: a unitless scalar renders as a
+  // multiplier ("500.00×"), which is nonsense for a velocity. Only `runtime` reads
+  // the number; no CSS rule consumes this var.
+  s('--swipe-dismiss-velocity', 'Swipe flick speed', 'Motion', 500, 100, 1500, 25, 'px/s', 'swipeVelocity'),
+  s('--swipe-dismiss-distance', 'Swipe distance', 'Motion', 80, 20, 240, 5, 'px', 'swipeDistance'),
+  // Durations — the length of every animation and transition, declared in tokens.css and read
+  // with var() there and in components. A runtime key means JS reads it too, as `duration.*` in
+  // design/motion.ts, so one slider moves both. The steps a transition takes, in ms (0 = instant):
+  s('--duration-short', 'Short transition', 'Motion', 100, 0, 300, 10, 'ms', 'durationShort'),
+  s('--duration-effects', 'Fade', 'Motion', 200, 0, 500, 10, 'ms', 'durationEffects'),
+  s('--duration-medium', 'Medium transition', 'Motion', 300, 0, 800, 10, 'ms', 'durationMedium'),
+  s('--duration-long', 'Long transition', 'Motion', 500, 0, 1200, 10, 'ms', 'durationLong'),
+  // One cycle of a loop, in seconds. Never 0: a loop with no length repeats as fast as it can.
+  s('--duration-blink', 'Caret blink', 'Motion', 0.9, 0.3, 2, 0.1, 's'),
+  s('--duration-loading', 'Loading sweep', 'Motion', 1.4, 0.4, 4, 0.1, 's', 'durationLoading'),
+  s('--duration-beat', 'Live beat', 'Motion', 1.6, 0.6, 4, 0.1, 's', 'durationBeat'),
+  s('--duration-shimmer', 'Text shimmer', 'Motion', 2.2, 0.6, 6, 0.1, 's'),
+  s('--duration-scan', 'Placeholder scan', 'Motion', 2.6, 0.6, 6, 0.1, 's'),
+  s('--duration-breath', 'Glow breath', 'Motion', 3, 1, 8, 0.1, 's', 'durationBreath'),
+  s('--duration-drift', 'Slow drift', 'Motion', 7, 2, 16, 0.5, 's', 'durationDrift'),
+
+  // ── Elevation & glass (frosted overlay intensity) ──
+  s('--glass-blur', 'Glass blur', 'Elevation & glass', 16, 0, 40, 1, 'px'),
+  s('--glass-alpha', 'Glass opacity', 'Elevation & glass', 0.72, 0.4, 1, 0.02),
+  // Duration (seconds) of ONE outward pulse of the gateway-connectivity status
+  // dot (top-right shell corner). Higher = slower, calmer pulse. The default 2.4s
+  // is a gentle breath; the built-in Tailwind ping (1s) read as too fast. The tour's halo is the
+  // same outward ring, so JS reads it too (`duration.statusPulse`).
+  s('--status-pulse-speed', 'Status dot pulse', 'Motion', 2.4, 0.6, 6, 0.1, 's', 'statusPulse'),
+]
+
+export const GROUPS = ['Brand', 'Surfaces', 'Content', 'Semantic', 'Glow & gradient', 'Typography', 'Layout', 'Shape', 'Elevation & glass', '3D surface', 'Motion']

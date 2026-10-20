@@ -1,0 +1,101 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { useEffect, useState } from 'react'
+import { ModelsPanel } from './ModelsPanel'
+
+// ── The prompt-cache switch (config point 5 of five) ──────────────────────────
+//
+// The cache marker shipped UNCONDITIONALLY for the EXPLICIT adapter. This control is
+// the only way a user can turn it off, so it is asserted at the level a user meets it:
+//
+//  · it RENDERS inside the Models panel a user actually opens — an allowlisted backend field
+//    with no control is "backend truth, frontend silence", and no python test can see that.
+//  · it has an ACCESSIBLE NAME, probed via getByRole rather than by reading the source.
+//  · it READS `agent.prompt_cache_enabled` off the config payload, so an off switch means the
+//    user turned it off — not that the panel never loaded the value.
+//  · it PATCHes the allowlisted dotted path, which is what makes the round trip real.
+//  · a FAILED read renders the failure instead of a switch at its fallback: a fabricated
+//    "off" would read as "you disabled caching".
+
+const patchConfig = vi.fn((_path: string, _value: unknown) => Promise.resolve({}))
+const personalclawConfig = vi.fn()
+
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError` and answer guards are kept. The eval
+// panels branch on `isSwitchedOff`/`isNotRun`, so a factory that returned only `api` made the mocked
+// module throw "No export is defined" from inside the render — and a double that rejected where the
+// wire answers `{"ran": false}` would render the generic failure instead of the state under test.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      personalclawConfig: () => personalclawConfig(),
+      patchConfig: (path: string, value: unknown) => patchConfig(path, value),
+      modelsAvailable: () => Promise.resolve([]),
+      activeChains: () => Promise.resolve({}),
+      modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
+      // The panel's HuggingFace-token section fetches on mount too.
+      hfTokenStatus: () => Promise.resolve({ sources: [] }),
+      // The panel reads the judge benchmark's tier recommendations on mount to offer
+      // the one-click rebind. `{"ran": false}` (no benchmark yet) is the ordinary case, so it is
+      // what the panel really sees on a fresh install.
+      judgeBench: () => Promise.resolve({ ran: false }),
+      modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
+      // The panel reads the download list once, so a row can re-attach to a running download.
+      modelDownloads: () => Promise.resolve([]),
+      // The panel's loaded-models section fetches on mount too; an unmocked call
+      // here would make this test fail for a reason that has nothing to do with caching.
+      modelsLoaded: () => Promise.resolve({
+        loaded: [],
+        providers: [],
+        pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
+      }),
+    },
+  }
+})
+vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
+vi.mock('../../lib/data', () => ({
+  useQuery: (_k: string, fn: () => Promise<unknown>) => {
+    const [data, setData] = useState<unknown>(null)
+    const [error, setError] = useState<unknown>(null)
+    useEffect(() => { fn().then(setData).catch(setError) }, [])
+    return { data, error, refresh: () => {} }
+  },
+  invalidateKeys: () => {},
+}))
+
+describe('the prompt-cache switch in the Models panel', () => {
+  beforeEach(() => {
+    patchConfig.mockClear()
+    personalclawConfig.mockResolvedValue({ agent: { prompt_cache_enabled: true } })
+  })
+
+  it('renders in the Models panel with an accessible name', async () => {
+    render(<ModelsPanel />)
+    const sw = await waitFor(() => screen.getByRole('switch', { name: /prompt caching/i }))
+    expect(sw).toBeTruthy()
+  })
+
+  it('reads the saved value rather than a fallback', async () => {
+    personalclawConfig.mockResolvedValue({ agent: { prompt_cache_enabled: false } })
+    render(<ModelsPanel />)
+    const sw = await waitFor(() => screen.getByRole('switch', { name: /prompt caching/i }))
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('PATCHes the allowlisted dotted path when flipped', async () => {
+    render(<ModelsPanel />)
+    const sw = await waitFor(() => screen.getByRole('switch', { name: /prompt caching/i }))
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(sw)
+    await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('agent.prompt_cache_enabled', false))
+  })
+
+  it('a failed config read renders the failure, not a switch at its fallback', async () => {
+    personalclawConfig.mockRejectedValue(new Error('boom'))
+    render(<ModelsPanel />)
+    await waitFor(() => expect(screen.queryAllByText(/prompt-cache setting/i).length).toBeGreaterThan(0))
+    expect(screen.queryByRole('switch', { name: /prompt caching/i })).toBeNull()
+  })
+})

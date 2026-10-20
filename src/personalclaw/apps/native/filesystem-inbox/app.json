@@ -1,0 +1,25 @@
+{
+  "name": "filesystem-inbox",
+  "version": "1.0.0",
+  "displayName": "System Inbox",
+  "description": "Filesystem-backed inbox for agent approval requests, input requests, and system notifications.",
+  "icon": "Inbox",
+  "author": "PersonalClaw",
+  "tags": [
+    "inbox",
+    "bundled"
+  ],
+  "provider": {
+    "type": "inbox",
+    "implementation": "personalclaw.inbox_providers.filesystem_source:create_provider",
+    "capabilities": [
+      "approvals",
+      "inputs"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "native": true
+}

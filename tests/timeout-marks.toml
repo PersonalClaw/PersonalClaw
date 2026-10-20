@@ -1,0 +1,178 @@
+# Every per-test timeout under tests/, with the cap it sets and why the test needs it.
+#
+# The suite's default cap is `--timeout` in pyproject.toml's addopts. A test that needs another
+# one carries `pytest.mark.timeout(N)`, and that mark is listed here by its site: the file and the
+# scope it sits in (see tests/timeout_marks.py). The CI contract row
+# `every-timeout-mark-is-listed-with-its-reason` fails on a mark this list lacks, an entry whose
+# mark is gone, a cap that differs, and an entry with no reason. Adding an entry is the reviewed
+# act; a mark that is deleted takes its entry with it.
+
+[[mark]]
+site = "tests/conftest.py::pytest_collection_modifyitems"
+cap = 46
+reason = "the workflow family's measured ceiling, given to every test_workflows_* test with no mark of its own; tests/test_pytest_workflows_timeout.py pins the policy"
+
+[[mark]]
+site = "tests/rails/test_keychain_namespace_census.py::test_every_keychain_call_names_the_homes_own_namespace"
+cap = 300
+reason = "a census of the tree: 55-90 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/rails/test_keychain_namespace_census.py::test_the_census_reads_the_real_keychain_calls"
+cap = 300
+reason = "a census of the tree: 90-98 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/rails/test_source_index.py::test_collecting_the_copy_rail_parses_nothing_from_test_code"
+cap = 300
+reason = "runs a pytest collection of a whole module in a child interpreter"
+
+[[mark]]
+site = "tests/test_browse_live_legs_run_in_ci.py::test_every_browse_proof_module_runs_on_the_merge_gate"
+cap = 300
+reason = "a census of the tree: 84-99 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/test_bundled_model_gate.py::test_the_drive_completes_a_first_turn_on_the_signed_off_weight"
+cap = 840
+reason = "a cold cache's first fetch of the signed-off weight (600 s), the drive (180 s) and a minute to check the copy"
+
+[[mark]]
+site = "tests/test_bundled_model_gate.py::test_the_drive_writes_no_credential_and_no_provider_row"
+cap = 840
+reason = "a cold cache's first fetch of the signed-off weight (600 s), the drive (180 s) and a minute to check the copy"
+
+[[mark]]
+site = "tests/test_child_output_reaches_the_log_masked.py::test_every_log_sink_the_tree_makes_masks_what_it_writes"
+cap = 300
+reason = "a census of the tree: 50-112 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/test_compose_standalone.py::test_compose_config_succeeds_from_a_scratch_directory"
+cap = 240
+reason = "drives a real container runtime's compose config, each runtime probe allowed 30 s"
+
+[[mark]]
+site = "tests/test_container_runtime_census.py::test_the_census_sees_the_modules_that_drive_a_runtime"
+cap = 300
+reason = "a census of the tree: 77-91 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/test_container_runtime_census.py::test_the_tests_that_drive_a_runtime_skip_without_the_opt_in"
+cap = 300
+reason = "runs the tests that drive a runtime in a child pytest, with stand-in runtimes on PATH"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_seed_tasks_seeds_the_named_scratch_home"
+cap = 300
+reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_a_validator_is_clean_on_the_named_scratch_home"
+cap = 300
+reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home"
+cap = 300
+reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_classify_smoke_reads_the_named_scratch_homes_models"
+cap = 300
+reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
+
+[[mark]]
+site = "tests/test_document_parser_limits.py::TestBlockCap.test_the_issue_repro_is_bounded_at_the_real_cap"
+cap = 600
+reason = "walks the shipped 20,000-block cap itself, which is the point of the test; no assertion is relaxed to fit the default"
+
+[[mark]]
+site = "tests/test_evals_benchmark_binding.py::test_two_arms_whose_staged_artifacts_differ_score_differently"
+cap = 300
+reason = "the real eval matrix, a spawned child per cell, against a local endpoint"
+
+[[mark]]
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_every_inert_surface_is_listed_with_its_reason"
+cap = 300
+reason = "builds the inert-surface census of the whole tree"
+
+[[mark]]
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line"
+cap = 300
+reason = "builds the inert-surface census of the whole tree, and of a planted one"
+
+[[mark]]
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_real_config_reader_census_fires_and_clears_an_accessor"
+cap = 300
+reason = "builds the inert-surface census of the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
+cap = 300
+reason = "a census of the tree: 85-95 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
+cap = 300
+reason = "builds the inert-surface census of the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_an_export_named_by_another_exports_signature_is_not_inert"
+cap = 300
+reason = "reads the SDK export census over the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_an_export_reachable_from_no_published_signature_is_still_inert"
+cap = 300
+reason = "reads the SDK export census over the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_a_type_that_names_only_itself_does_not_clear_itself"
+cap = 300
+reason = "reads the SDK export census over the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_justified"
+cap = 300
+reason = "computes the surface closure over the whole tree"
+
+[[mark]]
+site = "tests/test_inert_surface_baseline.py::test_an_exported_functions_signature_clears_an_export_in_both_directions"
+cap = 300
+reason = "reads the SDK export census and the surface closure over the whole tree"
+
+[[mark]]
+site = "tests/test_memory_daily_digest.py::pytestmark"
+cap = 300
+reason = "the first test on a fresh worker pays the memory stack's first-touch import, starved past the default under heavy local contention"
+
+[[mark]]
+site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_max_iterations_is_the_number_of_candidates_the_search_tries"
+cap = 300
+reason = "thirteen cycles of the search, each running its steps as processes of their own: 42-69 s plain and 64-120 s under coverage on CI (2026-10-15)"
+
+[[mark]]
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_every_config_bearing_surface_also_preserves_secrets_if_it_writes"
+cap = 300
+reason = "a census of the tree: 80-97 s of the default under coverage on CI (2026-10-14/15)"
+
+[[mark]]
+site = "tests/test_pytest_workflows_timeout.py::test_an_explicit_workflows_timeout_is_not_overwritten"
+cap = 17
+reason = "a mark built as data, to prove the workflow family's hook keeps an explicit one; it caps no test"
+
+[[mark]]
+site = "tests/test_sdist_bundles_spa.py::test_a_wheel_rebuilt_from_the_sdist_carries_the_whole_dashboard"
+cap = 180
+reason = "builds an sdist with the real build backend, then a wheel from it"
+
+[[mark]]
+site = "tests/test_verify_wheel_contract.py::test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one"
+cap = 240
+reason = "builds a real wheel and sdist with the build backend and inspects both"
+
+[[mark]]
+site = "tests/test_verify_wheel_contract.py::test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe"
+cap = 240
+reason = "drives the wheel gate through main() with its real install probe in a child process"

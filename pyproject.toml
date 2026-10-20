@@ -1,0 +1,588 @@
+[build-system]
+# EXACT, on purpose: `make build` rebuilds the wheel from the sdist and requires the two to be
+# byte-identical, which holds only when both builds run the same backend. It is the setuptools
+# `uv.lock` resolves (CI's test environment, where the packaging tests drive the backend
+# in-process), and `tests/test_verify_wheel_contract.py` keeps the two equal. `wheel` is gone
+# because setuptools has carried `bdist_wheel` itself since 70.1.
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+# ── Project metadata (PEP 621) ────────────────────────────────────────────────
+[project]
+name = "personalclaw"
+version = "0.2.3"
+description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
+# A PEP 639 SPDX expression, emitted as `License-Expression`; the trove classifier it
+# supersedes is gone, and setuptools refuses the pair.
+license = "MIT"
+# Upper-bounded ON PURPOSE, to the newest interpreter CI actually verifies. An open
+# `>=3.12` promised every future Python while the matrix proved two, and 3.14 collected on
+# that promise: the connector-pack parse fence denies `importlib`, so neutering the
+# pre-imported `importlib._bootstrap` replaces the import machinery's own
+# `_find_and_load` — on 3.14 EVERY import inside a pack script is refused, legitimate ones
+# included, and the refusal names `importlib._bootstrap._find_and_load` instead of the
+# module asked for. Connector-pack parsing is therefore non-functional on 3.14, not merely
+# noisier. Refusing the install is the honest answer until the fence is fixed; widen this
+# in the same change that adds 3.14 to the breadth legs (`.github/workflows/breadth.yml`), which
+# `tests/test_dependency_bounds.py` requires.
+requires-python = ">=3.12,<3.14"
+
+authors = [
+    { name = "PersonalClaw contributors" },
+]
+
+keywords = ["ai", "agent", "llm", "mcp", "acp"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Runtime dependencies
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "websockets>=12,<18",
+    "cron-descriptor>=1.4,<3",
+    # 🔴 The `<3` is LOAD-BEARING and is not a stale bound. croniter majors 2 and 6 disagree on
+    # the cron GRAMMAR — `0 9 * * * * *`, `0 9 * * * * 2026`, `0 9 * * * 30 *` and `5-1 * * * *`
+    # all parse differently — so a wide requirement lets a fresh `pip install -e ".[dev]"` resolve
+    # 6.x while CI's `uv sync --locked` resolves 2.0.7, and the same tree then fails locally and
+    # passes in CI. `tests/test_cron_expr_corpus.py` rails this specifier to the lock so the two
+    # install paths cannot diverge; widening it is a grammar migration against the shared
+    # frontend/backend expression corpus, never a version bump. See
+    # `docs/maintainers/local-pytest-determinism.md`, "Installer-dependent cron grammar".
+    "croniter>=2.0,<3",
+    # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
+    # memory app (native-vector-memory), which ships INSIDE core, so its deps are
+    # baked in (not shed). It's small + NOT excluded from the desktop bundle
+    # (unlike faiss/torch). vector_memory.py + memory_record.py still guard the
+    # import so a stripped env degrades to stdlib rather than crashing.
+    "numpy>=1.21,<3",
+    "snowballstemmer>=1.0",
+    # 🔴 packaging is a CORE dep because the APP INSTALLER cannot run without it.
+    # `apps/app_manager.py::_reject_core_dependency_conflicts` imports
+    # `packaging.requirements` + `packaging.utils` to prove an app's declared
+    # `pythonDependencies` cannot move a gateway dependency, and it fails CLOSED — no
+    # evaluator means it refuses the install. Undeclared, that refusal fired for EVERY app
+    # declaring `pythonDependencies` on a clean wheel install: `openrouter-models`,
+    # `claude-subscription` and both speech apps all failed with "cannot verify app X's
+    # python dependencies against core's (No module named 'packaging')". A dev checkout
+    # never saw it, because pip's own build tooling puts `packaging` in the venv
+    # transitively — so this is a defect only the shipped artifact has. The rail is
+    # `tests/test_app_installer_deps_declared.py`, which asserts the DECLARATION rather
+    # than importability, since importability is true in dev either way.
+    "packaging>=23.0",
+    # 🔴 pip is a CORE dep because the APP INSTALLER runs it: an app's `pythonDependencies`
+    # install with `python -m pip install --prefix <home>/app-python`, resolved against this
+    # environment (uv's `--prefix` treats nothing as installed, so it cannot do that install),
+    # and an app's engine installs into its own venv with this same pip (`pip --python`, hence
+    # the floor: 22.3 added it). Undeclared, pip was there only by accident: `python -m venv`
+    # puts one in through ensurepip, uv (`uv tool install`, `uv sync`) seeds none, and Debian
+    # and Ubuntu strip ensurepip's wheels from their system Python, so on that Python no app
+    # with Python packages could be installed. The rail is
+    # `tests/test_app_installer_deps_declared.py`, which asserts the declaration.
+    "pip>=22.3",
+    "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # sqlite-vec is a CORE dep, and NOT faiss. The knowledge store
+    # is SQLite-first (items + FTS5 + graph tables in one file), so a vector index shipped as a
+    # SQLite extension lives in that same file and travels with the rows it indexes — no
+    # sidecar artifact with its own consistency story. faiss stays an [embeddings] extra: it is
+    # excluded from the desktop bundle (personalclaw-backend.spec), so promoting it would hand
+    # desktop users a knowledge search that silently degrades to a full-table scan. sqlite-vec
+    # is small and pure-wheel, so it clears the desktop-bundle bar the reader block clears.
+    # Extension LOADING still is not universal, so knowledge/vector_index.py probes once and
+    # fails soft to the exact scan (correct, just linear) with a Doctor capability line.
+    "sqlite-vec>=0.1,<1",
+    # Knowledge document readers (readers.py): .docx / .pdf / .pptx / .html.
+    # Pure-Python, no native/torch weight — safe as core deps (incl. desktop bundle).
+    # Floor raised to 1.1: `Paragraph.text` only includes HYPERLINK text from 1.1
+    # onward, and `knowledge/readers.py:229` reads exactly that. On a 0.8.x install our own
+    # reader would silently drop a link's display words — the content loss this plan exists to
+    # prevent. `Paragraph.hyperlinks` (which the docx writer's round-trip test asserts) also
+    # does not exist before 1.1.
+    "python-docx>=1.1,<2",
+    "pdfplumber>=0.11,<1",
+    "python-pptx>=0.6.21,<2",
+    "html2text>=2020.1.16",
+    # Document GENERATION — the PDF writer (documents/writers/pdf_writer.py). CORE, not
+    # an extra, for the same reason codegraph is: "an
+    # accelerator that half the installs lack is one nobody can rely on" — and a document
+    # FORMAT that only exists on some installs is worse than one that exists nowhere,
+    # because the agent will offer it and then fail. Pure Python with prebuilt wheels and
+    # no torch weight, so it clears the same bar the reader block above already cleared.
+    # Deliberately NOT in personalclaw-backend.spec's excludes (unlike faiss/torch): a
+    # PDF writer that vanished in the desktop build would recreate that same problem.
+    "reportlab>=4,<6",
+    # Web fetch/extract core (web/extract.py): boilerplate-free main-content extraction
+    # (trafilatura, ~0.91 F1 vs html2text ~0.66) + HTML sanitization of untrusted pages
+    # (nh3). Shared by web_fetch and the knowledge web-url connector.
+    "trafilatura>=2,<3",
+    "nh3>=0.2",
+    "openpyxl>=3.1,<4",
+    # Knowledge media thumbnails (media.py): downscale uploaded images to WebP.
+    "Pillow>=10,<13",
+    # Codebase graph (codegraph/): tree-sitter parsers for the code index the agent
+    # queries instead of grepping blind. CORE rather than
+    # an extra, so `code_map` is simply present everywhere — an accelerator that half
+    # the installs lack is one nobody can rely on. The language pack ships prebuilt
+    # wheels, so there's no compiler requirement. Indexing still fails SOFT: no
+    # parser, no graph, and everything falls back to grep/read. 1.15.7 is the first language
+    # pack that reads TREE_SITTER_LANGUAGE_PACK_CACHE_DIR, the setting that keeps the grammars
+    # inside the home (library_env.py); an older one keeps them in the user's cache. The pack
+    # downloads nothing itself: codegraph/grammars.py fetches its bundle through the egress guard
+    # and hands it a manifest file naming only files on this machine (MANIFEST_URL, file://).
+    "tree-sitter>=0.21,<1",
+    "tree-sitter-language-pack>=1.15.7,<2",
+    # NOTE — openai / anthropic are NOT core deps. Their provider
+    # adapters (llm/openai.py, llm/anthropic.py, stt/tts openai_provider.py) import
+    # the SDK LAZILY and raise MissingSDKError naming the exact remedy when absent.
+    # The SDKs ship via the branded provider apps' manifest `pythonDependencies`
+    # (verified: apps/app_manager.py::_install_python_deps installs them into the
+    # shared venv), and the `[openai]` / `[anthropic]` extras remain
+    # the documented install path for pip/uv users. This keeps a bare
+    # `pip install personalclaw` lean without breaking any provider that's actually used.
+    "httpx>=0.27",
+    "PyYAML>=6,<7",
+    # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
+    # os.environ without hand-copying .env — an unconditional import at startup.
+    "python-dotenv>=1.0",
+    # The IANA timezone database. `zoneinfo` reads the operating system's copy when there is
+    # one, and minimal Linux images have none, so `America/Los_Angeles` would not load and
+    # setup would refuse it. This package is the stdlib's own fallback for exactly that case.
+    "tzdata>=2024.1",
+    # Codex keeps an old session compressed (`sessions/**/rollout-*.jsonl.zst`), and the Codex
+    # importer (onboarding_import/sources/codex.py) reads it as it reads a plain one. Python has
+    # no zstd in its standard library before 3.14, and requires-python stops at 3.13. The lower
+    # bound is the first release with CPython 3.13 wheels: 0.22 has cp312 wheels only, so a 3.13
+    # install would compile it. BSD-3-Clause, with prebuilt wheels for macOS, Linux (glibc and
+    # musl) and Windows. Measured on 0.25.0 for CPython 3.13: +0.6 MB to download and +1.8 MB
+    # installed on macOS arm64, and +5.5 MB and +23 MB on Linux x86_64, whose wheel ships both
+    # of its backends' shared objects with their debug symbols.
+    "zstandard>=0.23,<1",
+    # Owner-login password hashing (auth/credentials.py).
+    # CORE rather than an extra, deliberately: a password verifier that only exists on
+    # some installs means `auth.login_enabled` would be a setting that silently cannot
+    # work — and the failure would land on an internet-exposed box, which is the worst
+    # place to discover a missing dependency. argon2id is the current password-hashing
+    # recommendation (memory-hard, tunable); rolling our own PBKDF2 over hashlib to dodge
+    # one small wheel would be the wrong trade on a credential path. Prebuilt wheels, no
+    # compiler, no torch weight — the same bar reportlab/tree-sitter already cleared.
+    "argon2-cffi>=23,<26",
+    # Ed25519 signature verification for signed app bundles (signing.py). CORE and
+    # DECLARED, for two reasons. First, asymmetric signing is genuinely required: the
+    # verifying side is every user's machine, so an HMAC over hashlib would have to ship
+    # the signing key to everyone who verifies — i.e. no signature at all. Second, this
+    # wheel was already present transitively (pdfplumber → pdfminer.six → cryptography),
+    # so declaring it adds ZERO install weight; leaving a signature-verification path
+    # resting on someone else's transitive dep is how a security control silently
+    # disappears in a future dependency bump. Verification fails CLOSED if it is ever
+    # missing (a signature that cannot be checked is refused, not accepted).
+    "cryptography>=42",
+    # Config validation. HARD dependency, deliberately, for the same reason as
+    # `cryptography` above: it arrived only transitively through what was then the OPTIONAL
+    # [mcp] extra, so `pip install personalclaw` had NO enum validation, NO type validation, no
+    # unknown-key warning and no pruning of retired fields — `_validate_config_data` returned at
+    # its first line. `agent.approval_mode = "NOT_A_MODE"` entered the running config.
+    # CI could not see it because [dev] pulled [mcp].
+    "jsonschema>=4",
+    # The MCP client SDK: every external MCP server an agent calls, stdio or at a URL
+    # (mcp_client.py). CORE, not an extra, and for the reason code_map is: a server that only
+    # some installs can call is a feature nobody can rely on. As an extra it was missing from
+    # the public installer (`uv tool install personalclaw`), from `pip install personalclaw`
+    # and from the desktop bundle (release.yml installs `.[anthropic,openai,slack]`), so on
+    # all three the agent's MCP registry was empty while the Tools page probed each stdio
+    # server "ok". Measured against uv.lock on macOS arm64 / CPython 3.13: 13 more packages
+    # (pydantic and pydantic-core, starlette, uvicorn, …), +3.1 MB to download (+4.4% over
+    # the 70.9 MB core closure) and +9.7 MB installed (+5.9% over 164 MB), all prebuilt
+    # wheels. The import is still deferred to the first connection: it costs ~0.22 s.
+    # The upper bound is load-bearing: mcp 2.0.0 renamed
+    # `mcp.client.streamable_http.streamablehttp_client`, which mcp_client.py imports, so an
+    # unbounded spec makes a FRESH install resolve 2.0.0 and break the streamable-HTTP
+    # transport. CI installs from the lockfile and cannot see that. Supporting 2.x is a
+    # migration, not a widened bound (tests/test_dependency_bounds.py). The lower bound is
+    # load-bearing too: a remote server's OAuth sign-in reaches its connection as the `auth`
+    # of `streamablehttp_client` and `sse_client`, which both gained that parameter in 1.10.0.
+    "mcp>=1.10,<2",
+    # A floor and nothing else: core imports no urllib3, and trafilatura (above) and botocore
+    # (the bedrock extra) bring it with ranges that admit releases with published advisories.
+    # An update (`pip install -U personalclaw==<release>`) keeps an installed dependency that
+    # still satisfies every range, so only a floor declared here moves an existing install onto
+    # the patched release. tests/test_dependency_bounds.py holds it, here and in the lock.
+    "urllib3>=2.8.0",
+]
+
+# Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
+# NOTE: this sub-table MUST come AFTER the bare `dependencies`/`version`/etc. keys
+# of [project] — a `[project.urls]` header placed earlier would capture every
+# subsequent bare key (e.g. `dependencies`) into the urls table (TOML tables run
+# until the next header), silently zeroing out the runtime dependency set.
+[project.urls]
+Homepage      = "https://personalclaw.dev"
+Documentation = "https://github.com/PersonalClaw/PersonalClaw/tree/main/docs"
+Source        = "https://github.com/PersonalClaw/PersonalClaw"
+Changelog     = "https://github.com/PersonalClaw/PersonalClaw/blob/main/CHANGELOG.md"
+Issues        = "https://github.com/PersonalClaw/PersonalClaw/issues"
+
+[project.optional-dependencies]
+# Provider SDK extras — install only what your provider requires
+anthropic = ["anthropic>=0.20"]
+# Bounded to the major uv.lock holds, for the reason the dev tools in [dev] are: the documented
+# `pip install -e ".[dev]"` ignores the lock. openai 3 declares AsyncOpenAI's `http_client` as an
+# `httpx2.AsyncClient`, and the openai providers hand it the egress-guarded `httpx.AsyncClient`, so
+# whole-tree mypy goes red where pip resolved 3.x while CI's locked environment passes. Moving to
+# openai 3 is a migration: the lock and this bound move together (tests/test_dependency_bounds.py).
+openai    = ["openai>=1.0,<3"]
+bedrock   = ["boto3>=1.34"]        # Amazon Bedrock Converse provider
+httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
+
+# Feature extras.
+# NOTE — these extras are a convenience install path for apps whose Python deps are
+# heavy or commonly pre-provisioned in a server/container image. Apps can ALSO declare
+# `dependencies.pythonDependencies` in their app.json, which the app-install pipeline
+# pip-installs into the shared venv (apps/app_manager.py::_install_python_deps). The
+# slack-channel app declares slack-sdk that way, so a Store install pulls it
+# automatically; this `[slack]` extra remains for pip/uv users who pre-install it (or
+# run headless without the Store). Keep each extra aligned with the app that consumes it.
+slack = ["slack-sdk>=3.27,<4"]
+# faster-whisper's own `av>=11` admits PyAV 19, which removed the `metadata_errors` keyword
+# its decode_audio passes to `av.open` on every call (1.0 through 1.2.1, the newest), so
+# every transcription fails. The ceiling is ours to carry; `tests/test_dependency_bounds.py`
+# holds it and asks for it to be re-derived when faster-whisper stops passing the keyword.
+stt   = ["faster-whisper>=1.0", "av<19"]    # substrate for apps/faster-whisper (in-process Whisper STT)
+tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
+eval  = ["jinja2>=3.0"]
+# sentence-transformers 5.6 is the oldest release checked for the local-only model card the
+# sentence-transformers app hands a model it loads, as its app.json declares.
+# torch is sentence-transformers' own dependency, named here so `[tool.uv.sources]` (below) can
+# give Linux its CPU build: uv routes only a dependency the project names.
+embeddings = ["sentence-transformers>=5.6", "faiss-cpu>=1.7", "torch"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
+js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
+
+# OS keychain credential backend. Deliberately OPTIONAL and
+# deliberately NOT in [dev]/[test]: `.env` at 0600 is the supported default, the keychain
+# is an upgrade for installs that have an OS secret service, and a headless box without one
+# must keep working — config/loader.py falls back to `.env` 0600 and doctor says so. Tests
+# stub keyring rather than depend on it, so the suite is identical with or without this extra.
+keychain = ["keyring>=24"]
+
+# Every local-model feature, for installs that run models in-process (dev
+# server + container). Desktop deliberately omits these (torch is too large to
+# bundle — see personalclaw-backend.spec excludes); its bundles probe as
+# unavailable and the UI guides the user to the server/container build.
+models = ["personalclaw[embeddings]", "personalclaw[stt]", "personalclaw[tts]"]
+
+# Development and testing — superset of test + every local-model feature, so a
+# dev install (and the `make serve` dev gateway) can download/run the native
+# embedding/STT/TTS models the same way the container can.
+dev = [
+    "personalclaw[test]",
+    "personalclaw[models]",
+    "personalclaw[bedrock]",
+    # The `openai` SDK is a TEST-ENVIRONMENT dependency, not a core one. Two suites are
+    # `pytest.importorskip("openai")`-gated and were therefore SILENTLY UNVERIFIED in CI
+    # (`uv sync --locked --extra dev` never installed it): test_openai_sdk_drive.py —
+    # whose own skip reason says the SDK drive is then "UNVERIFIED here" — and
+    # test_evals_cell_provider.py's protocol-client test. Worse, an eval CELL cannot run
+    # without it at all: evals/cell_provider.py::_register_cell_type binds every cell
+    # through llm/branded_specs.py::build_protocol_provider, whose non-`anthropic` branch
+    # constructs OpenAIProvider, so the SDK is a hard runtime requirement of the evals
+    # subsystem — and evals/runner.py maps the child's non-zero exit to VERIFIER_ABSENT,
+    # which turns the MissingSDKError into an empty scored set rather than an error.
+    # Measured 2026-09-22 in a `uv sync --locked --extra dev` env: the two gated suites go
+    # 0-run -> 35 passed, and #2680's paired-eval gate test goes FAILED -> passed, with
+    # the SDK presence as the only variable. This does NOT weaken the provider-boundary
+    # tenet (line ~106): openai/anthropic stay out of CORE, the lazy adapter imports and
+    # their MissingSDKError remedy are unchanged, and `pip install personalclaw` stays
+    # lean. The extra whose exclusion from dev/test IS deliberate says so explicitly
+    # ([keychain], above); this one never did.
+    "personalclaw[openai]",
+    # Formatter/linter majors are pinned to the SAME major CI resolves from uv.lock,
+    # because CI runs `uv sync --locked` while the documented dev install is
+    # `pip install -e ".[dev]"` — which ignores the lock and resolves freely. An
+    # unbounded spec therefore lets a local gate run a different tool major than the
+    # gate that decides the merge, in either direction:
+    #   * isort was `>=5` and pip resolved 9.0.1, which flags 8 files on a BYTE-CLEAN
+    #     tree at origin/main (measured; 8.0.1 flags zero). Every agent building a
+    #     fresh venv saw that phantom red and had to investigate it.
+    #   * mypy was `>=1.5` while the lock has 2.3.0, so a local gate could type-check
+    #     under 1.x rules against a CI running 2.x — the same skew, aged the other way.
+    # `black` was already bounded for exactly this reason; the others were the oversight.
+    # Upgrading a major is now a deliberate PR (bump lock + bound together) rather than
+    # something that arrives with whoever installed most recently.
+    "black>=26,<27",
+    "isort>=8,<9",
+    "flake8>=7,<8",
+    "mypy>=2,<3",
+    "build>=1.0",
+]
+test = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+    "pytest-xdist>=3",
+    "pytest-timeout>=2",
+    "pytest-cov>=4",
+    "hypothesis>=6",
+]
+
+[project.scripts]
+personalclaw = "personalclaw.cli:main"
+
+# Entry-point provider groups loaded via importlib.metadata in
+# personalclaw.provider_registry.discover_providers(). LLM models, agents,
+# skills, tasks, tools and other entities are resolved through the bundled-app
+# extension registry (providers/registry.py + each bundle's app.json) and
+# import-time self-registration, so they are intentionally not declared here.
+[project.entry-points."personalclaw.message_source_providers"]
+filesystem = "personalclaw.inbox_providers.filesystem_source"
+# Channel-specific sources (e.g. Slack) are contributed by their app bundle's
+# transport via ChannelTransportProvider.message_source(), NOT declared here.
+
+# ── Setuptools ────────────────────────────────────────────────────────────────
+[tool.setuptools]
+# zip-safe intentionally NOT set (defaults to unzipped install): the runtime reads
+# packaged files by filesystem path — frontend.py serves personalclaw/static/dist/*,
+# config/defaults.json is read directly, and bundled skills/apps are globbed on disk.
+# A zipped egg would break those path reads; safe > clever.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+personalclaw = [
+    "py.typed",
+    "model_tokens.json",
+    "model_pricing.json",
+    # The baseline bash denylist. shell_denylist.py raises at import if this is missing,
+    # so a wheel without this line does not "degrade to no denylist" — it fails to start.
+    "baseline_denylist.json",
+    # THE scanner-rule gloss (#2633) — the one plain-language map behind all three
+    # finding-row renderers: the app-install consent card, the skills marketplace, and
+    # `personalclaw skills install`. web/src/lib/scanFindings.ts imports this same file at
+    # BUILD time; the CLI reads it at RUNTIME, where web/src does not exist. A wheel without
+    # this line makes supply_chain.load_scan_rule_gloss() RAISE rather than return {} — a
+    # refused install fails loudly instead of quietly going back to printing bare rule
+    # names, which is the whole defect the map removes. test_scan_rule_gloss.py proves the
+    # file out of a BUILT wheel, not out of the source tree.
+    "scan_rule_gloss.json",
+    # The hands-free voice loop's shipped confirmation and exit phrases. voice/duplex.py reads it
+    # at IMPORT for the config defaults, and web/src/ui/composer/duplex.ts imports the same file at
+    # build time, so a wheel without this line fails to start rather than ship a loop with no way
+    # to discard a dictated turn.
+    "voice/phrases.json",
+    # The owner-token link's browser half (dashboard/owner_token_url.py inlines it into the SPA
+    # document a `?token=` link opens, the Connect gate and the sign-in page). Read at IMPORT:
+    # a wheel without this line fails to start instead of serving a Connect gate whose button
+    # does nothing.
+    "dashboard/owner_token_url.js",
+    # The in-tree signing trust store. A wheel without this line ships a verifier
+    # with no trusted keys, so every signed bundle would be refused as "unknown key" —
+    # the safe direction, but it would silently retire first-party signing.
+    "trusted_keys/*.pub",
+    "config/defaults.json",
+    "config/prompts/*.md",
+    "config/prompt_snippets/*.md",
+    "config/design/*.json",
+    "tool_providers/rules_builtin.json",
+    # The shipped Loop-1 scenario library. evals/scenarios.py installs these
+    # into ~/.personalclaw/evals/scenarios/ on first reference; a wheel without this
+    # line ships an empty library, so the line is load-bearing, not cosmetic.
+    "evals/library/*.json",
+    # The shipped judge fixture sets. `judge_bench.resolve_fixture_set_path` reads
+    # these straight out of the package (the home only overrides them), so a wheel without
+    # this line ships a judge benchmark with nothing to benchmark — `personalclaw
+    # judge-bench` would refuse with "shipped sets: <none>" on every install.
+    "evals/benchmarks/judge/*.json",
+    "tests_fixtures/**/*",
+    "skills/bundled/*/SKILL.md",
+    # Progressive-disclosure companions a bundled SKILL.md links to (e.g.
+    # check-work/references/qa-boundary.md). Without this line the wheel ships a skill
+    # whose own text points at a file that isn't there — a dangling reference, not a
+    # degradation, so the line is load-bearing.
+    "skills/bundled/*/references/*.md",
+    # The bundled template library. `workflow.json`, not the `WORKFLOW.md` this line
+    # used to name: that filename was never produced by anything, so the wheel shipped an empty
+    # template library and only a real `pip install` would have shown it.
+    "workflows/bundled/*/workflow.json",
+    # The shared conventions blocks templates cite. Without this line the wheel ships
+    # templates whose `{{block:…}}` references cannot resolve — and an unresolvable reference is
+    # a hard error, so every review template would fail to load rather than degrade.
+    "workflows/bundled/shared/*.md",
+    "apps/native/*/app.json",
+    # A bundled app's OWN provider code (the native capability contract). MEASURED
+    # 2026-09-21 on a clean `rm -rf build dist && python -m build --wheel`: setuptools 84
+    # already carries `apps/native/*/*.py` into the wheel with no glob declared, while a
+    # `.txt`/`.yaml` beside it is dropped — so the inclusion is real but it rests entirely
+    # on setuptools' implicit handling of Python sources under the package tree.
+    # `build-system.requires` pins setuptools, but a pin is bumped, so that implicit behaviour
+    # is not ours to rely on: without this line a future setuptools could stop shipping
+    # `ollama-models`' and `personalclaw-ui-docs`' providers, and the failure would be a
+    # bundled app whose manifest names a module that isn't there — an error row in the
+    # Store on every install, discoverable only from a real `pip install`.
+    "apps/native/*/*.py",
+    # A bundled app's own LICENSE and README. MEASURED on the same clean build: non-`.py`
+    # files beside `app.json` are DROPPED, so without these two lines `ollama-models` shipped
+    # in the wheel with no licence statement at all — its `app.json` declares no licence
+    # field, so that file is the app's only terms, and `seed_builtin_apps` copies the whole
+    # bundle dir into the user's home. An app the platform installs on every first boot
+    # should carry its grant. `docs/architecture/licence-identity.txt` records the judgment
+    # behind keeping it rather than treating it as a duplicate of the root LICENSE.
+    "apps/native/*/LICENSE",
+    "apps/native/*/README.md",
+    # A bundled app's own prompt assets, the ones its `app.json` NAMES. MEASURED 2026-09-23
+    # while deriving the frozen bundle's payload from this block: `native-knowledge/app.json`
+    # declares four `prompts/*.yaml` files and not one of them was declared here, so
+    # `pip install personalclaw` shipped that app with its manifest pointing at prompts the
+    # wheel does not contain. The frozen bundle had them only because its spec copied the
+    # whole `apps/native` directory — the accident that hid this, and the accident the
+    # derivation removes. Same load-bearing reasoning as the LICENSE/README lines above:
+    # non-`.py` files beside `app.json` are DROPPED unless a glob names them.
+    "apps/native/*/prompts/*.yaml",
+    # 🔴 The bundled default chat model's WEIGHT IS DELIBERATELY NOT HERE: the wheel
+    # ships without the weight and fetches it on first run.
+    # There is no `*.gguf` glob and there must not be one: the weight is 138 MiB, which is
+    # over PyPI's 100 MiB per-file limit, and a ~147 MiB wheel for every install is a cost
+    # most users would pay for a model they replace on day one. It is fetched ONCE into
+    # `$PERSONALCLAW_HOME/models/bundled-chat/`, digest-verified against the sign-off record
+    # below, at the user's explicit go-ahead.
+    # `scripts/verify_wheel.py` assertion 7 enforces the absence: a wheel that grew a
+    # weight-shaped member REDS, because that member would silently reintroduce the limit
+    # problem and nothing else in the pipeline is looking.
+    #
+    # The licence text and attribution ARE shipped — 12 KB, and they are what the fetcher
+    # copies next to the downloaded weight so Apache-2.0 §4 is satisfied on the machine that
+    # actually holds the bytes, with no second network hop to fetch a LICENSE file.
+    "apps/native/*/weights/MODEL_LICENSE",
+    "apps/native/*/weights/MODEL_NOTICE",
+    # The sign-off record itself — the RUNTIME reads it, because it carries the source pin, the
+    # digest and the exact size the first-run download needs. It is a REAL file in the app dir,
+    # the one copy git holds, and the docs link to it. It used to be a symlink into
+    # `docs/architecture/`, which setuptools dereferenced only when `docs/` sat beside `src/`:
+    # true for a checkout and for `uv build`, false for the container image, which copies
+    # `src/` alone — so the image installed no record and could neither offer nor fetch its
+    # default model. `tests/test_src_tree_is_self_contained.py` reds on any link that leaves
+    # `src/`, and `scripts/verify_wheel.py` reads this record out of the INSTALLED wheel.
+    "apps/native/*/bundled-model-signoff.txt",
+    # The ONE token-lint rule, shared by web/src/design/tokenLintRule.ts and
+    # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim
+    # from an installed wheel with no core checkout on disk, so a wheel without this
+    # line makes `load_token_lint_rules()` raise rather than pass everything — loud,
+    # not silently permissive, which is the direction this change cares about.
+    "apps/token_lint_rules.json",
+    # …and the BEHAVIOURAL pin beside it (#3337). The four patterns are data, so parity is
+    # byte-equality; deciding which text on a line is CODE is a LEXER, which cannot be
+    # shared as data, so it exists twice (`stripComments` / `strip_comments`) and its
+    # behaviour is pinned by a shared case file instead. It ships with the rule it pins so
+    # the apps-repo CI can check its wheel's lint the same way the host does — a wheel
+    # carrying the patterns but not the cases could drift the comment semantics silently,
+    # which is the half of the gate an app author actually trips.
+    "apps/token_lint_comment_cases.json",
+    # The shipped BYO-runner catalog. Settings → Agents
+    # renders one row per definition, so a wheel without this line ships an EMPTY runner
+    # catalog: no Claude Code / Codex / Gemini CLI / Kiro rows, no adapter verification to
+    # gate an unattended spawn on. `test_runner_catalog.py` asserts the shipped rows load.
+    "agents/runner_catalog.json",
+    # The bundled source-recipe directory. These are the create flow's
+    # "is this site already covered?" answers, so a wheel without this line ships an empty
+    # directory and every paste-a-URL looks uncovered — a silent product regression, not a
+    # crash. `test_connector_pack.py` asserts the shipped count is non-zero.
+    "knowledge/sources/recipes/*.json",
+    # The bundled Domain OS packs — authored source trees the pack
+    # builder assembles into a `.pclaw` on demand. A wheel without these lines ships a Store
+    # with zero bundled packs and `build_bundled` raising "no bundled pack named …", so the
+    # lines are load-bearing. Recursive, because a pack carries skill dirs and runbooks at
+    # depths this glob has to reach.
+    "packs/bundled/**/*.md",
+    "packs/bundled/**/*.json",
+    "packs/bundled/**/*.yaml",
+    "reference/*.md",
+]
+
+# ── Tool configs ──────────────────────────────────────────────────────────────
+# Linux's torch is PyTorch's CPU build, in the lock and so everywhere the lock is installed: the
+# gateway image, and CI. The default Linux wheel on PyPI pulls nineteen CUDA runtime packages
+# (2.2 GB of wheels on x86_64) that a machine with no GPU never uses, and the image has always
+# installed the CPU build. `explicit` keeps every other package off that index. Only uv reads
+# this table; a `pip install 'personalclaw[embeddings]'` still resolves torch from PyPI.
+[tool.uv]
+# The oldest uv that reads and writes this lockfile's format (revision 5). A floor, not an exact
+# pin, so a newer uv keeps working in a checkout; CI and the gateway image install exactly this
+# release (tests/rails/test_ci_contract.py holds the three to one version).
+required-version = ">=0.13.1"
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.black]
+line-length = 100
+# Pin the target so formatting is deterministic across runner/local Python versions
+# (an unpinned target is inferred from the interpreter and warns when it is newer
+# than the code's floor). The project floor is 3.12.
+target-version = ["py312"]
+
+[tool.isort]
+known_first_party = ["personalclaw"]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+mypy_path = "src"
+check_untyped_defs = true
+show_error_codes = true
+pretty = true
+ignore_missing_imports = true
+# The bundled-app tree is checked ONE BUNDLE PER RUN by scripts/lint_bundled_apps.py, not
+# here. mypy maps every file to a module name, and a bundled app's dir is not a package
+# (hyphenated name, no __init__.py), so `apps/native/<name>/provider.py` maps to the
+# top-level module `provider`. The SECOND bundle that ships one therefore aborts the entire
+# run with "Duplicate module named 'provider'" before checking anything — and the native
+# capability contract EXPECTS that collision (providers/loader.py namespaces bundle modules
+# in sys.modules for exactly this reason). Excluding them here is not dropping the gate:
+# the script runs mypy per bundle from `make lint` and from CI's lint step, and carries a
+# vacuity floor so a run that checked nothing fails instead of passing.
+exclude = ['^src/personalclaw/apps/native/']
+
+[tool.pytest.ini_options]
+xfail_strict = true
+# "src" makes `personalclaw` importable; "." makes the repo-root `harness` dev
+# package importable from tests/ (the spec/replay harness lives
+# beside src/, not inside the shipped wheel — see harness/README.md).
+pythonpath = ["src", "."]
+# No worker count and no coverage here: a bare `pytest tests/test_x.py` runs in one process
+# with no tracer, so a quick check costs what the file costs. `make test` and every CI suite
+# step name their workers (`-n auto --dist worksteal`; the Makefile says why worksteal), and a
+# coverage run asks for it with `--cov=personalclaw`.
+addopts = [
+    "--verbose",
+    "--ignore=build",
+    "--timeout=120",
+    "--color=yes",
+]
+testpaths = ["tests"]
+markers = [
+    "security: proves a security or fail-closed boundary; never rerun, quarantined or selected out. tests/security_census.py names the modules that must carry it.",
+]
+
+# The per-test selection map (tools/ci/selection_map.py, #3946) reads which test ran each line, so
+# lines are recorded, not branches; paths are recorded relative to the checkout, so shards run on
+# different runners combine into one map; and every child interpreter a test starts is measured
+# too, since pytest-cov 7 no longer patches subprocesses itself. A child's lines carry no test's
+# context, so the map lists the files only children reached apart from the rest.
+[tool.coverage.run]
+branch = false
+parallel = true
+relative_files = true
+patch = ["subprocess"]
+
+[tool.coverage.paths]
+source = [
+    "src/personalclaw/",
+    "build/lib/*/site-packages/",
+]

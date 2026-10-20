@@ -1,0 +1,84 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Triggers" [level=#]
+  - button "New trigger"
+  - radiogroup "Triggers view":
+    - radio "List"
+    - radio "Week" [checked]
+  - status
+  - text: Nov # – # # fires this week · # suppressed
+  - button "Previous week"
+  - button "Next week"
+  - table "Scheduled trigger fires by day and hour. Shaded cells are suppressed by a quiet window or a skip date.":
+    - caption: Scheduled trigger fires by day and hour. Shaded cells are suppressed by a quiet window or a skip date.
+    - rowgroup:
+      - row "Hour Mon # Tue # Wed # Thu # Fri # Sat # Sun #":
+        - columnheader "Hour"
+        - columnheader "Mon #"
+        - columnheader "Tue #"
+        - columnheader "Wed #"
+        - columnheader "Thu #"
+        - columnheader "Fri #"
+        - columnheader "Sat #"
+        - columnheader "Sun #"
+    - rowgroup:
+      - 'row "# Mon, Nov # #:# — <fires> Tue, Nov # #:# — <fires> Wed, Nov # #:# — <fires> Thu, Nov # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing Fri, Nov # #:# — <fires> Sat, Nov # #:# — no fires Sun, Nov # #:# — no fires"':
+        - rowheader "#"
+        - 'button "Mon, Nov # #:# — <fires>"': "#"
+        - 'button "Tue, Nov # #:# — <fires>"': "#"
+        - 'button "Wed, Nov # #:# — <fires>"': "#"
+        - 'button "Thu, Nov # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing"': "#"
+        - 'button "Fri, Nov # #:# — <fires>"': "#"
+        - cell "Sat, Nov # #:# — no fires"
+        - cell "Sun, Nov # #:# — no fires"
+      - 'row "# Mon, Nov # #:# — no fires Tue, Nov # #:# — no fires Wed, Nov # #:# — no fires Thu, Nov # #:# — no fires Fri, Nov # #:# — <fires> Sat, Nov # #:# — no fires Sun, Nov # #:# — no fires"':
+        - rowheader "#"
+        - cell "Mon, Nov # #:# — no fires"
+        - cell "Tue, Nov # #:# — no fires"
+        - cell "Wed, Nov # #:# — no fires"
+        - cell "Thu, Nov # #:# — no fires"
+        - 'button "Fri, Nov # #:# — <fires>"': "#"
+        - cell "Sat, Nov # #:# — no fires"
+        - cell "Sun, Nov # #:# — no fires"
+      - 'row "# Mon, Nov # #:# — no fires Tue, Nov # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest Wed, Nov # #:# — no fires Thu, Nov # #:# — no fires Fri, Nov # #:# — no fires Sat, Nov # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup Sun, Nov # #:# — no fires"':
+        - rowheader "#"
+        - cell "Mon, Nov # #:# — no fires"
+        - 'button "Tue, Nov # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest"': "#"
+        - cell "Wed, Nov # #:# — no fires"
+        - cell "Thu, Nov # #:# — no fires"
+        - cell "Fri, Nov # #:# — no fires"
+        - 'button "Sat, Nov # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup"': "#"
+        - cell "Sun, Nov # #:# — no fires"
+  - text: Will run Partly suppressed Quiet hours Skip date

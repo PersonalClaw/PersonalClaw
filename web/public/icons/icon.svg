@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="PersonalClaw">
+  <!-- PWA app-icon tile: the claw mark on the dashboard's dark canvas.
+       ONE source of truth for every declared icon. The claw is inset to 60% of
+       the tile so it clears the maskable safe zone (a centred circle of radius
+       40%), which lets the same raster serve `purpose: "any maskable"` — Android
+       masks it, iOS squircles it, and nothing is clipped either way.
+       The PNG rasters the manifest declares are generated from THIS file:
+         rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png
+         rsvg-convert -w 512 -h 512 icon.svg -o icon-512.png
+       Regenerate both whenever this file changes; web/src/app/manifest.test.ts
+       reads each PNG's IHDR and fails if a declared size stops matching. -->
+  <defs>
+    <linearGradient id="claw" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c85a48"/>
+      <stop offset="0.45" stop-color="#ff6b5b"/>
+      <stop offset="0.75" stop-color="#ff9a7a"/>
+      <stop offset="1" stop-color="#ffb454"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="#0f0f0f"/>
+  <g transform="translate(102.4 102.4) scale(0.6)">
+    <path fill="url(#claw)" d="M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z"/>
+  </g>
+</svg>

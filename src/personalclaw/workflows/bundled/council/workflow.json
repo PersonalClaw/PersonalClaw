@@ -1,0 +1,184 @@
+{
+  "name": "council",
+  "description": "Put one question to a council of members who each answer it independently in a different role, then synthesize a single decision that attributes every position, names the real disagreements instead of averaging them, and says what would change the answer.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "deliberation",
+    "decision"
+  ],
+  "inputs": {
+    "question": {
+      "type": "string",
+      "required": true,
+      "help": "The one brief every member answers. Identical for all of them — the variation is the ROLE each member argues from, not the ask, so a question phrased to favour an answer poisons every seat at once."
+    },
+    "context": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Material every member is handed with the question — the design, the numbers, the constraints. Members cannot go and read anything themselves, so whatever is missing here is missing from all three answers."
+    },
+    "member_1_role": {
+      "type": "string",
+      "required": false,
+      "default": "the advocate — build the strongest honest case FOR the most obvious answer, and say plainly what it costs",
+      "help": "The first member's role blurb. Members are only worth convening when their roles pull in genuinely different directions; three variations on 'be thorough' produce three of the same answer at three times the price."
+    },
+    "member_2_role": {
+      "type": "string",
+      "required": false,
+      "default": "the skeptic — find the case AGAINST, the assumption nobody checked, and the way this fails quietly rather than loudly",
+      "help": "The second member's role blurb. The default is the adversarial seat, which is the one that most often changes the decision."
+    },
+    "member_3_role": {
+      "type": "string",
+      "required": false,
+      "default": "the pragmatist — what actually happens when this meets the existing system, what it costs to run, and what has to be sequenced before it",
+      "help": "The third member's role blurb. Three seats is the floor that yields a spread rather than a duel; a fourth is a one-node edit to this template when a question needs one."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "cost_tier": "metered",
+    "why_metered": "Four reasoning-tier model calls per run — one per member plus the synthesis — with no tools, no file writes and no egress: every node here is an `infer`, which is ONE bounded call by definition. The member calls sit in a `parallel`, so the spend is 4x a single ask while the wall clock is closer to 2x.",
+    "capabilities": [],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Convene the council on 'should we drop the local cache and read straight from the store?' — make member 3 the person who has to operate this at 3am."
+      },
+      {
+        "event": "mutation",
+        "description": "Member 2's role is landing too close to member 1's — retarget it at operational cost and sequencing before the synthesis node runs."
+      }
+    ],
+    "keywords": [
+      "council",
+      "get several opinions",
+      "deliberate",
+      "weigh the arguments",
+      "different perspectives",
+      "help me decide"
+    ],
+    "example_outputs": [
+      "one decision with every member's position attributed beside it, the disagreements named rather than averaged, and the strongest position the decision did NOT follow stated at full strength"
+    ],
+    "when_not_to_use": "anything with one correct answer — three roles arguing over a lookup is three times the cost for the fact you already had. And this is not a verifier: members reason over what `context` hands them and cannot go read the tree, so a claim that needs checking against reality wants check-work or a stage-based review instead."
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "parallel",
+        "id": "convene",
+        "label": "Members answer independently",
+        "children": [
+          {
+            "kind": "infer",
+            "id": "member_1",
+            "label": "Member 1",
+            "config": {
+              "model_tier": "reasoning",
+              "prompt": "You are ONE member of a council. Your role: {{inputs.member_1_role}}\n\nAnswer the question from that role and from nothing else. You cannot see the other members' answers, and guessing at what they will say is the one thing that would make this council worthless — its whole value is that the reads are independent before anything merges them.\n\nQuestion:\n{{inputs.question}}\n\nWhat every member was handed:\n{{inputs.context}}\n\nSay what you actually think, including where your own role's instinct is weak. A member who hedges toward the middle to sound reasonable contributes nothing the synthesis can use.\n\nReturn JSON: {\"stance\": \"yes|no|it-depends\", \"position\": \"your answer, under 120 words\", \"reasons\": [\"the reasons that carry the weight, strongest first\"], \"risk\": \"the single thing most likely to make you wrong\", \"confidence\": \"high|medium|low\"}",
+              "schema": {
+                "stance": "string",
+                "position": "string",
+                "reasons": "array",
+                "risk": "string",
+                "confidence": "string"
+              }
+            }
+          },
+          {
+            "kind": "infer",
+            "id": "member_2",
+            "label": "Member 2",
+            "config": {
+              "model_tier": "reasoning",
+              "prompt": "You are ONE member of a council. Your role: {{inputs.member_2_role}}\n\nAnswer the question from that role and from nothing else. You cannot see the other members' answers, and guessing at what they will say is the one thing that would make this council worthless — its whole value is that the reads are independent before anything merges them.\n\nQuestion:\n{{inputs.question}}\n\nWhat every member was handed:\n{{inputs.context}}\n\nSay what you actually think, including where your own role's instinct is weak. A member who hedges toward the middle to sound reasonable contributes nothing the synthesis can use.\n\nReturn JSON: {\"stance\": \"yes|no|it-depends\", \"position\": \"your answer, under 120 words\", \"reasons\": [\"the reasons that carry the weight, strongest first\"], \"risk\": \"the single thing most likely to make you wrong\", \"confidence\": \"high|medium|low\"}",
+              "schema": {
+                "stance": "string",
+                "position": "string",
+                "reasons": "array",
+                "risk": "string",
+                "confidence": "string"
+              }
+            }
+          },
+          {
+            "kind": "infer",
+            "id": "member_3",
+            "label": "Member 3",
+            "config": {
+              "model_tier": "reasoning",
+              "prompt": "You are ONE member of a council. Your role: {{inputs.member_3_role}}\n\nAnswer the question from that role and from nothing else. You cannot see the other members' answers, and guessing at what they will say is the one thing that would make this council worthless — its whole value is that the reads are independent before anything merges them.\n\nQuestion:\n{{inputs.question}}\n\nWhat every member was handed:\n{{inputs.context}}\n\nSay what you actually think, including where your own role's instinct is weak. A member who hedges toward the middle to sound reasonable contributes nothing the synthesis can use.\n\nReturn JSON: {\"stance\": \"yes|no|it-depends\", \"position\": \"your answer, under 120 words\", \"reasons\": [\"the reasons that carry the weight, strongest first\"], \"risk\": \"the single thing most likely to make you wrong\", \"confidence\": \"high|medium|low\"}",
+              "schema": {
+                "stance": "string",
+                "position": "string",
+                "reasons": "array",
+                "risk": "string",
+                "confidence": "string"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "kind": "transform",
+        "id": "positions",
+        "label": "The slate of positions",
+        "config": {
+          "expr": {
+            "question": "{{inputs.question}}",
+            "members": [
+              {
+                "member": "member_1",
+                "role": "{{inputs.member_1_role}}",
+                "answer": "{{nodes.member_1.output}}"
+              },
+              {
+                "member": "member_2",
+                "role": "{{inputs.member_2_role}}",
+                "answer": "{{nodes.member_2.output}}"
+              },
+              {
+                "member": "member_3",
+                "role": "{{inputs.member_3_role}}",
+                "answer": "{{nodes.member_3.output}}"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "synthesis",
+        "label": "Synthesize an attributed decision",
+        "config": {
+          "model_tier": "reasoning",
+          "prompt": "Three council members answered the same question independently, each from a different role. Produce ONE decision.\n\nAttribute every position to the member who held it. A synthesis that launders three named reads into an anonymous consensus destroys the only thing the fan-out bought, because the reader can no longer tell which role the decision is standing on.\n\nWhere the members disagree, say what the disagreement is ABOUT rather than splitting the difference — an averaged answer to a real disagreement is one nobody in the room actually holds. Where they agree for DIFFERENT reasons, that is weaker agreement than it looks, and worth saying so.\n\nYou are synthesizing, not counting votes: one member who is right outranks two who are wrong. Decide on the strength of the reasoning, and when you go against the majority, say that you did and why.\n\nQuestion and positions:\n{{nodes.positions.output}}\n\nReturn JSON: {\"decision\": \"the call, and what follows from it\", \"confidence\": \"high|medium|low\", \"attributed\": [{\"member\": \"which member\", \"role\": \"their role\", \"stance\": \"their stance\", \"held\": \"their position in one line\", \"weight\": \"how much it moved the decision, and why\"}], \"agreements\": [\"what they genuinely converged on\"], \"disagreements\": [{\"about\": \"what the disagreement is over\", \"members\": [\"who is on each side\"], \"unresolved\": true}], \"dissent\": \"the strongest position this decision does NOT follow, stated at full strength rather than softened\", \"would_change_it\": [\"the evidence that would flip this\"]}",
+          "schema": {
+            "decision": "string",
+            "confidence": "string",
+            "attributed": "array",
+            "agreements": "array",
+            "disagreements": "array",
+            "dissent": "string",
+            "would_change_it": "array"
+          }
+        }
+      },
+      {
+        "kind": "transform",
+        "id": "decision",
+        "label": "The council's decision",
+        "config": {
+          "expr": "{{nodes.synthesis.output}}"
+        }
+      }
+    ]
+  }
+}

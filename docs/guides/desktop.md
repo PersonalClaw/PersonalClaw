@@ -1,0 +1,625 @@
+# The desktop app
+
+PersonalClaw's desktop shell is a thin Electron wrapper around the same gateway and
+dashboard you get in a browser. It exists for the things a browser tab cannot do: a
+menu-bar presence, native permissions, and a **global push-to-talk shortcut** that works
+while another app has focus.
+
+Everything the shell adds is a *capability*, granted individually and visible in
+**Settings → Security → Desktop capabilities**. In a browser tab that panel says "desktop
+app not connected" and none of this applies.
+
+## The menu-bar item
+
+The shell puts an icon in the macOS menu bar and keeps it there while PersonalClaw is
+running. Its menu is live, refreshed every few seconds from the local gateway:
+
+- **Approvals waiting** — how many tool approvals are pending. Clicking the row opens
+  the chat surface where they are answered. It stays clickable at zero, so it is a way
+  in rather than a row that greys out the moment you catch up.
+- **Loops running** — a submenu of the loops currently `running`; each entry deep-links
+  to that loop. Paused, blocked and awaiting-input loops are *not* counted here — they
+  are active, but nothing is working on them.
+- **Quick Capture Note** — opens the Inbox with its note composer open, the same one the
+  Inbox header's **Capture a note** opens. What you write is saved as your own Inbox
+  item, up to 4,000 characters; if the save fails, your text stays in the composer.
+- **Open Dashboard**, **Open at Login**, and **Quit PersonalClaw**.
+
+When the count beside the icon and the "● Listening" capture indicator want the same
+space, **listening always wins** — a live microphone is never hidden behind a badge.
+
+If the gateway cannot be reached the menu says **"not connected"** rather than showing
+zeroes, because a zero looks like good news.
+
+### Closing the window is not quitting
+
+Closing the window hides it; the menu-bar item brings it back, and PersonalClaw keeps
+running. If the menu-bar item could not be created — a missing icon, or a platform
+without one — the shell notices and closes the window for real instead, so you can
+never end up with a running app you have no way to reach.
+
+## Open PersonalClaw at login
+
+**Off by default.** There are two places to turn it on, and they are the same switch:
+the menu bar's **Open at Login**, and **Settings → Security → Desktop capabilities →
+Open at login**. Flip either and the other follows — there is one registration, not one
+per surface.
+
+It registers this app with macOS Login Items — the same list in **System Settings →
+General → Login Items**, where you can also remove it without launching PersonalClaw. It
+needs no administrator password, writes no launch agent of its own, and turning it on
+twice cannot leave two entries behind.
+
+macOS owns this setting, so PersonalClaw keeps no copy of it. Both surfaces read the
+registration from the OS every time they draw, which is why removing it in System
+Settings shows up here rather than leaving a switch stuck on. If macOS declines the
+change, the switch says so and stays where the OS actually left it.
+
+In a browser tab there is no switch: registering a login item needs the desktop app, and
+a toggle that could not do anything would be worse than an honest absence.
+
+## How the app signs in to the gateway it starts
+
+The gateway the app starts asks every request for a sign-in, exactly as a gateway started any
+other way does: token sign-in is on, and it listens on this computer only. The app does not turn
+that off, and it does not pass on the variables that would (`PERSONALCLAW_AUTH_MODE`,
+`PERSONALCLAW_BYPASS_LOCAL_NETWORKS`, `PERSONALCLAW_BIND_HOST`), even when it is started from a
+terminal that sets them.
+
+Each time the gateway starts it hands the app a sign-in made for that start, on a pipe only the
+app reads, and the app signs its windows in with it:
+
+- **It is kept in memory only.** The windows carry it as the gateway's session cookie, which the
+  app holds for as long as it runs and never writes to disk; the app's own requests, such as the
+  menu bar's counts, carry it in a header. It is never put in an address, so no window's history
+  holds it, and the app never writes it to its log.
+- **Every window is signed in.** The main window, a new tab, a page a link opens in its own
+  window, and the menu bar's and notifications' links into the dashboard all share it.
+- **Quitting signs it out.** While the app runs, Settings → Devices lists it as "PersonalClaw
+  desktop app". Quitting ends that sign-in, and the next launch makes a new one.
+- **A restart signs the windows in again.** When the gateway restarts in place, it comes back on
+  a new port with a new sign-in. The app follows it there: each window reloads the page it was
+  on, signed in, and the sign-in from before the restart is ended.
+
+So everything else on this computer meets the same door a browser does. Another program cannot
+list or answer your approvals without signing in, an app you installed reaches only the routes
+its permissions declare, and the credential an agent CLI's tools hold opens only the operations
+it exists for.
+
+If the app is signed out from another device (Settings → Devices), or its sign-in runs out
+(`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
+to sign it back in.
+
+## The window
+
+On macOS the window has no title bar of its own: the window controls (close, minimize, zoom) sit
+in the strip above the sidebar, and the sidebar takes the system's translucent material, so the
+desktop shows through it softly. Everything you read and type in, the page beside the sidebar,
+stays opaque.
+
+The window is opaque all over, with the controls in the same place, when:
+
+- **macOS asks for reduced transparency** (System Settings → Accessibility → Display → Reduce
+  transparency). Turning it on or off changes every open window at once, with no restart.
+- **The page asks for it**, through the browser's reduced-transparency preference.
+
+On Linux the window keeps its plain frameless look, with no material.
+
+## Links that open the app
+
+A `personalclaw://` link opens the desktop app on one of its pages, from a browser, another app or
+Terminal (`open "personalclaw://settings"` on macOS). The installed app registers the scheme; a
+development run started from the repository does not take it over.
+
+```
+personalclaw://<page>[/<item>...][?<state>=<value>&...]
+```
+
+- **The page** is one of the dashboard's pages, by the name its address uses: `dashboard`, `chat`,
+  `projects`, `knowledge`, `tasks`, `inbox`, `triggers`, `files`, `artifacts`, `terminal`,
+  `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`, `apps`, `settings`,
+  `notifications`, `discover`, `loop`, `loops`, `code`, `app` or `mission-control`. `threads` is
+  another name for `chat` and `automations` for `triggers`. Names are lower case. The app's two
+  shell pages, `onboarding` and `companion`, are not on the list: a link to either is refused.
+- **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
+  `. _ : @ ~ -`.
+- **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder), on a
+  new thread only `prompt`, and on a code project's cockpit only `diff`, `commit` and `task`, each
+  given once. An artifact has a page of its own, so a link names it as one
+  (`personalclaw://artifacts/<slug>`); an `artifact` key gets the link refused.
+
+What the dashboard does with the state:
+
+- **`prompt`** is put in the new thread's composer, and nothing more. It is not sent: you read
+  it, change it if you like, and send it yourself. The address then holds it as the draft, so a
+  reload shows it in the composer again, still unsent. If the app is already showing a new
+  thread, the link opens a fresh one with its prompt in place of the unsent draft.
+- **`pane`** opens one of the chat's panes: `activity` on a thread, `history` on a new thread.
+  A pane the thread does not have is left closed. Other pages, apart from a code project's cockpit
+  (below), do not read `pane`.
+- **`file`** is the file the thread's file pane opens beside it.
+- **`project`** binds a new thread to that project, as the project's own Chat button does.
+- **`mode`** is read by the page it names, as that page's own address does: Skills opens its
+  Browse or Proposals view (`mode=browse`, `mode=proposals`), and the new-loop form opens with
+  Attended on (`personalclaw://loop?mode=attended`). On a thread it is the task mode: `agent`,
+  `ask`, `plan` or `build`. A new thread opens in that mode, which reaches the gateway only when
+  you send, as a mode you pick on the pill does. If the app is already showing a new thread in
+  another mode, the link moves it to the link's mode (Agent, for a link with no `mode`) and puts
+  its approval back to Normal, as on a new thread the link opens, so a link never leaves an
+  auto-approve you picked for another mode; your draft stays. An existing thread keeps the mode it
+  has, and the address is corrected to it, so a link never changes how a chat runs. The address
+  follows the mode as you change it, so a reload or a copied address opens the chat in the mode it
+  was in.
+
+On a code project's cockpit (`personalclaw://code/<id>`) the state is the review you had open, and
+the cockpit's own address keeps it as you click, so a reload, Back or a copied address opens the
+same review:
+
+- **`pane`** is the files rail's tab: `changes`, or `files`, which is also what it shows with none.
+- **`file`**, **`diff`** or **`commit`** is the one thing the center shows: a file open in the
+  editor, a file's working-copy diff, or a commit's changes. A file and a diff are paths inside the
+  project's workspace; a commit is its hash, 7 to 40 lowercase hex characters. The center shows one
+  at a time, so a link that names more than one of the three is refused. A commit's hash is only
+  read: it opens that commit's changes and goes nowhere else. A commit the Changes tab lists by a
+  shorter hash, as git abbreviates in some repositories, opens when you click it, and the address
+  then names none of the three.
+- **`task`** opens that task's detail in the Tasks panel. Opening it only shows it: its steer box
+  starts empty, and nothing is queued or sent. A task that is not in the project's lists is closed
+  again once they are read and hold a task.
+
+`diff`, `commit` and `task` on any other page get the link refused.
+
+For example:
+
+| Link | Opens |
+|---|---|
+| `personalclaw://threads/new?prompt=draft%20this` | a new thread, with the prompt in its composer, unsent |
+| `personalclaw://settings/providers` | Settings, at its providers address |
+| `personalclaw://skills` | Skills |
+| `personalclaw://automations` | Automations |
+| `personalclaw://artifacts/<slug>` | that artifact |
+| `personalclaw://threads/<key>?pane=activity&file=src%2Fapp.py` | that thread, with its Activity pane and that file open |
+| `personalclaw://code/<id>?pane=changes&diff=src%2Fapp.py&task=<task>` | that code project, on its Changes tab, with that file's diff and that task open |
+
+**A link only opens a page. It never acts.** It sends nothing, approves nothing, answers nothing
+and runs nothing. Any other key in a link, a key that would act included, gets the link refused.
+So does an unknown page, an encoded `/`, `#`, `?` or quote inside an item, a fragment, a value
+that is too long or the wrong shape, a file path outside the thread's folder, more than one of
+`file`, `diff` and `commit`, and a prompt with control characters other than tabs and line
+breaks. A refused link brings the app forward and changes nothing.
+
+A link that arrives while the app is still starting waits until the dashboard has loaded, and only
+the newest one waits. It is delivered once, and only to the dashboard of the gateway the window
+shows: never to the loading page, the gateway switcher, the gateway's sign-in or pairing page, or
+another site. The app's log says which page a link opened, or why it was refused, and never repeats
+the link itself, which can hold a prompt.
+
+## Other sites open in your browser
+
+The app's windows show only the dashboard of the gateway you are looking at. A link to another
+site, a window a page asks for on another site, and a page a server redirects to all open in your
+default browser instead. Only a web address (`http` or `https`) is handed to the browser: a file,
+another app's link or a blank page is not opened at all.
+
+Signing in to a remote tool server on the **Tools** page works the same way. Its sign-in page opens
+in your browser, the Tools page says it opened there, and the server's card turns to signed in once
+you finish. If the app could not open your browser, the page says why and gives you the sign-in link
+to copy into a browser yourself. On a gateway you paired with (below), the page cannot ask the app to
+open it, so it offers the link instead, and the link opens in your browser too.
+
+## Connecting to a gateway you did not start
+
+By default the desktop app starts its own gateway on this computer and loads that. That has not
+changed, and nothing below happens unless you ask for it.
+
+**Gateway → Gateways…** (⌘⇧G) opens the switcher. It lists every gateway you have paired with, marks
+the one you are looking at, and lets you add another — a PersonalClaw running on a different machine
+on your network, or your own gateway reached through the [remote access](remote-access.md) tunnel.
+Picking a different one reloads the dashboard from that gateway. Nothing is shared between them: see
+[No hub, ever](companion-apps.md#no-hub-ever).
+
+### Adding one: paste the pairing link
+
+On the gateway you want to reach, open **Settings → Devices → Pair a device**. It gives you a link
+that looks like `http://claw.local:10000/pair?code=ABCD-2345`. Paste that whole link into the
+switcher.
+
+Paste the *link*, not just the code, because the address in it was composed by that gateway rather
+than typed by you — so there is no address to get wrong. The app then shows you exactly which host it
+is about to open, and which network that host is on, and waits for you to say yes.
+
+You can type a bare address instead (`192.168.1.5:10000`) if you are reading it off a screen. Same
+checks, same confirmation, but now the address is only as right as your typing.
+
+### What the app refuses, and what it asks you about
+
+The three cases are genuinely different and the app treats them differently:
+
+| Where the gateway is | `http://` | `https://` |
+|---|---|---|
+| This computer (`localhost`, `127.0.0.1`) | fine, no prompt — this is the default mode | fine |
+| Your network or tailnet (`10.x`, `192.168.x`, `172.16–31.x`, `100.64–127.x`, `*.local`, `*.ts.net`) | allowed **once you confirm**, with a plain warning that the traffic is readable by anyone else on that network | allowed once you confirm |
+| Anywhere else (the public internet) | **refused** | allowed once you confirm |
+
+Plaintext to a public address is refused rather than warned about. A gateway reached over the
+internet goes through your own tunnel, which terminates TLS, and the session cookie it sets is
+`Secure` — so it would not be sent over `http://` anyway. "It does not work" is not a trade-off worth
+offering you.
+
+A few addresses are refused outright, and they are all the same kind of thing: an IP written as a
+number or in hex (`2130706433`, `0x7f000001`), an IPv4 address written as IPv6
+(`::ffff:127.0.0.1`), a link-local address (`169.254.x` — one of which is a cloud metadata service),
+and any address with a username and password in it. None of these is something you would type on
+purpose, and each is a known way to make one program disagree with another about which machine an
+address names.
+
+A name is also checked against what it actually resolves to. If `brain.example.com` points into your
+LAN, the app says "your local network" rather than "the public internet". If it points at more than
+one kind of network at once, the app will not connect, because it cannot tell you one true thing
+about where you are going. And a name that resolves to `127.0.0.1` is treated as a network address,
+never as this computer — the next section is why that distinction is load-bearing.
+
+### Desktop capabilities are for the gateway on this computer only
+
+The microphone, the global shortcut, native notifications, the login item and opening a sign-in page
+in your browser are exposed to the dashboard through a bridge the app attaches to the page. **That
+bridge is only ever attached to the gateway this app started.** A gateway on the network gets a plain
+window: the panel in **Settings → Security → Desktop capabilities** reads "desktop app not
+connected", exactly as it does in a browser tab, push-to-talk does nothing there, and a remote tool
+server's sign-in offers its link rather than opening it.
+
+That is not a limitation waiting to be lifted. The bridge is authorised by a secret file in
+`~/.personalclaw`, which proves "I am running as you, on this machine" — a claim no other gateway can
+check and none should be asked to trust. So the shortcut and the microphone follow the local gateway,
+and switching to a paired one leaves them behind.
+
+### When a paired gateway stops answering
+
+The switcher shows a status per row, and the statuses mean different things on purpose:
+
+- **Not checked yet** — nobody has asked. Not the same as a failure.
+- **Not answering** / **Timed out** — the machine is off, asleep, or off the network. The app
+  re-checks on a widening delay a bounded number of times, then stops and waits for you. When it
+  answers again, the dashboard reloads by itself.
+- **Signed out** — the gateway signed this app out: from Settings → Devices on another device, with
+  "Sign out all other devices", or because its sign-in ran out. The window shows the gateway's own
+  sentence saying why, when, and how to sign back in, and the row carries the same sentence. To pair
+  it again, choose **Pair a device** in Settings → Devices on a device that is still signed in, and
+  paste the pairing link into **Gateway → Gateways…** here.
+- **Refused the connection check** — the address answered the app's health check with a refusal.
+  A PersonalClaw gateway never does (the check needs no sign-in), so something in front of it — a
+  proxy asking for a password, say — or something else is answering. The app stops immediately and
+  does not try again: asking again achieves nothing and could trip a lockout.
+- **Answered, but not a PersonalClaw gateway** — something is at that address, and it is not this.
+- **Redirected somewhere else** — the address answered by pointing at a third host. The app does not
+  follow it.
+
+Revoking one gateway's device session breaks that row and nothing else. The others keep working, and
+switching back to them does not ask you to pair anything.
+
+### Where the list is kept
+
+In `~/.personalclaw/desktop/shell-store.json`, readable and writable by your account only. If those
+permissions are ever loosened — so that another account on the machine could edit it — the app will
+not silently connect to whatever it finds there: it starts its own gateway and asks you to confirm the
+address again. If the file is damaged it is **left exactly as it is** rather than overwritten, so
+nothing is lost while you look at it.
+
+The file holds addresses and names. It holds no tokens: your session for each gateway is an http-only
+cookie in the app's own cookie jar, which is also why pairing happens on the gateway's own page
+rather than inside the app.
+
+## Quitting shuts the gateway down, not off
+
+The desktop app starts its own gateway, so quitting has to stop it in the right order.
+Quit asks the gateway to shut down and then **waits for it to actually exit** before the
+app goes away, rather than sending a signal and disappearing — the difference between a
+clean stop and a half-finished write. A gateway that will not stop is escalated after a
+few seconds, and if it still will not, the app says so in its log rather than pretending
+the quit was clean.
+
+## When the gateway stops on its own
+
+**Restart** stops the gateway and starts it again in place: it comes back on a new port, and the
+windows follow it there (see [How the app signs in](#how-the-app-signs-in-to-the-gateway-it-starts)).
+A restart whose program can no longer be run is refused before anything stops, and the window says
+so; the gateway keeps running as it is.
+
+Any other time the gateway stops while the app is open (it crashed, something ended it, or a
+restart could not start it again), the app says so: **PersonalClaw's gateway stopped**, with how it
+exited and the last thing it said, and two choices. **Start Again** starts a new gateway, and every
+window moves to it, signed in, the way it does after a restart. **Quit** quits the app. Dismissing
+the dialog starts it again too; a start that fails says so the same way.
+
+A gateway that cannot start when the app opens is the same news, said as soon as the start fails:
+**PersonalClaw's gateway did not start**, with how it exited and the last thing it said, and the
+same two choices. **Start Again** starts a new gateway; the window loads the dashboard once it
+answers. A gateway that started and never answered, within two minutes, is said the same way.
+When another gateway already serves the app's home (one started in a terminal, or a service), the
+last thing it said names that gateway, and a start is refused the same way until that one stops.
+
+## What the desktop app runs, and what needs the installed version
+
+The desktop app runs PersonalClaw's gateway from one bundled program. It carries the Python packages
+PersonalClaw is built with, the model SDKs among them, and it starts no other Python program. So
+everything that runs inside the gateway works: chat, agents and their tools, memory and knowledge,
+automations, prompts and subagents, documents, sheets, decks and PDFs, the workflow templates and the
+bundled skills, and the PersonalClaw tools an agent CLI is given. So do the apps whose code runs in
+the gateway, every model app whose packages the bundle carries (OpenAI and the OpenAI-compatible
+ones, Anthropic) among them. An app whose server runs on Node runs too, when Node is installed.
+
+What needs a Python program of its own does not run in the desktop app. It is refused before
+anything of it starts, with one sentence that says what the desktop app can't run and that the
+installed version can:
+
+| What | Where the desktop app says so |
+|---|---|
+| An app that runs its own Python server or background worker, an engine in a Python environment of its own, connector-pack parse scripts, or Python packages the bundle does not carry | its Store card and details, which offer no Install; the install dialog; Activate. An app like this already installed, in a PersonalClaw folder the installed version also uses, says it on its Library card and details, and never starts, so nothing retries it. |
+| Install engine, for an app whose engine runs in a Python environment of its own | its engine section in Settings → Providers, when you press it |
+| A command in the Linux sandbox: the agent's bash tool, a hook or command automation, a scheduled script, an agent CLI's session, the terminal (Linux only) | where it would run: the tool call, the run, the terminal. The command is not run, and it never runs outside the sandbox. |
+| `personalclaw doctor`'s `pip:` row | the row says the desktop app installs no Python packages |
+
+To use any of them, install PersonalClaw with uv, as [Getting started](getting-started.md#1-install)
+describes:
+
+```bash
+uv tool install --python 3.13 personalclaw
+```
+
+The installed version runs all of the above, and it uses the same PersonalClaw folder
+(`~/.personalclaw`), so your conversations, settings and installed apps are there. The desktop app
+installs no Python packages in that folder and leaves the ones the installed version installs for
+its apps alone. Quit the desktop app before you start it, so the two do not run on one folder at
+once.
+
+## Push-to-talk
+
+Press the shortcut, speak, press it again. The recording is transcribed by whichever
+model you bound to the **STT** use case (Settings → Models) and the text is inserted into
+the composer **at your cursor** — it does not replace or append to what you had already
+typed.
+
+Dictation needs somewhere to land, so the shortcut is armed wherever a composer is — chat and
+the goal composer. On a screen with no composer (Settings, say) it does nothing rather than
+recording into nowhere, which also means the capture indicator is never lit somewhere you cannot
+see what it is feeding.
+
+The shortcut is configurable in **Settings → Speech & Transcription → Hands-free voice**.
+The default is `⌘⇧Space`. A shortcut needs at least one modifier: a bare key would be
+taken away from every other app on your machine, so PersonalClaw refuses to bind one. If
+another app already owns the chord you pick, the setting says so and keeps your previous
+shortcut rather than silently failing at the next launch.
+
+### It toggles; it does not read key-release
+
+The global shortcut **toggles** capture: one press starts, the next stops. This is a real
+platform limit rather than a shortcut we took — Electron's global-shortcut API delivers a
+press and exposes no key-release event, and reading raw key-up system-wide would mean
+requesting an accessibility-level input tap, which PersonalClaw does not do.
+
+The practical difference is that you cannot hold the chord down. So that a forgotten
+toggle cannot leave the microphone open indefinitely, a capture that runs past two
+minutes is stopped for you.
+
+### While it is capturing you can always see it
+
+Two indicators are lit while the microphone is live, and both matter:
+
+1. **macOS's own** orange microphone dot in the menu bar. That one is drawn by the
+   system, and PersonalClaw cannot suppress or fake it — which is exactly why it is the
+   one to trust.
+2. **PersonalClaw's menu-bar item** changes to `● Listening`. This says *which* app is
+   listening, which the system dot cannot. It is in the menu bar rather than in the page
+   because the shortcut is global: if the window were hidden behind a full-screen app, an
+   in-window indicator would be a capture indicator you could not see. Inside the app
+   there is also a "Listening" chip beside the composer.
+
+Releasing the toggle ends the recording and **stops the microphone track**. The app does
+not hold an idle-but-open microphone between captures.
+
+If you have not granted microphone access yet, the first capture asks. If you have
+already denied it, PersonalClaw cannot re-ask — macOS will not prompt twice — so it tells
+you that and points at Privacy & Security in System Settings.
+
+## System audio is not captured — microphone only
+
+PersonalClaw captures **the microphone only**. It does not capture system audio: not what
+your speakers are playing, not the other side of a call, not another app's output.
+
+This is a deliberate refusal, not an unfinished feature. macOS exposes no audio-only tap
+for system output; the only route is the **Screen Recording** entitlement's audio
+side-channel, which would mean asking you for the right to record your screen in order to
+record sound. That is not a trade worth making quietly for a transcription feature, so
+there is no code path in PersonalClaw that captures system audio at all.
+
+Probing the capability reflects this: `system_audio` reports `unavailable` with that
+reason on every platform, rather than reporting "not implemented" as though a later
+release will simply turn it on.
+
+## Native notifications
+
+The desktop app can deliver notifications as real OS notifications instead of only as a
+badge on the dashboard's bell. It is **per notification kind**, not a global switch:
+Settings → Notifications → the rules matrix → open a row's *detail* → tick **Desktop
+notification**. Nothing is ticked for you.
+
+Two things follow from where that switch lives:
+
+- **A kind you have set to Badge or Digest never raises one**, even with Desktop ticked.
+  Those modes mean "do not interrupt me", and an OS banner is an interruption. Only the
+  **Notify** mode delivers natively. By default only approvals, questions and errors are
+  Notify; a loop's progress after each cycle is a Digest and every other kind a Badge, so
+  ticking Desktop on one of those raises nothing until you set its row to Notify.
+- **The dashboard is always the record.** A native notification is an *addition* — the
+  note still lands in the bell and the notifications feed. So nothing is lost when the
+  desktop app is closed: the rule simply falls back to the dashboard delivery it would
+  have had anyway, and the note's stored detail says why (`the desktop shell is not
+  connected`).
+
+Clicking a notification brings PersonalClaw forward and opens the surface the note came
+from — an inbox alert opens Inbox, a loop's progress opens Loops, a skill proposal opens
+Skills. A kind with no surface of its own opens the notifications feed.
+
+macOS never tells an app whether notifications are authorized, so PersonalClaw cannot show
+you a truthful "granted" state for this one and does not pretend to (Settings → Security →
+Desktop capabilities says as much). The first notification asks; after that, **System
+Settings → Notifications → PersonalClaw** is the only control. If you have turned them off
+there, ticking Desktop in a rule will silently do nothing — that is macOS's answer, not a
+bug in the rule.
+
+## Platforms
+
+The shell ships for **macOS (Apple silicon)** and **Linux x86-64**. There is no Windows
+build — see below for exactly why and what would change that.
+
+### macOS — .dmg, not notarized, and one approval on first launch
+
+Every release attaches `PersonalClaw-<version>-arm64.dmg`, built by CI on a macOS runner
+from the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
+
+**Do not use the one-click Install button — it cannot work on this build.** Recent macOS
+versions offer an **Install** affordance when you open a `.dmg`. Clicking it here fails
+with:
+
+> Could not install. Nothing was changed. You can still drag the app to Applications.
+
+**That dialog is expected, and it is telling you the truth.** Your download is not
+corrupt and nothing needs retrying — macOS reserves the one-click install path for apps
+signed with a **Developer ID** *and* notarized by Apple, and this one is deliberately
+neither (what it *is* signed with: below). Clicking **Install** again will produce exactly
+the same dialog, because the artifact has not changed. The supported path is the one the
+dialog itself names:
+
+1. **Drag PersonalClaw to Applications** (the dmg window shows both the app and an
+   Applications shortcut for exactly this).
+2. **Approve it once** under System Settings → Privacy & Security — the next section.
+
+**It is not notarized, and unlike Linux that costs you one step.** Gatekeeper *does*
+consume a signature on macOS, so the first launch will not work by double-click — macOS
+will say the app "cannot be opened because the developer cannot be verified". To approve
+it once:
+
+1. Try to open the app (double-click). Let macOS refuse.
+2. Open **System Settings → Privacy & Security**, scroll to the message about
+   PersonalClaw, and click **Open Anyway**.
+3. Confirm. macOS remembers the decision — you will not be asked again for this build.
+
+That is the whole cost, and it recurs once per installed version. Removing it would
+require a paid Apple Developer account for notarization; the project has deliberately not
+taken that on, so *where you downloaded it* is the integrity story — get the dmg from the
+GitHub Release page only.
+
+**What "not notarized" means precisely**, because "unsigned" is the word people reach for
+and it is not accurate. The app *is* code-signed, with an **ad-hoc** signature: one that
+carries no identity, no certificate and no Apple account, and that every arm64 app needs
+simply to be allowed to execute. What it does not carry is a **Developer ID** signature and
+Apple's notarization, which is what Gatekeeper and the dmg's one-click Install actually ask
+for. So the signature you can verify locally is a genuine integrity check over the bundle's
+contents — `codesign --verify --deep --strict /Applications/PersonalClaw.app` should exit
+cleanly, and it will fail if a single file in the app was altered after it was built — but it
+proves nothing about *who* built it. That is why the download source is the integrity story.
+
+**Apple silicon only.** The dmg carries a PyInstaller-bundled backend, and a frozen
+Python binary cannot be cross-compiled, so the artifact matches the CI runner's
+architecture (arm64). There is no Intel build: it would need its own x86_64 runner, and
+nothing here claims Intel support until a job proves it.
+
+### Linux — AppImage and .deb, unsigned
+
+Every release attaches two Linux artifacts, built by CI from the same tree as the
+release tag:
+
+- `PersonalClaw-<version>.AppImage` — self-contained: `chmod +x` it and run it.
+- `personalclaw-desktop_<version>_amd64.deb` — install with
+  `sudo apt install ./personalclaw-desktop_<version>_amd64.deb`.
+
+**Neither artifact is code-signed, and that is deliberate, not a gap.** Linux has no
+OS-level signing gate — nothing analogous to macOS Gatekeeper consumes a signature on
+an AppImage or a .deb — so a signature would change nothing your system checks. What
+you will actually see:
+
+- The AppImage runs after `chmod +x` with **no provenance prompt at all**, which is
+  exactly why *where you downloaded it* is the whole integrity story. Get it from the
+  GitHub Release page only.
+- `apt` will not warn about the .deb either: repository GPG signing applies to
+  packages served *from an apt repository*, and this file installs directly. Same
+  rule — download from the release page.
+
+(App *bundles* installed inside PersonalClaw are a separate, signed story — see
+[artifact signing](../security/signing.md).)
+
+One Linux-specific behavior worth knowing: the menu-bar presence above depends on
+your desktop environment offering a tray. On one that does not, the shell notices —
+closing the window then quits for real instead of hiding, exactly as described under
+"Closing the window is not quitting", so you can never strand a running app you
+cannot reach.
+
+### Building it yourself
+
+From a checkout, `make desktop-dist` builds the dmg on an Apple-silicon Mac and
+`make desktop-dist-linux` builds the AppImage and .deb on x86-64 Linux: the targets the
+release's `desktop-mac` and `desktop-linux` jobs run, in the venv those jobs make
+(`.github/workflows/release.yml`).
+
+### Windows — deferred
+
+There is no Windows shell, and none is planned until **both** of these change:
+
+1. The [native-Windows audit](../research/windows-native-audit.md) ruled the
+   backend port **no-go** (its "Go / no-go" section): a native port would silently
+   weaken file-permission and sandbox guarantees the rest of the system depends on.
+   That doc's demand-evidence criteria are the flip condition.
+2. Windows code-signing secrets exist. None do — and an unsigned Windows executable
+   is SmartScreen-hostile in a way an unsigned AppImage is not: users would see a
+   scary "unrecognized app" interstitial on every install.
+
+The desktop shell follows platform support, never leads it. Windows users have real,
+tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-wsl2).
+
+## Updating
+
+**Download the new version and install it over the old one** — from the
+[releases page](https://github.com/PersonalClaw/PersonalClaw/releases), the same place you
+got this one. Replace the AppImage, or `sudo apt install ./personalclaw-desktop_<new>_amd64.deb`
+over the installed package. Your data lives in `~/.personalclaw` and is untouched by either.
+
+There is **no in-app update yet**, and the app will not offer you one. Settings → Updates
+tells you when a newer release exists and then points here; it deliberately does not show
+the "Update" button that a pip or git install gets, because the shell owns this install:
+the backend inside the app is a frozen bundle with no interpreter to upgrade, so a new
+version is a new app. An auto-updater is planned — until it ships, the panel says what is
+actually true rather than promising an update that never arrives.
+
+### What the update settings still do here
+
+The `updates` block is honored on this install even though the apply is manual, because it
+governs what the app *tells* you:
+
+- **Channel** (`updates.channel`) — `stable` (default) watches normal releases, `beta`
+  watches release candidates too. `nightly` tracks a git branch, so it has no meaning for
+  a packaged app; the resolver treats it as `stable` here.
+- **Version pin** (`updates.pin`) — pin `0.1.3` and the panel stops reporting newer
+  releases as available, which is how you stay on a known-good build while you finish
+  something. It must be an exact release version; a pin that matches no published
+  release is flagged in the panel rather than silently stopping updates. Clear it to
+  follow the channel again.
+- **Roll back** — download the older release from the
+  [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
+  this one, then set `updates.pin` to that version so the panel stops nagging. Run
+  `personalclaw snapshot` first: pre-1.0 releases carry no data migrations in either
+  direction. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
+  affordance — there is nothing for it to install here.)
+- **Apply updates** (`updates.auto`) — not offered on this kind: the shell owns the install,
+  and nothing in it can replace a running app bundle, so `staged` notifies exactly as `off`
+  does. The field stays in the config because the same config file follows your
+  `~/.personalclaw` to other install kinds.
+- **Automatic update checks** (`updates.check_enabled` + `updates.check_interval_hours`) —
+  the same switch as everywhere else. Off, the update check makes **zero** calls to GitHub on
+  its own, so the panel reports a new release only when you press **Check now**. On, it asks when it
+  starts and then once every `check_interval_hours` (default 12).
+
+## Related
+
+- [Platforms](platforms.md) — which OSes the desktop shell targets.
+- [Configuration reference](../reference/configuration.md) — `voice.push_to_talk_chord`
+  and the rest of the voice settings.

@@ -1,0 +1,92 @@
+{"site": "GET /api/agent-marketplace/agents/{name}", "reason": "plain detail; marketplace.get rejects absence"}
+{"site": "GET /api/agent-providers/{id}/agents", "reason": "registry rejects unknown ids; the built-in runtime intentionally has no catalog"}
+{"site": "GET /api/agents/detail/{name}", "reason": "plain detail; agent-file resolver rejects absence"}
+{"site": "GET /api/apps/{name}/agent-run/{run_id}", "reason": "run lookup is app-owned and rejects absent or cross-app run ids"}
+{"site": "GET /api/apps/{name}/config", "reason": "resolves the installed app manifest before reading config"}
+{"site": "GET /api/artifacts/{slug}/events", "reason": "provider.get resolves the artifact before listing events"}
+{"site": "GET /api/artifacts/{slug}/extract", "reason": "provider.get resolves the artifact before extraction"}
+{"site": "GET /api/artifacts/{slug}/model", "reason": "the artifact resolver rejects an unknown slug before decoding"}
+{"site": "GET /api/artifacts/{slug}/raw", "reason": "provider.get resolves the artifact before serving bytes"}
+{"site": "GET /api/artifacts/{slug}/versions/{version}", "reason": "provider.get resolves the exact artifact version; this is a child detail read"}
+{"site": "GET /api/channels/{name}/owner", "reason": "channel_owner._channel resolves the registered transport first, so an unknown channel is channel_unknown 404 (both halves driven in test_channel_owner_api.py)"}
+{"site": "GET /api/chat/sessions/{session}", "reason": "plain detail; live-or-persisted resolver rejects absence"}
+{"site": "GET /api/chat/sessions/{session}/export", "reason": "_read_transcript rejects a missing session"}
+{"site": "GET /api/chat/sessions/{session}/map", "reason": "full_session_messages rejects a missing session"}
+{"site": "GET /api/chat/sessions/{session}/organize", "reason": "resolve_session rejects a missing session"}
+{"site": "GET /api/chat/sessions/{session}/plan-session", "reason": "_resolve rejects a missing live chat session"}
+{"site": "GET /api/chat/sessions/{session}/rewind", "reason": "_resolve_session rejects a missing live chat session"}
+{"site": "GET /api/chat/sessions/{session}/tool-result/{rid}", "reason": "the exact session/result key must resolve in the raw-result store"}
+{"site": "GET /api/dashboard/views/{view_id}", "reason": "plain view detail; get_view rejects unknown ids"}
+{"site": "GET /api/dashboard/views/{view_id}/tiles/refresh", "reason": "tile_refresh rejects a missing view or tile with tile_not_found"}
+{"site": "GET /api/desktop/capabilities/{cap}", "reason": "enum-key detail; CAPABILITIES rejects unknown names"}
+{"site": "GET /api/doctor/crash/{filename}", "reason": "plain crash-artifact detail; read_crash rejects absence"}
+{"site": "GET /api/durability/history/{root}/timeline", "reason": "_history_root validates the root against the durable-root registry"}
+{"site": "GET /api/evals/studies/{study_id}", "reason": "plain study detail; study_view rejects absence"}
+{"site": "GET /api/inbox/{id}/attachments/{aid}", "reason": "the inbox row and then the exact attachment record are both resolved; this is child detail (a ghost row is inbox_attachment_not_found, driven in test_message_attachments.py)"}
+{"site": "GET /api/knowledge/collections/{id}/items", "reason": "get_collection resolves the collection before resolving its items"}
+{"site": "GET /api/knowledge/entities/{id}/graph", "reason": "the graph must contain the entity node"}
+{"site": "GET /api/knowledge/intents/{id}/outcomes", "reason": "the intent store resolves the intent first"}
+{"site": "GET /api/knowledge/items/{id}", "reason": "plain item detail; get_item rejects absence"}
+{"site": "GET /api/knowledge/items/{id}/annotations", "reason": "get_item resolves the item before annotations"}
+{"site": "GET /api/knowledge/items/{id}/content", "reason": "get_item resolves the item before returning content"}
+{"site": "GET /api/knowledge/items/{id}/duplicates", "reason": "get_item resolves the item before duplicate search"}
+{"site": "GET /api/knowledge/items/{id}/extracted", "reason": "get_item resolves the item before extracted content"}
+{"site": "GET /api/knowledge/items/{id}/file", "reason": "_serve_item_path rejects an item without a stored file"}
+{"site": "GET /api/knowledge/items/{id}/graph", "reason": "get_item resolves the item before projecting its graph"}
+{"site": "GET /api/knowledge/items/{id}/ingest/stream", "reason": "SSE event transport, not an empty collection read; the id selects a per-item progress feed"}
+{"site": "GET /api/knowledge/items/{id}/intents", "reason": "get_item resolves the item before listing outcomes"}
+{"site": "GET /api/knowledge/items/{id}/related", "reason": "the related-items handler explicitly distinguishes unknown items from no close neighbours"}
+{"site": "GET /api/knowledge/items/{id}/sections", "reason": "get_item resolves the item before sectioning"}
+{"site": "GET /api/knowledge/items/{id}/staleness", "reason": "staleness_for rejects an unknown item"}
+{"site": "GET /api/knowledge/items/{id}/thumbnail", "reason": "_serve_item_path rejects an item without a thumbnail"}
+{"site": "GET /api/learning/proposals/{id}", "reason": "plain proposal detail; proposal store rejects absence"}
+{"site": "GET /api/loops/{id}/conflict", "reason": "the loop (404) and the conflict it waits on (409) resolve first"}
+{"site": "GET /api/loops/{id}/design/tokens", "reason": "loop store resolves the design loop before token projection"}
+{"site": "GET /api/loops/{id}/kept-work", "reason": "_kept_loop resolves the loop (404 when absent) before listing"}
+{"site": "GET /api/loops/{id}/merge", "reason": "the loop (404) and its waiting merge (409) resolve before a review"}
+{"site": "GET /api/loops/{id}/plan-session", "reason": "loop store resolves the loop before nullable plan state"}
+{"site": "GET /api/loops/{id}/report", "reason": "loop store resolves the loop before reading empty-on-missing files"}
+{"site": "GET /api/loops/{id}/stream", "reason": "_loop_view resolves the loop before opening its SSE stream"}
+{"site": "GET /api/mcp/servers/{name}", "reason": "plain server detail; _definition_of rejects an unset name"}
+{"site": "GET /api/memory/history/{day}", "reason": "one day's document, keyed by its date (any other name is history_day_invalid); a day with no file reads as the empty text it is, and the PUT may write it, so absent and empty are one state here, not a ghost parent"}
+{"site": "GET /api/model-providers/{name}/models", "reason": "model-provider registry resolves the entry first"}
+{"site": "GET /api/model-providers/{name}/search", "reason": "model-provider registry resolves the entry first"}
+{"site": "GET /api/model-providers/{name}/show", "reason": "model-provider registry resolves the entry first"}
+{"site": "GET /api/models/downloads/{id}/stream", "reason": "download registry resolves the job before SSE setup"}
+{"site": "GET /api/models/embedding/reindex/{id}/stream", "reason": "reindex registry resolves the SSE job"}
+{"site": "GET /api/models/local/{provider}/search", "reason": "local-model registry rejects an unknown provider"}
+{"site": "GET /api/models/sidecar/{provider}/install/status", "reason": "sidecar registry rejects providers without an install definition"}
+{"site": "GET /api/models/use-cases/{use_case}/settings", "reason": "VALID_USE_CASES validates this enum-like key"}
+{"site": "GET /api/projects/{project_id}/export", "reason": "project store resolves the project before export"}
+{"site": "GET /api/projects/{project_id}/linked", "reason": "project store resolves the project before linked work"}
+{"site": "GET /api/projects/{project_id}/work", "reason": "project store resolves the project before board projection"}
+{"site": "GET /api/providers/{name}/config", "reason": "provider registry resolves the extension before config"}
+{"site": "GET /api/providers/{name}/instances", "reason": "provider registry resolves the extension before instances"}
+{"site": "GET /api/providers/{name}/instances/{id}", "reason": "provider registry and then the exact instance are both resolved; this is child detail"}
+{"site": "GET /api/providers/{name}/schema", "reason": "provider registry resolves the extension before schema"}
+{"site": "GET /api/rooms/{room_id}/export", "reason": "rooms.store.require_room resolves the room before any transcript read, so a ghost room is room_not_found rather than an empty export (asserted in test_rooms_api.py)"}
+{"site": "GET /api/session/archive/{name}", "reason": "plain archive-file detail; file read rejects absence"}
+{"site": "GET /api/sessions/{id}/agents/{agent_id}", "reason": "read_result requires the exact session/agent result; this is child detail"}
+{"site": "GET /api/sessions/{id}/agents/{agent_id}/stream", "reason": "SSE may attach before the child result exists; this is not a collection read"}
+{"site": "GET /api/skills/proposals/{id}", "reason": "plain proposal detail; proposal store rejects absence"}
+{"site": "GET /api/skills/{name}/files", "reason": "skill-root resolver rejects unknown skills before browsing"}
+{"site": "GET /api/triggers/{id}/history/{run_id}", "reason": "the run store resolves the exact trigger/run pair; this is child detail"}
+{"site": "GET /api/voice/profiles/{id}", "reason": "plain profile detail; require_profile rejects absence"}
+{"site": "GET /api/voice/profiles/{id}/audio", "reason": "require_profile resolves the profile before serving audio"}
+{"site": "GET /api/workflows/batches/{name}", "reason": "plain batch detail; batch_start.state_of rejects absence"}
+{"site": "GET /api/workflows/runs/{run_id}", "reason": "plain run detail; service.status rejects absence"}
+{"site": "GET /api/workflows/runs/{run_id}/continuations", "reason": "run store rejects unknown runs first"}
+{"site": "GET /api/workflows/runs/{run_id}/deliverable", "reason": "run_cockpit.run_deliverable rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/drop", "reason": "service.drop_status rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/events", "reason": "run store resolves the run before SSE setup"}
+{"site": "GET /api/workflows/runs/{run_id}/introspect", "reason": "run_cockpit.introspect rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/ledger-rails", "reason": "run_cockpit.ledger_rails rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect", "reason": "service.inspect_node resolves the run and node; this is child detail"}
+{"site": "GET /api/workflows/runs/{run_id}/observe", "reason": "service.observe rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/outbox", "reason": "service.outbox rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/outputs/{node_id}", "reason": "service.output resolves the run and node; this is child detail"}
+{"site": "GET /api/workflows/runs/{run_id}/review", "reason": "review_findings rejects an unknown run"}
+{"site": "GET /api/workflows/runs/{run_id}/steering", "reason": "guard and service resolve the run first"}
+{"site": "GET /api/workflows/runs/{run_id}/workspace", "reason": "service.workspace_review rejects an unknown run"}
+{"site": "GET /api/workflows/{name}/versions", "reason": "service.get_def resolves the workflow first"}
+{"site": "GET /api/ws/terminal/{session_id}", "reason": "WebSocket creation; session_id is a new client-selected key, not a parent"}

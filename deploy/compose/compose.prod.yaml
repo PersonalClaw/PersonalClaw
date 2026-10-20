@@ -1,0 +1,24 @@
+# Production overlay — expose the web container on 0.0.0.0 behind a reverse
+# proxy. :80 308-redirects to :443 (HTTPS + HTTP/2). If you terminate TLS at an
+# upstream (Caddy/nginx/ALB) instead, you can proxy to :80 there and let the
+# upstream redirect — but the web container's own 443 is the canonical surface.
+#
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.prod.yaml up -d
+#
+# Set PERSONALCLAW_BIND_HOST=0.0.0.0 in .env when the gateway must be reachable
+# from outside the Docker network (e.g. when running without the web container
+# and terminating TLS at a Caddy/nginx upstream).
+services:
+  personalclaw-web:
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    restart: always
+
+  personalclaw-gateway:
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

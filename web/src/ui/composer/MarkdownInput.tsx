@@ -1,0 +1,394 @@
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
+import { EditorState, Compartment } from '@codemirror/state'
+import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
+import { markdown } from '@codemirror/lang-markdown'
+import { liveMarkdown, liveMarkdownTheme } from './liveMarkdown'
+import { MentionMenu, type MentionPick } from './MentionMenu'
+import { SlashMenu } from './SlashMenu'
+import { enterKeyAction } from './enterKeyAction'
+
+/** Detect an active `@query` at the caret (word-boundary @, query has no space). */
+function activeMention(value: string, caret: number): { query: string; at: number } | null {
+  const upto = value.slice(0, caret)
+  const m = upto.match(/(?:^|\s)@([^\s@]*)$/)
+  if (!m) return null
+  return { query: m[1], at: caret - m[1].length - 1 }
+}
+
+// A slash command is only meaningful as the FIRST token of the message (matches
+// the backend's is_slash = first word ∈ _SLASH_COMMANDS). So the "/"-menu opens
+// only when the whole doc so far is `/word` (no space yet) with the caret in it.
+function activeSlash(value: string, caret: number): { query: string } | null {
+  const m = value.match(/^\/([a-z]*)$/i)
+  if (!m) return null
+  if (caret < 1 || caret > m[0].length) return null
+  return { query: m[1] }
+}
+
+/** The image files a clipboard carries (`image/*` file items), in clipboard order. */
+export function pastedImages(data: DataTransfer | null | undefined): File[] {
+  if (!data) return []
+  const out: File[] = []
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue
+    const file = item.getAsFile()
+    if (file) out.push(file)
+  }
+  return out
+}
+
+export interface MarkdownInputHandle {
+  focus: () => void
+  /** Replace the current selection (or insert at caret) with `text`. */
+  insertAtCaret: (text: string) => void
+}
+
+interface Props {
+  value: string
+  onChange: (v: string) => void
+  onSend: () => void
+  canSend: boolean
+  placeholder?: string
+  maxHeight: number
+  minHeight: number
+  onFocusChange?: (focused: boolean) => void
+  onOptimize?: () => void
+  history?: string[]
+  /** the text to show for `history[index]` as ↑/↓ brings it back (see `ComposerProps.onRecall`). */
+  onRecall?: (index: number) => string
+  onMentionFile?: (file: { path: string; name: string }) => void
+  /** notified when a knowledge-library item is @-mentioned (host records the id). */
+  onMentionKnowledge?: (item: { id: string; name: string }) => void
+  mentionProject?: string
+  /** enable the "/"-command autocomplete menu (chat only). */
+  slashCommands?: boolean
+  onLargePaste?: (text: string) => boolean
+  /** notified with the images a paste carries (a screenshot copied to the clipboard); the host
+   *  attaches them exactly as it attaches a picked or dropped file. Absent → images are ignored. */
+  onPasteFiles?: (files: File[]) => void
+  /** mobile viewport → Enter inserts a newline instead of sending (send is button-only). */
+  mobile?: boolean
+  /** the user's "Send on Enter" preference. `false` → Enter inserts a newline and sending is
+   *  button-only, which is exactly the behaviour `mobile` already produces — hence one branch
+   *  for both. Optional, and only an explicit `false` changes anything: an unresolved or failed
+   *  config read must not take Enter-to-send away from someone who never turned it off. */
+  sendOnEnter?: boolean
+}
+
+/** A CodeMirror-6-backed message input with Obsidian-style live markdown: the
+ *  line the caret is on shows raw markdown; other lines render. Replaces the
+ *  composer's <textarea> while preserving its behaviors — Enter to send (unless
+ *  the reader turned "Send on Enter" off, or is on a phone), Shift+Enter newline,
+ *  ⌘/Ctrl+Enter optimize, ↑/↓ prompt-history at the text boundaries, @-mention
+ *  file picker, large-paste interception, and pasted images as attachments. */
+export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function MarkdownInput({
+  value, onChange, onSend, canSend, placeholder, maxHeight, minHeight,
+  onFocusChange, onOptimize, history, onRecall, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
+  sendOnEnter,
+}, ref) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  // The placeholder lives in its own compartment so it can be reconfigured when the prop
+  // changes (e.g. the Loop composer's kind slider) — CodeMirror bakes extensions at editor
+  // construction, so without this the placeholder froze at its first-mount value.
+  const placeholderComp = useRef(new Compartment())
+  // The typeahead menus are a COMBOBOX popup driven from this editor: focus stays here (correct for a
+  // typeahead — moving it would break typing) while a cursor moves inside a portaled listbox. Measured
+  // on `#/chat` before this: ArrowDown moved `aria-selected` from option 0 to option 1 and the focused
+  // element said nothing at all — no `aria-activedescendant`, so a screen-reader user was never told
+  // which option the cursor was on, or that a list had opened. Same defect as the row menus of cycles
+  // 136-137, in its third variant: a cursor with no channel. axe reported ZERO violations on the open
+  // menu, because every attribute it can check was already right.
+  //
+  // `aria-activedescendant` + `aria-controls` + `aria-haspopup` only — deliberately NOT `role=combobox`
+  // + `aria-expanded`: `aria-expanded` is not an allowed attribute on `textbox` (axe: aria-allowed-attr),
+  // and re-roling a multi-line message editor as a combobox is a bigger claim than this fixes.
+  const comboComp = useRef(new Compartment())
+  const comboId = useId().replace(/:/g, '')
+  const [activeOption, setActiveOption] = useState<{ list: 'mention' | 'slash'; index: number } | null>(null)
+  // Each menu reports its cursor from an effect whose dependency list includes its `onActiveIndex`,
+  // so the two callbacks below MUST keep one identity for this component's lifetime — the effect
+  // then runs only when a menu actually opens, closes or moves its cursor.
+  //
+  // 🔴 A SAME-VALUE SET IS NOT FREE, which is what the inline `(i) => reportCursor(…)` this replaced
+  // relied on. Returning `prev` from the updater does not stop React from SCHEDULING the update: it
+  // can only drop one eagerly while neither copy of the fiber has pending lanes, and a component that
+  // just re-rendered still carries them on its alternate. So every render of this editor queued a real
+  // render pass from both menus' effects — one per keystroke — and after a keystroke React flushes
+  // those effects inside the same synchronous commit. Measured on `#/chat` typing at 2ms a key: 102 of
+  // 128 commits ended with that update pending, React counted each one as a nested update, and the
+  // 51st threw "Maximum update depth exceeded" (#185) out of the keystroke's own `onChange`, which
+  // CodeMirror caught and logged as `update listener:` — dropping the character from the draft.
+  //
+  // The dedupe below stays (a menu whose result count changes under an unmoved cursor re-reports the
+  // same index), but it is only a render saved, never the guard against the loop.
+  const reportCursor = useCallback((list: 'mention' | 'slash', index: number | null) => {
+    setActiveOption((prev) => {
+      if (index == null) return prev?.list === list ? null : prev
+      if (prev?.list === list && prev.index === index) return prev
+      return { list, index }
+    })
+  }, [])
+  const reportMentionCursor = useCallback((index: number | null) => reportCursor('mention', index), [reportCursor])
+  const reportSlashCursor = useCallback((index: number | null) => reportCursor('slash', index), [reportCursor])
+  // Latest props for the (static) CM extensions to read without rebuilding.
+  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onRecall, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
+  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onRecall, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
+
+  const [mention, setMention] = useState<{ query: string; at: number } | null>(null)
+  const [slash, setSlash] = useState<{ query: string } | null>(null)
+  const slashRef = useRef(slash); slashRef.current = slash
+  const dismissedRef = useRef<string | null>(null)
+  const slashDismissedRef = useRef<string | null>(null)
+  const histIdx = useRef(-1)
+  const draftBeforeHist = useRef('')
+  // set while setDoc() applies a recalled history entry, so the updateListener's
+  // docChanged handler doesn't reset histIdx (which would pin recall to the most
+  // recent entry — ↑ could never walk further back).
+  const navigatingHist = useRef(false)
+
+  // recompute the active @-mention from the live caret.
+  const syncMention = (view: EditorView) => {
+    if (!cb.current.onMentionFile && !cb.current.onMentionKnowledge) return
+    const caret = view.state.selection.main.head
+    const text = view.state.doc.toString()
+    const m = activeMention(text, caret)
+    if (m && dismissedRef.current === `${m.at}:${m.query}`) { setMention(null); return }
+    dismissedRef.current = null
+    setMention(m)
+  }
+
+  // recompute the active "/"-command from the live caret (first-token only).
+  const syncSlash = (view: EditorView) => {
+    if (!cb.current.slashCommands) return
+    const caret = view.state.selection.main.head
+    const text = view.state.doc.toString()
+    const s = activeSlash(text, caret)
+    if (s && slashDismissedRef.current === s.query) { setSlash(null); return }
+    slashDismissedRef.current = null
+    setSlash(s)
+  }
+
+  // ── build the editor once ──
+  useEffect(() => {
+    const updateListener = EditorView.updateListener.of((u) => {
+      if (u.docChanged) {
+        const text = u.state.doc.toString()
+        if (text !== cb.current.value) {
+          // user edits reset history navigation; programmatic recall writes don't.
+          if (!navigatingHist.current) histIdx.current = -1
+          cb.current.onChange(text)
+        }
+      }
+      if (u.docChanged || u.selectionSet) { syncMention(u.view); syncSlash(u.view) }
+      if (u.focusChanged) onFocusChange?.(u.view.hasFocus)
+    })
+
+    const sendKeys = keymap.of([
+      { key: 'Enter', run: (v) => {
+          // The decision itself lives in `enterKeyAction` so it can be tested without
+          // CodeMirror (same split as `sendButtonState`); this stays a thin adapter.
+          switch (enterKeyAction({
+            menuOpen: !!(mentionRef.current || slashRef.current),
+            mobile: cb.current.mobile,
+            sendOnEnter: cb.current.sendOnEnter,
+            canSend: cb.current.canSend,
+          })) {
+            // Declining is the point: while a menu is up, Enter belongs to its own
+            // capture-phase keydown, which selects the highlighted item.
+            case 'menu': return false
+            case 'newline': v.dispatch(v.state.replaceSelection('\n')); return true
+            case 'send': histIdx.current = -1; cb.current.onSend(); return true
+            default: return false
+          }
+        } },
+      { key: 'Shift-Enter', run: (v) => { v.dispatch(v.state.replaceSelection('\n')); return true } },
+      { key: 'Mod-Enter', run: () => {
+          if (cb.current.onOptimize && cb.current.canSend) { cb.current.onOptimize(); return true }
+          return false
+        } },
+      { key: 'ArrowUp', run: (v) => historyNav(v, 'up') },
+      { key: 'ArrowDown', run: (v) => historyNav(v, 'down') },
+    ])
+
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          markdown(),
+          liveMarkdown,
+          liveMarkdownTheme,
+          EditorView.lineWrapping,
+          // The accessible name belongs on CM's contenteditable (role=textbox)
+          // itself — on the host div (role-less) aria-label is a prohibited
+          // attribute and the textbox stays nameless (axe: aria-prohibited-attr
+          // + aria-input-field-name). Static label, not the placeholder: the
+          // placeholder is compartment-swapped at runtime but extensions here
+          // build once.
+          EditorView.contentAttributes.of({ 'aria-label': 'Message input' }),
+          comboComp.current.of([]),
+          placeholderComp.current.of(cmPlaceholder(placeholder ?? '')),
+          sendKeys,
+          updateListener,
+          EditorView.domEventHandlers({
+            paste: (e) => {
+              const text = e.clipboardData?.getData('text/plain') ?? ''
+              // A pasted screenshot carries only image data, so it becomes an attachment. A paste
+              // that carries text as well (cells copied from a spreadsheet put a picture of the
+              // cells beside their text) stays a text paste: the text is what was meant.
+              const images = text.trim() ? [] : pastedImages(e.clipboardData)
+              if (images.length && cb.current.onPasteFiles) {
+                e.preventDefault()
+                cb.current.onPasteFiles(images)
+                return true
+              }
+              if (text && cb.current.onLargePaste?.(text)) { e.preventDefault(); return true }
+              return false
+            },
+          }),
+        ],
+      }),
+      parent: hostRef.current!,
+    })
+    viewRef.current = view
+    return () => { view.destroy(); viewRef.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ↑/↓ prompt-history recall — only at the text boundaries (else normal cursor).
+  function historyNav(view: EditorView, dir: 'up' | 'down'): boolean {
+    const hist = cb.current.history ?? []
+    if (!hist.length) return false
+    const { head, anchor } = view.state.selection.main
+    const len = view.state.doc.length
+    const atStart = head === 0 && anchor === 0
+    const atEnd = head === len && anchor === len
+    const cur = view.state.doc.toString()
+    // The entry as the host gives it back (`onRecall`), else its text as it is.
+    const recalled = (i: number) => cb.current.onRecall?.(i) ?? hist[i]
+    if (dir === 'up' && (histIdx.current !== -1 || (atStart && !cur.trim()))) {
+      if (histIdx.current === -1) draftBeforeHist.current = cur
+      histIdx.current = histIdx.current === -1 ? hist.length - 1 : Math.max(0, histIdx.current - 1)
+      setHistDoc(view, recalled(histIdx.current))
+      return true
+    }
+    if (dir === 'down' && histIdx.current !== -1 && atEnd) {
+      histIdx.current += 1
+      setHistDoc(view, histIdx.current >= hist.length ? (histIdx.current = -1, draftBeforeHist.current) : recalled(histIdx.current))
+      return true
+    }
+    return false
+  }
+
+  function setDoc(view: EditorView, text: string) {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length } })
+  }
+
+  // setDoc for prompt-history recall — guards histIdx from the docChanged reset
+  // so repeated ↑ can walk further back through history (not pin to the latest).
+  function setHistDoc(view: EditorView, text: string) {
+    navigatingHist.current = true
+    try { setDoc(view, text) } finally { navigatingHist.current = false }
+  }
+
+  // keep the editor's doc in sync when the host changes `value` externally
+  // (optimize result, history pick from outside, mention insert, clear-on-send).
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    if (view.state.doc.toString() !== value) setDoc(view, value)
+  }, [value])
+
+  // reconfigure the placeholder when it changes (e.g. the kind slider) — the editor is
+  // built once, so the placeholder must be swapped via its compartment, not a rebuild.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: placeholderComp.current.reconfigure(cmPlaceholder(placeholder ?? '')) })
+  }, [placeholder])
+
+  // Point the editor at the option the typeahead cursor is on. Compartment-swapped for the same
+  // reason as the placeholder: the extensions above build once.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const attrs: Record<string, string> = activeOption
+      ? {
+        'aria-controls': `${comboId}-${activeOption.list}-list`,
+        'aria-activedescendant': `${comboId}-${activeOption.list}-opt-${activeOption.index}`,
+        'aria-haspopup': 'listbox',
+      }
+      : {}
+    view.dispatch({ effects: comboComp.current.reconfigure(EditorView.contentAttributes.of(attrs)) })
+  }, [activeOption, comboId])
+
+  // auto-grow: the editor min-height = restH, grows with content up to maxHeight.
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    host.style.minHeight = `${minHeight}px`
+    host.style.maxHeight = `${maxHeight}px`
+  }, [minHeight, maxHeight])
+
+  const mentionRef = useRef(mention)
+  mentionRef.current = mention
+
+  useImperativeHandle(ref, () => ({
+    focus: () => viewRef.current?.focus(),
+    insertAtCaret: (text: string) => {
+      const view = viewRef.current
+      if (!view) return
+      view.dispatch(view.state.replaceSelection(text))
+      requestAnimationFrame(() => view.focus())
+    },
+  }), [])
+
+  function pickMention(pick: MentionPick) {
+    const view = viewRef.current
+    if (!view || !mention) return
+    const text = view.state.doc.toString()
+    const before = text.slice(0, mention.at)
+    const after = text.slice(mention.at + 1 + mention.query.length)
+    const next = `${before}@${pick.name} ${after}`
+    const caret = before.length + pick.name.length + 2
+    view.dispatch({ changes: { from: 0, to: text.length, insert: next }, selection: { anchor: caret } })
+    // A prompt pick is a plain `@name` reference the backend expands at send — no
+    // side-channel meta (unlike file/knowledge, which thread a path/id into meta).
+    if (pick.kind === 'file') cb.current.onMentionFile?.({ path: pick.path, name: pick.name })
+    else if (pick.kind === 'knowledge') cb.current.onMentionKnowledge?.({ id: pick.id, name: pick.name })
+    setMention(null)
+    requestAnimationFrame(() => view.focus())
+  }
+
+  // choose a slash command — replace the doc with `/cmd ` (trailing space so the
+  // menu closes and the caret sits ready for args), then refocus.
+  function pickSlash(command: string) {
+    const view = viewRef.current
+    if (!view) return
+    const next = `${command} `
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next }, selection: { anchor: next.length } })
+    setSlash(null)
+    requestAnimationFrame(() => view.focus())
+  }
+
+  return (
+    <div className="relative w-full">
+      <div ref={hostRef} className="w-full overflow-y-auto px-s pt-xs" />
+      {(onMentionFile || onMentionKnowledge) && (
+        <MentionMenu query={mention?.query ?? ''} anchorRef={hostRef} open={!!mention} project={mentionProject}
+          leading={mention?.at === 0}
+          idPrefix={`${comboId}-mention`}
+          onActiveIndex={reportMentionCursor}
+          onSelect={pickMention}
+          onClose={() => { if (mention) dismissedRef.current = `${mention.at}:${mention.query}`; setMention(null) }} />
+      )}
+      {slashCommands && (
+        <SlashMenu query={slash?.query ?? ''} anchorRef={hostRef} open={!!slash}
+          idPrefix={`${comboId}-slash`}
+          onActiveIndex={reportSlashCursor}
+          onSelect={pickSlash}
+          onClose={() => { if (slash) slashDismissedRef.current = slash.query; setSlash(null) }} />
+      )}
+    </div>
+  )
+})

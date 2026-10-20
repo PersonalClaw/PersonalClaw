@@ -1,0 +1,1 @@
+[Execution plan — You are in {{label}}.{% if target %} This phase's objective: {{target}}{% endif %}{% if agent_name %} Delegate this phase's work to the `{{agent_name}}` agent via subagent_run, then synthesize its result into your cycle finding.{% endif %}{% if next_exit %} Move toward the next phase once: {{next_exit}}{% endif %}]

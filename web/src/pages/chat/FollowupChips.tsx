@@ -1,0 +1,60 @@
+import { motion } from 'framer-motion'
+import { CornerDownLeft } from 'lucide-react'
+import { fadeEnter } from '../../design/motion'
+import { QuietButton } from '../../ui/QuietButton'
+import { IconButton } from '../../ui/IconButton'
+
+/** What the host's always-mounted live region says when chips arrive.
+ *
+ *  The chips land 1-3s AFTER the reply finishes, from a WebSocket event — a purely
+ *  visual arrival. `role="group" aria-label` names them once a user reaches them, but
+ *  nothing told a screen-reader user they had appeared at all, so the only way to find
+ *  them was to re-walk the transcript on the off-chance. This is the sentence that gets
+ *  announced; the region itself lives in the host (ChatPage) and is mounted from first
+ *  render, because a live region that appears together with its content is not
+ *  reliably announced.
+ *
+ *  Empty string when there are none — including on dismissal, so the region CLEARS
+ *  rather than leaving a stale claim that suggestions are still there. */
+export function followupAnnouncement(count: number): string {
+  if (count <= 0) return ''
+  return `${count} follow-up suggestion${count === 1 ? '' : 's'} available`
+}
+
+/** Follow-up chips — 2-3 suggested next messages rendered under the
+ *  last assistant turn's actions after a reply completes. Click fills the composer to
+ *  edit; the small send glyph, which names what it sends, is the one way a chip is sent
+ *  as it stands. A double-click used to be promised as a send too, and it never could
+ *  be: the host took the chips away on the first click, so the second landed on whatever
+ *  the transcript moved under the pointer, the reply's Speak button among them. A pick
+ *  now leaves them in place. The host dismisses them when the user types 3+ chars,
+ *  sends, switches session or a new stream starts, so they never block or shift the
+ *  composer. Visual sibling of the hero SuggestionChips; each chip eases in on a small
+ *  per-item delay (motion tiers). Built from primitives: a QuietButton label half + an
+ *  IconButton send half. */
+export function FollowupChips({ items, onPick, onSend }: {
+  items: string[]
+  onPick: (text: string) => void
+  onSend: (text: string) => void
+}) {
+  if (!items.length) return null
+  // role="group": a bare <div> cannot take aria-label (prohibited — the name is
+  // discarded), so the chips announced as loose buttons with no indication of what they
+  // were. A named group says "Suggested follow-ups" before its contents.
+  return (
+    <div role="group" className="mt-m flex flex-wrap items-center gap-1.5" aria-label="Suggested follow-ups">
+      {items.map((s, i) => (
+        <motion.span key={`${i}-${s}`}
+          variants={fadeEnter} initial="initial" animate="animate"
+          className="inline-flex items-center overflow-hidden rounded-pill border border-outline-variant/50 bg-surface-container hover:border-primary/40">
+          <QuietButton onClick={() => onPick(s)}
+            title="Click to edit it before you send it" className="max-w-[22rem] truncate rounded-none hover:bg-surface-high">
+            {s}
+          </QuietButton>
+          <IconButton icon={CornerDownLeft} label={`Send: ${s}`} onClick={() => onSend(s)} size={28} iconSize={13}
+            className="shrink-0 border-l border-outline-variant/40 hover:text-primary" />
+        </motion.span>
+      ))}
+    </div>
+  )
+}

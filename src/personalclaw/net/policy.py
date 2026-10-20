@@ -1,0 +1,810 @@
+"""Egress policy plane — declarative, per-surface network posture.
+
+A caller picks a named :class:`EgressPolicy` profile (STRICT for agent fetch,
+CONNECTOR for knowledge scrape, WEBHOOK for user-configured POSTs, LOOPBACK_INTERNAL
+for gateway↔mcp self-calls) instead of re-implementing checks. The guard
+(``net/guard.py``) reads the policy to decide; the client (``net/client.py``)
+enforces the byte/timeout/redirect caps.
+"""
+
+import contextvars
+import logging
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class EgressPolicy:
+    """A network egress posture for one surface.
+
+    ``allow_private`` flips the whole stance: STRICT/public profiles keep it False
+    (public hosts only — block loopback/RFC-1918/link-local/etc.); LOOPBACK_INTERNAL
+    sets it True AND ``loopback_only`` so it *expects* 127.0.0.1 and denies public.
+
+    ``allow_hosts`` / ``deny_hosts`` are operator opt-in overrides matched by the
+    Anthropic rule (bare domain covers its subdomains): a deny always wins; an allow
+    permits an otherwise-private host (the homelab LAN-webhook case).
+    """
+
+    name: str = "strict"
+    allow_schemes: tuple[str, ...] = ("http", "https")
+    allow_private: bool = False
+    # Invert the stance to loopback-only (gateway↔mcp self-calls): allow loopback,
+    # deny everything public. Implies allow_private for the loopback range.
+    loopback_only: bool = False
+    allow_hosts: tuple[str, ...] = ()
+    deny_hosts: tuple[str, ...] = ()
+    # Invert ``allow_hosts`` from ADDITIVE to EXCLUSIVE: only a listed host is reachable,
+    # public or not. Without this, ``allow_hosts`` merely waives the private-range block,
+    # so REGISTRY (a 22-host preset) reached every public host exactly like STRICT and an
+    # egress "tier" could not narrow anything — the whole tier plane was decorative. A
+    # tier that means "only these hosts" needs the exclusive stance; the guard enforces it
+    # before DNS resolution, so a denied host is never even looked up.
+    allow_only: bool = False
+    max_redirects: int = 5
+    max_bytes: int = 5_000_000
+    timeout_s: float = 30.0
+    pin_resolved_ip: bool = True
+    # deny → block on violation; warn → audit but allow (operator escape hatch).
+    on_violation: str = "deny"
+
+    def with_overrides(self, **kw) -> "EgressPolicy":
+        """A copy with fields replaced (operator config layering)."""
+        from dataclasses import replace
+
+        return replace(self, **kw)
+
+
+# ── Named profiles ────────────────────────────────────────────────────────────
+
+# Default for agent-driven fetch/scrape/browse: public hosts only, pin IP,
+# re-check redirects, byte cap.
+STRICT = EgressPolicy(name="strict")
+
+# Knowledge web-url / bookmark scrape: STRICT posture, connector-tuned caps.
+CONNECTOR = EgressPolicy(name="connector", max_bytes=10_000_000, timeout_s=20.0)
+
+# WatchedSource poll fetch: a scheduled, unattended pull of a feed
+# or web listing page. Same STRICT public-only posture and CONNECTOR caps (10MB/20s) — a
+# source poll is a knowledge scrape on a timer — as a distinct profile so its egress
+# audits are attributable to the source engine and its caps can diverge from an
+# interactive bookmark scrape later without disturbing CONNECTOR's callers.
+SOURCE = EgressPolicy(name="source", max_bytes=10_000_000, timeout_s=20.0)
+
+# User-configured outbound POST: STRICT, but the operator may allow-list internal
+# hosts (a homelab user POSTing to a LAN service — opt-in via allow_hosts).
+WEBHOOK = EgressPolicy(name="webhook", timeout_s=30.0)
+
+# Gateway↔mcp self-calls: inverted — loopback expected, public denied.
+LOOPBACK_INTERNAL = EgressPolicy(
+    name="loopback_internal",
+    allow_private=True,
+    loopback_only=True,
+    pin_resolved_ip=False,
+    max_bytes=50_000_000,
+    timeout_s=60.0,
+)
+
+# A curated package-registry allow-list for sandboxed code
+# runs / loop workers that need to reach the common dev registries WITHOUT opening the
+# whole internet. STRICT posture (public-only, pin IP, redirect re-check) + this
+# preset in allow_hosts. A safety profile's egress tier "registry" selects this;
+# "all" selects STRICT (public), "listed" a user allow-list, "off" denies all egress.
+REGISTRY_HOSTS: tuple[str, ...] = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "npmjs.com",
+    "crates.io",
+    "static.crates.io",
+    "index.crates.io",
+    "docker.io",
+    "registry-1.docker.io",
+    "ghcr.io",
+    "github.com",
+    "raw.githubusercontent.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "repo1.maven.org",
+    "repo.maven.apache.org",
+    "rubygems.org",
+    "proxy.golang.org",
+    "sum.golang.org",
+    "packagist.org",
+    "nuget.org",
+    "api.nuget.org",
+)
+REGISTRY = EgressPolicy(
+    name="registry",
+    allow_hosts=REGISTRY_HOSTS,
+    allow_only=True,  # dev registries ONLY — the point of the tier
+    max_bytes=100_000_000,  # a wheel/image layer is large
+    timeout_s=60.0,
+)
+
+# The "listed" tier: reachable = exactly the operator's ``security.egress.allow_hosts``
+# (unioned in by ``egress_policy_for``) and nothing else. Its own allow list is empty, so
+# a "listed" tier with no configured hosts denies every host — the fail-closed reading of
+# "only what is listed", and visible as a refusal rather than a silent widening.
+LISTED = EgressPolicy(name="listed", allow_only=True)
+
+# The sync transport's egress posture. A sync
+# transport talks to EXACTLY ONE operator-configured object-store endpoint, forever — so the
+# base is `allow_only` with an EMPTY host list, which denies every host until
+# :func:`sync_egress_policy` pins the configured endpoint onto it. That ordering is the point:
+# the fail-closed reading of "host-pinned" is that an unpinned SYNC policy reaches nothing, so
+# a transport that forgets to pin cannot silently inherit STRICT's whole-public-internet reach.
+#
+# `max_bytes` is raised DELIBERATELY, not removed: a whole-database shard copy is much larger
+# than a 5 MB page fetch but is still bounded, so a hostile or misconfigured endpoint cannot
+# stream an unbounded body into memory. 200 MB is the same order as REGISTRY's 100 MB wheel cap
+# with headroom for a multi-hundred-MB memory/knowledge DB shard.
+#
+# `allow_private` stays False in the base, but MEASURED BEHAVIOUR (driven, not assumed): the
+# pinned endpoint is itself an `allow_hosts` entry, and the guard's documented `allow_hosts`
+# semantics waive the private-range block for a listed host. So a self-hosted endpoint on
+# loopback or a LAN — `http://127.0.0.1:9000`, `http://nas.local:9000` — IS reachable with no
+# further operator opt-in. That is deliberate and correct for this surface: the whole premise
+# is user-owned storage, a self-hosted MinIO/NAS is a first-class target, and the endpoint comes
+# from operator provider settings, never from anything an agent can influence.
+#
+# What that reachability does NOT get to include is the cloud metadata service, which is the one
+# private address where "fetch whatever the operator configured" turns into credential theft. A
+# `deny_hosts` entry is evaluated BEFORE the allow-list and before DNS resolution, so it survives
+# the pin; a legitimate MinIO host is unaffected.
+#
+#: The cloud instance-metadata endpoints, denied on every exclusive profile that can be pointed at
+#: an operator-named host. Named for WHAT they are rather than for the first surface that needed
+#: them (it was `SYNC_DENY_HOSTS`): :data:`FETCH_ACTION` is the second such surface, and a second
+#: copy of this tuple is how one of the two silently falls behind when a cloud adds an endpoint.
+#: 169.254.0.0/16 is already `link_local` to `classify_host`, so on a public-only profile this list
+#: is belt-and-braces — but on an EXCLUSIVE profile an allow-listed host waives the private-range
+#: block, and a deny is evaluated before both the allow-list and DNS. That is the case it covers.
+METADATA_SERVICE_HOSTS: tuple[str, ...] = (
+    "169.254.169.254",  # AWS/Azure/GCP/OpenStack IMDS
+    "metadata.google.internal",
+    "metadata.goog",
+    "100.100.100.200",  # Alibaba Cloud
+)
+SYNC = EgressPolicy(
+    name="sync",
+    allow_only=True,
+    allow_hosts=(),
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_bytes=200_000_000,
+    timeout_s=120.0,
+)
+
+# The headless-browser navigation posture. Every CDP
+# ``Page.navigate`` is pre-flighted through ``guard.evaluate`` against this profile before
+# the target URL reaches Chrome, and each redirect hop is re-evaluated. A distinct
+# profile — not CONNECTOR — because a browser is not ``net/client.fetch``: it renders, so it
+# pulls dozens of subresources, follows chains the user never typed, and takes render time on
+# top of network time. Public-only stance and ``on_violation="deny"`` are STRICT's, unchanged.
+#
+# ``allow_schemes`` is inherited and LOAD-BEARING here in a way it is not for a fetch surface:
+# a browser understands `file:`, `data:`, `blob:`, `chrome:`, `devtools:` and `view-source:`,
+# and a `Page.navigate` to `file:///etc/…` or to `devtools://` is local-file read / debugger
+# self-attach, not egress. Keeping the tuple at ("http", "https") is what refuses those, so
+# the pre-flight is also the scheme gate — do not widen it for a "convenience" local-file case.
+#
+# ``pin_resolved_ip=False`` — DELIBERATE, and the one field where True would be a LIE. Pinning
+# means "the caller dials these exact validated IPs, so the name is never resolved twice"; it
+# closes the rebind window only because ``net/client`` owns the socket. Chrome owns its own
+# resolver and its own sockets: it re-resolves the hostname itself after our pre-flight, and
+# CDP has no "connect to this IP" parameter to hand a pinned list to. So the rebind window
+# between "we validated this host's A/AAAA records" and "Chrome resolved it again, possibly to
+# a different answer" is REAL and this profile cannot close it. Declaring True would advertise
+# a mitigation the surface does not implement, which is strictly worse than an honest False:
+# a reader auditing the browse path would credit a control that isn't there. Note that
+# ``evaluate`` still returns ``pinned_ips`` regardless of this flag — for BROWSE those are
+# evidence for the SEL row ("at pre-flight, this host resolved to these addresses"), not an
+# enforcement mechanism. Closing the window for real needs a browser-level control (a proxy
+# Chrome must dial through, or ``--host-resolver-rules``), which is not this change.
+#
+# Ceilings, each raised from STRICT for a stated reason and none removed:
+#   * ``max_redirects=10`` (STRICT 5) — consent walls, geo/locale bounces and SSO hops routinely
+#     exceed five on ordinary public sites, and every hop is re-evaluated by the guard,
+#     so an extra hop costs a check rather than a hole. Still bounded, so a redirect loop
+#     terminates instead of spinning the browser forever.
+#   * ``timeout_s=60.0`` (STRICT 30.0) — a navigation is render + N subresource round-trips, not
+#     one request; 30s fails healthy slow sites. 60s bounds a hung navigation.
+#   * ``max_bytes=50_000_000`` (STRICT 5 MB) — sized for what OUR code reads back over CDP (a
+#     serialized DOM, extracted text, a screenshot), which a 5 MB page-fetch cap would truncate.
+#     Honest limit of the field on this surface: it does NOT meter the bytes Chrome pulls for
+#     subresources, because our code never sees that stream (see the gap note below).
+#
+# THE HEADLESS BYPASS GAP, recorded so nobody mistakes the pre-flight for a sandbox.
+# A check in front of ``Page.navigate`` constrains exactly one thing: the top-level URL we ask
+# the browser to open, plus its redirect hops. Once the page is live, Chrome egresses on its own
+# for things we never evaluated:
+#   * subresources the document requests (img/script/link/xhr/fetch/EventSource/WebSocket),
+#   * a frame's own document request and what an allowed frame's scripts fetch. A denied frame
+#     is blanked once judged: before its document loads when it first moves into a process of
+#     its own; one from the page's own site also as its navigation starts, a blank that may or
+#     may not land before its document loads; and otherwise only once its document has loaded
+#     (a frame in the page's own process, and a frame already in a process of its own that is
+#     navigated again, by itself or by its page, which the browser does not attach again),
+#   * ``window.open`` / ``target=_blank`` and JS/meta-refresh navigations that never round-trip
+#     through the CDP command we guard,
+#   * service workers and shared/dedicated workers, which outlive the navigation,
+#   * WebRTC/ICE and DNS prefetch, which are not HTTP at all.
+# All of those resolve DNS and dial sockets inside Chrome, so neither this profile nor
+# ``guard.evaluate`` sees them. The injected safety script (the other third) narrows the
+# in-page, same-context JavaScript surface — it runs in the document, so that is the part it can
+# reach. What remains OPEN after both halves land is the network-stack surface: subresource,
+# worker and frame egress (a frame's document request, and an allowed frame's own fetches), which
+# no in-page script can intercept. Closing that
+# needs enforcement at a layer Chrome must traverse — ``Fetch.enable``/``Network`` request
+# interception, or a mandatory local proxy — and is deliberately NOT claimed by this change.
+BROWSE = EgressPolicy(
+    name="browse",
+    pin_resolved_ip=False,
+    max_redirects=10,
+    max_bytes=50_000_000,
+    timeout_s=60.0,
+)
+
+# The posture for the DISPATCHABLE `net-fetch` action provider —
+# one bounded HTTP GET a workflow action node, a schedule trigger, an event trigger or a lifecycle
+# hook can name. Distinct from every profile above because of WHO chooses the URL: `CONNECTOR` and
+# `SOURCE` are pointed at a host the user typed into a create flow, while this one is pointed at a
+# host a TEMPLATE (and therefore, transitively, a planner) supplies. That inverts the default: the
+# operator, not the caller, decides where an automation may reach.
+#
+# 🔴 `allow_only=True` with an EMPTY `allow_hosts`, so an unconfigured instance reaches NOWHERE.
+# Not `STRICT`/`CONNECTOR` layered by `egress_policy_for`, which is the mistake
+# `capture_proxy.capture_policy` and `inbound.a2a.outbound_policy` both record in full: on an
+# `allow_only=False` base, `egress_policy_for` UNIONS the operator's `allow_hosts` in as an
+# ADDITIVE waiver of the private-range block, so the policy still reaches every public host and the
+# allow-list is decorative. Only the exclusive stance makes "nothing named yet" mean "nowhere to
+# go" instead of "anywhere".
+#
+# The reachable set is deliberately the operator's EXISTING `security.egress.allow_hosts` (unioned
+# on by :func:`egress_policy_for`, per :data:`LISTED`'s contract) rather than a new field beside it.
+# Measured, and this is the whole argument: that list is already unioned onto `SOURCE`, which is
+# what an unattended `web_watch` poll fetches under — and `SOURCE` is `allow_only=False`, so a
+# scheduled GET ALREADY reaches every public host plus every host on that list. A `net-fetch` node
+# is therefore a strict SUBSET of a shipped unattended-GET surface, and a second list would be a
+# sixth allow-list for a consent decision the operator has already made once, in one place, with a
+# frontend control and a PATCH path behind it.
+#
+# Ceilings, each narrowed from `LISTED`'s inherited defaults and neither removed:
+#   * `max_bytes=2_000_000` (LISTED 5 MB) — what this provider hands onward is TEXT bound for a
+#     workflow node and, usually, a model. The transfer cap is the first of two bounds; the second
+#     is the provider's own character ceiling (`net_fetch_provider.MAX_TEXT_CHARS`). Two bounds
+#     rather than one because they stop different things: this one stops a hostile endpoint
+#     streaming a gigabyte into memory, the character one stops a legitimate 2 MB page becoming a
+#     denial-of-wallet on the next model call.
+#   * `timeout_s=20.0` (LISTED 30.0) — `CONNECTOR`'s figure. A monitor fetch runs on a schedule
+#     with nobody watching; a hung request should fail and be retried by the next fire rather than
+#     hold a node open for half a minute.
+FETCH_ACTION = EgressPolicy(
+    name="fetch_action",
+    allow_only=True,
+    allow_hosts=(),
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_bytes=2_000_000,
+    timeout_s=20.0,
+)
+
+# App-registry LISTING fetch: the posture for `git` fetching an app from wherever a registry
+# index's listing says it lives. The index is third-party text, so this is STRICT's public-only
+# stance, applied to a connection the gateway makes because someone else's data named the host.
+# It is enforced by `net/git.py`, which runs git through a tunnel that evaluates EVERY host git
+# connects to against this profile — the listing's own host when git dials it (not when the Store
+# read it, so a name that rebinds in between is judged on its new answer) and every redirect hop.
+#
+#   * `allow_schemes=("https",)` — the listing form (`apps/catalog.listing_repo_refusal`) already
+#     admits only plain https, and git runs with every other protocol disabled; this makes the guard
+#     say the same thing rather than accepting an `http` it will never see.
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by NAME before DNS, like SYNC and FETCH_ACTION,
+#     so an allow-listed or source-trusted host can never be the metadata service's name.
+#   * `timeout_s=120.0` — a whole-repo shallow clone, not a page fetch; the same bound
+#     `apps/source._CLONE_TIMEOUT` puts on the git process itself.
+#
+# Not exclusive: a listing may name any PUBLIC host, as it always could. What the owner can add is
+# the other direction, private hosts they vouch for — their `security.egress.allow_hosts`, layered
+# on by `egress_policy_for`, and the host of the registry source they added themselves (see
+# :func:`listing_egress_policy`).
+LISTING = EgressPolicy(
+    name="listing",
+    allow_schemes=("https",),
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    timeout_s=120.0,
+)
+
+# A generated image or video a provider's answer points at, fetched once so the artifact outlives
+# the URL (`mcp_artifacts._materialize_image` / `_materialize_video`). The URL is the provider's
+# data, not the owner's, so this is STRICT's public-only stance, with the metadata service refused
+# by name as for LISTING. Its ceilings are sized for a generated clip, which a page cap cuts off:
+#   * `max_bytes=200_000_000` — a generated video runs to tens of megabytes. Under CONNECTOR's
+#     10 MB a longer clip was cut short, and the cut file was saved as though it were the video.
+#     What passes this cap is refused whole, never kept in part (the materializers check
+#     `FetchResponse.truncated`).
+#   * `timeout_s=180.0` — the download is one file of that size, not a page; 20 s failed a clip
+#     over a slow connection that 180 s carries.
+MEDIA = EgressPolicy(
+    name="media",
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_bytes=200_000_000,
+    timeout_s=180.0,
+)
+
+# A remote MCP server's OAuth SIGN-IN (`mcp_oauth`): the challenge sent to the server, the metadata
+# it and its authorization server publish, the client registration and every token request, at
+# sign-in and at each refresh. Apart from the server itself, every URL here is one the server's
+# answers named: third-party data, like a registry listing. So this is STRICT's public-only stance:
+#
+#   * `max_redirects=0` — metadata is read where the spec says it lives, and a token request that
+#     followed a redirect would hand the authorization code, the PKCE verifier or the refresh token
+#     to whoever the redirect names.
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by name before DNS, as for LISTING, so the
+#     server's own host (allowed below) can never be the metadata service's name.
+#
+# The server's own host is the owner's choice, the way a registry source they added is, so
+# :func:`mcp_sign_in_egress_policy` allows it private or not. HTTPS for the authorization server is
+# `mcp_oauth`'s rule, not this profile's: it depends on the server's own scheme.
+MCP_SIGN_IN = EgressPolicy(
+    name="mcp_sign_in",
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_redirects=0,
+    max_bytes=1_000_000,
+    timeout_s=20.0,
+)
+
+# A remote MCP server's CONNECTION (`mcp_client`). Each use of it, its start and every tool call
+# alike, asks the guard about the server's own URL under this policy before anything is sent. The
+# URL is the owner's: they configured the server and allowed it as it is defined (`mcp_grants`), so
+# it is reachable on their own machine or network as well as a public one (`allow_private`, which
+# reads only that URL: the connection's one host). A run's tier narrows it as it narrows any
+# request, so a run whose tier lists hosts reaches the server only when its host is on Allowed
+# hosts.
+#
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by name before DNS, as for MCP_SIGN_IN; the
+#     guard refuses a metadata or link-local ADDRESS for every policy.
+#   * `pin_resolved_ip=False` — honest, as for BROWSE: the transport's own HTTP client resolves the
+#     name again for itself, so the connection is not held to the address the guard checked. It
+#     follows a redirect only within the server's own origin, so it reaches no other host.
+MCP_SERVER = EgressPolicy(
+    name="mcp_server",
+    allow_private=True,
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    pin_resolved_ip=False,
+)
+
+# Every request a MODEL PROVIDER sends: chat and its stream, embeddings, transcription, speech,
+# images, video and the model list, each sent by the provider's own client (`net.http_clients`).
+# STRICT's public-only stance, with the metadata service refused by name as for MCP_SERVER. The
+# endpoint the owner configured for the provider is theirs, so :func:`provider_egress_policy` lets
+# its host be on their own machine or network (a model server here or on their LAN); any other
+# host the client is sent to (a redirect, an address an answer names) keeps to the public-only
+# stance and their Allowed hosts, and a host on their Denied hosts is refused before both.
+#
+# A request of the agent's own model (its chat, stream, embeddings and model list) is never
+# narrowed by a run's egress tier (`net.http_clients` asks it with the run held to none): the model
+# is shared by every run, so a run whose tier is `off` still reaches it. A transcription, speech,
+# image or video request keeps to the run's tier, as any request a run makes does.
+#
+# `pin_resolved_ip` stays True: a model list read through `net.fetch` dials the addresses the
+# guard checked. A provider's own client cannot (it resolves the name again for itself), which
+# `net.http_clients` says where it hands one out.
+MODEL_PROVIDER = EgressPolicy(name="model_provider", deny_hosts=METADATA_SERVICE_HOSTS)
+
+_PROFILES: dict[str, EgressPolicy] = {
+    p.name: p
+    for p in (
+        STRICT,
+        CONNECTOR,
+        SOURCE,
+        WEBHOOK,
+        LOOPBACK_INTERNAL,
+        REGISTRY,
+        LISTED,
+        SYNC,
+        BROWSE,
+        FETCH_ACTION,
+        LISTING,
+        MEDIA,
+        MCP_SIGN_IN,
+        MCP_SERVER,
+        MODEL_PROVIDER,
+    )
+}
+
+
+def egress_policy_for_tier(tier: str) -> "EgressPolicy | None":
+    """Resolve a safety-profile egress TIER to a base :class:`EgressPolicy`.
+
+    * ``off``      → ``None`` (the caller denies all egress — no policy applies).
+    * ``listed``   → LISTED: exclusively the operator's ``security.egress.allow_hosts``
+                     (unioned in by ``egress_policy_for`` at the call site).
+    * ``registry`` → the curated REGISTRY preset, exclusively (dev registries only).
+    * ``all``      → STRICT (public hosts, the normal agent posture).
+
+    An unknown tier falls back to STRICT (the safe public-only default); the ceiling
+    rejects an off-scale tier at boot, so an unknown value cannot arrive from there."""
+    if tier == "off":
+        return None
+    if tier == "registry":
+        return REGISTRY
+    if tier == "listed":
+        return LISTED
+    return STRICT
+
+
+def egress_policy_for_profile(base: EgressPolicy, tier: str) -> "EgressPolicy | None":
+    """Narrow a surface's ``base`` policy by a run's egress TIER — tightest wins.
+
+    The surface keeps its own caps and stance (a knowledge scrape stays CONNECTOR-shaped);
+    the tier can only take reach away. ``None`` means the run may not egress at all and the
+    caller must refuse — never fall through to the base.
+
+    Composition, per field:
+
+    * ``off`` → ``None``.
+    * a tier with an exclusive host set (``listed``/``registry``) → an ADDITIVE base becomes
+      exclusive, with the tier's hosts unioned onto the base's own (a surface that already
+      allow-listed a host keeps it; the tier adds its preset). An EXCLUSIVE base already
+      reaches only the hosts it names, and keeps exactly those: the tier's preset is not
+      added, since a union there would WIDEN it (a ``registry`` tier would hand a surface
+      pinned to one endpoint 22 package registries).
+    * ``all`` → the base is already at least this narrow, so it is returned unchanged.
+    * caps (``max_bytes``/``timeout_s``) take the tighter of the two, so a tier can never
+      raise a surface's ceiling — REGISTRY's 100 MB does not widen a 5 MB fetch.
+    """
+    tier_policy = egress_policy_for_tier(tier)
+    if tier_policy is None:
+        return None
+    if not tier_policy.allow_only:
+        return base
+    hosts = (
+        base.allow_hosts
+        if base.allow_only
+        else tuple(dict.fromkeys([*base.allow_hosts, *tier_policy.allow_hosts]))
+    )
+    return base.with_overrides(
+        allow_only=True,
+        allow_hosts=hosts,
+        max_bytes=min(base.max_bytes, tier_policy.max_bytes),
+        timeout_s=min(base.timeout_s, tier_policy.timeout_s),
+    )
+
+
+def egress_policy_for_run(
+    base: EgressPolicy, session_key: str | None = None
+) -> "EgressPolicy | None":
+    """*base* narrowed by the egress tier of the run a call is made for: the one reader of it.
+
+    A run's tier is its safety profile's (``SafetyProfile.egress_tier``, resolved through
+    ``guardrails.policy.profile_for_session``, so the governance ceiling bounds it), and it holds
+    for every network call made inside the run. The guard asks this about every request it judges
+    (``net.guard.evaluate``: behind ``net.fetch``, ``open_url``, the browser's navigations and
+    every app that fetches through the SDK), and so does each surface that refuses before it asks
+    the guard (a watched source's poll, the hosts the agent's shell reaches unasked, a program an
+    app's code starts). Tightest wins (:func:`egress_policy_for_profile`). A command the run starts
+    is held to the same tier at its launch (:func:`no_network_for_commands`).
+
+    *session_key* names the run, ``""`` included (an unnamed run resolves as attended, still
+    bounded by the ceiling). Left out, the run is the one the call is being made for
+    (:func:`run_of_this_call`): the session a tool call runs as, which each seam that dispatches
+    one binds around it (``mcp_core.set_current_session_key``: the built-in agent's tool calls, the
+    tool server an agent CLI runs, ``POST /api/tools/invoke``), or the run an automation's action
+    is dispatched for (:func:`egress_held_to`: a trigger's fire and its Run now, a hook, a
+    workflow step). A call no run is bound for is not a run's (the owner's own action in the app,
+    a background job), and *base* is returned as it is, the owner's Network egress settings
+    already on it.
+
+    ``None`` means the run may not reach the network at all, and the caller refuses: never fall
+    through to *base*. A *base* that reaches only this machine (``loopback_only``: the gateway's
+    calls to itself and to an app's own backend) carries nothing off it, so no tier narrows it.
+    A run whose profile cannot be resolved (a corrupt ceiling) raises, which refuses the call.
+    """
+    if base.loopback_only:
+        return base
+    tier = _tier_of_this_run(session_key)
+    return egress_policy_for_profile(base, tier) if tier is not None else base
+
+
+def no_network_for_commands(session_key: str | None = None) -> str:
+    """Why a command started for the run a call is made for runs with no network, or ``""`` when
+    it keeps the network.
+
+    A command is a program of its own: nothing it reaches asks the guard, so the run's tier holds
+    for it where it is launched (``sandbox.wrap_argv``), and what the operating system can do
+    there is take its network away, not keep it to a list of hosts. So a run whose tier is ``all``
+    launches its commands with the network, and one whose tier is ``off``, ``listed`` or
+    ``registry`` launches them with none. *session_key* names the run as
+    :func:`egress_policy_for_run` takes it, and its tier is read as that reads it; a call made for
+    no run keeps the network. A tier that cannot be read takes the network away.
+    """
+    try:
+        tier = _tier_of_this_run(session_key)
+    except Exception:  # noqa: BLE001 - an unreadable tier never widens what a command reaches
+        logger.warning("egress: the run's tier is unreadable, so its command gets no network")
+        return "this run's egress tier could not be read"
+    if tier is None or egress_policy_for_tier(tier) is STRICT:
+        return ""
+    if tier == "off":
+        from personalclaw.net.guard import EGRESS_OFF_REASON
+
+        return EGRESS_OFF_REASON
+    return (
+        f"this run reaches only the hosts it lists (safety profile egress tier {tier!r}), and a "
+        "command cannot be held to a list of hosts"
+    )
+
+
+def _tier_of_this_run(session_key: str | None) -> str | None:
+    """The egress tier of the run a call is made for (see :func:`egress_policy_for_run` for
+    *session_key*), or ``None`` for a call made for no run. Raises when the run's profile cannot
+    be resolved."""
+    key = run_of_this_call() if session_key is None else session_key
+    if session_key is None and not key:
+        return None
+    from personalclaw.guardrails.policy import profile_for_session
+
+    return profile_for_session(key).egress_tier
+
+
+#: The run :func:`egress_held_to` holds a call's requests to, with the session that was bound when
+#: it did; ``None`` outside every hold.
+_HELD_TO: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
+    "personalclaw_egress_held_to", default=None
+)
+
+
+@contextmanager
+def egress_held_to(session_key: str) -> Iterator[None]:
+    """Hold every request made inside the block to the egress tier of *session_key*'s run.
+
+    For a seam that dispatches work for a run without running it as that run's session: an
+    automation's action (a trigger's fire and its Run now, a hook, a workflow step), judged by its
+    other gates under a dispatch key (``guardrails.policy.unattended_dispatch_key``). That key is
+    not bound as the session (``mcp_core.set_current_session_key``), which every other reader of
+    the session would then see, an agent the action starts taking it for its parent among them; it
+    is read by the two readers of the run's tier, :func:`egress_policy_for_run` and
+    :func:`no_network_for_commands`, and nothing else. A task the action starts inside the block
+    takes the hold with it, as it takes any context, and so does a worker thread of the gateway's
+    own pool (``memory_writes.ScopeCarryingExecutor``).
+
+    The hold gives way to a session bound inside it, other than the one bound when it began: a
+    tool call the work makes for a session of its own (an agent the action starts) is held to that
+    session's run, the way a tool call is everywhere. ``""`` holds the block to no run, the
+    owner's Network egress settings alone (what a connection shared by every run is made under).
+    """
+    token = _HELD_TO.set((session_key or "", _session_of_this_call()))
+    try:
+        yield
+    finally:
+        _HELD_TO.reset(token)
+
+
+def run_of_this_call() -> str:
+    """The run the call being made is for (``""`` when none is): the innermost of the session a
+    tool call runs as and the run an automation's action is held to (:func:`egress_held_to`).
+
+    A hold names the session that was bound when it began, so a session bound since (a tool call
+    made inside the held work) is the inner of the two and its run is the one asked."""
+    session = _session_of_this_call()
+    held = _HELD_TO.get()
+    if held is not None and held[1] == session:
+        return held[0]
+    return session
+
+
+def _session_of_this_call() -> str:
+    """The session the call being made runs as (``""`` when none is bound).
+
+    The binding is ``mcp_core``'s, set around each tool call a run dispatches. Read through
+    ``sys.modules`` rather than imported: a process that never loaded that module has bound
+    nothing, and the guard also runs where the tool layer is never loaded (the command line),
+    which should not import it to learn that."""
+    mcp_core = sys.modules.get("personalclaw.mcp_core")
+    return mcp_core.get_current_session_key() if mcp_core is not None else ""
+
+
+def get_policy(name: str) -> EgressPolicy:
+    """Look up a named profile (defaults to STRICT for an unknown name)."""
+    return _PROFILES.get(name, STRICT)
+
+
+#: The last `security.egress.deny_hosts` a successful config read observed. Held at module
+#: scope so a LATER read failure cannot un-deny a host the operator explicitly denied — see
+#: :func:`egress_policy_for`. Only ever grows a policy's denials, never its allowances.
+_LAST_DENY_HOSTS: tuple[str, ...] = ()
+
+
+def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
+    """Layer the operator's ``security.egress`` config onto a base profile.
+
+    A self-hoster can allow-list LAN hosts (homelab webhook), deny specific hosts, or
+    opt the whole instance into private-network egress. The guard's built-in public-only
+    default is unchanged when no config is set. Operator ``allow_hosts``/``deny_hosts``
+    are UNIONed with the profile's own; ``allow_private`` ORs in. Config read is lazy +
+    best-effort so ``net`` stays importable without a loaded config (tests, early boot).
+
+    🔴 The best-effort catch is deliberate and stays. What it must NOT do is fail open in one
+    direction. Dropping the operator's ``allow_hosts``/``allow_private`` on an error is safe —
+    the result is narrower than they asked for. Dropping their ``deny_hosts`` is not: a host
+    they explicitly denied becomes reachable, so a transient config-read error silently
+    UN-DENIES it. The last successfully-observed deny list is therefore remembered and reused
+    on a later failure, and the failure is logged at WARNING rather than swallowed — a control
+    that stops applying should be visible, which is exactly what a bare ``return base`` was not.
+    Deliberately NOT a hard fail: refusing all egress on a transient read would take the
+    machine offline over a control that only ever ADDS denials."""
+    global _LAST_DENY_HOSTS
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        eg = AppConfig.load().security.egress
+    except Exception as exc:
+        remembered = _LAST_DENY_HOSTS
+        if not remembered:
+            # Nothing observed yet, so there is no operator denial to preserve — the original
+            # behaviour, and honestly narrower than the config would have made it.
+            logger.warning("egress config unreadable (%s); using the base profile", exc)
+            return base
+        logger.warning(
+            "egress config unreadable (%s); keeping the last known deny list (%d host(s)) "
+            "so an explicitly denied host does not become reachable",
+            exc,
+            len(remembered),
+        )
+        return base.with_overrides(
+            deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *remembered])),
+        )
+    _LAST_DENY_HOSTS = tuple(eg.deny_hosts or ())
+    return base.with_overrides(
+        allow_hosts=tuple(dict.fromkeys([*base.allow_hosts, *eg.allow_hosts])),
+        deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *eg.deny_hosts])),
+        allow_private=base.allow_private or bool(eg.allow_private),
+    )
+
+
+def fetch_action_egress_policy() -> EgressPolicy:
+    """The posture ONE ``net-fetch`` action node runs under.
+
+    Derived, never hand-written — :data:`FETCH_ACTION` supplies the exclusive stance, the tightened
+    caps and the metadata denies, and :func:`egress_policy_for` layers the operator's
+    ``security.egress`` config on top. That layering is what makes the reachable set the operator's
+    own ``allow_hosts`` (see :data:`LISTED`'s contract) and what preserves their ``deny_hosts``.
+
+    Three properties this composition has, in the order they are enforced by
+    :func:`personalclaw.net.guard.evaluate`, and all three are the point:
+
+    1. A ``deny_hosts`` match refuses BEFORE the allow-list and before DNS resolution, so
+       :data:`METADATA_SERVICE_HOSTS` survives even an operator who allow-lists the metadata
+       service by hand.
+    2. ``allow_only`` refuses an off-list host BEFORE resolution — a DNS query is itself an egress
+       signal, so an unlisted host is never even looked up.
+    3. ``allow_private`` can be ORed in by operator config, and it still cannot widen reach past the
+       allow-list: the exclusive check runs first and does not consult it. So "I trust my LAN"
+       remains a statement about the listed hosts, not a bypass.
+
+    A single named seam rather than an inline ``egress_policy_for(FETCH_ACTION)`` at the call site,
+    for the reason ``sync_egress_policy`` is one: the policy decision is the security-relevant part
+    of this provider, so it belongs somewhere greppable, reviewable and testable on its own — and a
+    call site that composed its own could compose a permissive one.
+    """
+    return egress_policy_for(FETCH_ACTION)
+
+
+def listing_egress_policy(source_host: str = "") -> EgressPolicy:
+    """The posture a fetch runs under when a registry LISTING named the URL (:data:`LISTING`).
+
+    :func:`egress_policy_for` layers the operator's ``security.egress`` config on, so a host they
+    allow-listed stays reachable when it is private and a host they denied is refused.
+
+    ``source_host`` is the host of the registry source the owner ADDED, whose index listed the app.
+    The owner chose that host, so its own listings may point back at it, private or not; a
+    self-hosted registry on a LAN is useless otherwise. It is the one host added, and it cannot be
+    the metadata service: :data:`LISTING` denies those names before this allow-list is read, and
+    the guard refuses a metadata or link-local ADDRESS for every policy.
+    """
+    layered = egress_policy_for(LISTING)
+    host = source_host.strip().lower()
+    if not host:
+        return layered
+    return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))
+
+
+def mcp_sign_in_egress_policy(server_host: str) -> EgressPolicy:
+    """The posture of every request a remote MCP server's sign-in makes (:data:`MCP_SIGN_IN`).
+
+    :func:`egress_policy_for` layers the operator's ``security.egress`` config on. ``server_host``
+    is the host of the server's URL, which the owner configured: it stays reachable private or
+    not — a server on the owner's own machine or LAN signs in as well as a public one — and it
+    cannot be the metadata service, which the profile refuses by name and the guard by address.
+    """
+    layered = egress_policy_for(MCP_SIGN_IN)
+    host = server_host.strip().lower()
+    if not host:
+        return layered
+    return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))
+
+
+def with_endpoint(policy: EgressPolicy, endpoint: str) -> EgressPolicy:
+    """*policy* with the host of *endpoint*, an address the owner configured, reachable on their
+    own machine or network as well as a public one.
+
+    The one host added, as for :func:`mcp_sign_in_egress_policy`: a host on Denied hosts is still
+    refused (the guard reads the deny list first), and the metadata service is refused by address
+    for every policy. *endpoint* without a host (none configured, a provider's built-in address)
+    adds nothing."""
+    try:
+        host = (urlparse(endpoint.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        host = ""
+    if not host:
+        return policy
+    return policy.with_overrides(allow_hosts=tuple(dict.fromkeys([*policy.allow_hosts, host])))
+
+
+def provider_egress_policy(endpoint: str = "") -> EgressPolicy:
+    """The posture of every request a model provider sends (:data:`MODEL_PROVIDER`).
+
+    :func:`egress_policy_for` layers the owner's Network egress settings on, and *endpoint* is the
+    address the owner configured for the provider (:func:`with_endpoint`): a model server on this
+    computer or their network stays reachable, and one on Denied hosts is refused.
+    """
+    return with_endpoint(egress_policy_for(MODEL_PROVIDER), endpoint)
+
+
+class SyncEndpointRefused(ValueError):
+    """A sync endpoint that cannot be pinned — so no policy is derived and nothing egresses.
+
+    Raised instead of returning a wide-open policy: "I could not work out which host you
+    meant" must never resolve to "reach any host". The caller surfaces it as a setup error.
+    """
+
+
+def sync_egress_policy(endpoint: str) -> EgressPolicy:
+    """The SYNC policy pinned to one configured object-store ``endpoint``.
+
+    Derived, never hand-written: :data:`SYNC` supplies the raised caps and the exclusive
+    stance, :func:`egress_policy_for` layers the operator's ``security.egress`` posture
+    (``allow_private`` for a LAN MinIO, ``deny_hosts`` for a host the operator has banned),
+    and only then is the endpoint's host pinned as the sole reachable host.
+
+    The pin is applied AFTER the operator layering on purpose. `egress_policy_for` UNIONs the
+    operator's ``allow_hosts`` into whatever base it is given, which for an exclusive policy
+    would widen the transport's reach to every host the operator listed for other surfaces —
+    hosts that have no business being an S3 endpoint. A sync transport speaks to one endpoint,
+    so ``allow_hosts`` ends as exactly that endpoint. ``deny_hosts`` is UNIONed rather than
+    replaced, so both :data:`METADATA_SERVICE_HOSTS` and the operator's own denies survive — and a
+    deny outranks the pin, including when the operator bans their own configured endpoint.
+
+    Because the pinned host is its own allow-list entry, a private/loopback endpoint is
+    reachable without further opt-in (see :data:`SYNC`'s note — that is the intended posture
+    for user-owned storage, and the metadata service is denied separately).
+
+    Raises :class:`SyncEndpointRefused` when no host can be parsed out of ``endpoint``, or when
+    the endpoint names a denied host — refusing at derivation is more legible than handing back
+    a policy whose only permitted host is one the guard will reject on every request.
+    """
+    raw = (endpoint or "").strip()
+    if not raw:
+        raise SyncEndpointRefused("no sync endpoint configured — nothing to pin egress to")
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise SyncEndpointRefused(f"cannot parse a host out of sync endpoint {raw!r}")
+    if parsed.scheme not in SYNC.allow_schemes:
+        raise SyncEndpointRefused(
+            f"sync endpoint scheme {parsed.scheme!r} is not one of {SYNC.allow_schemes}"
+        )
+    layered = egress_policy_for(SYNC)
+    denies = tuple(dict.fromkeys([*METADATA_SERVICE_HOSTS, *layered.deny_hosts]))
+    from personalclaw.net.guard import host_matches
+
+    if host_matches(host, denies):
+        raise SyncEndpointRefused(
+            f"sync endpoint host {host!r} is on the egress deny list and cannot be a sync target"
+        )
+    return layered.with_overrides(allow_only=True, allow_hosts=(host,), deny_hosts=denies)

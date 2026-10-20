@@ -1,0 +1,204 @@
+# Build context is the repo root:
+#   docker build -f deploy/docker/Dockerfile.backend .
+
+# ── Base image (single pull, reused across stages) ──────────────────────────
+# python:3.13.16-slim, the interpreter `.python-version` names, as its multi-arch index.
+# Platform manifests:
+#   linux/amd64 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024
+#   linux/arm64 sha256:cf97c3b79da1c706532c7042f851654d97d3b88c8ca6520acda9cf4479ea9b14
+FROM mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
+
+# ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
+FROM base AS deps
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv reads the lock. It is a build tool here: the runtime stage copies /opt/venv alone, so uv
+# never ships. Pinned, like everything this stage installs, so a newer uv cannot meet the
+# lock on a day nothing in the repository changed.
+ARG UV_VERSION=0.13.1
+RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
+
+# pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one
+# replaces this venv's in the layer below, with the rest of them. wheel is not in uv.lock, so
+# it is named as an exact release, and nothing refreshes it yet: moving it is a reviewed edit
+# of this line.
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install wheel==0.48.0
+
+# Third-party dependencies only (not the package itself), so the layer stays cached across
+# source changes, and EXACTLY the versions uv.lock pins, so the image runs what CI tested.
+# This layer used to `pip install ".[extras]"`, which resolves pyproject's ranges to whatever
+# is newest on the day the image is built: that is how the image shipped a PyAV its
+# faster-whisper cannot call, and every audio upload failed to transcribe, while every tested
+# environment had the locked one. `--emit-index-url` carries the lock's indexes, PyTorch's
+# CPU index among them (pyproject's [tool.uv.sources] gives Linux its CPU torch, so the image
+# carries no CUDA runtime), and `--require-hashes --no-deps` installs that list and nothing
+# else. A requirements file cannot tie a package to one index, so the hashes are what hold
+# each file to the one the lock recorded, whichever index offers it.
+COPY pyproject.toml uv.lock ./
+RUN uv export --locked --no-emit-project --emit-index-url \
+        --extra slack --extra eval --extra httpx --extra anthropic --extra openai \
+        --extra embeddings --extra stt --extra tts \
+        -o /build/requirements.txt && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes --no-deps \
+        -r /build/requirements.txt
+
+# ── Stage 1b: build the SPA ──────────────────────────────────────────────────
+# The gateway serves its dashboard from the INSTALLED package's static/dist, and
+# setup.py's BuildWithWeb grafts web/dist in during `pip install` — but only if
+# web/dist is present in the build tree. It never was here: .dockerignore excludes
+# it as a host build artifact and nothing built it in-image, so this image answered
+# /api/healthz 200 while serving NO dashboard. Bundling it is what makes
+# the single-container `docker run` in README.md reach a usable dashboard, and what
+# makes docs/guides/containers.md's "the gateway image bundles the wheel (with the
+# prebuilt dashboard)" true.
+#
+# Byte-identical to Dockerfile.web's builder stage on purpose: one SPA build recipe,
+# two images. Keep them in step — see the workspace-install and heap notes there.
+# It builds on the build platform for the same reason as there (`--platform=$BUILDPLATFORM`): the
+# files are the same on every architecture, so they are built once, natively, rather than for
+# arm64 under emulation. The builder stage copies them in for each target.
+# node:24.22.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:429bdfbc204b4eabc6438e6d34e4e9d8dd2ca1df8289bcd78cdd3c5db387b7a5
+#   linux/arm64 sha256:5b12456322560dcf9342f7339662bccf8c5665cf0732a8ec8363687aa93c5277
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS web
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY web/package.json web/
+
+# The COPYs of files outside `web/` below exist because `npm ci` and `npm run build`
+# reach OUTSIDE `web/`, and without them this stage cannot be built at all — see #3362,
+# which found the first two holes in Dockerfile.web by building it rather than pulling it.
+#
+# `package.json` declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci`
+# invokes it and dies with `exit code 2` on the missing file. The script already exits
+# 0 in a build context (`.git` is dockerignored), so copying it is the fix rather than
+# `--ignore-scripts`, which would also suppress the dependency postinstalls the SPA
+# build needs (esbuild's).
+COPY scripts/install_git_hooks.sh scripts/
+
+RUN npm ci --workspace=web --prefer-offline
+
+# The SPA imports two data files the backend reads too, each by a relative path that resolves
+# to /app/src/personalclaw/… from WORKDIR /app: without them `npm run build` (`vite build`)
+# cannot resolve those imports and fails. The list is complete, and
+# tests/test_web_image_stage_parity.py keeps it so — see the same COPYs in Dockerfile.web.
+COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
+
+COPY web/ web/
+
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
+
+# ── Stage 2: install package with full source ───────────────────────────────
+FROM deps AS builder
+
+COPY src/ ./src/
+COPY pyproject.toml setup.py ./
+# At the FIRST path setup.py's BuildWithWeb._find_web_dist looks in (<root>/web/dist),
+# and before the install below — build_py copies it into the installed package as
+# personalclaw/static/dist, which is where frontend.py resolves the SPA from.
+COPY --from=web /app/web/dist ./web/dist
+RUN rm -rf build/ *.egg-info && \
+    /opt/venv/bin/pip install --no-cache-dir --no-deps --no-build-isolation .
+
+# ── Stage 3: the Node the agent CLIs run on ──────────────────────────────────
+# The release `.nvmrc` names, on the Debian release the python base is (trixie, glibc): Node's
+# own build, which links only glibc, libstdc++ and libgcc_s, all of which the base ships. The
+# runtime stage copies `node` and npm out of it, so the image runs a dated Node line rather than
+# Debian's packaged one, which is Node 20, past its end of life.
+# node:24.22.0-trixie-slim, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:27526714fd6b7dc938f8cb1665bf1fe749efadadf0145d5bcc07f0fbd0370b60
+#   linux/arm64 sha256:74a6ed1058beb23dfb49fa05531f35421dc5d2b49b22972bbbb8041ab20588ad
+FROM mirror.gcr.io/library/node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315 AS node-runtime
+
+# ── Stage 4: runtime ─────────────────────────────────────────────────────────
+FROM base AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tini \
+        curl \
+        ffmpeg \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node and npm where the node image keeps them: /usr/local is on the base's PATH ahead of
+# /usr/bin. npm and npx are links, as in the node image, so npm finds its own modules from the
+# link's target.
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    node --version && npm --version
+
+# Bundle the public ACP agent adapters + their underlying CLIs so the
+# acp:claude-code / acp:codex providers work out-of-box (no per-host `npm i -g`,
+# no cold `npx` fetch on first spawn). These are the canonical @agentclientprotocol
+# adapters (the renamed home of the former @zed-industries/* adapters; both build
+# on @agentclientprotocol/sdk). Private/enterprise ACP runtimes are intentionally
+# NOT bundled (they ship only where their own toolchain is present).
+#
+# The four come from deploy/docker/agent-clis/: its package.json pins each one exactly and its
+# package-lock.json holds every package they pull in, each under a sha512 integrity, so a build
+# installs what the lock recorded and nothing newer. Dependabot's npm entry for that folder
+# moves the lock. `npm ci` fails the build when the registry cannot serve the lock, rather than
+# shipping an image without the CLIs. Each command is linked into /usr/local/bin, where the
+# gateway and a login shell find it on PATH, and a link that does not reach an executable fails
+# the build too: without the command the gateway would fetch the newest release with npx when it
+# starts one. The list is the commands the lock's four packages declare, which
+# tests/rails/test_docker_single_container_tree.py holds it to.
+WORKDIR /opt/agent-clis
+COPY deploy/docker/agent-clis/package.json deploy/docker/agent-clis/package-lock.json ./
+RUN npm ci --omit=dev --no-fund --no-audit && \
+    npm cache clean --force && \
+    for command in claude-agent-acp codex-acp claude codex; do \
+        ln -s /opt/agent-clis/node_modules/.bin/"$command" /usr/local/bin/"$command" && \
+        test -x /usr/local/bin/"$command" || exit 1; \
+    done
+
+RUN groupadd --gid 10001 personalclaw && \
+    useradd --uid 10001 --gid 10001 --create-home --shell /bin/false personalclaw
+
+COPY --from=builder /opt/venv /opt/venv
+
+# The ENV PATH below reaches every process the container runtime starts, but not a login shell:
+# /etc/profile resets PATH without /opt/venv/bin, and the dashboard's terminal is a login shell,
+# so `personalclaw` was not found there. /etc/profile then reads /etc/profile.d, and this puts the
+# environment back in front.
+COPY deploy/docker/personalclaw-profile.sh /etc/profile.d/personalclaw.sh
+
+# /data is the ONLY volume, so everything a user makes has to land under it. The workspace root —
+# the default chat workspace, and where the folder picker opens to create a project folder —
+# defaults to `workspace` in the home, /data/workspace here. It is also named explicitly: it is
+# the path compose has always set and the home's own `workspace` entry in the state inventory
+# (durability/inventory.py), so snapshots carry it, and a container-local workspace would be
+# gone on `docker rm` + `docker run` while the project page kept pointing at it. Set here, the
+# README's one-liner is safe without an extra flag.
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PERSONALCLAW_HOME=/data \
+    PERSONALCLAW_WORKSPACE=/data/workspace \
+    PERSONALCLAW_PORT=10000 \
+    PERSONALCLAW_INSTALL_KIND=container
+
+RUN mkdir -p /data && chown personalclaw:personalclaw /data
+VOLUME ["/data"]
+
+USER personalclaw
+WORKDIR /data
+
+EXPOSE 10000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:10000/api/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["personalclaw", "gateway"]

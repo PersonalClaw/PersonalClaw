@@ -1,0 +1,1 @@
+"self_persona": Array of short FIRST-PERSON growth notes about how YOU (the assistant) worked WELL with this user this session — your positive self-model, e.g. "favor clean-break refactors over shims", "this user wants thorough, direct review". NOT user facts, NOT corrections (those are lessons). Each: a string <=120 chars. Empty [] if nothing notable. Max 4.

@@ -1,0 +1,1 @@
+"history_entry": A concise paragraph (2-5 sentences) summarizing what happened. Use local time [YYYY-MM-DD HH:MM]. Focus on decisions, outcomes, facts. Use user's real name if known.

@@ -1,0 +1,76 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - textbox "Message input"
+  - button "Attach files"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - button "Send message" [disabled]
+  - heading "To triage" [level=#]
+  - paragraph: Nothing to triage — no approvals, messages or skill proposals are waiting.
+  - heading "Active work" [level=#]
+  - paragraph: No active work. Loops you launch appear here as they run.
+  - heading "Tasks" [level=#]
+  - paragraph: No tasks ready to work.
+  - button "New task"
+  - heading "Suggestions" [level=#]
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+  - button "Refresh"
+  - heading "Agent world" [level=#]
+  - paragraph: Nothing is running. Loops, chats and subagents appear here as they start.
+  - heading "Discover" [level=#]
+  - paragraph: Start a conversation
+  - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+  - button "Dismiss — don't suggest this again"
+  - button "Open Chat"
+  - button "See all # in Discover"
+  - heading "Pinned artifacts" [level=#]
+  - paragraph: No pinned artifacts. Pin one from its page to keep it here.
+  - heading "Desktop live view" [level=#]
+  - text: "Off"
+  - switch "Live view"
+  - switch "Cursor overlay"
+  - paragraph: Desktop computer use is off. If you arm it (an out-of-band step no agent can take), every action shows up here live.
+  - heading "Browse live view" [level=#]
+  - text: Idle
+  - button "Stop all browsing": Stop
+  - paragraph: No unattended browse is running. Each step shows here live, with a one-click stop.
+  - heading "Recent activity" [level=#]
+  - paragraph: Nothing ran recently — every recent fire was held by a gate.
+  - button "Show # suppressed by a gate"

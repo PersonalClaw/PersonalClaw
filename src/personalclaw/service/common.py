@@ -1,0 +1,151 @@
+"""Platform detection and shared service constants."""
+
+import enum
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from personalclaw.atomic_write import (
+    PRIVATE_DIR_MODE,
+    PRIVATE_FILE_MODE,
+    make_private_dirs,
+    private_file,
+    write_private_file,
+)
+
+SERVICE_NAME = "personalclaw"  # systemd unit name (without .service)
+LAUNCHD_LABEL = "io.personalclaw.gateway"  # launchd Label
+
+
+#: How much of what sudo, systemctl or launchctl said a failure keeps: the end, where the
+#: reason and what to do are.
+COMMAND_SAID_CHARS = 600
+
+
+def command_said(result: "subprocess.CompletedProcess[str]") -> str:
+    """What a service command (sudo, systemctl, launchctl) printed, fit for the terminal.
+
+    Its stderr, else its stdout: masked the way every view masks, cut to the end, where the
+    reason is (``Unit not found``, ``a terminal is required to read the password``), with its
+    line breaks kept for the person reading it and every control character written as a
+    visible escape, so the command cannot move the cursor or recolour the terminal it is shown
+    in. A status block goes through ``mask_child_output`` whole, the same way.
+    """
+    from personalclaw.security import mask_child_output
+
+    return mask_child_output(
+        result.stderr or result.stdout, limit=COMMAND_SAID_CHARS, tail=True, one_line=False
+    )
+
+
+#: A sign-in link's credential, as a line of the gateway's output carried one: the value of a
+#: URL's ``token`` parameter.
+_SIGN_IN_LINK_VALUE = re.compile(rb"([?&]token=)[^\s&#]+")
+_REMOVED = rb"\1[removed]"
+
+
+def private_output_log(path: Path) -> None:
+    """Make *path* ready to take a gateway's console output: the owner's alone, with no sign-in
+    link left in it. Called before the process that writes it starts.
+
+    For the files the gateway's stdout and stderr go to when no terminal shows them: launchd's
+    ``StandardOutPath`` and ``StandardErrorPath``, and a detached ``personalclaw restart``'s log.
+    Their folder is made 0700, and tightened to it when it is looser: it holds nothing but these
+    logs. The file is 0600 before its first byte, and the process that opens it to append keeps
+    that mode. A gateway older than this one printed its sign-in link there, a live owner session:
+    the link's value is taken out, and every other byte of the log is kept.
+    """
+    make_private_dirs(path.parent)
+    os.chmod(path.parent, PRIVATE_DIR_MODE)
+    try:
+        with path.open("rb") as log:
+            holds_a_link = any(_SIGN_IN_LINK_VALUE.search(line) for line in log)
+    except FileNotFoundError:
+        write_private_file(path, b"")
+        return
+    if not holds_a_link:
+        os.chmod(path, PRIVATE_FILE_MODE)
+        return
+    with path.open("rb") as log, private_file(path, fsync=False) as kept:
+        for line in log:
+            kept.write(_SIGN_IN_LINK_VALUE.sub(_REMOVED, line))
+
+
+def personalclaw_bin() -> str:
+    """Return the resolved personalclaw executable path, or fall back to sys.argv[0].
+
+    Used by both the systemd unit and the launchd plist as ``ExecStart`` /
+    ``ProgramArguments``. Falls back to ``sys.argv[0]`` for development
+    installs where ``personalclaw`` isn't on the global PATH.
+    """
+    found = shutil.which("personalclaw")
+    if found:
+        return found
+    return os.path.realpath(sys.argv[0])
+
+
+def service_path(home: str) -> str:
+    """Build the PATH for the gateway's service environment.
+
+    The ``$PATH`` the installing command was launched with (``env.startup_path``), in its
+    order, so subprocesses spawned by the gateway (git, agent CLIs, etc.) resolve the same
+    way they did in the interactive shell that ran ``personalclaw service install``.
+    Always-required user dirs (``~/.local/bin``) and POSIX defaults are appended when that
+    ``$PATH`` lacks them, never ahead of it.
+    Duplicates are removed while preserving order.
+    """
+    required = [
+        f"{home}/.local/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    from personalclaw.env import startup_path
+
+    env_path = [p for p in (startup_path() or "").split(":") if p]
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in env_path + required:
+        if entry not in seen:
+            seen.add(entry)
+            out.append(entry)
+    return ":".join(out)
+
+
+class Platform(enum.Enum):
+    """Supported service-management platforms."""
+
+    # System-level systemd. Unit lives at /etc/systemd/system/, write
+    # and control commands require sudo. The name reflects the privilege
+    # model: a user-level (~/.config/systemd/user/) variant doesn't work
+    # on some older Linux systemd versions, so we don't ship one.
+    SYSTEMD = "systemd"
+    LAUNCHD = "launchd"
+    # The published container image. Its service manager is the container runtime on the host,
+    # which starts, stops and restarts the gateway (the container's own main process) and which
+    # nothing inside the container can drive, so every service action here says what the host
+    # runs instead (`personalclaw.container_host`).
+    CONTAINER = "container"
+    UNSUPPORTED = "unsupported"
+
+
+def current_platform() -> Platform:
+    """Return the platform whose service manager we should target.
+
+    The container image → CONTAINER, whatever is on PATH.
+    Linux with systemctl on PATH → SYSTEMD.
+    macOS with launchctl on PATH → LAUNCHD.
+    Anything else → UNSUPPORTED.
+    """
+    from personalclaw import container_host
+
+    if container_host.in_container():
+        return Platform.CONTAINER
+    if sys.platform.startswith("linux") and shutil.which("systemctl"):
+        return Platform.SYSTEMD
+    if sys.platform == "darwin" and shutil.which("launchctl"):
+        return Platform.LAUNCHD
+    return Platform.UNSUPPORTED

@@ -1,0 +1,15 @@
+{
+  "name": "e2e-ui-fixture",
+  "version": "0.0.1",
+  "displayName": "E2E UI fixture",
+  "description": "Contributes one UI page so the a11y harness can sweep app-AUTHORED DOM, which no other route reaches. Test fixture: seeded into the e2e home by web/playwright.config.ts and never published.",
+  "ui": {
+    "pages": [
+      {
+        "route": "e2e-ui-fixture",
+        "label": "E2E UI fixture",
+        "entryPoint": "index.mjs"
+      }
+    ]
+  }
+}

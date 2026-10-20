@@ -1,0 +1,95 @@
+# Cancels a pull request's runs when it closes, merged or not.
+#
+# A workflow's concurrency group cancels a run only when a newer run joins that group, and closing
+# a pull request starts no run in any of them. So a closed pull request's run went on holding its
+# runners until it finished: on 2026-10-17 the CI runs of two merged pull requests still held
+# runners 2 and 4 hours later, with 48 runs queued behind them.
+#
+# Each job here joins ONE per-pull-request workflow's group, with cancel-in-progress, and runs
+# nothing else. A job-level group and a workflow-level group are one namespace across the
+# repository's workflows. GitHub's "Control the concurrency of workflows and jobs" says
+# `jobs.<job_id>.concurrency` ensures "that only a single job or workflow using the same
+# concurrency group will run at a time", and that group names "must be unique across workflows
+# to avoid canceling in-progress jobs or runs from other workflows". So a job joining a
+# workflow's group cancels that workflow's run in the group.
+#
+# The keys are written for a closed event, not copied from each workflow. When a pull request
+# closes because it merged, `github.ref` is the branch it merged into (`refs/heads/main`), not
+# `refs/pull/N/merge` (GitHub's "Events that trigger workflows", `pull_request`). ci.yml's own key
+# would then name the merge commit's main group, and its cancel-in-progress would read false.
+# Each key here is what that workflow's key evaluated to on the pull request's own runs.
+# tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
+# holds them equal, merged or not, from this repository or a fork.
+#
+# Nothing of the pull request runs here: no checkout, `permissions: {}`, and one step that logs
+# the runner image, as every job does. It runs on `pull_request`, not `pull_request_target`.
+name: Cancel a closed pull request's runs
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+
+  docker-single-container:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      group: docker-single-container-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+
+  nix:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+
+  release-image-tooling:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      group: release-image-tooling-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+
+  action-pins:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      # action-pins.yml keys on `github.ref`, which is `refs/pull/N/merge` on a pull request's run
+      # and the base branch on a merged one's close, so the pull request's ref is spelled out.
+      group: action-pins-refs/pull/${{ github.event.pull_request.number }}/merge
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"

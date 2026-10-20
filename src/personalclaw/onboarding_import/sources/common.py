@@ -1,0 +1,729 @@
+"""What every source reader shares, so two tools' importers cannot drift on the parts that match.
+
+- **Paths another machine recorded.** A tool's home copied from an old laptop names that laptop's
+  home (``/Users/old-name/src/app``). :func:`on_this_machine` finds the same path under THIS home,
+  and :func:`~personalclaw.home_paths.from_home` says it the way a person reads it.
+- **One file, one item** (:func:`text_item`), read through floors 1 and 2.
+- **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from,
+  with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
+- **Prompt history** (:func:`prompt_history`): counted and named, never imported.
+- **A file that is there and cannot be read** (:data:`UNPARSABLE`, and one that will not open):
+  named on the scan (:func:`note_unreadable`), never read as empty and never a scan fault.
+- **A conversation file, as the step lists it** (:class:`Transcript`, :data:`READINGS`): read in
+  full, or — for the thousands of files a months-long history holds — only as far as its first
+  prompt, and remembered until the file changes. Its title and note (:func:`one_line`,
+  :func:`conversation_note`).
+- **An MCP server** (:class:`McpServer`, :func:`mcp_item`): what a tool has configured, values
+  included, for the onboarding scan and the Tools page's Import — one definition, one writer.
+- **A command the tool refuses** (:func:`denied_command_item`), and the rest of its settings
+  (:func:`settings_not_imported`), named and left where they are.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+import re
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from personalclaw.home_paths import from_home
+from personalclaw.onboarding_import.floors import (
+    FileUnreadable,
+    read_text_safely,
+    refuses,
+    safe_text,
+    why_unreadable,
+)
+from personalclaw.onboarding_import.model import (
+    ImportCategory,
+    ImportItem,
+    NotImported,
+    ScanResult,
+    SkillScan,
+    UnreadableFile,
+)
+from personalclaw.skills.marketplace import (
+    SkillDetail,
+    SkillEntry,
+    SkillsMarketplace,
+    read_skill_file_entry,
+    scan_before_install,
+)
+
+logger = logging.getLogger(__name__)
+
+#: A title is a line in a list, not the first paragraph of a conversation.
+TITLE_CHARS = 80
+
+#: What ``json`` and ``tomllib`` raise for a document they cannot read: ``ValueError`` when it is
+#: not valid, and ``RecursionError`` when it nests deeper than the interpreter recurses. Either
+#: way that one file or line is unreadable, and neither may end the scan of the rest.
+UNPARSABLE = (ValueError, RecursionError)
+
+# ── paths another machine recorded ────────────────────────────────────────────
+
+#: ``/Users/<name>`` or ``/home/<name>``: the part of a recorded path that names the machine's
+#: home directory rather than anything inside it.
+_HOME_PREFIX_RE = re.compile(r"^(?:/Users|/home)/[^/]+")
+
+
+def on_this_machine(recorded: str) -> Path | None:
+    """Where the directory a tool recorded as ``recorded`` is on THIS machine, or ``None``.
+
+    The recorded path itself when it exists. Otherwise, when it is under a home directory
+    (``/Users/<name>/…``), the same path under this machine's home: a tool's home copied from an
+    old laptop names the old laptop's home, and ``~/src/app`` is still ``~/src/app``.
+    """
+    if not recorded:
+        return None
+    path = Path(recorded)
+    if path.is_dir():
+        return path
+    match = _HOME_PREFIX_RE.match(recorded)
+    if match is None:
+        return None
+    moved = Path.home() / recorded[match.end() :].lstrip("/")
+    return moved if moved.is_dir() else None
+
+
+def recorded_label(recorded: str) -> str:
+    """A directory a tool recorded, as a person reads it: where it is on this machine when it is
+    here, and the path as recorded when it is not."""
+    local = on_this_machine(recorded)
+    return from_home(local) if local is not None else recorded
+
+
+# ── files ─────────────────────────────────────────────────────────────────────
+
+
+def markdown_files(directory: Path, *, recursive: bool = True) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    found = directory.rglob("*.md") if recursive else directory.glob("*.md")
+    return sorted(p for p in found if p.is_file())
+
+
+def slug_name(raw: str, *, lower: bool) -> str:
+    """``raw`` as a destination name: runs of other characters become ``-``."""
+    text = raw.strip().lower() if lower else raw.strip()
+    pattern = r"[^a-z0-9-]+" if lower else r"[^A-Za-z0-9_-]+"
+    return re.sub(pattern, "-", text).strip("-")[:63]
+
+
+def unreadable_file(exc: FileUnreadable) -> UnreadableFile:
+    """The file ``exc`` could not read, as the step names it."""
+    return UnreadableFile(path=from_home(exc.path), why=exc.why)
+
+
+def note_unreadable(result: ScanResult, entry: UnreadableFile) -> None:
+    """Name a file that is there and could not be read on the scan, once however many of the
+    scan's readers asked for it (``settings.json`` is read for its servers and for its rules)."""
+    if all(known.path != entry.path for known in result.unreadable_files):
+        result.unreadable_files.append(entry)
+
+
+def text_item(
+    source: str,
+    path: Path,
+    result: ScanResult,
+    *,
+    category: ImportCategory,
+    key: str,
+    title: str,
+    origin: str = "",
+    note: str = "",
+    preselect: bool = True,
+    payload: dict[str, Any] | None = None,
+    seen_files: set[Path] | None = None,
+) -> bool:
+    """One file read through floors 1 and 2 into an item. False when nothing was added: the file
+    is empty, refused, unreadable (named on the scan), or (``seen_files``) already an item."""
+    if seen_files is not None:
+        # One file, one item: a tool can reach one file by two names.
+        resolved = path.resolve()
+        if resolved in seen_files:
+            return False
+        seen_files.add(resolved)
+    try:
+        text, redactions, skipped = read_text_safely(path)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        return False
+    result.secrets_skipped += skipped
+    if not text.strip():
+        return False
+    result.redactions += redactions
+    result.items.append(
+        ImportItem(
+            source=source,
+            category=category,
+            key=key,
+            title=title,
+            text=text,
+            payload=dict(payload or {}),
+            origin=origin,
+            note=note,
+            preselect=preselect,
+            redactions=redactions,
+            secrets_skipped=skipped,
+        )
+    )
+    return True
+
+
+def _skill_files(skill_dir: Path) -> list[dict[str, Any]]:
+    """A skill directory's files as an install stages them: every file but a credential file,
+    which is never staged, scanned or installed (the floor the scan counts it with)."""
+    files: list[dict[str, Any]] = []
+    for path in sorted(skill_dir.rglob("*")):
+        if not path.is_file() or refuses(path):
+            continue
+        try:
+            files.append(read_skill_file_entry(path, path.relative_to(skill_dir).as_posix()))
+        except OSError:
+            logger.warning("skipping unreadable file in imported skill %s", skill_dir.name)
+    return files
+
+
+class ImportedSkillMarketplace(SkillsMarketplace):
+    """A transient, single-directory skills source rooted at a foreign skill dir.
+
+    Not registered in the shared registry — another tool's skills dir is not a marketplace. It
+    exists so an imported skill is scanned before the import (:func:`scan_skills`) and installed
+    by it (``writers._write_skill``) through the one gate a Store skill goes through
+    (quarantine → scan → commit → lock), at the ``community`` trust tier (foreign, unsigned).
+    """
+
+    def __init__(self, skill_dir: Path) -> None:
+        self._skill_dir = Path(skill_dir)
+
+    @property
+    def marketplace_type(self) -> str:
+        return "onboarding_import"
+
+    @property
+    def trust_tier(self) -> str:
+        return "community"
+
+    def search(self, query: str, limit: int = 20) -> list[SkillEntry]:  # pragma: no cover
+        return []
+
+    def fetch(self, skill_id: str) -> SkillDetail:
+        return SkillDetail(
+            id=skill_id,
+            name=self._skill_dir.name,
+            files=_skill_files(self._skill_dir),
+            audit_status="pass",
+        )
+
+
+#: The findings a person weighs before importing a skill: what refuses it, and what it needs
+#: their acceptance for. A ``low`` finding changes neither, so it is not listed.
+_SHOWN_SEVERITIES = frozenset({"warning", "dangerous"})
+
+
+def _skill_scan(skill_dir: Path, name: str) -> SkillScan | None:
+    """The supply-chain scan the import's install will make of this skill, made now: ``None``
+    when its files cannot be staged, in which case the install says why."""
+    try:
+        report, consent = scan_before_install(ImportedSkillMarketplace(skill_dir), name)
+    except (ValueError, OSError):
+        logger.debug("could not scan imported skill %s", name, exc_info=True)
+        return None
+    findings = tuple(
+        {
+            "rule": finding.rule,
+            "severity": finding.severity.value,
+            "path": finding.path,
+            # A snippet of the skill's own file: through the detector like any text shown.
+            "evidence": safe_text(finding.evidence)[0],
+        }
+        for finding in report.findings
+        if finding.severity.value in _SHOWN_SEVERITIES
+    )
+    return SkillScan(verdict=report.verdict.value, findings=findings, consent=consent)
+
+
+def _warnings_note(scan: SkillScan | None) -> str:
+    if scan is None or not scan.needs_acceptance:
+        return ""
+    count = sum(1 for finding in scan.findings if finding["severity"] == "warning")
+    one = count == 1
+    return (
+        f"Its security scan found {count} warning{'' if one else 's'}, so it comes over only if "
+        f"you accept {'it' if one else 'them'}."
+    )
+
+
+def scan_skills(source: str, roots: list[tuple[Path, str]], result: ScanResult) -> None:
+    """Every ``<root>/<name>/SKILL.md``, one skill per name: ``roots`` is ``(directory, origin)``
+    in the order the tool reads them, and the first root to hold a name is the one it keeps.
+
+    A dot-directory is the tool's own (Codex keeps the skills it ships in ``skills/.system``),
+    not one of yours. Each skill carries the supply-chain scan its install will make, so the step
+    shows what refuses it, or what it needs accepting, before anything is chosen: a skill whose
+    scan has warnings starts unticked.
+    """
+    seen: set[str] = set()
+    for root, origin in roots:
+        if not root.is_dir():
+            continue
+        for skill_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            name = skill_dir.name
+            if name.startswith(".") or name in seen or not (skill_dir / "SKILL.md").is_file():
+                continue
+            seen.add(name)
+            # Count (and later exclude) any credential file sitting inside the skill. The
+            # writer's fetch applies the same predicate, so a counted file is also an
+            # uninstalled file — the count and the behaviour cannot drift.
+            withheld = sum(1 for f in skill_dir.rglob("*") if f.is_file() and refuses(f))
+            result.secrets_skipped += withheld
+            scan = _skill_scan(skill_dir, name)
+            result.items.append(
+                ImportItem(
+                    source=source,
+                    category=ImportCategory.SKILLS,
+                    key=name,
+                    title=name,
+                    path=str(skill_dir),
+                    origin=origin,
+                    note=_warnings_note(scan),
+                    preselect=scan is None or not scan.needs_acceptance,
+                    secrets_skipped=withheld,
+                    scan=scan,
+                )
+            )
+
+
+def count_lines(path: Path) -> int:
+    """How many non-blank lines a JSONL file holds: 0 when it is not there or is refused. One that
+    is there and will not open raises :class:`FileUnreadable`, because 0 would say it is empty."""
+    if not path.is_file() or refuses(path):
+        return 0
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            return sum(1 for line in handle if line.strip())
+    except OSError as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="text")) from exc
+
+
+def prompt_history(path: Path, result: ScanResult) -> None:
+    """A tool's list of past prompts (``history.jsonl``), counted under "Not brought over" and
+    never imported. A list that is there and will not open is named on the scan instead: counted
+    as none, it read as a tool with no prompt history."""
+    try:
+        count = count_lines(path)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        return
+    if not count:
+        return
+    result.not_imported.append(
+        NotImported(
+            what="Prompt history",
+            count=count,
+            why=(
+                "PersonalClaw keeps no separate list of past prompts. The prompts in your "
+                "conversations come over with them."
+            ),
+        )
+    )
+
+
+# ── commands a tool refuses, and the rest of its settings ─────────────────────
+
+#: The characters that mean something in a regular expression outside a character class.
+_REGEX_SPECIAL_RE = re.compile(r"([.^$*+?{}\[\]\\|()])")
+
+
+def denied_pattern(pattern: tuple[tuple[str, ...], ...]) -> str:
+    """A command prefix as a shell-denylist pattern: its words in order, each position one of the
+    words the tool accepts there, apart by whitespace, bounded so ``rm -rf`` does not also refuse
+    ``rm -rfv``.
+
+    PersonalClaw matches the pattern anywhere in a command, whatever the case, so it refuses at
+    least every command the other tool refused — ``bash -lc "rm -rf build"`` too.
+    """
+    positions = []
+    for alternatives in pattern:
+        words = [_REGEX_SPECIAL_RE.sub(r"\\\1", word) for word in alternatives]
+        positions.append(words[0] if len(words) == 1 else f"(?:{'|'.join(words)})")
+    start = r"\b" if all(re.match(r"\w", w[0]) for w in pattern[0]) else r"(?<!\S)"
+    end = r"\b" if all(re.match(r"\w", w[-1]) for w in pattern[-1]) else r"(?!\S)"
+    return start + r"\s+".join(positions) + end
+
+
+def denied_command_item(
+    source: str,
+    result: ScanResult,
+    *,
+    key: str,
+    pattern: tuple[tuple[str, ...], ...],
+    note: str = "",
+) -> None:
+    """A command the other tool refuses to run, as one it refuses here: a shell-denylist item.
+
+    A command that itself holds a credential is left out and counted: its pattern would carry
+    the credential into ``config.json``.
+    """
+    title, redacted = safe_text(" ".join("|".join(alternatives) for alternatives in pattern))
+    if redacted:
+        result.secrets_skipped += 1
+        return
+    clean_note, redactions = safe_text(note)
+    result.redactions += redactions
+    result.items.append(
+        ImportItem(
+            source=source,
+            category=ImportCategory.DENIED_COMMANDS,
+            key=key,
+            title=title,
+            payload={"pattern": denied_pattern(pattern)},
+            note=clean_note,
+            redactions=redactions,
+        )
+    )
+
+
+#: Rules that ask before a command runs, and rules that let one run unasked: what PersonalClaw
+#: does with each, in the words both tools' scans use.
+RULES_THAT_ASK = (
+    "Command rules that ask first",
+    "PersonalClaw has no rule that asks before one particular command.",
+)
+RULES_THAT_ALLOW = (
+    "Command rules that allow without asking",
+    "Letting a command run without asking stays your call in PersonalClaw, so an import never "
+    "makes it.",
+)
+
+
+def and_list(words: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def not_imported_rows(result: ScanResult, rows: list[tuple[int, str, str]]) -> None:
+    """``(count, what, why)`` rows, each named under "Not brought over" when it counts anything."""
+    for count, what, why in rows:
+        if count:
+            result.not_imported.append(NotImported(what=what, count=count, why=why))
+
+
+#: How many of a tool's option names a "Not brought over" row lists before it says how many more.
+_NAMES_SHOWN = 6
+
+
+def settings_not_imported(result: ScanResult, tool: str, names: list[str]) -> None:
+    """A tool's own options, named and left where they are.
+
+    They are the tool's options, not PersonalClaw's: an import that guessed at a match would
+    change live settings on a guess, and a copy set aside for review was a file nothing read. So
+    the step names them, and no value in them becomes a setting here. (An ``env`` value reaches
+    PersonalClaw only inside an MCP server that names it, and then only in the credential store.)
+    """
+    if not names:
+        return
+    shown = names[:_NAMES_SHOWN]
+    more = len(names) - len(shown)
+    listed = and_list([*shown, f"{more} more"] if more else shown)
+    one = len(names) == 1
+    result.not_imported.append(
+        NotImported(
+            what=f"{tool} settings",
+            count=len(names),
+            why=(
+                f"{listed} {'is' if one else 'are'} {tool}'s own "
+                f"{'option' if one else 'options'}. PersonalClaw keeps its own in Settings, so "
+                f"{'it stays' if one else 'they stay'} in {tool}."
+            ),
+        )
+    )
+
+
+# ── conversations ─────────────────────────────────────────────────────────────
+
+
+def one_line(text: str, limit: int) -> str:
+    """``text`` on one line, cut at ``limit`` characters with an ellipsis."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def message_count(messages: list[dict[str, Any]]) -> int:
+    """How many of a conversation's messages a person reads as messages: tool calls are not."""
+    return sum(1 for m in messages if m["role"] != "tool")
+
+
+def conversation_note(messages: int | None) -> str:
+    """What a person should know about an imported conversation before they pick it.
+
+    ``messages`` is :func:`message_count`, or ``None`` for a conversation not read in full yet —
+    whose count is not known, so it is not given.
+    """
+    held = (
+        "Not read in full yet."
+        if messages is None
+        else f"{messages} message{'' if messages == 1 else 's'}."
+    )
+    return f"{held} Tool calls come over by name; their output does not."
+
+
+#: The most of a conversation file a LOOK reads (:class:`Transcript`): far past the first prompt of
+#: any transcript either tool writes, which is what names a conversation. The rest of the file is
+#: read in full in the background, and by the import itself.
+LOOK_BYTES = 1_000_000
+
+#: How many lines a reader reads between two chances to step aside (:func:`give_way`).
+GIVE_WAY_LINES = 2048
+
+_GIVE_WAY: ContextVar[Callable[[], None] | None] = ContextVar(
+    "onboarding_import_give_way", default=None
+)
+
+
+@contextmanager
+def giving_way(wait: Callable[[], None]) -> Iterator[None]:
+    """Readers in this block call ``wait`` before a file's first line and every
+    :data:`GIVE_WAY_LINES` lines after it (:func:`give_way`).
+
+    For the reading pass, which reads in the background while a person may be asking for a scan:
+    two threads parsing at once share one interpreter, so the pass steps aside while a scan is
+    answered — mid-file, because one file can take seconds (a 450 MB transcript: 2.5 s).
+    """
+    token = _GIVE_WAY.set(wait)
+    try:
+        yield
+    finally:
+        _GIVE_WAY.reset(token)
+
+
+def give_way() -> None:
+    """A reader's chance to step aside: the wait of the :func:`giving_way` block it runs in."""
+    wait = _GIVE_WAY.get()
+    if wait is not None:
+        wait()
+
+
+@dataclass(frozen=True)
+class Transcript:
+    """One conversation file, as the step lists it.
+
+    READ IN FULL, every field is final and ``messages``/``redactions`` are counts. LOOKED INTO —
+    read only as far as its first prompt, which is what a scan can afford for each of the
+    thousands of files a months-long history holds — it names the conversation (its title, the
+    session it is, where it was held), and what it holds is not known yet: ``messages`` and
+    ``redactions`` are ``None`` until it is read in full.
+
+    ``title`` is the conversation's own, from its file, already through the credential detector:
+    Claude Code's summary or the first prompt, Codex's first prompt. Codex lists a conversation by
+    the name in its session index when it has one, which the scan puts first (a rename changes
+    the index, not the file).
+    """
+
+    title: str
+    session: str
+    cwd: str
+    messages: int | None = None
+    redactions: int | None = None
+
+    @property
+    def whole(self) -> bool:
+        return self.messages is not None
+
+
+class SessionUnreadable(Exception):
+    """A conversation file this import cannot read. ``reason`` completes a sentence that starts
+    with the file's name, and is true before the import and after it."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class Unreadable:
+    """A conversation file that could not be read, as a reading remembers it (the
+    :class:`SessionUnreadable` it raised)."""
+
+    reason: str
+
+
+def not_read(exc: OSError) -> str:
+    """Why a conversation file could not be opened or read, in the system's words and without its
+    path: the :class:`SessionUnreadable` reason both tools' readers give."""
+    return f"could not be read ({exc.strerror})" if exc.strerror else "could not be read"
+
+
+#: How many unreadable conversations the step names before it says how many more there are.
+UNREADABLE_NAMED = 6
+
+
+def unreadable_conversations(named: list[str]) -> tuple[int, str, str]:
+    """The "Unreadable conversations" row (:func:`not_imported_rows`): how many, then the first
+    :data:`UNREADABLE_NAMED` by name with why, then how many more. ``named`` holds one sentence
+    per file (``"<file> could not be read (Permission denied)."``)."""
+    shown = named[:UNREADABLE_NAMED]
+    if len(named) > len(shown):
+        shown.append(f"{len(named) - len(shown)} more cannot be read either.")
+    return (len(named), "Unreadable conversations", " ".join(shown))
+
+
+class Undecided(Enum):
+    """A file LOOKED INTO as far as :data:`LOOK_BYTES` without reaching a prompt: whether it is a
+    conversation at all is known once it is read in full."""
+
+    UNDECIDED = "undecided"
+
+
+UNDECIDED = Undecided.UNDECIDED
+
+#: What reading one conversation file found: a conversation, a file that cannot be read, a file
+#: with no prompt in it (``None`` — nothing to bring over and nothing to say), or, for a file only
+#: looked into, not yet known.
+Reading = Transcript | Unreadable | Undecided | None
+
+
+def is_final(reading: Reading) -> bool:
+    """Whether ``reading`` is the whole file's answer — final until the file changes."""
+    if reading is UNDECIDED:
+        return False
+    return not isinstance(reading, Transcript) or reading.whole
+
+
+def file_signature(path: Path) -> tuple[int, int, int] | None:
+    """What changes when a file does: its inode, size and modification time (``None``: gone)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+class Readings:
+    """What each conversation file was found to hold, kept for as long as the file is unchanged.
+
+    The scan of a months-long history lists thousands of conversation files, and reading every one
+    of them again on every visit was most of what the step cost. So a reading is kept under the
+    file's path with the file's :func:`file_signature` and the reader's own settings; a file that
+    changes (Claude Code appends to the session in use) is read again. A reading that only LOOKED
+    INTO a file answers another look, never a question that needs the whole file.
+
+    Only what the listing shows is kept — a title, a session id, two counts — never a message. It
+    lives in this process and nowhere else: the scan writes nothing to the home.
+    """
+
+    #: A bound on what one process keeps, far past any real history: cleared whole when crossed.
+    LIMIT = 200_000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: dict[str, tuple[tuple, Reading]] = {}
+
+    def recall(self, path: Path, signature: tuple, *, whole: bool) -> tuple[bool, Reading]:
+        """``(found, reading)``: the reading kept for ``path`` at ``signature``, when there is one
+        that answers the question (``whole`` asks for one read in full)."""
+        with self._lock:
+            kept = self._kept.get(str(path))
+        if kept is None or kept[0] != signature:
+            return False, None
+        reading = kept[1]
+        if whole and not is_final(reading):
+            return False, None
+        return True, reading
+
+    def keep(self, path: Path, signature: tuple, reading: Reading) -> None:
+        with self._lock:
+            if len(self._kept) >= self.LIMIT:
+                self._kept.clear()
+            self._kept[str(path)] = (signature, reading)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._kept.clear()
+
+
+#: The one process-wide store of readings, shared by every source and by the import.
+READINGS = Readings()
+
+
+# ── MCP servers ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class McpServer:
+    """One MCP server another tool has configured, with where it has it.
+
+    ``spec`` is PersonalClaw's form of the definition (``type``, ``command``/``url``, ``env``,
+    ``headers``, ``disabled``) WITH its values: this is what an import copies (into the credential
+    store, through ``write_mcp_document``) and what a listing masks. It never reaches a browser, a
+    note or a log.
+    """
+
+    #: The importer that read it (``claude_code``, ``codex``).
+    source: str
+    name: str
+    #: Where the tool keeps it: ``user`` (yours everywhere), ``local`` (yours, in one project) or
+    #: ``project`` (checked into the project).
+    scope: str
+    #: The project it belongs to, as recorded (``""`` for a user-scope server).
+    project: str
+    spec: dict[str, Any]
+    #: Where it was found, in words.
+    origin: str
+    #: Whether the tool lets it run as it stands. False starts the item unticked.
+    approved: bool = True
+    #: What a person importing it should know first, in words — or ``""``. Value-free, and true
+    #: on both surfaces that show it: the onboarding step and the Tools page's Import list.
+    note: str = ""
+
+    @property
+    def id(self) -> str:
+        """A stable id for this server in this scope — what a pick names instead of a path."""
+        raw = "\0".join((self.source, self.scope, self.project, self.name)).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class McpListing:
+    """What one tool's MCP configuration lists: its servers, and each of its files that is there
+    and could not be read.
+
+    A listing with a file in ``unreadable`` is INCOMPLETE, not empty. The servers that file holds,
+    or whose approval it records, are missing from ``servers``, so both surfaces that read a
+    listing (the onboarding step and the Tools page's Import) name the file instead of showing
+    the gap as "nothing to import".
+    """
+
+    servers: list[McpServer]
+    unreadable: list[UnreadableFile]
+
+
+def mcp_item(source: str, server: McpServer, *, key: str) -> ImportItem:
+    """One MCP server as an item, its definition WHOLE.
+
+    The one secret policy, the same as Tools › Import's: the MCP writer keeps every ``env`` and
+    ``headers`` value in the credential store (``secret_refs.write_mcp_document``), so a
+    credential is stored as a reference rather than dropped for the user to type in again.
+    The item's payload never leaves the server — it is not in :meth:`ImportItem.to_dict` — and
+    the note says only what a person should know first.
+    """
+    return ImportItem(
+        source=source,
+        category=ImportCategory.MCP_SERVERS,
+        key=key,
+        title=server.name,
+        name=server.name,
+        payload=dict(server.spec),
+        origin=server.origin,
+        note=server.note,
+        preselect=server.approved,
+    )

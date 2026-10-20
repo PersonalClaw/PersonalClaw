@@ -1,0 +1,1961 @@
+"""HTTP handlers for the unified Loop engine — ``/api/loops`` with ``kind``.
+
+The one route family for every loop kind (general/goal/code/design). The body
+carries ``kind`` + the shared spine fields; kind-specific fields fold into
+``kind_config`` (goal_type/granularity/sub_goals/rubric…; entry_stage/project_kind/
+verify_command/test_command…) defaulting from the kind strategy. Operates on the
+unified store/manager/watchdog.
+
+Registered at the cutover in place of the legacy loops + code routes;
+kept unregistered + import-clean until then so there is never a dual LIVE path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw import agent_cli_self_approval, approval_answer, lasting_work
+from personalclaw.config.loader import AppConfig
+from personalclaw.http_errors import consent_required, json_error
+from personalclaw.loop import files as loop_files
+from personalclaw.loop import kinds, manager, store, validation
+from personalclaw.loop.loop import (
+    ACTION_SOURCE_STATES,
+    KINDS,
+    PRELAUNCH_STATUSES,
+    Loop,
+    LoopStatus,
+)
+from personalclaw.loop.watchdog import registry_key
+from personalclaw.request_validation import (
+    MISSING,
+    bool_field,
+    json_object_body,
+    optional_bool,
+    require_bool,
+    require_string,
+)
+from personalclaw.security import MaskConflict, keep_masked_values
+from personalclaw.stale_write import stale_write_refusal
+
+logger = logging.getLogger(__name__)
+
+
+# ── shared helpers ──
+
+
+def _as_list(v) -> list:
+    return v if isinstance(v, list) else []
+
+
+def _loop_view(loop_id: str) -> dict | None:
+    """Detail view plus host-local diagnostics that must never enter persisted state, and whether
+    its owner let its agent CLI approve its own calls (``agent_cli_self_approval``)."""
+    view = store.get_redacted(loop_id)
+    if view is None:
+        return view
+    loop = store.get(loop_id)
+    if loop is None:
+        return view
+    view = {**view, "agent_cli_self_approval": agent_cli_self_approval.view(loop)}
+    if view.get("kind") != "code":
+        return view
+    from personalclaw.loop.kinds.sdlc import command_runnability_view
+    from personalclaw.loop.loop import effective_dir
+
+    return {
+        **view,
+        "command_runnability": command_runnability_view(
+            loop.kind_config or {}, effective_dir(loop)
+        ),
+    }
+
+
+def _refuse_source_state(
+    action: str, status: str, sources: frozenset[LoopStatus]
+) -> web.Response | None:
+    """The ONE lifecycle refusal: 409 naming the status, unless ``status`` may be a
+    SOURCE of ``action``. ``None`` means admissible — proceed.
+
+    ``PATCH /api/loops/{id}`` already speaks this sentence out of
+    :data:`~personalclaw.loop.loop.ACTION_SOURCE_STATES`
+    (``Cannot pause a loop in 'planning' state``). The ``/plan/*`` POST family drives the
+    same status machine and skipped the vocabulary entirely, so ``plan/retry`` accepted a
+    RUNNING loop and dragged it back to ``planning`` — measured: ``pause``/``resume``/
+    ``start`` then all refuse, the only exit left is ``stop``, and the frozen spec
+    re-opens because ``planning`` is a pre-launch phase (#412).
+
+    Callers MUST reach this BEFORE any write. Two of the plan routes wrote the planning
+    session first and kicked the planner second, so a refusal added downstream of the
+    write would be a partial action wearing a 409 (``plan/comment`` reverted the step's
+    ``awaiting_review`` gate to ``pending`` on its way in).
+    """
+    if LoopStatus(status) in sources:
+        return None
+    return web.json_response({"error": f"Cannot {action} a loop in '{status}' state"}, status=409)
+
+
+def _refuse_replan(cid: str) -> web.Response | None:
+    """The ``/plan/*`` family's shared precondition: a real loop, still pre-launch.
+
+    The stepwise walkthrough exists to BUILD a spec that has not been launched — every
+    route in the family either advances it or edits an artifact that ``finalize_plan``
+    projects into the spec before flipping the loop to ``review``. So the admissible set
+    is exactly the PRELAUNCH phase, DERIVED from
+    :data:`~personalclaw.loop.loop.LOOP_PHASES` via
+    :data:`~personalclaw.loop.loop.PRELAUNCH_STATUSES` rather than listed here: a status
+    added to that phase becomes admissible the day it joins the map, and no second copy
+    of the vocabulary can drift.
+
+    ``replan`` is deliberately NOT a row in ``ACTION_SOURCE_STATES``: that table's KEYS
+    are the actions ``PATCH /api/loops/{id}`` dispatches — the frontend mirrors exactly
+    those (``web/src/lib/loopStatus.ts:LoopAction``, railed by
+    ``tests/test_loop_action_guard_mirror.py`` on set EQUALITY), so a row for a POST
+    family would either advertise a PATCH action that does not exist or make PATCH accept
+    ``{"action": "replan"}`` and silently no-op. One refusal shape, two admissible sets,
+    each derived from the same phase map.
+
+    Asked first by every route in the family, so it is also where a plan is refused to the work of
+    an Incognito or Temporary chat, before anything is read or written: each route writes the plan
+    the loop's worker runs from or sets its planner going, on a model of its own
+    (:mod:`personalclaw.lasting_work`, answered ``403 restricted_session``).
+    """
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.PLAN)
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    return _refuse_source_state("replan", loop.status, PRELAUNCH_STATUSES)
+
+
+def _agent_exists(body: dict) -> bool:
+    """True if the chosen worker agent resolves. A loop worker is either a native
+    agent (``agent`` = a key in the agent pool) or a discovered ACP agent bound to an
+    ``acp:<cli>`` runtime (accepted on the runtime alone — ``provider_agent`` is
+    optional, e.g. claude-code's effort rungs leave it empty — and whether that runtime
+    is set up here is ``validation.runtime_errors``'s to say). An empty ``agent``
+    means the kind's default worker (always seeded), applied at launch."""
+    if str(body.get("provider", "")).startswith("acp:"):
+        return True
+    name = str(body.get("agent", ""))
+    if not name:
+        return True
+    try:
+        return name in AppConfig.load().agents
+    except Exception:
+        return True  # don't block on a config-load hiccup
+
+
+# Top-level spine fields a create body may set directly on the Loop.
+_SPINE_FIELDS = (
+    "summary",
+    "intake_rigor",
+    "execution",
+    "agent",
+    "model",
+    "provider",
+    "provider_agent",
+    "reasoning_effort",
+    "strategy_id",
+    "workspace_dir",
+)
+# Fields that, when present in the body, fold into kind_config (the kind owns them).
+_KIND_CONFIG_FIELDS = (
+    "goal_type",
+    "granularity",
+    "sub_goals",
+    "deliverables",
+    "scope",
+    "rubric",
+    "ratchet_mode",
+    "verify_command",
+    "test_command",
+    "entry_stage",
+    "project_kind",
+    "token_overrides",
+    "targets",
+    "exports",
+)
+
+
+def _build_loop_from_body(body: dict) -> Loop:
+    """Map a create body → a Loop, folding kind-specific fields into kind_config on
+    top of the kind's defaults. ``task`` accepts the legacy ``goal`` alias."""
+    kinds.ensure_loaded()
+    kind = str(body.get("kind", "goal")).strip().lower() or "goal"
+    strat = kinds.get_or_none(kind)
+    task = str(body.get("task") or body.get("goal") or "")
+    kc = dict(strat.default_kind_config() if strat else {})
+    # A whole kind_config blob (the natural classify→create round-trip — the classify
+    # result's kind_config carries fields no flat _KIND_CONFIG_FIELDS entry names, e.g.
+    # goal execution_plan / code queued_task_ids) merges over the defaults FIRST; the
+    # individual flat fields below then override, so a partial patch still works.
+    if isinstance(body.get("kind_config"), dict):
+        kc.update(body["kind_config"])
+    for f in _KIND_CONFIG_FIELDS:
+        if f in body:
+            kc[f] = body[f]
+    loop = Loop(
+        id="",
+        kind=kind,
+        task=task,
+        name=str(body.get("name") or "").strip(),
+        project_id=str(body.get("project_id", "")),
+        plan=[
+            p for p in _as_list(body.get("plan") or body.get("stage_plan")) if isinstance(p, dict)
+        ],
+        roster=[r for r in _as_list(body.get("roster")) if isinstance(r, dict)],
+        strategy_config=(_sc if isinstance((_sc := body.get("strategy_config")), dict) else {}),
+        skill_ids=[str(s) for s in _as_list(body.get("skill_ids")) if str(s).strip()],
+        workflow_ids=[str(w) for w in _as_list(body.get("workflow_ids")) if str(w).strip()],
+        # A loop is Unattended only when its creator says so; one that names no Mode asks.
+        attended=bool_field(body, "attended", default=True),
+        autopilot=bool_field(body, "autopilot", default=True),
+        auto_teardown_on_complete=bool_field(body, "auto_teardown_on_complete", default=False),
+        max_cycles=int(body.get("max_cycles", 30)),
+        # Cost and deadline ceilings: optional, 0 = uncapped. Clamped non-negative so a negative
+        # payload value cannot mean "already exceeded" and stop the loop on its first poll.
+        max_cost_usd=max(0.0, float(body.get("max_cost_usd", 0) or 0)),
+        deadline_secs=max(0.0, float(body.get("deadline_secs", 0) or 0)),
+        idle_secs=int(body.get("idle_secs", AppConfig.load().loops.default_idle_secs)),
+        success_criteria=(str(body["success_criteria"]) if body.get("success_criteria") else None),
+        kind_config=kc,
+    )
+    for f in _SPINE_FIELDS:
+        if f in body and body[f] is not None:
+            setattr(
+                loop,
+                f,
+                (
+                    body[f]
+                    if f != "execution"
+                    else ("multi_agent" if str(body[f]) == "multi_agent" else "solo")
+                ),
+            )
+    # A loop scoped under a project runs in that project's working area: when the
+    # caller didn't pick a workspace, inherit the project's bound workspace_dir so the
+    # loop's outputs land alongside the project's other loops + chats (the cohesive
+    # per-project context the unified model promises). Mirrors the chat create handler.
+    if loop.project_id and not str(loop.workspace_dir or "").strip():
+        try:
+            from personalclaw.tasks.hierarchy import HierarchyStore
+
+            proj = HierarchyStore().get_project(loop.project_id)
+            pws = str(getattr(proj, "workspace_dir", "") or "").strip() if proj else ""
+            if pws:
+                loop.workspace_dir = pws
+        except Exception:
+            logger.debug("project workspace inheritance failed for loop", exc_info=True)
+    # Name precedence: explicit name → the classifier's clean `title` → a word-aware
+    # derivation from the raw task. The classify→create round-trip passes the whole
+    # classification (which carries `title`, not `name`); without the title fallback the
+    # name derived from a long/URL-y task truncates mid-prose ("There are planned roadmap
+    # items on https://code.am…") instead of using the planner's human title.
+    if not loop.name:
+        loop.name = str(body.get("title") or "").strip() or _derive_name(task)
+    return loop
+
+
+def _derive_name(task: str, limit: int = 60) -> str:
+    text = " ".join((task or "").split())
+    if len(text) <= limit:
+        return text or "Loop"
+    head = text[:limit].rstrip()
+    cut = head.rfind(" ")
+    if cut >= limit // 2:
+        head = head[:cut].rstrip()
+    return head + "…"
+
+
+async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
+    """Installed skills + workflows ({id,name,description}) the classifier may rank.
+    Best-effort — empty on any failure. The workflows half is empty for
+    now (see below)."""
+    skills: list[dict] = []
+    workflows: list[dict] = []
+    try:
+        from personalclaw.skills.marketplace import list_local_skills
+
+        skills = [
+            {
+                "id": s.get("name", ""),
+                "name": s.get("name", ""),
+                "description": s.get("description", ""),
+            }
+            for s in list_local_skills()
+        ]
+    except Exception:
+        logger.debug("skills catalog for classify failed", exc_info=True)
+    # The workflow half stays EMPTY until a workflow definition store backs it.
+    # The classifier prompts still ask for `suggested_workflow_ids`, and they instruct
+    # "use ONLY ids that appear in the catalog … empty when nothing fits" — so an empty
+    # catalog makes the model return an empty list, which is the correct answer while
+    # no workflows exist. Removing the field from the prompts instead would mean
+    # re-adding it (and re-tuning them) later.
+    return skills, workflows
+
+
+# ── validate (deterministic pre-flight) ──
+
+
+async def api_loop_validate(request: web.Request) -> web.Response:
+    """POST /api/loops/validate — deterministic pre-flight on a create payload
+    (can_start + errors/warnings + cycle/duration estimate). Kind-aware via the
+    strategy's validate_config; the composer calls it before launch."""
+    body = await json_object_body(request)
+    result = validation.validate(body, agent_exists=_agent_exists(body))
+    blocked = await validation.tools_blocker(body)
+    if blocked:
+        result.errors.append(blocked)
+        result.can_start = False
+    return web.json_response(result.to_dict())
+
+
+def _cannot_use_tools(blocked: str) -> web.Response:
+    """The refusal of a loop whose model can't use tools (``validation.tools_blocker``)."""
+    return json_error("loop_model_cannot_use_tools", message=blocked, status=422)
+
+
+# ── classify (intake brain) ──
+
+
+async def api_loop_classify(request: web.Request) -> web.Response:
+    """POST /api/loops/classify {kind, task|goal} — the kind-aware intake analyze
+    pass. Dispatches to the kind strategy's classifier; returns the NORMALIZED
+    classification (every field a recommendation the user overrides on Plan Review)."""
+    body = await json_object_body(request)
+    kinds.ensure_loaded()
+    kind = str(body.get("kind", "goal")).strip().lower() or "goal"
+    if kind not in KINDS:
+        return web.json_response({"error": f"Unknown loop kind: {kind!r}"}, status=400)
+    task = str(body.get("task") or body.get("goal") or "").strip()
+    if len(task) < 12:
+        return web.json_response({"error": "Task too short"}, status=400)
+    # Reject an oversized paste BEFORE it hits the classifier LLM (a whole repo / binary
+    # / MBs would blow up the prompt). Same cap the create validator enforces.
+    if len(task) > validation._MAX_TASK_LEN:
+        return web.json_response(
+            {
+                "error": f"Task is too large ({len(task):,} characters) — trim it to under "
+                f"{validation._MAX_TASK_LEN:,} characters."
+            },
+            status=400,
+        )
+    # No-provider first-run legibility rail. Classification is a
+    # model call (`one_shot_completion(use_case="background")` below). On a fresh install
+    # with nothing bound it USED to answer 200 `classified:false` — indistinguishable from
+    # "the model returned garbage", so the user got bare defaults with a generic
+    # "couldn't auto-analyze" warning instead of "no model connected yet". Preflight the
+    # same no-instantiate probe behind onboarding's `needs_model` and surface the calm
+    # setup signal (the wire peer of ERR_MODEL_UNRESOLVED, message keyed for the FE
+    # `isNoModelSetupError` matcher) instead of the silent fallback. Only fires when
+    # NOTHING resolves — `can_resolve_use_case("background")` is true whenever any usable
+    # model is bound (background falls back to the chat chain), so a bound instance is
+    # byte-for-byte unchanged. The composer already degrades a null classify to
+    # "Could not analyze the task — is a model configured?" (LoopComposer.submit).
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    if not can_resolve_use_case("background"):
+        return json_error(
+            "model_unresolved",
+            message=(
+                "No model provider resolves for use case 'background'. Connect a model in "
+                "Settings → Models to analyze tasks."
+            ),
+            status=409,
+        )
+    strat = kinds.get(kind)
+    from personalclaw.guardrails.local_queue import Attended
+    from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
+
+    async def _ask(prompt: str) -> str:
+        # Loop spend, for a loop that has no id yet: the composer asks before it creates one.
+        # The composer waits on the answer, so it goes ahead of background work.
+        return await one_shot_completion(
+            prompt,
+            use_case="background",
+            usage=Attribution(source="loop"),
+            attended=Attended("Analyzing the task"),
+        )
+
+    skills_catalog, workflows_catalog = await _installed_capability_catalogs()
+    try:
+        _reserved = {"personalclaw-lite", "personalclaw-goal-planner", "personalclaw-code-planner"}
+        agents_catalog = [n for n in AppConfig.load().agents if n not in _reserved]
+    except Exception:
+        agents_catalog = []
+    result = await strat.classify(
+        task, _ask, skills=skills_catalog, workflows=workflows_catalog, agents=agents_catalog
+    )
+    result["kind"] = kind
+    return web.json_response(result)
+
+
+async def api_loop_grill_tree(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/grill-tree — guided-decomposition intake (grill's ``tree``
+    shape). Runs the memory-checked scoping pipeline over the loop's goal and returns
+    PHASES of clarifying questions (2-4 phases × 2-5 questions each) that build on one
+    another before the work is broken into tasks.
+
+    This is the richer intake behind ``intake_rigor='thorough'``: unlike the flat
+    ``clarifying_questions`` from classify, it groups questions into phases AND checks
+    the memory store during decomposition so it doesn't re-ask what the user already
+    settled (grill's headline advantage, previously unreachable — the pipeline had no
+    caller). Like classify, it only COMPUTES: the FE folds the answered phases into the
+    task text + persists ``{grill_phases, phase_answers}`` into ``kind_config`` at
+    launch — nothing is SETTLED until the user has answered, so there is one write path
+    and no dual state. (It used to also be true that persisting here would be clobbered,
+    because the launch PUT replaced ``kind_config`` wholesale; that write is a merge now,
+    see :func:`_merge_kind_config`, and the reason above is the one that still holds.)"""
+    cid = request.match_info["id"]
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    goal = (loop.task or "").strip()
+    if len(goal) < 12:
+        return web.json_response({"error": "Goal too short to decompose"}, status=400)
+
+    from personalclaw import grill
+    from personalclaw.guardrails.local_queue import Attended
+    from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
+
+    who = Attribution(source="loop", session_key=manager.usage_key(cid))
+    # The intake page waits on the questions.
+    waiting = Attended("Preparing the questions")
+
+    async def _ask(prompt: str) -> str:
+        return await one_shot_completion(prompt, use_case="background", usage=who, attended=waiting)
+
+    # Wire recall to the SAME L3 seam the Memory Studio recall uses (semantic_context),
+    # so the decomposition sees the agent's own memory view + can't drift from it.
+    # Best-effort: a recall failure just yields un-memory-checked phases (grill swallows
+    # it and continues). semantic_context embeds the query, so it runs in a worker thread, as
+    # the recall route's does: on the event loop that wait stopped every other request.
+    state = request.app["state"]
+
+    async def _recall(query: str) -> str:
+        try:
+            from personalclaw.dashboard.handlers.memory import _global_provider
+            from personalclaw.memory_service import MemoryService
+
+            svc = MemoryService.over_vector_store(_global_provider(state))
+            facts = await asyncio.to_thread(svc.semantic_context, query, cap=1500) or ""
+        except Exception:
+            logger.debug("grill-tree recall failed", exc_info=True)
+            return ""
+        # The settled decisions this pipeline itself persists are written by `write_lesson` as
+        # `lesson.<hash>` keys, and `get_semantic_context` EXCLUDES `lesson.%` by design
+        # (vector_memory._NON_FACT_KEY_CLAUSE — a lesson is not a fact about the user). So the fact
+        # block alone can never surface a prior grill decision: the recall would read a different
+        # key space than the save writes, and the memory check would look wired while being blind to
+        # its own output. The lessons block is the matching reader.
+        #
+        # Guarded SEPARATELY from the facts read, and that separation is the point: sharing one
+        # `try` meant a lessons failure discarded the facts that had already been fetched, turning a
+        # partial degradation into total silence. Each half degrades on its own.
+        try:
+            lessons = svc.lessons_context() or ""
+        except Exception:
+            logger.debug("grill-tree lesson recall failed", exc_info=True)
+            lessons = ""
+        return "\n\n".join(p for p in (facts, lessons) if p.strip())
+
+    # assess=False: the phases ARE the clarifying pass, so a separate assess step would
+    # double-ask. save=None: nothing is settled at GENERATION time (the user hasn't
+    # answered yet) — the answered phases fold into the launched loop's task instead.
+    result = await grill.grill(goal, shape="tree", ask=_ask, recall=_recall, assess=False)
+    return web.json_response({"phases": result.phases, "memory_hits": result.memory_hits})
+
+
+# ── CRUD ──
+
+
+async def _create_ported_kind_as_run(
+    request: web.Request, kind: str, task: str, body: dict
+) -> web.Response:
+    """Start a PORTED loop kind as a ``WorkflowRun`` instead of writing a loops row.
+
+    ``workflows.service.start_kind_run`` shipped with ZERO callers anywhere in the package — the
+    kind resolved to its template and nothing launched it — so "a Loop becomes a
+    WorkflowRun" had no reachable path from the product at all. This is the door it was
+    missing, and ``PORTED_LOOP_KINDS`` is read from the module that DECLARES it so the route and
+    the service cannot disagree about which kinds have arrived.
+
+    **Guarded by ``workflow_run_start`` and audited**, exactly like ``POST /api/workflows/runs``,
+    for the reason ``api_run_start_draft`` records: a second door to starting a run must carry the
+    same permission as the first, or a session that may not start a workflow starts one through
+    here — and it spends exactly the same money. The four un-ported kinds keep this family's
+    (unguarded) create untouched, because they still only write a row and start nothing.
+
+    **The refusal envelope is the workflows family's own ``_reply``**, not a second dialect: its
+    ``_STATUS_MAP`` is the one translator from the ``WF_*`` service vocabulary to wire codes
+    (:mod:`personalclaw.http_errors`' docstring names it as such). Neither of
+    ``start_kind_run``'s own two refusals is reachable from here — the caller already established
+    membership in ``PORTED_LOOP_KINDS``, which is a superset test of "resolves" — so this adds no
+    rows to that map.
+
+    🔴 **The response is NOT a loop view, and it cannot be.** A loops-row create answered 201 + the
+    thirty-odd fields of ``store.get_redacted``, describing a row in status ``ready`` that the
+    caller then starts. A run-backed create has no row, and the run is ALREADY DRIVING, so a loop
+    view here would describe state that does not exist. It answers 202 + the run's identity,
+    matching the non-blocking arm of ``POST /api/workflows/runs``.
+
+    **What the run carries from the create body, and why each is load-bearing.** The loop's name
+    becomes the run's ``title`` and its kind the run's ``loop_kind`` — which is what lists it as a
+    loop at all (``api_loop_list``). ``attended`` and ``max_cycles`` become the run's sparse policy
+    overlay, set at create so the first tick sees them: an explicit ``attended: false`` is the
+    UNATTENDED grant its stages spawn on (``supervisor_policy.unattended_grant``), and
+    ``max_cycles`` bounds the loop node's iterations (``loop_iteration_cap``).
+    ``success_criteria`` is the template's declared ``exit_condition``. Before this the door
+    handed the run the task alone: an "Unattended" loop stopped for approval on every stage, its
+    budget was the template's literal 6 while every surface counted toward 30, and it was listed
+    nowhere. ``max_cost_usd`` becomes the run's dollar budget, which pauses it once its steps have
+    spent it. ``auto_teardown_on_complete`` and ``deadline_secs`` have no home on a run and are
+    refused by the shared validation gate above rather than dropped.
+    (A retired cycle-count field is DESCRIBED in this module rather than spelled, deliberately.
+    The name was retired, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
+    fires on any string constant carrying the name near ``set ``/``update ``/…, and a docstring IS a
+    string constant. The rail's own docstring says prose mentions must never red it, so the cheap
+    honest move is to not reprint a retired identifier in a module that has no business holding
+    one. Grep its retirement rail under ``tests/`` for the spelling.)
+    """
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+    from personalclaw.workflows.models import OriginKind, RunBudget
+
+    denied = _guard(request, "workflow_run_start")
+    if denied is not None:
+        return denied
+    # The per-instance knobs this create body actually carried — only those, so a body that never
+    # said "attended" leaves the overlay without the key and the run asks per stage, exactly as a
+    # run started anywhere else does. Both are already type-checked by `validation.validate`
+    # (a non-boolean `attended` and a non-integer `max_cycles` are 400s before this point).
+    overrides: dict[str, Any] = {}
+    attended = optional_bool(body, "attended")
+    if attended is not MISSING:
+        overrides["attended"] = attended
+    # The validator's own coercion, so "30" and 30 mean the same budget here as they did there.
+    cycles = validation._as_int(body.get("max_cycles"))
+    if cycles is not None:
+        overrides["max_cycles"] = cycles
+    result = await workflows.start_kind_run(
+        kind,
+        task=task,
+        # The loop's `success_criteria` under the name the template declares for it — the same
+        # concept ("what done means"), per `start_kind_run`'s own docstring. Left blank, the
+        # template's declared default applies, so an omitted criterion is not an empty one.
+        exit_condition=str(body.get("success_criteria") or "").strip(),
+        # The SAME name precedence a loops row gets (`_build_loop_from_body`): explicit name →
+        # the classifier's clean title → a word-aware derivation from the task.
+        title=(
+            str(body.get("name") or "").strip()
+            or str(body.get("title") or "").strip()
+            or _derive_name(task)
+        ),
+        policy_overrides=overrides,
+        # Its dollar limit is its run's dollar budget, which pauses it when its steps have spent
+        # it; already read as a number of 0 or more by the validation gate above.
+        budget=RunBudget(max_cost=validation.run_dollar_cap(body) or 0.0),
+        # The file the loop's work produces, when its task asks for one: the run shows it.
+        document=str(body.get("document") or "").strip(),
+        supervisor=_supervisor(request),
+        # `API`, matching the sibling route on the same surface (`api_run_start`): this is an HTTP
+        # caller either way, and an origin that disagreed between the two doors would make the
+        # run's own provenance depend on which door the UI happened to use.
+        origin_kind=OriginKind.API,
+        # Carries the launching session's memory posture down into the run
+        # — an incognito chat's loop must not write memories through its run. The session is the
+        # work the request's sign-in proves (`work_of_request`), never one a header alone names.
+        session_key=approval_answer.work_of_request(request),
+        project_id=str(body.get("project_id", "") or ""),
+    )
+    # Audited under the operation that GUARDED it, so a denial and a failure land in the same
+    # SEL series as the sibling route's — an audit split across two operation names would make
+    # "who started runs" unanswerable from the log.
+    _audit(
+        request,
+        "workflow_run_start",
+        "success" if result.get("ok") else "failure",
+        f"loop-kind:{kind}",
+    )
+    if not result.get("ok"):
+        return _reply(result)
+    return _reply({**result, "kind": kind}, status=202)
+
+
+async def api_loop_create(request: web.Request) -> web.Response:
+    """POST /api/loops {kind, task|goal, …} — create a READY loop, or START a run for a ported kind.
+
+    A kind in :data:`~personalclaw.workflows.service.PORTED_LOOP_KINDS` is no longer a loops row:
+    it starts as a ``WorkflowRun`` on the template that replaced it. See
+    :func:`_create_ported_kind_as_run` for what that changes about the response, and why the four
+    un-ported kinds keep this path unchanged rather than being routed through a stub.
+    """
+    from personalclaw.workflows.service import PORTED_LOOP_KINDS
+
+    body = await json_object_body(request)
+    kind = str(body.get("kind", "goal")).strip().lower() or "goal"
+    if kind not in KINDS:
+        return web.json_response({"error": f"Unknown loop kind: {kind!r}"}, status=400)
+    task = str(body.get("task") or body.get("goal") or "").strip()
+    if len(task) < 12:
+        return web.json_response(
+            {"error": "Task is too short — describe it in more detail."}, status=400
+        )
+    # Validate BEFORE persisting — this is the gate that stops a dangerous verify/test
+    # command (rm -rf /, …) from ever landing in the store where the watchdog would
+    # auto-run it unattended. Workspace-binding is a warning here (picked later, then
+    # the launch action re-validates via launch_blocker), so a draft still creates.
+    #
+    # Run-backed kinds are validated by the SAME gate, before the branch: a ported kind gets the
+    # identical 400 for the identical bad body, so porting a kind never quietly widens what the
+    # route accepts.
+    v = validation.validate(body, agent_exists=_agent_exists(body))
+    if not v.can_start:
+        return web.json_response({"error": "Validation failed", **v.to_dict()}, status=400)
+    # Before anything is stored or started: a loop whose model can't use tools could only claim
+    # its work.
+    blocked = await validation.tools_blocker(body)
+    if blocked:
+        return _cannot_use_tools(blocked)
+    if kind in PORTED_LOOP_KINDS:
+        return await _create_ported_kind_as_run(request, kind, task, body)
+    loop = _build_loop_from_body(body)
+    created = store.create(loop)
+    return web.json_response(_loop_view(created.id), status=201)
+
+
+async def api_loop_list(request: web.Request) -> web.Response:
+    """GET /api/loops[?project_id=…][?kind=…] — EVERY loop (redacted), newest first.
+
+    Two homes, one listing: the loops-table rows AND the runs started as loops
+    (`workflows.loop_view`), which carry a ``run_id``. A ported kind stopped writing a loops row,
+    and every surface reading this route — the Loops list, Home's pulse and Active work,
+    Mission Control's Working lane, the nav badge — kept reading the loops table alone, so a running
+    General loop was "No loops yet" everywhere except Agent world. One route answering for both is
+    what keeps those surfaces from each having to learn a second source.
+    """
+    from personalclaw.workflows import loop_view
+
+    project_id = request.query.get("project_id", "").strip()
+    kind = request.query.get("kind", "").strip().lower()
+    rows = store.list_redacted(project_id=project_id, kind=kind)
+    rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
+    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+    return web.json_response({"loops": rows})
+
+
+def _run_backed(cid: str) -> Any:
+    """The run behind a run-backed loop id, or ``None`` when ``cid`` names no loop run."""
+    from personalclaw.workflows import store as run_store
+
+    run = run_store.get(cid)
+    return run if run is not None and run.loop_kind else None
+
+
+async def _run_backed_action(request: web.Request, run: Any, action: str) -> web.Response:
+    """``PATCH /api/loops/{id}`` for a run-backed loop: the lifecycle verb, applied by the RUN.
+
+    The same 409 sentence as a loops row (`_refuse_source_state`), judged against the run's own
+    narrower table (`loop_view.RUN_ACTION_SOURCE_STATES`). Each verb carries the permission and
+    the audit of its sibling route in the workflows family — a second door to pausing or
+    cancelling a run must not be a door around its guard.
+    """
+    from personalclaw.workflows import loop_view
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+
+    refusal = _refuse_source_state(
+        action,
+        loop_view.loop_status(run).value,
+        loop_view.RUN_ACTION_SOURCE_STATES[action],
+    )
+    if refusal is not None:
+        return refusal
+    operation = {
+        "start": "workflow_run_start",
+        "pause": "workflow_run_pause",
+        "resume": "workflow_run_resume",
+        "stop": "workflow_run_cancel",
+    }[action]
+    # The run is named, so a Temporary or Incognito chat's call controls only a run of its own.
+    denied = _guard(request, operation, run_id=run.id)
+    if denied is not None:
+        return denied
+    supervisor = _supervisor(request)
+    if action == "pause":
+        result = workflows.pause_run(run.id, supervisor=supervisor)
+    elif action == "resume":
+        # Clears the pause; it answers no gate (no token, no answer).
+        result = workflows.resume_run(
+            run.id, by=approval_answer.of_request(request), supervisor=supervisor
+        )
+    elif action == "stop":
+        result = workflows.cancel_run(run.id, supervisor=supervisor)
+    else:
+        result = await workflows.start_draft_run(run.id, supervisor=supervisor)
+    _audit(request, operation, "success" if result.get("ok") else "failure", run.id)
+    if not result.get("ok"):
+        return _reply(result)
+    return web.json_response(loop_view.get_loop_view(run.id))
+
+
+async def api_loop_get(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    # A malformed id is a 400 (client bug), distinct from a well-formed-but-missing
+    # loop's 404 — matching every sibling endpoint (report/stream/plan-session/nudge/
+    # queue). Without this, get_redacted's internal valid_loop_id guard returned None
+    # for a malformed id and this endpoint alone reported it as 404.
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    view = _loop_view(cid)
+    if view is None:
+        # A run-backed loop answers too, carrying its `run_id`, so a `#/loops/<id>` link to one
+        # opens its run cockpit instead of "This loop no longer exists".
+        from personalclaw.workflows import loop_view
+
+        run_view = loop_view.get_loop_view(cid)
+        if run_view is not None:
+            return web.json_response(run_view)
+        return web.json_response({"error": "Not found"}, status=404)
+    # What this loop cost. Detail-only, never on the list: it is one JSONL scan per loop,
+    # so putting it on `api_loop_list` would be N scans per poll. Best-effort — a money read must
+    # never turn a working cockpit into a 500, and a missing figure renders as "not recorded".
+    try:
+        from personalclaw.loop.manager import loop_spend
+
+        view = {**view, "spend": loop_spend(cid)}
+    except Exception:
+        logger.warning("loop spend read failed for %s", cid, exc_info=True)
+    return web.json_response(view)
+
+
+async def api_loop_report(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/report — the document deliverable + working log. ``report``
+    is the kind's ongoing deliverable doc; ``log`` is the cumulative FINDINGS.md."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    # Existence check before reading the (empty-on-missing) deliverable/log files —
+    # without it a nonexistent or deleted loop returned 200 {"report":"","log":""},
+    # indistinguishable from a real loop that just hasn't written its docs yet. A
+    # client polling a deleted loop's report would never learn it's gone. 404 to match
+    # every sibling endpoint (get/action/nudge/queue).
+    if store.get(cid) is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    return web.json_response({"report": store.read_deliverable(cid), "log": store.read_log(cid)})
+
+
+def _persist_grill_decisions(body: dict, state: Any) -> int:
+    """Persist a launched loop's settled grill answers as decision lessons. Returns how many.
+
+    Closes ``grill.SaveFn``, which was declared (``grill.py:38``) and defaulted to None at every
+    call site, so a memory-checked decomposition never fed the memory it checked.
+
+    Answers are folded through ``grill_protocol.fold_answers`` + ``settled_decisions`` rather than
+    written raw, because the protocol owns the settled/assumed/open distinction: an assumption is
+    the planner's guess, and hardening a guess into a standing lesson is how a scoping tool starts
+    lying to itself. Best-effort — a memory failure must never fail the launch the user just made.
+    """
+    kc = body.get("kind_config")
+    if not isinstance(kc, dict):
+        return 0
+    answers = kc.get("phase_answers")
+    phases = kc.get("grill_phases")
+    if not isinstance(answers, dict) or not answers or not isinstance(phases, list):
+        return 0
+    try:
+        from personalclaw.workflows.grill_protocol import Question, fold_answers, settled_decisions
+
+        # Rebuild the questions the FE asked, keyed the way it keyed them (`p<phase>s<step>` —
+        # LoopPlanReview.tsx:178). The key must match or `fold_answers` sees every question as
+        # unanswered and settles nothing: this is the exact dict-spelling mismatch that makes a
+        # wired value inert, so it is pinned by a test that drives the real FE id format.
+        questions: list[Question] = []
+        for pi, phase in enumerate(phases):
+            if not isinstance(phase, dict):
+                continue
+            for si, st in enumerate(phase.get("steps") or []):
+                text = str((st or {}).get("title") or (st or {}).get("prompt") or "").strip()
+                if text:
+                    questions.append(Question(key=f"p{pi}s{si}", text=text))
+        if not questions:
+            return 0
+        step = fold_answers(questions, {k: v for k, v in answers.items()})
+        decisions = settled_decisions(step)
+        if not decisions:
+            return 0
+
+        from personalclaw.dashboard.handlers.memory import _global_provider
+        from personalclaw.memory_service import MemoryService
+
+        # `_global_provider` reaches `state` for the wired store (and lazily builds a standalone
+        # one), so the real DashboardState must be threaded through — passing None here would raise
+        # inside the guard and the whole seam would silently swallow itself into the `except` below.
+        svc = MemoryService.over_vector_store(_global_provider(state))
+        if not svc.has_vector:
+            return 0
+        written = 0
+        for decision in decisions:
+            # category="decision" so these are filterable as scoping decisions rather than mixed
+            # into general knowledge. source="user_explicit": the user typed these answers, and a
+            # weaker source would let the write blocker drop them.
+            if svc.write_lesson(decision, category="decision", source="user_explicit"):
+                written += 1
+        logger.info("grill: persisted %d settled decision(s) from launch", written)
+        return written
+    except Exception:
+        logger.debug("grill: persisting settled decisions failed", exc_info=True)
+        return 0
+
+
+def _merge_kind_config(body: dict, existing: Loop) -> dict:
+    """The spec to validate + persist for a PUT, with ``kind_config`` merged OVER the
+    stored config instead of replacing it.
+
+    Every other field on this route is already a patch: a key absent from the body is
+    left alone, which is why a name-only or workspace_dir-only PUT works. ``kind_config``
+    was the one exception, because it is a single JSON column (``store._DICT_COLS``) that
+    ``update_spec`` writes with one ``json.dumps`` — so "patch at the top level" stopped
+    being "patch at the leaf" for the one field that holds every kind-specific value.
+
+    A caller only ever knows its OWN keys. Plan Review renders five or six goal-shaped
+    ones, and research loops route through that goal-shaped screen
+    (``LoopsSection.tsx`` excludes only ``design``), so writing its object as the whole
+    column destroyed everything the screen never shows: a research loop's subtopics,
+    output template and manner, primary deliverable and breadth/depth budget — plus the
+    ``granularity`` dial, whose loss silently re-enables value-based self-stop on a loop
+    the user set to run ``forever`` (``granularity.dial_for`` falls back to
+    ``balanced`` on a missing key). All of it authored during a multi-step intake, all of
+    it gone at the one click a user cannot undo (#411).
+
+    The request was already being SCREENED as a patch — ``validation.spec_edit_errors``
+    merges the body's ``kind_config`` over the stored one "so a partial patch is judged in
+    context" — so the two halves of one request disagreed: checked as a patch, written as
+    a replacement. Merging here makes the write match the check.
+
+    An explicit ``None`` DELETES a key. That is load-bearing, not decorative: it is how a
+    caller clears a field it owns, and without it a merge is the same swallowed write in
+    reverse. ``instrument.py`` resolves ``kind_config["verify_command"]`` as the reproduce
+    anchor and hands it to a fresh judge pass without re-reading ``goal_type``, so a goal
+    the user switched away from ``verifiable`` must be able to drop the command it no
+    longer runs on. A ``None`` and an absent key already read identically to every
+    consumer (all of them ``cfg.get(...)``), so delete mints no new state.
+
+    Merging on the SERVER rather than in the browser is not a preference. ``get_redacted``
+    masks ``kind_config`` (``security.redact_values_for_display``), so the config a client holds
+    is a masked view of it, and only the server has the config itself to merge against.
+
+    This is the route's contract, not the store's: ``store.update_spec`` still replaces the
+    column, and its in-process callers (``plan_walkthrough``, ``kinds/sdlc``) already merge
+    explicitly before calling it. There is one merge per layer, not a dual path.
+    """
+    patch = body.get("kind_config")
+    if not isinstance(patch, dict):
+        return body
+    merged = dict(existing.kind_config or {})
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return {**body, "kind_config": merged}
+
+
+#: The spec fields a PUT writes WHOLESALE from the caller's copy: the lists, the strategy config,
+#: and `kind_config`, each of whose keys replaces the stored one whole (`_merge_kind_config`). A PUT
+#: carrying any of them must name the revision its copy was read at (`If-Match`); a rename, a task
+#: edit or a workspace re-bind changes the one value it names and needs none.
+_WHOLE_SPEC_FIELDS: frozenset[str] = frozenset(
+    {"plan", "roster", "skill_ids", "workflow_ids", "strategy_config", "kind_config"}
+)
+
+
+async def api_loop_update(request: web.Request) -> web.Response:
+    """PUT /api/loops/{id} — edit a pre-launch spec, or a name-only rename in any
+    state (frozen spec → 409 unless it's just a name). ``kind_config`` is a PATCH
+    merged over the stored config (see :func:`_merge_kind_config`), so a caller never
+    destroys a kind-specific field it doesn't render."""
+    cid = request.match_info["id"]
+    body = await json_object_body(request)
+    existing = store.get(cid)
+    if existing is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    # 🔴 A WHOLE-DOCUMENT EDIT IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. Plan Review sends
+    # the plan, the capability lists and its `kind_config` keys from the loop it read, and the
+    # planner's finalize, the autopilot toggle and the task queue write this same row — so a
+    # review screen open across one of their writes used to put its old values back without a
+    # word. Compared against the spec as stored now, with nothing awaited between this check and
+    # `update_spec` below, so no other writer in this process can land in between.
+    if not _WHOLE_SPEC_FIELDS.isdisjoint(body):
+        current = store.edited_spec(existing)
+        stale = stale_write_refusal(request, current, what=f"the loop {current.get('name')!r}")
+        if stale is not None:
+            return stale
+    # Plan review and the design pages send back fields they were shown through `get_redacted`, so
+    # each hidden value arrives as our marker, on a Launch the user never edited too. Every field is
+    # restored from the stored loop before it is merged, screened or written.
+    stored = existing.to_dict()
+    try:
+        body = {key: keep_masked_values(value, stored.get(key)) for key, value in body.items()}
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    spec = _merge_kind_config(body, existing)
+    # Re-screen a spec edit before persisting — mirrors the create gate so an edit
+    # can't smuggle in a destructive verify/test command or a sensitive workspace
+    # that create rejects. A name-only patch skips this (nothing security-relevant).
+    #
+    # Screens ``spec``, i.e. exactly what the store will write: "validated" and
+    # "persisted" must be the same object or the gate is judging a request that is not
+    # going to be made. That is also why ``existing_kind_config`` is the merged config
+    # and not the stored one — ``spec_edit_errors`` merges again over whatever it is
+    # given, and re-merging the STORED config would resurrect a key this patch deletes,
+    # screening a command that is on its way out.
+    if set(spec) - {"name"}:
+        effective_cfg = spec.get("kind_config")
+        if not isinstance(effective_cfg, dict):
+            effective_cfg = existing.kind_config or {}
+        edit_errs = validation.spec_edit_errors(
+            spec,
+            kind=existing.kind,
+            existing_kind_config=effective_cfg,
+            existing_runtime={
+                "provider": existing.provider,
+                "provider_agent": existing.provider_agent,
+            },
+        )
+        if edit_errs:
+            return web.json_response(
+                {"error": " · ".join(edit_errs), "errors": edit_errs}, status=400
+            )
+    # A change that moves the model its worker runs on, before launch, is asked what a create is.
+    if not validation.MODEL_FIELDS.isdisjoint(spec) and (
+        LoopStatus(existing.status) in PRELAUNCH_STATUSES
+    ):
+        moved = {f: spec[f] if f in spec else getattr(existing, f) for f in validation.MODEL_FIELDS}
+        blocked = await validation.worker_tools_blocker({"kind": existing.kind, **moved})
+        if blocked:
+            return _cannot_use_tools(blocked)
+    updated = store.update_spec(cid, spec)
+    if updated is not None:
+        # The grill SAVE seam (`grill.SaveFn`). `api_loop_grill_tree` deliberately passes
+        # ``save=None`` because nothing is settled at GENERATION time — the user has not answered
+        # yet. THIS is the settle point: the launch write that persists ``phase_answers``. Wiring
+        # it here rather than in the generator is what makes the pipeline's memory-check real —
+        # `check_memory` recalls prior decisions, and until now no pass ever WROTE one, so the
+        # "don't re-ask what the user already settled" promise had nothing to read.
+        # Reads ``body``, not the merged ``spec``: a SETTLED decision is one the user just
+        # answered, and the merge carries forward the phases/answers of every earlier write,
+        # so feeding it the merged config would re-harden the same decisions on every
+        # subsequent edit of the same loop. Off the event loop: each decision is written as a
+        # lesson, which is embedded, a round trip to the model.
+        await asyncio.to_thread(_persist_grill_decisions, body, request.app["state"])
+    if updated is None:
+        # spec frozen — allow a name-only patch via rename
+        if set(body) <= {"name"}:
+            renamed = store.rename(cid, require_string(body, "name"))
+            return (
+                web.json_response(_loop_view(cid))
+                if renamed
+                else web.json_response({"error": "Not found"}, status=404)
+            )
+        # workspace_dir-only re-bind: the recovery path when a brownfield workspace
+        # went missing mid-run and the loop paused to NEEDS_INPUT/BLOCKED. The spec is
+        # frozen, but this single field must be re-pickable or the user is stuck (the
+        # launch_blocker/reaper/nudge guards prompt a re-pick with nowhere to do it).
+        # Already path-validated above; rebind_workspace gates by state (non-running).
+        if set(body) == {"workspace_dir"}:
+            rebound = store.rebind_workspace(cid, str(body.get("workspace_dir", "")))
+            if rebound is not None:
+                return web.json_response(_loop_view(cid))
+            return web.json_response(
+                {"error": "Workspace can't be changed while the loop is running or finished."},
+                status=409,
+            )
+        return web.json_response({"error": "Loop spec is frozen (already started)"}, status=409)
+    return web.json_response(_loop_view(cid))
+
+
+async def api_loop_action(request: web.Request) -> web.Response:
+    """PATCH /api/loops/{id} {action: start|pause|resume|stop}."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    body = await json_object_body(request)
+    action = str(body.get("action", ""))
+    if action not in ACTION_SOURCE_STATES:
+        return web.json_response({"error": f"Unknown action: {action}"}, status=400)
+    loop = store.get(cid)
+    if loop is None:
+        run = _run_backed(cid)
+        if run is not None:
+            return await _run_backed_action(request, run, action)
+        return web.json_response({"error": "Not found"}, status=404)
+    refusal = _refuse_source_state(action, loop.status, ACTION_SOURCE_STATES[action])
+    if refusal is not None:
+        return refusal
+    # Launch-time re-validation: the agent CLI the loop runs on must be ready, and a kind may
+    # block start (e.g. a brownfield code loop with no bound workspace) — that rule lives in the
+    # strategy, not here. Only on a fresh start (resume of a paused, already-launched loop is
+    # exempt).
+    if action == "start":
+        kinds.ensure_loaded()
+        strat = kinds.get_or_none(loop.kind)
+        blocker = getattr(strat, "launch_blocker", None)
+        reason = validation.runtime_blocker(loop) or (blocker(loop) if blocker else None)
+        if reason:
+            return web.json_response({"error": reason}, status=422)
+    # A start or a resume runs the worker's next turn, on the model it would run on now.
+    if action in ("start", "resume"):
+        blocked = await validation.worker_tools_blocker(loop)
+        if blocked:
+            return _cannot_use_tools(blocked)
+    state = request.app["state"]
+    from personalclaw.triggers.nudge import get_instance
+
+    svc = get_instance()
+    if svc is None:
+        return web.json_response({"error": "autonudge unavailable"}, status=503)
+    if action in ("start", "resume"):
+        await manager.start(state, svc, cid)
+    elif action == "pause":
+        await manager.pause(state, svc, cid)
+    elif action == "stop":
+        await _end_planning(request.app, cid)
+        await manager.stop(state, svc, cid)
+    return web.json_response(_loop_view(cid))
+
+
+async def _reap_loop_sessions(state, loop_id: str) -> None:
+    """Remove a deleted loop's dashboard sessions + their on-disk transcripts: the
+    worker (loop-<id>), the stepwise planner (loop-plan-<id>), and a code design
+    planner (code-plan-<id>). Reuses the chat session-delete primitives so the
+    in-memory _sessions entry AND the history .jsonl both go — no orphan leak."""
+    from personalclaw.dashboard.chat_utils import persisted_history_key
+    from personalclaw.dashboard.handlers.sessions import _remove_session_for_history_key
+
+    keys = [f"loop-{loop_id}", f"loop-plan-{loop_id}", f"code-plan-{loop_id}"]
+    for k in keys:
+        try:
+            await _remove_session_for_history_key(state, k)  # in-memory session (+ cancels task)
+        except Exception:
+            logger.debug("reap: in-memory session drop failed for %s", k, exc_info=True)
+        if state.conversation_log is not None:
+            try:
+                # Through the one owner of on-disk identity — a hand-formed prefix leaves
+                # the transcript behind whenever the file is not under that shape.
+                state.conversation_log.delete_session(
+                    persisted_history_key(state.conversation_log, k)
+                )  # the .jsonl
+            except Exception:
+                logger.debug("reap: transcript delete failed for %s", k, exc_info=True)
+
+
+async def _run_backed_delete(request: web.Request, run: Any) -> web.Response:
+    """``DELETE /api/loops/{id}`` for a run-backed loop: the run's own delete, with its guard.
+
+    `service.delete_run` refuses a run that can still move (``WF_RUN_NOT_TERMINAL``) and tears its
+    workspace down before the directory goes — the same two rules the Workflows page's delete has,
+    because it is the same operation reached through the loop surfaces.
+    """
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+
+    denied = _guard(request, "workflow_run_delete")
+    if denied is not None:
+        return denied
+    result = await workflows.delete_run(run.id, supervisor=_supervisor(request))
+    _audit(request, "workflow_run_delete", "success" if result.get("ok") else "failure", run.id)
+    if not result.get("ok"):
+        return _reply(result)
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("run-backed loop delete publish failed", exc_info=True)
+    return web.json_response({"ok": bool(result.get("deleted"))})
+
+
+async def api_loop_delete(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    if store.get(cid) is None:
+        run = _run_backed(cid)
+        if run is not None:
+            return await _run_backed_delete(request, run)
+    from personalclaw.triggers.nudge import get_instance
+
+    await _end_planning(request.app, cid)
+    svc = get_instance()
+    if svc is not None:
+        try:
+            await manager.teardown_for_delete(request.app["state"], svc, cid)
+        except Exception:
+            logger.debug("loop teardown-for-delete failed for %s", cid, exc_info=True)
+    deleted = store.delete(cid)
+    # Reap the loop's dashboard sessions + their transcripts. teardown_for_delete stops
+    # the autonudge WORKER loop + cleans worktrees, but the worker/planner chat sessions
+    # (and their .jsonl history) lingered registered after delete — orphans that pile up
+    # over create/delete churn. Drop the worker (loop-<id>), the stepwise planner
+    # (loop-plan-<id>), and a code design-planner (code-plan-<id>) the same way the chat
+    # session-delete does: remove the in-memory session + delete the history file.
+    try:
+        await _reap_loop_sessions(request.app["state"], cid)
+    except Exception:
+        logger.debug("loop session reap failed for %s", cid, exc_info=True)
+    # No `loops` refresh here: `store.delete` announces the deletion itself.
+    try:
+        request.app["state"].loop_sse().publish(registry_key(cid), "deleted", {"loop_id": cid})
+    except Exception:
+        logger.debug("loop delete publish failed", exc_info=True)
+    return web.json_response({"ok": deleted})
+
+
+# ── the work an ended run kept (``loop.kept_work``) ──
+
+
+def _kept_loop(request: web.Request) -> Loop | web.Response:
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    return loop
+
+
+async def api_loop_kept_work(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/kept-work — the task work an ended run kept because it was not merged.
+
+    For each task, what merging it would bring in, as an Attended loop's merge review shows it:
+    its branch, the commit it is at (``tip``), its commits (``log``) and its diff against
+    ``into``, the workspace's branch; ``cut`` says the diffs were longer than one review shows."""
+    from personalclaw.loop import kept_work
+
+    loop = _kept_loop(request)
+    if isinstance(loop, web.Response):
+        return loop
+    review = await kept_work.kept_review(loop)
+    return web.json_response({**review, "resumable": kept_work.resumable(loop)})
+
+
+async def _kept_work_act(request: web.Request, act: str, *args: str) -> web.Response:
+    from personalclaw.loop import kept_work
+    from personalclaw.triggers.nudge import get_instance
+
+    loop = _kept_loop(request)
+    if isinstance(loop, web.Response):
+        return loop
+    task_id = request.match_info["task_id"]
+    outcome = await getattr(kept_work, act)(get_instance(), loop, task_id, *args)
+    if outcome.code:
+        return _kept_work_refusal(outcome)
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop kept-work publish failed", exc_info=True)
+    return web.json_response({"ok": True, **await kept_work.kept_review(loop)})
+
+
+def _kept_work_refusal(outcome) -> web.Response:
+    """The refusal a merge or a discard of kept work answers with (``kept_work.Outcome``)."""
+    if outcome.code == "not_found":
+        return json_error("not_found", status=404)
+    if outcome.code == "loop_still_at_work":
+        return json_error("loop_still_at_work", status=409)
+    if outcome.code == "workspace_not_committed":
+        return json_error("workspace_not_committed", status=409)
+    if outcome.code == "kept_work_conflicts":
+        return json_error(
+            "kept_work_conflicts",
+            status=409,
+            error_extra={"detail": {"conflicts": list(outcome.conflicts)}},
+        )
+    if outcome.code == "loop_merge_moved":
+        return json_error("loop_merge_moved", status=409)
+    if outcome.code == "kept_work_no_identity":
+        return json_error("kept_work_no_identity", status=409)
+    if outcome.code == "kept_work_other_name":
+        return json_error(
+            "kept_work_other_name",
+            status=409,
+            error_extra={"detail": {"commits": list(outcome.named)}},
+        )
+    return json_error("kept_work_unmerged", status=500)
+
+
+async def api_loop_kept_work_merge(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/kept-work/{task_id}/merge {tip, confirm} — merge a task's kept work.
+
+    It goes into the loop's workspace at ``tip``, the commit the review showed, the way the
+    scheduler merges a finished task. That writes a commit into the owner's repository, so the
+    request says it means to (``confirm: true``), and names what it read."""
+    from personalclaw.safety_flags import confirm_granted
+
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error("confirm_required", status=400)
+    tip = body.get("tip")
+    if not isinstance(tip, str) or not tip.strip():
+        return json_error(
+            "invalid_request", message="'tip' must name the commit the review showed", status=400
+        )
+    return await _kept_work_act(request, "merge", tip.strip())
+
+
+async def api_loop_kept_work_discard(request: web.Request) -> web.Response:
+    """DELETE /api/loops/{id}/kept-work/{task_id} — discard one task's kept work."""
+    return await _kept_work_act(request, "discard")
+
+
+async def api_loop_nudge(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/nudge {text, task_id?} — steer; resume if awaiting input."""
+    cid = request.match_info["id"]
+    body = await json_object_body(request)
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    proj = store.get(cid)
+    if proj is None:
+        run = _run_backed(cid)
+        if run is None:
+            return web.json_response({"error": "Not found"}, status=404)
+        # A run-backed loop is steered by its RUN: the instruction is queued on the run and
+        # consumed at the next iteration boundary, which is what a loop nudge means. Guarded and
+        # audited as the run's own steer route is.
+        from personalclaw.workflows import service as workflows
+        from personalclaw.workflows.handlers import _audit, _guard, _reply
+
+        denied = _guard(request, "workflow_run_steer")
+        if denied is not None:
+            return denied
+        steered = workflows.steer_run(run.id, text)
+        _audit(request, "workflow_run_steer", "success" if steered.get("ok") else "failure", run.id)
+        if not steered.get("ok"):
+            return _reply(steered)
+        return web.json_response({"ok": True})
+    from personalclaw.loop.loop import TERMINAL_STATUSES
+
+    if LoopStatus(proj.status) in TERMINAL_STATUSES:
+        return web.json_response(
+            {"error": f"Cannot steer a loop in '{proj.status}' state"}, status=409
+        )
+    # A steer only reaches a worker that's running or resumable. A pre-launch loop
+    # (ready/review/intake/planning) has no worker + no cycle loop, so a nudge here is
+    # orphaned — persisted with applied_cycle=null and never seen (the worker applies
+    # nudges queued DURING a run, not before one). Reject it with an actionable reason
+    # instead of a misleading {"ok": true}. The cockpit already hides the steer box for
+    # these states (STEERABLE); this closes the same gap at the API for any other caller
+    # (chat tools / direct API / a future surface). Edit the plan before launch instead.
+    if LoopStatus(proj.status) in PRELAUNCH_STATUSES:
+        return web.json_response(
+            {
+                "error": f"Can't steer a loop that hasn't started (it's '{proj.status}'). "
+                "Launch it first, or edit the plan before launch."
+            },
+            status=409,
+        )
+    task_id = str(body.get("task_id", "")).strip()
+    if task_id and not loop_files.valid_task_guidance_id(task_id):
+        return web.json_response({"error": "Invalid task_id"}, status=400)
+    # A task-scoped steer must target a task that BELONGS to this loop. valid_task_
+    # guidance_id only checks the id FORMAT — a well-formed id from another loop (or a
+    # stale/deleted task) would otherwise write guidance_<id>.txt that this loop's
+    # worker never reads, returned as a misleading {"ok": true} (the orphaned-steer
+    # failure mode the pre-launch gate above also closes). Mirror the queue handler's
+    # guard: only reject when the loop HAS provisioned lists AND the id isn't among them
+    # (empty → can't-confirm-during-provision → allow, same as queue).
+    if task_id:
+        known = await _loop_task_ids(cid)
+        if known and task_id not in known:
+            return web.json_response(
+                {"error": f"Unknown task id for this loop: {task_id}"}, status=400
+            )
+    # A steer on a loop that waits starts its worker again (`manager.nudge`), as a resume does.
+    if proj.status in (LoopStatus.NEEDS_INPUT.value, LoopStatus.BLOCKED.value):
+        blocked = await validation.worker_tools_blocker(proj)
+        if blocked:
+            return _cannot_use_tools(blocked)
+    from personalclaw.triggers.nudge import get_instance
+
+    svc = get_instance()
+    if svc is None:
+        return web.json_response({"error": "autonudge unavailable"}, status=503)
+    result = await manager.nudge(request.app["state"], svc, cid, text, task_id=task_id)
+    if result is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_loop_stream(request: web.Request) -> web.StreamResponse:
+    """GET /api/loops/{id}/stream — per-loop live SSE; replays a snapshot on connect."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    view = _loop_view(cid)
+    if view is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    from personalclaw.dashboard.sse import stream_response
+
+    registry = request.app["state"].loop_sse()
+    key = registry_key(cid)
+    hub = registry.hub(key)
+    return await stream_response(
+        request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
+    )
+
+
+# ── queue / autopilot (execution drive) ──
+
+
+async def _loop_task_ids(loop_id: str) -> set[str]:
+    """All task ids across a loop's per-phase TaskLists. Empty (→ "can't confirm,
+    ALLOW") pre-provision or on any failure, so a queue is only ever rejected when
+    the loop HAS real lists AND the id isn't among them."""
+    ids: set[str] = set()
+    try:
+        loop = store.get(loop_id)
+        if loop is None:
+            return ids
+        from personalclaw.tasks import registry
+
+        for list_id in (loop.task_list_ids or {}).values():
+            if not list_id:
+                continue
+            tasks, _ = await registry.collect_tasks(task_list_id=list_id)
+            ids.update(t.id for t in tasks)
+    except Exception:
+        logger.debug("loop task-id gather failed for %s", loop_id, exc_info=True)
+    return ids
+
+
+async def api_loop_queue(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/queue {task_ids, action: queue|unqueue} — queue tasks for
+    the parallel scheduler (code kind). Returns the full updated queue."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    body = await json_object_body(request)
+    task_ids = [str(t) for t in _as_list(body.get("task_ids")) if str(t).strip()]
+    if not task_ids:
+        return web.json_response({"error": "task_ids required"}, status=400)
+    action = str(body.get("action", "queue"))
+    if action not in ("queue", "unqueue"):
+        return web.json_response({"error": f"Unknown action: {action}"}, status=400)
+    from personalclaw.loop.loop import TERMINAL_STATUSES
+
+    if action == "queue":
+        # A terminal loop has no scheduler — a queued task would sit forever. Reject
+        # honestly (unqueue is never guarded — clearing a stale id must always work).
+        if LoopStatus(loop.status) in TERMINAL_STATUSES:
+            return web.json_response(
+                {"error": f"Cannot queue tasks on a loop in '{loop.status}' state"}, status=409
+            )
+        # A pre-launch loop (ready/review/intake/planning) hasn't provisioned its
+        # per-phase TaskLists yet, so _loop_task_ids is empty → the unknown-id guard
+        # below ALLOWs by design (can't-confirm-during-provision). That bypass let a
+        # bogus id persist into queued_task_ids pre-launch, where it becomes a landmine
+        # for the scheduler at start. There are no real tasks to queue before launch
+        # anyway, so reject queueing here (mirrors the nudge pre-launch gate).
+        if LoopStatus(loop.status) in PRELAUNCH_STATUSES:
+            return web.json_response(
+                {
+                    "error": f"Can't queue tasks before the loop starts (it's '{loop.status}'). "
+                    "Launch it first — tasks are provisioned at launch."
+                },
+                status=409,
+            )
+        known = await _loop_task_ids(cid)
+        if known:
+            unknown = [t for t in task_ids if t not in known]
+            if unknown:
+                return web.json_response(
+                    {"error": f"Unknown task id(s) for this loop: {', '.join(unknown[:5])}"},
+                    status=400,
+                )
+    queue = (
+        store.unqueue_tasks(cid, task_ids)
+        if action == "unqueue"
+        else store.queue_tasks(cid, task_ids)
+    )
+    try:
+        request.app["state"].loop_sse().publish(registry_key(cid), "queued", {"loop_id": cid})
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop queue publish failed", exc_info=True)
+    return web.json_response({"ok": True, "queued_task_ids": queue})
+
+
+async def api_loop_autopilot(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/autopilot {on: bool} — toggle the execution drive live.
+    ON → the scheduler auto-queues + drives the phased plan; OFF → one-by-one."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    body = await json_object_body(request)
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    from personalclaw.loop.loop import TERMINAL_STATUSES
+
+    if LoopStatus(loop.status) in TERMINAL_STATUSES:
+        return web.json_response(
+            {"error": f"Cannot change autopilot on a loop in '{loop.status}' state"}, status=409
+        )
+    # Require an explicit boolean `on`. A defaulted bool(body.get("on", True)) silently
+    # turned autopilot ON for a missing/malformed body — and ON is the consequential
+    # direction (the system takes over driving the plan). A toggle must say which way.
+    on = require_bool(body, "on")
+    updated = store.set_autopilot(cid, on)
+    if updated is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    try:
+        request.app["state"].loop_sse().publish(
+            registry_key(cid), "autopilot", {"loop_id": cid, "on": on}
+        )
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop autopilot publish failed", exc_info=True)
+    return web.json_response({"ok": True, "autopilot": updated.autopilot})
+
+
+async def api_loop_agent_cli_self_approval(request: web.Request) -> web.Response:
+    """PUT /api/loops/{id}/agent-cli-self-approval {allowed: bool} — its CLI approves its calls.
+
+    Whether this Unattended loop's agent CLI approves its own calls instead of asking PersonalClaw
+    first, ``{"allowed": true, "confirm": true}`` to turn it on. Off for every loop until its owner
+    turns it on. Turning it on is a loosening, so it lands only
+    with her yes (``"confirm": true``; without it the answer is the consent question), and only for
+    a loop that can have it (``agent_cli_self_approval.not_offered``). Turning it off always lands.
+    Either change is audited, and the loop's next turn reads it."""
+    from personalclaw.loop.loop import TERMINAL_STATUSES
+    from personalclaw.safety_flags import confirm_granted
+
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    body = await json_object_body(request)
+    allowed = require_bool(body, "allowed")
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    if LoopStatus(loop.status) in TERMINAL_STATUSES:
+        return json_error(
+            "loop_finished",
+            message=f"This loop has ended ({loop.status}), so it runs no more turns to change.",
+            status=409,
+        )
+    if allowed:
+        why_not = agent_cli_self_approval.not_offered(loop)
+        if why_not:
+            return json_error(
+                "loop_agent_cli_self_approval_unavailable", message=why_not, status=409
+            )
+        if not confirm_granted(body):
+            return consent_required(
+                "loop.agent_cli_self_approval",
+                agent_cli_self_approval.consent(loop),
+                title=f"Let {agent_cli_self_approval.cli_name(loop)} approve its own calls?",
+            )
+    agent_cli_self_approval.set_for_loop(loop, allowed, caller=request.get("user", "dashboard"))
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop self-approval refresh failed", exc_info=True)
+    return web.json_response(
+        {"ok": True, "agent_cli_self_approval": agent_cli_self_approval.view(loop)}
+    )
+
+
+# ── an Attended code loop's merge review ──
+
+
+def _merge_waiting(cid: str) -> tuple[Loop, dict] | web.Response:
+    """Loop *cid* and the merge its scheduler put to its owner, or the refusal to answer with."""
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    asked = loop_files.pending_question(cid) or {}
+    merge = asked.get("merge") if isinstance(asked, dict) else None
+    tasks = merge.get("tasks") if isinstance(merge, dict) else None
+    if not isinstance(merge, dict) or not isinstance(tasks, list) or not tasks:
+        return json_error("loop_merge_not_waiting", status=409)
+    if loop.status != LoopStatus.NEEDS_INPUT.value:
+        return json_error("loop_merge_not_waiting", status=409)
+    return loop, merge
+
+
+async def api_loop_merge_review(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/merge — the finished work an Attended loop waits for you to merge.
+
+    For each task: its branch, the commit it is at, its commits and its diff against your branch,
+    the same text git shows; ``cut`` says the diffs were longer than one review shows."""
+    from personalclaw.loop import worktree
+
+    waiting = _merge_waiting(request.match_info["id"])
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, merge = waiting
+    tasks = [t for t in merge["tasks"] if isinstance(t, dict)]
+    ids = [str(t.get("task_id", "")) for t in tasks]
+    titles = {str(t.get("task_id", "")): str(t.get("title", "")) for t in tasks}
+    review = await asyncio.to_thread(worktree.merge_review, loop.workspace_dir or "", ids)
+    shown = [{**task, "title": titles.get(task["task_id"], "")} for task in review["tasks"]]
+    return web.json_response({"into": review["into"], "tasks": shown, "cut": review["cut"]})
+
+
+async def api_loop_merge(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/merge {tips, confirm: true} — approve merging the work you reviewed.
+
+    ``tips`` maps each task id to the commit the review showed you. Each task's branch must still
+    be at it, or nothing is approved and the review is read again. The approval is handed to the
+    loop's scheduler (it is kept nowhere the loop's own workers can write), the loop resumes, and
+    the scheduler merges each task at that commit into your branch, as git is configured to commit
+    there, then carries on."""
+    from personalclaw.loop import worktree
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.sel import sel
+    from personalclaw.triggers.nudge import get_instance
+
+    cid = request.match_info["id"]
+    waiting = _merge_waiting(cid)
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, merge = waiting
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error(
+            "confirmation_required",
+            message='merging into your branch needs {"confirm": true} with the commits reviewed',
+            status=400,
+        )
+    tips = body.get("tips")
+    if not isinstance(tips, dict) or not all(isinstance(v, str) for v in tips.values()):
+        return json_error(
+            "invalid_request", message="'tips' must map each task id to its commit", status=400
+        )
+    ids = [str(t.get("task_id", "")) for t in merge["tasks"] if isinstance(t, dict)]
+    ws = loop.workspace_dir or ""
+    now = {tid: await asyncio.to_thread(worktree.branch_tip, ws, tid) for tid in ids}
+    if set(tips) != set(ids) or any(not now[t] or tips[t] != now[t] for t in ids):
+        return json_error("loop_merge_moved", status=409)
+    svc = get_instance()
+    if svc is None:
+        return web.json_response({"error": "autonudge unavailable"}, status=503)
+    kinds.ensure_loaded()
+    strat = kinds.get_or_none(loop.kind)
+    approve = getattr(strat, "approve_merge", None)
+    if approve is None:
+        return json_error("loop_merge_not_waiting", status=409)
+    # The approval resumes the loop (`manager.start`), so work that may not set a loop going is
+    # refused before the approval is written.
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.START)
+    approve(cid, now)
+    loop_files.clear_question(cid)
+    try:
+        sel().log_api_access(
+            caller="dashboard:loop",
+            operation="loop_merge_approved",
+            outcome="approved",
+            resources=f"loop={cid} into={merge.get('into', '')} tasks={','.join(ids)}",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for an approved loop merge", exc_info=True)
+    await manager.start(request.app["state"], svc, cid)
+    return web.json_response({"ok": True, "loop": _loop_view(cid)})
+
+
+# ── a finished task whose work conflicts with the workspace (``loop.conflicts``) ──
+
+
+def _conflict_waiting(cid: str) -> tuple[Loop, dict] | web.Response:
+    """Loop *cid* and the conflict its scheduler put to its owner, or the refusal to answer with."""
+    from personalclaw.loop import conflicts
+
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    conflict = conflicts.waiting(loop)
+    if conflict is None:
+        return json_error("loop_conflict_not_waiting", status=409)
+    return loop, conflict
+
+
+async def api_loop_conflict_review(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/conflict — the finished task's work that conflicts with your branch.
+
+    The loop paused on it: the files it conflicts on, as git reads them now, and the work as a merge
+    review shows it (its branch, the commit it is at, its commits, its diff, its folder)."""
+    from personalclaw.loop import conflicts
+
+    waiting = _conflict_waiting(request.match_info["id"])
+    if isinstance(waiting, web.Response):
+        return waiting
+    review = await conflicts.review(*waiting)
+    return web.json_response(
+        {
+            "into": review["into"],
+            "files": review["files"],
+            "task": review["task"],
+            "cut": review["cut"],
+        }
+    )
+
+
+async def api_loop_conflict(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/conflict {choice, task_id, tip, confirm: true} — redo or drop that work.
+
+    ``redo`` runs the task again on top of your branch as it is now, setting aside the attempt
+    that conflicted; ``drop`` deletes its branch and folder and cancels the task. Either discards
+    the commits on the task's branch, so the request says it means to and names the commit it read
+    (``tip``): a branch that moved is read again. The loop then resumes. To resolve the conflict
+    yourself, do so, then Resume the loop: it merges the branch again."""
+    from personalclaw.loop import conflicts
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers.nudge import get_instance
+
+    cid = request.match_info["id"]
+    waiting = _conflict_waiting(cid)
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, _ = waiting
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error("confirm_required", status=400)
+    choice, task_id, tip = body.get("choice"), body.get("task_id"), body.get("tip")
+    if choice not in conflicts.CHOICES:
+        return json_error(
+            "invalid_request", message="'choice' must be 'redo' or 'drop'", status=400
+        )
+    if not isinstance(task_id, str) or not isinstance(tip, str) or not tip.strip():
+        return json_error(
+            "invalid_request",
+            message="'task_id' and 'tip' must name the work the page showed",
+            status=400,
+        )
+    svc = get_instance()
+    if svc is None:
+        return json_error(
+            "service_unavailable", message="The loop scheduler is not running.", status=503
+        )
+    # The choice resumes the loop (`manager.start`), so work that may not set a loop going is
+    # refused before the choice changes anything.
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.START)
+    outcome = await conflicts.choose(svc, loop, task_id, tip.strip(), choice)
+    if outcome.code == "loop_conflict_moved":
+        return json_error("loop_conflict_moved", status=409)
+    if outcome.code:
+        return json_error("loop_conflict_not_waiting", status=409)
+    await manager.start(request.app["state"], svc, cid)
+    return web.json_response({"ok": True, "loop": _loop_view(cid)})
+
+
+# ── plan walkthrough (stepwise, gated planning) ──
+
+
+def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
+    """Run ONE planning walkthrough pass in the background (it spawns the planner —
+    minutes), publish a refresh when it lands, return 202. The client watches the
+    planner session WS (``loop-plan-<id>``) + polls the plan-session."""
+    from personalclaw.loop import plan_walkthrough as pw
+    from personalclaw.triggers.nudge import get_instance
+
+    svc = get_instance()
+    if svc is None:
+        return web.json_response({"error": "autonudge unavailable"}, status=503)
+    state = request.app["state"]
+
+    async def _run() -> None:
+        try:
+            for _ in range(2):  # design + first artifact, or advance, until gated/done
+                outcome = await pw.advance_plan(state, svc, cid)
+                if outcome in ("gated", "finalized", "paused", "failed"):
+                    break
+        except Exception:
+            pw.mark_design_error(cid)
+        finally:
+            try:
+                state.loop_sse().publish(registry_key(cid), "plan_step", {"loop_id": cid})
+                state.push_refresh("loops")
+            except Exception:
+                logger.debug("loop plan advance publish failed", exc_info=True)
+
+    task = asyncio.create_task(_run(), name=_plan_task_name(cid))
+    tasks = request.app.setdefault("_loop_plan_tasks", set())
+    tasks.add(task)
+    task.add_done_callback(lambda t: tasks.discard(t))
+    return web.json_response({"ok": True, "planning": True}, status=202)
+
+
+def _plan_task_name(cid: str) -> str:
+    """The name of loop *cid*'s background walkthrough pass, so a delete can find and end it."""
+    return f"loop-plan-advance:{cid}"
+
+
+async def _end_planning(app: web.Application, cid: str) -> None:
+    """End loop *cid*'s walkthrough pass in flight, if any, before a stop or a delete: the pass's
+    own clean-up removes the planner's nudge loop and its files. Without this a deleted draft's
+    pass found its planner session gone, retried, and recreated the session for a loop that no
+    longer existed."""
+    from personalclaw.cancellation import cancel_and_wait
+
+    running = [t for t in app.get("_loop_plan_tasks", ()) if t.get_name() == _plan_task_name(cid)]
+    if running:
+        await cancel_and_wait(running, what=f"loop {cid} planning")
+
+
+async def api_loop_plan_session(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/plan-session — the stepwise planning walkthrough state."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    # 404 a GONE loop, distinct from a live loop with no session yet ({session:null}).
+    # Without this the planning walkthrough can't tell "deleted mid-plan" from "session
+    # not started" — it polls the dead loop forever instead of exiting.
+    if store.get(cid) is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    from personalclaw.planning import session as PS
+
+    session = loop_files.read_plan_session(cid)
+    # Each step carries the revision an edit of its markdown names (`PS.wire`).
+    return web.json_response({"session": PS.wire(session) if session else None})
+
+
+async def api_loop_plan_start(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/plan/start — begin (or resume) the walkthrough."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is None:
+        refusal = await _planner_cannot_use_tools(cid)
+    if refusal is not None:
+        return refusal
+    return _kick_plan_advance(request, cid)
+
+
+async def _planner_cannot_use_tools(cid: str) -> web.Response | None:
+    """The refusal of a walkthrough whose planner would run on a model that can't use tools: it
+    writes the plan with them, so no pass could draft a step."""
+    from personalclaw.loop import plan_walkthrough as pw
+
+    loop, agent = store.get(cid), pw.planner_agent(cid)
+    blocked = await validation.worker_tools_blocker(loop, planner=agent) if loop and agent else None
+    return _cannot_use_tools(blocked) if blocked else None
+
+
+async def api_loop_plan_retry(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/plan/retry — clear a recorded design failure + re-run the
+    design pass (dynamic kinds only; an explicit user action)."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is None:
+        refusal = await _planner_cannot_use_tools(cid)
+    if refusal is not None:
+        return refusal
+    from personalclaw.loop import plan_walkthrough as pw
+
+    pw.clear_design_error(cid)
+    return _kick_plan_advance(request, cid)
+
+
+async def api_loop_plan_approve(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/plan/approve {step_id} — approve a step + advance."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    body = await json_object_body(request)
+    step_id = str(body.get("step_id", "")).strip()
+    if not step_id:
+        return web.json_response({"error": "step_id required"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
+    from personalclaw.planning import session as PS
+
+    session = loop_files.read_plan_session(cid)
+    if session is None:
+        return web.json_response({"error": "No planning session"}, status=404)
+    if not PS.approve_step(session, step_id):
+        return web.json_response({"error": "Step not awaiting review"}, status=409)
+    loop_files.write_plan_session(session)
+    return _kick_plan_advance(request, cid)
+
+
+async def api_loop_plan_comment(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/plan/comment {step_id, text} — comment + re-draft."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    body = await json_object_body(request)
+    step_id = str(body.get("step_id", "")).strip()
+    if not step_id:
+        return web.json_response({"error": "step_id required"}, status=400)
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return web.json_response({"error": "Comment text required"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
+    import time as _time
+
+    from personalclaw.planning import session as PS
+
+    session = loop_files.read_plan_session(cid)
+    if session is None:
+        return web.json_response({"error": "No planning session"}, status=404)
+    if not PS.comment_step(session, step_id, text, at=_time.time()):
+        return web.json_response({"error": "Step not awaiting review"}, status=409)
+    loop_files.write_plan_session(session)
+    return _kick_plan_advance(request, cid)
+
+
+async def api_loop_plan_edit(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/plan/edit {step_id, markdown} — the user directly edits a
+    step artifact's body (no planner round-trip). Stays awaiting review."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    body = await json_object_body(request)
+    step_id = str(body.get("step_id", "")).strip()
+    if not step_id:
+        return web.json_response({"error": "step_id required"}, status=400)
+    markdown = str(body.get("markdown", ""))
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
+    from personalclaw.planning import session as PS
+
+    session = loop_files.read_plan_session(cid)
+    if session is None:
+        return web.json_response({"error": "No planning session"}, status=404)
+    # 🔴 AN EDIT IS SAVED ONLY OVER THE DRAFT IT WAS MADE ON. A comment sends the step back to the
+    # planner, whose redraft returns it to awaiting review — the only thing this route used to
+    # check — so an editor opened on the previous draft replaced the new plan with the old one
+    # plus the edit. The markdown replaces the whole body, so the request names the revision of
+    # the draft it edited (`PS.step_revision`); read, compared and written with nothing awaited.
+    # A step that is not at the review gate is refused below whatever the edit names.
+    step = next((s for s in session.steps if s.id == step_id), None)
+    if step is not None and step.status == PS.StepStatus.AWAITING_REVIEW.value:
+        stale = stale_write_refusal(
+            request, PS.shown_markdown(step), what=f"the plan step {step.title!r}"
+        )
+        if stale is not None:
+            return stale
+        try:
+            markdown = PS.keep_masked_markdown(step, markdown)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+    if not PS.edit_artifact(session, step_id, markdown):
+        return web.json_response({"error": "Step not awaiting review"}, status=409)
+    loop_files.write_plan_session(session)
+    return web.json_response({"ok": True, "session": PS.wire(session)})
+
+
+# ── design tokens (Design kind) ──
+
+
+async def api_design_default_tokens(request: web.Request) -> web.Response:
+    """GET /api/design/tokens/default[?scheme=light|dark] — PersonalClaw's canonical
+    default token set. Returns both the raw set (`tokens`, with {ref}s intact) + its
+    JSON schema, AND a fully-RESOLVED tree (`resolved`) + ready CSS-variable block
+    (`css`) for the requested scheme — the same shape as the per-loop token endpoint
+    (overrides empty). This lets the Design composer preview the default design system
+    (swatches, contrast) before any loop exists, reusing the cockpit's token views.
+    Global (not per-loop)."""
+    from personalclaw.loop import design_tokens as dt
+
+    scheme = request.query.get("scheme", "light").strip().lower()
+    if scheme not in ("light", "dark"):
+        scheme = "light"
+    return web.json_response(
+        {
+            "tokens": dt.default_tokens(),
+            "schema": dt.tokens_schema(),
+            "resolved": dt.resolve(),
+            "css": dt.to_css_variables(scheme=scheme),
+            "overrides": {},
+            "scheme": scheme,
+        }
+    )
+
+
+async def api_loop_design_tokens(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/design/tokens[?scheme=light|dark] — the RESOLVED token tree
+    for a design loop (defaults deep-merged with the loop's token_overrides, every
+    {ref} resolved) plus a ready-to-inject CSS-variable block for the live canvas."""
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return web.json_response({"error": "Invalid loop id"}, status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    if loop.kind != "design":
+        return web.json_response({"error": "Not a design loop"}, status=400)
+    scheme = request.query.get("scheme", "light").strip().lower()
+    if scheme not in ("light", "dark"):
+        scheme = "light"
+    from personalclaw.loop import design_tokens as dt
+
+    overrides = (
+        loop.kind_config.get("token_overrides") if isinstance(loop.kind_config, dict) else {}
+    )
+    overrides = overrides if isinstance(overrides, dict) else {}
+    return web.json_response(
+        {
+            "resolved": dt.resolve(overrides),
+            "css": dt.to_css_variables(overrides, scheme=scheme),
+            "overrides": overrides,
+            "scheme": scheme,
+        }
+    )
+
+
+def register_unified_loop_routes(app: web.Application) -> None:
+    """Register the unified ``/api/loops`` routes (CRUD + lifecycle core). The
+    plan-walkthrough + queue/autopilot routes register in the next sub-step. Called
+    at the cutover in place of the legacy loops + code route registration."""
+    app.router.add_post("/api/loops/validate", api_loop_validate)
+    app.router.add_post("/api/loops/classify", api_loop_classify)
+    app.router.add_post("/api/loops/{id}/grill-tree", api_loop_grill_tree)
+    app.router.add_get("/api/loops", api_loop_list)
+    app.router.add_post("/api/loops", api_loop_create)
+    app.router.add_get("/api/loops/{id}", api_loop_get)
+    app.router.add_get("/api/loops/{id}/report", api_loop_report)
+    app.router.add_put("/api/loops/{id}", api_loop_update)
+    app.router.add_patch("/api/loops/{id}", api_loop_action)
+    app.router.add_delete("/api/loops/{id}", api_loop_delete)
+    app.router.add_get("/api/loops/{id}/kept-work", api_loop_kept_work)
+    app.router.add_post("/api/loops/{id}/kept-work/{task_id}/merge", api_loop_kept_work_merge)
+    app.router.add_delete("/api/loops/{id}/kept-work/{task_id}", api_loop_kept_work_discard)
+    app.router.add_post("/api/loops/{id}/nudge", api_loop_nudge)
+    app.router.add_post("/api/loops/{id}/queue", api_loop_queue)
+    app.router.add_post("/api/loops/{id}/autopilot", api_loop_autopilot)
+    app.router.add_put("/api/loops/{id}/agent-cli-self-approval", api_loop_agent_cli_self_approval)
+    app.router.add_get("/api/loops/{id}/merge", api_loop_merge_review)
+    app.router.add_post("/api/loops/{id}/merge", api_loop_merge)
+    app.router.add_get("/api/loops/{id}/conflict", api_loop_conflict_review)
+    app.router.add_post("/api/loops/{id}/conflict", api_loop_conflict)
+    app.router.add_get("/api/loops/{id}/plan-session", api_loop_plan_session)
+    app.router.add_post("/api/loops/{id}/plan/start", api_loop_plan_start)
+    app.router.add_post("/api/loops/{id}/plan/retry", api_loop_plan_retry)
+    app.router.add_post("/api/loops/{id}/plan/approve", api_loop_plan_approve)
+    app.router.add_post("/api/loops/{id}/plan/comment", api_loop_plan_comment)
+    app.router.add_post("/api/loops/{id}/plan/edit", api_loop_plan_edit)
+    app.router.add_get("/api/loops/{id}/stream", api_loop_stream)
+    app.router.add_get("/api/design/tokens/default", api_design_default_tokens)
+    app.router.add_get("/api/loops/{id}/design/tokens", api_loop_design_tokens)

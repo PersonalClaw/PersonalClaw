@@ -1,0 +1,3200 @@
+"""HTTP API handlers for dashboard chat endpoints."""
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import time
+import uuid
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionResetError
+
+from personalclaw import approval_answer, approval_grants, session_keys
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
+from personalclaw.dashboard import chat_phase, headless_run, running_turn
+from personalclaw.dashboard.approval_state import (
+    SESSION_APPROVAL_ACTIONS,
+    _mark_permission_resolved,
+    chat_approval_id,
+)
+from personalclaw.dashboard.chat_persistence import (
+    _redact_meta,
+    _rehydrate_session_from_history,
+    _validate_reasoning_effort,
+    continue_kept_chat,
+    resolve_session,
+    save_session_to_history,
+    session_key_exists,
+)
+from personalclaw.dashboard.chat_queue import shown
+from personalclaw.dashboard.chat_runner import (
+    TURN_STOPPED,
+    auto_chain_name,
+    run_chat,
+    started_by_app,
+)
+from personalclaw.dashboard.chat_title import title_needs_model
+from personalclaw.dashboard.chat_utils import (
+    STEER_ACTIVITY_KIND,
+    _build_stream_chunk,
+    _emit_agent_assignment,
+    _history_key_for,
+    _normalize_model,
+    _prepare_messages,
+    _redact_for_display,
+    _remove_queued_by_id,
+    apply_task_mode,
+    full_session_messages,
+    persisted_history_key,
+    take_in_the_users_links,
+)
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.history import CREATED_BY_APP_META_KEY
+from personalclaw.http_errors import json_error
+from personalclaw.own_words import (
+    OWN_WORDS,
+    PASTES,
+    RAN_PROMPT,
+    left_as_marker,
+    pasted_blocks,
+    pastes_of,
+    typed_text,
+)
+from personalclaw.request_validation import bool_field, json_object_body
+
+# The `room:` session-key prefix, imported rather than spelled out: the filter below and the
+# key the room turn path mints must be the same string, and a literal here could drift from it.
+from personalclaw.rooms.turn import SESSION_KEY_PREFIX as ROOM_SESSION_PREFIX
+from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
+from personalclaw.sel import sel
+from personalclaw.turn_source import STEERED
+from personalclaw.validation import _AGENT_NAME_RE
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message: str) -> None:
+    """Run one turn, an inbound caller's in its spend scope (``inbound.spend.spend_scope``).
+
+    A headless ``personalclaw run`` turn's spend rides the ``cli`` run, a client's of the
+    OpenAI-compatible endpoint its own client's, each held to the run ceiling an inbound caller
+    is given; the endpoint's speech and transcription run in the same scope. Bound here rather
+    than inside ``run_chat`` because this is a fresh task: the scope cannot leak into the caller's
+    context. The two direct-await callers of ``run_chat`` (the gateway's nudge loop, tests) bind
+    no scope, and a dashboard session binds nothing, keeping every interactive turn as it was.
+    """
+    key = session.key or ""
+    if not session_keys.INBOUND.names(key):
+        await run_chat(state, session, message)
+        return
+
+    from personalclaw.inbound.spend import spend_scope
+
+    with spend_scope(key):
+        await run_chat(state, session, message)
+
+
+async def api_chat(request: web.Request) -> web.StreamResponse:
+    """POST /api/chat — send message to a session, stream response via SSE."""
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # `.get("message", "")` defends against a MISSING key, not a wrong TYPE — so a non-string
+    # `message` reached `.strip()` and raised `AttributeError`, answering a bare 500 with no JSON
+    # body while a MISSING message correctly answered 400 (#766). The right pattern is four lines
+    # down, on `meta`: check the type, then use it.
+    raw_message = body.get("message", "")
+    if not isinstance(raw_message, str):
+        # STRUCTURED (`json_error`): `test_wire_error_envelope_census` ratchets the flat
+        # `{"error": "<prose>"}` population DOWN, so a NEW refusal joins the shape the project
+        # converges on rather than the one it is retiring.
+        return json_error("invalid_request", message="message must be a string", status=400)
+    message = raw_message.strip()
+    agent = body.get("agent", "")
+    session_name = body.get("session")
+    color_theme = body.get("color_theme", "")
+    user_meta = body.get("meta")  # knowledge/files/pastes metadata from frontend
+    if not isinstance(user_meta, dict):
+        user_meta = None
+    # Client-supplied message timestamp: the FE stamps its optimistic user turn with
+    # this and we store the SAME ts here, so the turn's ts matches the persisted
+    # message immediately (we don't broadcast the user echo). Without it a live turn
+    # has no ts until reload, which broke Edit & resend's by-ts lookup. Validate as
+    # ISO-8601; pop it so it doesn't linger in persisted meta.
+    client_ts = ""
+    if user_meta:
+        _raw_ts = user_meta.pop("client_ts", "")
+        if isinstance(_raw_ts, str) and _raw_ts:
+            try:
+                datetime.fromisoformat(_raw_ts)
+                client_ts = _raw_ts
+            except (ValueError, TypeError):
+                client_ts = ""  # malformed → fall back to server-stamped ts
+        # Which of a row's words its sender typed, the saved prompt that ran in their place, and
+        # that a running turn took it as a steer, are said by the code that composes the row, never
+        # by the send: from a client they would let a message teach what it does not say, or show
+        # a prompt that never ran or a steer nobody sent.
+        user_meta.pop(OWN_WORDS, None)
+        user_meta.pop(RAN_PROMPT, None)
+        user_meta.pop(STEERED, None)
+        # The blocks she pasted, as many as are whole (`own_words.pastes_of`).
+        if _blocks := pastes_of(user_meta):
+            user_meta[PASTES] = _blocks
+        else:
+            user_meta.pop(PASTES, None)
+        if not user_meta:
+            user_meta = None
+    # The composer sends each block she pasted in the message, where its marker stood in her draft.
+    # A message that still holds a block's marker in its place would reach the model as the marker
+    # alone and never as what she pasted, so it is refused before anything is kept or run.
+    if (_unsent := left_as_marker(message, pastes_of(user_meta))) is not None:
+        return json_error("paste_not_expanded", status=400, error_extra={"paste": _unsent})
+    # The words she typed or said, before the dictation note below is added to them.
+    said = message
+    # A dictated turn is honest about where it came from.
+    # ``input_origin`` is a closed set of one: anything else is treated as typed.
+    # The disclaimer goes on the message the runner sees (so the model
+    # self-corrects on homophones) and the origin goes into the persisted turn's
+    # meta, so the session JSONL records that this text was heard, not typed.
+    if str(body.get("input_origin", "")).strip().lower() == "voice":
+        from personalclaw.voice.duplex import VOICE_DISCLAIMER
+
+        user_meta = {**(user_meta or {}), "input_origin": "voice"}
+        if message and AppConfig.load().voice.voice_disclaimer_enabled:
+            if VOICE_DISCLAIMER not in message:
+                message = f"{message}\n\n{VOICE_DISCLAIMER}"
+
+    # Validate against the SAME closed set the injector uses, so the accepted
+    # values and the injectable personas cannot drift apart.
+    from personalclaw.dashboard.chat_utils import persona_themes
+
+    if not isinstance(color_theme, str) or color_theme not in {"", *persona_themes()}:
+        color_theme = ""
+    # Reply style, per-conversation scope. Accepted on the send body as well as on its own
+    # PATCH so a choice made in the composer BEFORE the first send lands with that first turn,
+    # and held to the PATCH route's rule: a value outside the closed set is a client bug, not a
+    # reset, so the send is refused before anything is kept or run.
+    reply_style: str | None = None
+    if "reply_style" in body:
+        from personalclaw.reply_style import is_available, normalize_choice
+
+        raw_style = body.get("reply_style")
+        reply_style = normalize_choice(raw_style)
+        if (reply_style == "" and raw_style != "") or (
+            reply_style and not is_available(reply_style)
+        ):
+            return json_error(
+                "bad_request",
+                message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
+                status=400,
+            )
+    if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
+        _emit_agent_assignment(str(session_name or ""), str(agent), outcome="denied_invalid")
+        return web.json_response({"error": "invalid agent name"}, status=400)
+    if not isinstance(session_name, str) and session_name is not None:
+        session_name = None  # coerce non-string session to auto-generate
+
+    # A named session that is on disk but not in memory comes back WITH its persisted
+    # runtime binding and its whole transcript, archived or not ("archival is not
+    # deletion"): `get_or_create_session` makes a kept chat's name into that chat. After a
+    # gateway restart every un-foldered session is a miss (the startup restore is
+    # window/folder-scoped and ``restore_sessions`` defaults to false), and a blank session
+    # minted for one resolved its first message on the native axis though its meta line said
+    # ``acp:<cli>``, then rebuilt that meta line from the blank session and DROPPED the
+    # binding, and wrote its buffer over the kept transcript.
+    #
+    # 🔴 …but a name the client supplies is only honored when it NAMES SOMETHING.
+    # `get_or_create_session` mints a blank session on a miss, so a send to a
+    # hard-deleted key answered 200 and re-materialised the conversation the user
+    # destroyed — measured: back in `GET /api/chat/sessions`, `GET
+    # /api/chat/sessions/{key}` 200 again, and carrying only the resurrecting turn.
+    # That is "delete" degraded to "close", reachable from a background tab, a retried
+    # request or a queued send. `session_key_exists` is the one owner of that question
+    # (log-file presence, so an ARCHIVED session is still writable and a chat kept only on
+    # disk still comes back); the refusal matches the {session}-addressed
+    # route family, 47 of whose other 49 members already 404 on an unknown key — measured
+    # against a live gateway — and `GET /api/sessions/{key}` in particular, which stopped
+    # reading a deleted key as an empty-but-real session for exactly this reason
+    # (tests/test_session_detail_404.py). A client that wants a NEW conversation omits
+    # `session` — that contract is unchanged and is what the dashboard's `ensureSession`
+    # already uses.
+    if session_name and not session_key_exists(state, session_name):
+        return json_error("session_not_found", status=404)
+    # An app's request that names no conversation starts one that is the app's. One it names was
+    # already held to the app's own by the permission middleware (`ROUTE_AUTHZ["POST /api/chat"]`),
+    # before anything above loaded it.
+    session = state.get_or_create_session(session_name, created_by_app=request.get("app", ""))
+
+    if session.agent not in (None, ""):
+        # Session already has an agent — only reject explicit mismatches (non-empty different agent).  # noqa: E501
+        # Empty agent in request means "use existing" (e.g. follow-up messages from frontend).
+        if agent and session.agent != agent:
+            _emit_agent_assignment(session.key, agent or "", outcome="denied_mismatch")
+            return web.json_response({"error": "session agent mismatch"}, status=409)
+        else:
+            logger.debug("agent match for session=%s agent=%s", session.key, agent)
+    elif agent:
+        # Session has no agent — set it if not running, the way every door changes what answers a
+        # chat (`running_turn.rebind`): a chat the default agent has answered holds that agent's
+        # runtime, and the turn below must be built for the agent named, not run on it.
+        if session.running:
+            _emit_agent_assignment(session.key, agent, outcome="denied_running")
+            return web.json_response(
+                {"error": "cannot set agent on running session"},
+                status=409,
+            )
+        await running_turn.move_to_agent(state, session, agent)
+        _emit_agent_assignment(session.key, agent)
+    else:
+        # No agent on session, no agent in request — nothing to enforce.
+        pass
+
+    if "color_theme" in body:
+        session.color_theme = color_theme
+    if reply_style is not None:
+        session.reply_style = reply_style
+
+    # The user's message is taken in here, whether it runs now, steers the running turn or waits
+    # in the queue: the links written or pasted into it are the user's for this chat's web_fetch.
+    # Not a widget action's: its payload is what the agent's widget wrote, sent under a label.
+    if message and not (user_meta or {}).get("ui_label"):
+        take_in_the_users_links(request.get("app", ""), session.key, message)
+
+    # The pasted blocks as the message holds them — read before the redaction below rewrites
+    # the meta copy — so routing and learning can tell what was typed from what was pasted.
+    _pasted = pasted_blocks(user_meta)
+    # And as her row keeps them, masked as the meta of a message sent between turns is, for a
+    # message that steers the running turn or waits in its queue: her bubble shows each as its chip.
+    _kept_pastes = _redact_meta({PASTES: pastes_of(user_meta)})[PASTES]
+    # Her own words, recorded on the turn's row only when the message holds more than them (a
+    # pasted block, the dictation note): what every learning path reads of it (``own_words``).
+    _own = typed_text(said, _pasted)
+    _own_recorded = _own if _own != message else None
+
+    if session.running:
+        # Cancel-and-replace: when the resolved mid-turn
+        # policy is cancel_and_replace, a rapid follow-up to this interactive session
+        # cancels the in-flight answer and the new message is delivered as the next
+        # turn via the EXISTING queue-drain-on-turn-end path — no new dispatch. The
+        # webui chat is always an interactive origin, so eligibility reduces to policy
+        # + a debounce guard (a burst produces ONE cancel + the last message). Returns
+        # a response when it handled the message; None to fall through to steer/queue.
+        if message:
+            _cr = await _maybe_cancel_and_replace(
+                state, session, message, _own_recorded, pastes=_kept_pastes
+            )
+            if _cr is not None:
+                return _cr
+        # Mid-run handling — 4 modes:
+        #   steer: inject at the next model boundary of the RUNNING turn (only when
+        #     that turn's runtime exposes the drain seam); followup: queue for after
+        #     the turn; collect: queue (coalesced later); interrupt: /interrupt.
+        #
+        # The request wins over the policy: an explicit `queue_mode`
+        # is honored as sent, and `mid_turn_policy` only supplies the DEFAULT for a
+        # request that doesn't state one. So the platform default is a floor, never
+        # an override.
+        mode = str(body.get("queue_mode") or _default_mid_turn_mode()).strip().lower()
+        # Her row is written when the turn takes it (`running_turn.take_steer`), with the time she
+        # sent it and what this send says of her words: heard or typed, and which she typed.
+        if (
+            message
+            and mode == "steer"
+            and running_turn.steer(
+                state,
+                session,
+                message,
+                ts=client_ts,
+                own_words=_own_recorded,
+                heard=(user_meta or {}).get("input_origin") == "voice",
+                pastes=_kept_pastes,
+            )
+        ):
+            _c, _ = redact_exfiltration_urls(message)
+            _c, _ = redact_credentials(_c)
+            state.broadcast_ws(
+                "activity_event",
+                {
+                    "session": session.key,
+                    "kind": STEER_ACTIVITY_KIND,
+                    "text": f"Steering: {_redact_for_display(_c)[:80]}",
+                },
+            )
+            return web.json_response({"ok": True, "steered": True})
+        # followup / collect / steer-when-not-native → queue as before.
+        if message:
+            qid = session.queue_append(
+                message, own_words=_own_recorded, pastes=_kept_pastes, attended=True
+            )
+            state.broadcast_ws(
+                "queue_push",
+                {
+                    "session": session.key,
+                    **shown(session.queued(qid)),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "queue_id": qid,
+                },
+            )
+            chat_phase.restate(state, session)  # one more message waits behind the turn
+        return web.json_response({"ok": True, "queued": True})
+
+    if not message:
+        return web.json_response({"error": "message is required"}, status=400)
+
+    # WS mode: return JSON immediately, chunks delivered via WebSocket
+    ws_mode = request.query.get("ws") == "1"
+
+    # Outside WS mode this request's stream drains the turn's rows, chunks and end from `_pending`.
+    session._has_reader = not ws_mode
+    if user_meta:
+        user_meta = _redact_meta(user_meta)
+    if _own_recorded is not None:
+        user_meta = {**(user_meta or {}), OWN_WORDS: _own_recorded}
+    session.append("user", message, "msg msg-u", ts=client_ts, meta=user_meta)
+
+    # ── AutoNudge: user input defers any pending nudge (user wins). Lazy import + fail-open
+    # kept deliberately: this is a hot path and a broken nudge service must never block a send.
+    try:
+        from personalclaw.triggers.nudge import get_instance as _autonudge_get
+
+        _autonudge = _autonudge_get()
+        if _autonudge is not None:
+            _autonudge.notify_user_input(session.key)
+    except Exception:
+        logger.warning("autonudge.notify_user_input failed", exc_info=True)
+
+    # ── kind:idle: the same signal, for store-defined idle triggers. ──
+    # 🔴 Wired HERE, beside autonudge's own cancel, rather than left for later: a
+    # re-arm reader with no writer is the worst inert shape — `armed_at` would only ever advance on
+    # a fire, so a user typing all afternoon would still be nudged for "going quiet". Autonudge
+    # CANCELS a pending timer; a poll has no timer, so the equivalent is moving the arm point.
+    try:
+        from personalclaw.triggers.idle_poll import notify_activity
+        from personalclaw.triggers.store import TriggerStore
+
+        notify_activity(session_key=session.key, store=TriggerStore(base_dir=config_dir()))
+    except Exception:
+        logger.debug("idle re-arm on user input failed", exc_info=True)
+
+    task = asyncio.create_task(_run_chat_scoped(state, session, message))
+    session.task = task
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+    state.push_sessions_update()
+
+    # Agent routing: if this default-agent chat's message fits an
+    # installed specialist, broadcast a non-blocking suggestion the FE renders as a
+    # chip. Best-effort — a classifier error must never break the send.
+    #
+    # Classified on a worker thread, after the run task is registered (so a second send
+    # finds this one running): it embeds the message with the embedding model, and on the
+    # loop every other request waited for that round trip. The turn runs meanwhile.
+    #
+    # This broadcast is one of a send's first frames, which is what made it the one frame a
+    # brand-new chat could never receive: creating the session by sending re-keys the
+    # frontend's ChatSession, and the remount closes its WebSocket while the replacement is
+    # still handshaking, so the frame lands in the reconnect gap and is delivered to nothing
+    # (issue 569). So the same payload also rides the send RESPONSE below — causally after
+    # the request, therefore unraceable. ONE dict feeds both transports so they cannot
+    # disagree about the session (or anything else) the suggestion is for.
+    _routing: dict[str, Any] | None = None
+    try:
+        from personalclaw.agents.routing import suggest_for_send
+
+        _suggestion = await asyncio.to_thread(
+            suggest_for_send, state, session, message, pasted=_pasted
+        )
+        if _suggestion is not None:
+            _routing = {
+                "session": session.key,
+                "agent": _suggestion.agent,
+                "specialty": _suggestion.specialty,
+                "score": round(_suggestion.score, 3),
+                "method": _suggestion.method,
+            }
+            state.broadcast_ws("routing_suggestion", _routing)
+    except Exception:
+        logger.debug("routing suggestion hook failed", exc_info=True)
+
+    if ws_mode:
+        # Built as a LITERAL at the call site, not assembled into a name above: the wire
+        # envelope census (tests/rails/test_wire_error_envelope_census.py) reads response shapes
+        # statically, and `json_response(_body)` hides this one from it. The suggestion key
+        # is absent rather than null when there is nothing to suggest — the frontend keys
+        # the chip off the field's presence.
+        return web.json_response(
+            {
+                "ok": True,
+                "session": session.key,
+                **({"routing_suggestion": _routing} if _routing is not None else {}),
+            }
+        )
+
+    resp = web.StreamResponse()
+    resp.content_type = "text/event-stream"
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"
+    await resp.prepare(request)
+
+    try:
+        while True:
+            pending = session.drain()
+            for msg in pending:
+                if msg["cls"] == "done":
+                    await resp.write(b"data: [DONE]\n\n")
+                    session._has_reader = False
+                    return resp
+                chunk = _build_stream_chunk(msg)
+                await resp.write(f"data: {chunk}\n\n".encode())
+            try:
+                await asyncio.wait_for(session.event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                await resp.write(b": keepalive\n\n")
+    except (ConnectionResetError, ClientConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        session.drain()
+        session._has_reader = False
+    return resp
+
+
+def _default_mid_turn_mode() -> str:
+    """The `queue_mode` a mid-turn message gets when the request doesn't state one.
+
+    Derived from `resilience.mid_turn_policy`: policy ``steer`` defaults to steering,
+    everything else defaults to queueing. Historically this was hardcoded to
+    ``"steer"``, which meant the platform policy had no say over the webui's own
+    behavior. An explicit `queue_mode` in the request still wins —
+    this only supplies the default.
+
+    Best-effort: any config failure falls back to ``"queue"``, the safe behavior
+    (never drop, never cancel).
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return "steer" if AppConfig.load().resilience.mid_turn_policy == "steer" else "queue"
+    except Exception:
+        logger.debug("mid_turn_policy read failed; defaulting to queue", exc_info=True)
+        return "queue"
+
+
+async def _maybe_cancel_and_replace(
+    state: "DashboardState",
+    session: "_ChatSession",
+    message: str,
+    own_words: str | None,
+    *,
+    pastes: Sequence[Mapping[str, Any]] = (),
+) -> "web.Response | None":
+    """Cancel-and-replace decision for a follow-up sent mid-turn.
+    Returns a JSON response when it HANDLED the message (cancelled the in-flight
+    turn + queued the new one, which the turn-end drain delivers as the next turn), or
+    ``None`` to fall through to the normal steer/queue path.
+
+    Eligibility: the resolved mid-turn policy is ``cancel_and_replace`` AND the
+    in-flight turn is an interactive origin (webui) AND the per-session debounce window
+    has elapsed. Everything is best-effort — any failure returns ``None`` (queue), so a
+    broken check never blocks a message.
+
+    ``own_words`` are the words of the message its sender typed when it holds more than them
+    (``None`` when it is all theirs), and ``pastes`` the blocks she pasted into it
+    (``own_words.PASTES``), queued with it as the queue path queues them.
+    """
+    import time as _time
+
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.resilience.active_jobs import get_tracker, is_cancellable_origin
+
+    try:
+        cfg = AppConfig.load().resilience
+        if cfg.mid_turn_policy != "cancel_and_replace":
+            return None
+        key = session.key
+        tracker = get_tracker()
+        job = tracker.get(key) or tracker.get(f"dashboard:{key}")
+        # Only cancel INTERACTIVE turns — loop/cron/subagent work is never pulled out
+        # from under itself by a user message. A webui session with no tracked
+        # job (racing the register) is still webui, so treat it as cancellable.
+        if job is not None and not is_cancellable_origin(job.origin):
+            return None
+        now = _time.time()
+        if tracker.within_debounce(key, cfg.cancel_replace_min_interval_secs, now=now):
+            return None  # a cancel just fired — coalesce: fall through to queue
+        tracker.mark_cancel(key, now=now)
+    except Exception:
+        logger.debug("cancel-and-replace check failed", exc_info=True)
+        return None
+
+    # Soft-cancel the in-flight turn (preserve the queue so earlier follow-ups
+    # survive), tell the FE the partial answer was superseded (it dims the bubble
+    # instead of leaving a ghost), then queue the new message — the existing
+    # turn-end queue-drain re-dispatches it as a fresh turn.
+    try:
+        outcome = await state.sessions.stop_turn(
+            _history_key_for(session.key), force=False, preserve_queue=True
+        )
+        qid = session.queue_append(message, own_words=own_words, pastes=pastes, attended=True)
+        # One more message waits behind the turn, said before its page hears the turn is over.
+        chat_phase.restate(state, session)
+        # The superseded turn was stopped by the message that replaced it.
+        state.broadcast_ws(
+            "chat_done",
+            {
+                "session": session.key,
+                "outcome": TURN_STOPPED,
+                "superseded": True,
+                "superseded_by": qid,
+            },
+        )
+        sel().log_tool_invocation(
+            session_key=_history_key_for(session.key),
+            agent=getattr(session, "agent", "") or "personalclaw",
+            source="dashboard",
+            tool_name="mid_turn_cancel_replace",
+            tool_kind="command",
+            tool_input=None,
+            outcome=str(outcome),
+            metadata={"session": session.key, "queue_id": qid},
+        )
+        return web.json_response({"ok": True, "cancelled_and_replaced": True})
+    except Exception:
+        logger.warning("cancel-and-replace stop_turn failed", exc_info=True)
+        return None
+
+
+def _origin_of(name: str, app: str = "") -> tuple[str, str]:
+    """Classify a session by origin → ``(origin, source_id)``.
+
+    ``origin`` is ``manual`` for a user-initiated chat, else ``loop`` (every unified loop kind —
+    general/goal/code/design). A loop's own sessions persist under the ``dashboard_`` namespace
+    like user chats but are not user-initiated chats, so the history list tags them and hides them
+    behind a filter by default (dropping them entirely left loop and code conversations
+    unreachable). They are told by the kind of their key (``session_keys.LOOP``), which a session
+    known only from disk carries too, and not by their ``agent`` field, which varies
+    (personalclaw-loop, "Claude Code", "default", …): ``loop-<id>`` (its stage worker),
+    ``loop-<id>-<task>`` (a task worker) and ``loop-plan-<id>`` (its planner, which exists while it
+    plans: every surface that lists the session names it by that loop). The source_id is the
+    loop's id (``manager.session_loop``). A session whose key is no loop's but which a loop's
+    engine tagged (``app``) is a loop's too, with no loop to link to.
+    """
+    from personalclaw.loop.manager import session_loop
+
+    if session_keys.LOOP.names(name):
+        return "loop", session_loop(name)
+    if app in ("loop", "code"):
+        return "loop", ""
+    return "manual", ""
+
+
+def _channel_link(state: DashboardState, name: str) -> tuple[str | None, str | None, str]:
+    """The channel thread the chat *name* is linked to, as ``(thread, channel id, channel)``,
+    the channel being the one the link names (``""`` when it names none).
+
+    The inbound door and "send to a channel" keep a chat's link under its history key
+    (``DashboardState.link_channel``); a channel thread's own conversation is keyed by the
+    thread, so its bare name is asked too. Asking by the bare name alone missed every link the
+    door made, and each chat that came in on a channel listed as one opened here."""
+    for key in (_history_key_for(name), name):
+        try:
+            thread, channel_id = state.sessions.get_channel_link(key)
+            on = state.sessions.get_channel_provider(key) if thread else ""
+        except Exception:
+            continue
+        if thread:
+            return thread, channel_id, on if isinstance(on, str) else ""
+    return None, None, ""
+
+
+def _chat_origin(
+    link: tuple[str | None, str | None, str], name: str, app: str, channels: dict[str, str]
+) -> tuple[str, str, str]:
+    """``(origin, source_id, source_label)`` for the history row of the chat *name*.
+
+    A chat is a channel's when it is linked to a channel thread, or when its origin tag is a chat
+    channel: the inbound door stamps the channel on every chat it opens
+    (``channel_inbound._route_to_session``), so the tag says where it came from after its link is
+    gone too. Its label is the channel's name as registered (*channels*, key → name), empty for
+    a channel no longer set up here: the channel its link names, where it continues now (a chat
+    from Telegram continued on Slack is Slack's), else the one its origin tag names. Anything else
+    is classified by :func:`_origin_of`."""
+    thread, channel_id, on = link
+    if thread or app in channels:
+        provider = on or (app if app in channels else "")
+        if not provider and channel_id:
+            from personalclaw.channel_delivery import channel_of_id
+
+            provider = channel_of_id(channel_id)[0]
+        return "channel", channel_id or "", channels.get(provider, "")
+    origin, source_id = _origin_of(name, app)
+    return origin, source_id, _origin_label(origin, source_id) if origin != "manual" else ""
+
+
+def _origin_label(origin: str, source_id: str) -> str:
+    """A friendly name for a worker session's originating loop (any unified kind), for
+    the history row's origin chip. Falls back to the id. Best-effort: a missing/failed
+    lookup yields the bare id."""
+    if not source_id:
+        return ""
+    try:
+        if origin == "loop":
+            from personalclaw.loop import store as loop_store
+            from personalclaw.security import redact_for_display
+
+            lp = loop_store.get(source_id)
+            # Masked like the loop list's name (`store.get_redacted`).
+            return redact_for_display(lp.name) if lp and lp.name else source_id
+    except Exception:
+        logger.debug("origin label lookup failed for %s/%s", origin, source_id, exc_info=True)
+    return source_id
+
+
+def _disk_listing(log) -> list:
+    """Every chat on disk with its metadata, the search indexer held off while it is listed."""
+    from personalclaw import session_search
+
+    with session_search.INDEXER.foreground():
+        return log.list_sessions_with_metadata()
+
+
+async def api_chat_sessions(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions — list all chat sessions.
+
+    Merges in-memory sessions with persisted-on-disk ones so the history list
+    survives gateway restarts and ``restore_sessions=false`` (older chats live
+    only on disk until opened). In-memory entries win on key collision (they're
+    live/authoritative). Non-persistent (incognito/temporary) histories are
+    excluded. A loop's own sessions (goal loops, code projects and every other kind) ARE included
+    but tagged with their ``origin`` + ``source_id``/``source_label`` so the UI can
+    default-hide them behind a filter and link each back to its cockpit.
+
+    An app caller gets the conversations it started and nothing else
+    (``DashboardState.session_creating_app``, ``ROUTE_AUTHZ``'s reason for this route). A
+    conversation an app started carries the app and its display name, which your history row
+    shows as "Started by …".
+    """
+    state: DashboardState = request.app["state"]
+    request_app = request.get("app", "")
+    app_names: dict[str, str] = {}
+    # Archived sessions are excluded by DEFAULT — that is the whole point of
+    # archiving. `?archived=1` returns only the archive (the Archived view); `?all=1`
+    # returns both. Filtering here rather than in the client keeps the contract in one
+    # place, so a future consumer can't accidentally show archived chats as active.
+    _arch = request.query.get("archived", "")
+    _all = request.query.get("all", "")
+    want_archived = _arch in ("1", "true", "yes")
+    want_all = _all in ("1", "true", "yes")
+
+    def _lifecycle_ok(lifecycle: str) -> bool:
+        if want_all:
+            return True
+        return (lifecycle == "archived") if want_archived else (lifecycle != "archived")
+
+    # The disk listing first, off the event loop: at 12,005 chats listing them held the loop for
+    # 0.9 s, every request answered meanwhile waiting on it (measured). The live sessions below
+    # are read after it, so they are as fresh as the answer.
+    disk: list = []
+    if state.conversation_log:
+        try:
+            disk = await asyncio.to_thread(_disk_listing, state.conversation_log)
+        except Exception:
+            logger.warning("list_sessions failed for chat history merge", exc_info=True)
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    from personalclaw.channel_delivery import chat_channel_names
+
+    channels = chat_channel_names()
+    # In-memory first — these are live and authoritative.
+    for s in state._sessions.values():
+        # A ROOM MEMBER'S OWN PROVIDER SESSION IS NOT A CHAT. Each member of an Agent Room
+        # holds a real session keyed `room:<room>:<member>`, which is no loop's session, so
+        # `_origin_of` classifies it `manual` and it would surface here as though the USER had
+        # opened it, titled by its key, one row per member. That is the room's attribution property
+        # inverted: a member's conversation reading as the human's. The disk branch below
+        # already skips worker namespaces on the same reasoning; this is the in-memory half,
+        # which had no filter at all.
+        #
+        # Filtered rather than tagged `origin="room"`: a room is not N chats, it is ONE room,
+        # and it has its own surface (`#/chat/room/<id>`) reading `/api/rooms`. Publishing the
+        # members as rows would be a second, wrong answer to "what rooms do I have".
+        if s.key.startswith(ROOM_SESSION_PREFIX):
+            seen.add(s.key)
+            continue
+        # Restricted (incognito/temporary) sessions never surface in the list —
+        # the disk-merge branch below filters them; live ones must match.
+        if getattr(s, "memory_mode", "persistent") in ("incognito", "temporary"):
+            seen.add(s.key)
+            continue
+        # Marked seen either way, so the disk branch below cannot hand the app the same
+        # conversation from its file.
+        if request_app and s.created_by_app != request_app:
+            seen.add(s.key)
+            continue
+        d = s.to_dict()
+        d.update(_started_by(s.created_by_app, app_names))
+        # A channel's chat keeps its channel origin once resumed live too, so it stays
+        # grouped under the Channels scope rather than folding into 'manual'.
+        origin, sid, label = _chat_origin(
+            _channel_link(state, s.key), s.key, getattr(s, "_app", "") or "", channels
+        )
+        d["origin"] = origin
+        if origin != "manual":
+            d["source_id"] = sid
+            d["source_label"] = label
+        # `seen` is marked regardless of the lifecycle filter: a live session that is
+        # filtered out here must NOT then be re-added by the disk-merge branch below.
+        seen.add(s.key)
+        if not _lifecycle_ok(str(d.get("lifecycle") or "active")):
+            continue
+        out.append(d)
+
+    # Then merge disk-only sessions not already represented in memory — building the rows
+    # and the answer off the event loop too: for 12,005 chats they held it for 0.1 s more.
+    def _merge_disk() -> None:
+        for d, meta in disk:
+            raw_key = d.get("key", "")
+            if raw_key.startswith("dashboard:"):
+                name = raw_key.removeprefix("dashboard:")
+            elif raw_key.startswith("dashboard_"):
+                name = raw_key.removeprefix("dashboard_")
+            else:
+                name = raw_key  # bare key (e.g. a channel thread_ts)
+            # A channel conversation is keyed by its thread_ts + linked in the
+            # session map. It reaches disk under either the bare key or (once
+            # resumed) the dashboard_ namespace, so check the link on the RESOLVED
+            # name regardless of prefix — surface + tag it origin=channel. Other
+            # bare/non-dashboard namespaces (internal workers) are still skipped
+            # below.
+            link = _channel_link(state, name)
+            if (
+                not link[0]
+                and raw_key == name
+                and not raw_key.startswith(("dashboard:", "dashboard_"))
+            ):
+                continue  # non-dashboard, non-channel (worker namespace) — not chat history
+            if name in seen:
+                continue
+            if request_app and meta.get(CREATED_BY_APP_META_KEY) != request_app:
+                continue
+            if meta.get("closed"):
+                continue
+            # Incognito/temporary histories are never surfaced in the list.
+            if meta.get("memory_mode") in ("incognito", "temporary"):
+                continue
+            seen.add(name)
+            origin, sid, label = _chat_origin(link, name, meta.get("app", "") or "", channels)
+            row = {
+                "key": name,
+                "title": d.get("title") or name,
+                "agent": meta.get("agent", d.get("agent", "")),
+                "model": meta.get("model", ""),
+                "messages": d.get("messages", 0),
+                # Nothing runs for a chat kept only on disk, and no turn of it is on record here.
+                "run_state": chat_phase.idle_payload(name),
+                "created": meta.get("created_at") or d.get("created", ""),
+                "last_ts": "",
+                "last_activity_ts": (
+                    datetime.fromtimestamp(d["modified"], tz=timezone.utc).isoformat()
+                    if d.get("modified")
+                    else ""
+                ),
+                "folder_id": meta.get("folder_id", ""),
+                # The project it belongs to, as restoring the chat reads it (a string or none), so
+                # a chat lists under the same project whether it is live or kept only on disk.
+                "project_id": (
+                    meta["project_id"] if isinstance(meta.get("project_id"), str) else ""
+                ),
+                "pinned": bool(meta.get("pinned")),
+                "tags": [t for t in meta.get("tags", []) if isinstance(t, str)],
+                "color_index": meta.get("color_index"),
+                "memory_mode": meta.get("memory_mode", "persistent"),
+                "origin": origin,
+                # Lifecycle. The live branch above gets these from to_dict();
+                # this hand-built row has to carry them too or an archived session
+                # would read as active the moment it is served from disk.
+                "lifecycle": (
+                    meta["lifecycle"]
+                    if meta.get("lifecycle") in ("active", "archived")
+                    else "active"
+                ),
+                "last_activity_at": (
+                    float(meta["last_activity_at"])
+                    if isinstance(meta.get("last_activity_at"), (int, float))
+                    else 0.0
+                ),
+                "never_archive": bool(meta.get("never_archive")),
+                **_started_by(meta.get(CREATED_BY_APP_META_KEY), app_names),
+            }
+            if origin != "manual":
+                row["source_id"] = sid
+                row["source_label"] = label
+            if not _lifecycle_ok(str(row.get("lifecycle") or "active")):
+                continue
+            out.append(row)
+
+    if disk:
+        await asyncio.to_thread(_merge_disk)
+
+    return web.json_response(text=await asyncio.to_thread(json.dumps, out))
+
+
+def _started_by(creator: object, names: dict[str, str]) -> dict[str, str]:
+    """A history row's "Started by …" fields for a conversation whose creating app is *creator*,
+    or nothing for one of yours. *names* caches display names across one list's rows."""
+    if not isinstance(creator, str) or not creator:
+        return {}
+    if creator not in names:
+        from personalclaw.apps.app_manager import display_name_of
+
+        names[creator] = display_name_of(creator)
+    return {"created_by_app": creator, "created_by_app_name": names[creator]}
+
+
+async def api_chat_tool_result(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/{session}/tool-result/{rid} — the FULL raw output of
+    a projected tool result (the tool-output projection's raw store), for the chat
+    card's "Show full result" affordance. Optional ?grep= / ?start= / ?end= to
+    pull a slice. Read-only; redacted the same way the live output was."""
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.tool_providers import result_store
+
+    # The raw store is keyed by the canonical (dashboard:-prefixed) session key —
+    # the same key the projection write path uses during a turn (chat_runner sets
+    # session_key = _history_key_for(session.key)). The URL carries the bare id, so
+    # canonicalize here or the lookup misses (a stored result would 404 as "expired").
+    name = _history_key_for(request.match_info["session"])
+    rid = request.match_info["rid"]
+    grep = request.query.get("grep") or None
+    try:
+        start = int(request.query.get("start") or 0)
+    except ValueError:
+        start = 0
+    end_raw = request.query.get("end")
+    end = int(end_raw) if (end_raw and end_raw.isdigit()) else None
+    res = result_store.fetch_slice(name, rid, start=start, end=end, grep=grep, max_chars=200_000)
+    if not res.get("ok"):
+        return web.json_response({"error": res.get("error", "not found")}, status=404)
+    content, _ = redact_exfiltration_urls(res.get("content", ""))
+    content, _ = redact_credentials(content)
+    res["content"] = content
+    return web.json_response(res)
+
+
+async def api_chat_session_bound_project(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/bound-project — the CALLING session's bound Project id.
+
+    An ACP CLI's tools run in a separate ``mcp-core``
+    process, where the native runtime's per-turn project contextvar is empty by
+    construction, so ``artifact_save`` there stamped nothing. The session key already
+    crosses to that process, so this endpoint closes the loop with no protocol change.
+
+    Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``: the
+    session the internal credential names in ``X-Session-Key``), never off a path segment or a
+    query parameter: the caller must prove which session it IS, and letting it name any session
+    would turn a stamping helper into a cross-session read of someone else's project binding. An
+    app's own work is no chat's.
+
+    Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the
+    session is unknown or the session binds no project. All three mean the same thing to
+    the one caller ("nothing to stamp"), and an error status would make a normal
+    unscoped save look like a failure in its logs. Deliberately does NOT fall back to
+    the Personal default the way ``/api/context`` does: filing an unscoped save under a
+    project the user never chose is worse than an unstamped artifact.
+    """
+    state: DashboardState = request.app["state"]
+    sk = approval_answer.work_of_request(request)
+    if not sk or sk == session_keys.DASHBOARD_UI or session_keys.APP.names(sk):
+        return web.json_response({"project_id": ""})
+    name = sk.split(":", 1)[-1] if ":" in sk else sk
+    session = (getattr(state, "_sessions", {}) or {}).get(name)
+    return web.json_response(
+        {"project_id": str(getattr(session, "project_id", "") or "") if session else ""}
+    )
+
+
+async def api_chat_session_model_reach(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/model-reach — what the CALLING session keeps, and who asked.
+
+    An agent CLI's tools run in the separate ``mcp-core`` process, where the session scope a
+    chat's turn holds in the gateway (``memory_writes``) is empty, so each of their calls asks this
+    first and runs under the answer: ``{"memory_mode": "incognito"}`` (or ``"temporary"``, or
+    ``"unreadable"`` when no record says which) for a session that keeps nothing, whose work no
+    model but its own may read and whose writes the stores refuse, and ``{"memory_mode":
+    "persistent"}`` for any other. ``asked_by`` is the source of who asked for the work the session
+    runs when someone other than the owner did (``memory_writes.asker``: the turn it is running, or
+    the lasting work it is), ``{}`` when she did: the tool process holds no turn, so it asks here
+    whenever who asked decides what a call does (a skill drafted, an automation made, a callback's
+    record). The request runs as deriving from the session it names (``memory_write_gate``), so
+    this is the answer the gateway's own stores give. ``turn_stopped`` is whether the turn the
+    session runs was stopped (``SessionManager.turn_stopped``): nothing more runs for it, so the
+    call that asks is not made.
+
+    Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``), never off
+    a path segment or a query parameter: the caller asks about the session it is. No header, or the
+    dashboard's own, is no session.
+    """
+    from personalclaw import memory_writes
+    from personalclaw.approval_answer import work_of_request
+
+    work = work_of_request(request)
+    stopped = getattr(getattr(request.app["state"], "sessions", None), "turn_stopped", None)
+    return web.json_response(
+        {
+            "memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT,
+            "asked_by": memory_writes.asker(),
+            "turn_stopped": bool(work and callable(stopped) and stopped(work) is True),
+        }
+    )
+
+
+async def api_chat_session_detail(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/{session} — message history for a session.
+
+    Two query modes:
+      - Default (no ``limit`` and no ``before``): return the full chained history
+        from disk across gateway restarts.
+      - Paginated (``limit`` and/or ``before``): ``limit`` caps the number of
+        messages returned; ``before`` returns messages before that index.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    # Cache miss → rehydrate from persisted history. After a gateway restart
+    # (or with restore_sessions=false) older sessions aren't in memory, but the
+    # chat history list still surfaces them — opening one must load it from disk
+    # rather than 404. Returns None only if the session was never persisted.
+    if not session:
+        session = _rehydrate_session_from_history(state, name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    limit_raw = request.query.get("limit")
+    before = request.query.get("before")
+
+    # ONE list for both modes: the whole transcript, oldest first. The session's buffer
+    # holds its whole file (`_seed_transcript` never loads a window), and the splice with
+    # older sibling files lives in `full_session_messages` (chat_utils) because the
+    # session-map endpoint has to index the SAME list — see its docstring. Pagination is a
+    # slice of it, so `before` indexes the list the unpaginated read serves. (It used to
+    # stitch disk and memory by COUNT, and the per-turn `done` rows in the buffer made the
+    # "unflushed tail" too long, serving the last turn twice.)
+    all_msgs = full_session_messages(state, session)
+    total = len(all_msgs)
+    if limit_raw is None and before is None:
+        messages = all_msgs
+        has_more = False
+    else:
+        limit = min(int(limit_raw or "200"), 500)
+        end = max(0, min(int(before), total)) if before is not None else total
+        start = max(0, end - limit)
+        messages = all_msgs[start:end]
+        has_more = start > 0
+
+    # Read in the same synchronous step as `messages` (nothing above awaits), so it is an
+    # exact resume point: these messages hold every chunk stamped <= it, and none after.
+    stream_seq = state.stream_seq
+    prepared = _prepare_messages(messages, session.running)
+
+    # Branch lineage. `forked_from` is already persisted on the
+    # metadata line and restored on load, so the child's "Branched from" breadcrumb is
+    # a read of existing state — but only if the detail endpoint SERVES it. It is the
+    # request a reopened/reloaded chat makes, so serving it here is what makes the
+    # breadcrumb survive a refresh; holding the parent in navigation state instead
+    # would lose it on the first reload. Same reasoning as `memory_mode` below.
+    #
+    # `forked_from_title` names the parent for a human, resolved live-then-disk at read
+    # time (never a copy frozen at fork time — the parent can be renamed). "" means the
+    # origin no longer resolves at all, which the breadcrumb renders as unlinked text
+    # rather than a link into nothing.
+    forked_from = getattr(session, "forked_from", "") or ""
+    forked_from_title = ""
+    if forked_from:
+        parent_key = forked_from.removeprefix("dashboard:")
+        parent = state._sessions.get(parent_key)
+        if parent is not None:
+            forked_from_title = (parent.title if parent._titled else "") or parent_key
+        elif state.conversation_log:
+            try:
+                parent_meta = state.conversation_log.get_metadata(forked_from)
+            except Exception:
+                parent_meta = {}
+            if parent_meta:
+                forked_from_title = str(parent_meta.get("title") or "") or parent_key
+
+    # A conversation an app started approves nothing on its own, whoever sends into it — your
+    # approval switches never reach it (`chat_runner.started_by_app`). The chat names the app and
+    # says so above the composer, and the posture it restores is the one that asks.
+    app_chat = started_by_app(session)
+
+    return web.json_response(
+        {
+            "key": session.key,
+            "title": session.title,
+            # Why an untitled chat has no title yet, when it is that no model is chosen for it.
+            "title_needs_model": title_needs_model(session),
+            # What its turn is doing — its phase, whether a stop is asked of it, whether it takes
+            # a steer — and how its last turn ended: the last phase frame it was sent
+            # (`chat_phase`). A tab that missed frames reads from this what one that heard them
+            # knows, and applies only a frame newer than its `seq`: the page's stall reconciler
+            # recovers a card whose `approval` frame it lost from the phase that waits on her OK.
+            "run_state": session.run_state,
+            # What the context ring was last told (`DashboardState.say_context_usage`), so a page
+            # opened after the turn draws the same ring; null until a turn has said anything.
+            "context_usage": session.context_usage,
+            "messages": prepared,
+            "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
+            "total": total,
+            "has_more": has_more,
+            # Where a live answer resumes: a client continuing the in-flight `streaming`
+            # partial drops chat_chunk frames stamped <= this and keeps the rest.
+            "stream_seq": stream_seq,
+            # agent/model binding so the composer restores the SAME selection the
+            # session was using when reopened (native agent/model OR ACP provider
+            # + provider_agent + reasoning effort).
+            "agent": session.agent or "",
+            "model": session.model or "",
+            # The Settings → Models chain a turn here runs on when no model is picked for it
+            # ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the
+            # model pill's Auto names before the turn starts (`chat_runner.auto_chain_name`).
+            "auto_chain": auto_chain_name(session),
+            # The folder it works in, which the composer's Working directory prompt opens on.
+            "workspace_dir": session.workspace_dir or "",
+            # session mode so the UI can show the right indicator when a session
+            # is reopened.
+            "mode": getattr(session, "mode", "") or "",
+            "acp_provider": getattr(session, "acp_provider", "") or "",
+            "acp_provider_agent": getattr(session, "acp_provider_agent", "") or "",
+            "reasoning_effort": getattr(session, "reasoning_effort", "") or "",
+            # Both composer axes so the segmented controls restore to the session's
+            # ACTUAL posture on reopen (not the visual defaults). task_mode is
+            # per-session; approval is derived from the yolo(global)/trust/
+            # trust_reads precedence so the single enum the UI uses round-trips.
+            "task_mode": getattr(session, "_task_mode", "agent") or "agent",
+            # Investigate origin: the header ContextChip reads the staged
+            # envelope's display fields (title/kind/back_link) — present only until
+            # the first turn consumes it, or permanently via the injected preamble.
+            "investigate": (
+                {
+                    "kind": str((getattr(session, "_investigate_ctx", None) or {}).get("kind", "")),
+                    "title": str(
+                        (getattr(session, "_investigate_ctx", None) or {}).get("title", "")
+                    ),
+                    "back_link": str(
+                        (getattr(session, "_investigate_ctx", None) or {}).get("back_link", "")
+                    ),
+                }
+                if isinstance(getattr(session, "_investigate_ctx", None), dict)
+                else None
+            ),
+            "approval": (
+                "normal"
+                if app_chat
+                else (
+                    "yolo"
+                    if state.is_yolo_active()
+                    else (
+                        "trust"
+                        if session._trust
+                        else "trust_reads" if session._trust_reads else "normal"
+                    )
+                )
+            ),
+            **(_started_by(session.created_by_app, {}) if app_chat else {}),
+            # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
+            # page hides Fork on a non-persistent session — the backend refuses to
+            # fork temporary/incognito). The session-list endpoint already returns
+            # this; the detail endpoint must too, or a reopened chat looks persistent.
+            "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+            # Reply style — the RESOLVED style and its preview, for the same reason as
+            # memory_mode: the composer must restore to what actually takes effect, and it must
+            # not re-derive the resolution order to work that out.
+            **_reply_style_payload(session),
+            # Branch lineage — see the resolution block above the return.
+            "forked_from": forked_from,
+            "forked_from_title": forked_from_title,
+            # The questions the turn waits on her answer to, as their cards: a page opened or
+            # reloaded while one waits shows it (`owner_questions`).
+            "pending_questions": state.owner_questions.pending_for(session.key),
+            # persisted side-chat transcript (reloads attached to the session).
+            "side": (
+                session._side.to_dict()
+                if session._side is not None and session._side.messages
+                else None
+            ),
+        }
+    )
+
+
+async def api_chat_session_create(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions — create a new chat session."""
+    state: DashboardState = request.app["state"]
+    # #2923: this read used to be `except Exception: body = {}`, so a truncated or
+    # corrupt body was DISCARDED and session creation carried on with every field
+    # defaulted — a real, persisted session at 200. The next check already 400'd a body
+    # that parsed to a non-dict, which made the pair backwards: unparseable input is the
+    # STRONGER signal that the caller is broken. The shared reader refuses both.
+    body = await json_object_body(request)
+    name = body.get("name")
+    if name is not None and not isinstance(name, str):
+        return web.json_response({"error": "name must be a string"}, status=400)
+    agent = body.get("agent", "")
+    model = body.get("model", "")
+    project_id = str(body.get("project_id", "") or "")
+
+    # Resolve the agent's default working directory from its bindings.
+    workspace_dir = ""
+    try:
+        cfg = AppConfig.load()
+        if agent and agent in cfg.agents:
+            workspace_dir = resolve_session_workspace(cfg, agent)
+    except Exception:
+        logger.warning("Failed to resolve bindings for session create", exc_info=True)
+    # A project-bound chat works in the project's bound workspace (so file tools +
+    # memory scope to the project's codebase). The project's workspace wins over the
+    # agent default; falls back to the agent default when the project has none.
+    if project_id:
+        try:
+            from personalclaw.tasks.hierarchy import HierarchyStore
+
+            proj = HierarchyStore().get_project(project_id)
+            pdir = str(getattr(proj, "workspace_dir", "") or "") if proj else ""
+            if pdir:
+                workspace_dir = pdir
+        except Exception:
+            logger.debug("project workspace resolve failed for %s", project_id, exc_info=True)
+
+    try:
+        memory_mode = body.get("memory_mode", "persistent")
+        if memory_mode not in ("persistent", "incognito", "temporary"):
+            return web.json_response({"error": "invalid memory_mode"}, status=400)
+        # A name that is a kept chat's opens that chat (`get_or_create_session`), as a name open
+        # here does, so `personalclaw run --session` continues its conversation after a restart;
+        # the request's other fields shape a new chat only.
+        session = state.get_or_create_session(
+            name,
+            agent=agent,
+            workspace_dir=workspace_dir,
+            model=model,
+            mode=body.get("mode", ""),
+            memory_mode=memory_mode,
+            ephemeral=bool_field(body, "ephemeral", default=False),
+            created_by_app=request.get("app", ""),
+            project_id=project_id,
+        )
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    if session.is_restricted:
+        logger.info("Session %s created with memory_mode=%s", session.key, session.memory_mode)
+    # A project-bound chat must be able to READ the project's context dir even when its
+    # cwd is the project's bound workspace (the context dir lives outside it, under
+    # config/projects/<id>/context). Grant it as an extra native-tool root so the chat
+    # can actually read the sibling loops'/chats' shared outcomes the preamble points it
+    # at — the "mutually accessible per-project context" the vision promises. Mirrors the
+    # loop worker (manager.py grants the same dir). Best-effort.
+    if project_id:
+        try:
+            from personalclaw.tasks.hierarchy import HierarchyStore
+
+            ctx = str(HierarchyStore().context_dir(project_id))
+            if ctx and ctx not in (session._extra_tool_roots or []):
+                session._extra_tool_roots = [*(session._extra_tool_roots or []), ctx]
+        except Exception:
+            logger.debug(
+                "project context-dir tool-root grant failed for %s", project_id, exc_info=True
+            )
+    # Default the working directory to the workspace root so file search works
+    # out of the box.
+    if not session.workspace_dir:
+        session.workspace_dir = default_workspace_dir()
+    # Reply style: the list-row `to_dict()` carries only the conversation's own choice, so the
+    # composer gets the RESOLVED style here: one config read for the one session open.
+    return web.json_response({**session.to_dict(), **_reply_style_payload(session)})
+
+
+def _stop_reach_report(session: _ChatSession) -> dict:
+    """What the stop actually REACHED, off the provider's cancel scope.
+
+    The stop card used to say only "stopped", which is a claim about the button rather
+    than about the work. This is the evidence behind it — whether the model request was
+    aborted, how many child processes were reaped, how many queued tool calls were
+    dropped, how many subagents were stopped — and it is the shape the stop card consumes.
+
+    ``getattr`` because only a provider that OWNS a turn's cancellation can report on
+    it: an ACP-backed session delegates the turn to an external agent process, so it
+    has no scope and legitimately reports nothing. Absent → ``{}``, never a guess.
+    """
+    reporter = getattr(getattr(session, "provider", None), "last_stop_report", None)
+    if reporter is None:
+        return {}
+    try:
+        report = reporter()
+    except Exception:
+        logger.debug("stop report unavailable", exc_info=True)
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
+#: How a Stop's record reads once the stop is over, by what it came to
+#: (``SessionManager.stop_turn``): the agent answered it; it never did, and its process was ended;
+#: or nothing was in flight on the agent, and the turn ended where it stood (before its prompt
+#: went out, or after its answer).
+_STOP_RECORD_ENDINGS = {"soft": "stopped", "hard": "stop_failed_reset", "idle": "stopped"}
+#: The states a Stop's record holds while its stop is under way.
+_STOP_RECORD_OPEN = frozenset({"stopping", "interrupting"})
+
+
+def _open_stop_event(state: DashboardState, session: _ChatSession, opening: str) -> str:
+    """Write a Stop's record into the transcript, reading *opening* (``stopping`` or
+    ``interrupting``) until the stop is over (:func:`_close_stop_event`). Returns its id."""
+    stop_id = f"stop-{uuid.uuid4().hex}"
+    session._stop_event_id = stop_id
+    stop_data = {
+        "kind": "stop_event",
+        "id": stop_id,
+        "state": opening,
+        "outcome": None,
+        "ts_start": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    # cls must be JSON-encoded so parse_cls_meta() populates meta on the wire. content mirrors the
+    # same payload so consumers that read only content still see the stop event.
+    stop_msg = json.dumps(stop_data)
+    session.append("system", stop_msg, stop_msg)
+    chat_phase.restate(state, session)  # a stop is asked of the running turn
+    state.push_sessions_update()
+    return stop_id
+
+
+def _close_stop_event(
+    state: DashboardState, session: _ChatSession, stop_id: str, outcome: str
+) -> None:
+    """The Stop *stop_id* is over, having come to *outcome*: its record says how it ended, and the
+    chat no longer reads as stopping while this stop is the one it records.
+
+    Read from what the stop came to, never from the chat's stop state: the stopped turn's own end
+    sets that back as soon as its agent answers the stop, before the stop that asked hears the
+    answer, so a record closed only while the chat still read as stopping was never closed. A
+    record a later press already closed (a forced one) keeps how that press ended it."""
+    _resolve_stop_event(session, stop_id, outcome)
+    if session._stop_event_id in (stop_id, None):
+        session._stop_event_id = None
+        session._stop_state = "idle"
+    chat_phase.restate(state, session)  # the stop was answered
+    state.push_sessions_update()
+
+
+def _resolve_stop_event(session: _ChatSession, stop_id: str, outcome: str) -> None:
+    """Write how the Stop *stop_id* ended (*outcome*) into its record in the transcript, in place,
+    unless that record is already closed."""
+    for msg in reversed(session.messages):
+        cls_val = msg.get("cls", "")
+        if not cls_val:
+            continue
+        try:
+            cls_data = json.loads(cls_val) if isinstance(cls_val, str) else None
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(cls_data, dict) or cls_data.get("kind") != "stop_event":
+            continue
+        if cls_data.get("id") != stop_id:
+            continue
+        if cls_data.get("state") not in _STOP_RECORD_OPEN:
+            return
+        cls_data["state"] = _STOP_RECORD_ENDINGS.get(outcome, "stop_failed_reset")
+        cls_data["outcome"] = outcome
+        cls_data["ts_end"] = datetime.now(tz=timezone.utc).isoformat()
+        reached = _stop_reach_report(session)
+        if reached:
+            cls_data["reached"] = reached
+        serialized = json.dumps(cls_data)
+        msg["cls"] = serialized
+        msg["content"] = serialized
+        session._dirty = True
+        # Re-broadcast the record, so every page of the chat reads how the stop ended.
+        on_msg = getattr(session, "_on_message", None)
+        if on_msg:
+            try:
+                on_msg(session.key, msg)
+            except Exception:
+                logger.debug("stop_event re-broadcast failed", exc_info=True)
+        return
+    logger.debug("_resolve_stop_event: no record for stop %s", stop_id)
+
+
+async def api_chat_session_stop(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/stop — cooperative stop with kill fallback.
+
+    First press: soft cancel (cooperative). Second press (?force=true):
+    hard kill. Inserts a stop_event message into the session transcript.
+
+    Answers ``{"ok": true, "stopped": <bool>, "trust": <bool>}``: whether THIS press stopped a
+    turn, and whether the chat's Trust still stands. ``stopped`` is ``false`` when nothing was
+    running, when a stop was already under way, and when the runtime had no turn in flight — a
+    client must not announce a stop then; the turn's own ``chat_done`` says how it ended.
+
+    A headless run's chat keeps no Trust past a stop: it is withdrawn first, before the runtime is
+    asked to stop, so no call is approved on it while the turn winds down (``headless_run``).
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    headless_run.end_the_runs_trust(state, session, why="its turn was stopped")
+    force = request.query.get("force", "").lower() == "true"
+
+    # Force path: already soft_pending, user pressed again. It closes the record the first press
+    # opened, with how the forced stop ended.
+    if session._stop_state == "soft_pending" and force:
+        session._stop_state = "killing"
+        state.push_sessions_update()
+        logger.info("Stop (force): hard-killing session for session %s", name)
+        stop_id = session._stop_event_id or ""
+        forced = await state.sessions.stop_turn(_history_key_for(name), force=True)
+        _close_stop_event(state, session, stop_id, forced)
+        sel().log_tool_invocation(
+            session_key=_history_key_for(name),
+            agent=getattr(session, "agent", "") or "personalclaw",
+            source="dashboard",
+            tool_name="dashboard_stop",
+            tool_kind="command",
+            tool_input=None,
+            outcome=forced,
+            metadata={"session": name, "force": True},
+        )
+        return web.json_response(
+            {"ok": True, "stopped": forced in ("soft", "hard"), "trust": session._trust}
+        )
+
+    # Already stopping or not running — no-op
+    if session._stop_state != "idle" or not session.running:
+        if not session.running:
+            logger.info("Stop: session %s not running, ignoring", name)
+        return web.json_response({"ok": True, "stopped": False, "trust": session._trust})
+
+    # First press: soft stop
+    session._stop_state = "soft_pending"
+    session._queue.clear()
+    stop_id = _open_stop_event(state, session, "stopping")
+    logger.info("Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue))
+    outcome = await state.sessions.stop_turn(_history_key_for(name), force=False)
+    _close_stop_event(state, session, stop_id, outcome)
+    sel().log_tool_invocation(
+        session_key=_history_key_for(name),
+        agent=getattr(session, "agent", "") or "personalclaw",
+        source="dashboard",
+        tool_name="dashboard_stop",
+        tool_kind="command",
+        tool_input=None,
+        outcome=outcome,
+        metadata={"session": name, "force": False},
+    )
+    return web.json_response(
+        {"ok": True, "stopped": outcome in ("soft", "hard"), "trust": session._trust}
+    )
+
+
+async def api_chat_screen_state(request: web.Request) -> web.Response:
+    """GET /api/chat/screen-frame?session=<id> — can this session share its screen?
+
+    Returns ``{enabled, delivery, reason, staged}``. The composer reads this to
+    decide whether to offer the share control at all (``enabled``) and, when the
+    bound model can't be given the frame in any form, to render the control
+    disabled carrying ``reason`` — which is composed server-side so the UI can't
+    drift into its own explanation of a decision it doesn't make.
+    """
+    from personalclaw.dashboard import screen_context
+    from personalclaw.dashboard.chat_runner import session_image_input
+
+    state: DashboardState = request.app["state"]
+    name = str(request.query.get("session") or "")
+    session = state._sessions.get(name)
+    enabled = bool(AppConfig.load().dashboard.screen_share_enabled)
+    verdict = await session_image_input(state, session)
+    delivery, reason = await screen_context.resolve_delivery(verdict.accepted)
+    return web.json_response(
+        {
+            "enabled": enabled,
+            "delivery": delivery,
+            "reason": reason,
+            "staged": bool(session and screen_context.pending(session.key)),
+        }
+    )
+
+
+async def api_chat_image_input(request: web.Request) -> web.Response:
+    """GET /api/chat/image-input?session=<id> — whether an attached image reaches the model as one.
+
+    Returns ``{"accepted", "reason", "model"}``: ``accepted`` is whether the model the chat's
+    next turn is served by takes images as pixels (the platform's record,
+    ``providers.image_input``), and ``reason`` the sentence saying why not. The attachment chip
+    renders these; the turn decides from the same record, so the chip's promise and the turn's
+    delivery agree. What an image sent as text carries is the image's own extraction result
+    (``GET /api/attachment-extract``'s ``read``), which the chip reads per file. Optional
+    ``agent``/``model``/``runtime`` (the ACP runtime a picked agent runs on) answer for a
+    composer with no session.
+    """
+    from personalclaw.dashboard.chat_runner import session_image_input
+
+    state: DashboardState = request.app["state"]
+    name = str(request.query.get("session") or "")
+    session = state._sessions.get(name) if name else None
+    verdict = await session_image_input(
+        state,
+        session,
+        agent=str(request.query.get("agent") or ""),
+        model=str(request.query.get("model") or ""),
+        runtime=str(request.query.get("runtime") or ""),
+    )
+    return web.json_response(
+        {"accepted": verdict.accepted, "reason": verdict.reason, "model": verdict.model}
+    )
+
+
+async def api_chat_screen_frame(request: web.Request) -> web.Response:
+    """POST /api/chat/screen-frame — stage one screen frame for the next chat turn.
+
+    Body: ``{session, action, frame_b64}`` where ``action`` is
+    one of:
+
+    * ``start`` — the user just picked a screen/window in the browser's share
+      dialog. Audited, and clears any stale slot so a share always begins blank.
+    * ``frame`` (the default) — stage ``frame_b64`` for the next turn, REPLACING
+      any frame already staged (latest-wins).
+    * ``stop`` — sharing ended (chip, browser stop button, or session close).
+      Audited, and drops the slot immediately rather than waiting for a drain.
+
+    **The config gate is enforced HERE, not only in the UI.** ``screen_share_enabled``
+    is read per request and a frame is refused with 403 when it is off, so a client
+    that kept a stale bundle, forged the call by hand, or simply had the toggle
+    flipped off underneath it cannot stage anything. The hidden button is a
+    convenience; this check is the control.
+    """
+    from personalclaw.dashboard import screen_context
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    name = str(body.get("session") or "")
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    session_key = session.key
+
+    # No app reaches this: it is a human-consent surface driven from the dashboard's own composer,
+    # and `ROUTE_AUTHZ` makes both screen-frame writes owner-only, refused before this runs.
+    action = str(body.get("action") or "frame").strip().lower()
+    if action not in ("start", "frame", "stop"):
+        return web.json_response({"error": "action must be start, frame or stop"}, status=400)
+
+    # `stop` is allowed unconditionally: tearing a share down must never depend on
+    # the switch that permitted it, or turning the feature off would strand a slot.
+    if action == "stop":
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_share_stop",
+            outcome="success",
+            source="screen_share",
+            resources=f"session={session_key}",
+        )
+        return web.json_response({"ok": True, "sharing": False})
+
+    if not AppConfig.load().dashboard.screen_share_enabled:
+        # Drop anything already staged as well. Withdrawing consent mid-session must
+        # take effect on the frame in hand, not just on the next one.
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation=f"chat.screen_{'share_start' if action == 'start' else 'frame'}",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session_key}",
+            error="dashboard.screen_share_enabled is off",
+        )
+        return web.json_response(
+            {
+                "error": "Screen sharing is off. Turn it on in Settings → Chat.",
+                "code": "screen_share_disabled",
+            },
+            status=403,
+        )
+
+    if action == "start":
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_share_start",
+            outcome="success",
+            source="screen_share",
+            resources=f"session={session_key}",
+        )
+        return web.json_response({"ok": True, "sharing": True})
+
+    try:
+        frame = screen_context.parse_frame(str(body.get("frame_b64") or ""))
+    except screen_context.FrameRejected as exc:
+        # `str(exc)` never contains the payload — see parse_frame's docstring.
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session_key}",
+            error=str(exc),
+        )
+        return web.json_response({"error": str(exc)}, status=400)
+
+    screen_context.stage(session_key, frame)
+    # Audit the SHAPE of the frame (type + size), never the frame. A length is not
+    # content; a base64 blob in the security log would be the leak this feature is
+    # built to avoid.
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.screen_frame",
+        outcome="success",
+        source="screen_share",
+        resources=f"session={session_key}:{frame.media_type}:{frame.byte_len}b",
+    )
+    return web.json_response({"ok": True, "staged": True})
+
+
+async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
+    """POST /api/chat/screen-frame/pin — promote one frame to an ordinary attachment.
+
+    Pinning is the ONLY way a screen frame becomes a file, and it
+    is deliberately a separate verb from sharing: sharing is a read, pinning is a
+    write. The bytes come from the CLIENT rather than from a server-side slot,
+    because there is no server-side slot to take them from once a turn has drained it
+    — which is the ephemerality guarantee working as designed, not a limitation.
+
+    Once written, the frame is an ordinary upload: the uploads dir, the same
+    sanitized-name + random-prefix + 0600 treatment, and read into text, like every
+    attached image, only when its text is asked for. Sending it on to the knowledge
+    library is then the user's normal explicit ingest action; nothing here touches
+    knowledge.db or memory.db.
+
+    Refused in incognito/temporary sessions — "writes suppressed" is the whole
+    contract of those modes, and a pinned screenshot is a write.
+    """
+    import re
+    import uuid as _uuid
+
+    from personalclaw.dashboard import screen_context
+    from personalclaw.dashboard.handlers.files import _upload_dir
+    from personalclaw.uploads.content_scan import ContentRefused, scan_upload
+    from personalclaw.uploads.policy import check_upload
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    name = str(body.get("session") or "")
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    if not AppConfig.load().dashboard.screen_share_enabled:
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame_pin",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session.key}",
+            error="dashboard.screen_share_enabled is off",
+        )
+        return web.json_response(
+            {
+                "error": "Screen sharing is off. Turn it on in Settings → Chat.",
+                "code": "screen_share_disabled",
+            },
+            status=403,
+        )
+
+    if session.is_restricted:
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame_pin",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session.key}:{session.memory_mode}",
+            error="writes are suppressed in this session",
+        )
+        return web.json_response(
+            {
+                "error": "This chat is temporary — pinning a frame would write it to disk.",
+                "code": "session_restricted",
+            },
+            status=409,
+        )
+
+    try:
+        frame = screen_context.parse_frame(str(body.get("frame_b64") or ""))
+    except screen_context.FrameRejected as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[frame.media_type]
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"screen-{stamp}{ext}"
+    raw = base64.b64decode(frame.b64)
+    check = check_upload(filename, frame.media_type, size=len(raw))
+    if not check.ok:
+        return web.json_response({"error": check.reason}, status=check.status)
+    # The scan every stored upload gets, by its bytes: a frame's media type is the client's word.
+    try:
+        await scan_upload(raw, check.category, surface="screen_frame")
+    except ContentRefused as exc:
+        return exc.response()
+
+    _upload_dir().mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w.\-]", "_", filename)
+    dest = _upload_dir() / f"{_uuid.uuid4().hex}_{safe}"
+    dest.write_bytes(raw)
+    os.chmod(dest, 0o600)
+    # Not read ahead: a frame is an image, read only when its text is asked for
+    # (`AttachmentExtractor.start`).
+
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.screen_frame_pin",
+        outcome="success",
+        source="screen_share",
+        resources=f"session={session.key}:{frame.media_type}:{frame.byte_len}b",
+    )
+    return web.json_response({"ok": True, "path": str(dest), "name": filename})
+
+
+async def api_chat_session_interrupt(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/interrupt — stop the turn, KEEP the queue.
+
+    Unlike /stop (which clears the queue), /interrupt soft-cancels the current
+    turn and preserves the queue so the run_chat finally-block dequeue picks up
+    the next queued message immediately. Optional body ``{"queue_id": ...}``
+    promotes a specific queued message to the front first.
+
+    Preconditions: the session must be running (else ``{ok, info}``) and the
+    queue must be non-empty (else 400 — with nothing queued, /interrupt is just
+    /stop, so the two verbs stay distinct).
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    if not session.running:
+        return web.json_response({"ok": True, "info": "not running"})
+    if not session._queue:
+        return web.json_response({"error": "queue empty, use /stop instead"}, status=400)
+    if session._stop_state != "idle":
+        return web.json_response({"ok": True, "info": "already stopping"})
+
+    body = {}
+    if request.body_exists:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "body must be a JSON object"}, status=400)
+    queue_id = body.get("queue_id")
+    if queue_id:
+        if not session.queue_promote(str(queue_id)):
+            return web.json_response({"error": "queue_id not found"}, status=404)
+        # Tell every client the strip reordered so the promoted card jumps to the
+        # front on all of them (the finally-block drain will run it next).
+        state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
+
+    session._stop_state = "soft_pending"
+    stop_id = _open_stop_event(state, session, "interrupting")
+    logger.info(
+        "Interrupt: cooperative cancel for session %s (queue=%d preserved)",
+        name,
+        len(session._queue),
+    )
+    outcome = await state.sessions.stop_turn(
+        _history_key_for(name), force=False, preserve_queue=True
+    )
+    _close_stop_event(state, session, stop_id, outcome)
+    sel().log_tool_invocation(
+        session_key=_history_key_for(name),
+        agent=getattr(session, "agent", "") or "personalclaw",
+        source="dashboard",
+        tool_name="dashboard_interrupt",
+        tool_kind="command",
+        tool_input=None,
+        outcome=outcome,
+        metadata={"session": name, "queue_len": len(session._queue)},
+    )
+    return web.json_response({"ok": True})
+
+
+async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
+    """DELETE /api/chat/sessions/{session}/queue/{queue_id} — cancel a queued message.
+
+    Removes the message from the backend queue and broadcasts a
+    ``queue_cancel`` WebSocket event so the frontend can move the
+    text back to the input box.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    queue_id = request.match_info["queue_id"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    content = session.queue_remove_by_id(queue_id)
+    if content is None:
+        return web.json_response({"error": "queue item not found"}, status=404)
+    _remove_queued_by_id(session.messages, queue_id)
+    _redacted = _redact_for_display(content)
+    state.broadcast_ws(
+        "queue_cancel", {"session": name, "queue_id": queue_id, "content": _redacted}
+    )
+    chat_phase.restate(state, session)  # one fewer message waits behind the turn
+    state.push_sessions_update()
+    sel().log_tool_invocation(
+        session_key=f"dashboard:{name}",
+        agent="personalclaw",
+        source="dashboard",
+        tool_name="queue_cancel",
+        tool_kind="permission",
+        outcome="allowed",
+        metadata={"queue_id": queue_id, "session": name},
+    )
+    return web.json_response({"ok": True, "content": _redacted})
+
+
+async def api_chat_session_delete(request: web.Request) -> web.Response:
+    """DELETE /api/chat/sessions/{session} — delete a chat for good: the Delete button.
+
+    HARD DELETE, on purpose: the explicit "Delete chat" button must actually
+    destroy the conversation, not soft-close it. A soft close left the raw tool-result store
+    (file contents, command output) on disk and let the chat RESURRECT when its URL was reopened
+    (the rehydrate path clears `closed`). So it goes through the one way a chat is deleted
+    (`chat_forget.delete_chats`): its transcript and every file it keeps, under every form of the
+    key they were written with, a Temporary chat's attached files, and what memory drew from it
+    alone. The soft-close/archive path lives ONLY in /cleanup (api_chat_sessions_cleanup).
+
+    A chat warm in the gateway or only kept on disk is deletable: after a restart only recent,
+    pinned and foldered chats are restored, and requiring a resident one made "Delete" a silent
+    404 for the common "delete an old chat from history" flow, leaving its JSONL and tool results
+    on disk and letting it resurrect on reopen. Only a chat in neither place answers 404, and one
+    whose transcript could not be removed answers 500 (``session_not_deleted``), so the page says
+    it is still there rather than that it is gone. An app reaches this only for a conversation it
+    started: the permission middleware checked the creator on its meta line before this ran.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    app = request.get("app", "")
+    by = f"app:{app}" if app else str(request.get("user") or "dashboard")
+    done = await delete_chats(state, [name], by=by)
+    if done.failed:
+        return json_error("session_not_deleted", status=500)
+    if not done.deleted:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/cleanup — bulk-archive inactive sessions to history.
+
+    Body: ``{"max_inactive_days": 3, "active_session": "chat-1-123"}``
+    Skips the active session and pinned sessions. An inactive Temporary chat is forgotten
+    rather than archived: its session ends here.
+    """
+    state: DashboardState = request.app["state"]
+    body = await json_object_body(request)
+    max_days = 3
+    try:
+        max_days = max(1, int(body.get("max_inactive_days", 3)))
+    except (ValueError, TypeError):
+        pass
+    active_session = body.get("active_session", "")
+    dry_run = bool_field(body, "dry_run", default=False)
+    request_app = request.get("app", "")
+    cutoff = time.time() - max_days * 86400
+    stale_keys: list[str] = []
+    active_is_stale = False
+    for name in list(state._sessions):
+        session = state._sessions.get(name)
+        if session is None or session.pinned:
+            continue
+        # An app archives only conversations it started (`ROUTE_AUTHZ`'s reason for this route);
+        # you archive any.
+        if request_app and session.created_by_app != request_app:
+            continue
+        last_activity = 0.0
+        if session.messages:
+            for m in reversed(session.messages):
+                ts = m.get("ts", "")
+                if not ts:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    last_activity = dt.timestamp()
+                except (ValueError, TypeError):
+                    continue
+                break
+        if not last_activity:
+            try:
+                dt = datetime.fromisoformat(session.created_at)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                last_activity = dt.timestamp()
+            except Exception:
+                last_activity = 0.0
+        if not last_activity:
+            continue  # unknown activity — don't archive
+        if last_activity >= cutoff:
+            continue
+        if name == active_session:
+            active_is_stale = True
+            continue
+        stale_keys.append(name)
+    # Dry-run: return the exact list without archiving
+    if dry_run:
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.cleanup_dry_run",
+            outcome="allowed",
+            source="dashboard",
+            resources=f"count={len(stale_keys)} threshold={max_days}d",
+        )
+        return web.json_response(
+            {
+                "ok": True,
+                "dry_run": True,
+                "keys": stale_keys,
+                "count": len(stale_keys),
+                "active_is_stale": active_is_stale,
+            }
+        )
+    from personalclaw.chat_traces import TEMPORARY
+    from personalclaw.dashboard.chat_forget import forget_temporary_chat
+
+    archived: list[str] = []
+    failed: list[str] = []
+    _tasks_to_cancel: list[asyncio.Task] = []
+    for name in stale_keys:
+        removed = state._sessions.pop(name, None)
+        if not removed:
+            continue
+        if removed.memory_mode == TEMPORARY:
+            # Evicting a Temporary chat ends its session, and a Temporary chat is forgotten
+            # when its session ends: it has no transcript to be reloaded from.
+            forget_temporary_chat(state, removed, why="it was evicted as inactive")
+        else:
+            try:
+                save_session_to_history(state, removed, closed=True)
+            except Exception:
+                logger.error("Cleanup: failed to archive session %s", name, exc_info=True)
+                state._sessions[name] = removed
+                failed.append(name)
+                continue
+        # Session cleanup is best-effort — history is already written
+        try:
+            await state.sessions.remove(_history_key_for(name))
+        except Exception:
+            logger.warning("Cleanup: session remove failed for %s", name, exc_info=True)
+        archived.append(name)
+        # Collect running tasks for concurrent cancellation after the loop
+        if removed.running and removed.task is not None:
+            removed.task.cancel()
+            _tasks_to_cancel.append(removed.task)
+    # Await all cancelled tasks concurrently with a single bounded timeout
+    if _tasks_to_cancel:
+        await asyncio.wait(_tasks_to_cancel, timeout=5.0)
+    if archived:
+        state.push_sessions_update()
+        state.push_refresh("history")
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.sessions_cleanup",
+        outcome="ok" if not failed else ("partial" if archived else "error"),
+        source="dashboard",
+        resources=f"archived={len(archived)} failed={len(failed)} threshold={max_days}d keys={','.join(archived[:10])}",  # noqa: E501
+    )
+    return web.json_response(
+        {"ok": True, "archived": len(archived), "keys": archived, "failed": failed}
+    )
+
+
+async def api_chat_session_agent(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/agent — set agent for a chat session."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    agent_name = body.get("agent", "")
+    if agent_name and not _AGENT_NAME_RE.match(agent_name):
+        return web.json_response({"error": "invalid agent name"}, status=400)
+
+    change = running_turn.to_agent(session, agent_name)
+    logger.info("Session %s agent switched to %r", name, agent_name or "personalclaw")
+    moved = await running_turn.rebind(state, session, change)
+    return web.json_response(
+        {
+            "ok": True,
+            "agent": agent_name,
+            "workspace_dir": change.fields["workspace_dir"],
+            "moved": moved,
+        }
+    )
+
+
+def _effort_not_honorable(provider: str, effort: str) -> str | None:
+    """Why *effort* cannot be honored on ACP runtime *provider*, or None if it can.
+
+    The composer already hides its effort row when the bound agent declares no options
+    (``effortsFor`` → ``[]``), but the API accepted, PERSISTED and echoed back an
+    effort regardless — so the axis existed on the wire for a runtime that had reported it
+    does not exist, and the value rode into the session metadata where a later read treats
+    it as a real pin. A control the provider cannot honor is worse than a missing one: it
+    is a setting the user is told took effect.
+
+    Judges only what the runtime DECLARED, never a guess:
+      * ``None`` from :func:`declared_efforts` → unknown (the runtime has not been tested,
+        or its Test listed no agent). Fail OPEN: refusing a bind we cannot judge would make
+        the picker unusable until the runtime's first Test, and the format check still applies.
+      * ``[]`` → the backend was asked and reported no effort axis. Refuse.
+      * a non-empty set → the effort must be one of the backend's own verbatim values.
+        This is also why the bind path can no longer use a hardcoded ``low/medium/high/max``
+        ladder: a backend declaring ``xhigh`` or ``minimal`` was being refused a value it
+        had itself offered.
+    """
+    if not effort or not provider:
+        return None
+    from personalclaw.dashboard.handlers.providers import declared_efforts
+
+    declared = declared_efforts(provider)
+    if declared is None:
+        return None
+    if not declared:
+        return (
+            f"{provider} declares no reasoning-effort options, so an effort cannot be pinned on it"
+        )
+    if effort not in declared:
+        # DECLARED order, not sorted: a backend lists its ladder low→high, and
+        # alphabetising it renders "high, low" to the one person who reads this sentence.
+        return (
+            f"{provider} declares reasoning efforts "
+            f"{', '.join(declared)} — {effort!r} is not one of them"
+        )
+    return None
+
+
+async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/acp-agent — bind a DISCOVERED ACP agent.
+
+    Body: ``{provider, provider_agent?, model?, reasoning_effort?}`` where
+    ``provider`` is the runtime id (``acp:<cli>``), ``provider_agent`` the ACP
+    modeId (persona-style agent; omit/empty for claude), ``model`` an optional override
+    from the runtime's model list, and ``reasoning_effort`` the pinned effort
+    (claude effort-agents). These are EPHEMERAL session overrides — nothing is
+    written to config (discovered catalogs are account-dynamic). They win over the
+    named-definition resolution in chat_runner. Passing an empty ``provider``
+    clears the override (revert to the saved/default agent)."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    provider = str(body.get("provider", "") or "").strip()
+    # Only acp:<cli> runtimes are valid here ("" clears the override).
+    if provider and not provider.startswith("acp:"):
+        return web.json_response({"error": "provider must be an acp:<cli> runtime id"}, status=400)
+    provider_agent = str(body.get("provider_agent", "") or "").strip()
+    if provider_agent and not _AGENT_NAME_RE.match(provider_agent):
+        return web.json_response({"error": "invalid provider_agent"}, status=400)
+    # No fixed scale — each backend declares its own values, so enforce the FORMAT here
+    # (the same bar `/reasoning-effort` applies) and the DECLARED SET below. The old
+    # hardcoded low/medium/high/max ladder disagreed with that endpoint: a value the
+    # per-turn path accepted could be refused at bind, and a backend-declared `xhigh` was
+    # refused outright.
+    raw_effort = str(body.get("reasoning_effort", "") or "").strip()
+    effort = _validate_reasoning_effort(raw_effort)
+    if raw_effort and not effort:
+        return json_error(
+            "invalid_reasoning_effort",
+            message="reasoning_effort must be a short lowercase token (a-z0-9_-) or ''",
+            status=400,
+        )
+    _refusal = _effort_not_honorable(provider, effort)
+    if _refusal:
+        return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
+
+    provider_agent = provider_agent if provider else ""
+    # An explicit pick (or an explicit clear) settles the runtime axis, so there is no
+    # unreported fallback left to announce on the next turn.
+    fields: dict[str, Any] = {
+        "acp_provider": provider,
+        "acp_provider_agent": provider_agent,
+        "_acp_meta_binding": "",
+        "reasoning_effort": effort,
+    }
+    if "model" in body:
+        fields["model"] = str(body.get("model", "") or "")
+    model = fields.get("model", session.model)
+
+    logger.info(
+        "Session %s ACP override → provider=%r agent=%r model=%r effort=%r",
+        name,
+        provider,
+        provider_agent,
+        model,
+        effort,
+    )
+    # Persisted so the ephemeral binding survives a gateway restart for THIS session (still
+    # never written to the global agents config).
+    moved = await running_turn.rebind(
+        state,
+        session,
+        running_turn.Rebinding(
+            fields=fields,
+            persisted={
+                "acp_provider": provider,
+                "acp_provider_agent": provider_agent,
+                "reasoning_effort": effort,
+                "model": model,
+            },
+        ),
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "provider": provider,
+            "provider_agent": provider_agent,
+            "model": model,
+            "reasoning_effort": effort,
+            "moved": moved,
+        }
+    )
+
+
+async def api_chat_session_model(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/model — set model for a chat session."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    model_name = _normalize_model(body.get("model", ""))
+    if session.model == model_name:
+        return web.json_response({"ok": True, "model": model_name})
+    logger.info("Session %s model switched to %r", name, model_name or "auto")
+    moved = await running_turn.rebind(
+        state, session, running_turn.Rebinding(fields={"model": model_name})
+    )
+    return web.json_response({"ok": True, "model": model_name, "moved": moved})
+
+
+async def api_chat_session_reasoning_effort(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/reasoning-effort — set reasoning effort.
+
+    Body: {"reasoning_effort": "" | "low" | "medium" | "high" | "max"}.
+    "" = provider default (e.g. CC falls back to its opus heuristic).
+
+    Currently consumed by Claude Code only; ACP/OpenCode wired later via
+    the same `reasoning_effort_override` factory kwarg seam.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    raw_effort = body.get("reasoning_effort", "")
+    if not isinstance(raw_effort, str):
+        return web.json_response({"error": "reasoning_effort must be a string"}, status=400)
+    # No fixed scale — each backend declares its own effort values. Enforce a safe
+    # FORMAT (short lowercase-alnum token) so any real backend value is accepted
+    # while blocking injection into the subprocess arg / config value. "" clears.
+    effort = _validate_reasoning_effort(raw_effort)
+    if raw_effort and not effort:
+        return web.json_response(
+            {"error": "reasoning_effort must be a short lowercase token (a-z0-9_-) or ''"},
+            status=400,
+        )
+    # The same declared-set bar the bind path applies. Checked against the session's
+    # CURRENTLY bound runtime, because that is the backend that would have to honor it —
+    # this endpoint does not change the binding. A no-op set (already this value) short-
+    # circuits below without re-judging, so an effort pinned while a permissive runtime was
+    # bound cannot be re-refused by a later identical call.
+    _refusal = _effort_not_honorable(str(getattr(session, "acp_provider", "") or ""), effort)
+    if _refusal:
+        return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
+    if session.reasoning_effort == effort:
+        return web.json_response({"ok": True, "reasoning_effort": effort})
+    logger.info("Session %s reasoning_effort switched to %r", name, effort or "default")
+    # The runtime is rebuilt so the next turn spawns with the new --effort flag. Same rule as a
+    # model switch (`running_turn`).
+    moved = await running_turn.rebind(
+        state, session, running_turn.Rebinding(fields={"reasoning_effort": effort})
+    )
+    return web.json_response({"ok": True, "reasoning_effort": effort, "moved": moved})
+
+
+async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/workspace-dir — set the working directory.
+
+    The working directory is the session's workspace: it is the agent's cwd and
+    scopes the session's memory partition.
+
+    A runtime fixes the folder its tools work in when it is built (the native loop's tool context,
+    an agent CLI's process), so the change is made the way every change of what a chat runs on is
+    (``running_turn.rebind``): between turns its runtime is let go and the next turn's is built in
+    the new folder; during a turn, that turn ends as stopped and her message is answered again
+    there, which the answer's ``moved`` says. Naming the folder it already works in changes
+    nothing, so it keeps its runtime.
+
+    Clearing is an EXPLICIT ``{"workspace_dir": ""}``, and puts the chat back in the workspace
+    a new chat starts in (``api_chat_session_create``). A body that omits the key is
+    refused rather than treated as a clear: measured, a
+    request with a mistyped key (``{"dir": "/some/path"}``) answered
+    ``{"ok": true, "workspace_dir": ""}`` and *unbound* the session's workspace. For
+    an ACP session that binding decides where the agent's CLI actually runs, so a
+    silent clear is the same defect class as the profile-bound cwd escape —
+    the caller believes it set a directory and the agent lands somewhere else.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    if "workspace_dir" not in body:
+        return web.json_response(
+            {"error": "workspace_dir is required (send an empty string to clear it)"},
+            status=400,
+        )
+    workspace_dir = body["workspace_dir"]
+    if not isinstance(workspace_dir, str):
+        return web.json_response({"error": "workspace_dir must be a string"}, status=400)
+    named = workspace_dir.strip()
+    if named:
+        workspace_dir = os.path.realpath(os.path.expanduser(named))
+        if not os.path.isdir(workspace_dir):
+            return web.json_response({"error": "Not a directory"}, status=400)
+        if is_sensitive_path(workspace_dir):
+            sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="chat_session_workspace_dir",
+                outcome="denied",
+                resources=f"session={name} workspace_dir={workspace_dir}",
+                error="sensitive path",
+            )
+            return web.json_response({"error": "Access denied"}, status=403)
+    else:
+        workspace_dir = default_workspace_dir()
+    # Against the folder it works in once a change already waiting for its running turn is made,
+    # so naming that folder again moves nothing, and naming the one it works in now undoes it.
+    moved = False
+    if workspace_dir != running_turn.once_moved(session, "workspace_dir"):
+        logger.info("Session %s workspace_dir set to %r", name, workspace_dir)
+        moved = await running_turn.rebind(state, session, running_turn.to_folder(workspace_dir))
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="chat_session_workspace_dir",
+        outcome="allowed",
+        resources=f"session={name} workspace_dir={workspace_dir}",
+    )
+    # Track recent working directories — yours. An app's conversation works where the app (or you,
+    # on its behalf) pointed it, and that folder is not one you chose to work in: filed among your
+    # recents, it would be offered to your next chat as one of yours.
+    if named and not session.created_by_app:
+        try:
+            await asyncio.to_thread(_save_recent_project, workspace_dir)
+        except Exception:
+            logger.warning("Failed to save recent workspace dir", exc_info=True)
+    # A folder of its own moves the chat's next turn to Code & tools, and clearing it back to
+    # Chat: the composer's Auto says which from this answer (`chat_runner.auto_chain_name`), for
+    # the folder its next turn works in.
+    return web.json_response(
+        {
+            "ok": True,
+            "workspace_dir": workspace_dir,
+            "auto_chain": auto_chain_name(session, folder=workspace_dir),
+            "moved": moved,
+        }
+    )
+
+
+_MAX_RECENT_PROJECTS = 10
+
+
+def _recent_projects_path() -> Path:
+    return config_dir() / "recent_projects.json"
+
+
+def _save_recent_project(path: str) -> None:
+    """Prepend path to recent projects list (deduped, capped)."""
+
+    fp = _recent_projects_path()
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = json.loads(fp.read_text(encoding="utf-8")) if fp.is_file() else []
+    except (json.JSONDecodeError, OSError):
+        existing = []
+    if not isinstance(existing, list):
+        existing = []
+    existing = [p for p in existing if p != path]
+    existing.insert(0, path)
+    existing = existing[:_MAX_RECENT_PROJECTS]
+    atomic_write(fp, json.dumps(existing))
+
+
+async def api_recent_projects(request: web.Request) -> web.Response:
+    """GET /api/recent-projects — list recently used project directories."""
+
+    def _read_recent_projects() -> list[str]:
+        fp = _recent_projects_path()
+        try:
+            dirs = json.loads(fp.read_text(encoding="utf-8")) if fp.is_file() else []
+        except Exception:
+            dirs = []
+        if not isinstance(dirs, list):
+            dirs = []
+        return [
+            d for d in dirs if isinstance(d, str) and os.path.isdir(d) and not is_sensitive_path(d)
+        ]
+
+    dirs = await asyncio.to_thread(_read_recent_projects)
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="recent_projects",
+        outcome="allowed",
+        resources=f"count={len(dirs)}",
+    )
+    return web.json_response({"dirs": dirs})
+
+
+async def api_chat_session_resume(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/resume — load a history session into a session."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    if name.startswith("dashboard_"):
+        name = name.removeprefix("dashboard_")
+    if not state.conversation_log:
+        return web.json_response({"error": "no conversation log"}, status=400)
+    body = await json_object_body(request)
+    # The client-supplied NAME of the session to resume. It is a session name, not a
+    # persisted key: everything below that touches disk must go through the one owner
+    # (`resolved_key`), and only the in-memory dedupe just below may compare the
+    # namespaced form directly.
+    history_key = body.get("key", name)
+
+    # If session already exists (active session), just return it — no duplicate.
+    # Check both by session name AND by canonical session key to prevent two
+    # sessions sharing the same ACP agent process. `_history_key_for` is the right tool
+    # HERE and only here: both sides of the comparison are in-memory session keys being
+    # normalised into one space, so no disk fact is being asserted.
+    canonical = _history_key_for(history_key)
+    existing = state._sessions.get(name)
+    if not existing:
+        for session in state._sessions.values():
+            if _history_key_for(session.key) == canonical:
+                existing = session
+                break
+    if existing:
+        # An app's request got here only for a conversation it started, named both in the path and
+        # in any `key` (`ROUTE_AUTHZ["POST /api/chat/sessions/{session}/resume"].owns`).
+        total = len(existing.messages)
+        recent = existing.messages[-200:] if total > 200 else existing.messages
+        prepared = _prepare_messages(recent, existing.running)
+        return web.json_response(
+            {
+                "ok": True,
+                "key": existing.key,
+                "messages": prepared,
+                "queue": [{"id": q["id"], **shown(q)} for q in existing._queue],
+                "total": total,
+                "has_more": total > 200,
+                "memory_mode": existing.memory_mode,
+            }
+        )
+
+    # Not resident — so this must be a RESUME of something persisted, not a create.
+    # The second of the two writers that reached `get_or_create_session` with a
+    # client-supplied name: `POST /resume` on a hard-deleted key answered 200 with an
+    # empty transcript and put the key back in the sidebar, the same resurrection the
+    # send path had. Guarded on `history_key` (the body may name a different key than
+    # the path) via the same one owner. Everything below reads that key off disk —
+    # `get_metadata`, `read_messages_chained` — so a key with nothing persisted was
+    # only ever going to produce a blank session wearing a dead conversation's name.
+    if not session_key_exists(state, history_key):
+        return json_error("session_not_found", status=404)
+    log = state.conversation_log
+    # A path naming a kept chat comes back as that chat, its whole record and transcript
+    # (`get_or_create_session`).
+    session = state.get_or_create_session(name, created_by_app=request.get("app", ""))
+    # 🔴 EVERY disk read below reads THIS key, not `history_key`. `history_key` is the
+    # BARE client-supplied name; a dashboard session's file lives under the
+    # `dashboard:` form, so `get_metadata`, `_path` and `read_messages_chained` all
+    # missed it and this endpoint answered 200 with `messages: []` and `meta_closed`
+    # still true for any non-resident dashboard session — the clear-`closed` block
+    # below silently no-opped too, which is what made archival irreversible. Masked in
+    # practice only because the startup restore usually makes the session resident
+    # first, so the early-return above fires. The canonical form was already being
+    # computed four lines up for the in-memory dedupe and simply never reached disk.
+    resolved_key = persisted_history_key(log, history_key)
+    own_key = persisted_history_key(log, name)
+    if log._path(resolved_key) != log._path(own_key):
+        if log.has_log(own_key):
+            # The path's own chat is kept, and it is the one resumed: a body naming another
+            # chat does not make one chat of two kept ones, whose next save would replace the
+            # path's transcript with the other's.
+            logger.warning(
+                "resume of %s: its own chat is kept, so %s is not loaded into it", name, history_key
+            )
+            resolved_key = own_key
+        else:
+            # The body names a kept chat into a path that keeps none: that chat's record and
+            # whole transcript are brought into this one, through the one loader.
+            continue_kept_chat(state, session, resolved_key, log.get_metadata(resolved_key))
+    title = body.get("title", "")
+    if title:
+        session.title = title
+        session._titled = True
+    meta = log.get_metadata(resolved_key)
+    # Clear closed flag so session restores on next gateway restart. This is now the
+    # ONLY un-archiver: `save_session_to_history` preserves `closed` instead of dropping
+    # it on every rebuild, so resume is what a user's explicit "reopen" runs through —
+    # which is exactly why it had to stop reading the bare key.
+    if meta.get("closed"):
+        try:
+            path = state.conversation_log._path(resolved_key)
+            if path.exists():
+                lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if lines:
+                    first_line_data = json.loads(lines[0])
+                    first_line_data.pop("closed", None)
+                    lines[0] = json.dumps(first_line_data) + "\n"
+                    atomic_write(path, "".join(lines))
+                    state.conversation_log._invalidate_cache(resolved_key)
+        except Exception:
+            logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
+    total = session.message_count
+    recent = session.messages[-200:] if len(session.messages) > 200 else session.messages
+    state.push_sessions_update()
+    return web.json_response(
+        {
+            "ok": True,
+            "key": session.key,
+            "messages": _prepare_messages(recent, session.running),
+            "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
+            "total": total,
+            "has_more": total > len(recent),
+            "memory_mode": session.memory_mode,
+        }
+    )
+
+
+VALID_APPROVAL_MODES = ("normal", "trust", "trust_reads", "yolo")
+
+#: The standing grant each approval mode is (`approval_grants`); ``normal`` grants nothing.
+_MODE_GRANTS = {
+    "trust": approval_grants.TRUST,
+    "trust_reads": approval_grants.TRUST_READS,
+    "yolo": approval_grants.YOLO,
+}
+#: The standing grant each approval card scope makes besides answering its own call.
+_CARD_GRANTS = {**_MODE_GRANTS, "trust_agent": approval_grants.AGENT_FLOOR}
+
+
+def _set_posture(
+    session: _ChatSession, *, trust: bool | None = None, trust_reads: bool | None = None
+) -> None:
+    """Set a chat's approval posture as YOU chose it.
+
+    A posture an agent's floor seeded is withdrawn when the floor is
+    (`chat_runner._apply_approval_floor`); one you set is yours, so the mark is cleared.
+    """
+    if trust is not None:
+        session._trust = trust
+    if trust_reads is not None:
+        session._trust_reads = trust_reads
+    session._trust_from_floor = ""
+
+
+async def api_chat_mode(request: web.Request) -> web.Response:
+    """POST /api/chat/mode — set the tool APPROVAL mode (whether tools auto-approve).
+
+    Modes:
+      - ``normal``: interactive: a call that needs approval asks (a tool that declares it only
+        reads never does)
+      - ``trust_reads``: a read-only shell command is approved without asking too
+      - ``trust``: auto-approve tools for active session
+      - ``yolo``: auto-approve all tools everywhere
+
+    Orthogonal to the TASK mode (agent/ask/plan/build — see ``/api/chat/task-mode``),
+    which gates *which* tools are available + how the agent frames the work. Unlike
+    the per-tool approve endpoint, this doesn't require a pending approval — it
+    preemptively sets the mode for future tools.
+    """
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    mode = body.get("mode", "normal")
+    if mode not in VALID_APPROVAL_MODES:
+        return web.json_response(
+            {"ok": False, "error": f"invalid mode (expected one of {VALID_APPROVAL_MODES})"},
+            status=400,
+        )
+    session_name = body.get("session") or None
+
+    # A posture that approves calls on its own is a standing grant, and the operator ceiling
+    # bounds every grant (`approval_grants`, rule 2): under `approval: ask` no switch approves a
+    # call without a person. Refused here, saying why, so the pill never shows a posture that
+    # does not hold — and nothing below runs, so no pending approval is approved by it either.
+    grant = _MODE_GRANTS.get(mode, "")
+    if grant and not approval_grants.stands(
+        grant, caller="dashboard:mode", subject=f"mode={mode},session={session_name or '*'}"
+    ):
+        return json_error(
+            "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
+        )
+
+    if mode == "yolo":
+        state.enable_yolo()  # TTL enforced internally (state._YOLO_TTL)
+        try:
+            sel().log_api_access(
+                caller="dashboard:mode",
+                operation="mode_change:yolo",
+                outcome="enabled",
+                resources=",".join(s.key for s in state._sessions.values()),
+            )
+        except Exception:
+            logger.warning("SEL audit failed for YOLO mode activation", exc_info=True)
+    elif mode == "trust_reads":
+        state.disable_yolo()
+        if session_name is not None:
+            if session_name not in state._sessions:
+                return web.json_response({"ok": False, "error": "unknown session"}, status=400)
+            _set_posture(state._sessions[session_name], trust=False, trust_reads=True)
+        else:
+            for session in state._sessions.values():
+                _set_posture(session, trust=False, trust_reads=True)
+        try:
+            sel().log_api_access(
+                caller="dashboard:mode",
+                operation="mode_change:trust_reads",
+                outcome="enabled",
+                resources=session_name or ",".join(s.key for s in state._sessions.values()),
+            )
+        except Exception:
+            logger.warning("SEL audit failed for trust_reads mode activation", exc_info=True)
+    elif mode == "trust":
+        state.disable_yolo()
+        if session_name is not None:
+            if session_name not in state._sessions:
+                return web.json_response({"ok": False, "error": "unknown session"}, status=400)
+            _set_posture(state._sessions[session_name], trust=True)
+        else:
+            for session in state._sessions.values():
+                _set_posture(session, trust=True)
+        try:
+            sel().log_api_access(
+                caller="dashboard:mode",
+                operation="mode_change:trust",
+                outcome="enabled",
+                resources=session_name or ",".join(s.key for s in state._sessions.values()),
+            )
+        except Exception:
+            logger.warning("SEL audit failed for trust mode activation", exc_info=True)
+    else:  # normal
+        state.disable_yolo()
+        if session_name is not None:
+            if session_name not in state._sessions:
+                return web.json_response({"ok": False, "error": "unknown session"}, status=400)
+            _set_posture(state._sessions[session_name], trust=False, trust_reads=False)
+        else:
+            for session in state._sessions.values():
+                _set_posture(session, trust=False, trust_reads=False)
+        try:
+            sel().log_api_access(
+                caller="dashboard:mode",
+                operation="mode_change:normal",
+                outcome="disabled",
+                resources=session_name or ",".join(s.key for s in state._sessions.values()),
+            )
+        except Exception:
+            logger.warning("SEL audit failed for normal mode activation", exc_info=True)
+
+    # YOLO is unified process-global trust state (personalclaw.trust_mode):
+    # state.enable_yolo()/disable_yolo() above already drive the single source of
+    # truth that the channel handler also reads — no separate sync needed.
+
+    # A trust/yolo switch answers the pending approvals it covers, and no others. YOLO, and Trust
+    # for every chat, cover every one. Trust for ONE chat covers that chat's own and the ones its
+    # agents asked on its behalf (`approval_grants.PARENT_TRUST`), never another chat's or another
+    # run's: trusting this chat is not an answer to what anyone else is waiting on. Nor does it
+    # answer an ask only a decision on it answers (`DashboardState.answered_alone`): a call that
+    # reaches a host off the allowed hosts, which no grant answers, or a batch's consent.
+    if mode in ("trust", "yolo"):
+        only = session_name if mode == "trust" else None
+        # The switch answers them as the one who flipped it, held to the rule every door is
+        # (`approval_answer`).
+        by = approval_answer.of_request(request)
+        for key, session in state._sessions.items():
+            if only is not None and key != only:
+                continue
+            for aid, fut in list(session._approval_futures.items()):
+                if not fut.done():
+                    # A posture switch is a door like any other: it does not approve a call
+                    # for work that has already ended (a stopped loop's worker, say).
+                    if state.answer_refusal(chat_approval_id(session.key, aid), by):
+                        continue
+                    if state.refuse_ended_owner(chat_approval_id(session.key, aid)):
+                        continue
+                    if state.answered_alone(chat_approval_id(session.key, aid)):
+                        continue
+                    fut.set_result("approved")
+                    # Persist resolved state into the permission message
+                    _mark_permission_resolved(session.messages, aid, mode)
+                    # Off every surface, not just this chat's card: the registry row, the
+                    # Inbox row and Home's count all read the same entry.
+                    state.withdraw_approval(
+                        chat_approval_id(session.key, aid),
+                        outcome="approved",
+                        request_id=aid,
+                        session=session.key,
+                    )
+                    try:
+                        sel().log_api_access(
+                            caller=f"dashboard:{session.key}",
+                            operation=f"tool_approval:bulk_{mode}",
+                            outcome="approved",
+                            resources=aid,
+                        )
+                    except Exception:
+                        logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
+        # And the background ones (a subagent, a trigger's run) it covers. An ask only a decision
+        # on it answers (a batch's consent to change things, a call off the allowed hosts:
+        # `DashboardState.answered_alone`) keeps asking: a posture switch is not that decision.
+        for aid in list(state._approval_futures):
+            fut = state._approval_futures[aid]
+            if state.answered_alone(aid):
+                continue
+            if only is not None and state._pending_approvals.get(aid, {}).get("session") != only:
+                continue
+            if not fut.done() and state.resolve_approval(aid, True, by=by):
+                try:
+                    sel().log_api_access(
+                        caller="dashboard:background",
+                        operation=f"tool_approval:bulk_{mode}",
+                        outcome="approved",
+                        resources=aid,
+                    )
+                except Exception:
+                    logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
+    # Hand each chat's runtime the policy its posture answers now, so subagents inherit it: none
+    # for a turn someone else asked for, nor for a conversation an app started.
+    for session in state._sessions.values():
+        state.push_chat_policy(session)
+
+    state.push_sessions_update()
+    return web.json_response({"ok": True, "mode": mode})
+
+
+VALID_TASK_MODES = ("agent", "ask", "plan", "build")
+
+
+async def api_chat_task_mode(request: web.Request) -> web.Response:
+    """POST /api/chat/task-mode — set the per-session TASK mode.
+
+    Task mode is ORTHOGONAL to the approval mode (``/api/chat/mode``): approval
+    gates *whether* a tool auto-approves; task mode gates *which* tools are
+    available + *how* the agent frames the work, layered on the active agent:
+      - ``agent``: full execution (default)
+      - ``ask``:   read-only — only SAFE/read tools run; mutating tools denied
+      - ``plan``:  the agent plans; NO tool executes
+      - ``build``: scoped to producing an artifact/widget/skill
+
+    Body: ``{mode: <task mode>, session?: <key>}``. ``mode`` is REQUIRED. When
+    ``session`` is omitted the mode applies to all sessions (mirrors the approval
+    handler's broadcast shape); the response names the sessions it changed.
+    """
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # No default: an absent (or non-string) mode is refused, not read as ``agent``.
+    # Defaulting made the most under-specified request the most permissive one — a
+    # bodiless POST relaxed every ask/plan session to full execution. A caller that
+    # cannot name the mode it wants is not asking to widen the tool gate.
+    mode = body.get("mode")
+    if mode not in VALID_TASK_MODES:
+        return web.json_response(
+            {"error": f"invalid task mode (expected one of {VALID_TASK_MODES})"}, status=400
+        )
+    session_name = body.get("session") or None
+    if session_name is not None and session_name not in state._sessions:
+        return web.json_response({"ok": False, "error": "unknown session"}, status=400)
+
+    targets = (
+        [state._sessions[session_name]]
+        if session_name is not None
+        else list(state._sessions.values())
+    )
+    # A chat inside the plan walkthrough may not be relaxed out of `plan` by this
+    # control: while a step's review gate is open, the no-execute guarantee IS the plan
+    # task mode, so letting the pill drop it would make that guarantee decorative. The
+    # exits are Approve and Cancel, both named here.
+    if mode != "plan":
+        from personalclaw.dashboard import chat_plan
+
+        gated = [s.key for s in targets if chat_plan.awaiting_review(s.key)]
+        if gated:
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "plan_awaiting_approval",
+                        "message": (
+                            "This chat's plan is awaiting your review — approve it or "
+                            "cancel plan mode to change the task mode."
+                        ),
+                    },
+                    "sessions": gated,
+                },
+                status=409,
+            )
+    for session in targets:
+        # One write path for both postures — the session's own and the runtime's (the
+        # native runtime gates in _guard_and_invoke, before approval, so a Trust/YOLO
+        # auto-approve can't bypass an ask/plan/build restriction).
+        apply_task_mode(state, session, mode)
+    try:
+        sel().log_api_access(
+            caller="dashboard:task-mode",
+            operation=f"task_mode_change:{mode}",
+            outcome="enabled",
+            resources=session_name or ",".join(s.key for s in state._sessions.values()),
+        )
+    except Exception:
+        logger.warning("SEL audit failed for task-mode change", exc_info=True)
+
+    state.push_sessions_update()
+    # Name the sessions actually changed: the broadcast form is still supported, so a
+    # caller must be able to tell a one-session change from a fleet-wide one.
+    return web.json_response({"ok": True, "task_mode": mode, "sessions": [s.key for s in targets]})
+
+
+async def api_chat_session_approve(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/approve — resolve a pending tool approval.
+
+    Parses and names the target; the decision itself is `DashboardState.decide_session_approval`,
+    the same path `POST /api/approvals/{id}/{action}` takes for a chat's approval, so the card and
+    every surface outside the chat cannot answer one call two different ways.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    action = body.get("action", "rejected")
+    # Reject an UNKNOWN verb loudly. The decision collapses everything it does not
+    # recognise to "rejected", so a typo (notably "approve" — the verb the sibling
+    # /api/approvals/{id}/{action} surface uses) used to deny the tool while returning
+    # 200 {"ok": true}: the caller reads success and the user sees a denial. Omitting
+    # "action" entirely stays a deliberate fail-closed reject, so only an explicitly
+    # supplied unknown verb is an error.
+    if action not in SESSION_APPROVAL_ACTIONS:
+        return web.json_response(
+            {"error": f"unknown action {action!r}", "allowed": sorted(SESSION_APPROVAL_ACTIONS)},
+            status=400,
+        )
+    # No app reaches this: the route is the owner's in `apps/permissions.ROUTE_AUTHZ`, so every
+    # verb here, `yolo` and `trust_agent` included, is the owner's. The answer is still held to
+    # the one rule every door is (`approval_answer`), after the target is named below.
+    # Name the target BEFORE anything is granted: a trust/yolo verb aimed at an approval that is
+    # no longer pending must not raise the session's posture behind a 404.
+    pending_ids = [k for k, f in session._approval_futures.items() if not f.done()]
+    request_id = body.get("request_id", "")
+    if not request_id:
+        if len(pending_ids) > 1:
+            return web.json_response(
+                {"error": "multiple approvals pending, specify request_id", "pending": pending_ids},
+                status=400,
+            )
+        request_id = pending_ids[0] if pending_ids else ""
+    if request_id not in pending_ids:
+        return web.json_response({"error": "no pending approval"}, status=404)
+    by = approval_answer.of_request(request)
+    refused = state.answer_refusal(chat_approval_id(session.key, request_id), by)
+    if refused:
+        return json_error("approval_owner_only", message=refused, status=403)
+    ended = state.refuse_ended_owner(chat_approval_id(session.key, request_id))
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
+    # A scope wider than this one call is a standing grant, which the operator ceiling bounds
+    # (`approval_grants`, rule 2). Refused before anything is decided, so the call is still asking
+    # and "Allow once" still answers it.
+    standing = _CARD_GRANTS.get(action, "")
+    if standing and not approval_grants.stands(
+        standing, caller=f"dashboard:{session.key}", subject=f"scope={action}"
+    ):
+        return json_error(
+            "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
+        )
+    grant = state.decide_session_approval(session, request_id, action, by=by)
+    # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
+    # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
+    # learn the grant had degraded to session scope — the promise and the outcome were
+    # unfalsifiable from the outside (#541). Present only when there was a grant.
+    return web.json_response({"ok": True, **({"grant": grant} if grant else {})})
+
+
+MAX_COLOR_INDEX = 20
+
+
+async def api_chat_session_color(request: web.Request) -> web.Response:
+    """PATCH /api/chat/sessions/{session}/color — set session color."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = resolve_session(state, name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # ABSENT IS NOT "CLEAR". `null` is a legitimate explicit clear on this field, which is
+    # exactly why a body that never mentions `color_index` must not be read as the same
+    # request: an agent that PATCHes with the wrong key name ("colour") used to get
+    # `200 {"ok": true}` and have silently erased the colour the user picked (#2970).
+    # The house rule is already stated thirty lines below, at api_chat_session_reply_style:
+    # a value outside the closed set is a client bug, not "inherit". So is a missing one.
+    # Same shape as the `nothing_to_set` refusal the /lifecycle sibling already returns.
+    if "color_index" not in body:
+        return web.json_response(
+            {"error": "body must include 'color_index' (use null to clear)"}, status=400
+        )
+    ci = body.get("color_index")
+    if ci is not None and (
+        isinstance(ci, bool) or not isinstance(ci, int) or ci < 0 or ci > MAX_COLOR_INDEX
+    ):
+        return web.json_response(
+            {"error": f"color_index must be a non-negative integer <= {MAX_COLOR_INDEX} or null"},
+            status=400,
+        )
+    session.color_index = ci
+    session._dirty = True
+    state.push_sessions_update()
+    return web.json_response({"ok": True, "color_index": ci})
+
+
+def _reply_style_payload(session: _ChatSession) -> dict[str, object]:
+    """The composer's reply-style state for *session*, resolved server-side.
+
+    What this conversation states, what its agent states, the RESOLVED style with the scope that
+    decided it, and the preview of what the next turn carries for its voice. Resolved here, not
+    in the frontend: the order exists once, in ``reply_style.REPLY_STYLE_PRECEDENCE``.
+    """
+    from personalclaw import reply_style as rs
+    from personalclaw.dashboard.chat_utils import persona_block
+
+    preview = rs.preview(session, persona_block)
+    return {
+        "reply_style": session.reply_style,
+        "reply_style_agent_default": rs.agent_default(session.agent or ""),
+        "reply_style_effective": preview["style"],
+        "reply_style_source": preview["source"],
+        "reply_style_preview": preview,
+    }
+
+
+def _style_row(s) -> dict[str, object]:
+    from personalclaw import reply_style as rs
+
+    row: dict[str, object] = {
+        "id": s.id,
+        "title": s.title,
+        "description": s.description,
+        "source": s.source,
+    }
+    if s.source == "app":
+        row.update(app=s.app, by=s.by, file=s.file)
+    elif s.source == rs.OWN:
+        # Your own style's text, for its editor in Settings. A bundled style's lives in
+        # Settings > Prompts, an app's ships with the app.
+        row.update(file=s.file, text=rs.own_text(s.id))
+    return row
+
+
+async def api_chat_reply_styles(request: web.Request) -> web.Response:
+    """GET /api/chat/reply-styles — the reply styles a conversation or an agent can choose.
+
+    The bundled styles, your own (``own:<name>``) and the ones enabled apps add with the
+    ``replyStyles`` permission (``<app>:<name>``), plus each style file that is not loaded and why.
+    """
+    from personalclaw import reply_style as rs
+
+    return web.json_response(
+        {
+            "styles": [_style_row(s) for s in rs.available_styles()],
+            "refused": rs.refused_styles(),
+            "precedence": list(rs.REPLY_STYLE_PRECEDENCE),
+            "size_cap": rs.STYLE_SIZE_CAP,
+        }
+    )
+
+
+async def api_chat_own_reply_style_put(request: web.Request) -> web.Response:
+    """PUT /api/chat/reply-styles/own/{name} — create or replace one of your own styles.
+
+    Body ``{"title", "description", "text"}``. Written to ``styles/<name>.md`` under the home. The
+    same checks a style file meets at load decide it: a style that would be refused there is a 400
+    naming why, and nothing is written.
+    """
+    from personalclaw import reply_style as rs
+
+    name = request.match_info["name"]
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    try:
+        style = rs.save_own_style(
+            name,
+            title=body.get("title"),
+            description=body.get("description"),
+            text=body.get("text"),
+        )
+    except ValueError as refused:
+        return json_error("bad_request", message=str(refused), status=400)
+    return web.json_response({"ok": True, "style": _style_row(style)})
+
+
+async def api_chat_own_reply_style_delete(request: web.Request) -> web.Response:
+    """DELETE /api/chat/reply-styles/own/{name} — remove one of your own styles.
+
+    A chat or agent that chose it keeps the choice and falls back to the next level down, saying
+    so once (the same path an app style that went away takes)."""
+    from personalclaw import reply_style as rs
+
+    if not rs.delete_own_style(request.match_info["name"]):
+        return json_error("not_found", status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_chat_session_reply_style(request: web.Request) -> web.Response:
+    """PATCH /api/chat/sessions/{session}/reply-style — set the per-conversation scope.
+
+    Body ``{"reply_style": "" | <a style id>}``: a style available now (bundled, your own or an
+    enabled app's), or ``""`` to reset the conversation so it follows its agent (then the platform)
+    again. Responds with the re-resolved state and preview, so the composer shows what actually
+    takes effect.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = resolve_session(state, name)
+    if not session:
+        return json_error("not_found", status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    from personalclaw.reply_style import is_available, normalize_choice
+
+    # ABSENT IS NOT "RESET": an empty body must not drop a choice the owner made (#2970).
+    if "reply_style" not in body:
+        return json_error(
+            "bad_request",
+            message="body must include 'reply_style' (use \"\" to follow the agent's style)",
+            status=400,
+        )
+    raw = body.get("reply_style")
+    choice = normalize_choice(raw)
+    # A value that names no style, or a style that is not available now, is a client bug, not a
+    # reset: refuse it rather than silently clearing the choice already made.
+    if (choice == "" and raw != "") or (choice and not is_available(choice)):
+        return json_error(
+            "bad_request",
+            message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
+            status=400,
+        )
+    session.reply_style = choice
+    session._dirty = True
+    state.push_sessions_update()
+    return web.json_response({"ok": True, **_reply_style_payload(session)})
+
+
+_MAX_CONTEXT_PER_SOURCE = 10
+
+
+async def api_chat_session_context(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/context — inject silent background context.
+
+    Adds a ContextEntry to the session's ``_pending_context`` queue.
+    The content is consumed on the next user-initiated message via
+    ``ctx_builder.build_message()`` and prepended to the LLM prompt.
+
+    No LLM turn is triggered, no WS event is broadcast, and no visible
+    message is appended to the session's chat history.
+
+    Body::
+
+        {
+            "content": "...",
+            "source": "watch-check",   // optional
+            "ephemeral": true,         // optional, default true
+            "maxAge": 300              // optional, seconds
+        }
+    """
+
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "session not found"}, status=404)
+
+    # An app reaches this only for a conversation it started (`ROUTE_AUTHZ`'s `owns`), which the
+    # permission middleware checked before this ran.
+    request_app = request.get("app", "")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    content = body.get("content", "")
+    if not content:
+        return web.json_response({"error": "content is required"}, status=400)
+
+    # Content size limit (40,000 chars — same as message limit)
+    max_context_content = 40000
+    if len(content) > max_context_content:
+        return web.json_response(
+            {"error": f"content exceeds {max_context_content} char limit"}, status=400
+        )
+
+    entry: dict[str, object] = {
+        "content": content,
+        "source": body.get("source", ""),
+        "ephemeral": bool_field(body, "ephemeral", default=True),
+        "injectedAt": time.time(),
+    }
+    max_age = body.get("maxAge")
+    if max_age is not None:
+        entry["maxAge"] = max_age
+
+    # Per-source cap: prevent one app from evicting all others' context
+    source = body.get("source", "")
+    if source:
+        source_count = sum(1 for e in session._pending_context if e.get("source") == source)
+        if source_count >= _MAX_CONTEXT_PER_SOURCE:
+            return web.json_response(
+                {"error": f"source {source!r} has {_MAX_CONTEXT_PER_SOURCE} pending entries"},
+                status=429,
+            )
+
+    # FIFO eviction: cap pending queue at 50 entries
+    max_pending_context = 50
+    while len(session._pending_context) >= max_pending_context:
+        session._pending_context.pop(0)
+
+    session._pending_context.append(entry)  # type: ignore[arg-type]
+
+    # SEL audit logging
+    sel().log_api_access(
+        caller=request_app or request.get("user", "dashboard"),
+        operation="context_inject",
+        outcome="ok",
+        source="app_kit",
+        resources=f"session={name}",
+    )
+
+    return web.json_response({"ok": True, "pending": len(session._pending_context)})
+
+
+# ── Chat navigation: batched link summaries ──
+
+# Caps so one request can't fan out into a huge prompt or echo unbounded text.
+_NAV_MAX_LINKS = 30
+_NAV_CONTEXT_CAP = 400
+_NAV_SUMMARY_CAP = 80
+
+
+def _build_nav_links_prompt(links: list[dict[str, str]]) -> str:
+    """One prompt for the whole batch — concise human label per (index, url).
+
+    The instruction lives in the prompt system (bundled ``task-nav-links``); we
+    assemble the numbered link lines and render them into it."""
+    link_lines = []
+    for i, link in enumerate(links):
+        ctx = link.get("context", "")
+        ctx = f" — context: {ctx}" if ctx else ""
+        link_lines.append(f"{i}: {link.get('url', '')}{ctx}")
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    return render_use_case_prompt("nav_links", {"numbered_links": "\n".join(link_lines)}) or ""
+
+
+def _parse_nav_links_response(text: str, count: int) -> list[str]:
+    """Parse ``<index>: <title>`` lines into a list aligned to the input order.
+
+    Any index we can't parse (or that the model omitted) stays an empty string,
+    so the response is always positionally aligned to the request.
+    """
+    summaries = [""] * count
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or ":" not in line:
+            continue
+        idx_part, _, title = line.partition(":")
+        try:
+            idx = int(idx_part.strip())
+        except ValueError:
+            continue
+        if 0 <= idx < count:
+            clean, _ = redact_exfiltration_urls(title.strip())
+            clean, _ = redact_credentials(clean)
+            summaries[idx] = clean[:_NAV_SUMMARY_CAP]
+    return summaries
+
+
+async def api_nav_resolve_links(request: web.Request) -> web.Response:
+    """POST /api/chat/nav/resolve-links — batch-summarize bare links.
+
+    Request ``{"links": [{"url": str, "context": str}]}``; response
+    ``{"summaries": [str]}`` positionally aligned to the input (empty string for
+    any that fail). One stateless Model-entity call summarizes the whole batch
+    (the explicit anti-N+1 goal) via the ``background`` use-case binding.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    raw_links = body.get("links")
+    if not isinstance(raw_links, list):
+        return web.json_response({"error": "links must be a list"}, status=400)
+
+    # Normalize + cap the batch defensively before it reaches the model.
+    links: list[dict[str, str]] = []
+    for item in raw_links[:_NAV_MAX_LINKS]:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "")).strip()
+        if not url:
+            continue
+        links.append(
+            {"url": url, "context": str(item.get("context", "")).strip()[:_NAV_CONTEXT_CAP]}
+        )
+
+    if not links:
+        return web.json_response({"summaries": []})
+
+    try:
+        from personalclaw.guardrails.local_queue import Attended
+        from personalclaw.llm_helpers import one_shot_completion
+
+        # The caller waits on the summaries.
+        text = await one_shot_completion(
+            _build_nav_links_prompt(links),
+            use_case="background",
+            attended=Attended("Summarizing the links"),
+        )
+    except Exception:
+        logger.warning("nav link resolve failed", exc_info=True)
+        # Soft-fail: the UI keeps its structured fallback labels.
+        return web.json_response({"summaries": [""] * len(links)})
+
+    summaries = _parse_nav_links_response(text, len(links))
+    try:
+        sel().log_api_access(
+            caller="dashboard:nav",
+            operation="resolve_links",
+            outcome="ok",
+            resources=f"count={len(links)}",
+        )
+    except Exception:
+        logger.debug("SEL audit failed for nav resolve-links", exc_info=True)
+    return web.json_response({"summaries": summaries})

@@ -1,0 +1,38 @@
+{
+  "about": "Written by docs/brand/render_marks.mjs. Re-run it after a change to the source; do not edit by hand.",
+  "source": "web/public/claw.svg",
+  "source_sha256": "c806dcf4539528dbf48fdccd435f2d9ed82296f0ebd5094a3dea77bde695bace",
+  "script_sha256": "9035134264743409ed51ecdea7d0de78009c7916ce99126d2b1399e4115fad05",
+  "outputs": [
+    {
+      "path": "desktop/icon.png",
+      "size": 1024,
+      "sha256": "7f5c5df33d7f94e993ba8041c66609dd2114514afb78da8b2418852b2f77eea2"
+    },
+    {
+      "path": "desktop/tray.png",
+      "size": 18,
+      "sha256": "f1bebd6e40daa6b677368d7ff7775628af62c0f7e0d9f94ecdd3384e0b774acb"
+    },
+    {
+      "path": "desktop/tray@2x.png",
+      "size": 36,
+      "sha256": "8454e1ca6942ffc04af63d85d4f4e583ab2f3b49382406860d0193f84929b483"
+    },
+    {
+      "path": "desktop/trayTemplate.png",
+      "size": 18,
+      "sha256": "2aba3711c88e45a0419120cc2d5ca185a7beffe5c5a95ba00584ed220182975a"
+    },
+    {
+      "path": "desktop/trayTemplate@2x.png",
+      "size": 36,
+      "sha256": "1e0d74fb4a882a09d34b63158bf97232ba5746f622aadc2c51a669d2759d9e37"
+    },
+    {
+      "path": "docs/brand/personalclaw-mark.png",
+      "size": 512,
+      "sha256": "51623c3d401e2f6baee0f48b99ec2ec157e54c7072d228bb127634341b8309a5"
+    }
+  ]
+}

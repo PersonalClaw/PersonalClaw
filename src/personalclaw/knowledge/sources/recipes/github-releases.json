@@ -1,0 +1,16 @@
+{
+  "id": "github-releases",
+  "displayName": "GitHub releases",
+  "description": "Every published release of one repository. GitHub already serves this as an Atom feed, so no page scraping is involved and nothing has to be tuned.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://(?:www\\.)?github\\.com/(?!trending|topics|collections|features|sponsors|marketplace|explore|orgs|settings|about|pricing|security|enterprise)(?P<owner>[A-Za-z0-9][A-Za-z0-9._-]*)/(?P<repo>[A-Za-z0-9][A-Za-z0-9._-]*?)(?:\\.git)?(?:/(?:releases|tags)(?:/.*)?)?/?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste a repository URL such as https://github.com/astral-sh/uv — the releases feed is derived from it.",
+  "spec": {
+    "preset": "atom",
+    "url": "https://github.com/{{owner}}/{{repo}}/releases.atom"
+  },
+  "tags": ["releases", "code"]
+}

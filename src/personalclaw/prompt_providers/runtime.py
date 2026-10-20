@@ -1,0 +1,185 @@
+"""Runtime rendering helpers — the one way call sites turn a bound prompt into
+final text.
+
+Every migrated call site that used to build a hardcoded f-string now calls
+:func:`render_use_case_prompt` (for a standalone LLM task prompt bound to a
+use-case) or :func:`render_snippet_block` (for an injected instruction fragment).
+Both resolve through the registered prompt provider and render through the engine
+— snippet ``{{> name}}`` includes and ``{{var}}`` substitutions are applied
+exactly as in the Settings preview, so what the model receives can never drift
+from what an author sees.
+
+These wrap the lower-level ``engine.render`` so no consumer re-implements the
+provider lookup + snippet-resolver + ``PromptTemplate`` assembly.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from personalclaw.prompt_providers.base import PromptRenderError, PromptSnippet
+
+logger = logging.getLogger(__name__)
+
+
+def snippet_resolver() -> Callable[[str], "PromptSnippet | None"]:
+    """A ``name -> PromptSnippet | None`` resolver for the engine's ``{{> name}}``
+    includes, backed by the default prompt provider. Yields None for every name
+    when no provider is available (the engine then renders an explicit
+    ``[missing snippet: name]`` marker rather than failing)."""
+    try:
+        from personalclaw.prompt_providers.registry import (
+            _ensure_default_providers_registered,
+            get_default_provider,
+        )
+
+        _ensure_default_providers_registered()
+        provider = get_default_provider()
+    except Exception:
+        provider = None
+    return lambda n: provider.get_snippet(n) if provider is not None else None
+
+
+def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) -> str | None:
+    """Resolve the prompt bound to ``use_case`` and render it with ``values``.
+
+    Reads the binding (Settings → Prompts) or the bundled default, fetches the
+    template from its provider, and renders it through the engine with snippet
+    includes resolved. Returns the rendered string, or ``None`` when the prompt
+    can't be resolved (no provider / missing template) so the caller can fall
+    back to a shipped default.
+    """
+    from personalclaw.prompt_providers.engine import render_template
+    from personalclaw.providers.prompt_use_cases import (
+        DEFAULT_PROMPT_PROVIDER,
+        active_prompt_ref,
+        bundled_prompt_name_for,
+        split_ref,
+    )
+
+    try:
+        from personalclaw.prompt_providers.registry import (
+            _ensure_default_providers_registered,
+            get_prompt_provider,
+        )
+
+        # Register + seed FIRST (core + always-on bundled-app prompts) so an
+        # app-owned use-case is in the vocabulary before we resolve its binding —
+        # otherwise it'd look unknown and resolve to no prompt at all.
+        _ensure_default_providers_registered()
+        ref = active_prompt_ref(use_case)
+        parsed = split_ref(ref)
+        if not parsed:
+            return None
+        provider_name, prompt_name = parsed
+        provider = get_prompt_provider(provider_name)
+        if provider is None:
+            return None
+        template = provider.get_prompt(prompt_name)
+        if template is None:
+            # The BOUND prompt is gone (deleted after it was bound): serve this use
+            # case's own bundled prompt. Not the chat prompt — that is an agent persona,
+            # and a title/judge/extraction task handed it would get "You are <bot>…"
+            # with every one of its own instructions and variables missing. No
+            # bundled prompt either → None, and the caller's shipped fallback applies.
+            own = bundled_prompt_name_for(use_case)
+            default_provider = get_prompt_provider(DEFAULT_PROMPT_PROVIDER)
+            if not own or default_provider is None:
+                return None
+            template = default_provider.get_prompt(own)
+            if template is None:
+                return None
+            provider = default_provider
+        return render_template(template, values or {}, resolver=(lambda n: provider.get_snippet(n)))
+    except PromptRenderError as exc:
+        logger.warning("render_use_case_prompt failed for %r: %s", use_case, exc)
+        return None
+    except Exception:
+        logger.debug("render_use_case_prompt failed for %r", use_case, exc_info=True)
+        return None
+
+
+def render_snippet_block(name: str, values: dict[str, Any] | None = None) -> str:
+    """Render a bundled instruction snippet by name, with ``values`` substituted.
+
+    Used for injected instruction fragments (critical rules, workspace identity,
+    widget block, …) that are composed into the session context rather than bound
+    to a use-case. Returns ``""`` when the snippet can't be resolved so a missing
+    fragment degrades to nothing instead of breaking context assembly.
+    """
+    from personalclaw.prompt_providers.engine import render_snippet as _render_snippet
+
+    try:
+        from personalclaw.prompt_providers.registry import (
+            _ensure_default_providers_registered,
+            get_default_provider,
+        )
+
+        _ensure_default_providers_registered()
+        provider = get_default_provider()
+        if provider is None:
+            return ""
+        snip = provider.get_snippet(name)
+        if snip is None:
+            return ""
+        return _render_snippet(snip, values or {}, resolver=(lambda n: provider.get_snippet(n)))
+    except Exception:
+        logger.debug("render_snippet_block failed for %r", name, exc_info=True)
+        return ""
+
+
+#: The bundled snippet that states the platform's always-on safety rules: the bound Chat and
+#: Background prompts include it, and :func:`with_safety_rules` layers it on every other prompt.
+SAFETY_RULES_SNIPPET = "safety-rules"
+
+
+def safety_rules(values: dict[str, Any] | None = None) -> str:
+    """The platform's always-on safety rules, worded exactly as the Chat prompt words them.
+
+    They are the ``safety-rules`` snippet, rendered through the prompt store with ``values`` as
+    the Chat prompt's own ``{{> safety-rules}}`` is, so an edit in Settings → Prompts rewords them
+    for every agent at once. Fails CLOSED: when the store cannot produce them (no provider, the
+    snippet missing, or emptied), the snippet's shipped text answers, because these are the rules
+    no agent's turn may go without. A shipped file that cannot be read is a broken install, and
+    that error is raised rather than answered with no rules.
+
+    The push rule follows the owner's Settings → Security → Git push switch
+    (``allow_git_push``), read here on every render unless *values* names it, so no path can
+    hand an agent a rule that says pushing is forbidden while the owner allows it, or allowed
+    while they do not.
+    """
+    from personalclaw.branch_publish import switch_on
+
+    values = {"allow_git_push": switch_on(), **(values or {})}
+    rules = render_snippet_block(SAFETY_RULES_SNIPPET, values).strip()
+    if rules:
+        return rules
+    from pathlib import Path
+
+    from personalclaw.prompt_providers.catalog import BUNDLED_SNIPPETS
+    from personalclaw.prompt_providers.engine import render
+
+    logger.warning(
+        "The %r snippet is missing or empty in the prompt store; using its shipped text",
+        SAFETY_RULES_SNIPPET,
+    )
+    (entry,) = (e for e in BUNDLED_SNIPPETS if e.name == SAFETY_RULES_SNIPPET)
+    shipped = Path(__file__).resolve().parent.parent / "config" / "prompt_snippets"
+    return render((shipped / entry.filename).read_text(encoding="utf-8"), [], values).strip()
+
+
+def with_safety_rules(prompt: str, values: dict[str, Any] | None = None) -> str:
+    """*prompt* with the platform's safety rules layered after it, once.
+
+    A layer, as an agent's voice and a chat's task mode are: an agent's own prompt REPLACES the
+    one bound for Chat, and the rules lived only in that prompt, so a routed agent's request went
+    without them, the one telling the model that ``<untrusted_content>`` holds data and never
+    instructions (``security.fence_untrusted``) among them. An agent's prompt adds to the rules and
+    cannot remove them. A prompt that already states them, as the bound Chat and Background
+    prompts do, is returned as it is, so no request carries them twice.
+    """
+    rules = safety_rules(values)
+    if rules in prompt:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{rules}" if prompt.strip() else rules

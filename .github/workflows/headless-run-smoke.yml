@@ -1,0 +1,93 @@
+# Headless CLI smoke test — `personalclaw run`.
+#
+# The as-a-user validation for the scripted entry point: it installs the wheel-equivalent
+# package and drives the `personalclaw run` command a CI pipeline would actually type.
+#
+# Every run completes a real turn, against the offline scripted provider, so it needs no
+# credential and never skips (#3918). It runs on `workflow_dispatch` for a maintainer, and
+# on a `schedule` so a regression in the headless path surfaces without anyone asking.
+#
+# It is ALSO the reference recipe. `docs/reference/cli.md` points contributors here, so
+# the steps below are deliberately plain: probe, run, parse, assert.
+name: headless-run-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"  # Mondays, 07:00 UTC
+
+concurrency:
+  group: headless-run-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
+  # that is exactly the version asked for wins over a download by default (see breadth.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    # A turn boots a transient gateway and waits on a model round-trip; the default
+    # 360-minute budget would let a wedged provider hold a runner for hours.
+    timeout-minutes: 20
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+          prune-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+
+      # The parser-level half of the contract: the subcommand exists, is wired, and refuses
+      # a blank prompt, before any turn runs.
+      - name: run is registered and refuses a blank prompt
+        run: |
+          uv run personalclaw run --help > /dev/null
+          if uv run personalclaw run -p "" 2>/dev/null; then
+            echo "::error::an empty prompt was accepted — the guard is inert"
+            exit 1
+          fi
+          echo "blank-prompt guard holds"
+
+      - name: Configure an isolated home
+        run: |
+          echo "PERSONALCLAW_HOME=${{ runner.temp }}/pclaw-home" >> "$GITHUB_ENV"
+
+      # The turn runs against the scripted provider (src/personalclaw/llm/scripted.py), the
+      # one the e2e run uses. Its script is the variable's value, it answers only in an
+      # isolated home (the step above), and it needs no credential, so every run, a fork's
+      # and a secretless dispatch's included, runs a real turn. The fixture's reply contains
+      # the `OK` the smoke expects. A real vendor model is out of this smoke's scope.
+      # `uv run` puts the project's venv on PATH, where the script finds `personalclaw`.
+      - name: Headless turn smoke test
+        env:
+          PERSONALCLAW_SCRIPTED_MODEL_SCRIPT: ${{ github.workspace }}/web/e2e/fixtures/scripted-chat.json
+        run: |
+          uv run personalclaw setup --agent-only
+          uv run sh scripts/ci_smoke_run.sh
+
+      # A headless run must not leave a gateway behind. `run` kills the transient
+      # gateway it started by pid; assert that rather than trusting it, because a leaked
+      # gateway on a self-hosted runner would outlive the job.
+      - name: No gateway left running
+        if: always()
+        run: |
+          if pgrep -f "personalclaw gateway" > /dev/null; then
+            echo "::error::a gateway survived the run — transient teardown leaked"
+            pgrep -af "personalclaw gateway" || true
+            exit 1
+          fi
+          echo "no gateway left running"

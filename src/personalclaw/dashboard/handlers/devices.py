@@ -1,0 +1,663 @@
+"""Device pairing + Settings → Devices, the list of everything signed in.
+
+Seven routes. Five are about sessions, the one credential a device holds:
+
+* ``POST /api/devices/pair/start``      — owner-authenticated; mints a code + QR payload
+* ``POST /api/devices/pair/complete``   — auth-EXEMPT; the device redeems the code for a session
+* ``GET  /api/devices``                 — owner-authenticated; every signed-in device and token
+* ``POST /api/devices/{id}/revoke``     — owner-authenticated; signs one of them out
+* ``POST /api/devices/revoke-others``   — owner-authenticated, ``{"confirm": true}``; signs out
+  all but the caller
+
+Two are about the tokens an external agent reaches an inbound surface with, which
+are not sessions and never were — but the owner asking "what can reach this gateway?" asks it
+here, so they are listed here too, each with when it stops working and a revoke:
+
+* ``GET  /api/devices/integrations``              — owner-authenticated; every integration token
+* ``POST /api/devices/integrations/{id}/revoke``  — owner-authenticated; revokes one of them
+
+**There is no device token.** A paired device gets an ordinary session cookie from the same
+:func:`token_auth.mint_session` every door uses; pairing names its door (``issuer="pair"``)
+and its device. That is the load-bearing decision: a second credential type would need its own
+expiry, its own revocation list, its own middleware branch and its own bugs, and the first time
+the two disagreed the device would be authenticated by one and unknown to the other. The list
+is therefore a VIEW over `sessions.json`, which is why "sign out" and "the session is gone"
+cannot drift apart — they are the same write.
+
+**The list is every sign-in, not only the paired ones.** It used to show paired
+phones alone, so the owner's own browsers, the desktop app and every token a script minted —
+the sessions a sixth mint silently signed out — could not be seen, let alone signed out. An
+app-scoped token is left out on purpose: it is not a device, it only narrows a signed-in
+session to one app, and it is re-minted as that app needs it.
+
+``pair/complete`` is exempt from token auth for exactly the reason ``/api/auth/login`` and
+``/api/auth/enroll/complete`` are: the caller has no session yet, and gating the route behind
+the session it exists to mint would be circular. It carries the same compensating guards —
+origin check, per-IP lockout, single-use hashed code with a short TTL — and it shares the
+lockout counters and the cookie writer with the login path rather than reimplementing them,
+because two cookie writers means two security postures for one session model.
+
+Every route emits a SEL event, INCLUDING the denials. A rejected pairing attempt is the event
+an owner most wants to see afterwards; a rejection that leaves no trace is indistinguishable
+from an attempt that never happened.
+"""
+
+from __future__ import annotations
+
+import logging
+import secrets
+import time
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw.dashboard.handlers.page_shell import page_document
+from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.owner_presence import ACTION_PAIR_DEVICE, require_owner_presence
+from personalclaw.dashboard.session_store import (
+    POOL_CAPS,
+    DeviceInfo,
+    describe_user_agent,
+    nonces_for_session,
+    pool_of,
+    sanitize_device_kind,
+    sanitize_device_name,
+    signed_in_sessions,
+)
+from personalclaw.dashboard.token_auth import (
+    END_SIGNED_OUT,
+    END_SIGNED_OUT_ELSEWHERE,
+    END_SIGNED_OUT_OTHERS,
+    ISSUER_PAIR,
+    browser_session_ttl,
+    mint_session,
+    revoke_nonce,
+    sign_out,
+)
+from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
+from personalclaw.safety_flags import confirm_granted
+
+logger = logging.getLogger(__name__)
+
+# The asymmetry (`_code_invalid` but `_expired`) is deliberate, not a slip here: the pairing
+# page maps these exact strings to copy, so guessing a tidier pair would mean the frontend
+# showing a raw code to the user.
+ERR_CODE_INVALID = "device_pair_code_invalid"
+ERR_CODE_EXPIRED = "device_pair_expired"
+ERR_ORIGIN = "device_pair_origin_rejected"
+ERR_LOCKED_OUT = "device_pair_locked_out"
+ERR_UNKNOWN_DEVICE = "device_unknown"
+ERR_UNKNOWN_INTEGRATION = "integration_unknown"
+
+#: The user id a paired device authenticates as. Distinct from `enrolled-device` so the auth
+#: log says which door was used.
+PAIRED_DEVICE_USER = "paired-device"
+
+
+def _sel() -> Any:
+    from personalclaw.sel import sel
+
+    return sel()
+
+
+def _audit(
+    operation: str,
+    outcome: str,
+    *,
+    caller: str = "owner",
+    error: str = "",
+    resources: str = "",
+) -> None:
+    """One SEL event per route outcome. Never raises: an audit failure must not eat the reply.
+
+    Never carries a code, a nonce, or a token — a pairing code in the security log is a
+    pairing code in every log shipper downstream of it.
+    """
+    try:
+        _sel().log_api_access(
+            caller=caller,
+            operation=operation,
+            outcome=outcome,
+            source="devices",
+            error=error,
+            resources=resources,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("SEL audit failed for %s", operation, exc_info=True)
+
+
+def _pair_base_url(request: web.Request) -> str:
+    """The origin a device should be pointed at.
+
+    Prefers the configured public URL (a tunnelled instance must not hand out a LAN address),
+    then falls back to the Host the OWNER's own authenticated request arrived on — which on a
+    LAN install is exactly the address a phone needs. `Host` is caller-controlled in general,
+    but this caller is the authenticated owner reading their own dashboard, so echoing it back
+    tells them nothing they did not type; it is still bounded and screened for control
+    characters so it cannot smuggle anything into a rendered QR payload.
+    """
+    try:
+        from personalclaw.dashboard.exposure import public_url
+
+        configured = public_url()
+        if configured:
+            return configured.rstrip("/")
+    except Exception:  # noqa: BLE001
+        logger.debug("could not resolve the configured public URL", exc_info=True)
+
+    host = str(request.host or "")[:255]
+    if not host or any(ch.isspace() or not ch.isprintable() for ch in host):
+        return ""
+    return f"{request.scheme}://{host}"
+
+
+# ── pair/start ──────────────────────────────────────────────────────────
+
+
+async def api_devices_pair_start(request: web.Request) -> web.Response:
+    """POST /api/devices/pair/start — mint a single-use pairing code + QR payload.
+
+    Behind the normal middleware, so this is the "I am already in on my laptop and want my
+    phone in too" path — and the code redeems for a device sign-in of its own, which outlives the
+    session that asked, so it needs a recent sign-in, not just a live one (``owner_presence``).
+    The code is returned ONCE; nothing can read it back, because the store holds only its hash.
+    """
+    if not check_origin(request):
+        _audit("device_pair_started", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    refused = require_owner_presence(request, ACTION_PAIR_DEVICE)
+    if refused is not None:
+        return refused
+
+    from personalclaw.auth import pairing
+
+    body = await json_object_body(request)
+    label = sanitize_device_name(body.get("label", ""))
+
+    code, expires_at = pairing.issue_code(label=label)
+    formatted = pairing.format_code(code)
+    base = _pair_base_url(request)
+    # The QR payload: a single URL a phone camera can act on. The code rides in it because a
+    # two-step "scan this, then type that" flow is the one people abandon. Resolved HERE and
+    # never composed in the browser — the dashboard may be open on loopback while the
+    # scanning phone needs the LAN address, and a browser-composed URL hands it `127.0.0.1`.
+    pairing_url = f"{base}/pair?code={formatted}" if base else ""
+
+    _audit("device_pair_started", "ok", resources=f"label={label}" if label else "")
+    return web.json_response(
+        {
+            "code": formatted,
+            "pairing_url": pairing_url,
+            "expires_at": expires_at,
+            "expires_in": pairing.PAIR_CODE_TTL_SECS,
+        }
+    )
+
+
+#: The phone's own surface: approvals first, then what is running, its tasks and its inbox, with
+#: the full dashboard one tap away in its footer. The dashboard is a desktop layout, and a phone
+#: that paired used to land on it with no way to the companion but typing its address.
+COMPANION_HOME = "/#/companion"
+
+
+def landing_for(kind: str) -> str:
+    """Where a device that has just signed in by pairing lands: a phone on the companion, any
+    other device on the dashboard.
+
+    Chosen from the device kind the gateway derived and clamped (`session_store.DEVICE_KINDS`),
+    never from anything the request names, so a pairing can send the browser nowhere else.
+    """
+    return COMPANION_HOME if kind == "mobile" else "/"
+
+
+def _described(request: web.Request) -> tuple[str, str]:
+    """``(name, kind)`` for a device that did not name or declare itself.
+
+    The ONE derivation every sign-in uses (``session_store.describe_user_agent``), so a
+    paired phone and a signed-in browser are described alike. Both still go through the
+    sanitizers, so a match here cannot widen the vocabulary.
+    """
+    name, kind = describe_user_agent(str(request.headers.get("User-Agent") or ""))
+    return sanitize_device_name(name) or "Paired device", sanitize_device_kind(kind)
+
+
+# ── pair/complete ───────────────────────────────────────────────────────
+
+
+async def api_devices_pair_complete(request: web.Request) -> web.Response:
+    """POST /api/devices/pair/complete — redeem a code for a durable device session.
+
+    Auth-exempt by necessity (see the module docstring), so it wears login's guards: origin
+    check, per-IP lockout, and a single-use hashed code.
+    """
+    from personalclaw.dashboard.handlers.auth import (
+        _auth_cfg,
+        _clear_failures,
+        _client_ip,
+        _lockout_remaining,
+        _record_failure,
+        _set_session_cookie,
+    )
+
+    ip = _client_ip(request)
+    cfg = _auth_cfg()
+
+    if not check_origin(request):
+        _audit("device_paired", "denied", caller=ip, error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+
+    remaining = _lockout_remaining(ip, cfg)
+    if remaining:
+        _audit("device_paired", "denied", caller=ip, error=f"locked out retry_after={remaining}s")
+        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+
+    from personalclaw.auth import pairing
+
+    body = await json_object_body(request)
+    code = str(body.get("code") or "")
+    # `device_name` is OPTIONAL: omitted, the gateway derives one, so a client with
+    # nothing but a code can still pair.
+    name = sanitize_device_name(body.get("device_name", ""))
+    kind = sanitize_device_kind(body.get("kind", ""))
+
+    outcome = pairing.redeem_code(code)
+    if not outcome.ok:
+        # A wrong code and an expired one both count toward the lockout: the difference is
+        # what the user is told, not how much grinding they are allowed.
+        _record_failure(ip)
+        _audit("device_paired", "denied", caller=ip, error=f"code {outcome.result}")
+        err = ERR_CODE_EXPIRED if outcome.result == pairing.RESULT_EXPIRED else ERR_CODE_INVALID
+        return json_error(err, status=401)
+
+    # A device session at the same TTL as a browser login (`auth.session_ttl`, 30 days by
+    # default) rather than the 90-day limit: a phone in a drawer should not hold a live session
+    # for the longest a credential may last.
+    ttl = browser_session_ttl(cfg)
+    derived_name, derived_kind = _described(request)
+    device = DeviceInfo(
+        id=secrets.token_hex(8),
+        # The device's own name wins, then the owner's label from `pair/start`, then a derived
+        # one. None of the three is trusted text — all went through `sanitize_device_name`.
+        name=name or sanitize_device_name(outcome.label) or derived_name,
+        # An explicit kind wins; otherwise the derived one, already clamped.
+        kind=kind if kind != "unknown" else derived_kind,
+        minted_at=time.time(),
+        ip=ip[:64],
+    )
+    minted = mint_session(PAIRED_DEVICE_USER, ttl, issuer=ISSUER_PAIR, device=device)
+    token = minted.token
+    if not minted.persisted:
+        # The session exists but is not in the store, so it cannot be listed or revoked, and it
+        # would not survive a restart. Refuse and retract it rather than leave an unrevocable
+        # session behind: an un-listed device session is the exact failure the list prevents.
+        revoke_nonce(minted.nonce)
+        _audit("device_paired", "denied", caller=ip, error="could not persist the device session")
+        return json_error(ERR_CODE_INVALID, status=503)
+
+    _clear_failures(ip)
+    _audit(
+        "device_paired",
+        "granted",
+        caller=ip,
+        resources=f"device={device.id} kind={device.kind}",
+    )
+
+    resp = web.json_response(
+        {
+            "ok": True,
+            "device_id": device.id,
+            "name": device.name,
+            "kind": device.kind,
+            "expires_in": ttl,
+            # Where the redeem page sends the device next (`landing_for`).
+            "landing": landing_for(device.kind),
+        }
+    )
+    _set_session_cookie(request, resp, token, ttl)
+    return resp
+
+
+# ── /pair — the joining device's redeem screen ──────────────────────────
+
+
+async def pair_page(request: web.Request) -> web.Response:
+    """GET /pair — the screen the URL from ``pair/start`` actually points at.
+
+    Served as a standalone document rather than an SPA route, exactly like ``/login`` and for the
+    identical reason: the browser opening it has **no session**, so every authenticated bundle
+    fetch the SPA makes on boot would 403 before a single field rendered. The `pairing_url` the
+    panel hands out was a dead end in both states without this — 403 without a token, and with
+    one the SPA's hash router simply landed on the dashboard.
+
+    **Why exempting this path from token auth opens nothing.** The document is a CONSTANT: the
+    code is never interpolated into it server-side (the script reads `?code=` out of
+    `location.search` in the browser), so there is no injection surface and no secret on the
+    page. Every grant still happens at ``/api/devices/pair/complete``, which keeps its own
+    guards — origin check, per-IP lockout, single-use hashed short-TTL code. What the exemption
+    buys is that the door is reachable at all.
+
+    A browser that ALREADY holds a valid session is redirected home instead of being offered the
+    form. That is not tidiness: redeeming a code here overwrites this browser's session cookie,
+    so the owner's own laptop would silently become a "device" row while its previous session
+    row stayed behind unreachable, still counting against the browser limit. Home is where a
+    pairing would have landed it (`landing_for`): a phone that opens the link again goes to the
+    companion, as it did the first time.
+    """
+    from personalclaw.dashboard.handlers.auth import has_valid_session
+
+    if has_valid_session(request):
+        raise web.HTTPFound(landing_for(_described(request)[1]))
+    return web.Response(
+        text=_PAIR_HTML,
+        content_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# The card body. Shares `/login`'s shell (handlers/page_shell.py) so the two doors into the same
+# gateway are one visual language rather than two hand-written copies of the tokens.
+_PAIR_BODY = """\
+<h1>Pair this device</h1>
+<p>This will sign this device in to the PersonalClaw dashboard on your home network.</p>
+<form id='f' autocomplete='off'>
+<input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='one-time-code'
+inputmode='latin' autocapitalize='characters' spellcheck='false' aria-label='Pairing code'>
+<input id='n' name='device_name' type='text' placeholder="This device's name (optional)"
+autocomplete='off' spellcheck='false' aria-label="This device's name">
+<button id='b' type='submit'>Pair this device</button>
+</form>
+<div class='err' id='e' role='alert' aria-live='polite'></div>
+<div class='hint'>The code is on the device you started from, under
+<code>Settings &rarr; Devices</code>. It expires five minutes after it is created.</div>"""
+
+# Every error code `pair/complete` can return, mapped to something a person can act on. An
+# unmapped code would render as a raw identifier, so the fallback is a sentence too.
+_PAIR_SCRIPT = """\
+var MESSAGES = {
+  device_pair_code_invalid: 'That code is not valid, or has already been used.',
+  device_pair_expired: 'That code has expired. Start pairing again on the other device.',
+  device_pair_locked_out: 'Too many attempts. Wait a moment and try again.',
+  device_pair_origin_rejected:
+    'This gateway will not accept pairing from this address. On the host, set the dashboard '
+    + 'URL to the address you are using here, then try again.'
+};
+var params = new URLSearchParams(window.location.search);
+var prefilled = (params.get('code') || '').toUpperCase();
+if (prefilled) { document.getElementById('c').value = prefilled; }
+document.getElementById(prefilled ? 'n' : 'c').focus();
+document.getElementById('f').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('b'), err = document.getElementById('e');
+  btn.disabled = true; err.textContent = '';
+  fetch('/api/devices/pair/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      code: document.getElementById('c').value,
+      device_name: document.getElementById('n').value
+    })
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (d) {
+      return { ok: r.ok, data: d };
+    });
+  }).then(function (res) {
+    if (res.ok) {
+      // Where the gateway says this device lands; only ever a path on this same gateway.
+      var to = res.data && res.data.landing;
+      var local = typeof to === 'string' && to.charAt(0) === '/' && to.charAt(1) !== '/';
+      window.location.href = local ? to : '/';
+      return;
+    }
+    var code = (res.data && res.data.error && res.data.error.code)
+      || 'device_pair_code_invalid';
+    err.textContent = MESSAGES[code] || 'Pairing failed. Ask for a new code and try again.';
+    btn.disabled = false;
+  }).catch(function () {
+    err.textContent = 'Could not reach the gateway.';
+    btn.disabled = false;
+  });
+});
+"""
+
+_PAIR_HTML = page_document(
+    title="Pair this device — PersonalClaw", body=_PAIR_BODY, script=_PAIR_SCRIPT
+)
+
+
+# ── the list: everything signed in ─────────────────────────────────────
+
+
+def _row(nonce: str, record: Any, current: str) -> dict[str, Any]:
+    device = record.device
+    return {
+        "id": device.id,
+        "name": device.name,
+        "kind": device.kind,
+        # When it signed in. 0.0 only for a session from before this was recorded.
+        "minted_at": device.minted_at,
+        # 0.0 means "never made an authorized request" and the panel renders it as "never".
+        # It is deliberately not coalesced to `minted_at` — see `DeviceInfo`.
+        "last_seen": device.last_seen,
+        # Where it was last seen from; "" until it has made an authorized request.
+        "ip": device.ip,
+        "issuer": record.issuer,
+        # Which limit it counts against: `device`, `browser` or `token`.
+        "pool": pool_of(record),
+        "expires_at": record.expiry,
+        "current": bool(current) and nonce == current,
+    }
+
+
+async def api_devices_list(request: web.Request) -> web.Response:
+    """GET /api/devices — every device and token signed in to this gateway.
+
+    Derived from `sessions.json`, so an entry disappears the moment its session is signed out
+    or expires. ``current`` marks the one asking. ``limits`` is how many of each kind may be
+    signed in at once. Never returns a nonce: this list is something the owner reads out loud.
+    """
+    current = str(request.get("session_nonce") or "")
+    rows = [_row(nonce, record, current) for nonce, record in signed_in_sessions().items()]
+    rows.sort(key=lambda r: (not r["current"], -float(r["last_seen"] or r["minted_at"] or 0.0)))
+    _audit("devices_listed", "ok", resources=f"devices={len(rows)}")
+    return web.json_response({"devices": rows, "limits": dict(POOL_CAPS)})
+
+
+async def api_devices_revoke(request: web.Request) -> web.Response:
+    """POST /api/devices/{id}/revoke — sign one device or token out.
+
+    Ends the session in memory AND in the durable store (``token_auth.sign_out``). Both halves
+    are load-bearing and for different clocks: without the in-memory drop the device keeps
+    working until this process restarts, and without the durable drop it comes back TO LIFE at
+    the next restart. A revoke that un-revokes on reboot is worse than no revoke, because the
+    owner was told it worked. The device's next request is told it was signed out from here.
+    """
+    if not check_origin(request):
+        _audit("device_revoked", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+
+    device_id = request.match_info.get("id", "")
+    nonces = nonces_for_session(device_id)
+    if not nonces:
+        _audit("device_revoked", "denied", error="unknown device", resources=f"device={device_id}")
+        return json_error(ERR_UNKNOWN_DEVICE, status=404)
+
+    current = str(request.get("session_nonce") or "")
+    reason = END_SIGNED_OUT if current in nonces else END_SIGNED_OUT_ELSEWHERE
+    revoked = sign_out(nonces, reason, actor=str(request.get("user") or "owner"))
+    _audit("device_revoked", "ok", resources=f"device={device_id} sessions={revoked}")
+    return web.json_response({"ok": True, "revoked": revoked})
+
+
+async def api_devices_revoke_others(request: web.Request) -> web.Response:
+    """POST /api/devices/revoke-others — sign out every device and token but the caller's own.
+
+    The one-click answer to "a device I don't recognise is signed in" (or a lost phone): each
+    device it signs out is told, on its next request, that another device chose "Sign out all
+    other devices". App-scoped tokens are left alone — each is an app's narrowing of a
+    session, and one belonging to a signed-out session is refused with it. A caller with no
+    session of its own (a local-network bypass) keeps nothing, so this signs out everything.
+
+    It needs ``{"confirm": true}``, unlike signing ONE device out (which must stay a single
+    step: that is containment, see ``tests/test_destructive_actions_confirm.py``). This one
+    reaches every paired phone, each of which then has to be paired again, so a bare POST — a
+    script's, an agent's, a stray request's — signs nothing out. The panel sends it only from
+    its own confirmation, which names how many devices it will sign out.
+    """
+    if not check_origin(request):
+        _audit("devices_revoked_others", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    if not confirm_granted(await json_object_body(request)):
+        _audit("devices_revoked_others", "denied", error="not confirmed")
+        return json_error(
+            "confirmation_required",
+            message=(
+                'send {"confirm": true} — this signs out every other device and token, '
+                "and each has to sign in again"
+            ),
+            status=400,
+        )
+
+    current = str(request.get("session_nonce") or "")
+    others = [nonce for nonce in signed_in_sessions() if nonce != current]
+    revoked = sign_out(others, END_SIGNED_OUT_OTHERS, actor=str(request.get("user") or "owner"))
+    _audit("devices_revoked_others", "ok", resources=f"sessions={revoked}")
+    return web.json_response({"ok": True, "revoked": revoked})
+
+
+async def api_auth_rotate_key(request: web.Request) -> web.Response:
+    """POST /api/auth/rotate-key — replace the key every sign-in is signed with.
+
+    Every browser, paired device and token is signed out at once, the caller's own included, and
+    each is told on its next request that the key was replaced (``token_auth.rotate_signing_key``).
+    Settings → Security sends it, and so does ``personalclaw auth rotate-key`` — over loopback with
+    the local secret, the rail ``personalclaw logout`` uses (the route is a mixed internal path).
+
+    It needs ``{"confirm": true}``, like "Sign out all other devices" and for the same reason, one
+    step further: it signs out the device asking too. Answers how many sessions it signed out and,
+    for a caller that had one, ``notice`` — the sentence that device is told — so the page can
+    show it at once instead of on its next refused request.
+    """
+    from personalclaw.dashboard.token_auth import ended_notice, rotate_signing_key
+
+    if not check_origin(request):
+        _audit("session_key_replaced", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    if not confirm_granted(await json_object_body(request)):
+        _audit("session_key_replaced", "denied", error="not confirmed")
+        return json_error(
+            "confirmation_required",
+            message=(
+                'send {"confirm": true} — this signs out every browser, paired device and token, '
+                "this one included, and each has to sign in again"
+            ),
+            status=400,
+        )
+    current = str(request.get("session_nonce") or "")
+    actor = str(request.get("user") or "local process")
+    try:
+        signed_out = rotate_signing_key(actor=actor)
+    except OSError as exc:
+        _audit("session_key_replaced", "error", caller=actor, error=str(exc))
+        return json_error(
+            "service_unavailable",
+            message=f"The sign-in key could not be replaced, so nobody was signed out: {exc}",
+            status=503,
+        )
+    # The key's security-log event is the rotation's own (the CLI's in-process path writes it too).
+    notice = ended_notice(current)
+    return web.json_response(
+        {
+            "ok": True,
+            "signed_out": signed_out,
+            "notice": (
+                {"code": notice.code, "reason": notice.reason, "message": notice.message}
+                if notice is not None
+                else None
+            ),
+        }
+    )
+
+
+# ── integrations: the tokens an external agent reaches an inbound surface with ──────────
+
+
+async def api_devices_integrations(request: web.Request) -> web.Response:
+    """GET /api/devices/integrations — every integration token that can reach this gateway.
+
+    Each inbound surface's token and every registered client's (``inbound/tokens.py``): when it
+    was issued, when it stops working, when it was last used, and whether it still works. Never
+    a token or a hash. ``problem`` is the sentence to show when the record of their lifetimes
+    cannot be read, because every surface token is refused until it can.
+    """
+    from personalclaw.inbound import tokens
+
+    rows, problem = tokens.integration_rows()
+    rows.sort(key=lambda r: (r["kind"] != "surface", str(r["name"]).lower()))
+    _audit("integrations_listed", "ok", resources=f"integrations={len(rows)}")
+    return web.json_response({"integrations": rows, "problem": problem})
+
+
+async def api_devices_integration_revoke(request: web.Request) -> web.Response:
+    """POST /api/devices/integrations/{id}/revoke — revoke one integration's token.
+
+    A surface token stops working at once, and stays refused for as long as it is configured —
+    even when the environment sets it again at the next start. The surface stays on, so a
+    registered client's own token keeps working. A client's record is deleted, which is what
+    kills its token. Either way, whatever still presents it is told it was revoked, and when.
+
+    One step, like signing out one device: a leaked token is the reason to reach for this, and
+    a prompt would only delay containment.
+    """
+    if not check_origin(request):
+        _audit("integration_revoked", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    from personalclaw.inbound import tokens
+
+    row_id = request.match_info.get("id", "")
+    try:
+        revoked = tokens.end_integration(row_id, actor=str(request.get("user") or "owner"))
+    except tokens.RegistryUnavailable as exc:
+        _audit("integration_revoked", "error", error=str(exc), resources=f"integration={row_id}")
+        return json_error(
+            "service_unavailable",
+            message=(
+                "The record of when each integration token stops working can't be written, so "
+                f"nothing was revoked — though every surface token is refused until it can: {exc}"
+            ),
+            status=503,
+        )
+    if not revoked:
+        _audit(
+            "integration_revoked",
+            "denied",
+            error="unknown integration",
+            resources=f"integration={row_id}",
+        )
+        return json_error(ERR_UNKNOWN_INTEGRATION, status=404)
+    _audit("integration_revoked", "ok", resources=f"integration={row_id}")
+    return web.json_response({"ok": True, "revoked": row_id})
+
+
+def register_device_routes(app: web.Application, *, pairing: bool = True) -> None:
+    """Wire the eight API routes plus the redeem PAGE the pairing URL points at.
+
+    ``pairing=False`` leaves out the pairing flow (its two routes and the page), for a gateway that
+    serves none of the dashboard's pages (``--headless``): its URL would open a page that is not
+    there, and a device it signed in would land on a dashboard that is not there either."""
+    if pairing:
+        app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
+        app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
+    app.router.add_get("/api/devices", api_devices_list)
+    app.router.add_post("/api/devices/revoke-others", api_devices_revoke_others)
+    # Beside the other sign-out actions: replacing the key is signing EVERY device out.
+    app.router.add_post("/api/auth/rotate-key", api_auth_rotate_key)
+    app.router.add_post("/api/devices/{id}/revoke", api_devices_revoke)
+    app.router.add_get("/api/devices/integrations", api_devices_integrations)
+    app.router.add_post("/api/devices/integrations/{id}/revoke", api_devices_integration_revoke)
+    # Registered here rather than beside the other pages in server.py: it is the entry point of
+    # `pair/start`'s URL, and splitting the two across files is how the URL came to point at a
+    # route that did not exist.
+    if pairing:
+        app.router.add_get("/pair", pair_page)

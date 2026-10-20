@@ -1,0 +1,132 @@
+import { useEffect, useState } from 'react'
+import { api, type NotificationSettings, type NotificationRulesDoc } from '../../lib/api'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { useFieldHintId } from '../../ui/forms'
+import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
+import { ApprovalChannelSection } from './ApprovalChannelSection'
+import { notify } from '../../app/appSdk'
+
+const SEVERITIES = [
+  { key: 'info', label: 'All' },
+  { key: 'warning', label: 'Warnings+' },
+  { key: 'error', label: 'Errors only' },
+]
+
+/** Notification preferences → GET/PUT /api/notifications/settings, enforced by
+ *  the DashboardState.notify() delivery gate (mute / severity / quiet hours). */
+export function NotificationsPanel() {
+  const [s, setS] = useState<NotificationSettings | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  // Settings: stale-while-revalidate + persist; seeded into the optimistic local
+  // `s` so saves keep their existing behavior.
+  // 🔴 NOT `.catch(() => null)`. A substituted null is indistinguishable from "still loading" to the gate
+  // below, so a failed read left this panel shimmering FOREVER with nothing said — measured on
+  // `#/settings/notifications` with the GET at 500: 0 controls, one `aria-busy` skeleton, no alert. Same
+  // shape found earlier on the inbox panel and on three config panels.
+  const { data: settingsData, error: loadErr, refresh } = useQuery(
+    'settings:notification-settings', () => api.notificationSettings(), { persist: true },
+  )
+  useEffect(() => { if (settingsData) setS(settingsData) }, [settingsData])
+
+  // The per-kind rules matrix. Not persisted to the cache: it's the authoritative view of
+  // policy, and serving a stale copy after an edit would show the user a rule they just
+  // changed back to its old value.
+  // 🔴 THE "IT ONLY DECORATES" ARGUMENT DID NOT SURVIVE READING WHAT IT GATES (#3394). This read
+  // used to carry `.catch(() => null)` and bind no `error` — both halves of the contract defeated at
+  // once — on the reasoning that the matrix "DECORATES this panel, so losing it degrades one section
+  // rather than fabricating the switches above". But `rules` gates TWO sections, and the comment four
+  // lines above calls the same payload "the authoritative view of policy". One of the two is
+  // `<NotificationRulesMatrix>` — every per-kind rule the user came here to change — and the other is
+  // `<DigestSchedule>`, which is a CONTROL, not a readout. A failed read therefore deleted the page's
+  // per-kind half with no alert, no retry, and nothing to distinguish it from "you have no rules".
+  // The fallback is gone and the failure is now stated where the sections were. The panel's GATING
+  // read keeps its own separate branch, so an unreadable matrix still leaves every global control up.
+  const { data: rules, error: rulesErr, refresh: refreshRules } = useQuery<NotificationRulesDoc | null>(
+    'settings:notification-rules', () => api.notificationRules(), { persist: false },
+  )
+  const reloadRules = () => { invalidateKeys('settings:notification-rules'); refreshRules() }
+
+  const flashSaved = () => { setSaved(true); setTimeout(() => setSaved(false), 1600) }
+  const patch = (p: Partial<NotificationSettings>) => {
+    setS((prev) => prev && { ...prev, ...p })
+    // Optimistic locally, silent on failure. A notification setting that did not save while the UI says
+    // it did is the worst member of this family: the next missed alert has no explanation.
+    api.saveNotificationSettings(p)
+      .then(flashSaved)
+      .catch((e) => notify(`Couldn't save your notification settings: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
+  // Error BEFORE the skeleton, or it is unreachable: `s` is null for loading AND for failure.
+  if (!s && loadErr) return <LoadError what="notification settings" error={loadErr} onRetry={refresh} />
+  if (!s) return <FormSkeleton sections={2} what="notification settings" />
+  return (
+    <div>
+      <PanelHeader title="Notifications" hint="Control how and when PersonalClaw notifies you." />
+      <div className="mb-l flex justify-end"><SavedToast show={saved} /></div>
+
+      <Section title="Delivery">
+        {/* The switch's `aria-label` must CONTAIN the visible row label, or a speech-input user who
+            says what they can see does not hit the control — WCAG 2.5.3 Label in Name, Level A. It read
+            "Mute all" against a visible "Mute all notifications". Measured from the accessibility tree,
+            not the source: `ui/Toggle` puts `label` on the switch as `aria-label`, which OVERRIDES every
+            other naming source, so the row's visible text is not in the name at all. */}
+        <Row label="Mute all notifications" hint="Pause every notification regardless of severity.">
+          <Toggle on={s.mute_all} onChange={(v) => patch({ mute_all: v })} label="Mute all notifications" />
+        </Row>
+        <Field label="Minimum severity" hint="Only notify at or above this level.">
+          <SegPills ariaLabel="Minimum severity" value={s.min_severity} onChange={(v) => patch({ min_severity: v })} options={SEVERITIES} />
+        </Field>
+      </Section>
+
+      <Section title="Quiet hours" hint="Only errors ping you during these hours. A notice your rules send to the digest or as a badge still arrives that way, and one that needs your answer waits silently in the bell.">
+        <Row label="Enable quiet hours">
+          <Toggle on={s.quiet_hours_enabled} onChange={(v) => patch({ quiet_hours_enabled: v })} label="Enable quiet hours" />
+        </Row>
+        {s.quiet_hours_enabled && (
+          <Row label="Window" hint="Start and end (24-hour, server time).">
+            <div className="flex items-center gap-2">
+              <TimeInput ariaLabel="Quiet hours window start" value={s.quiet_hours_start} onChange={(v) => patch({ quiet_hours_start: v })} />
+              <span data-type="body-s" className="text-on-surface-low">to</span>
+              <TimeInput ariaLabel="Quiet hours window end" value={s.quiet_hours_end} onChange={(v) => patch({ quiet_hours_end: v })} />
+            </div>
+          </Row>
+        )}
+      </Section>
+
+      {/* Which chat channel asks an approval. Above the per-kind rules, whose Approval needed row's
+          Channel DM target it steers. */}
+      <ApprovalChannelSection onSaved={flashSaved} />
+
+      {/* Per-kind rules sit BELOW the global controls because that's the order they apply
+          in: the gate above decides whether anything is delivered at all, and these decide
+          how. Rendered only once loaded — an empty matrix would read as "no kinds exist".
+          And the failure branch precedes them for the same reason: `!rules` is true while
+          loading AND on failure, so an arm placed after them could never run. */}
+      {!rules && rulesErr
+        ? <LoadError what="per-kind notification rules" error={rulesErr} onRetry={reloadRules} />
+        : (
+          <>
+            {rules && <NotificationRulesMatrix doc={rules} onSaved={reloadRules} />}
+            {rules && <DigestSchedule schedule={rules.digest.schedule} onSaved={reloadRules} />}
+          </>
+        )}
+    </div>
+  )
+}
+
+function TimeInput({ value, onChange, ariaLabel }: { value: string; onChange: (v: string) => void; ariaLabel: string }) {
+  // Named on its own: a settings `Row` names nothing (its control does), and the two time fields read
+  // to a screen reader as "time, edit" twice. The name holds the row's visible "Window", so a speech
+  // user who says what they see reaches it; the row's hint is its description.
+  const hintId = useFieldHintId()
+  // Only propagate a complete HH:MM — clearing the field emits '' which the
+  // backend rejects (an unparseable time silently disabled quiet hours at the
+  // delivery gate). The controlled value snaps back, so a clear is a no-op.
+  return (
+    <input type="time" aria-label={ariaLabel} aria-describedby={hintId} value={value} onChange={(e) => { if (e.target.value) onChange(e.target.value) }}
+      data-type="body-s" className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+  )
+}

@@ -1,0 +1,45 @@
+/* Jade. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="jade"] {
+  /* layer 1: the steps the base sheet does not have */
+  --blue-482: #0057c2;
+  --blue-538: #1668d8;
+  --blue-693: #4e9ff8;
+  --blue-699: #50a1fa;
+  --teal-232: #04231f;
+  --teal-320: #0c3b35;
+  --teal-439: #006057;
+  --teal-478: #006c64;
+  --teal-600: #0d9488;
+  --teal-633: #2a9e90;
+  --teal-665: #3aa898;
+  --teal-785: #2dd4bf;
+  --teal-864: #7fe8da;
+  --teal-939: #cbf5ee;
+  /* layer 2, dark */
+  --color-primary: var(--teal-785);
+  --color-primary-emphasis: var(--teal-864);
+  --color-on-primary: var(--teal-232);
+  --color-primary-container: var(--teal-320);
+  --color-secondary: var(--blue-693);
+  --color-info: var(--blue-699);
+  --grad-1: var(--teal-633);
+  --grad-2: var(--teal-785);
+  --grad-3: var(--teal-864);
+  --grad-4: var(--blue-693);
+  --glow-a: var(--teal-785);
+  --glow-b: var(--teal-864);
+}
+:root.light[data-theme="jade"] {
+  --color-primary: var(--teal-478);
+  --color-primary-emphasis: var(--teal-439);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--teal-939);
+  --color-secondary: var(--blue-538);
+  --color-info: var(--blue-482);
+  --grad-1: var(--teal-633);
+  --grad-2: var(--teal-478);
+  --grad-3: var(--teal-665);
+  --grad-4: var(--blue-693);
+  --glow-a: var(--teal-600);
+  --glow-b: var(--teal-665);
+}

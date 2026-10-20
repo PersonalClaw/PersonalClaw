@@ -1,0 +1,484 @@
+import { useMemo } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { PresetEmptyState } from '../../ui/PresetEmptyState'
+import { Button } from '../../ui/Button'
+import { TRIGGER_PRESETS } from './triggerPresets'
+import { SidePanel } from '../../ui/SidePanel'
+import { ListControls } from '../../ui/ListControls'
+import { Segmented } from '../../ui/Segmented'
+import { WeekGridView } from './WeekGridView'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
+import { api, type ActionProvider, type TriggerSourceUnreadable } from '../../lib/api'
+import { ScheduleDetail } from '../schedule/ScheduleDetail'
+import { LifecycleDetail } from './LifecycleDetail'
+import { StoreTriggerDetail } from './StoreTriggerDetail'
+import { CallbackDetail } from './CallbackDetail'
+import { TriggerReview } from './TriggerReview'
+import { RestoreHoldNotice } from './RestoreHold'
+import { UnreadableNotice } from './UnreadableNotice'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
+import { RungChip } from '../../ui/RungChip'
+import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
+import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
+import { PageTitle } from '../../ui/PageTitle'
+
+/** No file the page lists from is unreadable: one array, so the memo inputs keep their identity. */
+const NONE_UNREADABLE: TriggerSourceUnreadable[] = []
+
+// One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store · callback.
+// `Data events` was missing, so an event trigger — creatable from this page's own form — had no
+// chip AND was absent from every count.
+// The plural wording is deliberate and differs from `TRIGGER_KINDS`' singular labels: these name
+// a CATEGORY OF ROWS you are filtering to, not the kind of the one thing you are creating. Every
+// filter is the PLURAL of its kind — Schedules, Lifecycle events, Data events, Automations — so
+// `lifecycle` reads "Lifecycle events" (the plural of the canonical "Lifecycle event" kind, parallel
+// to "Data events"), not the singular "Lifecycle" that broke the row's own convention.
+const FILTERS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'schedule', label: 'Schedules' },
+  { key: 'lifecycle', label: 'Lifecycle events' },
+  { key: 'event', label: 'Data events' },
+  { key: 'store', label: 'Automations' },
+  { key: 'callback', label: 'Callbacks' },
+]
+
+// 🔴 The local `statusDot` was DELETED. It handled four values and defaulted the rest to a
+// neutral grey circle — and for a store trigger this page fed it `t.health`, whose vocabulary is
+// `ok | degraded | parked | failing`. `degraded`, `parked` and `failing` ALL rendered as
+// the same grey circle, so a FAILING automation was pixel-identical to a parked (self-healing) one
+// on the single page a user manages automations from. Second instance of the defect shape in a
+// second local copy, which is why the vocabulary has one mapper per language: `statusMeta` for run
+// outcomes, `triggerHealthMeta` for health + lifecycle state.
+//
+// 🔴 AND THEN THE CALL SITE BECAME THE COPY (issue 496). Deleting the local mapper left a per-kind
+// TERNARY choosing between them, so each new kind picked a vocabulary again — and measured on a live
+// gateway, both directions were wrong at once: the `event` branch picked the run-outcome mapper for a
+// row with no run outcome (a PARKED event trigger rendered "never run", with the reason on the wire
+// and unread), while the `schedule` branch reached around `triggerMeta`'s never-run guard by passing
+// the raw wire pair, so **6 of 11 schedule rows** — five of them the SYSTEM triggers every fresh home
+// registers — drew an ok-GREEN tick beside the word "never".
+//
+// One row, one call: `triggerStatusMeta(t)`. The converters put each fact in the field named for its
+// vocabulary and `scheduleMeta` owns the precedence, so a fifth kind cannot re-open this.
+
+/** Unified Triggers list — schedule + lifecycle triggers in one view, with a
+ *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
+ *  verbatim; LifecycleDetail for lifecycle triggers). Backed by the unified
+ *  /api/triggers facade (api.schedules()/api.hooks() project it per kind). */
+export function TriggersListPage({ onCreate, query, setQuery }: {
+  /** Opens the create flow. With a preset id, the flow opens SEEDED from that preset. */
+  onCreate: (presetId?: string) => void
+} & Pick<RouteProps, 'query' | 'setQuery'>) {
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })
+  const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
+  const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
+  const openId = openIdRaw || null
+  const [editing, setEditing] = useEditFlag(query, setQuery)
+  // List | Week. URL-addressable, unlike the run-detail toggle: a week grid is something
+  // you send someone ("look at Thursday"), and the section is already query-state driven.
+  const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
+
+  // Schedules carry live next-run/running state → persist:false (instant in-app
+  // revisit, but never stale across a hard reload). Hooks + action providers are
+  // lifecycle config that rarely changes → persist:true so they survive a reload.
+  const { data: scheduleList, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules(), { persist: false })
+  const schedules = scheduleList?.jobs
+  // The files this page lists from that cannot be read, said above the list: a list read from one
+  // as empty is not "no triggers". Every `/api/triggers` read names them; the schedules read is the
+  // one taken here.
+  const unreadable = scheduleList?.unreadable ?? NONE_UNREADABLE
+  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
+  // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
+  const catalog = useTriggerVariables()
+  // Store triggers (file/web_watch/idle/…, and data events) carry live enabled/health state →
+  // persist:false, like schedules: instant in-app revisit but never stale across a hard reload. A
+  // data-event trigger is a row in the same store, so it arrives here too; `storeToTrigger` presents
+  // it by the pattern it listens for.
+  const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
+  // Callbacks the agent registered (`hook_register`): live, because the agent can register one — or
+  // register it again with other context — at any moment, and the switch is the owner's yes to it.
+  const { data: callbacks, error: callbacksErr, refresh: refreshCallbacks } = useQuery('triggers:callbacks', () => api.callbacks(), { persist: false })
+  const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  // What a restart left for you to decide: missed runs and interrupted runs. Live, like schedules.
+  const { data: review = [], error: reviewErr, refresh: refreshReview } = useQuery('triggers:review', () => api.triggerReview(), { persist: false })
+  // How much each row's action may do UNATTENDED. The ladder is
+  // keyed on the action-provider name — the same identity the backend dispatch seams hold —
+  // so this page annotates a row without knowing anything about action types. A failed read
+  // leaves `ladder` null and the rows simply carry no chip: the Settings ladder panel is the
+  // surface that OWNS this data and reports the failure, and substituting a rung here would
+  // be a fabricated claim about what an automation may do on its own.
+  const { ladder } = useAutonomyLadder()
+  const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
+
+  const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
+  const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
+  const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
+  const loadCallbacks = () => { invalidateKeys('triggers:callbacks'); refreshCallbacks() }
+  const loadReview = () => { invalidateKeys('triggers:review'); refreshReview() }
+  // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
+  useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
+  // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
+  // tab) reached the status strip's count on its next poll and never reached this page: only
+  // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
+  // `crons` whenever the trigger store changes, and every source re-reads on it, and on the socket
+  // coming back, which lost any `crons` sent while it was down.
+  const loadAll = () => { loadSchedules(); loadHooks(); loadStores(); loadCallbacks(); loadReview() }
+  useChatSocket((m: WsMessage) => {
+    if (refreshKinds(m).includes('crons')) loadAll()
+  }, loadAll)
+
+  // What a restore holds, whatever the filter shows: the notice is about this home, and Resume all
+  // resumes every one of them. Only a schedule or a store row can be held.
+  const restoreHolds = useMemo(
+    () => [...(schedules ?? []).map(scheduleToTrigger), ...(stores ?? []).map(storeToTrigger)]
+      .map((t) => t.restoreHold ?? '')
+      .filter((hold) => hold !== ''),
+    [schedules, stores],
+  )
+
+  // Above the list AND the week grid: the "Missed scheduled runs" notice sends you to this page,
+  // whichever view you last left it in. So does the restore's "Resume them on the Triggers page".
+  const reviewPanel = (
+    <>
+      <UnreadableNotice sources={unreadable} />
+      <RestoreHoldNotice holds={restoreHolds} onResumed={() => { loadSchedules(); loadStores() }} />
+      <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
+        onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
+        onOpen={(openId) => setQuery({ open: openId, edit: null, view: 'list' })} />
+    </>
+  )
+
+  const triggers = useMemo<Trigger[] | null>(() => {
+    if (schedules === undefined || hooks === undefined || stores === undefined || callbacks === undefined) return null
+    // Every kind needs its converter: the wire carries no `whenLabel`/`whenIcon`/`actionLabel`,
+    // so a raw row would render `undefined` for the icon the list draws per row.
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger), ...callbacks.map(callbackToTrigger)]
+    const n = q.trim().toLowerCase()
+    return all
+      .filter((t) => filter === 'all' || t.kind === filter)
+      .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
+  }, [schedules, hooks, stores, callbacks, filter, q])
+
+  const open = useMemo(() => resolveOpenTrigger(triggers, openId), [triggers, openId])
+
+  const counts = useMemo(() => {
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, all = stores?.length ?? 0, c = callbacks?.length ?? 0
+    // Data events are store rows; the chip counts them apart from the other store kinds.
+    const e = (stores ?? []).filter((row) => row.store_kind === 'event').length
+    return { all: s + h + all + c, schedule: s, lifecycle: h, store: all - e, event: e, callback: c }
+  }, [schedules, hooks, stores, callbacks])
+
+  // 🔴 A FAILED FETCH USED TO READ AS "No triggers". Each list source `.catch(() => [])`'d its
+  // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
+  // `LoadError` exists to end (its docstring: "A failed fetch and a genuinely empty collection are
+  // different facts"). The catches are gone; a rejection now reaches the hook's `error`. This flag is
+  // true only when NOTHING has composed yet (so we are not hiding a good cached list) and a source
+  // actually failed — a partial success still renders, because a working schedule list should not be
+  // hidden because the event feed hiccuped.
+  const loadFailed = triggers === null &&
+    !!(schedulesErr || hooksErr || storesErr || callbacksErr)
+
+  return (
+    <WorkbenchLayout
+      topBar={
+        <TopBar
+          keepCornerPadding
+          left={<PageTitle>Triggers</PageTitle>}
+          right={
+            /* `() => onCreate()`, NOT `onCreate` — the blank path must pass NO preset id.
+               `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
+               is assignable to it, so tsc accepts the bare reference while React still hands the
+               handler its click event. That event landed in `presetId` and rode into the URL:
+               clicking this button produced
+               `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D`. The preset lookup is
+               tolerant, so no field was corrupted — the damage was to the URL this page's own
+               contract says is shareable and reload-survivable. */
+            <HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={() => onCreate()} /></HeaderActions>
+          }
+        />
+      }
+      controls={(triggers === null || counts.all > 0)
+        ? <ListControls
+            results={{ count: (triggers ?? []).length, noun: 'triggers', active: !!q.trim() || filter !== 'all' }}
+            // Search and the type filter belong to the LIST. The week grid plots every enabled clock
+            // trigger by construction, so a search box over it would be a control that changes
+            // nothing — worse than an absent one.
+            search={view === 'list' ? { value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' } : undefined}
+          >
+            <Segmented
+              ariaLabel="Triggers view"
+              size="sm"
+              value={view}
+              onChange={setView}
+              options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]}
+            />
+            {view === 'list' && <FilterMenu sections={[{
+              title: 'Type',
+              value: filter,
+              defaultKey: 'all',
+              onChange: setFilter,
+              options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as keyof typeof counts] })),
+            } satisfies FilterSectionDef]} />}
+          </ListControls>
+        : undefined}
+      panel={
+        open && (
+          <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
+            {open.kind === 'schedule' && open.schedule
+              ? <ScheduleDetail job={open.schedule} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
+              // A data-event trigger IS a store row: the same inspector, run history and Run now.
+              : (open.kind === 'store' || open.kind === 'event') && open.store
+              ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
+              : open.kind === 'callback' && open.callback
+              ? <CallbackDetail callback={open.callback} onChanged={loadCallbacks} onDeleted={() => { setOpenId(""); loadCallbacks() }} />
+              : open.hook
+              ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
+              : null}
+          </SidePanel>
+        )
+      }
+    >
+      {view === 'week' ? (
+        <>
+          {(review.length > 0 || reviewErr != null || restoreHolds.length > 0 || unreadable.length > 0) && (
+            <div className="mx-auto px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>{reviewPanel}</div>
+          )}
+          {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
+              and a row lead to one inspector rather than two surfaces that drift apart. */}
+          <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+        </>
+      ) : (
+      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {reviewPanel}
+        {loadFailed ? (
+          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || callbacksErr}
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); loadCallbacks() }} />
+        ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
+              // Nothing listed because a file could not be read is not an empty list: the notice
+              // above says what it stops and what to do, and a "No triggers" here would say the
+              // opposite.
+              unreadable.length > 0 ? null : !q && filter === 'all' ? (
+                // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
+                // A blank create form here opens on the full ontology (four trigger kinds, ~15
+                // lifecycle events, every action provider), so the empty state offers finished
+                // presets that SEED that same form instead. The expert blank path is still the top
+                // bar's "New trigger", repeated under the grid. This branch is rare on a real home:
+                // the triggers PersonalClaw registers for itself fill the list, which is why the
+                // blank form "New trigger" opens offers the same presets at its top.
+                <PresetEmptyState
+                  title="No triggers"
+                  // No em dash in this hint on purpose: at the centered 520px measure it wrapped
+                  // onto the second line, so the line began with punctuation and read as a new
+                  // sentence. `text-balance` was tried and measurably changed nothing (the break
+                  // was already near-balanced) — the copy was the defect, not the wrapping.
+                  hint="A trigger runs an action when something happens. Each of these opens the create form already filled in, ready for you to review and save."
+                  presets={TRIGGER_PRESETS}
+                  onPick={(prefill) => onCreate(prefill.id)}
+                  footer={
+                    <Button variant="ghost" size="sm" onClick={() => onCreate()}>
+                      <Plus size={15} /> Start from scratch
+                    </Button>
+                  }
+                />
+              ) : (
+              // The hint names the control the user actually touched. One line for "try a
+              // different filter" was wrong whenever the search box was the thing narrowing
+              // the list, which is the common case: it pointed at a filter they never set.
+              // No presets in this branch: the list is merely FILTERED, so offering a starter
+              // answers a question this user did not ask (the `emptyStateNoMatch` contract).
+              <EmptyState
+                icon={Zap}
+                title="No matching triggers"
+                hint={
+                  q && filter !== 'all' ? 'Try a different search or filter.' :
+                  q ? 'Try a different search term.' :
+                  'Try a different filter.'
+                }
+              />
+              )
+            ) : (
+              <div className="flex flex-col gap-s">
+                {triggers.map((t) => {
+                  // ONE call for every kind. The per-kind ternary that used to live here was the
+                  // defect: each branch chose a MAPPER, so adding a kind meant picking a vocabulary
+                  // again — and the event branch picked the run-outcome mapper for a row that has no
+                  // run outcome, rendering a PARKED event trigger as "never run". The converters now
+                  // put each fact in its own field and `triggerStatusMeta` owns the precedence.
+                  const sd = triggerStatusMeta(t)
+                  const started = runSourceMeta(t.lastRunSource)
+                  // The cause, shown only where it is still true — see `explainsCause`: the backend
+                  // never clears `last_error_summary` on recovery, so a healthy row still carries the
+                  // old reason and printing it would report a fixed fault.
+                  const reason = explainsCause(sd) ? t.lastError : ''
+                  // The advisory's REASON, in words on the row. It was the badge's hover `title`
+                  // only, so the one line that says WHY a schedule needs checking was invisible to
+                  // anyone not hovering it — and unreachable on touch. Yields to an error exactly as
+                  // the badge does: a row already "needs attention" does not also get a milder note.
+                  const advisory = (!t.broken || t.broken.length === 0) ? (t.warnings ?? []) : []
+                  // Right-click / long-press → the scoped actions this list performs on
+                  // a row (open the inspector, or open it straight into edit mode). Both
+                  // route through the same `setQuery` the row's click uses — destructive
+                  // + enable/disable live inside the opened detail panel, not here.
+                  // A FOREIGN row gets 'Open' and nothing else.
+                  // It is somebody else's automation: this harness will not arm or fire it,
+                  // so offering Edit would be offering to change a row whose owner's machine — not
+                  // this one — decides what it does. Open still works: the row is informational,
+                  // and informational means readable.
+                  // An EVENT row gets no Edit either: the store inspector has no editor (the chat's
+                  // `automation_update`, or recreating it, changes the pattern), so the item would
+                  // silently act as a second Open — an affordance that lies about what it does. Nor
+                  // does a CALLBACK: its context is the agent's, saved by `hook_register`. Nor a row
+                  // an app serves: the app keeps what it is, and its panel says where it is changed.
+                  const menuItems: ContextMenuItem[] = [
+                    { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
+                    ...(t.readOnly || t.servedBy || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                  ]
+                  return (
+                    <ContextMenu key={t.id} items={menuItems}>
+                    <ListRow accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
+                      <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-s">
+                          <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
+                          {/* A callback's switch is the owner's yes, so an off one says "not allowed to
+                              run" below rather than "disabled" as well. One a restore switched off
+                              says so: it waits for a Resume, not for a switch the owner flipped. */}
+                          {t.restoreHold
+                            ? <span data-type="caption" className="shrink-0 text-warn">· paused by the restore</span>
+                            : !t.enabled && t.kind !== 'callback' && <span data-type="caption" className="shrink-0 text-on-surface-low">· disabled</span>}
+                          {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
+                          {/* A BLOCKING hook that no agent binds still fires — on the
+                              informational path, whose results are discarded — so its run count
+                              climbs while the write it exists to stop lands anyway. 3
+                              fires, file written. The dim "· dormant" it used to share with every
+                              other unbound event cannot carry that, and the run count argues
+                              against it, so an inert safety control gets warn ink and the word
+                              "enforcing" the user was looking for. Non-blocking events keep
+                              "· dormant": accurate for them, and crying wolf on 14 of the 15
+                              would train the eye to skip the one that matters. */}
+                          {/* Issue 610: `used_by` is "which agents reference this", NOT "does it
+                              fire" — 7 of the 15 events fire GLOBALLY, agent references irrelevant
+                              (a MemoryWrite hook badged by used_by delivered its notification
+                              while reading "dormant"). So the badge reads the event's FIRE PATH
+                              from the server catalog: "dormant" is reserved for eventIsDormant's
+                              real meaning (an event nothing fires), agent-scoped events with no
+                              referencing agent say exactly that, and an unreferenced GLOBAL event
+                              gets no badge — it fires regardless. Catalog still loading / older
+                              backend → no claim at all (a wrong badge is the bug, silence is not). */}
+                          {t.kind === 'lifecycle' && t.enforcement === 'not_enforcing'
+                            ? <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]"><ShieldOff size={11} /> not enforcing</span>
+                            : t.kind === 'lifecycle' && eventIsDormant(catalog, t.hook?.event)
+                              ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
+                              : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
+                          {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {/* Brought over from an older version and off until the owner allows what
+                              it runs — what the Inbox's review item sends you here to find. Warn, not
+                              danger: nothing is broken, it is waiting for a decision. */}
+                          {t.needsReview && <span data-type="caption" className="shrink-0 text-warn">· waiting for your review</span>}
+                          {/* Its action is not allowed to run — Run now and every fire are refused
+                              until the owner allows it on its panel. An imported row already says
+                              so as "waiting for your review". */}
+                          {!t.needsReview && (t.needsGrant?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 text-warn">· not allowed to run</span>}
+                          {/* A newer version of the workflow it runs, or of one its steps start,
+                              waits for your Use vN on its panel: it keeps running the versions
+                              you allowed. */}
+                          {t.workflowVersion?.use && (
+                            <span data-type="caption" className="shrink-0 text-warn">
+                              · {t.workflowVersion.newer > 0 ? `v${t.workflowVersion.newer} waits for you` : 'a newer version waits for you'}
+                            </span>
+                          )}
+                          {/* The row's WARNING-severity issues, which reached no surface at all
+                              before issue 531 — the store computed them on every load and the wire
+                              projection dropped them. Rendered ONLY when there is no error: a row
+                              already flagged "needs attention" in red does not need a second,
+                              milder verdict beside it. The badge is the signal; the diagnosis is
+                              printed on the meta line below, not left to a hover. Warn-toned, not
+                              danger, because the trigger RUNS as authored; this is an advisory. */}
+                          {/* A web watch whose last check leaves it unable to fire carries that
+                              sentence among its warnings, and "check schedule" would send the owner
+                              to a cadence that is not the problem. */}
+                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {t.store?.last_check?.can_fire === false ? "can't fire" : 'check schedule'}</span>}
+                          {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
+                          {/* The app that keeps it: where it is changed, and why its menu has no Edit. */}
+                          {t.servedBy && !t.readOnly && <span data-type="caption" className="shrink-0 text-on-surface-low">· from {t.servedBy}</span>}
+                          {/* The AUTHOR chip. Shown only for a foreign row — a chip
+                              on every row would be noise on the single-user install that is the
+                              norm, and the useful signal here is "this one is not mine". */}
+                          {t.readOnly && <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-px text-on-surface-var text-[0.75rem]"><Users size={11} /> {t.author || 'shared'}</span>}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
+                          <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
+                          <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
+                          {/* No countdown on a row someone else wrote: it runs on their computer, never on this one. */}
+                          {t.kind === 'schedule' && t.enabled && !t.readOnly && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
+                          {/* The rung chip: what this automation may do on its own, and why.
+                              Placed beside the action label because that is the thing being
+                              governed — the action, not the schedule that fires it. Absent for
+                              an action no declaration claims (it keeps its pre-ladder
+                              behaviour) and while the ladder is still loading. */}
+                          {t.actionProvider && rungByProvider.get(t.actionProvider) && (
+                            <RungChip type={rungByProvider.get(t.actionProvider)!} ladder={ladder} />
+                          )}
+                          {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
+                          {/* An event trigger has no clock, so `fired N×` is its one live number. */}
+                          {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}
+                          {/* 🔴 THE CAUSE, which this row never showed (issue 496). `last_error` has
+                              been on the wire for all three store-backed kinds and the LIST — the one
+                              page a user manages automations from — read none of them. The issue was
+                              filed because a digest reaped for blowing an 1800-second deadline said
+                              "Reaped after 1811s (exceeded 1800s deadline)" on the wire and nothing
+                              at all on screen; that reaper hang went unexplained for cycles purely
+                              because the evidence was fetched and dropped.
+                              Neutral ink, not danger: the DOT carries the alarm, and a second red
+                              thing on the row would compete with it. Truncated with the full text in
+                              the title — a 200-character reason must not reflow the list. */}
+                          {reason && (
+                            <span data-type="caption" className="min-w-0 max-w-full truncate text-on-surface-low" title={reason}>{reason}</span>
+                          )}
+                          {advisory.map((w) => (
+                            <span key={w} data-type="caption" className="min-w-0 max-w-full text-warn">{w}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="hidden sm:flex shrink-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+                        <sd.icon size={13} style={{ color: sd.tone }} />
+                        {/* 🔴 THE WORD, not just the tone. After the dot stopped collapsing four
+                            states into one grey circle, three of them were still distinguished only
+                            by hue + glyph — which fails WCAG 1.4.1 and asks the user to learn a
+                            colour key. The label is the same string the mapper already computed.
+                            Suppressed for "never run", where the timestamp beside it says it. */}
+                        {sd.label && sd.label !== 'never run' && (
+                          <span data-type="caption" style={{ color: sd.tone }}>{sd.label}</span>
+                        )}
+                        {/* 🔴 "never" is a CLAIM, so it is only made when it is true. A store or event
+                            row carries no last-run timestamp on the wire, so this cell printed
+                            "never" for an automation with `run_count: 9` — the exact confusion this
+                            issue is about, in the text beside the dot. `hasRun` is the honest
+                            discriminator: no timestamp AND no fires is "never"; no timestamp with
+                            fires recorded says nothing rather than something false. */}
+                        <span>{t.lastRunTs ? relPast(t.lastRunTs) : t.hasRun ? '' : 'never'}</span>
+                        {/* What started that run, as its row says: an agent's run never reads as
+                            yours. Nothing for a row that does not say. */}
+                        {started && <span title={started.title}>· {started.label}</span>}
+                      </div>
+                    </ListRow>
+                    </ContextMenu>
+                  )
+                })}
+              </div>
+            )}
+      </div>
+      )}
+    </WorkbenchLayout>
+  )
+}

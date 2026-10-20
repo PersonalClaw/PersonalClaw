@@ -1,0 +1,3 @@
+- [Dedupe lives in Postgres, not the LRU](dedupe-is-postgres-not-lru.md) — carrier-webhooks deduplicates through the event_dedupe table since Aug 18; the in-process LRU is only a fast path
+- [Never quote consignee PII](never-quote-consignee-pii.md) — strip consignee names, addresses and phone numbers before anything leaves the laptop
+- [On-call rotation](oncall-rotation.md) — Noor is secondary on call the week of Sep 28; primary is Dev Patel; handoff Mondays 10:00

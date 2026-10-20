@@ -1,0 +1,410 @@
+"""ModelProvider ABC and provider-agnostic event types.
+
+``ModelProvider`` is the inference-axis base — a model provider is not always an
+LLM (it may serve chat, embedding, STT/TTS, vision, image-gen, or doc-parse), so
+the abstraction is named for the model, not the modality. All inference backends
+(ACP, OpenAI-compatible, Ollama, Claude Code, ...) implement ``ModelProvider``.
+Consumers (handler, gateway, CLI) depend only on this interface, never on a
+concrete provider.
+
+The stateless completion contract (``complete()`` + ``supports_tools``) lives on
+this same base: it owns **no** session, agent loop, or tool execution — those
+belong to an ``AgentProvider`` (the native loop). ``complete()`` is the
+loop-facing contract the native agent loop calls turn-by-turn; the four HTTP
+adapters (openai / anthropic / ollama / vllm) and bedrock implement it. ACP is
+also an ``AgentProvider``, not a stateless completion adapter.
+"""
+
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+# Event kinds + the neutral event — the single source of truth is llm/events.py.
+# LLMEvent stays as the public alias every provider/consumer imports; it is now
+# the backend-neutral AgentEvent, no longer the ACP event.
+from personalclaw.llm.events import (  # noqa: F401
+    EVENT_AGENT_SWITCHED,
+    EVENT_CLEAR_STATUS,
+    EVENT_COMPACTION_STATUS,
+    EVENT_COMPLETE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_TEXT_CHUNK,
+    EVENT_THINKING_CHUNK,
+    EVENT_TOOL_CALL,
+    EVENT_TOOL_CALL_UPDATE,
+    EVENT_TOOL_RESULT,
+)
+from personalclaw.llm.events import AgentEvent as LLMEvent  # noqa: F401
+from personalclaw.llm.prompt_cache import PromptCache
+from personalclaw.turn_streams import closing_stream
+
+
+def wire_temperature(value: object) -> float | None:
+    """A request-bound ``temperature`` value as the float it is, or ``None`` when it is none.
+
+    ``bool`` is refused even though it is an ``int``: ``True`` is not a temperature.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
+
+
+@dataclass(frozen=True)
+class ModelSubstitution:
+    """A model someone NAMED could not serve, and another one did.
+
+    Named means chosen: an agent's pinned model, a chat's own pick, a use case's binding in
+    Settings → Models. The resolution seam (``providers.provider_bridge``) produces this only where
+    a substitute is allowed to serve: a later entry of a chain the user built, or the chat binding
+    when an agent's own model cannot run. Anywhere else a named model that cannot serve is a
+    refusal that names it, never a quiet swap.
+
+    ``who`` says whose choice it was ("Researcher's model", "this chat's model"), so the one
+    sentence reads correctly on every surface that shows it: the chat, a room, a workflow step
+    and Introspect.
+    """
+
+    requested: str
+    served: str
+    why: str
+    fix: str = ""
+    who: str = ""
+
+    def sentence(self) -> str:
+        """``ran on <served> instead of <who> <requested>: <why>. <fix>`` — the one wording."""
+        whose = f"{self.who} " if self.who else ""
+        text = f"ran on {self.served} instead of {whose}{self.requested}: {self.why}"
+        return f"{text}. {_capitalized(self.fix)}" if self.fix else text
+
+    def notice(self) -> str:
+        """The sentence as a line of its own — capitalized and closed — for a chat or a room."""
+        return f"{_capitalized(self.sentence())}."
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "requested": self.requested,
+            "served": self.served,
+            "why": self.why,
+            "fix": self.fix,
+            "who": self.who,
+            "sentence": self.sentence(),
+        }
+
+
+def _capitalized(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+class ModelProvider(ABC):
+    """Abstract inference backend (the model-provider axis)."""
+
+    # Whether the model this provider serves can accept + emit tool calls. A declaration about the
+    # MODEL: a provider may answer it model by model, and may change it once it learns its model
+    # takes none (a server that refused a request for its tools). Read through
+    # ``llm.tool_use.uses_tools`` only, so every surface asks the same question.
+    supports_tools: bool = False
+
+    # Graded prompt-cache support the native loop reads (via getattr, mirroring
+    # supports_tools) to decide how to mark a cacheable prefix. Defaults NONE so an
+    # undeclared provider gets the byte-identical no-marker path; a caching provider
+    # sets AUTOMATIC (stable-prefix, no marker) or EXPLICIT (per-request marker).
+    prompt_cache: PromptCache = PromptCache.NONE
+
+    # Whether this provider reads the reasoning record its own model wrote on an earlier answer
+    # (``llm.reasoning_record.REASONING_KEY`` on an assistant message). False by default: the
+    # native loop strips that key from every request to a provider that does not declare it, so
+    # opaque model data never reaches a wire that does not know it.
+    reads_reasoning: bool = False
+
+    # Whether this provider hands its model ONLY the user's request, never the assembled
+    # context (identity, memory, skills, instructions). True for a model too small to follow a
+    # long instruction block — it continues the instructions instead of answering — so the
+    # provider reads the request back out at ``USER_REQUEST_MARKER`` and discards the rest.
+    # Declared, because core must assemble, measure and record exactly what such a model
+    # receives: a skill "used" by a model that was never shown it is a false record.
+    request_only: bool = False
+
+    # The ``"<entry>:<model>"`` ref this instance was BUILT for. Stamped by the resolution seam
+    # (``providers.provider_bridge._resolve_from_config_registry``) — the one point that knows
+    # both halves — so the window resolver can name the model that actually serves a turn,
+    # including the zero-config fallback, which is a registry entry and not a binding.
+    served_ref: str = ""
+
+    # How long this provider's INSTANCE waits for an answer to start, and then between its parts,
+    # in seconds (the instance's Request Timeout), or None when the instance keeps no wait of its
+    # own. Declared, because the spend guard every automated call rides (``ModelCallGuard``) adds
+    # no clock of its own to a call the instance already bounds: one there cut a local model's
+    # call short at a number nobody set, under the one its owner did.
+    request_timeout_secs: float | None = None
+
+    async def served_context_window(self) -> int | None:
+        """The context window, in tokens, this provider will serve its next completion with.
+
+        ``None`` means "this provider cannot say" — the window is then resolved from what was
+        declared about the model (its catalog card, then the shared window table). A provider
+        that KNOWS better overrides it: an operator-declared ``context_window``, a runtime that
+        publishes the window it loaded the model with, or a model this provider runs itself.
+        This is the "served" step of ``context_headroom.resolve_window``, and a provider's own
+        context gauge must divide by the same number, or the gauge and the prompt budget
+        describe two different windows.
+        """
+        return None
+
+    @abstractmethod
+    async def start(self) -> None:
+        """Initialize the provider (spawn process, create client, etc.)."""
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Gracefully shut down."""
+
+    @abstractmethod
+    async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        """Send a message and yield events."""
+        yield LLMEvent(kind=EVENT_COMPLETE)  # pragma: no cover
+
+    @abstractmethod
+    async def approve_tool(self, request_id: str | int) -> None:
+        """Approve a pending tool permission request."""
+
+    @abstractmethod
+    async def reject_tool(self, request_id: str | int) -> None:
+        """Reject a pending tool permission request."""
+
+    @abstractmethod
+    def context_usage_pct(self) -> float | None:
+        """Last known context usage percentage, or ``None`` if never measured.
+
+        ``None`` and ``0.0`` are different answers: ``None`` means this provider
+        was never told, ``0.0`` means it was told the context is empty. Consumers
+        must OMIT the number for ``None`` rather than render zero.
+        """
+
+    @property
+    def session_id(self) -> str:
+        """Provider-specific session identifier for file cleanup.
+
+        Returns empty string if the provider has no persistent session files.
+        Each provider overrides to return its own session_id.
+        """
+        return ""
+
+    async def cleanup_session(self, session_id: str) -> None:
+        """Delete on-disk session files for the given session ID.
+
+        Default implementation is a no-op. Providers with persistent
+        session files override this to perform actual deletion.
+
+        cleanup_session only operates on the filesystem (Path.unlink,
+        shutil.rmtree). It does NOT depend on the provider process being
+        alive. This makes fire-and-forget via asyncio.ensure_future safe —
+        the cleanup task only needs the session_id string, not a live process.
+        """
+
+    @property
+    def supports_native_commands(self) -> bool:
+        """Whether this provider can execute a slash command as a COMMAND.
+
+        False by default, and the default is the honest answer for every provider that
+        has no command axis at all (the native loop, every HTTP model provider): for
+        those, :meth:`stream_command` below is a plain prompt wearing a command's name.
+        A caller that must tell the user which of the two it got — because "the agent ran
+        /compact" and "the agent was asked about the text /compact" are different
+        answers — reads THIS, not the method's success.
+        """
+        return False
+
+    @property
+    def compacts_in_process(self) -> bool:
+        """Whether this provider compacts its OWN conversation history itself.
+
+        Orthogonal to :attr:`supports_native_commands`, which asks whether a *backend*
+        can be handed a slash command over the wire. This asks whether the provider owns
+        the message list at all: the native loop does (``runtime._messages``), so it can
+        run ``context_compaction.compact`` synchronously with no command axis and no
+        agent to fire anything. An ACP backend owns its own history out of process, so
+        the answer there is False — its compaction arrives as a status frame.
+
+        The two flags answer the same question for ``/compact`` from opposite ends, and
+        exactly one of them being true is what stops the command reaching a model as the
+        literal text "/compact" (#470).
+        """
+        return False
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """Whether this provider compacts its own history on its own, so a session whose context
+        crosses the Settings threshold (``session.autocompact_pct``) is left to it.
+
+        False by default. The session manager restarts a session at that threshold only
+        when this is False: a provider that compacts itself would otherwise lose what it keeps
+        to the restart. The native loop answers True while its automatic pass still helps, and
+        compacts at that same threshold; an agent CLI answers what its app declares
+        (``register_acp_cli_entry(compacts_itself=...)``), and compacts at its own limit.
+        """
+        return False
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The sampling temperature this instance puts on the request, or ``None`` if it sends none.
+
+        ``None`` by default, and the default is the safety property: a provider that never
+        declared where a temperature goes cannot be credited with sampling at one. A caller
+        that ASKED for a temperature (best-of-N's ladder, threaded as the ``temperature``
+        build kwarg) reads this back through the model-call record the guard keeps
+        (:mod:`personalclaw.guardrails.calls`) and says so when it differs, instead of
+        presenting N answers at the provider default as a sweep.
+
+        A statement about the REQUEST, not the model: an endpoint can still ignore the field,
+        which no client can observe — a zero spread across a slate is then the visible sign.
+        """
+        return None
+
+    @property
+    def unsent_options(self) -> dict[str, str]:
+        """Request options this instance was given and leaves off the request, each with why.
+
+        ``{}`` by default. An adapter that omits an option it was handed — a sampling parameter
+        its model refuses (``llm.catalog.refused_sampling``) — names it here with a sentence a
+        user may be shown. The guard records it on the call (:mod:`personalclaw.guardrails.calls`)
+        next to :attr:`sampling_temperature`, so a caller that asked for a temperature can say
+        why none was sent instead of only that none was.
+        """
+        return {}
+
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """Whether a turn stopped mid-way stays in this provider's OWN history.
+
+        False by default: an ACP agent discards a cancelled turn from its conversation
+        log, so the next prompt re-injects it as the "[PREVIOUS TURN WAS CANCELLED]"
+        preamble. A provider that keeps the turn (the native loop records the user
+        message and whatever it had answered) must say True, or that preamble sends the
+        stopped message a second time.
+        """
+        return False
+
+    async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
+        """Execute a slash command and yield streaming events.
+
+        Default falls back to :meth:`stream` for providers without native
+        command support. That fallback is silent by design at this layer — it is the
+        caller's job to say so, because only the caller owns a user-visible surface.
+        """
+        async with closing_stream(self.stream(command)) as events:
+            async for event in events:
+                yield event
+
+    async def compact(self, context: str = "") -> None:
+        """Trigger context compaction. No-op for providers without native support."""
+
+    async def wait_for_compaction(self, timeout: float = 120.0) -> dict:
+        """Wait for compaction completed/failed. Returns ``{'type': 'timeout'}`` by default."""
+        return {"type": "timeout"}
+
+    async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
+        """Cancel in-flight operation. Returns CancelOutcome."""
+        return "no_turn"
+
+    def is_alive(self) -> bool:
+        """Return True if the provider's backing process/connection is alive."""
+        return True
+
+    def touch_activity(self) -> None:
+        """Refresh provider activity timestamp without I/O. Default no-op."""
+        return None
+
+    def set_workspace(self, path: Path) -> None:
+        """Override the working directory used for subsequent provider activity.
+
+        Default implementation is a no-op. Providers backed by a process
+        whose ``cwd`` is part of the protocol contract (e.g. ACP agents
+        spawned over stdio) override this to redirect future invocations
+        to *path*. Providers without a notion of a workspace (text-only
+        Q&A, embedding-only) inherit the no-op and silently ignore the
+        call.
+        """
+        return None
+
+    def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
+        """Bind a logical session key (and optional channel) to this provider.
+
+        The session key is an opaque identifier used by stateful agents
+        (e.g. ACP-over-stdio backends) to scope on-disk session files
+        and resume prior conversations. ``channel_id`` optionally rebinds
+        the collaboration room in the same call (used by the warm-pool
+        claim path). Default implementation is a no-op for stateless
+        providers (HTTP-only chat completions, embedding-only). Providers
+        that maintain per-session filesystem state override this to update
+        their internal binding without re-spawning the underlying process.
+        """
+        return None
+
+    async def complete(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        reasoning_effort: str = "",
+    ) -> AsyncIterator[LLMEvent]:
+        """Stream a completion for the full ``messages`` list (stateless).
+
+        The caller (native loop) owns conversation history and passes the entire
+        message list each turn. ``tools`` is a list of model tool schemas; the
+        provider emits ``EVENT_TOOL_CALL`` events for any tool the model invokes
+        (it does NOT execute them — the loop does).
+
+        ``reasoning_effort`` is the session's chosen effort (``"" | low | medium |
+        high | xhigh | max`` for native providers). A provider whose model reasons maps it
+        to the shape that model takes (an effort level, or a thinking token budget on a
+        model that takes one), sending a level the model lacks as the nearest one it has;
+        others ignore it. "" = model default.
+
+        An assistant message may carry the reasoning record its model wrote
+        (:data:`~personalclaw.llm.reasoning_record.REASONING_KEY`). Only a provider that
+        declares :attr:`reads_reasoning` is handed it: it is opaque model data, never content.
+
+        A user message's ``content`` is either a string or a list of neutral parts:
+        ``{"type": "text", "text": ...}`` and ``{"type": "image_url", "image_url": {"url":
+        "data:<media-type>;base64,<payload>"}}``. Image parts reach a provider only when its
+        type's :class:`~personalclaw.llm.capabilities.ProviderCapability` declares
+        ``supports_vision`` (``providers.image_input``), and such a provider translates them
+        to its own wire (Anthropic ``image`` blocks, Ollama's ``images`` array, Bedrock
+        Converse ``image`` blocks; OpenAI's wire is the neutral shape itself).
+
+        A ``role: "system"`` message can come after the first turn. One carrying
+        :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY` is the runtime's per-turn note (the
+        tool catalog), which changes every turn and arrives fenced as the runtime's: the model
+        must read it as an instruction, never as the user's words, and it must follow every
+        cache checkpoint. A wire that takes a system message anywhere sends it where it is; a
+        wire whose system prompt is out of band (Anthropic, Bedrock Converse) carries it as a
+        text block on the last user turn, never as a turn of its own. ``VOLATILE_KEY``'s
+        definition is the whole contract.
+
+        Default implementation: a convenience adapter over the simple-prompt
+        ``stream(str)`` API — it sends the last user message's text. Concrete completion
+        adapters (openai / anthropic / ollama / vllm / bedrock) override this with
+        real multi-message + tools support.
+        """
+        last_user = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    last_user = "\n".join(
+                        str(p.get("text", ""))
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                else:
+                    last_user = str(content)
+                break
+        async with closing_stream(self.stream(last_user)) as events:
+            async for ev in events:
+                yield ev

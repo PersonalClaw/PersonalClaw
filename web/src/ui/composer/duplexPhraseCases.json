@@ -1,0 +1,189 @@
+{
+  "_comment": [
+    "Hands-free phrase matching, pinned once for both matchers:",
+    "  * web/src/ui/composer/duplex.ts  isConfirmation / isExit (the live loop: the browser owns the microphone)",
+    "  * personalclaw/voice/duplex.py   is_confirmation / is_exit",
+    "Matching is logic, so it exists in both languages. Its behaviour is shared as data instead:",
+    "duplex.test.ts and tests/test_voice_duplex.py run every case, so a rule changed on one side reds the other.",
+    "A case without `phrases` (or without one of its two lists) uses the shipped lists in",
+    "src/personalclaw/voice/phrases.json. `confirmation` and `exit` are what each matcher answers for `text`.",
+    "Keep both directions: the variants speech-to-text writes must match, and ordinary dictation must not."
+  ],
+  "cases": [
+    {
+      "name": "exit_written_as_one_word",
+      "why": "speech-to-text wrote a spoken 'Never mind.' as this",
+      "text": "Nevermind",
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_one_word_with_its_punctuation",
+      "why": "the same retraction with the full stop the transcript usually carries",
+      "text": "Nevermind.",
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_hyphenated",
+      "why": "a hyphen only separates words",
+      "text": "never-mind",
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_as_configured",
+      "why": "the phrase written the way it is configured",
+      "text": "Oh, never mind.",
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_after_a_confirmation_in_the_same_chunk",
+      "why": "'send it, never mind' must be heard as both, so the loop's exit-wins rule can discard it",
+      "text": "Send it. Nevermind.",
+      "confirmation": true,
+      "exit": true
+    },
+    {
+      "name": "exit_with_its_apostrophe_dropped",
+      "why": "an apostrophe inside a word does not count",
+      "text": "Dont send.",
+      "phrases": { "exit": ["don't send"] },
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_with_a_curly_apostrophe",
+      "why": "a typographic apostrophe is an apostrophe",
+      "text": "Don’t send",
+      "phrases": { "exit": ["don't send"] },
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_phrase_word_said_as_two",
+      "why": "an exit may assemble one of its words from two: a missed exit can send, a false one only discards",
+      "text": "Never mind.",
+      "phrases": { "exit": ["nevermind"] },
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_phrase_configured_with_capitals_and_a_hyphen",
+      "why": "the configured phrase is folded the same way as the transcript",
+      "text": "nevermind",
+      "phrases": { "exit": ["Never-Mind!"] },
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_never_rewords",
+      "why": "folding drops separators and apostrophes, it never changes the words",
+      "text": "Do not send",
+      "phrases": { "exit": ["don't send"] },
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "ordinary_word_containing_mind",
+      "why": "only whole words count",
+      "text": "Remind me to call the bakery about the order",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "ordinary_word_containing_never",
+      "why": "only whole words count",
+      "text": "Whenever you can, check the timetable",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "ordinary_mind",
+      "why": "one word of the phrase is not the phrase",
+      "text": "Mind the gap on the platform",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "ordinary_never",
+      "why": "one word of the phrase is not the phrase",
+      "text": "I never said Monday",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "ordinary_cancellation",
+      "why": "a longer word that begins with the phrase is not the phrase",
+      "text": "Read me the cancellation policy",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "exit_folded_but_outside_the_tail",
+      "why": "folding does not widen the tail window: an idiom at the head of a long dictation is not a retraction",
+      "text": "Nevermind the weather, book the Tuesday ferry to the island for two",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_run_together",
+      "why": "a confirmation's words may run together",
+      "text": "Book the Tuesday ferry. Sendit.",
+      "confirmation": true,
+      "exit": false
+    },
+    {
+      "name": "confirmation_hyphenated",
+      "why": "a hyphen only separates words",
+      "text": "Go-ahead.",
+      "confirmation": true,
+      "exit": false
+    },
+    {
+      "name": "confirmation_with_a_curly_apostrophe",
+      "why": "a typographic apostrophe is an apostrophe",
+      "text": "Book the ferry, that’s it.",
+      "phrases": { "confirmation": ["that's it"] },
+      "confirmation": true,
+      "exit": false
+    },
+    {
+      "name": "confirmation_never_assembles_a_phrase_word",
+      "why": "a confirmation never builds one of its words from two that were said: a false confirmation sends",
+      "text": "Email the Goa head office",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_phrase_word_said_as_two",
+      "why": "the strict side of the asymmetry the exit case above relaxes",
+      "text": "Go ahead.",
+      "phrases": { "confirmation": ["goahead"] },
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_whole_words_only",
+      "why": "'redo it' contains 'do it' but not at a word boundary",
+      "text": "Redo it",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_longer_word",
+      "why": "a longer word that begins with the phrase is not the phrase",
+      "text": "Show me the execution plan",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_outside_the_tail",
+      "why": "a confirmation at the head of a long dictation is part of the thought",
+      "text": "Go ahead and tell me what you think about the plan",
+      "confirmation": false,
+      "exit": false
+    }
+  ]
+}

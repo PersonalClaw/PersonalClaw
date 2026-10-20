@@ -1,0 +1,14 @@
+{
+  "name": "e2e-ui-fixture",
+  "version": "0.0.1",
+  "displayName": "E2E UI fixture",
+  "enabled": true,
+  "installedAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "source": "e2e-fixture",
+  "origin": "local",
+  "resources": "gateway",
+  "lifecycle": "gateway",
+  "tier": "",
+  "schemaVersion": 2
+}

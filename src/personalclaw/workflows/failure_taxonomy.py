@@ -1,0 +1,506 @@
+"""Failure -> typed failure taxonomy: the ONE place that decides whether a retry can help.
+
+Lifted out of ``engine.py`` rather than left there: the classifier is the one place that
+decides whether budget gets spent on a retry, three modules consult it (the engine itself,
+the controller's terminal-failure path and the gateway's channel injection), and two of those
+three reached it through a function-local ``from ... import`` of a private name. It is also
+what ``engine.py``'s size rail asked for — the file sat 81 lines below the 2800-line watch
+band, and the rail's remedy for a file on that cliff is a split, not a wider band.
+
+Classified at the CAUSE, typed errors first. The guard's own errors say exactly what happened
+(an open breaker even says when a call can run again), an HTTP status is on the exception, a
+transport error has a type, and a model that cannot be resolved carries the platform's
+WHAT/WHY/FIX envelope. The substring rules are what is left for an exception that carries none
+of that: a vendor SDK error whose only signal is its message.
+
+The same answer reaches the run page as whether it offers Retry (`Failure.retryable`, from
+`models.RETRYABLE_CLASSES`). So a permanent failure's remediation says what to change and where,
+and a transient one's says to retry — neither may promise that "the engine will retry": by the
+time a person reads it, the engine has stopped.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterable
+from typing import Any
+
+from personalclaw.guardrails.failure import use_case_binding
+from personalclaw.workflows.models import RETRYABLE_CLASSES, Failure, FailureClass
+
+__all__ = [
+    "OWN_REASON_FIX",
+    "binding_failure",
+    "classify_action_result",
+    "classify_exception",
+    "gave_its_own_reason",
+    "http_status_class",
+    "with_breaker_window",
+]
+
+#: After changing what a permanent failure's remediation names, the way back is a fork: the run
+#: page's Retry is offered only for a failure the same attempt can clear, and a fork keeps every
+#: step that finished.
+_THEN_FORK = "then fork this run to try again"
+
+#: The fix for a step whose command said why it failed, in its own answer: what its reason names
+#: is what to change, and that is as often what the run was started with as the step itself.
+OWN_REASON_FIX = (
+    "the step's command gave this reason itself: change what it names (the step, or what the run "
+    f"was started with), {_THEN_FORK}"
+)
+
+#: What to do about each class when the provider named the class but not the fix.
+_CLASS_FIX: dict[FailureClass, str] = {
+    FailureClass.USER: f"check this step's configuration, {_THEN_FORK}",
+    FailureClass.PERMISSION: f"check the credential in Settings → Providers, {_THEN_FORK}",
+    FailureClass.NETWORK: "check that the provider is running and reachable, then Retry",
+    FailureClass.TRANSIENT: "Retry in a moment",
+    FailureClass.TIMEOUT: "raise the step's timeout, or split it into smaller steps",
+    FailureClass.BUDGET: (
+        "raise or remove the cap in Settings → Guardrails, or wait for it to reset, then Retry"
+    ),
+    FailureClass.PROTOCOL: "tighten the schema in the prompt, or use produce-then-extract",
+    FailureClass.INTERNAL: "check the gateway log",
+}
+
+
+def classify_exception(exc: BaseException, *, use_case: str = "") -> Failure:
+    """Map an exception to the typed taxonomy. Only TRANSIENT/NETWORK are retryable, so
+    this classification decides whether budget gets spent on a retry — and whether the run
+    page offers one.
+
+    ``use_case`` names where a model binding is changed ("the Background use case"), for the
+    caller that knows which axis the failed call ran on.
+    """
+    seen: BaseException | None = exc
+    # A provider that wraps a transport error keeps it as the cause; five hops is the same
+    # bound `llm_helpers._describe_unexplained_failure` walks.
+    for _ in range(5):
+        if seen is None:
+            break
+        typed = _typed(seen, use_case)
+        if typed is not None:
+            typed.cause_plain = typed.cause_plain or f"{type(exc).__name__}: {exc}"[:500]
+            return typed
+        seen = seen.__cause__
+    return _by_text(type(exc).__name__, str(exc), timed_out=isinstance(exc, TimeoutError))
+
+
+def _typed(exc: BaseException, use_case: str) -> Failure | None:
+    """The class an exception's TYPE (or the status it carries) decides, or None."""
+    from personalclaw.guardrails.failure import (
+        BudgetExceededError,
+        CircuitOpenError,
+        ModelCallTimeout,
+        PromptExceedsWindow,
+    )
+    from personalclaw.lasting_work import ASKED
+    from personalclaw.lasting_work import Refused as LastingWorkRefused
+    from personalclaw.llm.registry import CredentialMissing
+    from personalclaw.llm.registry import ProviderResolutionError as RegistryResolutionError
+    from personalclaw.loop.gates import CheckRefused
+    from personalclaw.providers.provider_bridge import ProviderResolutionError
+    from personalclaw.visualize import GenUiDisabled
+
+    if isinstance(exc, GenUiDisabled):
+        # An operator's switch, not a provider fault: only they can change it, and a retry
+        # never can. Its message already names the switch.
+        return Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=str(exc)[:500],
+            remediation="turn on Generative UI, or drop this node",
+        )
+    if isinstance(exc, LastingWorkRefused):
+        # The run keeps nothing, as the Incognito or Temporary chat that started it does, or works
+        # on the say-so of someone other than the owner (`lasting_work`): no retry changes either,
+        # and the sentence says where it can be done.
+        return Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=str(exc)[:500],
+            remediation=(
+                "ask the owner to do this, or they can do it themselves"
+                if exc.code == ASKED
+                else "start this workflow from an ordinary chat, or on the Workflows page"
+            ),
+        )
+    if isinstance(exc, CheckRefused):
+        # The shell denylist's rule, which no retry changes. Its message names the rule.
+        return Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=str(exc)[:500],
+            remediation=(
+                "change the check command, or a pattern you added under Settings → Security → "
+                "Shell denylist, then re-run this node"
+            ),
+        )
+    if isinstance(exc, CircuitOpenError):
+        wait = max(0.0, float(exc.retry_after))
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            remediation=(
+                f"calls to {exc.provider!r} are paused after it failed repeatedly; Retry once "
+                f"the pause ends, in about {wait:.0f}s"
+            ),
+            recoverable=True,
+            retry_at=time.time() + wait,
+            providers=[exc.provider] if exc.provider else [],
+        )
+    if isinstance(exc, ModelCallTimeout):
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            remediation=(
+                "the model provider did not answer in time; Retry once it is responding, or "
+                f"bind a faster model to {use_case_binding(use_case)}"
+            ),
+            recoverable=True,
+        )
+    if isinstance(exc, BudgetExceededError):
+        # The refusal's own two halves, the words a chat or a loop shows for it: which ceiling
+        # stopped the call and what was spent against it, then where it is lifted. The run page
+        # offers Retry once the ceiling has room again.
+        return Failure(
+            failure_class=FailureClass.BUDGET,
+            cause_plain=exc.headline(),
+            remediation=f"{exc.fix()}, then Retry",
+        )
+    if isinstance(exc, PromptExceedsWindow):
+        return Failure(
+            failure_class=FailureClass.USER,
+            remediation=(
+                "shorten this step's input, or bind a model with a larger context window to "
+                f"{use_case_binding(use_case)}"
+            ),
+        )
+    if isinstance(exc, CredentialMissing):
+        return Failure(
+            failure_class=FailureClass.PERMISSION,
+            remediation=f"add the provider's credential in Settings → Providers, {_THEN_FORK}",
+        )
+    if isinstance(exc, (ProviderResolutionError, RegistryResolutionError)):
+        # The bridge derives its fix from the cause that actually fired (#3408), and carries it
+        # in the WHAT/WHY/FIX envelope; a registry refusal names an entry or type that is not there.
+        agent_error = getattr(exc, "agent_error", None)
+        fix = str(getattr(agent_error, "fix", "") or "") or (
+            f"check the model bound to {use_case_binding(use_case)}"
+        )
+        return Failure(failure_class=FailureClass.USER, remediation=f"{fix}; {_THEN_FORK}")
+    status = _http_status(exc)
+    if status is not None:
+        return _by_status(status, use_case)
+    return _by_transport(exc)
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """The HTTP status an exception carries — ``status_code`` on the error, or on its
+    response (httpx's ``HTTPStatusError``, and the vendor SDKs' status errors)."""
+    for holder in (exc, getattr(exc, "response", None)):
+        raw = getattr(holder, "status_code", None)
+        if isinstance(raw, int) and 100 <= raw <= 599:
+            return raw
+    return None
+
+
+def http_status_class(status: int) -> FailureClass:
+    """Whether a retry can clear an HTTP refusal, for any caller holding the status.
+
+    A 5xx, 408, 425 or 429 is the server's own fault or a moment's overload: TRANSIENT. 401, 402
+    and 403 refuse access: PERMISSION. Anything else is the request itself, which a retry sends
+    unchanged: USER.
+    """
+    if status in (401, 402, 403):
+        return FailureClass.PERMISSION
+    if status in (408, 425, 429) or status >= 500:
+        return FailureClass.TRANSIENT
+    return FailureClass.USER
+
+
+def _by_status(status: int, use_case: str) -> Failure:
+    """A model provider's HTTP refusal, with what to change for this status."""
+    if status in (401, 403):
+        fix = (
+            f"the provider rejected the credential; fix its key in Settings → Providers, "
+            f"{_THEN_FORK}"
+        )
+    elif status == 402:
+        fix = (
+            "the provider account is out of credit; top it up, or bind another model to "
+            f"{use_case_binding(use_case)}, {_THEN_FORK}"
+        )
+    elif status == 404:
+        fix = (
+            f"the provider has no such model; bind one it lists to {use_case_binding(use_case)}, "
+            f"{_THEN_FORK}"
+        )
+    elif status in (408, 425, 429):
+        fix = (
+            "the provider is rate-limiting or overloaded; Retry in a moment, or bind another "
+            f"model to {use_case_binding(use_case)}"
+        )
+    elif status >= 500:
+        fix = (
+            "the provider reported a fault on its own side; Retry, and if it keeps failing check "
+            "the provider itself"
+        )
+    else:
+        fix = (
+            f"the provider refused the request (HTTP {status}), and a retry would send the same "
+            f"one; change the model bound to {use_case_binding(use_case)} or this step's input"
+        )
+    cls = http_status_class(status)
+    return Failure(failure_class=cls, remediation=fix, recoverable=cls in RETRYABLE_CLASSES)
+
+
+def _by_transport(exc: BaseException) -> Failure | None:
+    """A transport error's class, by type. None for anything that is not one.
+
+    Both HTTP stacks the gateway uses: httpx (the model providers) and aiohttp (`net.fetch`),
+    whose connect failure reads "Cannot connect to host …" and matches no text rule.
+    """
+    import socket
+
+    import aiohttp
+    import httpx
+
+    from personalclaw.llm_helpers import failed_endpoint
+
+    where = failed_endpoint(exc)
+    if isinstance(exc, (httpx.UnsupportedProtocol, httpx.InvalidURL, aiohttp.InvalidURL)):
+        return Failure(
+            failure_class=FailureClass.USER,
+            remediation=f"the provider's endpoint is not a usable URL; fix it in Settings → "
+            f"Providers, {_THEN_FORK}",
+        )
+    if (
+        isinstance(exc, httpx.TimeoutException) and not isinstance(exc, httpx.ConnectTimeout)
+    ) or isinstance(exc, aiohttp.ServerTimeoutError):
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            remediation=f"the provider{where} did not answer in time; Retry once it is responding",
+            recoverable=True,
+        )
+    if isinstance(
+        exc, (httpx.TransportError, aiohttp.ClientConnectionError, ConnectionError, socket.gaierror)
+    ):
+        return Failure(
+            failure_class=FailureClass.NETWORK,
+            remediation=f"couldn't reach the provider{where}; check that it is running and "
+            "reachable, then Retry",
+            recoverable=True,
+        )
+    return None
+
+
+def _by_text(name: str, text: str, *, timed_out: bool) -> Failure:
+    """The substring rules, for a failure whose only signal is its message."""
+    low = text.lower()
+    cause = f"{name}: {text}"[:500] if name else text[:500]
+    if timed_out:
+        # A bare `TimeoutError` is a wall-clock budget the engine or a dispatcher set: the same
+        # attempt hits the same cap, so it is not a retry's to fix.
+        return Failure(
+            failure_class=FailureClass.TIMEOUT,
+            cause_plain=cause,
+            remediation="raise timeout_total, or split the node into smaller steps",
+            recoverable=True,
+        )
+    if "timeout" in low or "timed out" in low:
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain=cause,
+            remediation="the provider did not answer in time; Retry once it is responding",
+            recoverable=True,
+        )
+    if any(k in low for k in ("connection", "network", "dns", "unreachable", "socket")):
+        return Failure(
+            failure_class=FailureClass.NETWORK,
+            cause_plain=cause,
+            remediation="check that the provider is running and reachable, then Retry",
+            recoverable=True,
+        )
+    if any(
+        k in low for k in ("permission", "forbidden", "unauthorized", "credential", "access denied")
+    ):
+        return Failure(
+            failure_class=FailureClass.PERMISSION,
+            cause_plain=cause,
+            remediation="check the credential in Settings → Providers, or the tool's "
+            "approval policy",
+        )
+    if any(k in low for k in ("rate limit", "429", "throttl", "overloaded", "capacity")):
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain=cause,
+            remediation="the provider is rate-limiting or overloaded; Retry in a moment",
+            recoverable=True,
+        )
+    # A server-side fault is the provider saying "this was not your request, try again" — the
+    # same retriable shape as a rate limit, so it belongs in TRANSIENT and not in the INTERNAL
+    # catch-all below. Measured on the occurrence in issue 385: a Bedrock
+    # ``InternalServerException`` ("reached max retries: 0 … Try your request again") fell all
+    # the way through to INTERNAL, which `RETRYABLE_CLASSES` excludes, so every caller that
+    # consults `Failure.retryable` declined to retry the one class of failure a retry fixes.
+    # Matched against the exception's CLASS NAME as well as its text because a provider SDK puts
+    # the fault in the type and only sometimes in the message.
+    if any(
+        k in low or k in name.lower()
+        for k in (
+            "internalserver",
+            "internal server",
+            "serviceunavailable",
+            "service unavailable",
+            "bad gateway",
+            "temporarily unavailable",
+        )
+    ):
+        return Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain=cause,
+            remediation="the provider reported a fault on its own side; Retry",
+            recoverable=True,
+        )
+    if "outputcontract" in name.lower() or "schema" in low or "json" in low:
+        return Failure(
+            failure_class=FailureClass.PROTOCOL,
+            cause_plain=cause,
+            remediation="tighten the schema in the prompt, or use produce-then-extract",
+        )
+    return Failure(
+        failure_class=FailureClass.INTERNAL,
+        cause_plain=cause,
+        remediation="check the gateway log for the full traceback",
+    )
+
+
+def classify_action_result(result: Any, output: Any = None) -> Failure:
+    """The typed failure for a failed ``ActionResult``, classified where the cause is known.
+
+    A provider that knows why it failed says so: ``failure_class`` in this taxonomy's
+    vocabulary, ``agent_error.fix`` for what to change and where, and ``retry_after`` when a
+    retry must wait. A provider that says nothing has its ``error`` read through the same text
+    rules an exception's message is, and is never assumed retryable. Every failed action used
+    to be filed TRANSIENT, so the run page offered Retry for a missing config field, a rejected
+    key and a model that does not exist, each of which fails the same way again.
+
+    A command run by a step can say why itself, in its own answer: *output* is that answer as the
+    step parsed it (`engine._action_output`), and a JSON object's ``error`` is its reason — how the
+    bundled template's steps refuse (`evals.optimize.main`, "refuses to search without a positive
+    `budget_usd` …"). It is the cause when the provider said nothing, ahead of the command's
+    stderr; it used to be left in the step's output while the failure read "action failed". A
+    command that said nothing at all is named by its exit status.
+    """
+    provider_said = str(getattr(result, "error", "") or "")
+    own = "" if provider_said else _own_reason(output)
+    cause = (
+        provider_said or own or str(getattr(result, "stderr", "") or "") or _exit_status(result)
+    )[:500]
+    err = getattr(result, "agent_error", None)
+    fix = str(getattr(err, "fix", "") or "") if err is not None else ""
+    declared = str(getattr(result, "failure_class", "") or "")
+    try:
+        cls: FailureClass | None = FailureClass(declared) if declared else None
+    except ValueError:
+        cls = None
+    if cls is not None:
+        wait = float(getattr(result, "retry_after", 0.0) or 0.0)
+        retryable = cls in RETRYABLE_CLASSES
+        return Failure(
+            failure_class=cls,
+            cause_plain=cause,
+            remediation=fix or _CLASS_FIX[cls],
+            recoverable=retryable,
+            retry_at=time.time() + wait if retryable and wait > 0 else None,
+        )
+    failure = _by_text("", cause, timed_out=False)
+    if fix:
+        failure.remediation = fix
+    elif failure.failure_class is FailureClass.INTERNAL and own:
+        failure.remediation = OWN_REASON_FIX
+    elif failure.failure_class is FailureClass.INTERNAL:
+        failure.remediation = (
+            "the action reported this failure without saying whether a retry can help; check "
+            "this step's `config.with` and the gateway log"
+        )
+    return failure
+
+
+def gave_its_own_reason(failure: Failure) -> bool:
+    """Whether *failure* is a step whose command said why it failed (:data:`OWN_REASON_FIX`)."""
+    return failure.remediation == OWN_REASON_FIX
+
+
+def _own_reason(output: Any) -> str:
+    """The reason a step's command gave in its own JSON answer (``{"error": "…"}``), or ""."""
+    reason = output.get("error") if isinstance(output, dict) else None
+    return " ".join(reason.split()) if isinstance(reason, str) else ""
+
+
+def _exit_status(result: Any) -> str:
+    """A failed action that gave no reason at all: its command's exit status, when it ran one."""
+    code = int(getattr(result, "exit_code", 0) or 0)
+    return f"the command exited with status {code}" if code else "action failed"
+
+
+def binding_failure(exc: Any, what: str = "binding failed") -> Failure:
+    """A binding that did not resolve, filed by who can fix it.
+
+    USER is for what the CALLER supplied (`BindingError.caller_supplied`): a run input, or a
+    `{{secret:KEY}}` they have not added. Everything else a binding reads belongs to the
+    workflow definition (a node id, a field of another step's output, a loop root, a pipe), and
+    whoever pressed Run did not write it, so USER ("user error" on the run page) blamed the
+    wrong person. INTERNAL says the definition, or the engine, is at fault. Neither class is a
+    retry's to fix.
+    """
+    supplied = bool(getattr(exc, "caller_supplied", False))
+    return Failure(
+        failure_class=FailureClass.USER if supplied else FailureClass.INTERNAL,
+        cause_plain=f"{what}: {exc}"[:500],
+        remediation=getattr(exc, "remediation", "")
+        or "check this binding against the workflow definition",
+    )
+
+
+def with_breaker_window(failure: Failure | None, providers: Iterable[str] = ()) -> Failure | None:
+    """Stamp when a retry can run, for a retryable failure behind an open circuit breaker.
+
+    ``providers`` are the names the step's guarded calls went to, the breaker keys. They are kept
+    on the failure beside any it already names, so a later read (the run page's) can ask the
+    breakers again: one can open AFTER the step failed, since every call to the same provider
+    counts toward it. The failures that trip a breaker are network errors rather than
+    `CircuitOpenError`s, so the classification alone cannot see the window. Offered Retry inside
+    it, the next attempt was refused in microseconds ("retry eligible in ~21s") without a call.
+    """
+    if failure is None or not failure.retryable:
+        return failure
+    from personalclaw.guardrails.breaker import all_breakers
+
+    failure.providers = sorted({*failure.providers, *(p for p in providers if p)})
+    breakers = all_breakers()
+    wait = max((breakers[p].retry_after() for p in failure.providers if p in breakers), default=0.0)
+    if wait > 0:
+        at = time.time() + wait
+        failure.retry_at = at if failure.retry_at is None else max(failure.retry_at, at)
+    return failure
+
+
+def is_engine_install_fault(exc: BaseException) -> bool:
+    """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
+
+    The distinction is the whole point: an `ImportError` naming a `personalclaw` module means
+    this PROCESS is stale (its code was deleted or predates the run's state), so it knows
+    nothing about the run and must not render a verdict on it. Every other exception — a
+    provider error, a bad spec, a third-party import that a node genuinely needs — IS about
+    the run and still terminally fails it. Widening this to all `ImportError`s would silently
+    convert real run failures into runs that never finish.
+
+    Keyed on `ImportError.name` rather than the message: the attribute is populated for both
+    shapes that occur here (`from personalclaw.x import y` sets it to `personalclaw.x`, a
+    missing module sets it to the module), and matching message text would break the moment
+    CPython rewords it. `name` can be None for a hand-raised `ImportError`, which reads as
+    "not attributable to the engine" — the conservative answer, since it keeps the existing
+    fail-loudly behaviour for anything we cannot positively identify.
+    """
+    if not isinstance(exc, ImportError):
+        return False
+    name = getattr(exc, "name", None) or ""
+    return name == "personalclaw" or name.startswith("personalclaw.")

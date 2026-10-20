@@ -1,0 +1,240 @@
+import { useEffect, useMemo } from 'react'
+import { type ActionProvider, type PromptItem, type PromptVariable } from '../../lib/api'
+import { Combobox } from '../../ui/Combobox'
+import { Field, TextArea } from '../../ui/forms'
+import { InlineError } from '../../ui/InlineError'
+import { buildArgs, schemaProps, SchemaField, SchemaFields } from '../tools/schema'
+import { usePromptWidgets } from '../prompts/promptWidgets'
+import { useWorkflowWidgets } from '../workflows/workflowWidgets'
+import { actionIcon } from './triggerMeta'
+import { PATH_WIDGETS } from './pathsWidget'
+
+/** Pick an Action provider + render its schema-driven config form. The available
+ *  `$variables` (which depend on the chosen trigger) are shown as insertable
+ *  chips beside each text field so the user can template the action with the
+ *  trigger's event data. Mirrors the Tools "Try it" schema renderer. */
+export function ActionConfig({ providers, provider, config, onProvider, onConfig, vars, loadError, onRetryProviders }: {
+  providers: ActionProvider[]
+  provider: string
+  config: Record<string, unknown>
+  onProvider: (name: string) => void
+  onConfig: (cfg: Record<string, unknown>) => void
+  vars: string[]
+  /** The providers read's rejection, when it left nothing to pick. Distinct from an install that
+   *  genuinely registers no action provider — the picker's "No action providers" cannot say which. */
+  loadError?: unknown
+  onRetryProviders?: () => void
+}) {
+  const selected = providers.find((p) => p.name === provider)
+  // An INTERNAL provider (the Self-QA loop's steps) is a system automation's plumbing: its config is
+  // written by the reconciler that installs it, so offering it here offers an action nobody can
+  // configure. It stays in the catalog — a row already naming one still has to render — and it is
+  // kept as an option only while it is the CURRENT value, so an existing trigger's picker never
+  // blanks out the action it actually runs.
+  const options = useMemo(() => providers.filter((p) => !p.internal || p.name === provider).map((p) => ({
+    value: p.name, label: p.display_name, description: p.supports_blocking ? 'can block the event' : undefined,
+  })), [providers, provider])
+  const { props, required } = useMemo(() => schemaProps(selected?.settingsSchema), [selected])
+
+  const setField = (k: string, v: unknown) => onConfig({ ...config, [k]: v })
+
+  // Metadata-driven widgets: a schema field with x-meta.widget "prompt" renders a
+  // live, searchable picker of saved Prompts instead of a free-text box. Loaded
+  // lazily. Clearing the picker (the X) leaves the field empty — which for
+  // run-prompt means "use loop.md".
+  //
+  // "workflow" picks one of your workflows and "workflow-inputs" fills in the chosen one's declared
+  // inputs (the run-workflow action). Its manifest was restored with them: without it this form
+  // rendered nothing for the action, which then saved with no workflow and failed at every fire.
+  const needsPrompt = props.some(([, s]) => s['x-meta']?.widget === 'prompt')
+  const { prompts, widgets: promptWidgets } = usePromptWidgets(needsPrompt)
+  const needsWorkflow = props.some(([, s]) => s['x-meta']?.widget === 'workflow')
+  const { widgets: workflowWidgets } = useWorkflowWidgets(needsWorkflow, String(config.workflow ?? ''))
+  // "paths" lists the files an agent-starting action may change (`writes`), one chip each.
+  const widgets = useMemo(() => ({ ...promptWidgets, ...workflowWidgets, ...PATH_WIDGETS }), [promptWidgets, workflowWidgets])
+
+  return (
+    <div className="flex flex-col gap-l">
+      <Field label="Action" hint="What runs when this trigger fires. Provided by a registered action provider.">
+        {loadError ? (
+          // The form's one required choice. With the read failed there is nothing to pick and no
+          // point offering the picker — say what happened and offer the retry, because the Save
+          // button's reason can only ever name a requirement, never a broken request.
+          <InlineError icon onRetry={onRetryProviders}>
+            Couldn&rsquo;t load the action providers{(loadError as Error)?.message ? `: ${(loadError as Error).message}` : '.'}
+          </InlineError>
+        ) : (
+          <Combobox options={options} value={provider} onChange={onProvider} placeholder="Pick an action…" emptyText="No action providers" />
+        )}
+      </Field>
+
+      {selected && (
+        <>
+          {vars.length > 0 && (
+            <div className="rounded-md bg-surface-container/60 px-m py-2">
+              <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Available variables</div>
+              <div className="flex flex-wrap gap-1.5">
+                {vars.map((v) => (
+                  <span key={v} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]" title="Use this in any template field below">{v}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {props.length === 0 ? (
+            <p className="text-on-surface-low text-[0.8125rem]">This action takes no configuration.</p>
+          ) : (
+            <div className="flex flex-col gap-m">
+              <SchemaFields
+                key={selected.name}
+                fields={props}
+                required={required}
+                values={config}
+                renderField={(name, schema, isRequired) => (
+                  <SchemaField name={name} schema={schema} required={isRequired}
+                    value={config[name]} onChange={(v) => setField(name, v)} widgets={widgets} />
+                )}
+              />
+            </div>
+          )}
+
+          {/* When a saved Prompt is picked (run-prompt), render ITS declared variables as
+              guided fields that populate the action's `vars` object — so a parameterized
+              template (e.g. the digest: sources/window/target) is filled with labelled,
+              typed inputs instead of hand-writing raw JSON in the advanced "Variables" box.
+              This is the "digest builder" realized on the ONE trigger-authoring surface
+              (no separate route/dual path). */}
+          <PromptVarsFields prompts={prompts} promptId={String(config.prompt_id ?? '')}
+            vars={(config.vars as Record<string, unknown>) || {}}
+            onVars={(v) => setField('vars', v)} />
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Guided fill-in for the selected saved Prompt's `{{variables}}`, writing into the
+ *  run-prompt action's `vars` object. Renders a select for a `select`-type var (its
+ *  options), a textarea for `textarea`, else a text input; seeds each from the var's
+ *  default. No-op unless the chosen prompt declares variables. */
+function PromptVarsFields({ prompts, promptId, vars, onVars }: {
+  prompts: PromptItem[]
+  promptId: string
+  vars: Record<string, unknown>
+  onVars: (v: Record<string, unknown>) => void
+}) {
+  const selected = prompts.find((p) => p.name === promptId)
+  const declared: PromptVariable[] = selected?.merged_variables || selected?.variables || []
+
+  // Seed each declared variable's DEFAULT into `vars` when it's absent — so a default
+  // shown in the field is actually PERSISTED (and rendered at fire time), not silently
+  // dropped because the user didn't retype it. Without this, an unedited required var with
+  // a default (e.g. the digest's window/target) round-trips as empty → a render error when
+  // the trigger fires. Runs whenever the prompt/its declared vars change.
+  useEffect(() => {
+    const missing: Record<string, unknown> = {}
+    for (const v of declared) {
+      if (v.default != null && vars[v.name] === undefined) missing[v.name] = v.default
+    }
+    if (Object.keys(missing).length > 0) onVars({ ...vars, ...missing })
+  }, [promptId, declared.length])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!promptId || declared.length === 0) return null
+
+  const setVar = (name: string, value: unknown) => onVars({ ...vars, [name]: value })
+  const valOf = (v: PromptVariable) => {
+    const cur = vars[v.name]
+    return cur !== undefined && cur !== null ? String(cur) : (v.default != null ? String(v.default) : '')
+  }
+
+  return (
+    <div className="rounded-md border border-outline-variant/40 bg-surface-container/40 px-m py-3 flex flex-col gap-m">
+      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+        {selected?.name} variables
+      </div>
+      {declared.map((v) => (
+        <Field key={v.name} label={v.name + (v.required ? ' *' : '')} hint={v.description}>
+          {v.type === 'select' && v.options && v.options.length > 0 ? (
+            <select
+              value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)}
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+              {!v.required && <option value="">—</option>}
+              {v.options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : v.type === 'textarea' ? (
+            <TextArea value={valOf(v)} onChange={(val) => setVar(v.name, val)} rows={3} ariaLabel={v.name} />
+          ) : (
+            <input
+              value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)} aria-label={v.name}
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          )}
+        </Field>
+      ))}
+    </div>
+  )
+}
+
+/** Seed a provider's config from its schema defaults (used on provider switch). */
+export function seedActionConfig(provider: ActionProvider | undefined): Record<string, unknown> {
+  if (!provider) return {}
+  const { props } = schemaProps(provider.settingsSchema)
+  const out: Record<string, unknown> = {}
+  for (const [k, s] of props) {
+    if (s.default !== undefined) out[k] = s.default
+    else if (s.type === 'boolean') out[k] = false
+    else out[k] = ''
+  }
+  return out
+}
+
+/** Coerce an action config to the SHAPES its provider's schema declares, before it is saved.
+ *
+ * `SchemaField` renders an `object`/`array` field as a JSON textarea, so what the form holds for
+ * one is a *string*. Nothing turned it back into a value on the way out: every consumer of
+ * `ActionConfig` sent `config` verbatim, so `create-task`'s `labels` — badge `string[]`, placeholder
+ * `[ … ]` — persisted as the string `"market, prep"`. The provider then gates on
+ * `isinstance(labels, list)` and drops a non-list, so the created task came out with `labels: []`.
+ * No error at any point in the chain (issue 269).
+ *
+ * The parse itself already existed and was already right: `buildArgs` returns
+ * `{ error: "labels: invalid JSON" }` rather than storing the raw string. It was simply never on
+ * this path — it belongs to the tool inspector, and the trigger and lifecycle forms are the two
+ * surfaces that render the same schema and never called it. So this is a wiring fix, not a new
+ * parser; a second implementation would be the more likely thing to disagree.
+ *
+ * Returns the error for the caller to SHOW. Saving a config the provider will silently discard is
+ * the failure being fixed, so refusing has to be visible or nothing has changed.
+ */
+export function coerceActionConfig(
+  providers: ActionProvider[],
+  provider: string,
+  config: Record<string, unknown>,
+): { config: Record<string, unknown>; error?: string } {
+  const selected = providers.find((p) => p.name === provider)
+  if (!selected) return { config }
+  const { args, error } = buildArgs(selected.settingsSchema, config)
+  return error ? { config, error } : { config: args }
+}
+
+/** The config an EDIT of an action sends: `coerceActionConfig`'s, with every field the form shows
+ *  and left empty sent as `null`.
+ *
+ *  The gateway puts what an edit sends over the saved config (`triggers/action_edit.py`), so a field
+ *  cleared by leaving it out would keep its saved value; `null` is how an edit says it cleared one.
+ *  A saved setting the form does not show (one the provider's schema does not declare) is not sent,
+ *  and stays as saved. */
+export function editedActionConfig(
+  providers: ActionProvider[],
+  provider: string,
+  config: Record<string, unknown>,
+): { config: Record<string, unknown>; error?: string } {
+  const coerced = coerceActionConfig(providers, provider, config)
+  const selected = providers.find((p) => p.name === provider)
+  if (coerced.error || !selected) return coerced
+  const cleared = schemaProps(selected.settingsSchema).props
+    .filter(([key]) => !(key in coerced.config))
+    .map(([key]) => [key, null] as const)
+  return { config: { ...Object.fromEntries(cleared), ...coerced.config } }
+}
+
+export { actionIcon }

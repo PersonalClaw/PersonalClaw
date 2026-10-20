@@ -1,0 +1,32 @@
+{
+  "name": "native-knowledge",
+  "version": "1.0.0",
+  "displayName": "Native Knowledge",
+  "description": "The built-in knowledge library \u2014 typed items (notes, gists, bookmarks, files) ingested by the node-graph pipeline and reachable by agents via tools.",
+  "icon": "BookOpen",
+  "author": "PersonalClaw",
+  "tags": [
+    "knowledge",
+    "bundled"
+  ],
+  "prompts": [
+    "prompts/knowledge-extraction.yaml",
+    "prompts/knowledge-insights.yaml",
+    "prompts/knowledge-intent-match.yaml",
+    "prompts/knowledge-skill-synthesis.yaml"
+  ],
+  "provider": {
+    "type": "knowledge",
+    "implementation": "personalclaw.knowledge_providers.registry:create_native_provider",
+    "capabilities": [
+      "bookmarks",
+      "documents",
+      "search"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "native": true
+}

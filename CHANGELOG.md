@@ -1,0 +1,2197 @@
+# Changelog
+
+All notable changes to PersonalClaw are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
+follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's new."
+
+## [Unreleased]
+
+### Added
+
+- **⌘⇧E shows a chat's working folder beside the conversation, and a click on a file opens it in the chat's file peek; a chat with no working folder says so.**
+- **While a reply is running, the composer's Stop button has a thin arc turning round it, at the pace of the Loading sweep slider; it holds still while the reply waits for your OK or your answer, as the orb does, and with reduced motion on it stays still.**
+- **Settings → Design → Motion has a slider for each animation length: the short, fade, medium and long transitions and each loop's cycle, and every animation takes its length from one of them.**
+- **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
+- **On macOS the desktop window's controls sit in the strip above the sidebar, and the sidebar takes the system's translucent material while the page stays opaque; with Reduce transparency on, or on Linux, the window stays opaque.**
+- **A code project's cockpit keeps its review in its address: the Files or Changes tab, the file, diff or commit the center shows, and the open task, so a reload, Back, a copied address or a `personalclaw://code/<id>` link opens the same review; a link only opens it and never steers, queues or runs anything.**
+- **Write reply styles of your own in Settings, and let an app add styles only when it holds the new `replyStyles` permission.**
+- **A new chat asks once how you like things explained, and keeps your answer as a pinned preference.**
+- **⌘K has Start a loop, so every page the app opens is one search away, and a link to an address the app has retired, such as an artifact's link from before artifacts had their own page, opens the new page straight away instead of passing through the old one.**
+
+### Changed
+
+- **The composer has one pill for the agent and the model; it offers a reasoning effort, under the chosen model, only for a model that declares its levels, and a switch to a model without the chat's level sets it back to Default and says so.**
+- **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
+- **Navigation and sending are instant; motion is kept for panels and moves.**
+- **A code project's cockpit opens a diff in a pane beside the editor instead of over it: drag its edge or use the arrow keys to resize it, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from.**
+- **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
+- **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
+
+### Fixed
+
+- **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
+- **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
+
+## [0.2.3] — 2026-10-19
+
+A patch release on 0.2.2. ⌘Enter approves only the approval that has keyboard focus, and a delete,
+a change outside the chat's folder, a send to other people, spending, or a call to a tool that
+doesn't say what it does asks once more first, on every surface. Each reply shows a small orb for
+what its agent is doing, focus mode (⌘\) and reading mode (⌘⇧.) clear the screen, and a chat or an
+agent can take a terse or a conversational reply style. `personalclaw://` links open the desktop app
+on a page and never act. The dashboard API is version 2, so a client built for version 1 is refused.
+It installs over 0.2.2.
+
+### Added
+
+- **Focus mode (⌘\) hides the sidebar and side pane; reading mode (⌘⇧.) folds the composer.**
+- **A small orb at the head of each reply shows what the agent is doing, and goes still when it needs you.**
+- **The chat history's peek shows what a chat's turn is doing with the same orb, a new chat opens on a still orb, and Settings › Design shows every state of the orb in your colours.**
+- **A test that holds a population down can list its sites, one per line with a reason, instead of comparing a count with a fixed number, so two pull requests that each fix one site and add another no longer turn it red in whichever order they merge; a line a pull request adds needs a date and a reason.**
+- **`personalclaw://` links open the desktop app on one of its pages, from a browser, another app or Terminal; a link only opens a page and never sends, approves or runs anything.**
+- **A link that opens a new thread with a prompt puts the prompt in the composer, unsent, also when the app is already showing a new thread, and a link can open a thread's Activity pane or a new thread's Chat history; a link that names an artifact by key is refused, because an artifact opens on its own page.**
+- **Pick a terse or a conversational reply style for a chat from the composer, or for an agent on its form.**
+- **Settings → Agent defaults → Reply style sets the style every agent uses unless the agent or the chat chooses its own, and the composer's style picker says what the next reply carries, with Show what is sent for the exact text.**
+- **⌘Enter approves the approval that has keyboard focus, and a delete, a change outside the chat's folder, a send to other people, spending, or a call to a tool that doesn't say what it does asks once more first; new keys open the palette, sidebar, terminal drawer, chats and what needs you, and the palette lists every key.**
+- **A messaging channel's approval prompt no longer answers a call that asks once more first: the channel says the call is waiting, with the link to answer it where it asks.**
+- **A tool can declare that it sends to other people or spends money (`ToolDefinition.consequences`); until they declare, the tools of `code-review`, `companion`, `design-critique`, `docs-slides`, `issue-radar`, `notes`, `openai-tools`, `ops`, `research-lab`, `spec-builder` and `web-tools` ask the second confirmation on every call that isn't a read.**
+
+### Fixed
+
+- **A new chat's Chat history button tells a screen reader whether the Chat history pane is showing, where it said the button was pressed.**
+- **A chat's Activity button tells a screen reader whether the Activity pane is showing, where it said the button was pressed.**
+- **A loop page's Details button tells a screen reader whether the Details rail is showing, where it said the button was pressed.**
+- **A chat's row in the chat history follows the chat: it stops saying "running" and shows the new message count when the turn ends, and a chat started elsewhere appears, where the row kept what it said when the page opened.**
+- **The code cockpit's Terminal button tells a screen reader whether the terminal is showing, where it said the button was pressed.**
+- **`python -m tools.ci rails check` reads every test module of a checkout that sits inside a hidden folder, where it found none and passed, and a tree with no test modules fails the check instead of passing it.**
+- **Form fields announce their errors, and the busiest pages use the shared controls.**
+- **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
+- **A focused primary or danger button shows its keyboard focus ring in the page's ink colour, where the coral ring matched the button's own colour and could barely be seen.**
+- **A shell command that repeats the same steps many times, such as a long pipeline written out again and again, is checked for the files it names in a fraction of the time, with the same answer: a repeated step is read again only when a glob in it lists a folder, where every repeat was read again.**
+- **When the notifications can't be read, the bell says so, with a muted mark and Retry in its shade, where it showed no badge, as if nothing were unread, and its shade said "Loading…" for good.**
+- **A view switcher that folded into a menu while its header was settling unfolds again once there is room, where it could stay folded for the rest of the visit; and a week view hour with fires is a 44 px tall target on a phone, where it was 24 px.**
+
+### Changed
+
+- **CI's jobs set up uv, Python and Node with one shared step, so the uv release and the setup actions' pins change in one place instead of in every job.**
+- **Schemes recolour the code editor and the terminal, where each had fixed light and dark colours of its own; each scheme is one override sheet.**
+- **The chat says what its agent is doing as the gateway measures it: waiting to start, thinking, searching your knowledge, the tool it runs, writing, or waiting on your OK or your answer, and a first message on a new chat shows at once.**
+- **The dashboard API is version 2, and a client built for version 1 is refused: chat sessions, a chat's detail and a project's chats report the chat's `run_state` in place of their running, stopping, approval and outcome flags, the `work_phase` frame replaces `chat_status` and `turn_steerable`, and a chat's reply style replaces its natural voice (`/reply-style` and `reply_style_*` in place of `/natural-voice` and `natural_voice_*`).**
+- **Only approvals, questions and errors interrupt you; a loop's progress after each cycle waits for the daily digest, and every other notification waits in the bell.**
+- **`python -m tools.ci verify-check-run` says whether a pull request's posted merge verdict counts: only the merge controller's App's newest run, green, for the exact head and tree it records, so a job of a pull request's own that names itself `merge-verdict` counts for nothing.**
+- **The desktop app's icon, menu-bar image and loading mark are the PersonalClaw gradient mark.**
+- **CI runs once per pull request push instead of twice: a push to a branch other than main no longer starts its own CI run, so a branch is checked once it has a pull request.**
+- **A burst of merges runs the suite once, on its newest commit, instead of once per commit; a commit whose suite was replaced by a newer one stays red, marked "superseded by" that commit.**
+- **`make check` and `make gate` run the change and merge tiers' CI jobs on this machine, as CI runs them, and `python -m tools.ci run-job <id>` runs one of them.**
+
+### Security
+
+- **A browse run blanks a frame from a site it may not reach, such as one your egress settings deny, on its own and says so, where it blanked the whole page; in a browser that gives each site its own process, that frame was not blanked at all and stayed in the run's screenshots and took its clicks.**
+
+## [0.2.2] — 2026-10-18
+
+A patch release on 0.2.1. A long shell command, such as one that writes a file from a here-document,
+is checked in a fraction of a second instead of holding up every chat while it is checked; an
+agent's command that only mentions "push" is no longer refused as one; a message sent while a turn
+runs is no longer stopped after 10 minutes; and an answered approval or a Stop takes effect at once.
+The default look no longer animates its backdrop, Home shows only what waits on you, and the
+machine's telemetry moves to Settings › System. It installs over 0.2.1; a git clone that uv
+installed needs uv 0.13.1 or newer to update, which `uv self update` gets.
+
+### Fixed
+
+- **An agent's shell command is no longer refused as a push when it only reads text that says "push", such as a search of your workflow files, or when the word is in a commit, tag, merge, note or stash message given with `-m` or `--message`. A message given in a here-document, and any other git argument or word containing "push", are still refused, and so is a real push unless you allow pushes in Settings → Security.**
+- **A long shell command, such as one that writes a file from a here-document, is checked against the shell denylist in a fraction of a second, where a few kilobytes took several seconds and held up every chat while it was checked.**
+- **The check of a shell command for credential files takes a fraction of a second on a long command, where 100 KB took about 40 seconds and held up every chat while it ran.**
+- **A message you send while a turn runs is no longer stopped after 10 minutes when its turn comes: it runs until it is done, as one sent to an idle chat does, and a turn nobody is watching, such as a subagent's report or a loop's cycle, is stopped only once it has made no progress for its whole limit, saying how far it got.**
+- **An answered approval, a Stop or an edit takes effect immediately.**
+- **A reasoning effort on a current Claude model over the Anthropic API no longer fails every turn with an error.**
+- **With the default look, picking a colour scheme in Settings → Design keeps the UI density, dot shape, arrangement, bounciness and expressiveness you set, where it put them back to their defaults.**
+- **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
+- **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**
+- **The context ring measures Claude Haiku 5.5 against its 1M-token window, where it said no window was declared for the model.**
+- **The Nix flake installs 0.2.1, where it was still on 0.1.3, and under it the agent's own tools, app installs and `personalclaw doctor` find PersonalClaw's packages; it no longer offers Intel Macs, where it could not build.**
+- **Settings → Updates' release notes and changelog scroll from the keyboard, and a screen reader names each box instead of reading all of it out as its name.**
+- **A service from `personalclaw service install` finds `git`, `python3` and every other program where the shell that installed it does, instead of the system's copies first, once it is installed again.**
+- **A gateway installed as a service passes Claude Code and Gemini CLI the provider, region and model your shell chose for them, so Claude Code on Amazon Bedrock or Google Vertex AI keeps that provider under the service once `personalclaw service install` runs again.**
+- **On a macOS service, `personalclaw logs` also shows what the gateway printed, such as where the dashboard is, as the Linux service's journal does, where a healthy service showed nothing.**
+- **A chat open in the dashboard shows its notices as they happen while another client, such as one on the OpenAI-compatible endpoint, streams its turn, not only after a reload.**
+- **`personalclaw-client` signs in with the token it is given: it sends it as `Authorization: Bearer`, where it sent a cookie the gateway never reads, so every call was refused.**
+- **Knowledge consolidation's background check no longer sends your items to the embedding model: it groups them by the vectors they already have, runs at most once per the minimum hours you set (your own consolidation is never held back by it), and the call log names knowledge maintenance as the caller of the embeddings it makes.**
+- **A workflow step inside a fan-out reads the steps of its own item, where it could be handed another item's answer, and a branch in each item takes the case its own item's answer selects.**
+- **A step after a fan-out reads every item's result as `{{nodes.<fan-out>.output}}`, and audit-sweep checks each finding with its own verifier shown the target, keeps a finding whose verifier gave no verdict, and hands its fix stage only the findings no verifier refuted, where one verifier judged them all and refuted ones were fixed too.**
+- **A browse run whose start page fails to load says so instead of blaming your egress settings, a blocked redirect torn down cleanly no longer ends a healthy run, and a watched source whose browse step could not run says why instead of telling you to change its URL.**
+
+### Security
+
+- **The built-in push rule judges a `git stash push` as the command it is, where a text exception could let a command through that was not a stash push.**
+- **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
+- **A folder holding a `personalclaw` package no longer runs its own code in place of PersonalClaw's when an agent runs a command there, or when PersonalClaw starts an app, the computer-use driver, an evaluation, an upload scan or a restart: that code ran before the sandbox did.**
+- **A browse run whose page redirects itself to a site your egress settings deny can no longer read or act on that page when the browser refuses to tear it down, and a refusal that lasts only a moment after the redirect no longer ends the run.**
+
+### Changed
+
+- **The animated backdrop is off by default, so an idle chat no longer repaints every frame: Claw Arcade brings the wave field with its glow, the composer's glowing focus ring and the button sheen, and Retro Terminal brings a still field; if you already use one of them, pick its backdrop under Background in Settings → Design.**
+- **Home shows only what waits on you: the header counts approvals, tasks ready and inbox, and only when they are above zero; a "YOLO active" warning stays beside them while every tool call is approved without asking; the shortcut row is gone (its pages are in the sidebar, under "Everything", and in ⌘K); the machine's health moved to Settings › System; and what is holding memory is in Settings › Models.**
+- **Updating a git clone that uv installed needs uv 0.13.1 or newer, which `uv self update` gets.**
+- **`personalclaw setup` ends by naming `personalclaw service install`, which keeps the gateway running in the background and through reboots, on a Mac or on Linux with systemd.**
+- **Every CI job stops at its own time limit, sized from how long it has taken, so a hung job no longer holds a runner for hours.**
+- **Closing or merging a pull request cancels its CI runs that are still queued or running, so they no longer hold runners other pull requests are waiting for.**
+- **A bare `pytest` in core runs in one process without coverage; `make test` stays parallel, and coverage is `--cov=personalclaw`.**
+- **Core's test extra no longer installs pytest-split: the suite's CI shards are whole test files planned from recorded durations, and `pytest tests --shard-list FILE` runs the files one names.**
+- **CI builds the dashboard once and runs every browser check in one run, so one failing check no longer hides the others, and a build that does not match the code fails before any check runs.**
+- **Every pull request's commits and title are checked for a sign-off that matches each author, no co-author or tool marks on a maintainer's commit, and no marker that would skip CI, and every push to `main` is checked the same way, its committers included.**
+
+### Added
+
+- **Settings → Security can let agents push a branch, each push still asking you.**
+- **The app quality check can judge each app's `tested` claim from test results a CI run already recorded (`--results DIR`), instead of running every app's tests again.**
+
+## [0.2.1] — 2026-10-15
+
+A patch release on 0.2.0. On Linux an agent on an agent CLI can save your automations,
+callbacks and overview tiles, math is drawn as written again, and a few labels and counts say
+what they mean. The release attaches its Linux AppImage, its deb and an SBOM of the wheel, and
+its wheel and sdist get GitHub's build-provenance attestation, none of which 0.2.0 had. The
+dependencies are up to date, and the updates that close published advisories are listed under
+Security. It installs over 0.2.0 with nothing to do first.
+
+### Fixed
+
+- **A release attaches its Linux AppImage and deb: the release's check of the deb no longer fails a good package, which in 0.2.0 stopped the GitHub Release from being created.**
+- **A release attaches an SBOM of the wheel, `personalclaw-wheel.spdx.json`, that lists the wheel and every package it installs with, where 0.2.0's listed nothing and was not attached.**
+- **A release's wheel and sdist get GitHub's build-provenance attestation even when the GitHub Release cannot be created; 0.2.0's have none.**
+- **On Linux, an agent on an agent CLI can make, change and delete your automations, and its callbacks, overview tiles, proposals and model spend are kept, instead of each save ending its PersonalClaw tools with "Read-only file system".**
+- **Math in replies and documents is drawn as written again: overlines, underlines, boxed and numbered equations, the ruled lines of an array, accents, a root's index and size changes were missing or out of place, because the math and its stylesheet came from different KaTeX releases.**
+- **Filtering Settings → Memory down to one record announces "1 memory", not "1 memorie".**
+- **An app's install review counts what its scanner found: "2 findings the app cannot run", and "1 finding" for one.**
+- **Settings → External access shows `config.json` as code, not between literal backticks.**
+- **`personalclaw doctor` names the credential store "OS keychain", the name Settings → Security gives it.**
+- **The API route reference gives each method of a route its own summary, where two methods used to share one line.**
+- **A deleted artifact leaves Knowledge's search even when Knowledge is being written at that moment, instead of staying searchable.**
+
+### Changed
+
+- **`personalclaw.sdk.channel.__version__` is part of the SDK as a string, the version of the PersonalClaw an app runs on, and no longer as one release's value, so a new release is not an SDK change (no app has to change for it; `slack-channel` shows it on its Home tab).**
+
+### Security
+
+- **urllib3 moves to 2.8.0, and PersonalClaw now requires at least that release (`urllib3>=2.8.0`), so an update brings an existing install up to it.**
+- **PyJWT moves to 2.15.1.**
+- **DOMPurify moves to 3.4.17.**
+- **Every copy of KaTeX moves to 0.19.0.**
+- **source-map-js moves to 1.2.2.**
+- **The three copies of undici move to 6.29.0, 7.30.0 and 8.11.2.**
+
+## [0.2.0] — 2026-10-07
+
+The first release since 0.1.3, and its theme is **work that answers to you**. Controls do what
+their labels say, and a number nobody measured says so instead of showing `0`. Work nobody watches
+(an automation, a loop, an agent CLI, an app) runs only on the approvals, budgets and workflow
+versions you gave it, and an app is refused what only you may decide. What someone else brings in,
+from a shared thread, a correspondent's mail or a program, can neither use your trust nor become
+your memory, and an Incognito or Temporary chat's words are kept nowhere but its transcript. It is
+a pre-1.0 clean break with no automatic migration: run `personalclaw snapshot` and read
+[Updating](https://github.com/PersonalClaw/PersonalClaw/blob/v0.2.0/docs/guides/getting-started.md#updating) before you upgrade.
+
+### Highlights
+
+- **Updates track releases, not `main` — and the update you get is the one you chose.**
+- **Unattended work is read-only by default, and bounded by a ceiling you control.**
+- **An approval is a brief, not a name and four buttons.**
+- **Cost and context stop lying to you.**
+- **Your library is searchable by what is inside documents.**
+- **Scheduled automations fire when you meant.**
+- **Chat craft: Stop stops, and you can branch, plan and rewind.**
+- **A fresh install boots with a working chat provider.**
+- **Backups you can step through.**
+- **Secrets stay secret.**
+- **Apps are honest about what they can reach.**
+- **The dashboard stops showing an old number and quietly changing it.**
+- **Phone, devices and the desktop shell on Linux and macOS.**
+
+### ⚠️ Breaking changes — read before upgrading
+
+- **Updates.**
+- **Timed triggers change the hour they fire.**
+- **Existing automations now honour the action denylist**
+- **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
+- **Python 3.14 is refused at install time**
+- **Config fields removed**
+- **`inbound` is renamed `external_access`**
+- **API breaks.**
+- **State shapes changed with no migration.**
+- **SDK breaks for app authors.**
+- **Chat's Activity → Index tab is gone**
+- **An agent no chat started asks before it acts, unless its automation or loop was allowed to run on its own.**
+- **The first start re-embeds your library once.**
+- **A webhook takes a token of at least 32 characters, and only from this machine.**
+- **An app says what its agent work may use, and its agents approve nothing.**
+- **Slack asks you to pair once more.**
+
+### Added
+
+- **A webhook post or callback whose sender names it with an `Idempotency-Key` header fires once: the same name sent again within a week, after a restart too, answers as already received and runs nothing.**
+- **`personalclaw.sdk.channel.screen_tool_call` takes what the call is (`tool_kind`, `declared`), so an approval it answers is decided on the command a shell call runs (an SDK addition no app has to change for; `slack-channel` screens with it).**
+- **A channel that keeps only the owner its pairing named can say so: `paired_owner`, `forget_owner` and `CANNED_OWNER_PAIRED_REPLY` in `personalclaw.sdk.channel`, and the `paired-owner` core feature. Once PersonalClaw has paired or forgotten a channel's owner, the shared `PERSONALCLAW_OWNER_ID` no longer answers for that channel (SDK additions, used by `slack-channel`).**
+- **A model app that reads its provider's own wire reads it through `personalclaw.sdk.model.until_terminal` and declares the `cut-off-answers` core feature, so a stream cut before its answer ended raises instead of reading as complete (an SDK addition, used by `bedrock-models` and the bundled `ollama-models`).**
+- **`ActionProvider.hands_config_to_a_run` declares an action that starts a workflow run with its config, and `ActionContext.secret_references` names the secret references its dispatch hands on to that run (SDK additions no app has to change for).**
+- **When an agent needs your decision to go on, it asks you a question with options and waits: the question shows as a card in its chat, where you choose, write your own answer or skip it, and as a Needs you item in the Inbox and Mission Control's Your turn. PersonalClaw's own agent asks with its new `ask_user` tool, and Claude Code asks its own questions there too; your Stop withdraws a question still waiting.**
+- **An app that reads a model's stream with `personalclaw.sdk.model.closing_stream` declares the `closing-streams` core feature, and a PersonalClaw without it refuses the app instead of failing to load it (an SDK addition, used by `slack-channel`, `code-review` and `issue-radar`).**
+- **`personalclaw.sdk.net.open_url` streams a download too large to buffer, every request and each redirect hop asked of the egress guard first, and the `guarded-download` core feature names it (an SDK addition, used by `diarization-onnx`).**
+- **An app built for a newer PersonalClaw is refused when you review, install, update or switch it on, and the refusal names what this one lacks: an app lists the core features it relies on in `requiresCoreFeatures`, and `personalclaw.sdk.features` says which this core offers (SDK addition, used by `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel`).**
+- **Your agent can search what your earlier chats said (`chat_search`), and a handoff, a standup or a weekly review now looks there too. It never returns the chat you are in, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.**
+- **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
+- **The agent reads the calendars in the folders you share: each turn names them, and `calendar_events` lists what is on a day, with repeating events expanded in your time zone and an all-day event through its last day.**
+- **A chat channel's approval offers what the chat's approval card offers: Allow once, Allow for this chat and Deny, from the answers core hands over in the approval brief (channel contract change, used by `*-channel`).**
+- **`SubagentInfo.held_back` and `SubagentManager.spawn(held_back=…)` say why an agent may do less than the step that started it asks (an SDK addition no app has to change for).**
+- **A working folder that holds an automation back can be trusted from that automation's panel, and from the request it raised in the Inbox, which asked you to trust the folder and offered no way to.**
+- **`SubagentInfo.refused` lists the calls an agent's own limits refused (an SDK addition no app has to change for).**
+- **A model is priced in the unit it is billed in: per 1M tokens, per image (by size and quality), per second of video, per minute of audio or per 1M characters of speech. Settings → Usage → Model prices takes a price in any of them, and says whose list price a shipped price is and the day it was recorded.**
+- **Image, video, transcription and speech calls are counted in Usage by their images, seconds, minutes or characters, and an automation's are held to the daily dollar cap like its model calls.**
+- **Set your own price for any model from any provider, a known price included. Your prices are part of your configuration (`config.json` → `model_prices`), Model prices shows where each price comes from and its date and the default under yours, and resets yours to it. Prices set before in `model_rates.json` are carried over when the gateway starts, and the file is removed.**
+- **A message that runs a saved prompt shows the prompt's text under it, folded and labelled as the prompt's, as the prompt runs and after a reload.**
+- **A loop can run on an agent CLI you have set up: the loop composer's Runs on picks PersonalClaw or one of the agents a ready CLI offers, Plan Review and the page of a loop that hasn't started change it, a CLI that isn't ready is shown with why, and a loop on a CLI that isn't set up or isn't ready is refused with that reason instead of failing on its first turn. Settings → Agent defaults' Default agent now says it is a chat's default, which loops don't use.**
+- **A room member can be an agent CLI's agent: Add a member lists the agents each ready CLI offers (a CLI that isn't ready is listed with why), and the member's turns run on that CLI as that agent rather than asking it for a mode named after the binding.**
+- **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
+- **Settings → Speech & Transcription shows which ffmpeg PersonalClaw runs, or where it looked when there is none; a long recording sent whole and a video whose sound could not be read say so too.**
+- **A channel can ask whether a session keeps no memory before it ends one: `personalclaw.sdk.channel.HistoryConsolidator.keeps_nothing_from` and `ConversationLog.recorded_memory_mode` (an SDK addition no app has to change for; `slack-channel` can use it).**
+- **A chat channel can let go of the conversation a session's runtime holds, so that session's next turn starts one of its own: `personalclaw.sdk.channel.SessionManager.forget_conversation` (an SDK addition no app has to change for; `slack-channel` can use it).**
+- **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**
+- **An automation made in chat can send its result to the chat channel you name, and run when a workflow run you name finishes; the Triggers page makes one as "Run finishes"**
+- **Once a chat model is ready, onboarding's model lane still offers the Ollama on this machine or your network: "Also add a local model" adds it as one more provider and leaves the chat model as it is, and the recap lists every model provider set up.**
+- **An email's attachments are listed in the Inbox by name, type and size, each with a download, and an agent reading the message is given each one's text inside a fence: `IncomingMessage.files` and `ChannelMessage.files` carry `personalclaw.sdk.inbox.Attachment` (`personalclaw.sdk.channel.Attachment`), used by `mail-inbox` and `email-channel`.**
+- **An automation that starts an agent can name the files its job changes (Files it may change): its agent may write those and nothing else, and its Allow says what its agent may do.**
+- **"Make me a button that runs …" makes an automation that runs when you run it, and the chat shows it with its Run now.**
+- **A trigger's run is told what started it (the file that arrived, the message, the page's new items, the webhook's body), and its agent may read that file: `ActionContext.fire_facts` and `fire_files`, and `SubagentManager.spawn(may_read=…, may_change=…)` (SDK additions no app has to change for).**
+- **`read_file` reads the text of a PDF, Word or PowerPoint document.**
+- **A search app's refusal names the network setting that lifts it, in the words a model provider's Test uses: `personalclaw.sdk.net.egress_refusal` (an SDK addition, used by `brave-search`, `duckduckgo-search`, `exa-search`, `perplexity-search`, `searxng-search`, `tavily-search`, `wikipedia-search` and `skills-sh`).**
+- **Settings → Backups → Sync asks for the sync passphrase when the chosen transport encrypts, before the first sync, and saves it to the credential store without showing it again.**
+- **An artifact's page pins it to Home, or unpins it, from its header: Pin to Home.**
+- **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**
+- **Files, a chat's file panel and the Code cockpit save an image or a PDF as a versioned artifact: a copy of the file, checked by its contents, which gains its next version each time it is saved again after the file changes.**
+- **A model server app can declare that it runs the models it serves where it is, `ProviderCapability.hosts_model` (an SDK addition, set by the bundled Ollama app and `vllm-models`): only an instance of such a type on this machine is a local model.**
+- **An answer drawn from a learned lesson can cite it as [Lesson N], which opens that lesson in Memory (`ContextBuilder.build_session_context` and `MemoryService.lessons_context` take an optional `citations_out`: an SDK addition no app has to change for).**
+- **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
+- **A diarization app can say why it could not tell the speakers apart: `personalclaw.sdk.diarization.DiarizationError`, used by `diarization-onnx` and `diarization-pyannote`.**
+- **Memory Studio edits a fact where it is shown: Edit changes its value under the same key, and the Audit tab can undo it.**
+- **An app's test suite can load model libraries the way PersonalClaw does, reporting nothing and writing nothing outside its home: `personalclaw.sdk.testing.library_env()`, used by the apps repository's test harness.**
+- **Settings → Usage → Model prices sets the price a model's calls are counted at, and lists each model you use with its price and where that comes from.**
+- **A provider type can say where an instance that names no endpoint sends, and that it runs inside the gateway: `ProviderCapability.default_endpoint` and `in_process` (SDK additions no app has to change for; every branded app declares its default through `register_branded_app`, and `ollama-models` and `bundled-chat` declare theirs).**
+- **An app can sign git in with a token it keeps in the credential store, never on a command line, in the clone or in a keychain: `personalclaw.sdk.git.git_argv(…, token=True)` with `git_env(token=…)`, used by `git-sync`.**
+- **An app can say why its media features fail: `personalclaw.sdk.stt.SttError`, `unavailable_reason()` on speech-to-text and embedding providers, and `personalclaw.sdk.net.sentence_with_detail` (SDK additions no app has to change for; `bedrock-models` uses all three, and `openrouter-models`, `google-models`, `alibaba-models`, `git-sync`, `dir-sync`, `rsync-sync`, `s3-sync` and `vector-store-qdrant` use `sentence_with_detail`).**
+- **The channel conformance kit checks how each approval ends and what a press after it is told, and every task status a stream is given: `assert_channel_contract(press=…)`, used by `telegram-channel`, `discord-channel`, `slack-channel` and `email-channel`.**
+- **A channel app can say it sends as you, not as a bot, and then answers no stranger: `ChannelCapabilities.speaks_as_owner`, used by `email-channel`.**
+- **A channel app waits for an approval as long as PersonalClaw does: `personalclaw.sdk.channel.approval_window_secs()`, used by `slack-channel`.**
+- **A channel app can say the agent compacted the conversation on its own: `personalclaw.sdk.channel.COMPACTION_AUTOMATIC`, used by `slack-channel`.**
+- **An app's provider runs git the way core runs its own through `personalclaw.sdk.git`, masks what a program it starts printed with `personalclaw.sdk.security.mask_child_output`, and passes only the SSH agent to a program that signs in over ssh with `child_process_env(ssh_agent=True)` (`git-repo`, `git-sync`, `notes`, `spec-builder`, `skills-sh` and `rsync-sync` use them).**
+- **An image or video provider can say why it can't generate: `unavailable_reason()` on `ImageGenProvider` and `VideoGenProvider` (an SDK addition no app has to change for; `google-models`, `bedrock-models`, `openrouter-models`, `alibaba-models`, `fal-image` and `local-image-gen` say why).**
+- **An app can say that git is too old to run: `personalclaw.sdk.git.git_argv` refuses a git older than 2.12 with `GitTooOld`, and `git_problem()` says so before anything runs (`git-repo`, `git-sync`, `notes` and `spec-builder` use them).**
+- **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
+- **An app's test suite can refuse its tests a real local model server, and with `loopback=True` any server on the machine its tests did not start: `personalclaw.sdk.testing.refuse_ports()` (an SDK addition no app has to change for).**
+- **An app's test suite can keep its tests' git off the machine's credential helpers, as core's own suite now does: `personalclaw.sdk.testing.neutral_git_env` and `refuse_git_helpers`, used by the apps repository's test harness.**
+- **A sync transport can refuse a key that leads out of its folder, and the sync report names it: `personalclaw.sdk.sync.KeysRefused`, with `is_path_in_store` and `is_safe_relative_path`, the rule the sync holds another machine's paths to, used by `dir-sync` and `git-sync`.**
+- **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
+- **Settings → Security sets the sign-in lockout: how many wrong attempts, and how long it lasts.**
+- **Settings → Security sets how long a sign-in lasts.**
+- **A sidecar app's engine installs from the dashboard: Install engine, on its card in Settings → Providers and on its Configure page.**
+- **Install consent and the Store card say what an app needs that PersonalClaw doesn't install.**
+- **You choose which chat channel asks your approvals: Settings → Notifications → Send approvals to.**
+- **Codex's compressed sessions come over too.**
+- **A task's due date now reminds you the day before, once, and you can turn that off per task.**
+- **A workflow can be edited in the dashboard.**
+- **A remote MCP server that signs in with OAuth connects: Sign in on its Tools page card, and it stays signed in.**
+- **⌘K searches what is inside the app, not only its pages.**
+- **An SDK change is a reviewed diff, and CI runs the first-party apps' contract on it.**
+- **Bringing your setup over lists what comes across, with a count and a checkbox per group, and lets you pick item by item.**
+- **A fresh install can hold a conversation without an account, an API key or a provider — after one download it tells you about first.**
+- **A workflow step whose output ignored its declared `schema` now says so on its own row.**
+- **Each room member now reads only what it has not seen.**
+- **Validation warns about words on a gate that its kind never shows anyone.**
+- **Agents → Export to Claude Code writes your agents into Claude Code's agents folder, after you confirm it, and never over a file PersonalClaw did not write.**
+- **An Invoke Agent automation can work in a folder you allowed in Settings → Agent defaults, so its agent reads the files there; the automation's save refuses any other folder, as a Run prompt automation's now does too.**
+- **Settings → Models → Background sets how long a background task may run (five minutes unless you change it), the most text it may write in one answer (4,096 tokens) and how long a reply waits for a busy local model before asking the next one (15 seconds); a change applies to the next call, and a task the time limit stopped says where to raise it (`AppConfig.background`, an SDK addition no app has to change for).**
+- **The gateway keeps answering while a recording's speakers are told apart: an app can run one call of an engine that holds Python's interpreter lock in a process of its own, `personalclaw.sdk.sidecar.run_once` (an SDK addition, used by `diarization-onnx`, whose diarization stopped every request for as long as it ran, and by `diarization-pyannote`, whose clustering stopped them for a second or more at a time on a long recording).**
+- **A client of the OpenAI-compatible endpoint can keep its conversation, one per `user` value: you choose it when you register the client (`persistent_sessions`) and change it on the client's row in Settings → External Access, where a client could only ever keep none; a change starts its conversations over.**
+- **`personalclaw.sdk.channel.to_schedule_row` takes `last_run_source`, what started the automation's newest run, and the row it returns says it (an SDK addition no app has to change for).**
+- **A first-time contributor's three dead ends are closed: a compose service that runs a command the CLI does not have, a Discussions category that does not exist, and a dev setup that fails on the `python3` most machines have.**
+- **The `WF_*` workflow error codes now have a registry and a both-directions rail: `workflows/error_codes.py` (`WF_ERROR_CODES`), 162 codes with a meaning each.**
+- **"When PersonalClaw is not the right tool (yet)" gains an eleventh scenario: there is no spend cap on a fresh install, and the ceilings that exist never cover the chat window.**
+- **Browse can now click a `<canvas>`: an opt-in vision-grounding fallback, using a vision model you pull yourself.**
+- **"When PersonalClaw is not the right tool (yet)" — ten situations where a new reader should walk away today, and the two README claims that contradicted the code.**
+- **Agent Rooms are now something you can see and use: a Rooms tab, an attributed transcript, the pause card and per-member status.**
+- **Agent Rooms take turns deterministically, and a round budget pauses the room to you rather than running on.**
+- **Deep research is now a judged, bounded research loop, and a template can say which input carries a loop's task.**
+- **A loop kind can now be started as a workflow run: `general` is the first.**
+- **Agent Rooms: a shared transcript several bound agents deliberate in.**
+- **Agent Rooms: every member now carries its own tool reach, and the human is the only one who can approve a tool call.**
+- **The tool-loop breaker's abort ceiling is now tunable: `guardrails.loop_breaker.circuit_threshold`.**
+- **A fresh install now ships a working model provider: `ollama-models` is bundled.**
+- **`StructuredOutput` is exported from `personalclaw.sdk.model`.**
+- **A skill now says HOW it came to exist, not only which tier it lives in.**
+- **CSV is a generated document format, and it stores as text rather than as a binary body.**
+- **A pack's staged roster could be deployed only by `curl`. `POST /api/packs/{name}/roster/deploy` shipped complete — route, handler, `deploy_roster`, and the `roster` rows already on the `/api/packs/installed` wire — with no control anywhere in the dashboard**
+- **Nine config sections were PATCH-editable, backend-read and reachable from NO control in the dashboard. They have controls now — two new Settings panels and five new sections on existing ones.**
+- **`knowledge.synthesis_window` and `knowledge.max_mentions_per_claim` now do what they say.**
+- **The contradiction judge's typed relations are now stored instead of discarded.**
+- **A notification can now say WHO it is for, and one addressed to somebody else is visible here but fired nowhere here.**
+- **`sharing_policy: shared` knowledge now actually goes somewhere: the provider contract gains its outbound half.**
+- **One install of a knowledge connector can now watch MANY sources: the engine hands `poll` the source row's validated `spec`.**
+- **Bring your own vector store: knowledge vector search can run against your own Qdrant (or pgvector, or Chroma) instead of the built-in `sqlite-vec` index.**
+- **A Session Map mark now says what the turn DID, and you can tell the map to show fewer of them.**
+- **A scanned PDF stops ingesting EMPTY: `ocr` is a new provider type, and a PDF with no text layer is rasterized and read.**
+- **A clean run down one branch of an either/or no longer reports as `partial`.**
+- **A relevance reranker arm for knowledge retrieval, OFF by default.**
+- **The Session Map is reachable: chat now carries an in-session index rail, and on a phone it becomes a tappable drawer.**
+- **A mark jump now lands on the turn you clicked.**
+- **`personalclaw footprint` reports where your disk went, and the gateway now actually gives it back.**
+- **A chat session now has a durable index: `GET /api/chat/sessions/{session}/map`.**
+- **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
+- `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn.
+- The dashboard gains a **Desktop live view** widget: the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land.
+- The desktop app now ships for **Linux x86-64**: every release attaches an AppImage and a `.deb`, built and smoke-tested by CI from the release tag.
+- The desktop app now ships for **macOS (Apple silicon)**: every release attaches `PersonalClaw-<version>-arm64.dmg`, built and smoke-tested by CI on a macOS runner from the release tag (the smoke executes the dmg's bundled backend, so a bundle that packages but cannot start fails the release).
+- **The macOS build is now deterministically ad-hoc signed, and that fact is verified rather than assumed**
+- Durable tmux-backed run workers gain their **spawn** half.
+- **An MCP server can now ask *you* a question mid-tool-call, through the approval card PersonalClaw already had**
+- The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
+- **The published HTTP route reference is now generated, and its count is measured rather than asserted**
+- **Homebrew and Nix are now real install paths, and a fresh-install validator proves it on a machine that does not already have them.**
+- **Proposals can now show whether they would have helped on YOUR work.**
+- **Automations can now read a web page.**
+- **"Open at login" is now a working switch in Settings, and it agrees with the menu bar.**
+- **You can put your own note in your inbox.**
+- **Notification rules can now deliver as real OS notifications.**
+- **Your phone can wake you when a run is blocked on your approval — and the notification carries nothing but two ids.**
+- **A reviewer's findings now get triaged by you before anything touches your code.**
+- **Your watched sources now write you a morning digest, without you scheduling anything.**
+- **App cards now tell you whether an app is tested, styled like the rest of PersonalClaw, and accessible — and for our own apps, a card that claims it and isn't fails the build.**
+- **"Is this template edit actually better?" is now a question you can answer, not settle by taste.**
+- **A resumed session no longer redoes yesterday's finished work.**
+- **A big skill can no longer take the conversation.**
+- **A stale browser tab now says it is stale instead of going blank.**
+- **The app stops showing you an old number and then quietly changing it.**
+- **Your knowledge library can live as plain markdown files you own, and you can edit them.**
+- **A loop now tells you what it cost.**
+- **A turn that will not fit says so before it runs, and says what to do about it.**
+- **Ask your library a question about structure and get a traversal, not a guess.**
+- **Independent lookups in one turn now run at the same time.**
+- **Long lists stay fast however long they get.**
+- **Pair a phone or a second browser with your gateway over your home network.**
+- **Ask for plainer prose without editing a prompt.**
+- **Stop actually stops.**
+- **Know whether a model will actually run on your machine before you download it.**
+- **Put back one file, not your whole configuration.**
+- **See every device paired with your gateway, and cut one off.**
+- **Plan a task before anything runs, from the chat you are already in.**
+- **See everything your agents are doing at a glance.**
+- **The desktop app has a live menu-bar item, and quitting it no longer risks the gateway.**
+- **Undo a bad edit instead of restoring a backup.**
+- **Apps can subscribe to platform events they declare.**
+- **Pair a phone or tablet as its own device.**
+- **Nudge an artifact's look without spending a message on it.**
+- **Point at what is wrong instead of describing it.**
+- **A pinned dashboard tile can now keep its own numbers up to date, for free.**
+- **Sync through storage you don't trust, and it still can't read your data.**
+- **Mistyping your sync passphrase is now a mistake you can take back.**
+- **Saved the same article twice? Knowledge will now tell you, and fold the two together.**
+- **Hold a thought, press a key, keep your hands where they are.**
+- **The design-system tool can list what it has, instead of making the assistant guess.**
+- **PersonalClaw can now notice what a project is and suggest a pack for it — and it only ever suggests.**
+- **Branch a conversation from any message, and see where a branch came from.**
+- **A bad edit is no longer permanent.**
+- **Your phone can find this machine on its own now, if you ask it to.**
+- **Two ready-made setups you can install in one go — Personal CFO and Health OS.**
+- **A pack can bring a team, and only the people you actually hired show up.**
+- **Paste a prompt card and turn it into something you can actually use.**
+- **Share a setup as one link.**
+- **Take your data out — all of it, or just the part you asked for.**
+- **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
+- **See what a run actually built, in a browser.**
+
+### Changed
+
+- **A chat working in a folder of its own runs on Settings → Models → Code & tools: its turns and the side questions asked beside it go to that chain (your Chat chain while it binds no model), where every chat turn went to Chat; each turn names the model that answered it and where that model was chosen from, the model pill's Auto says it, and Settings → Models says which work each use case serves, loop judges, library processing, workflow steps and the audio and video rows nothing reads yet included**
+- **Every upload, Knowledge write and artifact save waits about 0.8 s less for its content scan: the scan's child process imports the scanner and nothing else, where it loaded the whole command line first.**
+- **The code map's grammars are fetched once for every PersonalClaw process on a home, and a language the language pack has no grammar for is answered without a fetch; core's test suite keeps its two downloads, the grammars and the default chat model, in pytest's cache or in the folder `PERSONALCLAW_TEST_DOWNLOADS` names, and fetches each once.**
+- **The security log says which refusal an agent's refused document write was: one that named no base, or one whose base another write had replaced**
+- **Docs, code comments and the shared-store kit's failure messages give the engineering reason for a behaviour instead of naming another product**
+- **Code comments, docs, help text and test messages say the reason behind a behaviour instead of citing planning identifiers a reader cannot resolve**
+- **PersonalClaw's own background chores (a chat's title and tags, its follow-ups, the suggestions) and its judges run on a model and never start an agent CLI; with no model chosen nothing is asked, and the new-chat page, the dashboard, the place under a reply and an untitled chat's header each say so and lead to Settings → Models; and a helper call refuses every tool request unless its caller passes a policy of its own.**
+- **`SubagentInfo.priced` says whether a subagent's turn had a price, and `Trigger` no longer carries a `retry` nothing read (SDK changes no app has to change for: `companion` and `shared-automations` keep `Trigger` rows and never set or read their `retry`).**
+- **`personalclaw doctor` reads the agent config and changes nothing in it: a missing or stale entry for PersonalClaw's own server is an issue it reports, repaired by the Fix in Settings → Doctor → Tools, which asks first, and neither doctor nor any Fix adds a tool to the ones the agent runs without asking.**
+- **A second gateway on a home that one already serves refuses to start and names the one serving it, before it seeds, binds or writes anything in the home; `--seed-replace` never empties a served home.**
+- **`personalclaw chat` chats through your running gateway: a call that asks for approval waits for your answer in PersonalClaw or on your paired chat channel, each turn has your assistant's name and memory, Ctrl+C stops the turn, and with no gateway running it says how to start one.**
+- **`personalclaw.sdk.channel.MemoryService` embeds a recall's question once for all its arms: `embed_query()` answers a `QueryVector` (exported beside it), each recall arm takes it as `query_vector` (`None` ranks by words alone), and `search_episodic`'s `query_embedding` is now `query_vector`, so a caller still passing the old name fails at once (`slack-channel` imports `MemoryService` and calls none of them).**
+- **An automation whose agent runs on an agent CLI can't be given files to change: PersonalClaw can't limit a CLI's own file edits to them, so saving them is refused, its Allow says it only reads, and a run that reaches a CLI anyway changes none of them and says why.**
+- **`personalclaw.sdk.channel.run_chore` and `chore_usage` (with the `Attribution` it returns) ask a model for a chore in a call of its own, and refuse one for a thread or chat that keeps nothing outside its own turn; `compress_thread_history` and `HistoryConsolidator` take no session manager, and `BACKGROUND_KEY` is off the channel SDK (an SDK change; `slack-channel` moves to them).**
+- **An automation's Allow names every message its agent may send: a reading agent may message you in PersonalClaw or on a chat channel you connected and no one else, and an agent with write access, like an app's background agent at install, may also send messages.**
+- **`personalclaw.sdk.stt` and `personalclaw.sdk.diarization` replace `ensure_ffmpeg_in_path` with `find_ffmpeg` and `ffmpeg_not_found`: an app is handed the ffmpeg's path, and the gateway's `PATH` is never changed to find it (`faster-whisper`, `diarization-onnx` and `diarization-pyannote` move to them).**
+- **The agent's file tools read the folders you added as knowledge sources, read only and with no approval, and read and change files in Settings › Agent defaults › Allowed working directories as they do in the workspace; `glob` and `grep` take a `path`, and every other folder stays out of reach.**
+- **An Attended Code loop merges a finished task's work into your branch only when you approve it, after showing you its commits and diff; every commit a loop or a workflow run makes carries your own git name and email, a Code loop in a repository where git has none does not start (and a running one stops) until you set them, work committed under another name is never merged, and the loop's page lists what it merged.**
+- **An Attended loop's model spend is yours, like a chat's: the daily cap for unattended work no longer counts it.**
+- **A model instance's address is its `endpoint`, the one option every provider reads: an address saved as `base_url` is refused with the field to use, and `ProviderEntry.endpoint` replaces `ProviderEntry.endpoints` (an SDK change; `alibaba-models`, `anthropic-models`, `claude-subscription`, `meta-muse-spark`, `openai-models`, `openrouter-models` and `vllm-models` read only `endpoint`).**
+- **`ChannelMessage.attachments`, a list of names, is replaced by `ChannelMessage.files`, the files themselves (`email-channel` passes them).**
+- **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
+- **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
+- **The snapshot is the backup: Settings → Backups and `personalclaw backup` say so, and that the hourly export and sync carry your records only, not your skills, scripts or uploads.**
+- **The hourly export and each sync no longer copy your skills, uploads, workspace and installed apps as files nothing could restore.**
+- **`EmbeddingProvider.embed_batch` answers `None` for a text it did not embed, never an empty vector (`bedrock-models` and `sentence-transformers` implement it).**
+- **MCP Tool Servers ships with PersonalClaw: an MCP server you add or import is one every agent can call, with nothing to install from the Store.**
+- **Checking a workflow spec, previewing an edit to a running workflow, a workflow's drift report and an automation's dry run are tools of their own that only read (`workflow_check`, `workflow_edit_preview`, `workflow_audit`, `automation_dry_run`), so none of them asks; `workflow_repair` repairs, and `workflow_author`, `workflow_edit` and `automation_run` refuse the old preview arguments.**
+- **A `ToolDefinition` that declares `RiskLevel.SAFE` asks nobody, whatever its `requires_approval` says (SDK: a change no app has to make, and MCP Tool Servers now says so itself).**
+- **Trusting an MCP server's read-only labels lets its reads run without asking in every approval mode, as the Tools page now says.**
+- **An approval's `is_read_only` is true or false: whether the call is established as a read.**
+- **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
+- **A subagent works in the workspace unless you add another folder: `agent.subagent_cwd_allowed_roots` is empty by default.**
+- **The git PersonalClaw runs refuses a remote at a local path; reach it over ssh or https.**
+- **Settings → Agent defaults → Runners runs a runner's `--version` only when you press its Check, and only for a runner an installed agent app set up.**
+- **PersonalClaw needs git 2.12 or newer, and refuses an older one with the version it needs: an older git ignores the settings that stop a repository's own configuration from running a program.**
+- **`note_unknown_sender` loses its unused `silent` argument.**
+- **`make build` is the one distribution build, and it proves what it built.**
+- **`credentials.json` is gone: the gateway moves what it held into the credential store at its first start.**
+- **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
+- **Settings → Updates lists each change as one plain line, shows what an available update brings, and links the upgrade notes.**
+- **`GET /api/notifications` lists the notification log newest first, the order the bell, the Notifications page and the phone show it in.**
+- **The backdrop's default dot shape is PersonalClaw's own claw mark, and a saved appearance choice that is no longer offered falls back to its default.**
+- **The app SDK now exports every type its own published surface names — 25 of them were unimportable, so apps had to derive or re-declare them.**
+- **The SDK surface is now closed under its published *functions* too, not only fields and methods — 22 more types an app could not name, and one collision resolved.**
+- **The published docs stop sending readers after internal plan identifiers they cannot resolve.**
+- **The Session Map rail is redesigned after Codex's, and LENGTH is now the channel that carries it.**
+- **The five Settings switches that relax a security or safety default now confirm before they take effect.**
+- **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
+- **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
+- **66 more spacing values now obey the Density slider (Appearance → Density), in 29 whole files.**
+- **A tool's risk level now gates the control that runs it, and "Always for this agent" only promises a saved grant when it will actually save one ([#506](https://github.com/PersonalClaw/PersonalClaw/issues/506), [#541](https://github.com/PersonalClaw/PersonalClaw/issues/541), [#683](https://github.com/PersonalClaw/PersonalClaw/issues/683)).**
+- **⚠️ PERSONALCLAW NOW TRACKS RELEASES, NOT `main` — AND THE UPDATE IT APPLIES IS THE ONE YOU CHOSE.**
+- **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
+- **A release candidate no longer moves `:latest`, a `-beta` tag is no longer published as a stable release, and the moving `:X.Y` / `:beta` image tags the updater pulls now actually exist.**
+- **A container install's update commands now carry the image tag your `updates` channel/pin resolves to, not a bare `latest`.**
+- **A pip / pipx / uv wheel install now upgrades to the release your `updates` channel/pin selects, not a blind `releases/latest`.**
+- **Unattended auto-update is now OPT-IN and STAGED, and the always-on `auto_update` bool is retired.**
+- **The in-app updater no longer tracks raw `main` — a git checkout rides release TAGS by channel, and the destructive `git reset --hard origin/main` is gone from every unattended and dashboard apply path.**
+- **The install scanner's terminal tier is no longer shell-only: destruction written in Python is refused, and a bundle that deletes your home directory can no longer install with a clean bill of health.**
+- **`run_chat` is no longer exported from `personalclaw.sdk.channel`.**
+- **Workflow runs gain a sparse `policy_overrides` overlay: the five per-instance supervisor knobs (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) can now be persisted per run, composed on top of the template/kind defaults at resolution time.**
+- **The install one-liner now verifies something, and stops claiming to verify what it does not ([#2582](https://github.com/PersonalClaw/PersonalClaw/issues/2582)).**
+- **The inbox has one definition of "open" and publishes one count.**
+- **The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field.**
+- **⚠️ TIMED TRIGGERS WITH NO EXPLICIT TIMEZONE NOW FIRE AT THEIR LOCAL WALL-CLOCK TIME, NOT AT UTC.**
+- **The eval report can now tell "not recorded" from "recorded as zero/none"**
+- **PersonalClaw no longer writes anything into your coding CLI's own config, and an ACP agent app can no longer ask it to.**
+- **The agent can no longer edit a file it has not read.**
+- **Rewinding a conversation no longer throws the old ending away — and that history is now stored inside your chats.**
+- **Finding something in a long conversation now works properly with a keyboard and a screen reader.**
+- **The Optimize button now knows who said what, and leaves an already-good prompt alone.**
+- **The assistant now needs to see a habit work three times, not twice, before it offers to make it a standing principle.**
+- **A step that reads another step's output no longer needs a hand-written ordering — and steps in different branches of a workflow can now feed each other.**
+- **Autonomous loops now learn the way workflows do.**
+- **A fan-out step that shares a limited resource now waits its turn instead of racing.**
+- **A workflow that reads another step's output now refuses to save unless that step is guaranteed to run first.**
+- **A workflow step that declares what its output will contain is now checked against the steps that read it.**
+- **A loop that keeps working but stops getting anywhere now stalls, even when it insists it is making progress.**
+- **A loop's judge no longer runs on the same model as the worker it grades.**
+- **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
+- **Knowledge search now finds the passage, not just the document — and tells you which passage.**
+- **Semantic search on a large library got about twenty times faster.**
+- **The library you already have becomes searchable by content, without you doing anything.**
+- **Anthropic models now reuse the stable head of a conversation instead of re-reading it every turn.**
+- **The Retro Terminal and Claw Arcade personalities now skin the error surfaces too.**
+- **The Retro Terminal personality now lays a CRT raster over the whole shell.**
+- **A goal loop's judge verdict now shows you what the supervisor checked for itself.**
+- **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it claimed to.**
+- **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and one system does it, not two.**
+- **A workflow judge now has to show its work, and a PASS it cannot justify is refused.**
+- **A workflow plan now tells you which of its stops survive an unattended run.**
+- **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
+- **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
+- **The desktop app can now tell the dashboard what it is actually allowed to do.**
+- **First run now sets you up with a working model instead of pointing at Settings.**
+- **Prompt caching is now a switch you can find, in Settings → Models.**
+- **You can approve what PersonalClaw is waiting on from your phone.**
+- **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.**
+- **The autonomy ladder now actually decides whether an automated action runs.**
+- **You can now see, grant and take back what each automation may do on its own.**
+- **You can share a chat as a read-only artifact — inside your own instance, never on the internet.**
+- **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of work.**
+- **A Usage panel in Settings shows what you're spending.**
+- **The chat header shows what the whole conversation has cost.**
+- **The "Turn complete" line now shows what the turn cost.**
+- **`personalclaw doctor` now reports your SQLite driver and its capabilities.**
+- **Memory-backed answers cite their sources, and say so when memory is empty.**
+- **A muted agent can be un-muted from its detail page.**
+- **Local models now carry a capability matrix and a runtime/license contract from a declarative catalog.**
+- **Mid-run steering now takes effect, and the judge leaves a paper trail.**
+
+### Removed
+
+- **Slack Channel's Configure form no longer offers Open Channels or Allowed Enterprise IDs, which never let anyone in or kept anyone out: who may talk to the bot is its owner and Allowed Users, in the one workspace its bot token belongs to.**
+- **A watched folder's item type, which nothing read since its files are kept as their own kinds: a folder source states none, and one created with one is refused.**
+- **`POST /api/models/local/{provider}/selftest`, `GET /api/models/local/{provider}/health` and `POST /api/model-providers/{name}/selftest`: a model's Test is `POST /api/models/test`.**
+- **The app manifest's `loggerRoots` (`AppManifest.loggerRoots`), since an app's log lines are recognised by the code that logs them: `bedrock-models`, `code-review`, `companion`, `design-critique`, `docs-slides`, `inbox-github-notifications`, `issue-radar`, `mail-inbox`, `notes`, `ops`, `research-lab`, `spec-builder`, `watched-source-github`, `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel` drop it.**
+- **`personalclaw.sdk.channel.generate_token` is off the channel SDK.**
+- **The `api_key` and `oauth2` auth modes are gone.**
+- **The per-site browse "profile key", which nothing used; a key an earlier release stored is deleted at start.**
+- **The README's coverage badge, so the job that measures coverage no longer holds a token that can write the repository.**
+- **⚠️ Four Settings controls that wrote config keys nobody read are gone, and so are the keys: Ambient surfaces → **Surface layers** (`ambient.surfaces_max_layer`) and **Menu-bar companion** (`ambient.tray_enabled`), Watched sources → **Daily request budget per source** (`sources.daily_request_budget`), and Packs → **Connector catalog URL** (`packs.connector_catalog_url`).**
+- **⚠️ The app permission `memory: "app-scoped"` is gone; `memory` is now a boolean grant.**
+- **⚠️ Four remaining runtime-editable config paths that governed nothing are gone: `workflows.max_active_runs`, `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`, and `learning.min_session_score`.**
+- **⚠️ Two earlier runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.**
+- **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
+
+### Fixed
+
+- **What a chat in the workspace kept stays in the shared memory every chat reads when its home moves: restored from a snapshot or an export archive into a home at another path, the chat works in the new home's workspace, and upgraded from a release whose workspace was `~/workplace/personalclaw-workspace`, it keeps working there; the start no longer moves its episodes and summaries into a folder memory named for the old workspace, and gives back what an earlier start moved there; a chat in the workspace records no folder of its own; and each move of records at the start is one line in both memories' history on Settings → Memory → Audit**
+- **A slash command typed as the first message of a new session (a new chat, the first message after a model switch, a chat the idle sweep let go, a chat after a restart) no longer leaves that session without its opening: the first message its model is sent carries the agent's instructions, the safety rules, your standing rules and memory and the chat's history, once, whatever ran before it; a slash word the agent does not run itself is sent as a message with all of it, `/compact` on a session that holds none of the chat yet says so instead of "already short enough", the session line says "restored from history" only on the turn that restores it, and a command an agent CLI rejects is not re-sent as that session's first message (SDK: `SessionManager.hand_back_opening`, an addition no app has to change for)**
+- **The tool server an agent CLI starts no longer opens the gateway's own log: it runs in the CLI's sandbox, where on Linux nothing can be added at the top of the home, so in a home with no `gateway.log` yet it ended before its first call, and in any other it was a second writer that could rotate the log out from under the gateway; it logs to its stderr, masked, which the CLI keeps; the skills folder its skill tools save in is made before an agent CLI starts, so a home whose start seeded no skills takes drafts and skills too; and a draft it cannot write says the write failed instead of calling the draft empty or the session's limit reached**
+- **Deactivate, Uninstall and Force uninstall switch off every app whatever a library has loaded in the gateway, the app that loaded it included, and an app whose package holds a folder with no `__init__.py`: an app's code is taken out by reading each loaded module without running any of its code, where torch's made every app answer "The request was malformed or carried an unusable parameter." and stay on, and what the unload cannot get past is a restart reason, not a failed control; a fault inside PersonalClaw's own code or an app's answers a 500 that says PersonalClaw failed, its traceback in the gateway log, instead of blaming the request, and the MCP surface answers a tool that fails inside as failed, not unknown (SDK: `missing_modules` and `modules_installed` answer a module already loaded from `sys.modules` alone, a change no app has to make anything for)**
+- **A Code loop's stage gate judges what the stage did, as it observed it: every file the loop changed (the diff, and each file as it is now), every file the deliverable names, and the checks it ran with what they printed, each test named, so a stage that adds a fix and its test passes when both are in; a stage whose work is done but whose gate still cannot tell a criterion, or finds one held by something that was there before the loop, pauses at once saying which and what it looked at, your steer settles it, and a worker held that way asks instead of re-checking finished work**
+- **The Store installs Notes and Spec Builder again: a destructive string in an app's own test (the one proving a revision like `x; rm -rf /` is refused) is a warning to consent to when nothing the app runs loads that test file and the file cannot run a string itself, where it refused the app with no way past; and the same string in any file the app loads is refused, a package module its provider imports by a dotted name included, where that one was offered to install anyway as inert text**
+- **A chat whose working directory you change works in the new folder from its next turn: its shell starts there and a relative path is read and written there, between two folders too (its tools stayed in the old folder until its runtime was rebuilt for another reason); a turn running when you change it ends and your message is answered again in the new folder, as for a change of agent or model, and the toast says so; the prompt opens on the chat's folder and an empty path puts the chat back in the workspace; and an agent CLI follows its chat's task mode into and out of its own planning mode, where a chat switched back to Agent still only planned**
+- **An answer its model stopped at its output cap is no longer read as an answer: a chore, a one-shot call and a knowledge synthesis ask the chain's next model instead, so a memory consolidation cut at the Background output limit no longer marks its chat consolidated with nothing kept; a consolidation keeps only an answer holding a key it asked for, one no model could finish is tried again later and said in a notice that names the limit to raise, and a heartbeat task's result cut at the cap says so.**
+- **A helper whose start you declined, or that never started, no longer starts a turn of its own in your chat, where the agent took the work up again by itself: the agent is told with your next message, or at once while it waits, and the chat's Subagents list shows the helper as declined or not started; a helper you stop yourself is told the same way, and one the run budget stops says so rather than "Cancelled by user" (SDK: `SubagentInfo.never_ran`, `SubagentInfo.stopped_by_you` and `by_you` on `SubagentManager.cancel` and `cancel_fanout`, additions no app has to change for).**
+- **A reminder, a day's nudge or a watched folder an app adds while PersonalClaw runs is armed and fires at its time with no restart, an app's file watch is polled like your own, and one whose time had passed before PersonalClaw saw it waits on the missed-run review, saying so; the Triggers page runs, rehearses, switches and deletes an app's automation and its history and review card stay, an edit of one says which app it is changed in, and one someone else wrote says it is read-only and offers nothing it would refuse (SDK: `personalclaw.sdk.triggers` docs a store's rows are armed by core and kept until it deletes them; `companion`, `shared-automations`)**
+- **A file watch with nothing to watch is refused when it is made or edited and says why, and one already saved shows on the Triggers page as needing attention instead of as watching**
+- **A Stop ends the turn and nothing more runs for it: a helper the turn started no longer starts the chat's next turn with its report (which set the agent to work again), a call an agent CLI still makes of PersonalClaw's tools after the Stop is answered as not made and a `wait` under way ends, an approval the Stop ends is never read as your Deny, a Stop pressed while the turn is being put together ends it before its prompt goes out, and each Stop's record says how it ended (SDK: `SessionManager.turn_stopped` and `SubagentInfo.starter_ended`, additions no app has to change for).**
+- **A loop whose judge passes the work ends passed: a judge's pass is set aside only for a forbidden success mode the judge itself names, where words in its reasoning such as "workspace", "claims" or its own report that a forbidden pass did not happen set nearly every pass aside and the run read "Stopped at its budget"**
+- **An optimize-harness search on Linux files its winner, raises it in your Inbox and pre-registers its study: the filing is a step the gateway runs itself (`optimize-file`), where it was a command in the sandbox, which on Linux can neither add a folder at the top of PersonalClaw's home nor replace a file there, so a home with no `learning` folder yet filed nothing and every home lost the Inbox row and the study.**
+- **On Linux an Incognito or Temporary chat's commands run in a home that has no workspace folder yet, where each stopped with "could not fence memory": the sandbox makes the memory folders before it fences the home, and holds them read-only as before.**
+- **Editing or deleting a chat starter while the file that keeps them cannot be read is refused and says why, as saving one is, where it answered that the starter was not found; nothing is written over the file.**
+- **A prompt you gave a mail address reaches the automation that mail starts as your instruction: its run is handed your prompt first, outside any fence, then the mail fenced once by PersonalClaw as data, with where it came from, and only a prompt your settings for the app hold is taken as yours (`personalclaw.sdk.inbox.IncomingMessage.instruction`, a setting declared `x-meta.instruction`, the `message-instructions` core feature; used by `mail-inbox`)**
+- **Investigating a past automation run says the cadence and action it shows are the automation's current ones, which may have changed since that run**
+- **`.env.example` names only variables PersonalClaw reads or sets: it no longer offers `OLLAMA_HOST` (the Ollama address is the provider's Endpoint setting in Settings → Providers) or four gateway variables nothing sets**
+- **What you paste into a message goes with it whichever way it leaves the composer: a message you steer into a running answer or queue for when it ends, one you bring back with ↑ or edit back out of the queue, and an edit or a rewind each send the pasted text (they sent its `[Paste #N]` marker, so the agent never saw it), your message shows it as its chip live and after a reload, Copy copies it, and editing a queued message while you are writing another keeps both.**
+- **Nothing PersonalClaw learns replaces a lesson you taught: where a lesson learned from a chat, a correction or an app would replace one of yours, yours stays as it is and the Inbox and the Learning page ask which to keep, and Accept saves the learned one as yours in its place. Two lessons are one rule said again only when they share at least two words and half of all their words, so a short rule is no longer retired by a lesson that shares one word with it, and two corrections about different things stay two lessons.**
+- **A subagent that has not started when PersonalClaw restarts, waiting for a free slot or for your Allow, is kept: it waits for its slot again in the order it was asked for, or asks you again with the same card, and the restart approves nothing for it; one that can no longer run (its agent, its chat or its app is gone, or the turn that asked for it ended) is ended, and the chat that asked for it, when that chat is still there, is told why; the notice after the restart names each one, one you cancelled stays cancelled, and the restart's confirm no longer counts a subagent the restart keeps.**
+- **A message you steer into a running answer is your message in the chat, where the answer took it, marked as steered: it stays after a reload, what PersonalClaw learns from the chat reads it as yours, and a steer the answer did not take runs next and shows once.**
+- **`personalclaw run` stops its turn in the gateway when it stops waiting for it (its `--timeout` passes, Ctrl+C, SIGTERM, its terminal closing, its connection closing) and says so, its JSON report says how the turn ended (`outcome`), and the Trust `--allow` gives the run's chat ends with the run's turn, so nothing after it (a helper's report the run did not wait for, the next run of the same session) is approved on it.**
+- **Deleting a chat removes what memory drew from it alone (its summary, its episodes, and the facts and lessons that came only from it) from every memory, the daily history and the day's digest, and other chats stop recalling it; what also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, and the Delete dialog says so. The Delete button and both history routes delete one way, and each says so when a chat's history could not be removed from disk instead of answering as if it were gone.**
+- **An MCP tool call is never sent after its caller stopped waiting: one still waiting its turn at its two-minute deadline, or when its turn stops, is dropped and says it was not sent, and one the server was given and did not answer in time, or whose connection ended first, says it may have gone through instead of that it failed; a server started with a command that ends is started again by its next call.**
+- **A workflow run's dollar budget pauses it, as its token budget does: a run starts with the budget its definition declares (`defaults.budget`), pauses once its steps have spent it, and its page shows each budget beside what it has spent; Resume asks for the budget it reached, and only you can raise it.**
+- **A run with a dollar budget pauses at a step whose spend no price covers, a subagent's included, instead of counting it as $0.00; your Resume goes on past that step, and the run's dollar figure says it leaves it out.**
+- **A budget nested inside a run stays inside what that run has left and never replaces it, in tokens and dollars: a run that another run or an automation starts, a learning replay, a room member's turn and the doctor's model-judged jobs. Max tokens / run in Settings → Guardrails holds beside each.**
+- **A loop's time limit and dollar limit stop it while a cycle is still running, a General loop's dollar limit is its run's budget (its time limit is refused, since a run has none), a loop's declared cycle budget bounds its run, and raising a run's cycle cap past the one its loop stops at asks you first.**
+- **An automation's per-run dollar limit holds when you press Run now too, an idle automation keeps to its fire limit, the doctor's dollar limit is per run rather than for as long as the gateway runs, and the per-window cost cap, which nothing metered, is no longer a gate: an automation that still sets it is told it holds nothing.**
+- **A file of yours PersonalClaw cannot read is never written over: every write to it is refused while it cannot be read, a copy of it is kept beside it, and the Triggers page and the Doctor say which file, what that stops and what to do. An automations file that did not parse used to read as empty, and the next edit, fired run or start replaced every automation with one.**
+- **A subagent's report is no longer cut to its first 3,000 characters: a long one reaches its chat as a part with a way to read all of it, `subagent_status` reads the whole report after it is delivered and after a restart, a workflow step a subagent runs keeps its whole answer, and the report reaches the chat's agent as text from outside, screened and fenced, and withheld when the injection screen refuses it.**
+- **A model's answer whose stream ends before its provider says it is finished is cut off, never complete: the turn ends in the error that says so, with Retry; what arrived stays, marked Partial; no tool call from it runs; and the error row and the gateway log name the model's stream and what never came.**
+- **Every version check reads versions one way, the packaging standard's: an app that needs a newer PersonalClaw is refused on a release candidate or a dev build too (`0.3.0rc1` is older than `0.3.0`), a `minPersonalClawVersion` or a core version that cannot be read refuses the app instead of being skipped, and so does an app version the Store cannot order; the Store offers an app's release over its own candidate, the stable channel keeps a candidate out however its tag is spelled, a pin may name a candidate as `personalclaw --version` prints it, and an update's change list starts at the running candidate's tag.**
+- **An update of PersonalClaw replaces a bundled skill only while your copy is still the one it installed, judged by its files and never their times: a copy you edited or added files to is kept, the Skills page offers you the newer version to take or decline, and no skill of yours is removed for its name.**
+- **A skill you edit, on the Skills page or in its files, reads as edited, with what changed, and never as tampered: only an install record that is damaged reads as one, and only that lowers the health score or makes `personalclaw skills verify` exit 1.**
+- **The Skills page lists, opens, saves, checks and deletes the copy of each skill that agents get, so an agent's own copy is edited there instead of the library's skill of that name, and installing a skill again leaves exactly the new version's files.**
+- **`/rewind-to-turn` puts back an agent CLI's file edit PersonalClaw allowed, and its preview lists every file in the chat's folder that a shell command or an agent CLI's unasked edit changed with no backup, which the rewind leaves as it is; a file it puts back keeps the permissions it had, where it used to come back readable by everyone and a script lost the right to run; the help and Settings say exactly that, and recording a turn's folder no longer stops the gateway while it walks.**
+- **An agent CLI that compacts its own conversation keeps its session at the Auto-compact threshold, with the results of its earlier tool calls, and a session restarted there says it was restarted and why instead of "Auto-compacted" (SDK: `register_acp_cli_entry(compacts_itself=...)`, used by `claude-code-agent` and `codex-agent`; `SessionManager.set_compact_callback` is now `set_restart_callback`, which no first-party app calls).**
+- **The OpenAI-compatible endpoint's speech and transcriptions are held to the spend caps its chat turns are: counted in Usage under the client and against the day's dollar cap, and refused past it before anything is spoken or transcribed.**
+- **A channel message runs one turn however many times its channel delivers it: a delivery made again, while its turn runs, after it finished or failed, or after a restart, is answered as already received and changes nothing; a message is told apart by its own id in its own chat, so another chat's message with the same id is judged on its own; a message with no id is refused; and a channel that acts on a message before the door claims it first (`claim_message`, core feature `messages-run-once`: SDK addition used by `slack-channel` and `email-channel`).**
+- **Memory learns your correction or preference when your queued message runs as one turn beside someone else's, and never learns what a turn did for someone else, in that turn or in your next one.**
+- **A long turn keeps what you asked when the conversation is compacted: your request, a steer you sent mid-turn and the turn's tool catalog stay word for word however many rounds have passed, the summary lists your earlier requests in your own words (the newest word for word, older ones by their first line, and a count of the rest) rather than the first ten at 200 characters, a later compaction carries an earlier summary forward, and a room member's fold keeps your latest message.**
+- **The agent never writes over an edit you made to an artifact behind your back: `artifact_get` gives it the text of every kind (a Word document, deck, spreadsheet and PDF included) with its version and its base, a write over an existing artifact with no base or with one older than the version you saved is refused and changes nothing, an edit of yours that no version holds is kept as a version of its own before the agent, an app or a workflow's refresh writes over it, and an app's edit is recorded as the app's.**
+- **A chat the dashboard saves keeps where each turn came from: a channel's message keeps its thread and sender, a program's message through the OpenAI-compatible door keeps that program, and only what you type in the dashboard reads as typed there (the inbound door hands a chat a message with its `source`, and the conformance kit's `CapturedSession.queue_append` takes it: an SDK addition no app's code has to change for, though a stand-in chat that a channel's tests hand the door takes `source` too).**
+- **Retry on a turn that ended without its answer asks first when the turn finished steps that may have changed something, and names them: running it again may repeat them, so it runs only once you confirm.**
+- **Regenerate, Rewind to here and Edit & resend with your message unchanged ask first, as Retry does, when the turn they run again finished steps that may have changed something; and a chat moved to another agent while it answered is not sent to the new one on its own after such a step, but says so, with Retry.**
+- **The Learning page's skill-impact benchmark command names the home it must run in: on a gateway running from a home other than the default one, it showed the bare command, which wrote the report into the default home, where the page never reads it. The command now starts with that home's `PERSONALCLAW_HOME`, quoted for a shell.**
+- **Reconnect on an MCP server's card also starts agents' connections to it again, so they are offered the tools its card shows rather than the ones the server listed before it changed them.**
+- **Dev scripts, docs captures and harness tools act only on a scratch home you name: the task seeder, the memory and tool validators, the classify smoke, the screenshot and demo captures, the motion driver and the render smoke's gateway mode take `--home` (or `PERSONALCLAW_HOME`), find that home's gateway from the record it keeps there, and refuse no home or the default one, where they aimed at port 10000 and the default home, the install's own.**
+- **A run a workflow step starts keeps what the run that started it keeps: a `run-workflow` step's run now records its parent run and the step, and a run an Incognito or Temporary chat started can no longer start one that keeps everything, on any model, and outlives the chat. A step whose run cannot be read starts nothing.**
+- **An Incognito or Temporary chat saves nothing your other chats read later: its agent keeps no skill it is taught, files no proposal for review, makes or changes no task, task list or project, posts nothing to the Inbox and changes no loop's task or plan, and says why; a workflow run it starts puts none of its steps on the Tasks page, and a Temporary chat's workflow runs are stopped and deleted once the chat ends, as its notice now says.**
+- **An Incognito or Temporary chat sets up no work that outlasts it: its agent creates, starts or steers no loop or project, creates or changes no automation or scheduled task, and registers no callback, and says why, since each would keep the chat's words and run on a model of its own; set them up from an ordinary chat.**
+- **A CSV artifact downloads from Artifacts as a `.csv` file a spreadsheet program opens, where it downloaded as `.txt`.**
+- **A spreadsheet `sheet_create` makes from CSV text has the cells the text has: a quoted field holding a comma, a line break or a quote is one cell, read the way Knowledge reads a `.csv` file, and in both a quoted field after a comma and a space is one cell too.**
+- **A workflow step after a branch reads what the case the branch took produced, as `{{nodes.<branch>.output.produced}}` beside the `case` it took, so deep-research sweeps with the angles, breadth and depth its triage chose and produce-and-audit produces from what its gather step found, where both were handed only the case's name; a read of a field a branch, or a case it can take, never produces is refused when the workflow is saved.**
+- **A branch's `on`, a fan-out's `items` and a condition's operand that hold two references read them as the text they spell, where each looked up one path running from the first reference to the last; a branch that cannot read the value it routes on says so, where it said it matched no case and had no default.**
+- **A workflow step's `on_error` is refused when the workflow is saved unless it is `null_continue` or `fail_run`, where any other value behaved as `null_continue`, and an action that declares `on_error`, `retry` or another of the engine's own step keys without arguments is no longer told to move it into `config.with`.**
+- **A notification or a chat-channel message an automation sends shows a value from outside in its own words, without the markers that fence it for a model, as a lifecycle trigger's Test does.**
+- **Work that needs tools is no longer run on a model that can't use them: a loop on such a model is refused when it is created, planned, started or resumed, naming the model and where to choose another; Settings → Models won't bind one for Loops; a workflow run whose steps work with tools is refused at its start; and an agent started to read or change things ends saying why before it runs. A loop whose model stops using tools mid-run pauses, saying so on its page and in the Inbox, and each Ollama model says whether it calls tools as its server reports.**
+- **A Morning triage proposal you have not answered comes back in the next digest, marked as carried over with how long it has waited, for up to a week, and is answered there on the card or on your channel; one you dealt with elsewhere drops out, one a week old is named as no longer offered, and a message that arrived while the last digest ran, or a run that ended after it, is in the next one.**
+- **Each event in a run's journal has an id of its own, whoever writes it and whenever: an answer to a digest after its run ended, a step's provider writing beside the engine and a run picked up again after a restart reused ids the run already had, so closing one outcome question could close another and the routing feedback could count two verdicts as one.**
+- **A snapshot, an export and an app's update carry every database in your home whole, an installed app's own included and each declared store once, and a snapshot keeps your own files named like PersonalClaw's databases and is still taken with a damaged memory store; no restore or sync puts a database beside a write-ahead log it was not written with, a replace sets your workspace aside as it was, links included, and the restore drill reads only the databases a snapshot holds.**
+- **A program can fire a webhook automation: the automation's page shows the address it posts to and makes the sender token it sends (as `personalclaw inbound webhook create` does), and `hook_register` says exactly what a callback's sender posts. Both addresses take requests only from programs on this machine and only their own token, never PersonalClaw's internal credential; the webhook token must be at least 32 characters, and webhook automations no longer carry the `token_ref` nothing read.**
+- **A call to an inbound surface from another machine, refused before the surface reads it, is in the inbound audit and the Security log, as every refusal the surface makes itself is.**
+- **Your next message to an agent CLI is sent the moment its last turn ends, on every supported Python, where it could wait unsent until its time limit while the turn before still held the session; whatever stops reading a turn's stream now closes it (`personalclaw.sdk.model.closing_stream`, an SDK addition no app has to change for).**
+- **Your answer to a Morning triage proposal is yours, wherever you give it: it runs under an operator ceiling of `ask` and in incident mode, which hold only what the digest does on its own, and `3 yes` from you on the chat channel the digest reached answers it there through the card's own path, its text naming the card and its DM saying how to answer (`GatewayServices.answer_channel_reply` and the `digest-replies` core feature: an SDK addition, used by `slack-channel`).**
+- **An artifact an agent on an agent CLI saves, edits or deletes reaches Knowledge and every open page as one saved in the gateway does: a search in Knowledge finds its text, an edit replaces it there, a delete takes it out, and an open Artifacts page shows it without a reload, where none of it reached either until something in the gateway wrote that artifact again.**
+- **A workflow step after a loop reads what the loop produced, so the optimize-harness, design-project and goal-pursuit-open-ended templates run past their loop, where the step after it failed "unresolved reference"; a workflow that reads a sequence, parallel or foreach, which produce nothing of their own, is refused when it is saved instead of failing at that step on every run.**
+- **A workflow step that refuses stops its run there and says why in its own words: a step's failure is the reason its command gave, where it read "action failed", and the run's way forward says to change what that reason names, the step or what the run was started with; a step that declares its failure ends the run (`on_error: fail_run`) ends it with that reason, and so does a step a safety control refused, whatever it declares; optimize-harness started with no budget stops at its preflight saying so, and a loop whose cycle ended in skipped steps goes on, where both ended "run deadlocked".**
+- **optimize-harness's model steps are handed what they are told to read, the candidates the search already tried with their raw diffs, and the winner is filed with its ops; a search that reaches its iteration limit files its winner instead of stopping for you.**
+- **optimize-harness holds its `budget_usd`: it measures what the run's model calls cost and stops before its next cycle or scoring would pass the budget, saying so and what it kept. A candidate's score is measured against the target's own finished runs and never read from the proposer's answer, a candidate is kept only when it beats the best score so far, the search tries as many candidates as `max_iterations` says (up to 50), and a target with fewer than three finished runs is refused before the search starts.**
+- **A workflow value that begins and ends with a reference resolves each reference in it, so market-monitor's alert no longer fails on its title.**
+- **After a restart, a loop's workers and planner, a client of the OpenAI-compatible endpoint that keeps its conversation and a schedule's chat continue the conversation they kept, and their model is given its earlier turns, where the stop's save used to replace it with the turns since the restart; a chat opened from the list or resumed keeps all it was saved with (its colour theme, voice choice, tags, project and task mode), which its next save used to drop; and a chat opened while its saved conversation cannot be read never writes over it.**
+- **`personalclaw gateway --headless` serves your channels: it starts your installed apps, answers on Telegram, Slack, Discord or email, asks its approvals there and runs your automations as the full gateway does, behind the same sign-in, with none of the dashboard's pages.**
+- **Saving a skill on the Skills page, or the curator aging it, no longer writes its accepted refinements into its SKILL.md: each refinement is added once, after the skill's own text, when it loads, and reverting it removes it completely. The editor edits the skill's own text and lists the refinements applied on top, each with Revert, as the skill's details do, and a skill an earlier save doubled is put back to its own text the first time it loads.**
+- **An agent's skill list now decides which skills it is given: on PersonalClaw's own agent its turns are offered only the skills the list names, and its `skill_search`, `skill_invoke` and `skill_resource` reach no other, where a custom agent was offered none whatever its list said and the default agent every skill. A loop's own skills, which you confirm when you review its plan, stay usable on its turns whatever its agent's list holds, and the built-in loop worker carries no list (the one it was seeded with, which repeated its own instructions, is cleared from `config.json`). The Agents page says the list does not apply to an agent that runs on an agent CLI, and the Skills page no longer says such an agent uses a skill.**
+- **A chat you continue on another channel answers there: a chat from Telegram continued in a Slack thread answers in that thread, and your Telegram DM is told once where it went, where its answers kept going to Telegram and nothing reached the thread. A channel link now names the channel it is on (`link_channel(…, provider=…)`, `SessionManager.get_channel_provider`, the `links-name-their-channel` core feature; a channel contract change used by `slack-channel`, and a stand-in for the gateway that a channel's tests hand the door takes `provider` too).**
+- **A new chat is never given the name of a chat already kept, so a chat opened in the second the gateway restarted, or after the clock was set back, no longer replaces that chat's saved conversation; a save never writes over another chat's conversation, a document's Send to a new chat opens a new chat each time, and `personalclaw run --session` continues the conversation it names.**
+- **A memory consolidation no longer undoes what you change in your preferences or projects while it runs: it applies its rewrite to the files as they are when its model answers, and where you changed the same lines, or the lines beside them, it leaves them as you wrote them and the gateway log says so.**
+- **Saving History on the Memory page changes only the day you edited: the History editor lists the days and holds one day's file (`/api/memory/history/{day}`), where its Save wrote the recent days into today's file and stored every other day's entries a second time there; the save is a memory write like the others, so keyword search finds what you wrote and a Temporary or Incognito chat's work cannot make it.**
+- **A name you give a chat while its title is being generated, a title or note you type on a bookmark while its page is fetched, and an edit you save to an auto-created skill while a consolidation refines it are kept, where the generated title, page title, page text or refinement replaced them.**
+- **A secret saved in Settings → Secrets for one project is read by that project's work — its workflow runs and the agents their steps start, its loops and its chats — ahead of a global secret of the same name, and by nothing outside the project: Secrets picks the project by name and says who reads its secrets, and a run's step inspector says which secret each step used and where it came from.**
+- **Yes on a Morning triage proposal does what it says: a reply is drafted by the Inbox's own drafting and never sent, a task is filed under the title the card shows, and a Yes admits only its own kind of action. The digest no longer offers a Yes it cannot carry out: a reminder, an Inbox action on a run or a chat, a reply to a message that takes none, or a second proposal for one item.**
+- **A proposal to refine an imported skill, or any skill kept in a folder, shows in Skills → Proposals, and it opens, accepts and rejects there and from its Inbox row; one filed before is moved into the queue the first time the queue is read, its Inbox row with it.**
+- **Accepting a refinement of a skill in a folder that was removed since adds it as a new skill, as its review says, instead of failing.**
+- **A merge restore, a folder sync and an archive import bring in every row of the other home's learning log (its captures, capture passes, budget samples, ablation sweeps, curator changes and surfacing events) once each, where rows whose number this home had used were dropped and an imported archive's log was left out, and a proposal still names the captures it was compiled from after it moves.**
+- **An archive imported in merge mode brings its knowledge library, vocabulary and project memories into yours row by row, each item under its own tags and its documents opening here, and the summary says what became of each store (merged, copied, or left unchanged and why) instead of reading "workspace (merged)"; a merge restore or a folder sync no longer files the other library's items under this one's tags or leaves Knowledge with a second Artifacts source.**
+- **After the gateway restarts, a message on a Telegram, Slack, Discord or email thread continues the chat that thread is linked to, with everything said before, and its answer goes back to the thread, where it used to start a new chat with none of the conversation; a Slack thread imported with Link to dashboard is answered in Slack too.**
+- **Editing an automation changes only what you changed: moving an Invoke Agent automation's time on the Triggers page no longer drops the files it may change, its capability and its turn cap, which its editor now shows; an edit from the Triggers page, the chat or `personalclaw cron update` keeps every setting it does not send, and removes one only when it is cleared.**
+- **The optimize-harness workflow template runs in a `uv tool` install and the desktop app: its steps run this install's own `personalclaw`, and in any bash step, hook or schedule `personalclaw` is now this install's own CLI rather than whatever `PATH` holds.**
+- **A Knowledge item whose text the content safety scan withheld shows each step after the one that read the text as not run, saying why, where those steps read as done though nothing they made was kept.**
+- **A drafted reply that names a note with no text says why: a note Knowledge refused, or whose text the scan withheld, says so in the item's own words, and one read with nothing found says no text was read from it, where each was said to hold no text yet.**
+- **In the desktop app, the agent has its memory, automation, prompt and subagent tools, agent CLIs get PersonalClaw's tools, documents, sheets, decks and PDFs can be written, and the workflow templates and the bundled skills are there, where the app left out every part of PersonalClaw that is loaded by its name.**
+- **In the desktop app, what needs a Python program of its own is refused before it starts, saying the desktop app can't run it and the version installed with uv can, where it failed with a usage error or said nothing: an app with its own Python server, a worker, an engine, parse scripts or packages the desktop app does not carry (its Store card, Library card, install and Activate say so, and one already installed is never started), Install engine, an app's own tests, and on Linux a command in the sandbox, which never runs outside it.**
+- **Model and channel apps whose SDK the desktop app carries (OpenAI and the OpenAI-compatible ones, Anthropic, Slack) install in the desktop app, where their install asked for a pip it does not have; and `personalclaw doctor` there no longer reports its packages missing and its pip broken.**
+- **The desktop app leaves alone the Python packages the version installed with uv installs for its apps in the PersonalClaw folder they share, where it deleted them each time it started.**
+- **When the desktop app's gateway cannot start, the app says so at once, with how it exited and its last message, and Start Again starts it again, where Retry waited two more minutes for a gateway nothing had started.**
+- **A model your Ollama answers from Ollama's cloud (its tag says `cloud`, or the server says it answers it elsewhere) is no longer taken for a model on this machine: it is unpriced until you price it, so a daily dollar cap refuses it, it is not tried first as local, its prompts get the outbound scan your settings ask for, and Settings shows it running off this machine (`ProviderRegistry.register_type(passes_on=…)` is an SDK addition, used by `ollama-models`).**
+- **A snapshot or export that fails reads as failed on Settings → Backups, with the reason in plain words, beside when it last worked and the newest snapshot a restore can still bring back; a note says when it starts failing and when it works again, the Doctor and `personalclaw doctor` report it, and an export that failed part way is tried again in full instead of reading as done.**
+- **An automation whose action's app is gone, whose secret is not stored, or that has no action is a refused run that says which, shown as its last run on the Triggers page and told to you once, instead of being skipped without a word at every fire; Run now fills a `{{secret:…}}` as a scheduled run does, and a run due while the apps are still starting waits for them.**
+- **The chat the dashboard opens for a conversation a chat channel runs itself shows the turns the channel writes after it opened, where a gateway stop saved the copy it opened with over them, and the name the channel gives the conversation, which its saves keep.**
+- **A heartbeat pass no longer deletes a task you save in HEARTBEAT.md while it runs, or undoes an edit made meanwhile: it takes out only the tasks it finished, from the file as it is when its turns end, and leaves every other line exactly as written.**
+- **Signing in to a remote tool server works in the desktop app: its sign-in page opens in your browser, and the Tools page says it opened there and when you are signed in; a sign-in page that did not open, in the app or in a browser that blocked its tab, is said, with its link.**
+- **Restart brings the desktop app's gateway back, where the restarted gateway used to exit at once and leave the app with no gateway until it was quit and opened again; and when its gateway stops on its own, the app says what happened and offers to start it again.**
+- **In the desktop app, MCP servers, agent CLI sessions, the commands an agent runs and computer use start instead of exiting at once with a usage error, and on a Mac the commands PersonalClaw sandboxes run inside the macOS sandbox, whose check always failed in the app.**
+- **A lesson update memory refuses leaves the lesson it would have replaced as it was, recalled and in every prompt, and is answered as not saved, saying why: on the Memory page, to the agent's `memory_remember` and to `personalclaw learn add` (`MemoryService.lesson_refusal` is an SDK addition no app has to change for).**
+- **A lesson an earlier version left replaced by a lesson that was never kept comes back when its memory opens, and a lesson taught again after what replaced it was removed is no longer deleted by the Health sweep.**
+- **A Temporary chat's work, or an app's not given your memory, no longer raises the confidence of a lesson it repeats.**
+- **An accepted self-model principle that memory refuses no longer displaces one of yours, and its accept says it was not written; a fact consolidation replaces points at the fact that replaced it, never at a key that holds nothing.**
+- **A code or config file attached in chat or to an Inbox message (`.py`, `.json`, `.yaml`, `.sh`, `.ts` and every other kind the library keeps as code) reaches the agent as its text, scanned and fenced like any text attachment, rather than as "no extractable text content"; the sent message's preview shows that text masked as the agent got it.**
+- **An automation set to Silent posts no note when the agent it started finishes well, so an app's scheduled job no longer leaves one in the bell every time it runs; a failure still goes where its "If it fails" setting says.**
+- **A gateway started on a port the system picks (`--port auto`, as the desktop app starts one) names its sign-in cookie for that port, so a password sign-in or a pairing on it stays signed in.**
+- **Cancel on the update screen stops the update: it stops the installer, puts a git clone back on the commit it was on, and the screen says what that left, where it used to close and say "Update cancelled by user" while the update went on and the gateway restarted into the new release. Once the new release is installed the update can no longer be cancelled, and the screen says it will finish; a Ctrl-C of `personalclaw update` stops it the same way and says so.**
+- **Each folder's own memory can be seen and removed, and the work done for a folder chat reads it. Settings → Memory lists every memory you have under "Memory of", each named by its folder or said to be gone with it, and shows, forgets, exports and removes a folder's memory as it does the one every chat shares; `memory_list` and `memory_forget` reach every folder's lessons, so do `personalclaw learn` and `personalclaw memory` (`personalclaw memory partitions`, then `--partition`), and the memory vault mirrors each folder's memory under `folders/`. A subagent's first prompt and its `memory_recall`, and a workflow step's, read the memory of the chat the work is for: that chat's folder's first, then the shared memory, labeled, searched by the task. A project keeps one memory, its bound folder's: its runs and its routed context (`get_context`) read what its chats keep, and what an earlier version's runs kept in the project's context folder moves there at the next start. `ContextBuilder.build_message(memory_folder=…, recall_query=…)` and `ContextBuilder.build_session_context(memory_folder=…)` are SDK additions no app has to change for.**
+- **An agent on an agent CLI works with your workflows as an agent in a PersonalClaw chat does: it finds the ones you have, a run it starts runs to the end in PersonalClaw and its chat's Stop ends it, and a pause it lifts lets the run carry on. It was told "no workflow definition named …" for a workflow you have, and a pause it lifted stayed on. A Temporary or Incognito chat's batch starts, and so does a workflow its agent on an agent CLI starts, each keeping the chat's setting and staying on its model: both were refused.**
+- **An agent your chat started can save a lesson: its `memory_remember` was refused as an unknown session and told to start a new tab. The lesson is saved where the chat it works for keeps memory, filed under that chat, and work for an Incognito or Temporary chat is told why nothing was saved.**
+- **A memory data-event trigger fires only for a write that is stored: one refused in a Temporary chat's work or in an app's not given your memory fired it before it was refused, and so did a write the memory turned away (an automatic one that could not replace a fact you set, or one too unsure to keep).**
+- **A workflow a Temporary or Incognito chat starts on its first turn keeps the chat's setting, and work for a chat whose setting cannot be read reads and keeps none of your memory and says why: both used to run as normal work.**
+- **In Settings → Memory a focused explorer row and the graph's Records and Entities switch show their whole focus ring: a row the list showed only in part lost the bottom of its ring when Tab reached it, and the switch lost its top and left edge.**
+- **The captions under each device in Settings → Devices, and under each sender and group in Settings → Sender trust, are readable in the dark theme: dimmed, they fell below the contrast text needs.**
+- **Subagents, batches and workflow steps run in Temporary and Incognito chats, on the chat's own model and no other: they were refused every model, the chat's own included, and an Incognito chat's workflow step resumed after a restart started unmarked and on another model.**
+- **An automation whose agent or workflow run fails every time pauses itself and says why ("paused after 5 failed runs: …"), its history and last run say how that work ended, a run you stopped reads as stopped rather than failed, and switching a paused automation back on makes it run again.**
+- **A workflow your agent starts from a chat runs to the end, as one you start does, and keeps that chat's Incognito or Temporary setting; a pause your agent lifts lets the run carry on; and a run left with nothing driving it is picked up again instead of reading "running" on its first step for good.**
+- **Stopping a loop or a chat's turn ends the processes its commands left running in the background, a server that detached itself included (a test fixture's database ran on for hours after its loop was stopped), and so does the turn's own end, a loop's ending, an automation's command exiting, a workflow's workspace teardown and an agent CLI's process ending.**
+- **A chat working in a folder keeps what consolidation and its own turns learn in that folder's memory, with or without an embedding model set up: the folder's chats recall it and chats elsewhere no longer do. The lessons consolidation draws from it apply in that folder, a chat in a folder also follows the lessons taught for every chat, and `memory_recall` reads the asking chat's folder first. The episodes and session summaries an earlier version filed in the global memory for such a chat move to its folder at the next start; the facts, lessons and daily history entries stay where they are, since no record ties them to one chat. `ContextBuilder.get_memory_for(writes=…)` and `MemoryService.lessons_context(beside=…)` are SDK additions no app has to change for.**
+- **The gateway and web container images build again: the stage that builds the dashboard copies every file outside `web/` the dashboard imports, the voice phrases included.**
+- **The development Compose overlay's gateway starts instead of exiting on a flag the CLI does not have.**
+- **An app's Python packages and its engine install on a Debian or Ubuntu system Python: pip is one of PersonalClaw's own dependencies instead of something the interpreter's `ensurepip` had to provide, and `personalclaw doctor` shows it on a `pip:` row.**
+- **Updating a git clone installs it with the tool that made its environment: `uv sync --locked` for one uv made, which can have no pip at all, and `pip install -e .` for one pip made. When that tool is not on PATH the update changes nothing and says what to run, where it used to check the new release out and then fail to install it. The dashboard's Update and the staged auto-update are one update now, and a wheel upgrades with the tool that made it as well.**
+- **A git clone's update whose install fails puts the clone back on the commit it was on and says nothing changed, where it used to leave the new release's code over the old release's packages; when git cannot put it back, it says where the clone is and the one command that does. `personalclaw update` runs the dashboard's update now, so it installs before it builds the dashboard, and a gateway that stops mid-install puts the clone back first.**
+- **Core's test suite builds images, runs containers and starts the Compose stack only where `PERSONALCLAW_TEST_CONTAINER_RUNTIME=1` is set (CI sets it), and names a test that would otherwise; the programs a test starts keep their caches, logs and shell history in its own folder, and every test loads libraries the way every `personalclaw` command does.**
+- **Each deep-research run keeps its RESEARCH.md in its own folder, and its rounds, its judge and its Document panel all read that one file: a new run starts empty instead of from the last run's report, and continues an earlier run only when its `continue_from` input names it.**
+- **With several tool servers set up, the agent still sees every one of PersonalClaw's own tools: a turn's catalog names each of its groups, what it is for and all its tools first, your servers and apps share the room left, the tools your request is about first, and a last line says what was left out and that `tool_search` finds it. The catalog no longer runs past its size, and `tool_search` cuts its answer after leaving out what the run is not shown.**
+- **Cancelling a file you are adding to Knowledge stops it: while it uploads the form says so and offers Cancel upload, and its Cancel, Back and leaving the page stop it too, so nothing is added or processed. A cancelled upload in Knowledge, a chat or Files is removed from the gateway at once, and an upload that has all been sent no longer offers a cancel that could not stop it.**
+- **The gateway keeps answering while a large file lands: assembling, moving, hashing and writing an upload, the content check of a large text file, a Files move to another disk, a Self-QA evidence seal and the first document a gateway reads no longer stop every other request, chat and approval for as long as they take.**
+- **A call that did not run says why on its card, live and after a reload: the chat's mode, the shell denylist, a hook (one that blocked it after you allowed it too), or an unattended run with nobody to approve it. A call an agent CLI keeps failing the same way says so on its card, and a turn's footer says what fed it, what it learned and its telemetry the same live as after a reload.**
+- **An exit criterion an agent sends as `"met": "false"` stays unmet, so its task, and a loop waiting on that task, no longer close before the work is done. A plan step's `completed`, a task list's `repeatable` and a project run's `attended` sent as text are read as the word they spell too.**
+- **A boolean an agent sends as text is read as the word it spells in every tool, not only in tasks: `"replace_all": "false"` no longer replaces every match, a workflow step configured `"redo_effects": "false"` does not fire its effect again, `"require_hitl": "true"` asks you, an automation an agent switches off with `"enabled": "false"` stops, and a loop whose judge answers `"done": "true"` finishes.**
+- **A criterion or plan step that is neither text nor an object is refused, saying which one it is, instead of being saved as an empty criterion that kept its task open; and the agent is told to complete a task's criteria only when that is why its update was refused.**
+- **A Goal, Code, Design or Research loop no longer asks its worker to redo a step you declined: the cycle ends there, saying what you declined, and the loop waits for you, on its page and in the Inbox, until you steer, resume or stop it. Its planner does not retry a draft you declined, and Resume carries a waiting loop on instead of stopping it again on the question it waited on.**
+- **An MCP server whose first start is still installing what it runs (an `npx` package, say) is left to finish instead of being stopped part-way, which left the package cache half-written and the server failing on every start after; its card says it is still starting and reads its true state once it has, with no leftover error from an earlier probe.**
+- **A note about background agent work is named by the run, its title or the first line of its task, not "Subagent `<id>` failed", and says what happened or why it failed; the same failure again within the hour is not told again, and an automation set to collapse repeat failures no longer tells each repeat in the bell anyway.**
+- **A memory search index that cannot be built never deletes the memories beside it: a working folder's facts and episodes, kept in the same database, stay where they are, a damaged database is moved aside with a notice instead of deleted, and the Doctor and Settings → Memory → Health say when keyword search is degraded and why.**
+- **A General loop no longer asks you again for a step you declined: the cycle ends there, saying what you declined, and the loop waits for you on its run page and in the Inbox until you tell it what to do instead, resume it or stop it. The step's row and the run page's “Declined by you” say what you declined, and a steer sent to a running loop now reaches its next cycle.**
+- **An automation run that a restart or a stop cuts off, an agent its Run now started included, reads "interrupted by a restart" in its history instead of "failed · cancelled", waits on the Triggers page with Run now and Dismiss, and the next start says once in the bell which runs were interrupted; a run the 30-minute deadline reaps now has its row in the history.**
+- **The phone's companion page stays current while it is left open: a loop that ends leaves Running, a task finished at your desk, by the agent or by a loop leaves Tasks, an approval answered elsewhere leaves Approvals and the Inbox, a new notification shows in Recent, and every lane reads again when the page is shown again or reconnects. A running loop there reads the status and cycle its cockpit shows, and Home's ready tasks follow a task change at once.**
+- **Exit criteria an agent sends as the text of a list are read as that list, so its task can be marked done once they are met: they were saved as one criterion holding that text, and the task stayed open. A task's plan, labels and prerequisites, task search filters, and a project run's plan and goals are read the same way, and a run goal sent as one sentence is one goal, not one per letter.**
+- **A room member's call that needs your approval asks you the way a chat's does: it is listed in the room, on Home, in the Inbox and on your phone, named by the room and the member, and runs only on your Allow; a Deny, an ask nobody answered and an ask with nowhere to go are each refused, and the room says which.**
+- **A call a room member's agent CLI runs without asking is said in the room and audited as one that never asked, under the member's name, and a read-only member's turn stops when such a call may have changed something. The heartbeat's and a subagent's result turns on an agent CLI audit theirs the same way.**
+- **A room member is told what its tools may do: a read-only member's instructions say its tools are read-only and that it may not write, edit or run a command, so it no longer offers a change it cannot make.**
+- **A sender you revoke in Settings → Sender trust is a stranger again at once: their next message gets the pairing note and you are told, where it got no reply and you heard nothing within a day of their first message. Sender trust also lists the people who messaged your agent and aren't paired, with how many messages and the last one's time, so someone who keeps writing after the one reply and the one notice is never lost.**
+- **What an app's backend, background worker and engine print reaches the gateway's log, masked and tagged with the app, instead of being thrown away, and an app's panel under Apps and the Doctor say how a process that is not running last ended, with the last lines it printed.**
+- **Ask the agent about your automations and it reads them: `automation_list` says whether each one runs now, when it last ran and how that went, and when it runs next, marks the ones that need you, and every turn says how many need attention and which tool reads them.**
+- **A Code loop's task worktrees take the memory their workers kept with them: a worktree's memory partition goes with the worktree, one an earlier version left behind goes at the next start, a memory partition's lesson evidence is in every snapshot, and Doctor no longer reads “Durability degraded” over them.**
+- **A named agent is handed its own instructions and voice wherever it runs: a spawn, a workflow step, an automation or an app run that names it ran on the Background prompt, a webhook on an agent saved in Agents was handed the safety rules alone, a room member had its role line alone, the heartbeat and `personalclaw chat` left out the default agent's own instructions, an agent made from a marketplace definition had none, and a chat or loop on an agent kept only as a file under `agents/` could be handed the default agent's instructions and voice in place of its own.**
+- **A new snapshot no longer replaces the only verified one: the newest snapshot a restore drill passed on stays until a newer one passes a drill, a snapshot run names each snapshot it removed and why (Settings → Backups, its audit row and `personalclaw snapshot`), and the drill line says when the file it checked is gone.**
+- **"Loosen a security setting?" names what it changes, from and to ($33.50 → $10,033.50, the sync transport by name), and a raise of ten times or more asks for a second look; Cancel or a refused save leaves the stored value in the field, and the daily dollar cap takes cents.**
+- **A skill you installed or imported can use the files it ships, such as the template its instructions name: the agent's file tools read a skill's own folder with no approval and never change it, and `skill_invoke` names that folder.**
+- **Hands-free voice hears its phrases however speech-to-text spells them, so “Send it. Nevermind.” throws the dictation away instead of sending it.**
+- **“Speak replies aloud” and the hands-free settings apply at once to a chat that is already open, and switching “Speak replies aloud” off stops a reply being read out.**
+- **A reply is read out in one tab only, the one that sent the message or where Speak was pressed, and Stop also silences the sentences still on their way.**
+- **Opening System status on a busy machine no longer blanks the app: a reading the gateway could not take shows “—”, and a header control, popover section or Home band that fails to render shows “Couldn't show …” with Retry in its place while the rest of the app keeps working.**
+- **System status reads the machine once however many pages ask at the same moment, and a CPU reading that timed out shows “—” instead of 0%.**
+- **A Code loop task whose finished work conflicts with your branch keeps that work on its own branch and asks you: redo it on top of your branch, resolve the conflict yourself and Resume, or drop it. It was reset and run again, twice at most, with nobody asked, work you had approved included.**
+- **A Code project that finished or was stopped has nothing queued: its Tasks rail reads the tasks it left unfinished as not done, never queued or waiting for a stage.**
+- **An automation's run history says when each run started and finished and how long it took, every fire moves its run count and last-fired time whatever started it, and a run that did its work without a model it needed, such as a digest with no summary, is recorded as degraded rather than as a success.**
+- **Compacting a conversation keeps every tool call with its results, so an agent no longer disowns a fact it read from a result the compaction dropped, and the record of what was folded no longer says a call that answered never finished.**
+- **An image gets its next version on an image model that makes new images and edits none: `image_generate` saves a new image as an existing one's next version (`slug`, which replaces `edit_artifact`), sends an image to be edited (`edit`) only to a model that edits, and refuses an edit the model cannot make before you are asked to approve it; Iterate with agent offers the way the model in use can take.**
+- **Regenerate on a chat image whose artifact was deleted makes it again from the prompt it was made with, not from its caption.**
+- **A Verifiable loop runs its check in the folder its worker writes to, so a check that passes finishes the loop with one notification; every cycle's check, and its judge's answer, is shown on the loop's page, and a check or judge that cannot run says why.**
+- **The dashboard no longer stalls while the background model is busy: a chat's organize suggestion, the prompt suggestions and an attachment's reading answer at once and arrive when the model has answered, each chat keeps one such read open at a time, and a read that ran out of time no longer says the server did not respond.**
+- **A loop's ending says why it stopped — the judge's own reason when it could not decide, how long an ask had really waited when a step's time limit ran out, or the budget it was given — and what to do about it; "Change the workflow" is offered only when a step is the cause, and the Loops list's status, stop reason and error agree.**
+- **A workflow step whose answer ignored its declared schema fails, saying what was asked for and what came, instead of reading Done; a loop whose steps keep failing is no longer read as finished.**
+- **Onboarding's first loop saves its note in your workspace, where its tools reach on a fresh install, and the run's page shows the note as its document.**
+- **A workflow step can be inspected while its run is live: Inspect shows what it has been given so far, and its output once it finishes.**
+- **A reply names a file in your home from `~` (`~/Notes/…`) and the chat opens it as written, so an answer no longer cites a folder that isn't yours: the agent is told what `~` is once, and the file tools, the places note and the request show every path in your home from `~`.**
+- **A skills marketplace an app adds leaves with the app: once the app is switched off or uninstalled, Skills > Browse no longer lists it, and a search, preview or install that names it is refused instead of running the removed app's code.**
+- **Settings → Memory → Health shows the search index's size beside the embedded episodes it holds, and the Doctor's index check reads "N of M embedded episodes indexed": the Embedded count also counts the facts and lessons recall compares by their own vectors, so it is no longer compared with the index.**
+- **A web watch whose checks are refused or find nothing on the page to track says it cannot fire, on its panel, in the list and to the agent, shows its last check, and reports the problem once to where its failures go, the Inbox by default.**
+- **A chained automation its depth cap or a loop refuses leaves the reason in its history.**
+- **The agent's file search finds a word whatever its case: `grep` and `glob` ignore case unless the pattern has a capital letter, and take `ignore_case` to choose either way, so "dentist" finds "Dentist" and "pick up" finds "Pick up".**
+- **Consolidation reads every memory the bound embedding model embedded, with or without faiss: the width a model writes is its newest vector's, never a 384 default, and the memory search index takes its width from its vectors. Without faiss the memory stats count no index, and Settings → Memory → Health shows the Doctor's search index check with its Fix.**
+- **A record deleted on one machine stays deleted when the other machine's older copy arrives, and the delete reaches the other machine, for every kind of record a sync carries; a change the other machine made after the delete waits in Settings → Backups → Conflicts to review, to keep it deleted or bring it back.**
+- **A sync keeps this machine's newest copy of your records in the shared store, not a copy per sync: it sends one only when your records changed, reads only the newest copy of each machine, and removes a copy a newer one replaced; Settings → Backups → Sync says which copies the store keeps (an SDK addition, `SyncTransportProvider.remove` and `removes_old_copies`, used by `dir-sync` and `s3-sync`).**
+- **A sync whose copy the store did not take, or whose registry never named it, reads as failed on Settings → Backups → Sync, instead of as a sync that went through.**
+- **A Deny on an agent CLI's call that it can refuse only by ending its turn says so on the approval card before you press it, and the turn goes on: the agent is told which step was refused and asked to carry on without it, the chat says so, and the audit row of every decision on an agent CLI's call names the answers it offered.**
+- **A turn whose agent CLI connection closes after it made calls is no longer sent again on its own, since that could repeat them: the chat says so, and Retry sends it again.**
+- **A queued, retried or reported turn that runs past its time limit ends saying so instead of as a reply cut short, its clock stops while one of its calls waits on your answer, and a loop's turn says it once.**
+- **An agent CLI is called by its app's name in the Store everywhere: a loop's Runs on, a room's member picker, the Agents page and the agents it lists name it as the chat already did, never by its id.**
+- **Changing where an automation's results go from chat or the CLI is checked when it is saved: a chat channel named by its name is that channel, anything that is not a route is refused with the ones there are, and the reply says where results and failures go and whether the automation runs now; a task made in chat without a channel now sends you its result.**
+- **A model that runs out of output room before it answers is asked once more, briefly and without extended reasoning, and a chat turn, subagent or workflow step it still can't answer ends failed saying so, never "completed" with no response; the model-call log records such a call as `output_cap`, every provider the native loop drives says when it stopped at its cap, and a subagent's live status names its runtime, model and calls (SDK additions `LLMEvent.output_cap` and `FailureMode.OUTPUT_CAP`; `bedrock-models` reports its stop reason).**
+- **The Morning triage reads proposals a model wrapped in a markdown fence or a sentence instead of refusing them and ending Degraded: every check and parser of a model's JSON answer (triage, prompt-card import, workflow infer nodes and judges, knowledge extraction, loop planning) reads it the one way the call that asked for it did.**
+- **A knowledge step's time limit counts only its own work: a video's frame extraction is no longer failed as out of time while another step held up the gateway, a step stopped for its time stops the ffmpeg or model process it started and its item offers Run again, and a step whose own request timed out says so instead.**
+- **A video's frames are taken across its whole length, not its first 70 seconds, the steps that read them take frames from all of it, and the video's page says how many frames were taken, across how long, and when.**
+- **The gateway keeps answering while an item's vectors are written: each ingest waits for the embedding model beside the gateway's requests, as a re-index does, instead of stopping every request for as long as the model took to answer.**
+- **Memory recall no longer stops the gateway and answers in time: it embeds the question once instead of every saved fact and lesson again, runs off the event loop, searches by keyword (and says so) when the embedding model is slow, stops when nobody waits for it any more, and a re-index never makes a search wait; a recall or tool call that runs out of time says what timed out.**
+- **The gateway keeps answering while a chat turn, a webhook, a heartbeat or a subagent puts its message together, while a send's agent suggestion is worked out and while a re-index starts: the embedding model is waited for off the event loop, and skill descriptions and agent specialties are embedded in the background, once per model.**
+- **Each background chore of a chat (its title and tags, its organize suggestion, its follow-up suggestions, its memory consolidation) is sent only its own prompt: the chores of every chat shared one conversation that grew all day, so a consolidation could store what another chat said as yours, and the chores slowed to minutes.**
+- **The Inbox sorts each new message on the background model, a few per call, and shows one it has not sorted as "Not sorted yet" (one it could not sort says why, with Sort again); a notice, a note or an agent's post carries no made-up verdict, Mark accurate / Mark wrong appear only on a verdict or draft a prompt produced, and a verdict is credited to the prompt that made it. Settings → Inbox → Sort new messages turns it off.**
+- **A merge restore no longer deletes your newest notifications: every bounded log keeps its newest entries by when each happened, a merge puts an archive's older entries where they belong in time (notifications, run history, feedback, the model-call audit, the security log), and the bell lists what a merge brought in without a restart.**
+- **A replace restore refused while the gateway runs names that gateway's pid and port.**
+- **A scheduled report says what it reads — your knowledge, over which window, and never the web — on its card and in the form that makes it; a report with no tags reads what is new anywhere in your knowledge, and a run that finds nothing new says so on the card and in Run now's answer, which says what the run found rather than that it started.**
+- **A scheduled report's time is one schedule: changing or switching its automation on the Triggers page changes the report, changing the report keeps what the Triggers page set on its automation, every fire of that automation runs the report, and a run that does nothing is recorded as such rather than as a success. A report can be edited from its card, and the Triggers page says which automation is a report's schedule.**
+- **Stopping a chat turn stops what it started: a batch of tasks it handed to `subagent_run`, a subagent it started and the approvals they were waiting on, each saying its chat turn was stopped, while what an earlier turn started goes on (an SDK change: `SubagentManager.stop_children_of` is now `stop_agents`, which `slack-channel` does not call).**
+- **A workflow run that is stopped, fails or is deleted ends a batch one of its steps started, saying how the run ended.**
+- **An approval's Inbox row says how it ended (approved, denied, expired, cancelled) instead of still reading "is waiting for your decision".**
+- **An automation's Allow no longer says its agent may change files in a working folder you haven't trusted: it says the agent only reads there until you trust the folder, and a run held back that way, or by a folder you stopped trusting since, says why in its history, on its trigger and in the note it sends when it ends.**
+- **A working folder written from `~` is the folder you trust: its trust was looked up under a folder named `~` inside wherever the gateway was started, so trusting the folder never reached it.**
+- **An automation that only reads no longer asks you to trust its working folder: the request said it wanted to run project scripts.**
+- **A batch of subagent tasks where one may change things can start: it asks you once, in the chat that started it, the Inbox, your phone and your channel, naming each task and what it may change, and starts on your Allow; Deny ends it declined, and a run with nobody to ask is refused saying why.**
+- **A batch of subagent tasks tells the chat that started it how each task ended, in one turn its agent reads next, instead of leaving it to poll; its run is recorded as that chat's batch, so the Work board folds it away like other work an agent started.**
+- **An approval a chat's subagent or batch asks for can be answered from its card in that chat, with Allow or Deny.**
+- **Starting subagents asks you at most once: a batch whose tasks only read starts where the chat's own subagents would, or asks once for the whole batch, instead of every task asking for itself. The chat shows one card per batch, which says it waits for you and then follows its run, naming a step that waits and what for (the agent is told too); its tasks are listed in the chat's Activity panel; its ask names the batch, stays in sight in the chat until it is answered, and no longer says a batch that only reads writes files; and an ask still waiting when PersonalClaw restarts is asked again, or the chat is told the batch never started (SDK: `LLMEvent.work_asks`, an addition no app has to change for).**
+- **A read-only subagent on an agent CLI is offered only its read-only tools, and a call to any other is refused in the same words a native subagent's is.**
+- **A read-only run told it may not call a tool says so in plain words, and is told which MCP servers' reads it was not shown and where you trust their read-only labels.**
+- **An automation allowed to change a file can change it: its edit of the very file its Allow named was refused, and only that file can be changed.**
+- **An automation run whose own limits refused calls it made is recorded as refused, naming the calls, instead of as a success.**
+- **A reading automation refused a tool of an MCP server whose read-only labels you have not trusted is told so, and where you trust them, and that its file tools read the folders you shared.**
+- **Learning reads only what you typed: a saved prompt's text, an attached file, a pasted block, a theme's persona or an automation's message no longer becomes a lesson, preference or glossary entry of yours, and what was learned from such text before is retracted (Memory → History can undo it) or offered for review under Learning → Proposals.**
+- **A proposal under Learning → Proposals shows the text it rests on as written, a line each, without the markers meant for the model.**
+- **A replace restore brings each automation that runs on its own back paused and says how many and why, so a copy restored onto another machine no longer repeats every brief and digest the original still sends; Resume all on the Triggers page, or each one's own Resume, switches them back on (`Trigger.restore_hold`: an SDK addition no app has to change for).**
+- **Every approval card shows what it would run and where it came from: the workflow run page, Mission Control, Home's To triage and the Inbox show the tool, its risk, what it can touch, the whole command or path behind Show all, and the loop, workflow step, trigger or chat that asked; a channel's prompt names that source too, where a loop's call read "[chat]".**
+- **A loop a spend cap refuses is paused, not failed: its planning or its cockpit says which cap, what was spent and what the call needed, links Settings → Guardrails, raises one Inbox item and one notification, and tries nothing again until you resume it; a chat, a workflow step and a subagent say the same words, and a workflow run a cap stopped links the cap, says when it resets on your clock, and offers Retry once it has room instead of telling you to change the workflow.**
+- **Every time the gateway stores or serves carries its offset, so a browser or phone in another timezone reads it right: a watched folder polled a moment ago says "next in 5m", not "next in 3h", and the library, chat transcripts and rooms read the times they already hold as the instants they were.**
+- **Claude Sonnet 5.5, Opus 5.5 and the other current Claude models have their list price under every id a service calls them by, a Bedrock inference profile (`global.`, `us.`, `eu.`, `apac.` …) priced as its base model, so a daily dollar cap no longer refuses them; Opus 4.5 to 4.8 are priced at their list price, not three times it.**
+- **A speech, embedding or image engine that runs on this machine is free, as Ollama there is, and one at an address elsewhere is not: `ImageGenProvider.hosts_model` declares a backend whose model server runs the model where it is (an SDK addition, used by `local-image-gen`).**
+- **A call refused for having no price says how to lift the refusal: price the model ($0 if it costs nothing), or set Max dollars / day to 0. A chat or planning turn a dollar cap stops says which cap and how to lift it, not "an error PersonalClaw doesn't recognize".**
+- **Usage, the daily budget meter and the model-call log show one figure for each model call: a turn a dollar cap stops part way is in Usage for the calls it made, a call to the model an agent names is charged as that model, and a turn's cost is the sum of its calls' own prices.**
+- **The agent's `web_fetch` opens a link you typed or pasted into your message, or the source link of a library item you attached, instead of refusing it as one "not surfaced in the conversation"; a link that appeared only in a fetched page or a tool's output is still refused, now in words that name the rule and ask you for the link, and Network egress still bounds every fetch.**
+- **`personalclaw restart` starts the service installed for this home after `personalclaw stop`, instead of a gateway with no restart on a crash and no start at login; `stop` says what starts the service again, `status` names it, and none of the three touches a service installed for another home.**
+- **The agent's `grep` leaves out binary files, as `grep -I` does, rather than returning lines of a database's or an image's bytes.**
+- **An MCP server that lists a tool with no description, or a tool whose name a model provider does not accept, no longer fails every chat turn: the tool is offered with a description written from its name and inputs (shown on the Tools page too) and under a name every provider accepts, and one that still cannot be offered is left out and logged.**
+- **An MCP server's card says how its start really ended: it exited, with its exit code and the line that says why, or it did not answer in time; what it wrote to its error output is behind Details (`McpServerInfo.detail`: an SDK addition no app has to change for), and the card updates as soon as the gateway knows, without a reload.**
+- **An MCP server that fails to start three times in a row is stopped, with Retry on its card, instead of being started again by every chat turn and every look at the Tools page.**
+- **A scheduled time missed while the computer slept is put up for review, the same as one missed while PersonalClaw was stopped, instead of run late on its own; a schedule's Advanced "If a time is missed" chooses between waiting for you and running it once, late, and the agent's automation tools take the same choice (`catch_up`).**
+- **Changing a chat's agent, agent CLI, model or reasoning effort while it answers (Route on the routing chip included) stops that turn, ends a permission it was waiting on as not run, and answers your message with what you picked, saying so in the chat; the composer offers Steer only while the running turn can take a message in, and Queue otherwise.**
+- **A call an agent CLI ran without asking you says so on its own card, live, after a reload and in the chat's export, and a reloaded chat shows the same steps it showed live, with no extra rows for a denied or unasked call.**
+- **A note the agent cites in a chat opens from the chat, by its path or its file name alone, and so does a file in a folder the agent may read.**
+- **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
+- **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**
+- **A chat channel's Owner names you as the channel knows you, with its id for you under it ("Telegram id …" when it knows no name), and says "Paired." once.**
+- **Deny on an agent CLI's request declines that call and lets the agent go on, and the step names the answer sent; an agent that still ends its turn after a Deny is said to have stopped after it.**
+- **Stop on an agent CLI's turn ends it as stopped, never as a timeout or an unrecognized error, keeps the agent's process for the next turn, and starts no replacement after a hard stop.**
+- **An agent CLI's Test that fails says why: the agent's refusal in its own words, how its program ended (its exit code and last output), and what to check.**
+- **An agent CLI's turn waits for its answer however long it thinks after its last step, instead of ending after 90 seconds of silence, and an answer that arrives after its turn ended is never shown in the next one.**
+- **Each step a knowledge item skipped says why and what fixes it (a video with no Image · Modality model names it for its classifier, OCR and Vision), a step that does not apply says so, and the item offers to run again once the missing model or OCR app is there.**
+- **A reply or a step you are waiting for (a chat's answer, its schedule, a page's task analysis) goes ahead of background work on a local model, moves on to your next model after a short wait, and says why while it waits.**
+- **A model that answers with nothing, or not in the shape asked for, hands the call to the next model of its chain.**
+- **When the skill reviewer could not run, the Proposals page says so and why (which model failed, and how), never that it found nothing.**
+- **Background chores (a chat's title, its memory consolidation, the suggestions) move on to the next model of their chain when the first is paused after repeated failures, and a title or consolidation no model could answer is done once one answers again.**
+- **A background call is cut after five minutes and capped in what it may write, so a local model is never held for twenty minutes by one chore that answers nothing.**
+- **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
+- **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
+- **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**
+- **A read-only subagent is offered only the tools it may use, including the shell for commands that only read; a call to anything else is refused as outside its read-only tools, and a subagent whose every call was refused ends as not done, saying why.**
+- **Two or more tasks given to `subagent_run` are read as the contract the tool now shows: one path in `writes` is a path, not its letters, a wrong type or an unknown capability is refused by name, a boundary that names the folder a task works in no longer contradicts it (`off_limits` lists what it must not write), and the batch shows as a live run card in the chat, naming any task that failed and why.**
+- **A workflow run the watchdog ends without its controller, because its spec cannot be read or its steps all ended while nothing drove it, tells the trigger that started it how it ended.**
+- **Stopping a loop ends what it started: its batch runs and background subagents stop, saying the loop was stopped, an approval they were waiting on expires and can no longer be allowed, and a run whose loop has stopped, failed, finished or been deleted is closed, at the next start too, instead of starting again.**
+- **An approval nobody answered (out of time, its work stopped first, or the gateway stopping or restarting) reads Expired in the Inbox and says why, never Handled.**
+- **Your Deny of a subagent's start reads as your decision: the step is denied by you, the run ends declined naming it, and no "Workflow run failed" comes back to your Inbox; a start nobody approved no longer points at a transcript that does not exist.**
+- **A batch's steps are named by each task's title, or by what the task is for, never by a slug of the folder its text names.**
+- **A Code loop's planner and workers, background work and workflows on Amazon Bedrock and Anthropic models read their repeated prompt from the cache, instead of paying for all of it on every call.**
+- **The agent no longer answers its own tool list in your chat ("The catalog notice doesn't ask for anything…"): the per-turn tool note is marked as the runtime's, and on Anthropic and Amazon Bedrock models it rides the last turn instead of arriving as a message from you: `personalclaw.sdk.model.VOLATILE_KEY` (an SDK addition, used by `bedrock-models`; `anthropic-models`, `anthropic-compatible` and `claude-subscription` get it through core).**
+- **A Code loop no longer starts a task before the work it builds on is merged, and a task whose change is already in your workspace merges nothing, so a change two workers made lands once, with no empty merge commit.**
+- **A Code loop's stage gate judges each exit criterion on the stage's task outputs and findings, and its page shows which are met, which are not and which the record cannot show, with the reason; a Blocked loop names the criterion it is stuck on, re-checks of finished tasks no longer count as a stuck stage, and a loop whose every stage is done ends complete.**
+- **A Code loop's task worker that wrote its finding, or finished its task, is no longer asked three more times to write it, a re-prompt names the file the worker owes, and each one shows on the loop's page with how many asks are left.**
+- **A Code loop that ends with work not merged, a task still at work or finished work waiting for your merge, whether its budget ran out, it failed or you stopped it, keeps that work on its own branch, and the project's page shows its commits and diff, as a waiting merge's review does, to merge at exactly what you reviewed or discard; a failed loop's workers stop taking turns.**
+- **A Code loop's task worker in the middle of a long model call is no longer failed as stalled, a failed loop keeps its task workers' worktrees and the edits you approved in them, and Resume (or a steer) gives the task worker a turn instead of answering "ran out of cycles" again.**
+- **A planning step whose planner wrote a file that is not valid JSON says where it breaks, to the planner on its retry and to you beside Retry; a pass that ran out of time says so, and a planner turn cut at its time limit ends cleanly with a line in its session saying why.**
+- **"Cancel and edit the task" stops the planning and opens the composer with your task, project, codebase and Mode; a loop still planning can be stopped from its walkthrough, the Code list and its project's Work board, a stopped or cancelled planner is not started again after a restart, and the Loops list links to the code loops at work.**
+- **Inbox › Generate draft reads the notes you name in what the reply should say, keeps your word limit and shows its count, and when a note you name can't be read, or a reply needs your word, it says so and writes nothing rather than promising something for you; the button now sits right under its field.**
+- **A drafted reply no longer answers the sender's questions for you: what neither you nor your notes say is left as [your answer: …] for you to fill in, each draft is checked for answers you never gave, the reply panel lists what is left for you, and a reply that still has one isn't sent.**
+- **A follow-up chip no longer says anything for you that the conversation doesn't: when a reply asks you for something, the chips leave the answer to you, and one stating a time, number, name or file nobody gave isn't shown. New-chat suggestions are checked the same way, Optimize won't use a rewrite that adds a detail you left open, and a click on a chip puts the caret in the composer and leaves the chips in place, so a double-click no longer lands on the reply's own buttons.**
+- **The model pickers offer only models that can do their job: the shared model listing hands each vendor's model record to its app (`register_branded_app(capabilities_of=…)`, used by `mistral-models` and `together-models`), rerankers, moderation, safety, completion-only, realtime-only and Responses-only models are offered for nothing, the Ollama app reads all of Ollama's own record of a model, and binding a model its provider lists for another job is refused.**
+- **An approval for an MCP server's tool shows what the server labels it ("Server says it only reads") and reads its name word by word, so `list_commits` is no longer "Writes files": `ToolDefinition.annotations` and `LLMEvent.annotations` (SDK additions no app has to change for).**
+- **An approval says what a shell command does, on the card, the phone and every channel: "Reads only", "Writes files" for a redirect into a file, and the risk "Not checked" for a command PersonalClaw could not vouch for, where plain reads said "Destructive"; `2>/dev/null`, `2>&1` and a leading `cd` keep a read a read.**
+- **An agent is told the limits PersonalClaw's own tools check, such as how long an image prompt may be, which values a field takes and a number's bounds, and a call over one is refused with the reason before you are asked.**
+- **An array, object or true/false an agent writes as text for an MCP tool reaches the server as that value where the tool's schema wants exactly that, and an argument of another type is refused with the reason before you are asked: `personalclaw.sdk.mcp.argument_refusal` (an SDK addition no app has to change for).**
+- **A tool call its tool would refuse whatever you answer (a file outside the places its tools reach, an edit of a file not read first, an argument it does not take, a message to someone it may not reach, a batch of subagents that does not compile) is refused with its reason before you are asked, on any surface: a tool declares it with `ToolProvider.preflight` (an SDK addition no app has to change for).**
+- **A tool call refused before anyone was asked (by a hook, a blocked command, the chat's mode or an unattended run), or whose approval ended with no answer, tells the agent why instead of telling it you declined.**
+- **The phone's Recent list shows your newest notifications first.**
+- **The Morning triage card shows every item it counts: the runs that ended and what else is waiting. Its digest collects what reached your Inbox since the gateway started, looks back to the last digest, and no longer lists its own run as something your machine did or an item it acted on as still waiting.**
+- **The Morning triage digest, in its notification and on its card, says an action it tried on its own and could not do is not done, with why and what you can do next, and says once when incident mode, your approval ceiling or the spend ceiling stopped it; a failure is no longer listed or counted as something your machine did, a proposal reads as a request rather than as done, and a run's line counts each effect that landed once.**
+- **Yes on a Morning triage proposal acts on the item it names, and a yes that did not happen says why instead of "Noted.".**
+- **A permission card in a chat or the Code cockpit cuts what it runs at a word, and Show all opens the whole of it.**
+- **The Code cockpit's "worker needs your input" toast stays out of the way of the Tasks panel it points to, says what the worker is waiting on, and its Respond opens the panel.**
+- **A chat open in a second tab shows a new turn as soon as it starts: the question, "Thinking…" and Stop**
+- **A read-only room member is offered only the tools that read, says so when one is refused, and reaches the folders you allowed agents to work in**
+- **The one-line installer and every documented uv and pipx install put PersonalClaw on Python 3.13 (uv ignores the top of a package's Python range, so a bare `uv tool install` landed on 3.14), re-running the installer moves an install off 3.14, and `personalclaw doctor` fails an install running outside the release's supported range with the command that moves it.**
+- **Every shared form field carries an id and says how the browser may fill it: setup and Settings → Account offer your saved name, the sign-in fields your username and a new password, and configuration fields and secrets ask the browser not to fill them.**
+- **Onboarding's bar of Back, Skip and Continue runs the full width of the window, and Plan Review's step bar the full width of its pane, with their buttons still in line with the content above.**
+- **An app update, or an edit of a provider instance in Settings → Providers, reaches the embeddings an app serves (Amazon Bedrock's) without a restart, and a removed instance or uninstalled app leaves no embedding adapter behind.**
+- **The local model onboarding proposes for chat is one its server says calls tools, not the newest model pulled, so a vision model no longer wins over a chat model; and setting up a second local server while "Local Ollama" points at another says so and writes nothing.**
+- **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
+- **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
+- **Settings › Sender trust words each channel by what it does: a channel that sends as you, like Email, shows no group rule and no bot, says a stranger is sent nothing and waits in your Inbox, and says where someone mails their code; the consent to open it to anyone says your agent answers them as you.**
+- **Files › Go to path opens a file given its path, on the folder that holds it, reads a relative path against the folder it shows, and offers files as well as folders.**
+- **A loop that stops at the budget it was given says "Stopped at its budget" on its run page, the Workflows list and the chat card, ends with its budget sentence instead of naming its template's loop as escalated, and is never told its workflow fails the same way until a step changes.**
+- **A subagent's start asks as `subagent_run` with what allowing it does, its whole task and a risk, and the Inbox shows the task whole where it is answered, with no line cut mid-word.**
+- **A native agent's tool call missing an argument its tool requires is answered with what is missing and the tool's input schema before anyone is asked to approve it, in the web chat and on every channel; an identical retry is answered the same way and never asks.**
+- **Run now of a trigger that reports to a chat channel sends its result there, as a scheduled run does; so do the restart review's Run now, an answered question, a webhook fire and a view refresh.**
+- **A chat message is not sent while a file it carries is still uploading: Send is off and says why, Enter is refused with the same sentence, and once the file is in the message goes with it (it went without it, and on a new chat the file was then attached to nothing).**
+- **Memory Studio lists each lesson once, as a lesson, never again as a raw `lesson.<hash>` fact, and lists every lesson (past 50 it left out the newest); the memory graph and ⌘K do the same.**
+- **A chat that came in on a chat channel is listed under Chat history › Channels, and its row there and its Jump back in link on Home say which channel it came from.**
+- **Settings › Sender trust no longer calls a sender's pairing code outstanding once its time is up, and the line goes when it does.**
+- **Settings › Sender trust names Slack's people and channels as you named them, and a channel's group choices say what they do: a repeat `allow_sender` or `track` by the same route keeps its date, writes no second audit row and takes the name it is given (used by `slack-channel`).**
+- **An app setting that is an object gets form controls, not a JSON box: a control per named field, a switch for one that may be off, or a row per keyed entry (Slack's Reactions and Per-channel Config).**
+- **Stop, Pause and an incident hold end a native turn at once: the model request in flight is closed instead of waited for, on Ollama and on every OpenAI- and Anthropic-compatible app (`personalclaw.sdk.model.InFlightRequests`, an SDK addition used by the bundled `ollama-models`).**
+- **A chat sent with no model set up says what is missing and what to do, instead of an error PersonalClaw doesn't recognize (`AgentError.sentence()`, an SDK addition no app has to change for).**
+- **A new chat on a model this machine runs is no longer compacted before its first reply: until usage is reported, its history is sized against the window the runtime says it serves.**
+- **A native chat sends one tool-catalog note per turn, not every earlier turn's as well.**
+- **Incident mode holds a workflow run, a general loop's included, instead of failing its stages: the stage in flight is stopped and waits, nothing starts while the switch is on, the run page says it is held, and the run carries on by itself once the switch is off.**
+- **An app's proposal notification says what it is in the words the app declared, and the rule set for that app's proposals in Settings → Notifications decides how it reaches you; two apps' proposals of one name are two kinds, a paused Agent Room's rule applies too, and the phone's Recent list names each notification.**
+- **Home's recent runs name a run by its trigger after the trigger has left the list: a one-shot that ran, or one that was deleted.**
+- **Settings → Usage's "ran locally at $0" counts the turns that ran on this machine when they ran, whatever prices and instances are configured since.**
+- **A schedule's time changed in chat fires at its new time, not the old one, and an automation the chat switches on is armed to run, as one switched on from the Triggers page is: every edit and switch moves the next fire by one rule.**
+- **The Morning triage card says what your notification rule does with its digest (it notifies you, shows as a badge, waits for the notification digest, or is not announced, inside quiet hours and out), where it said "held back from your notifications" for every digest in quiet hours.**
+- **Investigate on a run of a schedule opens that run: it found nothing for any schedule whose id holds a colon, which is every schedule the Triggers page or the chat makes.**
+- **A workflow run incident mode holds reads Held, not Running, on its page, in the run list and on the chat's run card, and Mission Control no longer lists it as working.**
+- **Home's To triage, Mission Control and the phone name a row an app or a run raised by the app's name or the work it is for, not by its notification source (`app:demo-proposer`, `loop`).**
+- **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
+- **Settings → Usage, the daily spend caps and the monthly usage recap count the day in your timezone, the one your schedules run in, where Usage's Today, totals, chart and Settings tile counted the UTC day and the caps the gateway clock's.**
+- **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**
+- **A mail's attachment is no longer read into its message: the Inbox showed a PDF quote's font data as the message and listed no attachment.**
+- **A PDF's text is read from its pages, not from the font and image data inside it.**
+- **The Reports page says when a report runs in words, with its time zone and its next run, as the Triggers page does, instead of its cron expression.**
+- **The Providers page follows a channel while it is open: a receiver that stops reads Error without a reload, and an earlier Test's answer is no longer shown as the channel's status.**
+- **A one-shot's time can be changed: Triggers › Edit opens on the time it runs at, and a new time is saved and its next run moves with it, for a one-shot made on the page or in chat; a time that has already passed is refused.**
+- **Quiet hours never lose a notice your own rule sends quietly: one your rule sends to the digest waits for the digest, one it shows as a badge lands in the bell without a sound or a push, and only a notice that would ping is held back.**
+- **What a project's sessions remember is in every snapshot and export and comes back from a restore, so Doctor and Home no longer report durability as degraded over a project's memory.**
+- **Mission Control's Your turn names each skill proposal and accepts or rejects it on its card, as Home's To triage does.**
+- **A Temporary chat is forgotten when its session ends, as its notice says: when PersonalClaw stops or restarts, however it stops, the chat's messages, its working files and the files attached to it are deleted, its page no longer opens, a message sent to it starts nothing, and no snapshot or export taken while it ran carries it.**
+- **Turning the MCP surface on in Settings → External access serves `/mcp` at once, as `/v1`, `/a2a` and `/capture` are, and turning it off refuses the next call, with no restart.**
+- **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question (`MemoryService.recall_lessons` and `recall_facts`: SDK additions no app has to change for).**
+- **A program on another machine that calls `/mcp`, `/v1`, `/a2a` or `/capture` is told why it was refused and how to reach the surface, and `personalclaw inbound` no longer says `allow_remote` opens one to other machines.**
+- **Scanning an import source again shows an MCP server you signed in to as unchanged.**
+- **Archiving, pinning or filing an imported chat keeps where it came from.**
+- **Settings → Security says how long a sign-in from a token link lasts, beside how long a browser sign-in lasts.**
+- **Where there is no keychain, the keychain switch in Settings → Security is unavailable and says why.**
+- **Settings → External access says when the control bridge is switched on but not listening yet, and that it starts listening the next time PersonalClaw starts.**
+- **A one-shot made on the Triggers page, or a decision's review, runs at its time and is in its history before it leaves the list, a late run says it ran late, and a schedule an app serves runs its action.**
+- **A sync that fails reads as failed on Settings → Backups → Sync, with the reason in plain words; the Doctor reports it for as long as it lasts, and a note says when it starts failing and when it works again.**
+- **Settings → Backups shows an Export or Snapshot it has just run, and the archive it made, without a reload.**
+- **Routing hints of one or two words raise the "route to this agent?" chip when a message says them, and only the words you type are matched, not what you paste.**
+- **A chat paints the lines the gateway adds to it as they happen: /compact's outcome, a turn's own compaction and the notice of a restart at the context threshold no longer wait for a reload.**
+- **The context ring says why it shows no reading: not measured yet, with the window the model is served with, or no window declared, and a chat opened later draws the ring it was last told.**
+- **⌘K finds a command by the words its row shows, in any order: "Go to Discover" opens Discover.**
+- **Incident mode holds a running goal, research, code or design loop: it starts no new cycle and makes no model calls while the switch is on, its page says Held and why, and it carries on by itself once the switch is off. Memory consolidation and background compression skip while it is on.**
+- **The incident banner appears and clears within seconds of the switch, from the dashboard or `personalclaw incident`, on a tab nobody is using.**
+- **After a restart that missed a scheduled run, the "Missed scheduled runs" notice reaches the bell even inside quiet hours, where it is kept without a toast; it and a stop's "was interrupted" notice have their own row in Settings → Notifications, Runs to review after a restart.**
+- **An item saved before an embedding model was bound stops saying no model is bound: one the re-index already embedded is no longer listed as unsearchable, and one still waiting says it waits to be embedded and that Maintenance embeds it.**
+- **`personalclaw doctor` reports the running gateway's own Maintenance score and each model provider as its connection test found it, so it agrees with the Doctor page, and a provider that cannot be used says why instead of reading ✅; with no gateway running it says it measured without one.**
+- **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
+- **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
+- **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**
+- **A turn sent again after an empty answer or a lost connection is the same message: no second bubble holding the chat's context blocks, and the retry is given the context the first attempt had.**
+- **A message reaches its model a second or more sooner: the bundled prompts are seeded into the store once, not again at each of the prompt lookups a turn makes.**
+- **A model instance that stops answering says so on its Settings → Providers card, on each Settings → Models chain entry that uses it, and in the Doctor, by name and in words.**
+- **A chain entry whose model is gone from its instance reads "unavailable", and the Doctor offers to prune it; pruning removes the model from the chain.**
+- **A loop that is stopped, fails or finishes leaves none of its tasks "in progress", and a task its worker left unfinished can be taken again when the loop resumes.**
+- **Mission Control lists each loop once, by its name, however many of its workers are running, and never names a chat by its internal key.**
+- **The Inbox's "Needs reply" lists only messages that need a reply, not app-update notices, notes you wrote or requests from your agents.**
+- **The Inbox's Dismiss all dialog names the Done filter by the name the page shows.**
+- **An image or document artifact never takes text as its next version, so its file, the bytes it serves and its details always agree; the agent is told the tool that does make one (for an image, `image_generate` with its slug), and the Iterate panel names that tool from the start.**
+- **An open artifact shows each new version as soon as it is written, whoever wrote it: the Iterate panel's chat, another chat, a workflow step or another tab. An image's page and its library card draw the new picture, not the first one they loaded.**
+- **A declined or retried tool call proposes a refinement only of a skill whose procedure asked for that call, never of one that joined the turn on a matching word.**
+- **A workflow run that fails or stops before it finished says so in the Inbox and the bell, and the row opens that run.**
+- **The daily dollar cap holds when calls run at the same time: a call that costs money sets aside what it may cost and starts only when that fits beside what is spent and what the calls already running have set aside.**
+- **Past a spent daily dollar cap, calls to a model that costs nothing keep running, so automations, loops, subagents and app workers on local models no longer stop until midnight; only the token cap stops work before it starts.**
+- **A model reached through an OpenAI-compatible instance on this machine is no longer counted as free: it is priced by its model's id or has no price, a daily dollar cap refuses a model with no price, and Settings → Usage → Model prices lists it, and every model spent on in the last 30 days, to price ($0 declares it free).**
+- **An agent's memory recall, project context, triage rules, prompt render, batched subagents and self-nudge stop work on every install, not only on the development server, and a call the gateway refuses says why instead of asking to sign in.**
+- **A list setting takes the list you paste, as JSON, separated by commas or one per line, and a settings form whose JSON does not parse refuses to save, naming the field, instead of saving the value from before.**
+- **A search app's key is tested: Settings → Search and the app's card in Settings → Providers say what its last search found (working, or failed with the reason) or that nothing has tried it yet, with a Test, instead of "ready" for a key that is merely saved.**
+- **A web search that falls back to the keyless engine says so, to the agent and on its card, and one that fails on both says why each failed.**
+- **A tool installed, removed or switched off while a chat is open reaches that chat's next turn, and a call to a tool whose app left during a turn is refused instead of run.**
+- **An installed app's panel says what it runs on this machine, as the Store did before the install.**
+- **After an app is reinstalled, a setting whose saved credential was deleted reads as not set, so its form asks for it again.**
+- **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
+- **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
+- **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**
+- **A loop's workers are told where the loop's status file and brief are, and a read repeated with its output thrown away (`2>/dev/null`) counts as a repeat.**
+- **A request about one piece of work, such as “a shorter version of those notes”, is no longer saved as a standing preference; a preference that is saved is said on its turn, still after a reload, can be forgotten from there, and reads in words in Memory rather than as stored data.**
+- **A room's Export transcript downloads the file instead of replacing the app with it, and names the member who said each line; every time in a chat or room export carries its UTC offset.**
+- **The “text-to-speech is switched off” line under a chat goes away once Speak works.**
+- **Voices says what a clone voice needs where it is chosen, and refuses one its engine cannot speak with.**
+- **Regenerating an answer that made an image saves the new image as that image's next version, not as a second image.**
+- **Stopping or restarting the gateway waits a few seconds for the app package repair its start began, so an app it has just repaired stops with the rest instead of starting again after them.**
+- **A scheduled automation's notification and chat message say what it produced, or why it failed, instead of its name alone; an automation that had nothing to do says nothing.**
+- **A failed automation whose failures go to the Inbox is an item in the Inbox, not only a notification.**
+- **A task a workflow run files for one of its steps is the run's: it starts with its step's state, names no author, is not counted as yours or as ready work, and links to its run; the morning triage files none.**
+- **The agent's file tools read a path that starts with `~/` as your home, within the folders they may reach.**
+- **Tasks → Filter & sort → Mine leaves out the tasks that are not yours; choosing it used to leave the list as it was.**
+- **The first message after a restart no longer holds every page up for half a minute while the agent's tools are indexed: the index is kept across restarts, filled in batches, and never on the path that answers requests.**
+- **A reply a restart cuts off says so in the chat, after the restart too, and offers Retry; it no longer reads as a Stop you pressed.**
+- **A workflow step you allowed is not asked again when a restart resumes it, while every other start still asks (SDK: `SubagentInfo.request_key` and `approved_at`, and the same two on `SubagentManager.spawn`, additions `slack-channel` does not have to change for).**
+- **A page open across a restart or a dropped connection reads again what it may have missed, approvals first: a run's page shows the approval its resumed step asked for, the approval nudge still comes, and the Inbox, notifications, lists, artifacts and chat history catch up.**
+- **A restart no longer waits ten seconds on a page left open, or on a model's answer nobody will read, and its log names what a stop could not finish and whether the gateway restarts or exits.**
+- **A chat turn that ran its steps and wrote no answer asks its model once for the reply, and if none comes says the turn has no answer, with Retry, instead of "Response complete."**
+- **Regenerating a reply an automation, a subagent's report or an auto-nudge started runs that turn again, instead of deleting it and asking the question before it.**
+- **A phone that pairs opens on its companion, and on a phone the menu's Companion row leads back to it.**
+- **The Morning triage card's link to the item opens that run, and a knowledge result's link opens the item.**
+- **Opening a terminal past the limit says how many run at once and to close one, and New session waits until you do.**
+- **Start from template opens the chosen template's form with what you typed already in it.**
+- **A trigger that cannot be created yet says why beside Create trigger, naming a required setting by its label.**
+- **A Run workflow trigger's panel shows the workflow it starts and the inputs it starts it with.**
+- **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
+- **`personalclaw --version` and `--help`, building the web app, and reading a setting, a credential, your apps or memory no longer create a PersonalClaw home; the first thing written into it creates it, readable only by you.**
+- **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**
+- **An automation that starts an agent starts it on the Allow you gave the automation, without asking again; its run's history says how the agent's run went instead of "launched", and a start you decline reads "declined", with no note calling it a failure (SDK: `ActionResult.work_id` and `SubagentInfo.declined`, additions no app has to change for).**
+- **A schedule keeps its time across a change of the clocks: a cron whose next run falls after daylight saving time ends or begins runs, and is described, at the hour it names instead of an hour off, and a time the clocks skip runs as they jump.**
+- **Moving a task to another project from its editor saves it in that project, and a task in no project opens on "(none)".**
+- **`automation_create` tells the agent which automations wait for your Allow: one that sends your own words is active at once.**
+- **A pairing code says the time it stops working, with one full stop, on a channel's Owner and on Sender trust.**
+- **The quiet-hours window's two times and the speaking-speed slider have names a screen reader reads.**
+- **A folder you watch brings in the notes already in it, newest first up to 1,000 files or 100 MB: the add form says so, the folder's row says what is still to come and what the bound left for later, and later checks bring in only what changed.**
+- **A folder you watch is checked as often as you set it, down to once a minute, and every source's row states how often it is really checked.**
+- **What you add to the library yourself is read before a watched source's backlog, and a queued item says how many items are ahead of it and how long recent ones took.**
+- **A feed or page with more new entries than one check takes brings the rest in on the next checks instead of never.**
+- **Library enrichment, history consolidation and thread compression move to the next model in their chain when one is too slow, and a slow model is reported as timing out, not as no model being available.**
+- **A feed's or page's entries are stored as their words, not their HTML, so they preview and read as text.**
+- **An item that has been embedded no longer says no embedding model is bound.**
+- **A title you give an upload, the file's own name included, is kept after enrichment; the suggested title stays on the item.**
+- **Labels that name a type read as English: "Choose an audio file", "New PDF", "an 8-cycle budget".**
+- **A video or voice memo whose speech could not be transcribed no longer reads "Transcription done": the step fails with the reason, and a recording with no speech says "No speech found".**
+- **The microphone and the OpenAI-compatible transcription endpoint answer a transcription that could not run with its reason, instead of an empty transcript.**
+- **Speaker diarization that cannot tell the speakers apart fails its step with the reason, instead of finishing with no speakers, and long recordings get the time transcription gets.**
+- **A recording's text keeps who said what and the corrections the Vocabulary made, and a video's text and description include its narration alongside its slides' text.**
+- **The Vocabulary builds itself from your knowledge graph, people first, so transcriptions are biased toward the names in your notes without pressing Rebuild; a word that only sounds like a term is proposed, never rewritten, and a graph term is turned off rather than deleted.**
+- **A skill joins a message only when it is clearly the one the message asks for, and every turn names the skills that joined it, a turn that only calls tools or is stopped included.**
+- **A request to set up an automation or a reminder carries the automation tool's inputs, a path in a request no longer crowds out the tools it needs, and a refused tool argument names the ones the tool takes.**
+- **Reads that reach one store at the same moment — Memory Studio's reload after a save, the knowledge library, the lexicon, the code index — no longer fail or return wrong rows.**
+- **A page whose read fails says whether the server answered with an error or did not answer at all.**
+- **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
+- **A second tab opened during first-run setup joins the setup where it is, with the name already entered, instead of starting over at step 1.**
+- **A model provider whose Save and test fails in first-run setup is no longer a dead end: every step of it offers Pick a different provider, which brings back the local model, the network scan and the provider list.**
+- **Only a source checkout offers to install updates on its own: first-run setup and Settings → Updates tell a pip, uv, container or desktop install how its updates arrive, and Staged no longer hides the update notice there.**
+- **A refused model endpoint names the control that allows it, Allowed hosts in Settings → Security → Network egress, instead of config keys, and so do a web fetch's and a net-fetch action's refusals.**
+- **The instructions you bring over from Claude Code or Codex reach every chat whole, not as 220-character summaries a small model's window cut again, and the notes they were remembering become memories recall finds and the re-index embeds.**
+- **The embedding re-index embeds every memory with an Ollama embedding model, where it used to fail on every other one and leave half of them read by keyword.**
+- **Settings → Secrets no longer lists a switch PersonalClaw sets for itself as a credential inherited from the host, and Settings → Security no longer says the credential store is always in `~/.personalclaw`.**
+- **A tool server's card says what the server does after every add, edit, Allow, removal or switch-on, reading "checking" until its probe lands, and never shows a removed server's state.**
+- **Sign in is offered only on a tool server that has a sign-in; one that takes a token instead says what it wants, on its card.**
+- **A tool server whose host cannot be looked up says so, instead of reading as a timeout.**
+- **MCP Tool Servers names every transport it connects over (a command, Streamable HTTP and SSE), and its card in Settings → Providers can save a Streamable HTTP server.**
+- **A message from Telegram, Discord, email or a Slack thread linked to a chat is answered however long its turn runs: the session sweep no longer ends a runtime a turn is using, and it knows every chat that exists however the chat was made (SDK: `SessionManager.register_dashboard_sessions` replaces `set_active_dashboard_sessions`, a change no app has to make).**
+- **A turn that ends without an answer says why on the channel its conversation is linked to: the error the chat shows, that it was stopped from the dashboard, or that it stopped before it finished, which the chat now says too.**
+- **The install scanner no longer reports a comment or a docstring as something an app does, and a finding's evidence is the code it matched rather than a comment above it.**
+- **A settings list whose schema describes its entries is edited as a list in Apps › Configure and Settings › Providers, chips for texts and a row per entry for records, instead of typed as JSON (`slack-channel` describes its lists).**
+- **A local model that takes minutes to read a long conversation is given the time: an Ollama instance waits up to 600 seconds for its first word (10 for the server to answer at all), and a model that still has not started is stopped once, not retried, with a sentence naming the setting to raise (`personalclaw.sdk.model.FirstTokenTimeout`, used by `ollama-models`).**
+- **A turn sends the tool schemas its request needs, and no more than an eighth of a small window: tools are chosen by what you asked rather than by the prompt's own wording, and every other tool is still listed by name (`personalclaw.sdk.prompt.user_request`, used by `bundled-chat`).**
+- **Text typed after an @prompt fills the prompt's arguments: `@standup ~/src/app` renders it for that path, and single words fill `{{arg1}}` to `{{arg9}}`.**
+- **A tool loop that keeps getting the same answers is stopped: a read that returned the same result three times in a turn is refused, and a turn with more than eight repeats ends with a sentence in the chat saying why, a CLI agent's turn too.**
+- **A model's reasoning markers no longer show in its reply, and a local model's thinking shows as thinking, not as its answer (`StreamingTagSplitter(channel=…, inside=…)`, `make_think_splitter(inside=…)`, `CHANNEL_OPEN` and `CHANNEL_CLOSE`, used by `ollama-models`).**
+- **`memory_remember` takes the `scope` and `workspace` the system prompt teaches and saves a lesson's `negative`, and every worked example in the tool reference is one its tool accepts.**
+- **A model that did not answer is logged as one warning naming the model and the cause, not a traceback, for a chat turn and for an auto-title.**
+- **An approval is answered where it is announced: its Inbox row and its notification offer Approve and Deny, and once it has ended they say so instead.**
+- **The trigger presets are on the form New trigger opens, so Morning briefing and the others can be picked on a home that already has triggers.**
+- **PersonalClaw's own triggers no longer ask you to confirm their cadence: the cadence floor warns only about one someone set, not the heartbeat pass's designed every 60s.**
+- **A subagent waiting for you to approve its start is not stopped by its time limit, which counts from when it starts running, so the loop or trigger that asked is not reported as failed while it waits; one that does end while waiting on you says so.**
+- **Memory consolidation no longer turns PersonalClaw's own records (procedures, lessons, the self-model) into facts with no value, so Memory Studio no longer lists them as "null", and a fact with no value reads "No value".**
+- **A lesson learned from "never do X" reads as you said it, not "Never: never do X".**
+- **The Incognito chat notice says what happens: the chat stays out of your history and search, and PersonalClaw still keeps its transcript.**
+- **The import step says why an item starts unticked: a skill the security scan warned about is named as that, not as something the other tool does not use.**
+- **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
+- **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**
+- **The Routing tab shows a model nothing prices as unpriced, never free, and such a model no longer knocks a priced one off the frontier or reads as cheaper in a proposal.**
+- **An evaluation gate's spend and the Usage page's "Not included" figure say how many calls they could not price, and the gate's dollar bound counts them as calls it could not count.**
+- **The judge bench and the model bake-off read a model's cost as unknown when any of its calls had no price, and a model on this machine as free.**
+- **The bundled offline model, and a provider instance that names no endpoint and relies on its app's default on this machine, are priced at a known $0 and tried first by local-first routing: pricing, routing and the spend guard's outbound scan decide what runs here by one rule.**
+- **On Linux x86_64, the hourly export, the daily reclaim and every other job that reads a store open it through the same SQLite as the store, so the store's next writes no longer fail or vanish after them.**
+- **The spend caps, the Usage page and every turn's cost price a call at the rate you set in `model_rates.json`, and a cap says how many calls it could not price rather than counting them as free.**
+- **An open-weight model is free only on this machine: `mistral-large` and a `llama3.1` served elsewhere are no longer priced at $0 by their names.**
+- **A rate a provider app declares prices that app's instances whatever you named them, and never another provider's.**
+- **Routing orders a model first as local only when its provider's endpoint is on this machine, whatever the provider is called.**
+- **The monthly usage recap no longer calls its total a floor for turns that ran on this machine.**
+- **Stopping PersonalClaw, a workflow run, a loop or a channel no longer waits forever on a task that will not stop: it waits a few seconds, logs what did not finish, and goes on.**
+- **A generated image or video larger than 10 MB is saved whole instead of cut off, and one that can't be saved says why.**
+- **An encrypted sync that can't read its store is reported as a failed read, as an unencrypted one is.**
+- **A sync whose first registry write lost to another machine's write that never landed writes it on the next try, instead of losing every try.**
+- **Settings → Speech & Transcription shows speech-to-text on until you turn it off, as voice input behaves.**
+- **Settings → Models keeps an image or video provider that can't generate in its row, with the reason it gives.**
+- **Voice input shows the reason speech-to-text can't run instead of setup advice for a model already chosen, and the loop composer says why a recording did not become text.**
+- **The Models page's Test shows a failure's whole sentence, next step included.**
+- **The OpenAI-compatible transcription endpoint no longer puts "Transcription failed:" in front of a provider's own sentence.**
+- **`personalclaw app new` writes a `.gitignore`, so an app's first commit no longer publishes its compiled bytecode and the path it was built on.**
+- **First run's Web search lane is ready only once the agent can search: after a search provider, it offers Web Tools, the app that gives the agent its `web_search` tool.**
+- **A tool that only reads asks nobody over an agent CLI either: in a Normal chat, in a background agent's run and in a room.**
+- **`personalclaw run --allow` runs the writes it grants: the run's chat approves its own calls, within the operator's approval ceiling.**
+- **The Normal and Trust reads approval modes say what they do.**
+- **The notification that someone you haven't paired messaged you offers Allow and Deny, and Allow asks you first.**
+- **An automation's agent can message you (SDK: `ToolDefinition.tells_owner` and `LLMEvent.tells_owner`, additions no app has to change for).**
+- **An automation that runs an agent or a workflow says it finished when it has, not when it started.**
+- **A conversation held on Telegram, Discord, email or Slack is told there when it is compacted, as its dashboard chat is: a `/compact`'s result, the agent compacting on its own, and a restart at the context threshold.**
+- **A chat linked to a channel thread (`POST /api/chat/sessions/{session}/channel-link`) continues there, as a handed-off chat does: its answers and notices go to the thread, a reply there continues it, and the thread opens on the channel that issued its id.**
+- **A message to a chat or user id with no channel named goes out on the channel that id belongs to, and an id two channels could take is refused with both (`email-channel` takes only an address).**
+- **The Triggers page checks a send-message action's chat channel when you save it.**
+- **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
+- **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**
+- **`personalclaw update` in a container says you're on the newest release when nothing newer is published, and no update offers or installs an older release; release candidates compare in order.**
+- **On the beta channel, a container's update commands pull an image that exists: `:beta` only while a release candidate is the newest release.**
+- **With update checks off, a container's Settings → Updates makes no call to GitHub.**
+- **The update check picks the release every update installs, the highest version on your channel, so a back-patch of an older line can't hide a newer one.**
+- **Settings → Updates says when a pin names an older release than the one running, and shows the rollback it sets up.**
+- **The rollback confirm in Settings → Updates shows `personalclaw snapshot` as a command instead of printing the backticks around it.**
+- **A release candidate's release no longer fails its own checks: the image smoke, the wheel gate and the release notes compare versions, not their spelling.**
+- **In a container, `personalclaw service`, `stop` and `restart` say the container runtime runs the gateway, print the host command, and change nothing.**
+- **`personalclaw` is found in the dashboard's terminal on the container image.**
+- **`personalclaw stop` needs neither `lsof` nor `ps`, stops only this home's gateway and waits for it to exit, and `restart` never starts a second gateway beside one it could not stop.**
+- **On a host without `ps`, the container image included, an app update names the processes still running its previous version.**
+- **Sync brings another machine's automations and hooks into a home that has its own, and a run on either machine is not a conflict.**
+- **Keeping this machine's version of a sync conflict leaves it as it is.**
+- **Sync leaves each machine's own counters, model spend, scheduler state and runner health on it: two machines' copies no longer turn every pull into a conflict to review.**
+- **The hourly export and sync carry saved prompts, prompt snippets and every other file in a store's folder, and name any file they cannot carry.**
+- **A sync pull writes only what it changed, and never over a file this machine wrote while it merged.**
+- **A workflow run or a loop stays on the machine that ran it: another machine's, synced or merged in, used to run again here.**
+- **Sync no longer writes chat sessions, scheduled-run history or channel history into a file named for the year: those folders stay on each machine.**
+- **A replace restore holds every workflow run, loop and agent its snapshot had working, until you resume it, instead of running again what each did after the snapshot.**
+- **A replace restore keeps this machine's workflow run history in its pre-restore copy, which the snapshot's used to overwrite.**
+- **A merge restore and an import leave this machine's spend, tool and savings counters, backup schedule and due-date notices as they are: another machine's spend no longer counts against your budget caps.**
+- **`personalclaw backup export` into a folder that holds anything but an earlier export refuses, instead of deleting the folder.**
+- **An import in Settings → Import / Export merges; a replace, which rewrites what the running gateway holds open, runs from `personalclaw restore <archive> --mode replace` with the gateway stopped.**
+- **Merging a snapshot in Settings → Backups runs, where the gateway it runs in used to refuse it.**
+- **`personalclaw restore` takes an export archive as well as a snapshot.**
+- **Searching your chats as you type reads a bounded amount per keystroke, and a chat found by reading it shows why it matched.**
+- **Every change of the embedding model re-embeds what it has not: its provider removed, a local model bound in setup, a binding another process wrote, and a model not ready yet, once it is.**
+- **A re-embed that stops partway keeps what it did, and leaves no search index holding the previous model's vectors.**
+- **A tool that only reads no longer asks for approval: a chat stops asking about recalling memory or a workflow's status, and a run with nobody to ask uses them.**
+- **A message you ask for on one chat channel goes out there and on no other: "message me on Telegram" no longer lands on Discord.**
+- **A workflow run's steps work in the folder the run owns instead of being refused: its scratch workspace (every batch has one), its own worktree, its project's folder when it works in place, or its project's context folder.**
+- **A workflow run that works in place runs its steps in the folder its project is bound to, instead of in the project's context folder.**
+- **A workflow run whose worktree or container could not be made works in the scratch folder it falls back to, and its record says so.**
+- **Git over ssh signs in through your SSH agent, and the service install keeps git's own certificate settings.**
+- **The Agents page says why an agent runtime's agents couldn't be listed, instead of "No agents discovered."**
+- **An agent runtime on the Agents page that isn't ready says why, instead of a count of 0.**
+- **A reminder a trigger starts arrives named for its trigger, not as a subagent's completion (`SubagentManager.spawn` takes an optional `title`, which `SubagentInfo` carries; `slack-channel`, the one app that spawns, needs no change).**
+- **A run's Document panel shows what its steps wrote, also on a run with no project, and only what they wrote.**
+- **A stop or a Restart records the run it cut off as interrupted, names which, and puts it on the review; Run now counts as running while it runs.**
+- **The chat says when it compacted a conversation on its own, and how much, in the words `/compact` answers with.**
+- **An automation's Run now spins only for its own run and says what the run recorded; a question's Deny waits while an answer is being sent.**
+- **You are told which background agents a restart stopped.**
+- **The workflow editor and the chat's progress card name steps by their labels.**
+- **Settings hints show commands and paths as code, not wrapped in backticks.**
+- **Something you type into a setting just as its panel opens is kept.**
+- **The last lines the gateway prints as it stops reach its log.**
+- **An agent runtime whose ACP adapter isn't installed offers Retry on its card even when no install of it failed.**
+- **Every model call PersonalClaw makes is on the Usage page, chat titles, tags, judges and digests included.**
+- **The Usage page's daily budget sets the spend the cap counts beside the cap, not every chat turn.**
+- **`personalclaw setup --provider` takes an agent runtime (`native`, `acp`, `acp:<cli>`) and refuses anything else instead of saving it.**
+- **`personalclaw setup` shows the workspace `PERSONALCLAW_WORKSPACE` sets, instead of asking for a folder it would not use.**
+- **An agent's tool is told why the gateway refused it, not only the HTTP status.**
+- **A run the chat's `automation_run` could not start is reported as not run.**
+- **The gateway's missing-dependency errors go to stderr.**
+- **A masked secret no longer takes the backslash of an escaped quote with it, so masked JSON still parses.**
+- **A text-to-speech model that is chosen but cannot speak yet says so, instead of answering with no audio.**
+- **A loop's cost counts the turns its workers ran, so its cost cap stops it.**
+- **The daily spend cap counts a subagent given its own model, a loop's planning, a webhook's agent turn and a scheduled job's reading of its subagent's result.**
+- **The daily spend cap counts each subagent once, including one on an agent CLI.**
+- **A session stopped the hard way comes back as the agent it was, where it was.**
+- **A webhook stopped by the spend cap says so, not "internal failure".**
+- **A model selftest fails on an empty reply, and a voice selftest on an engine that wrote no audio.**
+- **A library's model steps run on the model itself and count against the daily spend cap, so a video's description is written by the model instead of left as its raw transcript.**
+- **A loop's judge bound to Chat or Code is the model itself, with no tools, and counts against the daily spend cap.**
+- **The daily spend cap counts a loop, a subagent or a webhook's turn on an agent CLI, and refuses its next turn once the day is spent.**
+- **A subagent's report back to a webhook's or an app's turn counts against the daily spend cap.**
+- **A provider's selftest tests that provider and says a failure whole, and one for a name no provider has is not found.**
+- **A model server on another machine is no longer priced as free: only one on this machine is, and any other is priced by a rate set or declared for it, or reads as unpriced.**
+- **Routing & Efficiency says what it measures: every call on Reasoning, and on Chat or Code & tools only the calls automation makes, not the turns you type.**
+- **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
+- **Knowledge compares two embeddings only when one model wrote both, as memory does.**
+- **Voice input and a refused re-index say why speech-to-text or the embedding model can't work, in its provider's words, and a transcription that failed no longer reads as a recording with no speech.**
+- **An error above the chat composer stays until you dismiss it or send again; only an update clears on its own.**
+- **Sync, a merge restore and an import bring another machine's inbox items, document comments, research reports, tags, tag boards, folders and dashboard views into a home that has its own.**
+- **An automation, hook, inbox item, tag or other record written while a sync, a merge restore or an import runs is no longer lost.**
+- **`personalclaw restore` merges while the gateway runs, and refuses a replace in the words the dashboard uses.**
+- **Memories and knowledge another machine's model embedded are re-embedded when a sync, a merge restore or an import brings them in.**
+- **An edit made on one machine reaches the other by sync, whichever machine made it and whatever either clock says; an edit made on both is a conflict to review.**
+- **The image and video tools say where to choose a model, and name no vendor.**
+- **Clearing Chat posts one notice, not ten.**
+- **A memory no model embedded is counted everywhere search is described, as one number.**
+- **A step you open from a chat's workflow card shows its result once it finishes, and a loop or fan-out of more than ten items shows its real last one.**
+- **A chat found by a search is named as the chat list names it, not by its internal key.**
+- **Searching your chats as you type finds what was said late in a long chat.**
+- **Searching your chats lists each chat once, with its latest words, instead of sometimes twice.**
+- **A replace restore keeps the engine each returning app has here, instead of moving it into `pre-restore-<ts>/` and asking for Install engine again, and says which engines it kept or set aside.**
+- **A gate's Wake it now, Approve and Submit, and a trigger's Allow, show they are working while their own answer is out, and a screen reader hears it.**
+- **`personalclaw setup` never says "Done!" after a step that failed: it names each failed step with the command that runs it again, and exits 1.**
+- **Settings → Usage counts a room's summaries and a chat's history compression, and its "Not included" figure no longer counts a call a usage row already holds (SDK: `LLMEvent` gains `audit_ids`, an addition no app has to change for).**
+- **"Remind me at 5 pm" makes a task that runs once, at 5 pm, where you are.**
+- **An automation made in chat runs what it says.**
+- **The banner `personalclaw` and `personalclaw chat` print draws PersonalClaw.**
+- **`personalclaw` or a command group run with none of its commands (`personalclaw cron`) is a usage error, exit 2 with the usage on stderr, and a refusal prints on stderr, never on stdout.**
+- **An automation set to run every 0 seconds or fewer is refused where it is made, instead of saved as one that never runs.**
+- **Each cycle of a gate inside a loop asks its own question.**
+- **A goal monitor run no longer promises a log it never writes.**
+- **OpenAI-compatible clients, A2A agents and capture imports reach `/v1`, `/a2a` and `/capture/import` with their own token.**
+- **The status card says how long this browser's sign-in has left.**
+- **A Restart saves what a stop saves, time travel's pending history included.**
+- **Time travel's memory history follows your memory, and resolving it no longer creates a folder.**
+- **Installing or updating an app with a `source` that is not a string is a `400` naming the field.**
+- **After a reload, Settings → Models finds a Repair still running and shows its progress under its model, and how it ended.**
+- **A chat that started on a chat channel is asked its approvals in that chat, with nothing to set up.**
+- **A channel's approval prompt is told how its approval ended.**
+- **A chat's progress lines on its channel say how each call ended.**
+- **A goal monitor wakes on the trigger it armed, and finishes when its goal is met.**
+- **`personalclaw cron trigger` runs the jobs `cron add` makes and `cron list` shows, and the chat can run a job whose name has a space.**
+- **An app's request whose body is not a JSON object is refused before it reaches the route.**
+- **Stopping the gateway saves the settings history it was still holding.**
+- **A run that went on past a failed step says so, a Run button says what its run recorded, no gate carries words nobody sees, a run's history row is a sentence for every action that prints JSON, and a snapshot merge leaves another home's trigger stamps behind.**
+- **An agent's or a trigger's call to an app route reaches the app.**
+- **Allowing something no longer shows a failed request in the browser's console.**
+- **A chat that started on a channel can be continued on another one.**
+- **A check gate that fails ends what follows it, a revise closes the question it answered, every queued edit applies, and four surfaces say what happened.**
+- **A workflow's approval gate waits your approval window, a retry a grant ran settles its note, and a lifecycle hook's agent knows its trigger.**
+- **A chat channel's approval prompt shows what will run: the tool, its arguments and why, as the dashboard's approval card shows them.**
+- **Two mails sent in the same second are two Inbox rows.**
+- **Slack's inbox source reads the channels you choose, in Settings → Inbox.**
+- **After Send, the Inbox's open item shows your reply as sent.**
+- **A channel's dashboard link signs in its owner, and nobody else.**
+- **Email's owner is paired from its Configure page, like every channel's.**
+- **An Embedding rebind or clear reaches every memory store at its next use, and memory never compares one embedding model's vectors with another's.**
+- **The status chip says "Choose a model" when no model is chosen, not "12 degraded".**
+- **A media call names its model, like chat, and so does every binding.**
+- **A memory no model embedded joins semantic search once one is bound, a keyword hit ranks by its score, and the knowledge re-index re-embeds only what the model has not.**
+- **A notice about a surface going down says what is wrong, in the chip's words.**
+- **The chat list answers at once on a 12,005-chat history, the search index catches up in two minutes instead of five hours, and a search says when it has not looked in every chat.**
+- **A file-backed artifact never writes its file unless the request carries the text to write.**
+- **Only an approval lets what follows an approval gate run, a trigger that stops for you asks you, and every question a run asks is its own.**
+- **Signing in on one more device no longer signs another one out without a word; a device that is signed out is told why; and Settings → Devices lists every sign-in.**
+- **Nothing signs in for longer than 90 days, and asking for longer says so; and every refusal of a sign-in says why and how to sign in, in the desktop app too.**
+- **Installing an app's packages, speaking a reply, the Doctor's speech probe and uninstalling the service no longer leave anything outside PersonalClaw's home.**
+- **A first loop from onboarding stops after one cycle, each home has a tmux server of its own, and the last files PersonalClaw left outside its home are gone.**
+- **A loop that finishes on its last allowed cycle ends complete, so onboarding's first loop no longer ends asking for a decision nobody can give.**
+- **The Terminal page no longer lists a workflow run's durable workers as detached terminals, and a durable worker is live only while its command runs.**
+- **An agent CLI, MCP server, app backend, app worker or the artifact bundler run through Node keeps its compile cache in the home.**
+- **A CLI command that refuses exits 1 and says why on stderr, so a script can tell it did nothing.**
+- **A Repair on Settings → Models shows its download where you pressed it, and is checked for free space first.**
+- **Backups leave an app's engine behind, and a restore says which apps need theirs installed again.**
+- **An installed inbox app is polled: Mail Inbox and Slack's inbox source did nothing at all.**
+- **A model provider you add without choosing a model says so, and never answers on a model nobody chose; its Default Model is the model it answers with.**
+- **A room's turns count in Settings → Usage, and every usage row names the provider that answered.**
+- **Mission Control follows a workflow run as it changes, an approval nobody answered no longer reads "(rejected)", and its Inbox note runs the call again where it was asked and resolves once it is answered.**
+- **Bringing your setup over answers in seconds on a months-long history, and imports all of it with progress you can stop.**
+- **An app update keeps the engine installed in the app's folder, as it keeps the app's data.**
+- **A chat turn is priced by the model that answered it, and a room member's turn falls back down its chain too.**
+- **The install scanner reads a language's rule only in that language.**
+- **Opening a chat you brought over from another tool no longer logs a 404.**
+- **A pasted image the model is shown is not also read into text, and what you see names it as you attached it.**
+- **Someone you haven't paired gets "I don't recognize you yet…" once a day, not once per message, on every channel.**
+- **A chat channel's card shows its whole status sentence.**
+- **A rewind confirmed while a run waits at a gate applies, a cancel closes the run's gates, and a step that parks on a sign-in page asks you.**
+- **An app's own page can save over the copy it read, and a refused save says what it refused.**
+- **A trigger refused away from the dashboard says where it is allowed, not who may allow it.**
+- **Rebinding a model in Settings → Models reaches everything already running, not only new chats.**
+- **A model bound in Settings → Models is the model that answers, even when its id has a slash in it.**
+- **A first model download checks free space before it starts.**
+- **A download refused for disk space says why in a sentence, a download that could not check the disk says so while it runs, and model sizes read in one unit.**
+- **Reading an image names the model that reads it, or says no image model is set up.**
+- **Tapping a due-task reminder's desktop notification opens Tasks.**
+- **The terminal draws its letters in its own font, and every bundled font draws the weights `fonts.css` says it has.**
+- **A failed download of the bundled chat model says what to do about it.**
+- **A chat turn whose model fails before it replies is answered by the next model in its chain, and says so; a provider's refusal names the real fix.**
+- **Every chat channel's trust is set on the Sender trust page, the Channel DM target sends, and a schedule's results reach the channel it names.**
+- **A screen reader hears how a chat turn ended: complete, stopped, or with an error.**
+- **Two programs saving settings at the same moment no longer undo each other.**
+- **Mission Control's Working lane lists every running workflow run, and a call denied without an answer is in the Inbox the next morning.**
+- **The chat and an app's Configure page see a failed channel read.**
+- **An app installed from the Store shows its update, and Update starts from where it came from.**
+- **The dashboard's bundled fonts ship with their licences, and every font, image, binary and fixture in the tree has a recorded source.**
+- **On the project pages, Resume resumes, Plan a project plans, and an exported project can be imported again from the Projects page.**
+- **The npm packages bundled into the dashboard ship with their licence notices, and Settings → Updates links them.**
+- **A trigger's Run workflow action names its workflow, a restart's missed and interrupted runs wait on the Triggers page for your decision, and the HEARTBEAT.md queue is an automation you can see and switch off.**
+- **A channel set up in the dashboard knows its owner, and a chat can continue on it.**
+- **The answer to a message from a chat channel goes back to that channel.**
+- **A failed chat action says so, and leaves the page as it was.**
+- **A turn's details keep their telemetry line after a reload, and the gateway's messages say things in words.**
+- **The credential guard protects `~/.aws`, `~/.ssh` and the other credential locations when they are symlinks.**
+- **The Backups panel names a replace-restore command that works, and so does every other command PersonalClaw tells you to run.**
+- **Settings › Security says when Max memory and Max processes don't contain a child.**
+- **A model you chose is the model that answers, or PersonalClaw says it is not: an agent's missing model is no longer swapped in silence.**
+- **A browse task that stops at a sign-in page says why on its needs-input card.**
+- **A default install can call MCP tools, and a server reads "ready" only when an agent can call it.**
+- **`personalclaw footprint --reclaim` and the daily reclaim say when compacting made your stores bigger, instead of calling it space freed.**
+- **Onboarding's app step says what you can do when it has nothing to list, instead of describing PersonalClaw's source tree.**
+- **Bringing your setup over from Claude Code reads the files Claude Code writes, and says what stays behind.**
+- **Bringing your setup over from Codex reads the files Codex writes, and keeps what its settings mean.**
+- **A skill whose security scan has warnings can be brought over, and you decide with the warnings in front of you.**
+- **`personalclaw setup` accepts a named timezone on minimal Linux, and a missing timezone database is reported as a broken install, not as your typo.**
+- **A service starts the gateway with the environment you install it from, and never with a secret.**
+- **The install kind comes from where the running package lives, never from the directory PersonalClaw was started in.**
+- **"Speak replies aloud" reads each finished reply out, and Speak says what is actually missing.**
+- **An image reaches a model that takes images as the image itself, and a pasted screenshot attaches.**
+- **An app update runs the new version at once, or says a restart is needed, and why.**
+- **Gateway startup, the Settings → Providers switch and agent sessions go through the one app load path too.**
+- **A proposal's second opinion no longer stops the gateway, and no decision stays hidden in Filtered.**
+- **An event trigger fires: a memory write, an inbox message or an app event runs its action once, and the run shows in the trigger's history.**
+- **A save from a page that is out of date is refused instead of overwriting a change made elsewhere.**
+- **A workflow step whose model is still generating is no longer stopped as stalled, and every step records what its model calls used, the failed ones included.**
+- **The chat header fits at every width, and a chat an app started says so under its title.**
+- **A secret saved in Settings → Secrets reaches everything that names it, and `personalclaw setup --credential` saves where Settings → Secrets lists it.**
+- **"Try it" runs a tool from an external MCP server, stdio or remote, and so does an agent.**
+- **An app update installs exactly the Python package versions its new manifest pins, older or newer.**
+- **A feature that is switched off says so, with the way to turn it on, and a page that could not load says that instead of waiting forever.**
+- **A channel starts and stops receiving the moment you enable, change or remove it.**
+- **A failed workflow step says whether a Retry can help, and the run page offers Retry only when it can.**
+- **Every model call carries the model it is bound to, the sampling its model accepts, and its output budget.**
+- **Settings forms and controls do what they show.**
+- **Typing fast in the chat composer no longer trips React's "Maximum update depth exceeded" (#185), and five search boxes with the same defect are fixed with it.**
+- **A snapshot carries every file PersonalClaw writes, and the Doctor's health score counts the checks it shows as failed.**
+- **A notification for you goes to the first channel that can actually reach you, and to the Inbox when none can.**
+- **An app's setup and doctor steps load, a step that cannot run fails the command, a saved app setting takes effect without a restart, each channel keeps its own owner, and "a channel is configured" is the channel's own answer.**
+- **The `rich-ingest` template persists what its lenses extract, and a workflow can no longer save a pipe call the engine cannot evaluate.**
+- **An unattended loop runs unattended, every loop is listed wherever you look, and Pause stops the worker.**
+- **The chat page has no drifting shadow shapes any more, and the glow around the composer fades out smoothly in every state instead of ending in a hard line.**
+- **A chat model that validates tool schemas strictly (Gemini, directly or through a router) can chat again, and one tool with a sloppy schema can no longer fail every turn.**
+- **If PersonalClaw can't read your name when it opens, it shows a retry instead of first-run setup, so "Skip setup for now" can no longer overwrite your name.**
+- **A room keeps showing replies after everyone has spoken, a restart no longer loses a round without a word, and a member whose turn fails says so.**
+- **Settings → Providers never freezes the gateway, and every model instance — Ollama included — can be tested, edited and removed.**
+- **An approval ends with the work that asked for it, and an approval whose work is gone can no longer run anything.**
+- **Mission Control can decide.**
+- **An idle tab no longer floods the gateway and the security log.**
+- **The attention surfaces agree with each other.**
+- **The container image can offer and fetch its default chat model, keeps your workspace on its volume, and says when a project's folder is gone.**
+- **In a container, a refused `localhost` names the address your container runtime gives your computer, such as `192.168.5.2` for Finch and Lima, instead of a host name that may not resolve there.**
+- **Apps with Python dependencies install on the published Docker image, and keep working after `docker rm` + `docker run`.**
+- **Generated chat titles no longer keep the model's label.**
+- **A room at its member ceiling no longer offers another agent.**
+- **Boot no longer logs three chained tracebacks for a correctly configured embedding model.**
+- **`personalclaw chat` can use app-provided models, the bundled default model included.**
+- **The network-egress census says `huggingface.co` is fetched, and it now checks what it says.**
+- **A warm page load no longer prints a console warning every 8 seconds.**
+- **A long answer no longer deletes your question, and a restart keeps everything you saw in a chat.**
+- **Background compression no longer rewrites your chats. It shortens what the model reads, and the chat keeps every message.**
+- **A tool approval a chat is waiting on now shows up everywhere you would look for it, and can be answered from any of them.**
+- **A long message no longer takes the gateway down, and every part of a turn uses the same answer for how big the model's window is.**
+- **Updates → Check gives a pip, container or desktop install a result, and the Settings home never says "Up to date" for an install nothing compared.**
+- **A version pin must be a release version, and a pin that matches no release says so.**
+- **The Settings home's Search tile says what is actually installed.**
+- **The Settings home's Chat tile names widget density for what it is.**
+- **A failed workflow is blamed on the step that failed, a transient failure offers a Retry that works, and best-of-n's temperatures reach the model.**
+- **What a chat turn sends the model now matches your settings: the assistant's name and yours arrive, the prompt bound in Settings → Prompts is the one used, each message is sent once, and no other conversation's messages are included.**
+- **A streamed answer renders once and whole: a new chat's first answer is no longer painted twice, and reloading in the middle of an answer no longer cuts off its start.**
+- **First-run setup offers the small offline model up front, notices when its download finishes, and says a chat model is ready only when one exists.**
+- **"Run setup again" keeps your name and handle when you skip it.**
+- **"Escalate on name mention" now escalates a notification that mentions *you*, not one that mentions the assistant.**
+- **Knowledge says what actually failed when no model is set up.**
+- **A refused task save now appears next to Save, and ticking the missing criterion in the same form fixes it.**
+- **The task panel's Status choices fit inside the panel.**
+- **A cancelled task no longer shows as done on a project's Work board.**
+- **An artifact saved from a project's workspace now appears on that project.**
+- **Your default project is now the same on every device.**
+- **Triggers: Dry run shows its result, a trigger's notification opens the trigger, one fire makes one notification, and the 900s floor only warns about model calls.**
+- **A judged loop now works past its first iteration: a loop body is handed its previous iteration, a stage's output arrives in its declared shape, and each iteration takes its own execution claim.**
+- **An escalation no longer blames the iteration ceiling for iterations that never ran, and a tripped breaker is visible.**
+- **First-run setup's "All set" recap no longer calls the model-provider app your chat model after a reload.**
+- **The loop cockpit names the whole model, so `ollama:qwen2.5vl:7b` no longer reads `7b`.**
+- **A reload on first-run setup's "All set" recap no longer says `Chat model — set up later in Settings` for a model that is bound.**
+- **An assistant name with an accent, an apostrophe or a non-Latin script is saved as typed, and "Saved" no longer sits beside a name the server did not store.**
+- **The workspace picker could create your project folder at the root of the disk.**
+- **The Files page no longer goes blank the first time you open a file of a new type.**
+- **An empty folder in Files now shows how to fill it.**
+- **The README and the guides describe the small default model, and say plainly what it can't do.**
+- **New skill works on the first try, and a skill you create there says so.**
+- **Your prompts are no longer buried under PersonalClaw's own.**
+- **The Learning page no longer logs six errors on every visit when evals are off.**
+- **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
+- **Signing a device out ends its push notifications.**
+- **A terminal opened in a sandbox tier opens in that tier every time, or not at all: it never falls back to a shell on this computer.**
+- **A durable setup step's arguments stay arguments.**
+- **An installed app's panel says what it needs that PersonalClaw doesn't install.**
+- **Device sync brings another machine's automations in switched off, without its runs, fire times or alerts.**
+- **The run page names each step by its label, as the run's own error line does.**
+- **A stopped run's panel offers Retry or the workflow's editor, and no longer says it needs a decision.**
+- **What a run recorded shows under the schedule panel's Run button at full strength.**
+- **A lookup that fails says so instead of showing an empty list: the Tools page's MCP servers and import list, the network scan for a local model, the routing, learning and pack suggestions, and the skill search.**
+- **Another tool's config file that can't be read is named on the onboarding step and in the Tools page's import list, and no longer shows as nothing to import.**
+- **The onboarding step names a Claude Code conversation, a prompt history or a Codex session index it can't read, instead of dropping it, and importing that conversation says why it can't come over.**
+- **The Routing tab says when your routing table can't be read, and a reorder or an accepted proposal no longer writes over it.**
+- **Pack suggestions say when project fingerprinting is off, and name each project whose folder is missing or protected.**
+- **The skill search answers every refusal in the shared error shape, and an unusable `limit` is refused instead of failing.**
+- **Settings → Search no longer shows a search binding whose provider app was uninstalled as the active provider — and no longer makes it unremovable.**
+- **A chat whose finishing frame went missing no longer strands: it now recovers the finished turn from the server instead of claiming "Assistant is responding…" forever.**
+- **A small-window chat model refused the FIRST message of a new chat, because the context assembler and the headroom contract disagreed about that model's window by 97.7x.**
+- **A context refusal no longer prescribes `/compact` to a chat with no history, and it names the model.**
+- **A chat turn that fails FAST no longer puts the composer on Stop at all, and the message you send next is no longer swallowed.**
+- **`personalclaw doctor` said `(Python Python 3.13.14)` on a pipx or system install — and the rail that forbids exactly that could not see the branch it happened in.**
+- **App installs that declare Python dependencies were refused on every clean install: `packaging` was never a declared dependency of core.**
+- **The install-consent dialog no longer freezes on "Install anyway" when a confirmed install fails for a reason the scanner never anticipated.**
+- **A failed workflow stage can be retried immediately, instead of being refused by its own no-double-execution claim for fifteen minutes.**
+- **A loop body's `{{last.output.summary | default("…")}}` can finally use its own default, and its failure no longer reads "user error".**
+- **Every field in an app's Configure form now has an accessible name: 16 of 16 were unnamed.**
+- **The published tree no longer cites an internal authority a reader cannot resolve, and six user-facing claims that the code contradicts are now true.**
+- **Emptying a stored provider credential field now actually clears it, instead of silently surviving under the new-looking blank form.**
+- **The app install-consent dialog now says that installing an app `pip install`s into the interpreter your gateway is running out of, and names the packages.**
+- **A workflow run of `stage` nodes now reports what it spent, and its token cap can actually fire.**
+- **An app uninstall, a force uninstall, an activate/deactivate and a highlight delete now say when they fail, instead of stopping the spinner and leaving you to guess.**
+- **An empty code fence no longer paints the literal word `undefined` into a chat answer.**
+- **A `<widget>` shown inside a code fence is now shown, not run — and the fence keeps the line it was about.**
+- **A `javascript:` URL with a tab in its scheme no longer survives the HTML sanitizer, and a URL it cannot classify is now rejected instead of kept.**
+- **A room's member picker no longer says "Loading…" forever when the agent list cannot be read, and no longer tells a user with no agents that they are all already in the room.**
+- **The learning panel's "out of scope" day drew its pass count in a border token at 3.18:1, and the rail that should have caught it only looked at one file.**
+- **The default accent was under AA as chip text on every light surface — 3.52:1 on a page every user visits — so `--color-primary`'s light value is retuned across all 12 schemes.**
+- **The `neutral` status pill is readable: its text was drawn in a border token at 1.63:1, and the contrast rail that should have caught it measured four of the six tones.**
+- **The shell no longer corrects away the two routes it renders itself: `#/companion` — the PWA's own `start_url` — is reachable again, and every deep-link out of first-run setup lands where its button says.**
+- **A local-model download now shows real progress from the moment you start it, instead of freezing at `0 MiB` through completion.**
+- **Five surfaces now say a load failed instead of spinning forever or showing an empty picker, and the ratchet that guards the contract learned the third way it was being defeated.**
+- **Three Settings switches that governed nothing now govern what they promise: Ambient surfaces → **Composable home**, Ambient surfaces → **Generative UI**, and Agent defaults → **Propose fix branches**.**
+- **A handled tool failure now reaches the wire AND the audit log as a failure, so a refused destructive operation is no longer recorded as one that ran.**
+- **Doctor is clean on a fresh install: the last two "in NO snapshot" paths are now recorded as deliberately not state, with the reasoning beside them.**
+- **A misspelled permission in `app.json` is now refused at install by name, instead of vanishing silently from both the manifest and the consent screen.**
+- **Adding a model-provider instance now shows on screen that it landed, instead of leaving the section you acted in saying "No remote model providers yet."**
+- **`personalclaw doctor` no longer fails a fresh install over ffmpeg, and no longer tells a Linux user to run `brew`.**
+- **An unreadable spend ceiling no longer reads as an unlimited one, and the four unattended seams now refuse rather than spend against an unknown.**
+- **First run no longer tells you your name is saved before it has been saved.**
+- **The audit-outcome rail now sees the outcome words a subsystem names as CONSTANTS, and its raisable ceiling is replaced by a named ledger — so the better practice is no longer the one that evades the rail.**
+- **The Doctor no longer tells every pip-installed instance that its dashboard “serves a stale SPA”.**
+- **A workflow run that called no model at all is no longer told a free local model ran.**
+- **Launching a loop with no model bound now tells you where to fix it, instead of asking you whether you fixed it.**
+- **Four labelled cells on a workflow run page rendered a label with nothing after it, on any run that finished in under a second.**
+- **"Needs you" now names one set, so the dashboard can no longer say "All clear" while a project shows work waiting on you.**
+- **A screen reader no longer says "tab 2 of 6" for the task form's Status field — every single-choice field is now announced as the radio group it is.**
+- **The Inbox no longer tells a fresh install its inbox “is not connected yet” while its own banner says the native source is active.**
+- **Prompt-cache counts now survive the native runtime, which is why every ledger row read a structural zero.**
+- **The home screen’s “Needs you” card now opens the inbox item it names, instead of dropping you on the inbox list.**
+- **Two security controls that resolved an unreadable config to their most permissive value now refuse instead.**
+- **A first chat no longer shows the assistant's finalized reply twice until reload.**
+- **A `config.json` that cannot be parsed no longer re-widens a deliberately narrowed security posture — it now fails CLOSED.**
+- **The composer no longer reports itself idle while the previous run is still live, so a message sent in that window is not silently absorbed.**
+- **First-run setup no longer tells you no model provider exists when it simply could not read its app sources — and it names a missing `git` instead of blaming the network.**
+- **A browse run that got stuck or was refused by the egress policy now explains itself in a sentence instead of printing a reason code.**
+- **First-run setup no longer tells you a chat model is ready when chat cannot use it, and when it cannot, it names the actual reason.**
+- **First-run setup is navigable: you can see where you are, go back without losing anything, refresh without starting over, and come back later without wiping your name.**
+- **A credential typed into a project name no longer reaches the download filename, and download filenames now carry non-ASCII names instead of dropping them.**
+- **`personalclaw config --help` no longer advertises a key the command refuses, and a rail now holds every key it advertises to that standard.**
+- **`personalclaw config set --file` no longer reports `✅` for a deletion it did not apply, and `config unset` gives removal a path at all.**
+- **The packaged desktop app carries its data files, its `sdk.*` submodules and its own `personalclaw-core` MCP server.**
+- **"Check for updates" no longer runs `git fetch` inside an app bundle.**
+- **The config is validated once per file content instead of once per request, and three retired keys are consumed instead of reported.**
+- **Inbox, Apps and Settings reach a terminal state on a first run instead of spinning forever; the onboarding page scrolls; and a structured tool argument no longer kills a subagent from inside the approval path.**
+- **Prompt-cache savings are now reported on OpenAI-family models, which had silently reported a flat zero on every cached turn.**
+- **A loop template's first iteration no longer dies on its own `{{last.… | default(…)}}` guard.**
+- **A binding failure no longer tells you to add the `| default(...)` pipe your expression already has.**
+- **A fan-out's `[i/total]` marker reports the item count on both surfaces that render it.**
+- **Your local models no longer disappear when you delete one of two endpoints of the same model provider, and a healthy endpoint no longer reports itself as "not available on this machine".**
+- **`ERR_MODEL_UNRESOLVED` now states the cause that actually fired instead of asserting one cause for all of them.**
+- **A scheduled script can finally read a tool refusal instead of crashing on it.**
+- **A content search that hits its deadline inside the worker thread now answers 504 with guidance and records the audit row, instead of letting the exception escape the handler.**
+- **A room's export reports when the room was created, not when someone first spoke in it — and a room nobody has spoken in exports a real date instead of an empty one.**
+- **A failed model-catalog or file-roots read no longer renders as "you have none".**
+- **`LedgerRailsPanel` no longer renders a token FLOOR as a plain number on the same run page where `IntrospectPanel` discloses it.**
+- **A never-fired store trigger no longer reads `never run` in the list and ok-green "Firing on its own" one click later.**
+- **The context gauge is monotone, in range, and honest about a window nobody declared.**
+- **The macOS sandbox wrap no longer resolves its own enforcement binaries through the PATH of the child it is about to confine.**
+- **An unreadable `entity_settings/inbox.json` no longer ENABLES retention cleanup and deletes the items you told it to keep.**
+- **A workflow loop whose body is an agent step now runs more than one round.**
+- **A workflow loop's round cap written as `{{inputs.…}}` was not a cap at all.**
+- **`personalclaw doctor` no longer loads `torch` to answer a yes/no question, which is what aborted macOS verification runs inside `faiss`.**
+- **The desktop app's dashboard window runs inside the Chromium process sandbox again, and a test can now see whether its bridge actually loaded.**
+- **Uninstalling an app while keeping its data, or updating an app, no longer refuses because the app's own background process touched a file.**
+- **Citing an issue number inside a block comment no longer fails token-lint as a "raw color hex."**
+- **A stray `/*` in code no longer blanks out the lines under it and takes a raw colour hex with it.**
+- **A chat on a local model now reports a real context percentage and compacts before it overflows, instead of reading a confident 0% forever.**
+- **The paired evals now score against a model that actually resolved, and refuse to score when none does.**
+- **A watched page that builds itself with JavaScript now reports content instead of nothing, forever.**
+- **Re-ingesting a document now re-embeds only the sections that changed.**
+- **A bundled app's CODE now reaches an already-installed home, not just its `app.json`.**
+- **`POST /api/tools/invoke` can now run the nine filesystem and shell tools it always listed.**
+- **Workflow `rewind` and `run-from` now stop at the same committed-effect boundary as edits, and tool-bearing stages are inside that boundary.**
+- **Notification settings no longer advertise production-unowned rows.**
+- **Pre-first-pass days no longer render as silent capture failures.**
+- **Projects now expose both sides of their archived lifecycle.**
+- **Creating or editing a skill now rejects an invalid `SKILL.md` before touching disk.**
+- **The Automations week grid now defines both request bounds as explicit instants before comparing or projecting them.**
+- **Current macOS releases now use the sandbox capability they actually provide instead of being rejected by version number.**
+- **`personalclaw agent list` measures its columns instead of hardcoding them, so the table is aligned on a fresh install.**
+- **A credential in a chat title no longer reaches the export download's filename.**
+- **Code-loop runnability now distinguishes a missing command binary from a project that has not been scaffolded yet.**
+- **A run ledger whose completed steps never recorded token counts no longer reports `tokens: 0`.**
+- **The token total a user actually reads now carries the same disclosure as the ledger's own aggregate.**
+- **The persistence toggle no longer lights up for a setting the host cannot honour, the durable-workers hint now answers the requirement it names, and "sessions survive a restart" has exactly one owner.**
+- **An automation can no longer be EDITED into a state it could never run from, and the doctor names the rows already on disk that are.**
+- **`pip install personalclaw` on Python 3.14 is now refused at install time instead of succeeding and handing you a connector-pack parser that refuses every import.**
+- **A trigger set to fire faster than the 900s LLM-invoking floor now says so — in the form, on the list, and in the doctor — and a cosmetic edit no longer re-phases its cadence.**
+- **Four defects in the workflows engine, each one a documented promise the code did not keep.**
+- **Settings → Notifications is a promise the app now keeps, in the five places it was breaking it.**
+- **An IPv4 address or a date in your prompt reaches the model as itself, not as `[REDACTED_PHONE]`.**
+- **`personalclaw doctor` now reports only what its checks actually established.**
+- **The kiro-cli runner id the product advertised could not be bound, and now it can.**
+- A memory **entity** can be deleted, and the deletion sticks.
+- **The documented `config get > f.json` → edit → `config set --file f.json` loop no longer deletes every provider you have configured.**
+- **`personalclaw config get` no longer prints your provider API keys and Slack tokens, and the fix does not delete them instead.**
+- **Launching a loop from Plan Review no longer wipes every `kind_config` field that screen doesn't render.**
+- **The durability census stopped counting decisions that had already been made as debt.**
+- **`personalclaw config set` no longer deletes every configured model provider.**
+- **A tool call's input has one owner, so a persisted chat renders the same as a live one.**
+- **The health strip no longer goes coral just because you set a login password.**
+- **A scanned document read only as far as the page cap now SAYS so, and the OCR true-type gate covers both OCR backends instead of one.**
+- **Settings → Agent defaults no longer shows a "Sandbox" switch that makes no sandbox decision.**
+- **A loop's first cycle is credited again: a fast first cycle no longer leaves its SDLC stage un-advanced.**
+- **One unreachable git source no longer makes the Store take two minutes to open, or re-pay that cost on every load.**
+- **A parallel loop phase no longer loses a task's worktree to a race inside `git worktree add`.**
+- **Trigger "Silent" is a switch again, not a one-way latch you can turn on and never off.**
+- **A read-only session GET no longer WRITES a session workspace for any id the caller invents.**
+- **A brand-new conversation's title, pin, colour, folder, tags and `never_archive` now survive a restart instead of being accepted `200 {"ok": true}` and lost.**
+- **An ABSENT field on a session-metadata PATCH is no longer read as a request to CLEAR it.**
+- **`{"confirm": "false"}` no longer reads as a YES on a destructive door — one strict predicate replaced two incompatible ones across 24 gates (issue 3000).**
+- **`security.egress` no longer accepts a host entry the matcher can never match, so a denylist that reads as blocking a domain family can no longer block nothing (issue 2956).**
+- **`GET /api/security/audit?token=…` no longer 400s as an unknown filter, so a query-token client can read the audit trail at all (issue 2927).**
+- **`doctor` now names the one bypass-behind-a-proxy combination that silently hands the internet a token-free dashboard.**
+- **The forwarded-header contract is true: `trusted_proxies` and `docs/guides/remote-access.md` now name the header the code actually reads.**
+- **An app that declares `permissions.api: ["/api/ws"]` no longer gets an owner shell with it (#2964).**
+- **A 56 KB `.docx` no longer costs 153 seconds of gateway CPU, and the office parsers finally inherit the zip-bomb posture the rest of the codebase has shipped for years (#2747).**
+- **Swapping to a different embedding model of the SAME dimension no longer leaves semantic search silently scoring the old model's vectors, and the re-index can no longer report success over a half-converted library.**
+- **`deploy/compose/compose.yaml` is finally true to its own header, and the guide no longer describes the failure backwards.**
+- **An app-scoped WebSocket no longer receives events its manifest never declared.**
+- **Workflow tools now pass through the shared MCP boundary: their 19 argument schemas are actually enforced (they were defined but never consulted), calls are SEL-logged, and a compiled batch leaf can no longer call workflow_start past the orchestration denial.**
+- **A subprocess whose deadline expires is now killed AND reaped, with its process group, at twelve more spawn sites.**
+- **A `PERSONALCLAW_AUTH_MODE` the runtime cannot honor is now NAMED at startup and by `doctor`, instead of being downgraded in silence.**
+- **The task API's doors now validate what they accept, so a wrong-but-plausible request is refused instead of answered with a quietly wrong result.**
+- **Discover's engagement probes now measure the user, not the system: four of the ten auto-hide checks counted machine-produced signals, so tips vanished before they could teach — the automation tip was unreachable on every install (boot registers the notification-digest trigger before the first interaction), the skills tip hid after one plain chat message (passive turn-time injection of bundled skills), the inbox tip hid on the first system-generated proposal (presence, not interaction, on a surface built to receive system items), and the memory tip hid on auto-consolidation rows a user never reviewed.**
+- **Content-hashed `/assets/*` Vite bundles no longer defeat the browser cache.**
+- **An ingest that leaves nothing you can find no longer reports success.**
+- **`personalclaw --help` no longer prints argparse's internal `==SUPPRESS==` sentinel, and the internal command it was meant to hide is now genuinely hidden.**
+- **Accepting a learning proposal installs it, or says it cannot.**
+- **Creating a loop on a fresh install with no model bound now says so, instead of silently building a bare-defaults plan.**
+- **The unattended auto-update no longer silently discards a user's uncommitted tracked-file edits.**
+- **A native-Windows gateway no longer `ImportError`s at boot on the POSIX-only `resource` module.**
+- **The desktop app now tells the gateway it IS the desktop app, so a packaged install stops offering to `pip install -U` its own frozen backend.**
+- **The three surfaces that tell a desktop user how to update stopped promising an updater the shell does not ship.**
+- **Every channel's outbound reply now goes to that channel, so a multi-provider install stops losing answers.**
+- **⚠️ THREE DESTRUCTIVE ROUTES NOW REQUIRE `confirm: true`, AND TWO UI CONTROLS ASK BEFORE THEY DESTROY.**
+- **A chat session's on-disk identity has one owner, so a send can no longer destroy a transcript or resurrect a deleted conversation.**
+- **A path containing a NUL byte is refused instead of crashing the request — and the credential guard now fails closed on it.**
+- **Five MCP paths ignored `PERSONALCLAW_HOME` and reached into the real home instead — one of them wrote there.**
+- The **Tools page no longer badges an installed community bundle `built-in`** — the same word core's own first-party providers get.
+- A successful local-source add now **shows up in the Manage Sources panel**.
+- **`--port` now reaches the tool subprocesses too.**
+- Every listing in the community app registry now carries a real **scan verdict** before you install it.
+- **The files surface now derives its credential blocklist from one declaration instead of a hand-copied list, and the PersonalClaw home's `auth/` directory is refused along with it.**
+- A provider's **sensitive settings are write-only again on the route the dashboard actually uses**.
+- **A keep-data uninstall (`Uninstall`, the middle removal rung) no longer destroys or silently overwrites an earlier copy of the app's `data/` that is still on disk.**
+- **The ledger's run totals now say whether a dollar figure was actually measured.**
+- A local model downloaded from a `catalog.json` now reports its **on-disk** state, so the truncated-model **Repair** button can finally appear — and finally repairs.
+- **A model id that escapes its cache root is refused instead of followed.**
+- **The diff view's committed-side read (`GET /api/file-git-original`) no longer leaks a process per timed-out read, no longer answers `HTTP 500` when git cannot be executed, and no longer serves a directory listing as a file's committed content.**
+- **An agent write now validates the SHAPE of every field before storing it.**
+- **An OpenAI-compatible provider now discovers the models its endpoint actually lists, and says why when it cannot.**
+- **Knowledge search no longer hands back the whole library for a term the library happens to talk about — and no longer collapses to a single result when one title happens to match.**
+- **Removed**
+- **A loop deleted while its cockpit is open now says so instead of rendering the loop forever.**
+- A knowledge **intent is now editable and pausable**, which turns three dead controls back on.
+- The inbox no longer offers **Approve / Deny** on a workflow run that already ended.
+- **A widget's Submit button can no longer fail in silence.**
+- Entity **aliases** are now written, so the knowledge graph's deterministic alias pre-pass can actually match one.
+- The **Tasks** page now loads every task instead of the server's default first 50, and says so when it cannot.
+- A project or task-list **name** is now validated the same way on create and update, and is length-capped.
+- The project hub's task-list **count badge** now renders.
+- The inbox header and its own filters no longer describe different sets, and **glancing at an item no longer decrements the count**.
+- **An app's `icon` can no longer crash the dashboard, and it is now validated at install rather than only at paint.**
+- **The Doctor's health score now says what it is excluding, and so does `personalclaw doctor`.**
+- A routing mute can now be undone from **Settings → Chat → Agent routing → Muted agents**, and the panel stops promising a control it did not have.
+- The **skill-proposal queue can now be emptied, and it stops refilling itself.** The 409-forever half of this cycle was fixed earlier; two links survived and kept proposals at 89% of the open inbox.
+- **Set default**
+- A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
+- The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
+- **A refused inbox-settings write now rolls back instead of keeping the rejected value on screen: Retention accepted `-5`/`0`/`99999`, and even once the failure notification landed, the optimistic merge stood — the field showed the refused value as saved until a reload silently restored the stored one.**
+- The app **Configure** dialog now reads its schema's `required` array.
+- Config validation now enforces the constraint keywords a manifest declares, through **one** validator instead of two that had drifted.
+- **Manually reclassifying an inbox item now marks the verdict as the user's own ("Set by you") instead of keeping the AI's confidence in the overridden verdict, and the classification feedback thumbs hide once no machine judgment is on display — Mark wrong can no longer file training feedback against a classification the model never produced.**
+- One-line previews are plain text: inbox rows strip markdown marks from both the painted preview and the announced name (a digest's ** and ## no longer render literally or get read aloud), and the artifact card's clipped excerpt is aria-hidden — a decorative thumbnail no longer walks 600 chars of raw markdown into the accessible tree.
+- **The week grid and the server now agree on one projection window: the grid sends its exact local-week end (7 local calendar days = 167h/169h across a DST transition, not a fixed 168h), so a real fire is no longer dropped on spring-forward weeks and no phantom hour is drawn on fall-back weeks; any out-of-window occurrence is disclosed in the caption instead of vanishing.**
+- **The Files page keeps unsaved edits across a rename: it now owns the draft cache FileViewer documents, the cache entry moves with the file (no more "Rename and discard" consent — nothing is discarded), a confirmed close purges the draft so a discarded edit cannot resurrect on reopen, and the Code cockpit's two programmatic close paths (workspace switch, worker delete) purge theirs too.**
+- The **Speaking speed** slider (Settings → Speech & Transcription) no longer tells every provider the same story: its Fast/Slow ends and "lower is faster" hint were Piper's `--length-scale` semantics, which are exactly backwards for OpenAI-compatible remote voices (the same raw number is the API's multiplier, where higher is faster) — so dragging toward "Fast" made remote speech slower.
+- **Editing a prompt or snippet whose body contains a credential-shaped string no longer destroys it.**
+- **Acking one notification can no longer permanently delete up to 200 older ones.**
+- **A retired built-in app no longer lingers as an undeletable broken card.**
+- **An upgraded home no longer ends up with two of a system-owned scheduled job.**
+- **Resetting a Repeatable task list now actually returns it to a not-yet-run state.**
+- **The tool inspector no longer walks a user into a dead end on a disabled tool: Try it kept offering the full Run → Confirm flow and only failed after arguments were filled in, via the server's 403 refusal.**
+- **Artifact tags are now editable where they display: the details rail's static pills become the house chip editor (add on Enter, named remove buttons), giving `PATCH /api/artifacts/{slug}`'s long-accepted `tags` field its first UI writer — previously whatever an agent set was what you had, while the sibling `collection` field got an editor and the list endpoint's tag filter stayed load-bearing for loop cockpits.**
+- **Reordering an action plan no longer deletes the completed steps: a locked row is deliberately rendered outside the reorder group so it cannot be dragged, which means Motion's `onReorder` can only describe the DRAGGABLE rows — and the write-back treated that partial array as the whole list, so one drag destroyed every ticked step (six of ten on a half-finished plan) and Save persisted it, under a tooltip promising "A completed step keeps its place".**
+- **Picking a personality now actually changes the assistant's voice: the chat send path attaches the active personality's persona theme, wiring the frontend half of a persona-injection path whose backend was fully built but read a field no client ever sent.**
+- **An unsaved edit to a markdown memory doc (Preferences / Projects / History) now survives clicking another Studio item.**
+- **Install consent now distinguishes "this app asked for nothing" from "nobody has read its manifest yet", on both surfaces that ask you to consent.**
+- **Code cockpit findings now attribute to tasks: the finding ingest canonicalizes model-authored stage labels ('1 — Write bell_times.py', 'Stage 2/2 — Verify & QA') against the loop's plan at the one write into the ledger, and the cockpit's matcher gains a normalized fallback for already-recorded labels — a 12-cycle blocked loop's entire reasoning trail (including the cycle that diagnosed the blockage) was invisible behind 'No activity yet' on every task.**
+- **The Vocabulary section's promises are now kept on both ends: the composer's mic dictation route was calling the flat transcriber — a function with no bias parameter at all — so the personal lexicon and learned corrections biased only knowledge audio/video ingestion while four copy sites claimed "mic input" too.**
+- **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
+- **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
+- **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**
+- **The agent detail panel now names its trigger bindings instead of printing raw hex ids: bound triggers resolve through the same endpoint the picker built its options from and render as "name · event", matching Skills/Tools (whose stored values are already labels).**
+- **The trigger list's lifecycle badge now reads each event's real fire path: globally-fired events (like MemoryWrite) no longer wear "dormant" while actually firing, agent-scoped events with no referencing agent say "no agent references this", "dormant" is reserved for events nothing fires, and the create form discloses agent scoping at the point of choice.**
+- **The artifact viewer tells the truth about a version that failed to load — a danger banner with Back to current instead of showing CURRENT content under a "historical vN (read-only)" claim with Revert armed for a nonexistent version — and closing version-compare (or the cockpit's diff) no longer throws Monaco's TextModel-disposed error: both DiffEditor sites detach their models through one shared teardown hook.**
+- **An exited terminal pane now retires itself from the run-in-terminal bridge: hasActiveTerminal() no longer reports a dead pane as live, so a queued "Run in terminal" command is no longer claimed and burned against a shell that already showed "Process exited" — it opens a fresh pane instead.**
+- **Prompt authoring now reads the same variable grammar the engine renders: inline typed declarations ({{ name::type }}, {{ name::select::[a, b] }}) appear in the undeclared-placeholders strip with their declared type and options, and the add-chip creates exactly the variable row the declaration asks for.**
+- A project's linked **Artifacts** row now actually lists its loops' deliverables: `/api/projects/{id}/linked` filtered artifacts on `project_id`, which the loop-deliverable convention never wrote — those artifacts carry a `loop:<id>` tag instead, so the row was permanently empty on exactly the artifact class a project is guaranteed to produce.
+- **Dismiss all now records the same per-item dismiss engagement signal for every item it sweeps, so the strongest topic-rejection gesture trains inbox ranking instead of being discarded (one store write per sweep).**
+- **Generate draft no longer runs on inbox items that can never be replied to: `can_reply` gated only the Send button, so on a read-only item the model ran, a full reply persisted, the row gained a `draft` badge — and Send stayed disabled.**
+- **Quiet hours no longer accepts a zero-length window: `08:00 → 08:00` saved with a Saved ✓ while the delivery gate documents start == end as never matching — quiet hours read as enabled and suppressed nothing (the opposite of the all-day quiet a user plausibly meant).**
+- Project guard refusals now speak the UI's own vocabulary: deleting or renaming a protected project says "the built-in project 'Personal' cannot be deleted" instead of "the **default** project…" — a singular article that was returned for two different projects and clashed with the Built-in badge those rows already carry.
+- **Artifact list responses no longer serve a fabricated `live_dirty`: the flag is computed per read by the detail path while list rows come off persisted metadata that never stores it — so the same artifact reported `False` in the list and `True` in the detail, and every consumer had learned to distrust the list copy.**
+- **The Agents page's group headers now count what the group shows: every group filters its rows through the search box, and the no-match empty states already say so, but each header's `count` read the unfiltered catalog — so searching for something absent rendered `Native | 8` directly above "No matching agents".**
+- **Creating an artifact with an unrecognized `kind` is now a 400 naming the allowed set instead of a silent success that stored the artifact as `widget` — the sandboxed-*execution* kind, so a typo like `"markdwon"` or a plausible `"md"` had its content treated as executable widget payload rather than prose, and lost the comment layer without explanation (sandboxed kinds are not commentable).**
+- **A reaped trigger run reads as a failure everywhere it renders: the reaper writes `health_status: degraded` plus the reap reason while the run-store row still says `success`, and both the detail panel's Last-run badge and the list's schedule-row dot read the two fields through a bare `last_run_status || last_status` chain — so the one record where the fields disagree rendered a green "ok · 1d ago" two lines above the red "Reaped after 1818s" banner.**
+- **Reset everything to defaults**
+- **`GET /api/artifacts/{slug}/versions/{n}` now self-describes as the version it carries: `native.get()` read the head metadata and swapped only the content, so v1 and v5 both reported `version: 5` next to different bytes — any caller labeling a version from its own payload mislabeled every historical fetch.**
+- Prompt render and preview now accept the same variable-value payload: preview took the map under `values` while render/launch/snippet-render demanded `variables`, and each silently ignored the other's key — so render returned a false `missing required variable` for a variable that **was** supplied (pointing the caller at the template instead of the request), and preview returned `ok: true` with unsubstituted braces.
+- **The Week grid's empty state no longer blames cron for an empty week: the hint still said "Only enabled interval schedules are plotted.**
+- **Discarding a session skill draft or rejecting a skill proposal that no longer exists now returns 404 — matching the sibling skill-delete in the same module — instead of `200 {ok: false}`.**
+- **Routing notes can be cleared again: emptying the field and saving PUT an empty `content` that the backend rejected with 400 `content required` — yet an agent with no note is a supported state everywhere else (a missing metadata file reads as `""`), so a note, once set, could never be removed from the UI. An empty (or whitespace-only) PUT now clears the stored note — the file is removed so the canonical empty representation stays "absent" — and clearing an agent that has no note is an idempotent 200.**
+- An existing tool-output projection rule can be edited normally again: the rule editor saved the whole list on **every keystroke** and the follow-up refresh re-seeded the input from server state, so keystrokes typed during the round-trip were silently discarded (measured: one of five survived) — a regex could not be corrected at all except by delete-and-re-add.
+- The prompt **Tags** field in the edit form can hold more than one tag again: it was a raw input whose value was re-parsed on every keystroke (`split(',')` → trim → `filter(Boolean)` → `join`), so the comma was eaten the moment it was typed and `red,green` became the single tag `redgreen` — while the placeholder instructed "comma-separated".
+- Signing in with a **correct** password from a LAN/tunnel address no longer reports "Wrong username or password." Three layers independently converted a CSRF origin rejection into a credentials error: the origin branch in the auth routes returned `auth_invalid_credentials`, the server-level CSRF middleware answered in plain text (which the login page parsed as `{}`), and the page JS defaulted every unmodelled error to the credentials message.
+- The agent edit form's **Name** field no longer silently swallows typing: the lock was enforced by discarding writes inside `onChange`, so the field looked pixel-identical to the editable Description below it — focusable, no disabled/readOnly/aria cue — and threw keystrokes away.
+- **The dashboard's Action Center and the HeroPulse "inbox" pill no longer double-count skill proposals: most pending inbox items are proposal *mirrors* (`item_kind: proposal`, `refs.skill_proposal`) of the same proposals the triage queue lists directly with Accept/Reject, so every open proposal rendered twice, "+N more to triage" over-reported ~2×, and the pill badged "31 inbox" for one real message.**
+- **`POST /api/artifacts` no longer reports a larger body than it saved: the store persists a text body sliced to `MAX_CONTENT_BYTES` (1 MiB) but `create()` echoed the full un-sliced input in its 201 response, so a >1 MiB save looked successful at full size while a subsequent `GET` returned only the first MiB. `create()` now returns the persisted (capped) body — matching what `update()`/`get()` already return by re-reading from disk — so the create response and the next read agree ([#781](https://github.com/PersonalClaw/PersonalClaw/issues/781)).**
+- Setting the backend log level from **Settings → Agent defaults** now takes effect immediately instead of only at the next restart.
+- **Artifact history now records exactly the real changes.**
+- **Context compaction no longer silently disables itself on providers that report no token usage — the normal local-model configuration, where an OpenAI-compatible endpoint rejects `stream_options` and the usage chunk never arrives.**
+- **Task lists now reject a duplicate name within one project, matching how projects reject duplicate project names: `create_task_list` had no uniqueness check, so a project could hold two lists of the same name — including two "General" lists, which made a `project_id`-only task attach to whichever id sorted first, arbitrarily.**
+- **The backend `skipped` task status now has a frontend representation: `TaskStatus` and the `STATUSES` vocabulary omitted it, so a skipped task matched no Kanban column (invisible on the board), rendered with the not-started glyph in the list, and sorted among active work.**
+- **Saving a session template with `reasoning_effort: "max"` is no longer rejected: the template validator's `_VALID_EFFORTS` allowlist omitted `max`, while the composer offers it, the native runtime accepts it, and the OpenAI adapter maps it to `high` — so the one value that could not be stored as a template default was one every other layer honours.**
+- **A tagged local-model id (`family:tag`, the normal Ollama form — `llama3.1:8b`, `qwen2.5:0.5b-instruct-q4_0`) now resolves to its FAMILY's context window instead of the 200k default: `model_context_window` split the id and kept the tail (right for a `Provider:` qualifier, wrong for `family:tag` where the family is the head), so the adaptive memory-injection budget scaled a local model's prompt to a window 1.5–6x larger than it actually has.**
+- **A schedule the trigger store kept despite a malformed field (lenient load) now flags "needs attention" on Settings → Triggers instead of listing as a healthy-looking row: the backend already carried the parse errors as `broken`, but the `ScheduleJob` type omitted the field, `scheduleToTrigger` dropped it, and the indicator was gated to `kind === 'store'` — so a schedule that silently could not fire gave the user no signal.**
+- **The chat approval wait no longer raises `UnboundLocalError` in its `finally` when the wait is cancelled (gateway shutdown, client disconnect, navigation away, or a CI timeout): `outcome` is now bound before the try, so the cancellation propagates unmasked and the mirrored inbox approval item is resolved instead of left asking for a decision the turn is already tearing down ([#1536](https://github.com/PersonalClaw/PersonalClaw/issues/1536)).**
+- **Dashboard failure feedback: Action Center approve/reject/accept/dismiss now report a failed action with the server's own message instead of an empty catch that made a 409 look like a dead button ([#324](https://github.com/PersonalClaw/PersonalClaw/issues/324)); bulk task Complete/Delete reads the per-item outcomes from the 200 body and names refused items instead of reporting success ([#478](https://github.com/PersonalClaw/PersonalClaw/issues/478)); the chat workflow progress card only collapses on a real 404 — transient fetch failures keep the card and offer Try again instead of silently erasing it ([#549](https://github.com/PersonalClaw/PersonalClaw/issues/549)).**
+- **Task/project integrity: completing a task now refuses while a BLOCKS prerequisite is still open (the DONE write enforced only the task's own exit criteria, so a kanban drag could complete a task with an unfinished prerequisite, strand a `blocked_reason_kind="auto"` stamp on the done row, and inflate graph completion — [#475](https://github.com/PersonalClaw/PersonalClaw/issues/475)); and deleting a project now cascades its tasks instead of orphaning them pointing at dead task-list ids, unreachable from every scoped view ([#457](https://github.com/PersonalClaw/PersonalClaw/issues/457)).**
+- **Task/project integrity, create path: `create_task(status="done", …)` now runs the same completion gates as the update path instead of persisting a done row straight from a caller-supplied status — a task born with `status=done` while an exit criterion is unfinished or a BLOCKS prerequisite is non-terminal is refused (400), closing the create-side backdoor to the `can_mark_complete()==False` DONE row that [#475](https://github.com/PersonalClaw/PersonalClaw/issues/475)'s gate refuses only on update.**
+- **Trigger specs are now validated at the door: `POST /api/triggers` and the chat/agent create tool refuse invalid cron expressions, 6/7-field (seconds-cadence) expressions, malformed skip dates, and unregistered action providers instead of persisting enabled rows that can never fire or dispatch; sub-900s cron cadences and skip dates the schedule never fires on are warned about at creation and reported by the trigger doctor ([#483](https://github.com/PersonalClaw/PersonalClaw/issues/483), [#687](https://github.com/PersonalClaw/PersonalClaw/issues/687), [#612](https://github.com/PersonalClaw/PersonalClaw/issues/612), [#560](https://github.com/PersonalClaw/PersonalClaw/issues/560), [#270](https://github.com/PersonalClaw/PersonalClaw/issues/270), [#779](https://github.com/PersonalClaw/PersonalClaw/issues/779)).**
+- **The native agent loop now retries ONE pre-stream inference transient per turn (provider 5xx class, timeout) with the taxonomy's correction note and guard-shaped audit rows — a single provider blip no longer kills the chat turn ([#2287](https://github.com/PersonalClaw/PersonalClaw/issues/2287), [#252](https://github.com/PersonalClaw/PersonalClaw/issues/252)).**
+- **Regenerate on a failed chat turn now works as a clean Retry of that turn's own user message instead of returning HTTP 400 (first-turn failure) or silently truncating the failed turn's message and replaying the previous question (later failures).**
+- **Chat:**
+- **Dashboard:**
+- **Security (skills marketplace):**
+- **Prompts:**
+- **Loops:**
+- **Security (egress guard):**
+- **Three views that show less than they were given now say so, and the numbers they state are the numbers they honour.**
+- **The API reference no longer claims to be complete when it is not.**
+- **Advancing an onboarding step no longer drops focus on the floor, the step you are on is a real heading, and the step body stops spending a fifth of a phone screen on alignment.**
+- **A release can no longer publish a gateway image whose dashboard does not work.**
+- **Searching the skill store said "No results" when there was nothing to search.**
+- **Selecting many conversations at once could file them under a tag or folder that doesn't exist.**
+- **Two knowledge shelves could have the same name, with nothing to tell them apart.**
+- **The dashboard file explorer's "Uploads" and "PersonalClaw" roots now follow the active home instead of a hardcoded `~/.personalclaw`.**
+- **The audit log's "Rotate" control described a key rotation it never performed.**
+- **Regenerating a project's agent-instruction files could destroy your own notes, or write them to the wrong place entirely.**
+- **Choosing a project while editing a task now moves the task.**
+- **A crash no longer explains itself to you as "Server got itself in trouble."**
+- **A list-typed action setting is no longer thrown away without a word.**
+- **"Speak replies aloud" did nothing: replies were spoken whether it was on or off.**
+- **The "Streaming transcription" toggle is gone, because there is nothing behind it.**
+- **Editing an artifact and navigating away lost the edit.**
+- **`personalclaw snapshot` left your custom themes behind.**
+- **When a model's answer is cut off mid-tool-call, it is now told that, instead of being told it forgot something.**
+- **Renaming a file you were editing asked permission after the fact, then stranded the tab.**
+- **Workflow controls no longer answer confidently about a run that is not there.**
+- **A trigger's skip dates could be set once and never changed.**
+- **Starring an inbox item now shows you something.**
+- **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it had.**
+- **Two settings saved at the same moment could lose one of them.**
+- **Renaming an automation replaced what it does.**
+- **A too-long file or folder name reported a server error instead of telling you the name was too long.**
+- **When the model was unavailable, knowledge enrichment told you it had found nothing.**
+- **Anything named like a path was treated as a credential — which broke a bundled template and stripped native libraries out of a workflow's leaves.**
+- **Saying "approve it" stopped working for good once a run had answered its first gate.**
+- **Creating a knowledge intent could silently delete one you already had.**
+- **Merging a knowledge tag into one nested underneath it made the tag disappear from the tree.**
+- **Knowledge search's keyword fallback never returned anything, in any install.**
+- **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
+- **Turning a tool off on the Tools page now turns it off everywhere.**
+- **The skill-proposal queue could fill up and never empty.**
+- **Editing a task can no longer corrupt it.**
+- **Scheduled automations now actually run.**
+- **Four places where sending the wrong kind of value did something worse than refuse it.**
+- **Switching an automation off now survives a restart.**
+- **Asking for an automation to be created switched off now creates it switched off.**
+- **Restarting PersonalClaw quietly moved a chat onto a different agent.**
+- **Restarting PersonalClaw mid-conversation lost what the agent had actually done.**
+- **The assistant learned nothing from turns run through an external coding CLI.**
+- **A read-only command is no longer called "destructive", and read-only tools no longer wait on you.**
+- **The approval card now tells you which tool it is asking about.**
+- **Ask mode no longer refuses a read-only `ls`.**
+- **The session line said "Session created" on every single turn, and named the wrong runtime.**
+- **The assistant learned "never more" as a permanent rule.**
+- **A reasoning-effort setting that the coding CLI cannot honor is now refused instead of silently stored.**
+- **A reasoning-effort setting no longer quietly lapses partway through long-running work.**
+- **A tool blocked by Ask or Plan mode no longer ends the whole conversation.**
+- **The context gauge said "0%" on turns that were nearly full.**
+- **Typing `/compact` at a coding-CLI agent killed the whole turn.**
+- **The sign-in page said "Sign-in failed" no matter what went wrong.**
+- **The audit log's "Failed" filter hid most failures.**
+- **Setting a chat's working directory with a mistyped field no longer silently unbinds it.**
+- **Settings → Prompts named four of its forty-four rows.**
+- **A scheduler tick wrote its history into the wrong PersonalClaw home.**
+- **An agent CLI could run in your home directory instead of the folder you gave the chat.**
+- **A "Pre tool use" hook that blocks nothing now says so.**
+- **A chat with no folder set could run its agent CLI wherever the app itself happened to be started.**
+- **Tinted "chip" buttons had unreadable labels in six of the twelve colour schemes.**
+- **"Unattended runs need a verified adapter" only covered one kind of unattended run.**
+- **Settings → Agents could show you a stale runner reading as if it were current.**
+- **A provider that rides a CLI subscription could look signed in and still fail.**
+- **"Possible duplicates" only looked at your 25 newest items.**
+- **An export could carry the same database twice, and one copy was the unsafe one.**
+- **Your ready-task list was in no particular order.**
+- **Forking a conversation could cut it earlier than the message you clicked.**
+- **A "replace everything" restore could run while the app was running.**
+- **Buttons inside a generated widget now work everywhere you can see the widget.**
+- **Home, the Inbox and Discover now arrive in sequence instead of all at once.**
+- **A guided tour of the app, and you can take it again whenever you like.**
+- **Empty pages now explain themselves and give you something to press.**
+- **The audit log can now answer "what did my agent actually do?" — and tell you which record was tampered with.**
+- **Artifacts are now findable from knowledge search.**
+- **First run now picks up where you left it, and you can walk out of it at any point.**
+- **Moving between pages now crossfades instead of cutting.**
+- **The two shipped personalities now arrive with their own motion and their own tone.**
+- **You can show the assistant your screen for one message — off until you turn it on.**
+- **You can snip a region of your screen into a message, on any platform.**
+- **Optional sound cues, off until you turn them on.**
+- **First run now ends with three things you can actually do, not a tour.**
+- **A knowledge item now has a reading mode, and a passage you highlight in it stays highlighted.**
+- **You can now see which local models are eating your RAM, and free one.**
+- **A model provider can now run in its own process, so a crash in a native library can no longer take the gateway down with it.**
+- **A new install now opens on a short sidebar that grows as you use the app.**
+- **You can now open your memory in Obsidian and edit it there.**
+- **An empty Triggers page now offers four working starters instead of a blank form.**
+- **PersonalClaw can now watch things for you, and new entries land in your library on their own.**
+- **App installs now check who published the bundle, not just what's in it.**
+- **You can install the phone companion to your home screen.**
+- **Memory now decides what to do with a new fact instead of just piling it on.**
+- **Memory can record whose claim something is (opt-in).**
+- **An optional topology block orients a new session in your memory graph.**
+- **Papers now ingest as papers.**
+- **An app can now teach PersonalClaw to watch a source it has never heard of — by shipping a parser, not a client.**
+- **Watching a site you have a link to now starts with "we already know this one".**
+- **A voice is now a thing you own, not a dropdown value.**
+- **Proposals are now one thing you approve in one place — and an app can raise one.**
+- **An HTML artifact can now be opened as a real page, not just previewed in a card.**
+- **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.**
+- **When two machines edit the same thing while offline, nothing is overwritten — you get asked.**
+- **Memory now has slots: a handful of small, always-there notes about you, instead of facts the assistant has to go looking for.**
+- **PersonalClaw can now try a local model first for background work, and fall back to a cloud model when it can't.**
+- **"Check this work" — verification that actually runs, instead of a second opinion from the same voice.**
+- **Ask for a few versions and get the best one, with the others one click away.**
+- **Apps can now share data with each other, read-only, only when both sides agree.**
+- **Evaluation scenarios are now yours to keep, version and extend.**
+- **Voice input can now run hands-free, and spoken replies stop talking over you.**
+- **Approval memory: teach the assistant what it may do without asking again.**
+- **Attention notifications can now ask for a second opinion before interrupting you.**
+- **A Companion apps settings section — turn on LAN discovery so phone/desktop clients can find this gateway.**
+- **You can now replay a finished workflow run and see exactly where an edit would change it.**
+- **A run's introspection now shows how its branches and judges actually decided, across the template's history.**
+- **A workflow template can now learn from its own runs — and you stay in control of every change.**
+- **Accepting a skill refinement no longer rewrites the skill.**
+- **Runs now record what LANDED, not just what they did.**
+- **You can now ask which runs of a template went a different way — and get warned when they start going a worse way.**
+- **Work that nobody reads now says so.**
+- **A second starter home, for looking around before you commit anything.**
+- **Generated documents no longer show up in your library as broken images, and a generated PDF finally previews.**
+- **The Loops page no longer tells you that you have no loops when it simply could not load them.**
+- **A security-audit write that fails is no longer swallowed.**
+- **A lesson saved for one project no longer becomes a rule for every project.**
+- **`until_dry` workflow loops now end when the work reports no progress, instead of always running to their iteration cap.**
+- **Run history no longer says "ran" for automations that did not run.**
+- **An automation fired from a background write could be dropped without a trace when the retry it was owed was skipped.**
+- **A workflow set to `on_overlap: queue` started a second run alongside the first instead of queueing it.**
+- **The Inbox's Mentions and Email filters could never match anything.**
+- **`personalclaw update` was a dead end unless you had installed from git.**
+- **`personalclaw update` could run `git reset --hard` without anyone agreeing to it.**
+- **A detached-HEAD update fetched a branch that does not exist.**
+- **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy error.**
+- **Renaming the built-in Personal or Repeatable project quietly broke your projects.**
+- **"Run now" did nothing for almost every automation, while reporting success.**
+- **A manual "Run now" left no trace and the "Running…" pill never cleared.**
+- **Knowledge ingest reported steps as finished that never ran.**
+- **Accepting a "refine an existing skill" proposal always failed with an error.**
+- **Importing a memory file that wasn't a JSON object failed with an unhelpful server error.**
+- **A request that named no task mode relaxed every chat to full execution.**
+- **A project could be pointed at your credential directories.**
+- **The dashboard could be tricked into handing over your secrets by changing the case of a filename.**
+- **One app could borrow another app's permission to run an agent, and read agent runs that weren't its own.**
+- **Discover's "see goal loops" tip opened a blank new-loop form instead of your loops.**
+- **Changing your embedding model silently stopped the assistant remembering anything.**
+- **A task comment could be signed as anyone, and never taken back.**
+- **`personalclaw app new` no longer names your app as its own copyright holder, and every licence file in the tree is now held to the real MIT grant.**
+- **First-run setup could require a model provider it offered no way to configure: Ollama's on-ramp is discovery-only, and Ollama is never in the app catalogue because it is already installed.**
+
+### Security
+
+- **The background service no longer opens the dashboard in your default browser and signs it in for 30 days at its install, at each login or boot and at every restart, a service an earlier release installed included: a gateway opens the dashboard only when you start it at a terminal, a restart from the dashboard or an applied update opens none, and `personalclaw service install` says to sign in with `personalclaw token`**
+- **What someone else in a shared group or thread asks or tells the agent never becomes your memory, whatever a model makes of it: consolidation is shown only the turns you asked for, never their message or what the agent did and said for them, so a claim a group member made about themselves that you refused to save no longer lands in your episodes, preferences.md, the day's history or the sealed summary; a turn in which you refused a change to your memory teaches nothing and is not consolidated later, a helper's report keeps who asked for its work, a loop or run someone else asked for keeps nothing, and the suggested prompts are written from your own lines only**
+- **An Incognito or Temporary chat's words are kept nowhere but its transcript: the learning log no longer keeps each of its messages that brought up a skill (it kept them ninety days, in backups and a sync), what an earlier version kept there is removed when PersonalClaw starts, deleting any chat removes what the log kept of it, and a private chat that comes back before it was titled is called by its mode, not its first message; each notice now says what is kept as for any chat: the Audit log's record of its tool calls, and the approvals, questions and notes it raises in your Inbox and notifications.**
+- **A host on Denied hosts in Settings → Security → Network egress is never reached by a model provider's chat, stream, embeddings, model list, transcription, speech, image or video request, or by a first-party app's own HTTP client: each request, each redirect hop included, asks the egress guard before it is sent, and a refused one fails in the words the provider's Test uses, naming the setting and the host, with a row in the security log, where a chat on a denied provider was answered while only its Test was refused. A run whose network is off still reaches its agent's model, as before, held to your Network egress settings alone; an AWS endpoint on your own network (a VPC endpoint, or one set with `AWS_ENDPOINT_URL_*`) is reached once its host is on Allowed hosts (SDK: `personalclaw.sdk.net`'s `http_client`, `sync_http_client` and `http_session`, and `RequestGuard` for a client library's own hook, the `guarded-clients` core feature; `bedrock-models`, `google-models`, `alibaba-models`, `fal-image`, `openai-tools` and `skills-sh` send their requests with them)**
+- **What a chat's work waits on in your Inbox is that chat's: an agent reading your Inbox (`inbox_list`, for a briefing) reads its own chat's approvals, questions and runs' requests and what is about no chat (your mail and messages, proposals, notices, your own runs), and another chat's, a Temporary or Incognito chat's batch request included, is neither listed nor counted; a scheduled briefing, an app and the Morning triage digest read none of what a chat's work waits on, and you still see everything on the Inbox page.**
+- **A shell command that would delete your home folder, the filesystem root or the folder the chat or run works in always asks you, whatever Trust, YOLO, Trust reads, a chat's grant, an auto-approve pattern or the Approval mode says, and its card says which folder; it is read on the command, by every spelling the shell accepts, and refused, saying why, where nobody can be asked; an ordinary recursive delete, such as of a build folder, is no longer refused for being one.**
+- **Your blocking pre-tool hooks are asked about every tool call before anything can approve it, on every path: a subagent's and an evaluation's calls on an agent CLI, a heartbeat task, a subagent's report, a room member's turn, a channel's own turn (`personalclaw.sdk.channel.ask_pre_tool_hooks`, the `pre-tool-hooks` core feature; `slack-channel` asks it) and a chat that names no agent, which asks the default agent's; a hook that never exits (it could not start or timed out) refuses the call, and a hook-based run with nobody to ask runs only what a hook approves, a heartbeat task's calls running on the task's own Allow.**
+- **A batch of subagents saves no workflow, and its run is its chat's own: no agent finds a batch among your workflow definitions any more, an ordinary chat's included, and another chat's agent reads a batch's run, or any run a Temporary or Incognito chat started, as not found and is not told it is running; the Runs tab marks each as its chat's, a Temporary chat's batch (its waiting ask included) ends with the chat, and an Incognito chat's runs are deleted when you delete the chat.**
+- **A chat's agent sees only its own chat's subagents: `subagent_list` lists that chat's, a batch's tasks and a subagent's own subagents included, and `subagent_status` reads only theirs, before and after a restart; another chat's, a Temporary or Incognito chat's included, reads as not found. You still see every chat's on the Background agents page.**
+- **An automation's Allow is a yes to the version of the workflow its question showed: a save that lands while you are asked is not allowed, and you are asked again, told who saved what since; and a workflow an agent working for an allowed automation's run starts is a version that automation was allowed, or it is not started and the agent says why (SDK: `SubagentInfo.workflow_run` and `SubagentManager.spawn(workflow_run=…)`, additions `slack-channel` does not have to change for).**
+- **An operator's auto-approve pattern approves only the one command it names, read as the shell reads it: a second command joined by any operator the shell runs (the background `&` included), a redirect into a file and a substitution are each asked about, a call is decided on the command it runs rather than on its shortened title, and an agent CLI's call meets your pre-tool hooks before any pattern, Trust or YOLO can approve it.**
+- **Slack makes nobody its owner on first contact: you pair your Slack account from Slack Channel's Configure page (Pair as owner) and send the bot the code, as on Telegram, Discord and email. Until then the bot does nothing anyone asks: a direct message or a mention gets a note saying how to pair, and nobody can answer an approval or be sent a dashboard link. An owner an earlier release kept without a pairing (the first person to message the bot, an id typed into setup or set in the environment) is forgotten when the channel next starts, so pair once more.**
+- **Only you apply a Doctor fix, run the Doctor's maintenance, update PersonalClaw (or check for, cancel or dismiss an update) and choose between your copy of a bundled skill and its newer version: an app is refused each, whatever its manifest declares, in words that name what it would have done, and an app you granted the Doctor still reads its report and its fixes.**
+- **Only you switch one of your tools, or a whole tool provider, on or off, and only you write a project's overview, which every session in the project is given: an app is refused each, whatever its manifest declares, in words that name what it would have done, and an app you granted them still reads your tools and what every session receives.**
+- **Only you write what a project gives the sessions in it (its brief, its instructions, the overview and ledgers in its folder, and the folder they work in), and only you change, delete or import a project, choose your default project, claim a row of its Work board or write PersonalClaw's block into the instruction files in its folder: an app is refused each, whatever its manifest declares and through the file explorer too, in words that name what it would have done, and it still makes a project under a name and reads your projects.**
+- **Your Trust, Trust reads, YOLO and an agent's Always allow answer only what you ask for: a call in a turn someone else asked for (a colleague in a shared thread, a correspondent, a program) is asked of you on every runtime and channel, its card naming who asked and offering your answer for that call alone, and a turn someone else asked for searches none of your chats.**
+- **Unattended work on an agent CLI (an Unattended loop, a `personalclaw run`) now asks PersonalClaw about each call, so a write that no grant covers is refused with its reason unless the loop's page lets that loop's agent CLI approve its own calls (off by default, asked of you first and audited); a read-only `personalclaw run` on an agent CLI runs instead of being refused.**
+- **A background chore that runs on an agent CLI (a chat's title, its follow-up chips, a memory consolidation) now refuses every call the CLI asks about, since a chore answers in text; before, such a chore approved them, so a chore could write a file a read-only run had just refused.**
+- **An app is judged as the app whatever chat of yours it names: its speech and images are held to the spend caps for work nobody watches, what it writes to your memory is filed under the app, and the audit log names it.**
+- **On the local-network bypass an app's page or backend is held to the permissions it declared, as it is everywhere else, instead of being admitted as you.**
+- **An agent can no longer change what your own git or shell runs as you: a repository's `.git/config`, `.git/hooks/` and `.gitmodules`, your `~/.gitconfig` and your shell's startup files (`~/.zshrc`, `~/.bashrc`, `~/.profile` and the rest) are refused to the file tools, an agent CLI's own writes and patches, artifacts, automations and the shell's screen, under every approval mode; on macOS the sandbox holds your own startup files and git settings too.**
+- **An automation that runs a workflow runs the version you allowed, and so do the workflows it starts as steps: a newer version you save in a workflow's editor is followed, and one an agent, a sync, an import or an app saved waits for your Use vN on the automation, which asks first. Every version says who saved it, the workflow's page lists the automations that run it, and the version pointer `POST /api/workflows/{name}/versions/repin`, which no run read, is gone.**
+- **A secret an automation's action or a workflow step was handed is masked in what the work prints, returns or fails with, however short: its run history and last error, the note that reports it, Run now's answer, a step's output and ledger, and the audit rows and log lines the work writes as it runs show `[REDACTED: credential]` where they kept the value. The agent's shell masks a value it filled in that is shorter than eight characters too, and when the gateway starts it rewrites to the reference a run's or an automation's record that kept such a value of eight characters or more.**
+- **The agent shell refuses commands that print live sign-in credentials, and agent apps can protect their documented sign-in stores (`kiro-cli-agent` uses it).**
+- **Only your own run of an automation passes over its hourly cap and its failure streak. A run that an agent (with its `automation_run` tool, or `personalclaw cron trigger` in its shell), an app, another automation's work or a script asks for is the automation firing: it is held to every rule its fires keep, an automation that is switched off, paused or runs only when you run it does not fire, a run its rules hold answers `429` or `409` `fire_held` and leaves a row in its history, and its failures count toward the streak that pauses it. Each run's row in the run history, and the Triggers page, say what started it.**
+- **Text from outside reaches a model only after the injection screen has read it, fenced as data with its source, whichever way it comes in: what a workflow run said it produced and an Inbox message's sender and attachments, as the automation they start is told them; a pasted prompt card, which is not imported when the screen refuses it; the context an agent saved for a callback, whose post answers `409 callback_context_refused` when the screen refuses it; a scheduled run's result opened as a chat; a group channel's recent messages, each person's apart, and the post that started a thread; and a line someone else sent in a chat's history. Text that only quotes the fence's own marker is fenced like any other, and text the screen refuses is kept as nothing, with a line saying it was withheld.**
+- **Every command that talks to a running gateway (`token`, `status`, `logout`, `auth revoke` and `rotate-key`, `chat`, `run`, `spawn`, `cron trigger`, `doctor`) reaches the gateway of the home it runs for, at the port that gateway recorded or the one `--port` or `PERSONALCLAW_PORT` names, and sends the home's secret only once the gateway there shows it serves that home, never through a proxy from the environment. They used to fall back to port 10000 and send the secret to whatever listened there. What the gateway starts and calls it back with the same secret (an agent CLI's core tools, a scheduled script) no longer sends it through a proxy from the environment, which a child is handed for its own downloads, nor on to wherever a redirect points.**
+- **Whether anybody watches a loop's work is its Mode, under whichever key a check reads it: an Unattended loop's worker, task workers and planner cannot stop or restart PersonalClaw, resolve the headless safety profile and keep the undo of an action they fire, while an Attended loop's still put their questions to you and are not refused an agent CLI whose adapter is unverified; a loop whose Mode cannot be read is judged unattended.**
+- **Work a turn someone else asked for starts keeps who asked, for as long as it lasts: a workflow run, a loop or a callback it starts changes none of your memory without your word after the turn has ended and after a restart, and neither does the turn that hands a subagent's result back to the chat; an automation is not made or changed on someone else's say-so, a loop takes the words of whoever asked for it alone, and a callback's Allow says who asked.**
+- **Trusting an MCP server's read-only labels covers the tools it listed when you trusted it: a tool it adds, or one whose description, inputs or labels change, asks until you review it on the Tools page, whose card says what was added, changed and removed, and a server whose labels you do not trust that changes a tool's description raises a quiet notice (`personalclaw.sdk.mcp.declared_risk` no longer takes a trust answer from its caller, which no app passed).**
+- **A webhook automation's fire and a view's refresh are the automation firing, and keep every rule its other fires keep: its hourly cap, spacing, quiet hours, budget and a run still going hold one (a webhook's sender is answered `429` or `409 fire_held`, saying which, and the run history keeps why), its failures count toward the streak that pauses it, its history records a fire rather than a Run now, and what it runs is screened and held as any fire's is; a view no longer refreshes during an incident.**
+- **Nothing that fires an automation chooses where its second opinion or its check works: an automation's handoff works only in the folder its own settings name and does not start without one (a lifecycle hook's used to work in PersonalClaw's own folder), and its check reads only the folder it names.**
+- **Nothing that fires an automation names the folder, run or project its action works in: every action takes them from the workflow run it is a step of, or has none, so an event's data cannot have one seal a folder, read or write another run's records, or file under another project.**
+- **A turn someone else started changes none of your memory on its own: when a colleague in a shared thread (or a correspondent, or a program through the OpenAI-compatible endpoint) asks the agent to remember or forget something, nothing is written, you are asked, and only what you allow is kept, as yours; a change it would make another way (a memory document through the file tools or the shell, an agent CLI's own included, a skill, a decision's lesson) is refused, saying who asked, as an agent CLI's own change to a memory document now is in an Incognito or Temporary chat too; and every history the agent is handed of a conversation, after a restart or a compression too, shows their earlier lines as theirs (a channel that runs its turns itself names who asked, `turn_asked_by` and the `turns-name-who-asked` core feature: SDK change, used by `slack-channel`).**
+- **Changing the sign-in password asks for the current one, and the 2FA code when one is set up, and pairing a device, making a device sign-in code, creating an integration token, pairing a channel’s owner, setting the first password, making sign-in less strict or storing a secret that changes who can sign in (such as the local-network bypass, the 2FA seed or a channel owner’s id) needs a sign-in from the last 10 minutes: the dashboard asks you to sign in again, with your password or a new `personalclaw token` link, and then carries on. The desktop app’s own window never asks, and neither do signing a device out, revoking a token or turning incident mode on. A merge restore or an archive import no longer brings another machine’s integration tokens in.**
+- **A Home tile's refresh and an app's own work (its requests, the tools it invokes and the agents it starts) are judged as work nobody watches: neither can stop or restart PersonalClaw, an app's speech and images count against the dollar caps, and an action an app's agent fires keeps its undo. Every kind of session key is classified in one table that a test holds every new kind to.**
+- **A workflow step's arguments no longer reach past its run: a `run-workflow` step starts its run in the step's own project, a `run-prompt` step's agent answers to no chat, and a `second-opinion` step works, writes its brief and is recorded in its own run, so a template that names another project, a session or a folder for them is refused when you save, check or start it, naming the key, while an automation's action keeps naming them; and a second opinion no longer runs the agent it asks on the host when that agent is set up to run sandboxed, nor takes its sandbox from a payload.**
+- **A workflow step works only as its own run's: the engine sets whose work an action step is (the run, the step, the run's project and folder, the attempt's key) from the run that executes it, so a template's payload can no longer make a step read another run's artifacts or book its spend to another run; a template that writes one is refused when you save it or start a run of it, naming the key, and neither an agent a step starts nor the triage digest takes whose work it is from the step's payload.**
+- **A CSV PersonalClaw writes no longer holds a cell a spreadsheet would run as a formula: in a sheet the agent or an app makes, and in every CSV artifact whoever saves its text (the agent, a workflow, an app or you in the editor), a cell whose text begins with `=`, `+`, `-`, `@`, a tab or a carriage return is kept behind a single quote and opens as text, a formula cell included, while numbers (negative ones, amounts with a currency sign and percentages too) and dates stay as they are.**
+- **A lifecycle trigger hands its action the words its event carried (the prompt a turn answers, the agent's reply, an error's message, a task's title, a tool's result) through the injection screen and fenced as data, as a stored trigger's fire hands on its payload, and what its action prints comes back into the agent's turn fenced too; text the screen refuses is kept as nothing, and the trigger's row says so: blocked when it did not run, withheld when what it printed was dropped.**
+- **A browse task in your own browser works only in a tab it opens for itself, in a tab group named after the task: it never touches a tab you have open, closing the group stops it, bringing its tab to the front pauses it for you to take over, and a task your browser opens no tab for is refused (with the Browser Connector app 0.1.2).**
+- **Each home keeps its own secrets in the OS keychain: the default home keeps the name it had, any other home files its items under a name of its own, so a dev or scratch home no longer lists, reads, hands to its children, overwrites or deletes the default home's secrets, and `personalclaw doctor` and Settings → Secrets name the namespace in use.**
+- **The injection screen passes the code and output an agent works with (Markdown tables, shell pipelines and install lines, code with `|`, stack traces, diffs, logs, commit messages and release notes), so a lifecycle trigger handed an agent's reply or a tool's result, and a trigger fired on such text, runs; it still refuses text addressed to the model that tells it to drop what it was told, speaks as its system turn or hides an instruction.**
+- **A restore, an import or a sync never writes through a link the home holds: where the home has a symbolic link at a path the archive or another machine brings, at a folder on the way to it or beside a database's log, or a file there with another name, that part is left as it is and named, in a restore's last line (a replace's too, which then fails), an import's summary, the conflict review's refusal and the sync report, whose pull waits until the link is gone.**
+- **A project's import, a pack's install, every lock in the home and the copy a sync sends never go through a link the home holds: an import or an install that would write through one is refused and names it, and a pack's uninstall removes nothing through one; a lock is never opened through one, so none empties the file a link at its name leads to, and a request it stops is answered `link_in_the_way`, naming the link; and a sync's copy and the backup export leave out a store, or a file or folder of one, behind a link, and refuse a machine id behind one, naming each, so nothing outside the home goes to your other machines and no record behind a link reads as deleted.**
+- **A call the deny-list refuses is refused wherever a call is approved or asked about, whatever the approval mode, read on the command it would run: an agent CLI's call it refuses is no longer approved in a subagent's result announced into a channel conversation you are in, a one-shot call or an evaluation, nor asked about in a room or on a Slack thread; a call PersonalClaw's own agent makes that a pattern in `hooks.auto_deny_tools` names no longer runs under a chat's Trust or YOLO or a standing grant, nor from Tools → Try it; and a command handed as a list of words, or under a title that is the bare command, is read as the command it is (`screen_tool_call` and the `tool-call-screen` core feature are SDK additions, used by `slack-channel`).**
+- **A command a run starts now keeps to the run's egress tier: unless the tier is `all`, a bash or a script action, a loop's or a workflow's check, a workflow's setup and teardown steps, an effect's teardown and the agent's shell run with no network at all (a network namespace of their own on Linux, a profile that denies the network on macOS), since no program can be held to the hosts a `listed` or `registry` tier names; where the sandbox cannot take the network away the command is refused, saying why and where the tier is set, with a row in the audit log.**
+- **Work nobody is answering can no longer stop, restart, update or reinstall the PersonalClaw it runs in, whichever way it comes: a webhook's fire from an outside caller, a view's refresh, a Run now an agent starts from a session nobody is in (`automation_run`), a loop's check, a workflow's verify gate, setup and teardown steps, an effect's teardown and the agent's own shell in such a session are held to the action denylist before anything runs, and say why in the words a trigger's fire records for the same rule, as a lifecycle hook, a tile's refresh and the triage digest now do; a Run now you press, and an agent in a chat you are in, run as before.**
+- **A refusal by the action denylist never shows a secret's value: when a path or a command in an automation's action, a workflow step or the agent's shell was filled in from `{{secret:NAME}}`, the refusal, the run's history, its owner's notice, the security log and the gateway log quote it as it was written, the reference left a reference, where they quoted the value. It is still judged on the value, so a reference cannot carry a credential path or a refused command past the check.**
+- **An Incognito or Temporary chat can no longer change your memory through the agent's file tools or shell: a write or edit of preferences.md, projects.md, the daily history or a working folder's memory is refused before you are asked, saying why, and the sandbox keeps those folders read-only to the chat's commands; an ordinary chat's write of a memory document, like your save of one in Files, is now indexed for search at once.**
+- **A Temporary chat no longer reads your memory through the agent's file tools or shell, as its notice promises: `read_file`, `list_dir`, `glob`, `grep` and `repo_map` refuse preferences.md, projects.md, the daily history and a working folder's memory, saying why, and leave them out of what they list and find; the shell refuses a command that names them, the sandbox keeps those folders unreadable to the chat's commands, and nothing there is read through an artifact's `content_file`, a file `notify_attachment` sends or an artifact saved from one of those files in Files. The same holds for an app you did not give your memory, which no longer changes such a file through that artifact either; an Incognito chat still reads its memory.**
+- **PersonalClaw's own stores are no longer files the agent's tools read or write in any chat: a working folder's memory database and learning log are refused to `read_file`, `write_file` and the shell and left out of listings, as the knowledge library's database already was, and an artifact's `content_file`, `notify_attachment` and an artifact saved from a file read none of the stores.**
+- **An Incognito or Temporary chat no longer changes your artifact library, as the library's own routes already refused such a chat: its agent's `artifact_save`, `artifact_update`, `artifact_delete`, document, sheet and deck tools and image and video generation are refused before you are asked, saying why; a workflow run it starts publishes and writes nothing there, and an artifact you mention in it is no longer stamped with the chat.**
+- **The Linux sandbox no longer refuses every command on a host whose home is mounted nosuid, nodev or noexec: it made the home read-only with a remount such a mount refuses inside the sandbox, and stopped each command with "sandbox: could not fence the home"; each read-only remount now keeps the flags its mount has.**
+- **A workflow run is handed a secret it starts with as the reference, never the value: an automation's Run workflow inputs, a step that starts a run and a subworkflow step wrote the value into the run's record, the run list, a preview's history row and the prompt a model step was sent. The run now fills the reference where a step uses it, its project's secret first, and never fills text that only reads like one in an input someone else gave it; a record that kept a stored secret's value holds the reference once the gateway has started.**
+- **A deployed artifact's page runs in an origin of its own: the serve response puts it in a sandbox that allows its scripts and nothing else, so framed in the Preview pane or opened in a tab it can no longer reach the dashboard's window, your session, web storage or a service worker of its own, where the Preview pane framed it with no sandbox in the dashboard's own origin. A deployment's URL now carries a key of its own (`/artifacts/serve/<slug>/<key>/`), which is what serves the page's own files, since a sandboxed page's requests carry no session; every deploy makes a new one and tearing down revokes it. Deleting an artifact by any route, the agent's tool included, takes its page down, and a new artifact never inherits a deployment its slug left behind. Deployments made before this change no longer answer: deploy them again.**
+- **A side question asked beside an Incognito or Temporary chat sends nothing to any model but the chat's own: it ran as no chat's work, so ranking its tools sent the question, with the conversation it reads, to the embedding model; it now runs as the chat's work, and its tools are ranked by their words, as the chat's own turns and its subagents rank theirs.**
+- **Memory learns only from your own words: what someone else writes in a channel's conversation (a friend in a group, a colleague in a shared thread, a correspondent's mail, anyone an open direct message lets in) or a program sends through the OpenAI-compatible endpoint is never kept or learned as yours, and consolidation shows it fenced as theirs (a turn a channel saves names the channel, `save_conversation_turn(…, source_channel=…)` and the `turns-name-their-channel` core feature: SDK change, used by `slack-channel`).**
+- **A workflow's action steps are held to the action denylist, as a trigger's fire is: a step that would stop, restart, update or reinstall PersonalClaw while its run is running (`personalclaw stop`, `personalclaw update`) is refused before it runs, whoever started the run, and the step, the run's ending and the audit log name the rule that refused it and why, in the words the trigger's fire records; a credential path, a path the operator denied and a denied command are refused there the same way.**
+- **Starting a subagent without asking no longer approves what it does: with the hook setting that starts subagents unasked on (`hooks.auto_approve_subagent_spawn`), an Invoke Agent step's agent approved every call it made, its file changes and commands included, where the step approved none of its own calls and its Allow said it asks you first; its calls now ask as any subagent's do, unless the step approves them, Approval mode is Auto or `hooks.auto_approve_subagent_tools` is on, and its Allow names which.**
+- **Saving an agent whose tool list now lets it call more, a tool added or the list emptied (which is every tool), asks you first, in the dialog a looser approval mode asks in; a save that only takes tools away asks nothing, and ticking the first tool of an empty list, which narrows the agent to that tool, no longer asks.**
+- **An agent's tool list now limits it: on PersonalClaw's own agent its model is shown only the tools the list allows, in every chat, subagent, loop, automation, workflow step and OpenAI-compatible request it answers, and a call to any other tool is refused, naming the tool and the agent. The Agents page shows every entry of the list, a pattern included, and says the list does not apply to an agent that runs on an agent CLI.**
+- **An artifact the agent, an app or a workflow saves is read by the content safety scan before it is kept, as a note they write is: what the scan refuses or could not check is not saved and the one who saved it is told why, where it was kept and made searchable in Knowledge unscanned; Knowledge's copy of an artifact that points at a file is scanned whoever saved it, and keeps no text the scan refuses. An artifact you write yourself is kept as you wrote it.**
+- **A project's secrets are no longer copied into the gateway's environment, which every program it starts inherits, and no step, automation, setting or app can read one by spelling its stored key; Settings → Secrets, `setup --credential` and connector packs refuse a name in PersonalClaw's own key namespaces instead of overwriting a setting's key.**
+- **Text from outside is read by the content safety scan before Knowledge keeps it: a watched feed's or page's entries, an app's source's items (a repository's files among them), the page a bookmark fetches, a web watch's new items, a note an app, the agent or a workflow writes or edits, and an edit made in a knowledge vault page; what the scan refuses or could not check is kept as nothing and says why, where it was stored, searched and recalled into prompts unscanned. A note you write yourself is kept as you wrote it, as your chat messages are.**
+- **A request to the OpenAI-compatible endpoint that names another agent for its conversation is answered by a runtime built for that agent, with its model and its instructions, where it ran on the previous agent's while the conversation, its transcript and its usage named the new one; and an API send that names an agent for a chat the default agent answered moves the chat the same way.**
+- **Each request from a client of the OpenAI-compatible endpoint that keeps no conversation is answered on a runtime started for it, with nothing of the requests before it, where the next request's model was handed the earlier requests' words and answers, and an agent CLI started again after an idle reap or a restart loaded the earlier conversation back.**
+- **A session of the OpenAI-compatible endpoint answers one request at a time: a request that arrives while it is still answering another, or still sending that answer, is refused (`session_busy`) and the answer in progress is left as it is, where a second turn started beside the first and one caller could be sent the other's answer while the other waited out the ten-minute limit.**
+- **Opening the Tools page or onboarding's Bring your setup over no longer reads Claude Code's or Codex's settings: a tool's setup is read when you press Look in it there, or on every visit once you turn it on in Settings → Security → Outside PersonalClaw's home, where each tool's setup is now a place of its own.**
+- **An app from the Store can no longer make itself impossible to remove: only an app that ships inside PersonalClaw is native and locked on, decided by where it was installed from rather than by its `app.json`, so installing, updating or reviewing any other app that declares `"native": true` is refused with a sentence naming the field, an app installed with it before can be deactivated and uninstalled, and a native app is updated with PersonalClaw, with no Update offered from a source.**
+- **A boolean in an app's `app.json` is the JSON `true` or `false`, or its review, install and update are refused naming the field, and one written as text reads as the word it spells: `"storage": "false"` no longer grants storage or shows it at install consent, `"agentCallable": "false"` no longer hands the route to the agent, and `"native": "false"` declares nothing (`Permissions.memory_declared_raw` is gone, an SDK change no app has to change for).**
+- **A trust given on a chat channel's own approval prompt is that chat's Trust in PersonalClaw: Allow for this chat, on a prompt in a conversation the channel runs itself, trusts the conversation's chat, whose Permission mode shows it and switches it off, the next call asks again once it is off, and the security log records the grant as for any chat. The channel keeps no trust of its own (`approval_brief_for(event, chat=…)`, `answer_in_chat`, `chat_grant` and the `chat-trust` core feature are SDK additions, used by `slack-channel`).**
+- **A run's egress tier now holds for every request the run makes, not only its page fetch: a web search, an app's request through the SDK, a generated image's download, the browser's navigations and a program an app starts are refused in a run whose egress is off, before any host is looked up and with a row in the audit log, and a `registry` tier no longer adds the package registries to a surface that reaches only the hosts it names, such as the hosts the agent's shell reaches unasked.**
+- **A call in a conversation a chat channel runs itself runs without asking only on PersonalClaw's answer, held to the operator ceiling and your allowed hosts: under a ceiling saying every call asks, an operator's hook pattern, the spawn setting and the turn's own approval mode no longer run a call there unasked, a command reaching a host off your allowed hosts is asked about whatever pattern names it, and no grant runs a command the hook chain refuses (`chat_grant` now also answers an operator's pattern and what a call declares, as a chat does; `slack-channel` approves on nothing else).**
+- **Switching a chat to Trust, or YOLO on, no longer approves a call already waiting that reaches a host off your allowed hosts, in the chat or asked by one of its agents: its card says it is always asked about, and it keeps asking until you answer it.**
+- **An evaluation's allowlist approves no call that reaches a host off your allowed hosts: a shell call an agent CLI titles with its command passed as a read when the command began with one, whatever else it reached, and is now refused.**
+- **An automation's action and a remote MCP server keep to the run's egress tier too: what a trigger's fire, its Run now, a webhook's fire, a hook or a workflow step sends is held to the run it is dispatched for, so a webhook or a fetch an automation sends is refused in a run whose egress is off, and a remote MCP server is asked of the egress guard before its connection starts and before every tool call, so a server on Denied hosts, or one a run's tier does not reach, is not reached and the call says why.**
+- **A file in a folder Knowledge watches is taken in as an upload is: the content safety scan checks it, the reader for its kind reads it (a script's code, a PDF's text, a picture), and one the scan refuses becomes a failed item that keeps no text, where every matched file became a note of its bytes read as text that nothing had scanned; and neither a watched folder nor the memory vault's `raw/` folder takes a file still being copied in, which became an item of the part copied so far.**
+- **A file dropped in the memory vault's `raw/` folder is taken into Knowledge as an upload is: the content safety scan checks it, the reader for its kind reads it (a script's code, a PDF's text, a picture), and one Knowledge refuses becomes a failed item that says why, where it became a note with nothing read from it but its name, or with text no scan had checked; a second file of the same name no longer replaces the first in `raw/.ingested/`.**
+- **The agents an app's agent starts are the app's work too: a batch of subagents never starts on your YOLO, a chat's Trust or the hook setting, and each of its tasks, each subagent the app's agent starts and each step of a workflow run it starts runs at no more than the app's agent tier and approves none of its calls, so each call that needs approval asks you, and the ask names the app and its scheduled job. A batch from an app whose tier is text, or that holds none, starts nothing and says why, and a refused subagent is no longer reported as queued (affects `research-lab`).**
+- **What not to do beside a lesson is scanned like the lesson's rule before memory keeps it.**
+- **The desktop app's gateway asks every request for a sign-in, as every other install does, and the app signs its own windows in with a session the gateway hands it at each start, kept in memory only: another program on the computer can no longer read or answer your approvals there, an app's token is held to the permissions it declared, and the agent tools' credential opens only its own operations.**
+- **An app's scheduled job runs at the agent tier its manifest declares, as the app's work: at `text` its model is handed the job's message alone, with no tools, at `read` its agent has read-only tools and sends no message, and at every tier its agent approves none of its calls, so each call that needs approval asks you whatever your own switches say, and its result goes to the app rather than to a turn of your own agent. An app that names no tier starts no agent on its schedule, a manifest that declares jobs or the cron permission without one is refused at install, install consent says each job's tier, and a job is named by its app (affects `growth`, `ops` and `research-lab`).**
+- **A Temporary or Incognito chat's agent changes only the workflow runs it started, on a native agent as on an agent CLI: it can no longer stop, edit, resume or fork a run you or another chat started, or save or delete a workflow in your library, and a spec it checks is not kept as a template for later plans. A preview of an edit is answered for any run it can read.**
+- **Every call PersonalClaw makes to its gateway with its internal credential names the work it is for, or it is refused: one that named no chat read and changed your memory, and a workflow it started belonged to nobody and kept everything. An agent CLI from the warm pool names the chat that claimed it, and a tool tried from the Tools page, a scheduled script's or an app's asks the gateway as that work.**
+- **A boolean in a request is the JSON `true` or `false`, or the request is refused naming the field, and a setting saved as text reads as the word it spells: consent sent as `"false"` no longer installs a pack the scanner flagged, a trigger toggled with `"enabled": "false"` stays off, and `"allow_private": "false"` in `config.json` keeps private addresses blocked.**
+- **Every upload is scanned before it is kept, not only a large one sent in parts: chat attachments, Files and Knowledge uploads, a file dropped into a workflow run, an artifact's new bytes, project archives and backups. A file of up to 512 KB is scanned whole (a larger one as its first and last 256 KB), and an upload the scan could not check is refused.**
+- **What a reader makes of an upload is scanned before a model reads it, and reaches the model fenced as data: a PDF's or a Word document's text, and text beside a stray NUL byte, are checked for a chat or Inbox attachment, a Knowledge file and a document `read_file` opens, and withheld (with why) when they fail. An SVG is scanned as the text it is, and a zip or another binary file is no longer read as text.**
+- **Downloads go through Settings → Security → Network egress: the code map's grammars, the bundled chat model, the app template `personalclaw app new --from-template` fetches and every Hugging Face download (the speech, voice, diarization and embedding models apps fetch) ask the egress guard before each request and each redirect, so a host on Denied hosts is never reached, and each request is audited. The language pack downloads nothing itself, and the Hugging Face library's Xet transfer client, which opened connections of its own, is switched off.**
+- **An app's work changes your memory only when you gave the app your memory: without the memory permission, a conversation it started, an agent its scheduled job started and any agent working for them save, forget and learn nothing, are never consolidated into your memory, and are told why, and a job's agent and its announce turn read none of it. With the permission, everything they write names the app as its source, so nothing an app writes counts as something you said (`HistoryConsolidator.why_nothing_is_kept` is an SDK addition no app has to change for).**
+- **Your memory is read only where the work may read it: a conversation an app started, and the agents it starts, read your saved facts, lessons and past conversations only when the app has the memory permission you allowed when you installed it, and a Temporary chat's subagents and workflow steps read none, as the chat itself does. Each says why when it is asked to recall, and a turn that read none says so in its details.**
+- **A gateway log line that names a tool call (asked about, refused, refused with its batch or on an unattended run, approved by a source, run without asking, failing again) writes its title masked, on one line and cut at 160 characters, so a credential in a command no longer reaches the log in clear.**
+- **An action that cannot be undone never runs at “runs with undo”: where its own rung or an app's clamped ceiling would put it there it asks first, and Settings → Guardrails → Earned autonomy and the Inbox say what it does cannot be taken back. A run that kept no undo is logged at the rung it had, an undo notice no longer says the action ran on its own, promotion never offers that rung to such an action, and the Self-QA filing step has its own rung.**
+- **The audit log records an automation's action only when it did something, at the rung it ran at and naming the trigger or hook that ran it, and Settings → Guardrails → Earned autonomy shows that same rung: a heartbeat pass with nothing to run writes no row (it wrote one every minute), a script that answers “skip” is still recorded, and a command or an agent turn reads “runs on its own” in both, where the log said “runs with undo” for actions that have no undo.**
+- **Every database PersonalClaw keeps in its home, with the journal and write-ahead files SQLite keeps beside it, is readable by you alone from its first byte, in folders only you can open; one an earlier version left readable is made private the next time it opens.**
+- **The controls that cut something off never wait for first-run setup: Settings → Devices, Security, Sender trust, Guardrails and External access open while setup is unfinished, so you can sign a device out, replace the sign-in key or turn on the incident kill switch in the middle of setup, and setup links to them as Security controls.**
+- **The audit log records what a tool call ran: a shell call's row keeps its command and a file write's row the file it changed, masked (a credential in a command is stored as its mask), on one line and cut at 500 characters with a marker saying how much was cut, on every path that audits a call; Settings → Security → Audit log shows it beside the tool, and `personalclaw security events` prints it (`SecurityEventLog.log_tool_invocation(tool_input=…)`, an SDK addition no app has to change for).**
+- **Every agent is handed the platform's safety rules, whatever its own instructions say. A routed agent, the goal loop's and the Code project's workers and planners, a webhook's agent, a room member and `personalclaw chat` were sent their prompt without them, the rule that a fenced web page or message is data and never instructions among them; an agent's instructions now add to the rules and cannot remove them, and an edit to the `safety-rules` snippet in Settings → Prompts rewords them for every agent.**
+- **A key or token in an MCP server's arguments or URL is kept in the credential store, with a reference in `mcp.json`, so no snapshot, export or sync carries it; a server restored onto a machine without the value does not start, and the Tools page says which value to type in.**
+- **Removing an MCP server, or changing any other configuration that can carry a credential, rewrites the shard export at once instead of at the next hourly export.**
+- **A workflow step that would approve its own tool calls or change things is saved only with your yes, at every door: an agent's save asks you once (in its chat, the Inbox, your phone and your channels) and saves nothing before you answer, your editor asks about every such step (a macro in the spec, or new work given to an allowed step, included), an agent's edit of a running workflow is refused, an accepted refiner change is not applied, and a pack's template arrives with its steps asking before they act.**
+- **A subagent started over `POST /api/spawn` asks as your own approval settings say: a request can no longer set its approval mode.**
+- **Unattended agents now ask unless their automation or loop was allowed to run on its own: Settings → Agent defaults → Approval mode ships as Ask each time, so a trigger's Invoke Agent agent or a subagent started outside a chat asks in your Inbox, an Auto a config already holds is kept, named by Doctor and by Settings, and said in the Allow of each trigger it reaches, and a gateway with nowhere to ask refuses their calls instead of approving them.**
+- **With automatic update checks off, the update check no longer reaches GitHub on its own: a source checkout's update status ran `git fetch` against its origin on every Settings visit, and the start-up line said "Already on latest version" with nothing checked. Settings › Updates has Check now, one check you ask for whatever the switch says; automatic checks run at start and then once per check interval; and the start-up line says what the check found.**
+- **The gateway's sign-in link stays out of its logs: under a service, after a detached restart and in a container it prints the dashboard's address and how to get a link, and the service's and restart's logs are readable only by you, with a link an older gateway left in one taken out.**
+- **Each gateway start replaces the startup sign-in link the start before it made, when no browser opened it, so a service that restarts again and again no longer piles up 30-day sign-ins in Settings → Devices.**
+- **The shell denylist binds every command PersonalClaw runs for the agent or an automation: a loop's or a workflow's check, a workflow step or teardown, a bash action however it started, an app's setup hook, a command an agent CLI asks to run and Tools → Try it are refused by its patterns before anyone is asked to approve them, and a loop or a workflow nobody watches says which rule refused its check. Every refusal by the denylist, the credential-path check or the file tools' reach is one `refused` row in the audit log naming the control and its rule, and one warning in the gateway log, never an approved call.**
+- **An Invoke Agent automation in a working folder you haven't trusted only reads there, as a Run Prompt one does: its agent got the write access its step asked for in a folder you never trusted.**
+- **The agent's shell commands reach only your allowed hosts without asking (an agent CLI's when it asks first): an unattended run is refused a command toward any other host, or one whose host its command does not name, a chat asks you and names the host whatever Trust or YOLO allows (on its card, and on a channel's prompt through the approval brief's `reach`, used by `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel`), and an unattended run writes only inside its own folders and its own temporary folder.**
+- **A program an app's code starts leaves an egress row in the audit log for each host its command names, and is stopped before it starts toward a host neither the app's manifest declares for that program (its `launches[].hosts`, or the npm registry for a package it names) nor you allowed: Git Sync's clone and connection check, and Rsync Sync's transfers, need their host on your allowed hosts.**
+- **A watched folder takes in only what is inside it: a link to a file or folder outside it is left out, and its row in Knowledge › Sources says how many; a link to a note inside comes in once, and a note taken in through a link out of the folder is removed at the next scan.**
+- **A snapshot, the manifest beside it, a `backup export` folder, a project export, a memory export and a pack are readable only by you from their first byte, wherever they are written, and a snapshot's files extract the same way; a snapshot being written was readable by anyone on the machine until it was done.**
+- **A sender's pairing code lets someone in only while the channel's rule for strangers asks for one: a code Email found in a mail paired its sender under "only you let them in", Pair someone is offered only under the rule that takes codes, and changing the rule ends a code still outstanding.**
+- **An app's `agent` permission names what its agent work may use — `text` (the model is handed only the text the app sends, with no tools), `read` (read-only tools) or `tools` (your tools) — and install consent says which; neither the app nor your YOLO or Trust approves its agents' calls, so each one that needs approval asks you, a finished task's result goes back to the app alone instead of into a turn of your own agent, an app still declaring `"agent": true` runs no agent work until it is updated, and `minutes` and `growth` declare `text` (an SDK change: `Permissions.agent` is now the keyword-only `Permissions.agent_tier`, which only `menu-bar-companion`'s tests read, and `AGENT_TIERS` lists the tiers).**
+- **A transcription no longer puts the folder holding ffmpeg in front of the gateway's `PATH`; every tool server, hook and script starts with the `PATH` and `TMPDIR` the gateway was launched with, and a Restart starts from that launch environment, so a stdio server's command never resolves to a program from a folder you never put on your `PATH`.**
+- **A secret named after a variable that decides which programs run (`PATH`, `NODE_OPTIONS`, `LD_PRELOAD` and the like) is stored and resolved like any other, but never put into the gateway's environment.**
+- **An agent app can keep its CLI's sessions to the config it gives them, and install consent names apart the settings of the folder a CLI works in: `register_acp_cli_entry(session_meta=...)` and the `folder-settings` word of `launches[].inherits` (SDK additions, used by `claude-code-agent`).**
+- **Install consent names the programs an app starts, what of yours each runs with, the npm packages installed for it and where outside its folder it writes, and core starts and installs nothing an app's manifest does not declare: `launches`, `writes` and `dependencies.npmPackages` in `personalclaw.sdk.manifest` (an SDK change, used by `claude-code-agent`, `codex-agent`, `kiro-cli-agent` and `gemini-cli-agent`).**
+- **Install consent says which npm package a program an app starts downloads and runs, the hosts it reaches, and when you name the programs yourself: a `launches` entry's `npmPackage` (which an `npx` entry must name) and `hosts`, and `program: "*"` (SDK additions, used by `skills-sh` and `ops`).**
+- **Trust reads, Ask and Plan mode run a shell command without asking only when every program in it runs in a form known to only read: an option that writes, deletes or runs another program (`find -delete`, `sort -o`, `git branch -D`), an unknown option and an unknown subcommand are not reads.**
+- **An Attended loop's planner asks for its tool calls the way its workers do and is no longer told it runs unattended, and a loop created with no Mode, or one whose Mode cannot be read, asks too.**
+- **An Incognito or Temporary chat is read to no background model: it is titled by its mode ("Incognito chat", "Temporary chat"), gets no model-made tags or follow-ups, has its history cut to fit rather than condensed by a model when reopened, and is left out of the suggestions made from your recent chats.**
+- **An Incognito or Temporary chat's words reach no model but the one it runs on: its memory is searched by keyword without the embedding model, a tool that needs a model runs on the chat's own model or says it can't, an agent CLI's tools included, and its turn is not moved to another model when its own fails. Files you attach, a screen you share, dictation and read-aloud still use the models you set up for them, as the chat's notice says, and every embedding call is now counted in Usage and the model-call log.**
+- **An Incognito or Temporary chat leaves nothing in memory by any path (idling out, ending, a consolidation you ask for, the agent's memory and knowledge tools), nothing from it is sent to the embedding model, a chat whose mode cannot be read is treated the same way, and on start PersonalClaw removes what an earlier version kept from one; persona notes and lessons an earlier version wrote record no chat, so review them in Memory › Studio.**
+- **The agent's shell refuses a command that lists a credential folder under your home, such as `ls ~/.aws` or `find ~/.ssh`, or a glob that reaches one, with the sentence a read of a file inside it gets.**
+- **A prompt sent through an OpenAI-compatible instance on this machine gets the outbound secret scan the setting asks for, since a proxy there can pass it on to a cloud service.**
+- **The gateway's internal credential opens only the operations PersonalClaw's own processes call, each one method on one route; it used to open every route under a listed path, every trigger route among them.**
+- **An Attended loop asks before its workers act: a call that needs your approval, from any of its workers, the per-task workers' included, waits for your answer on the loop's page, the bell and your approval channel, as a chat's does, and "This loop" lets its workers act without asking until the run ends. An Unattended loop's standing grant ends for every worker when its trust window does.**
+- **The agent's file tools, and a file sent to you, refuse a path with a control character in it, as the Files view already did.**
+- **What the dashboard shows from models, tools, feeds, pages, files, apps and other people is Markdown only: HTML in it reads as text (plain formatting tags such as `<kbd>` and `<br>` aside), only web and email links open, images load only over https or from the artifact library, and a `<widget>` runs only in a chat reply.**
+- **A saved page, an uploaded or watched-folder HTML file and a mirrored document artifact are stored as their words, and feed and page items and document artifacts stored as markup before are converted once.**
+- **The dashboard's page policy lets no form post to another site and no WebSocket reach another port on this machine.**
+- **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
+- **The libraries PersonalClaw's model features load report nothing and write nothing outside your PersonalClaw home: onnxruntime starts no telemetry and leaves no device identifier, the Hugging Face library keeps no list of AI tools in your shared Hugging Face folder and sends no usage pings, and the code map's grammars download into the home.**
+- **An MCP server's command, arguments and URL show every credential in them masked on the Tools page's edit form and in Settings → Providers, as the Allow question does, and a save keeps or replaces a masked value.**
+- **Widgets and react artifacts load nothing from a third party: their Tailwind CSS is compiled by the dashboard and React is written into their own document from the installed packages, so they render offline too, and neither the dashboard nor a deployed artifact allows a CDN to run code or styles. Widgets are told to draw their charts in SVG or on a canvas.**
+- **A sync writes nothing outside the stores it syncs: a path another machine names outside them is refused, nothing of that change is taken in, and the sync report names it.**
+- **Importing a pack writes nothing outside your PersonalClaw home: a pack whose name or component id would climb out of its folder is refused.**
+- **A subagent's report into a scheduled job or an Inbox sweep runs with read tools only, as every turn nobody watches does, and is not handed to an agent CLI.**
+- **A webhook's agent turn runs unattended with read tools only, as every turn nobody watches does, and does not run on an agent CLI.**
+- **An automation or hook edited on another machine keeps its switch here, and its yes only for what it still runs as it ran here, whether a sync brings the edit or you take the other machine's version of a conflict; a new schedule re-arms its next fire.**
+- **A workflow from another machine arrives with every step asking before it acts and without write access, and another machine's edit keeps what you allowed its steps here only on the steps it left as they were.**
+- **A runner definition runs its CLI only once you allow what it runs on this machine: one from another machine, or changed since you allowed it, waits for Allow in Settings → Agent defaults.**
+- **Sync never brings another machine's agent CLI runtime config: the tools it runs without asking and the servers it starts are this machine's.**
+- **A merge restore or an import brings another machine's workflows in with every step asking before it acts, and never its agent CLI runtime config.**
+- **Another machine never gives an agent here a tool you kept from it: which tools an agent is kept from is each machine's own.**
+- **What you upload is written 0600, in folders only you can open, like every other file PersonalClaw keeps in its home.**
+- **Sync's shared registry names none of your records: what each machine last agreed on with another stays on that machine.**
+- **Automations, tasks, projects, themes and the other stores PersonalClaw rewrites whole are written 0600, like the configuration, and a crash midway no longer leaves one half-written.**
+- **Switching one chat to Trust answers that chat's pending approvals and its own agents', not every other chat's and every background run's.**
+- **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a merge restore or an import.**
+- **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**
+- **A model server on another machine is scanned like a hosted provider: only one at `localhost`, a loopback address or `0.0.0.0` counts as local.**
+- **What a hook or another program PersonalClaw starts prints reaches the gateway log masked, and a hook's output is logged by its length only.**
+- **The git PersonalClaw runs gets no gateway secret, and runs no program a repository's own configuration names: no hook, file-system monitor, ssh command, external diff, credential helper or `ext::` remote.**
+- **PersonalClaw never starts an agent CLI on its own: a gateway start, the Providers page and `personalclaw doctor` only check that it is installed, and the Test on its card is what starts it.**
+- **A Hugging Face download sends only the token PersonalClaw resolved: the library no longer reads `huggingface-cli login`'s token from outside the home by itself.**
+- **An agent app's ACP adapter installs from npm only when you install or enable the app, never at a gateway start; a failed install says why on its card, with Retry.**
+- **Hugging Face's transfer cache stays in the PersonalClaw home, for the gateway and every process it starts.**
+- **A research report from another machine arrives switched off, and sync never brings in another machine's project trust, autonomy grants or integration clients.**
+- **The keys that are not sign-ins have a lifetime: an app's proxy secret is new each time its backend starts, the 2FA secret is deleted when 2FA is turned off, and a trigger's question can be answered for a week.**
+- **The `embeddings` extra needs sentence-transformers 5.6 or newer, the oldest release checked for a model card that stays local.**
+- **The gateway log, the console a service manager keeps and the Logs page mask what they write, and an evaluation keeps what its step printed masked in its artifacts.**
+- **`personalclaw service install`, `service status` and `update` show what sudo, systemctl, launchctl or git said masked, and a failure keeps its end, where the reason is.**
+- **A text PersonalClaw cannot mask is withheld instead of shown, sent or stored as it came: the local-model health message, run notifications, send-message hooks, the run ledger, crash records, the doctor, the trigger history, skill drafts and proposals, and every log sink.**
+- **Markup a web source's sanitizer fails on is withheld instead of stored as the page sent it, and every text PersonalClaw withholds because it could not mask it says so in the same words.**
+- **An install that cannot load its HTML sanitizer refuses a page's markup and says why, instead of cleaning it with a weaker pass that kept event handlers and `javascript:` links.**
+- **Without the HTML sanitizer, `web_fetch`, `web_extract` and `document_create` fail like any other call, in the refusal's words, instead of raising (an SDK change web-tools and design-critique see through `personalclaw.sdk.net`).**
+- **A password that holds an `@`, a `:` or a `/` is masked whole in every detail and log line instead of leaving its tail behind, and the login of an scp-style `user:password@host:path` address is masked too.**
+- **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
+- **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**
+- **A workflow step on the native runtime is held to a step's limits, as on an agent CLI.**
+- **A tool runs as a read only when it says it only reads, never because of its name.**
+- **What an agent's model is handed is masked, and a credential it needs is named, not shown.**
+- **The sandbox fences the names of what runs as you, not whichever files are there when the agent's shell starts.**
+- **Only you answer an approval, and never the party that asked for it.**
+- **"Is YOLO permanent from the config?" is answered from the config.**
+- **The chat's approval card and the phone's approval queue no longer show an autonomy rung for a tool call.**
+- **An MCP server runs only once you allow what it runs, and an agent cannot add one.**
+- **An ACP agent CLI no longer gets the gateway's secrets.**
+- **An ACP agent CLI keeps the provider you picked for it: each ACP app passes the variables its CLI reads to choose a provider, a region and a model, and never a credential.**
+- **A background chore runs with no tools.**
+- **Every file tool stays inside the places the Files view reaches.**
+- **A trigger that drives an app route needs your grant unless the route only reads, and a plan asks about each step by what it declares.**
+- **The operator ceiling bounds every approval grant: under `"approval": "ask"` nothing runs without a person, whatever an automation, an agent or a switch says.**
+- **A read-only run's write tools stay refused while a grant approves its calls.**
+- **An approval follows your setting as it is now: a change in Settings reaches the next call, even in a run already going, with no restart.**
+- **A tool call's audit row says what was decided, and by whom, in every runtime.**
+- **A channel is never handed a key: core masks every text it gives Slack, Telegram, Discord or email, once, before the app sends it.**
+- **The tokens your integrations reach PersonalClaw with stop working within 90 days, are listed in Settings → Devices with a revoke, and say why when they stop.**
+- **The hourly backup exports your prompt override alone, not every file in your home with it.**
+- **What an agent writes no longer runs as you until you allow it: its webhook callbacks, its heartbeat tasks and the agent CLI's hooks.**
+- **What PersonalClaw runs for an app no longer gets your credentials.**
+- **A file-backed artifact points only at a file PersonalClaw's own surfaces reach, so saving one can no longer overwrite a file anywhere on disk.**
+- **Saving something that shows a hidden credential no longer writes `[REDACTED: credential]` over the real value.**
+- **An automation's prompt and command are masked on every read, and so is everything else one read showed while another masked it.**
+- **A masked tag, memory fact key or lesson names the real one, so removing or editing it acts on it.**
+- **A goal loop's source file opens in Files, and a loop's deliverable is read only from inside its folders.**
+- **Allowing a trigger allows what it runs now, and only you allow one.**
+- **A trigger runs only what it was allowed to run, and a restart never allows anything.**
+- **A trigger file from an older version is read once, and what its triggers would run waits for you to allow it.**
+- **An app can no longer read your first-run setup or run its network scan.**
+- **An app can no longer change your models.**
+- **An app can no longer reconfigure another app's provider, and editing a disabled app's instance leaves it off.**
+- **Bringing your setup over no longer puts a credential in memory or in a file nothing reads, and both ways in store a server's keys the same way.**
+- **The owner token travels in an `Authorization: Bearer` header, so it no longer has to ride a URL.**
+- **An app can no longer switch another app on or off through the Settings → Providers routes.**
+- **PersonalClaw reads and writes inside its home, and reads anywhere else only where you allow it.**
+- **A provider cannot take over another provider's tool.**
+- **A registry listing can no longer point the gateway at this computer, a private network or the cloud metadata service.**
+- **An app reads only the notifications it raised, and its socket no longer says whether your tool calls run without asking.**
+- **An app can no longer read another owner's key by naming it.**
+- **Every part of PersonalClaw asks one resolver where your home is, so a rail that refuses your real home refuses it however it is named, and importing PersonalClaw creates and opens nothing.**
+- **No model's verdict can hide or hold up a pending approval, or any other decision you owe.**
+- **An app can no longer change what you dictate, and packs are uninstalled only by you.**
+- **A tool you switch off is off for every agent, and a tool call that failed no longer shows a green check.**
+- **A secret reference resolves only against its own owner's credentials.**
+- **An installed app can no longer read your conversations, and its socket carries only its own.**
+- **An installed app can no longer post into your chats, rooms or runs, or steer them, and a conversation of its own runs under its own grant.**
+- **An installed app can no longer rewrite your agents or install skills, and install consent says its code runs as you.**
+- **Installing an app never copies files from outside its bundle.**
+- **An app installs exactly what was scanned.**
+- **An installed app can no longer run a command through the gateway, set up an automation that approves itself, or take your access away.**
+- **An installed app can no longer change your security settings, and every write that loosens one asks you first.**
+- **The Settings home's YOLO switch now asks before turning auto-approve-everything on, and the server refuses to turn it on without that consent.**
+- **API keys and channel tokens are no longer stored in plaintext, world-readable, or copied into backups.**
+- **MCP server secrets and the webhook token live in the credential store too, so an export truly carries no credential.**
+- **Importing an MCP server from Claude Code keeps it, its values never reach the browser, and a server can be edited and fully removed.**
+- **A remote MCP server works: it imports, can be added and edited on the Tools page, and connects with its headers, and the import list shows no credential.**
+- **Every app install now shows what the app gets and waits for you — a clean security scan no longer installs in one click.**
+- **A gateway running as root can now use its own home directory as a workspace — and its credentials under it stay refused.**
+- **The owner token no longer stays in the address bar after it is used.**
+- **A "read-only" background task could write to your memory, open a webhook, and schedule itself.**
+- **Uninstalling or disabling an app did not stop it, and uninstalling briefly gave it more access than it had.**
+- **PersonalClaw's own keys were protected in the files area and nowhere else.**
+- **A password inside a URL was invisible to every place PersonalClaw redacts secrets.**
+- **Adding an app source no longer accepts anything you type.**
+- **Three more ways a path could leave the folders PersonalClaw is allowed to touch.**
+- **A record id can no longer address a file outside its own store.**
+- **An argument a tool call carries can no longer lower that call's risk.**
+- **Ways *in* now share one gate instead of each inventing their own.**
+- **Inbound settings and tokens moved, and old ones stop working.**
+- **A `.env` reached a file checkpoint through a symlink.**
+- **A rewind now refuses to write outside the workspace it belongs to.**
+- **An app can no longer change the version of a library PersonalClaw itself depends on.**
+- **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**
+- **Unattended automations now run read-only by default, and you're asked before one runs scripts in a project folder.**
+- **The built-in command denylist now repairs itself.**
+- **Settings → Security now shows which denylist is actually protecting you.**
+- **Installed apps' backends no longer inherit PersonalClaw's environment.**
+- **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.**
+- **The Store now tells you which other apps an app may message.**
+- **The Store no longer implies PersonalClaw confines an app's network access.**
+- **Your hooks and cron scripts no longer inherit PersonalClaw's environment.**
+- **Scheduled, file-watch, webhook and chained automations now honour the action denylist — they never did.**
+- **A governance ceiling an operator writes once now bounds every unattended run — and the safety profile it bounds is finally read at all.**
+- **An egress "allow-list" now actually restricts.**
+- **A watched-source poll now honours your denied hosts on the headless-browser tier too.**
+- **An auto-approval grant for a spawned subagent can be refused by the ceiling.**
+- **Path rules are matched correctly.**
+- **App backends now authenticate inbound requests, closing a direct-to-port bypass.**
+- **Seven known vulnerabilities were shipping in the dashboard's bundled dependencies, and the usual way of checking said there were none.**
+
+## [0.1.3] — 2026-07-30
+
+The **attention-and-access** release. Two themes:
+
+**One place for everything waiting on you.** The inbox stops being a message list and becomes
+the single attention surface — a goal loop that needs a decision, a proposed skill, and a tool
+approval you walked away from all land there as items you can answer in place, instead of a
+toast that scrolls past while the work stays stalled. Delivery becomes a choice per kind of
+notification (notify / badge / digest / never) rather than one global severity floor, with a
+daily digest for the noisy kinds.
+
+**Reach your own assistant from anywhere.** Sessions now survive a restart (they didn't — every
+restart logged you out, and away from home that meant locked out), and an optional password
+sign-in with 2FA and device pairing lets a browser anywhere get in. It is off by default and
+purely additive: the local token link keeps working and remains the way back in, so a login you
+misconfigure cannot lock you out of your own box.
+
+Plus: artifacts get a real library, knowledge gets shelves and a proper tag taxonomy, the agent
+navigates code by symbol instead of grepping blind, backups run and verify themselves, and
+👍/👎 on AI judgments starts actually teaching.
+
+> **Note (0.x clean break):** model bindings in `active_models.json` now carry
+> ordered fallback-chain semantics. Old stores read cleanly (a single binding is a
+> one-entry chain); consider `personalclaw snapshot` before upgrading, per the
+> pre-1.0 banner.
+>
+> **Note (0.x clean break):** true rewind adds a `rewound` field to persisted chat
+> messages (the retained discarded tail). Old sessions read cleanly (missing field =
+> today's behavior — no migration); consider `personalclaw snapshot` before upgrading.
+>
+> **Note (0.x clean break):** knowledge-item tags move from a JSON column into their own
+> tables, and the old column is dropped. Opening your library migrates it in place — the
+> upgrade is verified against duplicates, blanks, non-ASCII and malformed values, and
+> refuses to drop the column if any tag would be lost. Consider `personalclaw snapshot`
+> before upgrading, per the pre-1.0 banner.
+>
+> **Note (0.x clean break):** the unread badge now counts unresolved **inbox** items instead
+> of unacknowledged notifications, so **it resets once on upgrade** — any old unacked toasts
+> stop contributing to it. Nothing is lost: the notification list keeps its full history and
+> becomes a delivery audit. The badge is more honest afterwards (dismissing a toast no longer
+> hides work that is still outstanding, and handling something in the inbox actually clears
+> it). Your inbox alert keywords move to notification rules automatically. Consider
+> `personalclaw snapshot` before upgrading, per the pre-1.0 banner.
+
+### Added
+
+- **Sign in from outside your home network.**
+- **Pair a phone without typing your password into it.**
+- **Sessions survive a restart.**
+- **Hardening for an internet-exposed instance.**
+
+- **One place for everything waiting on you.**
+- **Per-notification-kind delivery rules.**
+- **A daily digest.**
+
+- **Memory records who contributed them.**
+
+- **Memory can now offer itself, not just answer when asked.**
+
+- **Take a conversation with you, and stop rebuilding the same chat setup.**
+
+- **Hand an artifact to the agent, or point at one mid-conversation.**
+- **Shelves for your knowledge library — including ones that fill themselves.**
+- **Clean up a long chat list in one action, and let old chats retire themselves.**
+- **On a shared task board, your assistant only works on *your* tasks.**
+- **Decks and PDFs too — and anything already saved can become a document.**
+
+- **It can make you a Word document or a spreadsheet you can actually send.**
+
+- **Tags are a real taxonomy now — nest them, rename them, merge them.**
+
+- **Your reading state and favorites are now visible, and filterable.**
+
+- **Curate a whole shelf of saved items in one action.**
+- **See what changed between two versions of an artifact.**
+- **Backups now happen on their own, and they get checked.**
+- **Find any chat by what was said in it.**
+- **The agent navigates your code by symbol instead of grepping blind.**
+- **Memory now knows what it's *about*.**
+- **Your IDE can now actually ask your assistant things.**
+- **Point your IDE at your assistant: a read-only MCP endpoint.**
+- **Tool groups: the agent loads the tools it needs, not all of them.**
+- **The artifacts library: live previews, search, and collections.**
+- **Artifacts get their own page.**
+- **Artifacts: collections + save-time dedup.**
+- **Agent routing: suggest the right specialist, never route silently.**
+- **Chat craft: seven chat-surface mechanics.**
+- **Background compression keeps long chats fast.**
+- **Feedback that actually teaches: 👍/👎 on AI judgments.**
+- **Investigate anywhere: chat about any entity with its context pre-loaded.**
+- **Model use-cases v2: routing sub-categories + fallback chains.**
+- **Every model binding is an ordered fallback chain.**
+- **Type-routed tool-output compressors.**
+- **Projection rules: three layers + line operations.**
+- **Background prose summarizer.**
+
+- **"Investigate in chat" is now on everything worth asking about.**
+- **Tool groups are now visible, and they hide what can't work.**
+
+- **Personalities: themes that carry an identity, not just a palette.**
+
+- **A username, so your contributions stay attributable.**
+
+- **Backups you can actually read and verify: `personalclaw backup`.**
+
+### Fixed
+
+- **`personalclaw logout` never actually revoked anything.**
+
+- **Auto-archive skipped the very chats it existed to tidy — and you couldn't see or change the rule.**
+
+- **The "Steer" button never steered.**
+- **Knowledge and memory could never embed with a config-defined provider.**
+- **Binding a model can no longer fail silently.**
+- **Settings and the Store no longer blink to a loading skeleton when you touch anything.**
+- **Installing an app and updating PersonalClaw both failed on a `uv` virtualenv.**
+- **`personalclaw snapshot` was not backing up everything — and could copy a live database unsafely.**
+- **Snapshots of a non-default home no longer land in your real home.**
+
+### Changed
+
+- **Breaking-change policy is now written down, and it distinguishes maintainer from contributor.**
+
+## [0.1.2] — 2026-07-26
+
+The **safety-and-resilience** release: the autonomy guardrails program (kill switch,
+spend budgets, denylist, outbound scanning, named safety profiles), the full Platform
+Resilience program (Doctor health probes, no-model degraded mode, mid-turn message
+policy, confirm-gated fixes + trust simulators + crash capture, and a health-scored
+self-maintenance engine), first-party apps in the Store on a plain install, the
+legibility surfaces (self-documenting UI kit, Discover, routed project context, offline
+agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard hole.
+
+### Added
+
+- **One health-scored maintenance engine replaces scattered upkeep.**
+- **The Doctor can now fix what it finds, explain what it surfaces, and remember what crashed.**
+- **Mid-turn message policy: queue (default) or cancel-and-replace.**
+- **No-model degraded mode: the assistant stays useful, and honest, with no model bound.**
+- **A Doctor tab now diagnoses every subsystem from one read-only view.**
+- **First-party apps now appear in the Store on a plain install.**
+- **Every non-interactive model call now passes through one guarded seam.**
+- **Unattended spend now has budgets, and outbound prompts are scanned for secrets.**
+- **A kill switch, a path/action denylist, and a live-write guard for unattended work.**
+- **A Guardrails settings surface, a provider-health view, and named safety profiles.**
+- **The animated dot-wave backdrop is now a choosable background style.**
+- **PersonalClaw describes its own UI kit, guides you to the parts of itself you haven't tried, and hands external agents a routed project context.**
+- **Apps surface their skills and backend routes to the agent (declared, not discovered).**
+- **Offline agent reference + `pclaw-api` skill**
+
+### Changed
+
+- **The dashboard's system indicators are now a docked bottom rail.**
+
+## [0.1.1] — 2026-07-22
+
+### Fixed
+
+- **Blank dashboard in v0.1.0 (critical).**
+- **`monaco-editor` was never declared as a dependency**
+
+## [0.1.0] — 2026-07-19
+
+### Added
+
+- **App-contributed CLI seams**
+- **CI & release engineering**
+
+### Changed
+
+- **Provider-boundary completion (Slack residue retired from core):**
+- **LLM SDKs demoted out of core dependencies (`openai`, `anthropic`):**
+- **Self-update is now install-kind aware (git · pip · container · desktop):**
+
+### Removed
+
+- **`personalclaw gateway --slack-only`**
+
+### Fixed
+
+- **Release wheel now bundles the SPA when built via `python -m build`.**
+
+### Added
+
+- **Agentic chat**
+- **Goal loops**
+- **Memory**
+- **Knowledge base**
+- **Skills**
+- **Automation**
+- **App platform**
+- **Agent runtimes**
+- **Model layer**
+- **Security**
+- **Delivery surfaces**
+
+### Notes
+
+- **Single-user, self-hosted, MIT-licensed.**
+- **Requires Python 3.12+; a model-provider API key (or a local Ollama) to start chatting.**

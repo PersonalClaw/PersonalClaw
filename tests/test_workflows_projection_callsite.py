@@ -1,0 +1,327 @@
+"""The engine CALL SITE for task projection.
+
+`materialize` was built as pure decision functions and its events got somewhere to go. Nothing
+invoked either during a real run — `grep` for `materialize.` outside its own module found zero hits,
+so every rule in it was reachable only from a test.
+
+It is wired into `RunController` where a node settles, and these tests drive REAL runs to
+completion rather than calling the hook directly: a call site that is never reached is exactly the
+defect being fixed, and only an executed run proves it fires.
+
+Two mismatches were measured while wiring it, both of which would have made the projection silently
+project NOTHING:
+
+* `should_materialize`/`plan_materialization` read the node keys **`id`**, `kind`, `path` and
+  `config`. A `node_id` key — the name the *binding* uses — is ignored by both, so every node would
+  have failed the has-an-id refusal.
+* `plan.create` holds **`TaskSpec`** objects, not dicts. `entry.get("task_id")` would have raised
+  inside the hook's own `except`, which swallows — so the projection would have failed invisibly on
+  every single node.
+"""
+
+import asyncio
+
+import pytest
+
+from personalclaw.workflows import task_projection
+from personalclaw.workflows.journal import TASK_MATERIALIZED, ledger
+
+
+def _spec(children: list) -> dict:
+    return {"name": "t", "root": {"kind": "sequence", "id": "s", "children": children}}
+
+
+def _action(node_id: str, **config) -> dict:
+    return {
+        "kind": "action",
+        "id": node_id,
+        "config": {"provider": "bash", "with": {"command": "true"}, **config},
+    }
+
+
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.workflows import store as wstore
+
+    monkeypatch.setattr(wstore, "config_dir", lambda: tmp_path)
+    from personalclaw.action_providers import registry as apreg
+
+    # `bash` is a core-native provider but is only registered on demand. Without this the probe
+    # run fails with "unknown action provider 'bash'" and the success path — the one that projects —
+    # never executes. Measured while writing this file.
+    apreg._ensure_default_providers_registered()
+    yield
+
+
+def _run(spec: dict, run_id: str = "r-1") -> tuple[object, list]:
+    """Execute a spec to completion and AWAIT the projection writes, returning `(run, published)`.
+
+    Awaiting the writes is required, not tidiness: the event is emitted at the write's
+    completion so `task_id` is the real id, which means the write is scheduled on the loop and a
+    test that returned at `run_to_completion` would race it. The controller tracks the handles for
+    exactly this — a sleep-based version of this helper would be a flake generator.
+    """
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import WorkflowRun
+
+    published: list = []
+    run = WorkflowRun(id=run_id, workflow_name="t")
+    wstore.create(run)
+    controller = RunController(
+        run, spec, services=EngineServices(publish=lambda e, b: published.append((e, b)))
+    )
+
+    async def _go() -> None:
+        await controller.run_to_completion()
+        if controller._projection_writes:
+            await asyncio.gather(*list(controller._projection_writes))
+
+    asyncio.run(_go())
+    return run, published
+
+
+def _materialized(run_id: str = "r-1") -> list[dict]:
+    return [r for r in ledger(run_id) if r["kind"] == TASK_MATERIALIZED]
+
+
+# ── the call site fires on a real run ──
+
+
+def test_a_completed_leaf_node_PROJECTS():
+    """The whole point of the call site. Before it, `materialize` had no caller at all — every rule
+    in it was reachable only from a unit test."""
+    run, _published = _run(_spec([_action("impl")]))
+    assert run.status.value == "complete"
+    assert [r["node_id"] for r in _materialized()] == ["impl"]
+
+
+def test_EVERY_leaf_projects_with_its_own_fingerprint():
+    """Distinct fingerprints are what make dedup work; two nodes sharing one would collapse into a
+    single board row and the second node's work would be invisible."""
+    _run(_spec([_action("impl"), _action("verify")]))
+    rows = _materialized()
+    assert [r["node_id"] for r in rows] == ["impl", "verify"]
+    assert rows[0]["fingerprint"] != rows[1]["fingerprint"]
+
+
+def test_a_projection_reaches_BOTH_channels():
+    """The SSE stream is what the board folds live; the ledger is what a rebuild reads. A node that
+    projected to only one of them shows on the board and vanishes on reload, or the reverse."""
+    _run(_spec([_action("impl")]))
+    _run_obj, published = _run(_spec([_action("impl")]), run_id="r-2")
+    assert "workflow_task_materialized" in [e for e, _b in published]
+    assert _materialized("r-2")
+
+
+def test_a_CONTAINER_does_not_project():
+    """A board row for a `parallel` node is a row nobody can act on — the container's work IS its
+    children, and they project individually."""
+    _run(
+        _spec(
+            [
+                {"kind": "parallel", "id": "fan", "children": [_action("one"), _action("two")]},
+            ]
+        )
+    )
+    names = [r["node_id"] for r in _materialized()]
+    assert "fan" not in names
+    assert "one" in names and "two" in names
+
+
+def test_an_explicit_OPT_OUT_is_honoured():
+    """The author decided. It is the first refusal `should_materialize` checks, ahead of the kind
+    heuristics, because an explicit declaration outranks an inference."""
+    _run(_spec([_action("kept"), _action("skipped", materialize_task=False)]))
+    names = [r["node_id"] for r in _materialized()]
+    assert names == ["kept"]
+
+
+def test_a_FAILED_node_does_not_project():
+    """A task for work that did not happen is a board row a user would try to close. The hook runs
+    only on the success branch, where the output is already journaled."""
+    run, _p = _run(
+        _spec(
+            [
+                {
+                    "kind": "action",
+                    "id": "boom",
+                    "config": {"provider": "bash", "with": {"command": "exit 3"}},
+                }
+            ]
+        )
+    )
+    assert run.status.value != "complete"
+    assert _materialized() == []
+
+
+# ── idempotency ──
+
+
+def test_projecting_the_SAME_node_twice_in_one_run_is_a_REFRESH():
+    """`plan_materialization` dedups on `(run_id, node_id)` AND fingerprint. The second call must
+    report a refresh rather than a second create — idempotent recompute is the normal path, so
+    this is not a rare case."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import WorkflowRun
+
+    spec = _spec([_action("impl")])
+    run = WorkflowRun(id="r-1", workflow_name="t")
+    wstore.create(run)
+    controller = RunController(run, spec, services=EngineServices())
+    asyncio.run(controller.run_to_completion())
+
+    # Re-project the same settled node through the same controller. Inside a loop, because the
+    # write (and therefore the event) is now scheduled rather than inline.
+    async def _reproject() -> None:
+        item = next(i for i in controller.instances)
+        task_projection.project_task(
+            controller,
+            type("_I", (), {"node": controller.root.children[0], "path": item})(),
+            None,
+            None,
+        )
+        if controller._projection_writes:
+            await asyncio.gather(*list(controller._projection_writes))
+
+    asyncio.run(_reproject())
+    flags = [r["refreshed"] for r in _materialized()]
+    assert flags[0] is False
+    assert True in flags, "a re-projection must be recorded as a refresh, not a second create"
+
+
+def test_the_controller_REMEMBERS_what_it_projected():
+    """The dedup set lives on the controller because it is the single writer for its own run — a
+    per-node read of the per-entity JSON store would be one file scan per settled node."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import WorkflowRun
+
+    run = WorkflowRun(id="r-1", workflow_name="t")
+    wstore.create(run)
+    controller = RunController(run, _spec([_action("a"), _action("b")]), services=EngineServices())
+    asyncio.run(controller.run_to_completion())
+    assert [b.node_id for b in controller._projected] == ["a", "b"]
+    assert all(b.managed for b in controller._projected)
+
+
+# ── the hook must never break the run ──
+
+
+def test_a_PROJECTION_FAILURE_does_not_fail_the_run(monkeypatch):
+    """The node has already succeeded and its output is already journaled, so turning a board-row
+    problem into a run failure would lose real work over a presentation concern."""
+    from personalclaw.workflows import materialize
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("materialize exploded")
+
+    monkeypatch.setattr(materialize, "should_materialize", boom)
+    run, _published = _run(_spec([_action("impl")]))
+    assert run.status.value == "complete"
+    assert _materialized() == []
+
+
+def test_the_step_is_still_JOURNALED_when_projection_fails(monkeypatch):
+    """The durable record of the WORK must not depend on the projection succeeding."""
+    from personalclaw.workflows import materialize
+
+    monkeypatch.setattr(
+        materialize, "should_materialize", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError())
+    )
+    _run(_spec([_action("impl")]))
+    assert any(r["kind"] == "step_completed" for r in ledger("r-1"))
+
+
+# ── the measured API contract ──
+
+
+def _spied(monkeypatch, module, name: str) -> list:
+    """Every call a real run makes to `module.name`, recorded and passed through."""
+    real = getattr(module, name)
+    calls: list = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, spy)
+    return calls
+
+
+def test_the_hook_passes_the_keys_materialize_actually_READS(monkeypatch):
+    """`should_materialize` reads `id`, not `node_id`. Passing the binding's name would
+    make every node fail the has-an-id refusal and project nothing — silently, because the hook
+    swallows. A real run hands it the node under the keys it reads, and the node projects."""
+    from personalclaw.workflows import materialize
+
+    calls = _spied(monkeypatch, materialize, "should_materialize")
+    _run(_spec([{**_action("impl"), "label": "Implement it"}]))
+    # Asked twice for one node: by the hook, and again inside `plan_materialization`.
+    nodes = [args[0] for args, _kw in calls]
+    assert nodes, "the hook never asked materialize about the node"
+    for node in nodes:
+        assert node["id"] == "impl" and "node_id" not in node, node
+        assert node["kind"] == "action" and node["label"] == "Implement it", node
+    assert [r["node_id"] for r in _materialized()] == ["impl"]
+
+
+def test_the_hook_reads_TaskSpec_attributes_not_dict_keys():
+    """`plan.create` holds `TaskSpec` objects. `entry.get(...)` would raise inside the
+    hook's own `except`, so the projection would fail invisibly on every node. The task a real
+    run writes carries the plan's binding: its run, its node, its fingerprint, managed."""
+    from personalclaw.tasks.registry import collect_tasks
+
+    _run(_spec([_action("impl")]))
+    (row,) = _materialized()
+    tasks, _ = asyncio.run(collect_tasks())
+    bound = [t for t in tasks if t.workflow_binding is not None]
+    assert len(bound) == 1, [t.title for t in tasks]
+    binding = bound[0].workflow_binding
+    assert (binding.run_id, binding.node_id) == ("r-1", "impl")
+    assert binding.fingerprint and binding.fingerprint == row["fingerprint"]
+    assert binding.managed is True
+    assert row["task_id"] == bound[0].id, "the event names a task other than the one written"
+
+
+def test_the_projection_hook_runs_on_the_SUCCESS_branch_only(monkeypatch):
+    """The call sits on the success branch of a settled node, so failed work makes no task. Two
+    siblings, one that succeeds and one that fails: the hook is called for the one that
+    succeeded, and only it."""
+    calls = _spied(monkeypatch, task_projection, "project_task")
+    _run(
+        _spec(
+            [
+                {
+                    "kind": "parallel",
+                    "id": "fan",
+                    "children": [
+                        _action("ok"),
+                        {
+                            "kind": "action",
+                            "id": "boom",
+                            "config": {"provider": "bash", "with": {"command": "exit 3"}},
+                        },
+                    ],
+                }
+            ]
+        )
+    )
+    reached = sorted(args[1].node.id for args, _kw in calls)
+    assert reached == ["ok"], reached
+    assert [r["node_id"] for r in _materialized()] == ["ok"]
+
+
+def test_materialize_now_HAS_a_caller(monkeypatch):
+    """The inverse of the grep that motivated the call site: a real run reaches the task
+    projection from the controller, and it asks `materialize` for its plan. A module with no
+    caller is a module whose rules are decoration."""
+    from personalclaw.workflows import materialize
+
+    hooked = _spied(monkeypatch, task_projection, "project_task")
+    planned = _spied(monkeypatch, materialize, "plan_materialization")
+    _run(_spec([_action("impl")]))
+    assert len(hooked) == 1, "the controller did not reach the task projection"
+    assert [args[0] for args, _kw in planned] == ["r-1"], "materialize was not asked for a plan"

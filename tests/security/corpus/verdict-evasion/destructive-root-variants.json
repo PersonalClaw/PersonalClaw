@@ -1,0 +1,13 @@
+{
+  "id": "verdict-evasion/destructive-root-variants",
+  "class": "verdict-evasion",
+  "summary": "Whitespace and flag-order variants of the destructive-root idiom. Each must reach the DANGEROUS floor on its own.",
+  "expect": "dangerous",
+  "variants": [
+    "rm -rf / --no-preserve-root\n",
+    "rm -fr /\n",
+    "rm  -rf  ~ \n",
+    "rm -rf $HOME\n",
+    "cd /tmp && rm -rf /; echo done\n"
+  ]
+}

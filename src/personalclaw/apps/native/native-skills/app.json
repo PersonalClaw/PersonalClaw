@@ -1,0 +1,22 @@
+{
+  "name": "native-skills",
+  "version": "1.0.0",
+  "displayName": "Native Skills",
+  "description": "Filesystem-based skill definitions. Create, edit, and manage agent skills with markdown procedures.",
+  "icon": "Sparkles",
+  "author": "PersonalClaw",
+  "tags": [
+    "skills",
+    "bundled"
+  ],
+  "provider": {
+    "type": "skills",
+    "implementation": "personalclaw.skills.native:create_provider",
+    "capabilities": [
+      "crud",
+      "triggers",
+      "auto_generation"
+    ]
+  },
+  "native": true
+}

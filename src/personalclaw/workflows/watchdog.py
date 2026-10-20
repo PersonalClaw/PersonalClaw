@@ -1,0 +1,896 @@
+"""The workflow watchdog — crash recovery and the supervisor poll.
+
+A controller drives a run only while its process lives. The watchdog covers everything
+that outlives a process: a gateway killed mid-run, a stage subagent that finished after
+its controller died, a cancel issued while the gateway was down.
+
+Its job is narrow by design. It does NOT schedule nodes — that is the controller's, and
+having two schedulers is how a run gets two writers. The watchdog decides only *which
+runs need a controller*, then hands off.
+
+Three responsibilities:
+
+**Adoption.** At startup, every run the store thinks is live has no controller. Each is
+adopted: a fresh controller resumes from the journal, and completed nodes come back as
+cache hits rather than re-running. Without this a gateway restart silently abandons runs
+in RUNNING forever — the state a user reads as "still working" while nothing is. A run whose
+controller's loop died under it while the process lives on is the same: that controller is let
+go and the run adopted afresh (`RunController.dead`). Every run is driven on this supervisor's
+own loop, which a caller on another thread reaches through `run_threadsafe`.
+
+**Orphan reaping.** A run whose nodes are all terminal but whose status never got written
+(the process died between the last node and the terminal write) is finished off from its
+derived outcome. This is the one place a terminal status is written outside a tick loop,
+and it is safe precisely because there is no controller: adoption comes first, so a run
+with a live controller is never reaped.
+
+**Sticky cancel.** A CANCEL file is honoured even for a run with no controller.
+
+**A Temporary or Incognito chat's runs end with it.** A run such a chat started is stopped once the
+chat has ended (a Temporary chat's session, an Incognito chat's deletion), then deleted with what
+it produced (`private_runs`), as the chat's transcript is; so is a batch of the chat's still waiting
+for its ask, its ask with it (`batch_start.end_records_of_ended_chats`).
+
+**Overlap-queue drain.** A start held back by `on_overlap: queue` is a durable DRAFT row
+with a marker, so it outlives the process that queued it. The poll drains it once nothing
+is in flight for that def — which is what makes the queue survive a gateway kill, and what
+covers a finish whose process died before its own drain ran. Deciding WHICH queued
+run may start is `overlap.drain`'s; this only asks.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import inspect
+import logging
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from personalclaw import concurrency, shutdown_event
+from personalclaw.cancellation import cancel_and_wait
+from personalclaw.workflows import containers, overlap, private_runs, run_finish, store
+from personalclaw.workflows.coalescer import EventCoalescer
+from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
+from personalclaw.workflows.models import (
+    TERMINAL_RUN_STATUSES,
+    TERMINAL_STATES,
+    InstanceState,
+    Node,
+    RunStatus,
+    WorkflowRun,
+    cancelled_because,
+)
+from personalclaw.workflows.tick import frontier
+
+logger = logging.getLogger(__name__)
+
+POLL_INTERVAL_SECS = 5
+
+#: Terminal status strings, for the publish-side flush check. The enum values rather than the
+#: enum: the payload carries a serialized status, not a member.
+_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL_RUN_STATUSES)
+
+
+def registry_key(run_id: str) -> str:
+    """The per-run SSE registry key — one hub per run, matching `loop:<id>`."""
+    return f"workflow:{run_id}"
+
+
+class WorkflowWatchdog:
+    """Supervises workflow runs across process lifetimes.
+
+    `start()` on gateway startup, `stop()` on shutdown. Owns the controller registry, so
+    every lookup of "is this run being driven?" has one answer.
+    """
+
+    def __init__(self, state: Any = None, services: EngineServices | None = None) -> None:
+        self._state = state
+        self._services = services or EngineServices()
+        self._task: asyncio.Task | None = None
+        self._controllers: dict[str, RunController] = {}
+        #: The event loop this supervisor's runs are driven on (`event_loop`): each controller's
+        #: tick loop is a task there, so a call from another thread is handed to it
+        #: (`run_threadsafe`).
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        #: The boot sweep runs ONCE, on the first poll after start — a run without a live
+        #: controller then is one this process never adopted, i.e. a crash survivor. On
+        #: later polls a controller-less RUNNING run is a genuinely new run, not a stale
+        #: one, so sweeping again would abort live work.
+        self._swept = False
+        #: Consecutive poll failures. A persistently broken poll should be loud in the
+        #: log rather than silently retrying forever.
+        self._consec_errors = 0
+        #: Coalesced delivery. ONE coalescer for the whole supervisor, so
+        #: its windows are keyed by observer across every run rather than one debounce state
+        #: per run — a browser watching two runs should not get two independent timers
+        #: fighting over the same connection.
+        self._coalescer = EventCoalescer(self._raw_publish)
+
+    def announce(self, infos: list[Any]) -> None:
+        """Hand a conversation how work it started ended, through the delivery a run's own ending
+        uses (`EngineServices.announce`): a subagent batch that never started (`batch_start`) has
+        no run to end. Inert when the gateway wired none."""
+        deliver = self._services.announce
+        if deliver is not None and infos:
+            deliver(infos)
+
+    @property
+    def state(self) -> Any:
+        """The dashboard state of the gateway this supervisor runs in (``None`` without one): its
+        live chats are where a run started for a chat reads that chat's mode first."""
+        return self._state
+
+    # ── lifecycle ──
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._event_loop = asyncio.get_running_loop()
+            self._task = asyncio.create_task(self._loop())
+            logger.info("workflow watchdog started")
+
+    async def stop(self) -> None:
+        for controller in list(self._controllers.values()):
+            with contextlib.suppress(Exception):
+                await controller.stop()
+        self._controllers.clear()
+        # Flush before the loop goes away: a pending batch's timer would never fire, and the
+        # events in it are the LAST ones a watching client sees before shutdown.
+        with contextlib.suppress(Exception):
+            self._coalescer.flush_all()
+        await cancel_and_wait([self._task], what="workflow watchdog")
+        self._task = None
+
+    # ── controller registry ──
+
+    def controller(self, run_id: str) -> RunController | None:
+        """The controller driving *run_id*, or None. One that can no longer drive it
+        (`RunController.dead`) is none: nothing handed to it would move the run, and the next poll
+        takes the run over."""
+        controller = self._controllers.get(run_id)
+        return None if controller is None or controller.dead else controller
+
+    @property
+    def event_loop(self) -> asyncio.AbstractEventLoop | None:
+        """The event loop this supervisor drives its runs on, while it runs; else None.
+
+        The loop it was started on, the gateway's. One never started (a test driving runs by
+        hand) drives them on the loop it launched them on."""
+        loop = self._event_loop
+        return loop if loop is not None and loop.is_running() else None
+
+    def run_threadsafe(self, work: Callable[[], Any]) -> Any:
+        """Call *work* on the loop this supervisor drives its runs on, from any thread, and return
+        what it returns, awaited when it is a coroutine.
+
+        The door a caller outside that loop reaches the runs by: an agent's workflow tool runs in a
+        worker thread (the native runtime's executor). A run is driven by its controller's tick
+        loop, a task on the loop the run was launched on, so a run started on a loop of the tool
+        call's own stopped when that loop closed with the call, and a tick loop restarted from a
+        thread with no loop was never restarted at all.
+
+        Called on that loop, *work* runs right here, and a coroutine it returns is refused: this
+        thread cannot wait for it without stopping the loop that would run it. Raises when no loop
+        drives this supervisor's runs (`event_loop`).
+        """
+        home = self.event_loop
+        if home is None:
+            raise RuntimeError("no event loop drives this workflow supervisor's runs")
+        try:
+            here: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        if here is not home:
+            return asyncio.run_coroutine_threadsafe(_awaited(work), home).result()
+        result = work()
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError(
+                "a call into the workflow engine that must be awaited was made on the engine's own "
+                "loop, which cannot wait for it"
+            )
+        return result
+
+    def register(self, controller: RunController) -> None:
+        """Adopt a controller created elsewhere, so the watchdog does not later adopt the same
+        run a second time."""
+        self._controllers[controller.run.id] = controller
+
+    def forget(self, run_id: str) -> bool:
+        """Drop a finished run's controller from the registry. True if one was held.
+
+        For deletion: nothing may hold a handle to a run whose row is about to disappear, or
+        the next poll would try to reconcile a run that no longer exists. Only ever called for
+        a TERMINAL run (`service.delete_run` refuses otherwise), so this cannot orphan a live
+        tick loop.
+        """
+        return self._controllers.pop(run_id, None) is not None
+
+    async def launch(
+        self, run: WorkflowRun, spec: dict[str, Any], *, depth: int = 0
+    ) -> RunController:
+        """Create, register and start a controller for a run."""
+        existing = self._controllers.get(run.id)
+        if existing is not None and not existing.dead:
+            return existing
+        if existing is not None:
+            self._take_over_from(existing)
+        if self._event_loop is None or self._event_loop.is_closed():
+            # Never started, this supervisor drives its runs where it launches them (`event_loop`).
+            self._event_loop = asyncio.get_running_loop()
+        controller = RunController(run, spec, services=self._services_for(run), depth=depth)
+        self._controllers[run.id] = controller
+        await controller.start()
+        return controller
+
+    def _services_for(self, run: WorkflowRun) -> EngineServices:
+        """Per-run services — the publish callback is run-scoped so events land on the
+        right SSE hub."""
+        base = self._services
+        return EngineServices(
+            subagents=base.subagents,
+            completion=base.completion,
+            get_provider=base.get_provider,
+            verify=base.verify,
+            publish=self._publisher(run.id),
+            # The attention path: a waiting gate raises a durable inbox item + one
+            # notification. Handed the state directly rather than a callback, because
+            # `emit_attention_item` owns the item↔notification pairing and a callback here
+            # would be a second place that could get it wrong.
+            attention_state=self._state,
+            # Itself, for `subworkflow` nesting: a child run has to be driven by the
+            # supervisor that will also adopt it after a restart. Passing a different one would
+            # leave the child un-reconciled, which is exactly the two-writers hazard the
+            # controller registry exists to prevent.
+            supervisor=self,
+            model_tiers=dict(base.model_tiers),
+            lane_limits=base.lane_limits,
+            node_timeout_total=base.node_timeout_total,
+            node_timeout_stall=base.node_timeout_stall,
+            cwd=base.cwd,
+            # The run-end learner: forwarded so a run driven by the
+            # supervisor mines its own ledger on termination. Shared, not per-run — one memory
+            # service backs every run, the same way `subagents` does.
+            memory=base.memory,
+            # A run a trigger started says how it went on the trigger's route when it ends.
+            report_to_trigger=base.report_to_trigger,
+            # And the automation that run's failure paused says so.
+            on_attention=base.on_attention,
+            # What waits on a run hears when it ends, whichever controller drives it.
+            run_ended=base.run_ended,
+            # The chat that started a subagent batch hears how its tasks ended.
+            announce=base.announce,
+        )
+
+    def _publisher(self, run_id: str) -> Any:
+        """Build the run-scoped event publisher.
+
+        Deliberately NOT `state.notify(...)`: that is the user-notification gate behind
+        mute/severity/quiet-hours, and routing engine events through it would let a
+        quiet-hours setting silently eat a run's entire event stream. Genuinely
+        user-facing moments (needs_input, failure) go through `notify` separately.
+
+        Every event goes through the coalescer, which batches the high-frequency per-node
+        chatter and passes everything else straight through. A run's last
+        events are flushed on termination by `_flush_run`, so nothing is stranded in a
+        window whose timer outlives the run.
+        """
+        if self._state is None:
+            return None
+
+        key = registry_key(run_id)
+
+        def publish(event: str, payload: dict[str, Any]) -> None:
+            self._coalescer.publish(key, event, payload)
+            if event == "workflow_run_update" and payload.get("status") in _TERMINAL_VALUES:
+                # A terminal run publishes nothing further, so any batch still accumulating
+                # behind this status would sit until its timer fired — on a stream the FE has
+                # already closed (a terminal run's SSE closes immediately). Flush now.
+                self._coalescer.flush(key)
+
+        return publish
+
+    def _raw_publish(self, key: str, event: str, payload: Any) -> None:
+        """The coalescer's sink: the run's own SSE write, plus the run list's refresh hint."""
+        state = self._state
+        if state is None:
+            return
+        try:
+            registry = getattr(state, "workflow_sse", None)
+            if callable(registry):
+                registry().publish(key, event, payload)
+        except Exception:
+            logger.debug("workflow sse publish failed", exc_info=True)
+        self._publish_to_equivalent_loop_hub(state, key, event, payload)
+        try:
+            refresh = getattr(state, "push_refresh", None)
+            if callable(refresh) and event == "workflow_run_update":
+                # A run started, moved or ended, so every open page that LISTS runs re-reads them:
+                # Mission Control's Working lane, the Workflows list, Home's work. The gateway's
+                # refresh hint is the listing signal those pages already route on the one socket;
+                # a run's own page follows it on the SSE above. This was a hand-built
+                # `{"type": "workflow_run_update"}` note, but `_broadcast` reads `_type`, so it went
+                # out as a `notification` frame that nothing read as a run changing, and a
+                # finished run kept its Working card until a reload.
+                refresh("workflow_runs")
+        except Exception:
+            logger.debug("workflow run-list refresh hint failed", exc_info=True)
+
+    def _publish_to_equivalent_loop_hub(
+        self, state: Any, key: str, event: str, payload: Any
+    ) -> None:
+        """Mirror a run event onto the EQUIVALENT loop hub, so a loop cockpit adopts it live.
+
+        This is what `loop_aliases.keys_equivalent` exists for. During coexistence a legacy loop
+        can run as a template: the cockpit subscribes on `loop:<id>` (`loop/watchdog.registry_key`)
+        while the engine publishes on `workflow:<run_id>` (`registry_key` above). Those are the
+        SAME container, and the frontend already knows it — `containerKey.belongsToLoop` matches
+        `loop:`, `run:` and `workflow:run:` forms. But nothing published to the loop hub, so the
+        match had nothing to match: the stream connects, the cockpit renders, and no update ever
+        arrives, with no error anywhere. Absence is the whole failure mode.
+
+        `peek`, never `hub`: publishing through `hub()` would CREATE a loop hub for every workflow
+        run, resurrecting a stream for a container nobody is watching and leaking one per run. A
+        mirror is only worth writing when a subscriber is already there.
+
+        Equivalence is asserted rather than assumed. The mirror only happens when
+        `keys_equivalent` agrees the two keys name one container, so this cannot become a
+        broadcast to every open cockpit — the bug that would be louder than the one it fixes.
+        """
+        from personalclaw.workflows.loop_aliases import base_container, keys_equivalent
+
+        container = base_container(key)
+        if not container:
+            return
+        loop_key = f"loop:{container}"
+        # Guard the mirror with the helper itself. It is trivially true here by construction, and
+        # that is the point: a future change to either key scheme cannot silently start mirroring
+        # events onto an unrelated hub, because this is the one place that decides.
+        if not keys_equivalent(key, loop_key):
+            return
+        try:
+            registry = getattr(state, "loop_sse", None)
+            if not callable(registry):
+                return
+            hub = registry().peek(loop_key)
+            if hub is None:
+                # Nobody is watching this container as a loop. The workflow hub already got the
+                # event; there is nothing to adopt.
+                return
+            hub.publish(event, payload)
+        except Exception:
+            logger.debug("loop-hub mirror publish failed for %s", loop_key, exc_info=True)
+
+    # ── poll ──
+
+    async def _loop(self) -> None:
+        while not shutdown_event.is_set():
+            try:
+                await self._poll_once()
+                self._consec_errors = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._consec_errors += 1
+                logger.warning(
+                    "workflow watchdog poll failed (%d consecutive)",
+                    self._consec_errors,
+                    exc_info=True,
+                )
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=POLL_INTERVAL_SECS)
+            except asyncio.TimeoutError:
+                continue
+
+    async def _poll_once(self) -> None:
+        # Drop finished controllers first so a completed run does not look adopted and
+        # block its own reaping — and dead ones, so their runs are taken over below.
+        for run_id, controller in list(self._controllers.items()):
+            if controller.run.is_terminal:
+                self._controllers.pop(run_id, None)
+            elif controller.dead:
+                self._take_over_from(controller)
+
+        # The boot sweep runs ONCE, before the first adoption, so a run this process never
+        # drove is decided honestly rather than blindly re-adopted as "still
+        # working". A run it SUSPENDED is skipped on this same poll, and the next poll's
+        # adoption reattaches it: a gateway's death is no owner's pause, and taking the run on
+        # again after a restart — waiting for its durable worker when one outlived the gateway —
+        # is the durable-spawn promise (`tests/test_durable_spawn.py`). What must wait for its
+        # owner carries the sticky pause intent honoured below: a pause the owner asked for, and
+        # a run a restore brought back working (`store.hold_restored`).
+        # A run whose loop is over is ended, not driven: first, so neither the boot sweep nor
+        # adoption takes it on again — a stopped loop's batch resumed after a restart, provisioned
+        # its workspace again and asked for the same approvals anew.
+        self._end_runs_whose_loop_ended()
+        self._end_runs_whose_private_chat_ended()
+        await self._remove_runs_whose_private_chat_ended()
+        self._end_batches_whose_private_chat_ended()
+
+        swept: set[str] = set()
+        if not self._swept:
+            swept = await self._boot_sweep()
+            self._swept = True
+
+        for run in store.active_runs():
+            if run.id in swept:
+                continue
+            if store.cancel_requested(run.id):
+                await self._honor_cancel(run)
+                continue
+            if run.status == RunStatus.PAUSED and store.pause_requested(run.id):
+                # Paused by the user, and the pause is sticky. Adopting it would launch a
+                # controller whose `_prepare` flips the row back to RUNNING — a restart would
+                # silently resume every paused run. Resume clears the intent, and the next poll
+                # adopts it then.
+                continue
+            live = self._controllers.get(run.id)
+            if live is None:
+                await self._adopt(run)
+                continue
+            if live.run.is_terminal:
+                self._controllers.pop(run.id, None)
+
+        # The `on_overlap: queue` drain. Last, AFTER adoption, so a crash-survivor
+        # run that is about to be re-adopted still counts as active and a queued start does
+        # not overtake it.
+        #
+        # This is what makes the queue survive a restart: a queued start is a durable DRAFT
+        # row plus its spec file, so the first poll after a gateway comes back drains
+        # whatever was pending — the same 5s bound as adoption, with no separate boot hook.
+        # It also covers a finish whose process died between the terminal write and the
+        # controller's own drain.
+        await overlap.drain_all(self)
+
+    def _take_over_from(self, controller: RunController) -> None:
+        """Let go of a controller that can no longer drive its run (`RunController.dead`), so the
+        run is adopted afresh, as a restart adopts it: by the poll, or by the launch that found it.
+        What it still had in flight is cancelled, and the steps it left running go back in the
+        queue when the new controller starts (`run_start.requeue_lost_steps`)."""
+        self._controllers.pop(controller.run.id, None)
+        controller.let_go()
+        logger.warning(
+            "workflow run %s: its controller's loop stopped, so nothing would move the run; it is "
+            "taken over",
+            controller.run.id,
+        )
+
+    def _end_runs_whose_loop_ended(self) -> int:
+        """Ask the cancel, with its reason, of every live run whose loop is over for good.
+        Returns how many.
+
+        A loop's Stop ends its children itself (`loop.children.end_children`); this is the path
+        for one it missed: a loop that finished or was deleted while its batch ran, and a run of a
+        loop stopped while the gateway was down. The cancel is applied the way any sticky cancel
+        is — by a controller, through `_finish` — so the run closes its waits, approvals and
+        leases, and says which loop ended it.
+        """
+        from personalclaw.loop.children import parent_ended
+
+        asked = 0
+        for run in store.active_runs():
+            if store.cancel_requested(run.id):
+                continue
+            try:
+                reason = parent_ended(run)
+            except Exception:
+                # A loop that could not be read is not a loop that ended: the run goes on.
+                logger.debug("run %s: could not read its loop", run.id, exc_info=True)
+                continue
+            if not reason:
+                continue
+            store.request_cancel(run.id, reason=reason)
+            live = self._controllers.get(run.id)
+            if live is not None:
+                live.wake()
+            logger.info("workflow run %s: stopping it, because %s", run.id, reason)
+            asked += 1
+        return asked
+
+    def _end_runs_whose_private_chat_ended(self) -> int:
+        """Stop every run, live or still a draft, whose Temporary or Incognito chat has ended
+        (`private_runs.to_stop`), saying why (`private_runs.ended_because`). Returns how many.
+
+        Through `service.cancel_run`, so a draft ends at once and a launched run is ended by a
+        controller, through `_finish`, which closes what it holds: by its own on its next step, or
+        by one the adoption below starts for it (`_honor_cancel`), before the boot sweep or an
+        adoption could drive it again. Deleted once it has ended
+        (:meth:`_remove_runs_whose_private_chat_ended`).
+        """
+        from personalclaw.workflows import service
+
+        asked = 0
+        for run in private_runs.to_stop(self._state):
+            if store.cancel_requested(run.id):
+                continue
+            why = private_runs.ended_because(run)
+            try:
+                service.cancel_run(run.id, supervisor=self, reason=why)
+            except Exception:  # noqa: BLE001 - one run that will not stop must not stop the poll
+                logger.warning("could not stop workflow run %s", run.id, exc_info=True)
+                continue
+            logger.info("workflow run %s: stopping it, because %s", run.id, why)
+            asked += 1
+        return asked
+
+    async def _remove_runs_whose_private_chat_ended(self) -> int:
+        """Delete every ended run whose Temporary or Incognito chat has ended, with what it
+        produced (`private_runs.to_remove`, through `service.delete_run`, which tears its workspace
+        down first and expires its Inbox rows). Returns how many."""
+        from personalclaw.workflows import service
+
+        removed = 0
+        for run in private_runs.to_remove(self._state):
+            try:
+                deleted = await service.delete_run(run.id, supervisor=self)
+            except Exception:  # noqa: BLE001 - asked again on the next poll
+                logger.warning("could not remove workflow run %s", run.id, exc_info=True)
+                continue
+            if deleted.get("deleted"):
+                removed += 1
+        if removed:
+            logger.info(
+                "removed %d workflow run(s) whose Temporary or Incognito chat ended: their records "
+                "and what they produced are deleted",
+                removed,
+            )
+        return removed
+
+    def _end_batches_whose_private_chat_ended(self) -> int:
+        """End every batch of a Temporary or Incognito chat that has ended and that has no run
+        yet (`batch_start.end_records_of_ended_chats`): its record, with the chat's tasks, is
+        deleted, and its ask, if it still waits, is cancelled on every surface. Returns how
+        many."""
+        from personalclaw.workflows import batch_start
+
+        try:
+            return batch_start.end_records_of_ended_chats(self._state)
+        except Exception:  # noqa: BLE001 - asked again on the next poll
+            logger.warning("could not end the batches of an ended chat", exc_info=True)
+            return 0
+
+    async def _boot_sweep(self) -> set[str]:
+        """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.
+
+        A RUNNING run with no live controller on the first poll is one this process never
+        drove — a gateway killed mid-run. The rule turns on the SUBSTRATE: an isolated
+        run (worktree/container) whose substrate survived on disk has recoverable work →
+        SUSPENDED (PAUSED), which the next poll's adoption reattaches; one whose substrate is
+        gone is honestly aborted → CANCELLED. Marking every stale isolated run aborted is the
+        obvious implementation and it is wrong — it destroys recoverable work while reporting
+        success.
+
+        INLINE runs are deliberately NOT swept here. An inline run's substrate is the
+        process that died, but its journal is on disk, and the existing adoption path
+        resumes it from cache hits (or reaps it if every node is already terminal) — which
+        IS the truthful-across-a-kill behaviour for the inline case. Cancelling them here
+        would discard journal-backed recoverable work and pre-empt that path. That is
+        deliberate (sweeping inline → CANCELLED is the tempting alternative); the
+        intent — never abort a run whose substrate survived — is preserved, and the inline
+        path stays owned by adoption. Runs with a live controller are never swept (this
+        runs before the first `_adopt`, so it only sees controller-less runs). The status
+        write happens BEFORE adoption so a swept run is not relaunched. Returns the ids it
+        decided, so the adoption loop on this same poll skips them.
+
+        The *mechanics* of this are shared with the loop watchdog's own boot sweep (one
+        adoption/reaping path): :func:`concurrency.boot_sweep` owns the crash-survivor
+        partition, the per-row failure isolation, the count log and the decided-id contract,
+        and the run-specific substrate rule stays here in :meth:`_sweep_one`. One
+        consequence is a real improvement rather than a relocation: a row whose decision raises
+        no longer aborts the whole sweep — it is logged and the remaining survivors are still
+        decided.
+        """
+        return await concurrency.boot_sweep(
+            "workflow-run",
+            store.active_runs(),
+            survived=self._is_crash_survivor,
+            decide=self._sweep_one,
+        )
+
+    def _is_crash_survivor(self, run: WorkflowRun) -> bool:
+        """A run persisted RUNNING that no controller in THIS process drives — i.e. one a
+        gateway was killed in the middle of. A run with a live controller is never swept, and
+        nor is one whose cancel was asked: the cancel decides its fate, through a controller
+        (`_honor_cancel`), which closes what the run holds as a status written here would not."""
+        return (
+            run.status == RunStatus.RUNNING
+            and self._controllers.get(run.id) is None
+            and not store.cancel_requested(run.id)
+        )
+
+    async def _sweep_one(self, run: WorkflowRun) -> bool:
+        """The substrate rule for ONE crash-survivor run. Returns whether a fate was
+        written — an inline run, or one whose substrate says nothing changed, is deliberately
+        left to adoption and reports ``False`` so this poll still drives it."""
+        substrate = self._substrate_for(run)
+        if not substrate.isolated:
+            return False  # inline → left to adoption (resumed from the journal)
+        decision = containers.sweep_decision(run, substrate)
+        if decision.status is None or decision.status == run.status:
+            return False
+        run.status = decision.status
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        logger.info(
+            "workflow boot sweep: run %s → %s (%s)",
+            run.id,
+            decision.status.value,
+            decision.reason,
+        )
+        return True
+
+    def _substrate_for(self, run: WorkflowRun) -> containers.Substrate:
+        """The execution substrate for a stale run, for the sweep's substrate check.
+
+        A run is treated as isolated only when it recorded a workspace path; that path's on-disk
+        existence is its `alive`. An isolated-but-gone workspace is honestly aborted (a Resume
+        that points at a gone worktree is worse than an abort); an inline run (no recorded
+        workspace) is reported not-isolated so the sweep leaves it to adoption.
+
+        The answer comes from `worktrees.substrate_for(inspect_worktree(...))`, which exists
+        for exactly this — the substrate is built THERE so the boot sweep has one
+        source of truth. Before this, the sweep did its own `Path(wt).is_dir()`, so two places
+        computed the same decision and the disagreement would show up as a run aborted despite
+        having recoverable work. `provisioning.inspect_run` additionally records the DIRTY state
+        and the changed files, which is what makes the suspended run's Resume affordance able to
+        say what is waiting in it rather than only that something is.
+
+        Falls back to the cheap existence check if the inspection raises: a boot sweep must
+        decide, and an unanswerable git call is not a reason to leave a stale `running` row.
+        """
+        # The durable reattach-not-reap PRE-STEP. It runs FIRST, before any path check, because
+        # it is the only question whose answer can be "the worker is still executing right
+        # now" — and a run with a live worker must never be decided by looking at a directory.
+        # Ordering matters in one direction only: a live durable worker outranks every other
+        # signal, and if there is none this falls through to today's decision unchanged.
+        durable = self._durable_substrate(run)
+        if durable is not None:
+            return durable
+        wt = str((run.extra or {}).get("worktree_path", "") or "")
+        if not wt:
+            return containers.Substrate(kind="inline", alive=False)
+        try:
+            from personalclaw.workflows import provisioning
+            from personalclaw.workflows import worktrees as wt_mod
+
+            state = provisioning.inspect_run(run)
+            # Recorded on the way past: this is the one place at boot that knows whether a
+            # survived workspace has UNCOMMITTED work in it, and that is precisely what
+            # `preserved_workspace_path` means. A sweep that suspended a run without it would
+            # leave the user a Resume button and no path to the work.
+            if provisioning.stamp_preserved_path(run, state):
+                store.save(run)
+            return wt_mod.substrate_for(state)
+        except Exception:
+            logger.debug("substrate inspection failed for run %s", run.id, exc_info=True)
+            return containers.Substrate(kind="worktree", alive=Path(wt).is_dir(), detail=wt)
+
+    @staticmethod
+    def _durable_substrate(run: WorkflowRun) -> containers.Substrate | None:
+        """A still-alive durable tmux worker for *run*, or None. The durable boot pre-step.
+
+        Two ways a worker is recognised, in order of strength:
+
+        1. **The recomputed deterministic name.** `pclaw-<project>-<run>-<session>` is derived
+           from identity alone, so a gateway that lost every byte of in-memory state can
+           reconstruct it and ask the daemon directly. This recomputability IS the mechanism —
+           nothing had to be persisted at spawn time, so there is no write a crash could have
+           missed.
+        2. **A durable session working inside the run's workspace.** A worker is also identified
+           by WHERE it is, not only by what it is called: a shell the daemon is holding whose
+           cwd is inside this run's workspace is this run's live substrate even when an earlier
+           mechanism chose its name. Without this leg the pre-step would only ever recognise
+           sessions named by this exact version of this exact function, which is a reader that
+           agrees with itself and nothing else.
+
+        Returns None — never a dead `Substrate` — so the caller falls through to today's
+        decision untouched. That is deliberate: this function may only ever RESCUE a run from
+        being aborted, never cause one to be aborted that would not have been. A bug here can
+        cost a spurious "suspended"; it cannot destroy work.
+        """
+        from personalclaw import tmux_substrate
+        from personalclaw.agents import runner_lifecycle
+
+        # The flag gate is first and cheap. Off (or no tmux binary) means not one probe is
+        # spawned and the sweep behaves exactly as it did before this existed.
+        if not runner_lifecycle.durable_sessions_enabled():
+            return None
+        # The shared run→name derivation — the SAME function the spawn side names its session
+        # with, so the writer and this reader cannot drift apart on the fallback components.
+        name = containers.durable_worker_name(run)
+        if tmux_substrate.has_session_sync(name):
+            return containers.Substrate(
+                kind="tmux", alive=True, detail=f"durable session {name} is still running"
+            )
+        ws = str((run.extra or {}).get("worktree_path", "") or "")
+        if not ws:
+            return None
+        try:
+            root = Path(ws).resolve()
+        except OSError:
+            return None
+        for session_name, pane_path in tmux_substrate.pane_paths_sync():
+            try:
+                pane = Path(pane_path).resolve()
+            except OSError:
+                continue
+            # `is_relative_to`, not a string prefix: `/tmp/run-1x` must not match the
+            # workspace `/tmp/run-1`, and adopting a NEIGHBOUR's worker would report someone
+            # else's live shell as this run's recoverable work.
+            if pane == root or pane.is_relative_to(root):
+                return containers.Substrate(
+                    kind="tmux",
+                    alive=True,
+                    detail=f"durable session {session_name} is working in {pane}",
+                )
+        return None
+
+    async def _adopt(self, run: WorkflowRun) -> None:
+        """Resume a run with no live controller.
+
+        Reaping is checked BEFORE launching: a run whose work is all terminal needs a
+        status write, not a controller, and launching one would spin up a tick loop only
+        to have it immediately conclude.
+        """
+        spec = store.read_spec(run.id)
+        if spec is None:
+            await self._fail(run, "run spec is missing or unreadable")
+            return
+        if self._reap_if_finished(run, spec):
+            return
+        logger.info("workflow watchdog adopting run %s (%s)", run.id, run.status.value)
+        with contextlib.suppress(Exception):
+            await self.launch(run, spec)
+
+    def _reap_if_finished(self, run: WorkflowRun, spec: dict[str, Any]) -> bool:
+        """Finish a run whose nodes are all terminal but whose status never got written.
+
+        The only terminal write outside a tick loop, and safe only because it runs when
+        no controller exists for the run.
+        """
+        try:
+            root = Node.from_dict(spec.get("root") or {})
+        except ValueError:
+            return False
+        instances = store.read_state(run.id)
+        if not instances:
+            return False
+        states = {p: i.state for p, i in instances.items()}
+        if any(st not in TERMINAL_STATES for st in states.values()):
+            return False
+        fr = frontier(root, states, outputs={}, inputs=run.inputs)
+        if not fr.complete:
+            return False
+        status = _ROOT_TO_RUN.get(fr.outcome or InstanceState.DONE, RunStatus.COMPLETE)
+        run.status = status
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        logger.info("workflow watchdog reaped orphaned run %s → %s", run.id, status.value)
+        # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
+        # hear here how it ended.
+        run_finish.report_to_its_trigger(self._services, run, status)
+        run_finish.report_to_its_chat(self._services, run, status)
+        run_finish.chain_after_run(self._services, run, status)
+        return True
+
+    async def _honor_cancel(self, run: WorkflowRun) -> None:
+        """Honour a sticky cancel, through the controller's terminal writer — a cancel issued
+        while the gateway was down must not be lost, and must close what any ending closes.
+
+        A registered controller cancels itself on its next step, but only a LIVE tick loop has a
+        next step. A run parked on a question, or paused, has none, and a cancel written without
+        waking it — `run-workflow`'s `on_overlap: cancel_then_start` writes the prior run's intent
+        and moves on — was left here for a loop that did not exist: the prior run waited at its
+        gate forever. So it is woken; `wake` is a no-op for a loop that is running.
+
+        A run with NO controller (the gateway restarted) gets one: its tick loop honours the
+        intent before `_prepare` and ends the run through `_finish`, which closes the waits,
+        tokens, Inbox rows, approvals and leases the run still holds. Writing CANCELLED onto the
+        row here, as this used to, closed none of them — a gate kept reading `waiting` with a
+        live token on a run that was over. Only a run whose spec cannot be read is still written
+        directly, since no controller can be built for it.
+        """
+        controller = self._controllers.get(run.id)
+        if controller is not None:
+            controller.wake()
+            return
+        spec = store.read_spec(run.id)
+        if spec is not None:
+            logger.info("workflow watchdog cancelling run %s (no live controller)", run.id)
+            with contextlib.suppress(Exception):
+                await self.launch(run, spec)
+            return
+        run.status = RunStatus.CANCELLED
+        run.error_message = cancelled_because(store.cancel_reason(run.id))
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        store.clear_cancel(run.id)
+        logger.info("workflow watchdog cancelled run %s (no readable spec)", run.id)
+
+    async def _fail(self, run: WorkflowRun, reason: str) -> None:
+        run.status = RunStatus.FAILED
+        run.error_message = reason
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        logger.warning("workflow run %s failed: %s", run.id, reason)
+        # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
+        # hear here that it failed and why.
+        run_finish.report_to_its_trigger(self._services, run, RunStatus.FAILED)
+        run_finish.report_to_its_chat(self._services, run, RunStatus.FAILED)
+        run_finish.chain_after_run(self._services, run, RunStatus.FAILED)
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+async def _awaited(work: Callable[[], Any]) -> Any:
+    """*work*'s answer, awaited when it is a coroutine: what `run_threadsafe` runs on the loop."""
+    result = work()
+    return await result if inspect.isawaitable(result) else result
+
+
+# ── retention ────────────────────────────────────────────────────────────────
+
+
+async def prune_runs(workflow_name: str, *, keep: int = 100) -> int:
+    """Prune old runs for one def, oldest first, tearing each workspace down FIRST.
+
+    Pinned runs are never pruned, and the row is deleted only after its directory sweep
+    succeeds — the reverse order would orphan megabytes of journal with no row left to
+    find them by.
+
+    ASYNC because retention is the OTHER deletion path teardown has to cover (teardown
+    ties to run retention expiry). Wiring only the explicit delete would leave every
+    retention-expired run's services running — and retention is the path that fires without
+    anyone watching, so it is the one where a leak accumulates silently. The teardown goes
+    through `service.teardown_workspace`, the SAME performer the explicit delete uses, gated by
+    the same `workspace_teardown_on_expiry` config.
+    """
+    from personalclaw.workflows.service import teardown_workspace
+
+    runs, _total = store.list_runs(workflow_name=workflow_name, limit=10_000)
+    prunable = [r for r in runs if r.is_terminal and not r.pinned]
+    if len(prunable) <= keep:
+        return 0
+    # `list_runs` returns newest-first, so the tail is the oldest.
+    doomed = prunable[keep:]
+    removed = 0
+    for run in doomed:
+        # BEFORE the sweep, always: a scratch workspace lives under the run dir, so sweeping
+        # first would run teardown against a directory that is already gone.
+        await teardown_workspace(run, reason="retention")
+        if _sweep_run_dir(run.id):
+            store.delete(run.id)
+            removed += 1
+    return removed
+
+
+def _sweep_run_dir(run_id: str) -> bool:
+    """Delete a run directory, refusing any path that escapes the runs root.
+
+    The containment check is not paranoia: `run_id` reaches here from a stored row, and a
+    row is not a trust boundary. A `..`-shaped id must delete nothing.
+    """
+    import shutil
+
+    try:
+        root = store.runs_root().resolve()
+        target = store.run_dir(run_id).resolve()
+    except OSError:
+        return False
+    if target == root or root not in target.parents:
+        logger.error("refusing to sweep %s — outside the runs root", target)
+        return False
+    if not target.exists():
+        return True
+    try:
+        shutil.rmtree(target)
+        return True
+    except OSError:
+        logger.warning("could not sweep run dir %s", target, exc_info=True)
+        return False

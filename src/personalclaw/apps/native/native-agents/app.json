@@ -1,0 +1,25 @@
+{
+  "name": "native-agents",
+  "version": "1.0.0",
+  "displayName": "Native Agents",
+  "description": "Filesystem-based agent definitions using ACP protocol. Create, edit, and manage agent configurations.",
+  "icon": "Bot",
+  "author": "PersonalClaw",
+  "tags": [
+    "agent",
+    "bundled"
+  ],
+  "provider": {
+    "type": "agent",
+    "implementation": "personalclaw.agents.marketplace:create_provider",
+    "capabilities": [
+      "crud",
+      "acp"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "native": true
+}

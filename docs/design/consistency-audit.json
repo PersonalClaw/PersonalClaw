@@ -1,0 +1,1030 @@
+{
+  "totals": {
+    "driftHits": 17,
+    "filesScanned": 891,
+    "filesWithDrift": 11
+  },
+  "byCategory": {
+    "color": 13,
+    "spacing": 0,
+    "radius": 1,
+    "shadow": 0,
+    "duration": 3
+  },
+  "ranked": [
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "score": 20,
+      "detail": "4 color"
+    },
+    {
+      "file": "pages/projects/ProjectsSection.tsx",
+      "score": 19,
+      "detail": "9 raw-button, 1 raw-input"
+    },
+    {
+      "file": "pages/loops/LoopCockpitPage.tsx",
+      "score": 16,
+      "detail": "7 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "score": 12,
+      "detail": "2 color, 1 raw-button"
+    },
+    {
+      "file": "pages/settings/MemoryPanel.tsx",
+      "score": 12,
+      "detail": "5 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "score": 10,
+      "detail": "2 color"
+    },
+    {
+      "file": "pages/files/FilesSection.tsx",
+      "score": 10,
+      "detail": "4 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/knowledge/KnowledgeListPage.tsx",
+      "score": 10,
+      "detail": "5 raw-button"
+    },
+    {
+      "file": "pages/settings/DesignPanel.tsx",
+      "score": 10,
+      "detail": "5 raw-button"
+    },
+    {
+      "file": "pages/settings/DiagnosticsPanel.tsx",
+      "score": 10,
+      "detail": "5 raw-button"
+    },
+    {
+      "file": "pages/settings/ProviderCard.tsx",
+      "score": 10,
+      "detail": "5 raw-button"
+    },
+    {
+      "file": "pages/tools/ToolsPage.tsx",
+      "score": 10,
+      "detail": "5 raw-button"
+    },
+    {
+      "file": "pages/files/browse/FileTree.tsx",
+      "score": 9,
+      "detail": "3 raw-button, 3 raw-input"
+    },
+    {
+      "file": "pages/knowledge/KnowledgeCreatePage.tsx",
+      "score": 9,
+      "detail": "2 raw-button, 5 raw-input"
+    },
+    {
+      "file": "pages/loops/DesignCockpitPage.tsx",
+      "score": 9,
+      "detail": "4 raw-button, 1 raw-input"
+    },
+    {
+      "file": "pages/settings/ProjectionRulesPanel.tsx",
+      "score": 9,
+      "detail": "2 raw-button, 5 raw-input"
+    },
+    {
+      "file": "pages/chat/PromptPalette.tsx",
+      "score": 8,
+      "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/code/CodePlanReview.tsx",
+      "score": 8,
+      "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/loop/LoopComposer.tsx",
+      "score": 8,
+      "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/schedule/ScheduleForm.tsx",
+      "score": 8,
+      "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/tasks/TaskDetail.tsx",
+      "score": 8,
+      "detail": "4 raw-button"
+    },
+    {
+      "file": "pages/tasks/TasksListPage.tsx",
+      "score": 8,
+      "detail": "4 raw-button"
+    },
+    {
+      "file": "pages/tasks/formControls.tsx",
+      "score": 8,
+      "detail": "3 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/settings/MemoryGraph.tsx",
+      "score": 7,
+      "detail": "1 color, 1 duration"
+    },
+    {
+      "file": "pages/artifacts/ArtifactViewer.tsx",
+      "score": 7,
+      "detail": "3 raw-button, 1 raw-input"
+    },
+    {
+      "file": "pages/chat/ChatActivityPanel.tsx",
+      "score": 7,
+      "detail": "3 raw-button, 1 raw-input"
+    },
+    {
+      "file": "pages/prompts/VariableRow.tsx",
+      "score": 7,
+      "detail": "1 raw-button, 5 raw-input"
+    },
+    {
+      "file": "app/Onboarding.tsx",
+      "score": 6,
+      "detail": "1 color, 1 raw-input"
+    },
+    {
+      "file": "pages/apps/AppsSection.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/chat/MessageActions.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/chat/SessionSkillsReview.tsx",
+      "score": 6,
+      "detail": "2 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/loops/LoopPlanReview.tsx",
+      "score": 6,
+      "detail": "2 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/prompts/PromptDetail.tsx",
+      "score": 6,
+      "detail": "1 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/prompts/RunnableTemplateField.tsx",
+      "score": 6,
+      "detail": "1 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/prompts/SyntaxReference.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/settings/AccountPanel.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/skills/SkillInspector.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/settings/PacksPanel.tsx",
+      "score": 5,
+      "detail": "1 color"
+    },
+    {
+      "file": "pages/workflows/LedgerRailsPanel.tsx",
+      "score": 5,
+      "detail": "1 color"
+    },
+    {
+      "file": "ui/AgentOrb.tsx",
+      "score": 5,
+      "detail": "1 color"
+    }
+  ],
+  "a11y": {
+    "outlineNoneCount": 123,
+    "outlineNoneFiles": 76,
+    "localFocusVisibleFiles": 55,
+    "reducedMotionFiles": 18,
+    "animatedFiles": 208,
+    "hasGlobalReducedMotion": true,
+    "hasGlobalFocusRing": true
+  },
+  "byFile": {
+    "app/Onboarding.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "app/onboarding/EssentialsStep.tsx": {
+      "color": 4,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/dashboard/DashboardPage.tsx": {
+      "color": 2,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/knowledge/KnowledgeGraph.tsx": {
+      "color": 0,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 1
+    },
+    "pages/settings/MemoryGraph.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 1
+    },
+    "pages/settings/NotificationRulesMatrix.tsx": {
+      "color": 0,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 1
+    },
+    "pages/settings/PacksPanel.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/settings/SourcesPanel.tsx": {
+      "color": 2,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/workflows/LedgerRailsPanel.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "ui/AgentOrb.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "ui/composer/liveMarkdown.ts": {
+      "color": 0,
+      "spacing": 0,
+      "radius": 1,
+      "shadow": 0,
+      "duration": 0
+    }
+  },
+  "primitivesByFile": {
+    "app/CommandPalette.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "app/ErrorBoundary.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "app/Onboarding.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/agents/AgentDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/agents/AgentForm.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/apps/AppFrame.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/apps/AppsSection.tsx": {
+      "raw-button": 3,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/apps/appConfigForm.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/artifacts/ArtifactCompare.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/artifacts/ArtifactViewer.tsx": {
+      "raw-button": 3,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/AttachmentChips.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/ChatActivityPanel.tsx": {
+      "raw-button": 3,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/ChatContextLine.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/ContextLedger.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/MessageActions.tsx": {
+      "raw-button": 3,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/PasteChip.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/PromptPalette.tsx": {
+      "raw-button": 2,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/chat/QuestionCard.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/SessionMapRail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/SessionSkillsReview.tsx": {
+      "raw-button": 2,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/chat/ToolCard.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/composer/ContextPickers.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/composer/PasteCards.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/composer/QueueStack.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/header/ChatHeader.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/history/ChatHistoryPage.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/history/SessionPeek.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/transcript/AssistantSegments.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/transcript/UserEditor.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/CodePlanReview.tsx": {
+      "raw-button": 2,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/code/CodeSection.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/CodeToast.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/WorkspacePicker.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/CenterEditor.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/FilesTouched.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/ChangesPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/FileFinder.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/FilesRail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/WorkspaceTree.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/footer/ProjectFooter.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/header/CockpitHeader.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/meta/CockpitMeta.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/FindingCard.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/StageTasks.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/TaskDetailView.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/TaskRow.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/DashboardPage.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/ActionCenter.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/ActiveWork.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/HeroPulse.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/Suggestions.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/SystemHealth.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/TasksWidget.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/kit.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/files/FilesSection.tsx": {
+      "raw-button": 4,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/files/browse/FilePreviews.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/files/browse/FileTree.tsx": {
+      "raw-button": 3,
+      "raw-input": 3,
+      "raw-dialog": 0
+    },
+    "pages/files/browse/PathBar.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/files/comments/CommentLayer.tsx": {
+      "raw-button": 0,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/inbox/InboxPage.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/AudioRecorder.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/KnowledgeCreatePage.tsx": {
+      "raw-button": 2,
+      "raw-input": 5,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/KnowledgeDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/KnowledgeDetailPage.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/KnowledgeListPage.tsx": {
+      "raw-button": 5,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/loop/LoopComposer.tsx": {
+      "raw-button": 2,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/loop/LoopRuntimePill.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/loop/LoopSelfApproval.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/loops/CockpitPromptBar.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/loops/DesignCockpitPage.tsx": {
+      "raw-button": 4,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/loops/LoopCockpitPage.tsx": {
+      "raw-button": 7,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/loops/LoopPlanReview.tsx": {
+      "raw-button": 2,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/projects/ProjectsSection.tsx": {
+      "raw-button": 9,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/prompts/PromptDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/prompts/PromptEditFields.tsx": {
+      "raw-button": 1,
+      "raw-input": 3,
+      "raw-dialog": 0
+    },
+    "pages/prompts/PromptForm.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/prompts/PromptPreviewPane.tsx": {
+      "raw-button": 1,
+      "raw-input": 3,
+      "raw-dialog": 0
+    },
+    "pages/prompts/PromptsListPage.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/prompts/RunnableTemplateField.tsx": {
+      "raw-button": 1,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/prompts/SnippetDetail.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/prompts/SnippetForm.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/prompts/SyntaxReference.tsx": {
+      "raw-button": 3,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/prompts/VariableRow.tsx": {
+      "raw-button": 1,
+      "raw-input": 5,
+      "raw-dialog": 0
+    },
+    "pages/schedule/ScheduleDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/schedule/ScheduleForm.tsx": {
+      "raw-button": 2,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/settings/AccountPanel.tsx": {
+      "raw-button": 3,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/AlwaysOnConventions.tsx": {
+      "raw-button": 0,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/settings/ArchivePanel.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/AuditPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/DesignPanel.tsx": {
+      "raw-button": 5,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/DiagnosticsPanel.tsx": {
+      "raw-button": 5,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/MemoryPanel.tsx": {
+      "raw-button": 5,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/settings/ModelBackends.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/ModelsPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/NotificationsPanel.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/PortabilityPanel.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/ProjectionRulesPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 5,
+      "raw-dialog": 0
+    },
+    "pages/settings/PromptsPanel.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/ProviderCard.tsx": {
+      "raw-button": 5,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/RoutingPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/SearchPanel.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/SecurityPanel.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/SettingsPage.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/settings/VoicePanel.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/bento.tsx": {
+      "raw-button": 2,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/settingsUI.tsx": {
+      "raw-button": 2,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/skills/SkillInspector.tsx": {
+      "raw-button": 3,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/skills/SkillProposals.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/skills/SkillsPage.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/tasks/DagView.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tasks/TaskDetail.tsx": {
+      "raw-button": 4,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tasks/TasksListPage.tsx": {
+      "raw-button": 4,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tasks/formControls.tsx": {
+      "raw-button": 3,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/terminal/TerminalDrawer.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/terminal/TerminalPage.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/terminal/TerminalView.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tools/ToolInspector.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tools/ToolOutput.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tools/ToolsPage.tsx": {
+      "raw-button": 5,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/tools/schema.tsx": {
+      "raw-button": 0,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/triggers/ActionConfig.tsx": {
+      "raw-button": 0,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/workflows/OutboxPanel.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/workflows/WorkflowDefEditor.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/workflows/WorkflowRunDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    }
+  },
+  "drift": [
+    {
+      "file": "app/Onboarding.tsx",
+      "line": 785,
+      "category": "color",
+      "snippet": "`--color-canvas` (rgb(240,244,248)), where the base accent measured **4.37:1** against"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 556,
+      "category": "color",
+      "snippet": "card, so the catalog below is unchanged. #3529 (containerised installs"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 568,
+      "category": "color",
+      "snippet": "{/* #3529 — a provider type can be registered with NO route into it: its app is"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 597,
+      "category": "color",
+      "snippet": "Sits alongside #3447's `verify` phase rather than merging with it: both are"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 599,
+      "category": "color",
+      "snippet": "reads. #3447 guards a POSITIVE claim (a model is ready) made from a probe"
+    },
+    {
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "line": 116,
+      "category": "color",
+      "snippet": "#3471: this section is NOT called \"Needs you\". That phrase belongs to the"
+    },
+    {
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "line": 298,
+      "category": "color",
+      "snippet": "the APP's permissions, and the title alone cannot tell you that (#3632). A chat that"
+    },
+    {
+      "file": "pages/knowledge/KnowledgeGraph.tsx",
+      "line": 474,
+      "category": "duration",
+      "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
+    },
+    {
+      "file": "pages/settings/MemoryGraph.tsx",
+      "line": 117,
+      "category": "color",
+      "snippet": "return `hsl(${h} 55% 60%)`"
+    },
+    {
+      "file": "pages/settings/MemoryGraph.tsx",
+      "line": 164,
+      "category": "duration",
+      "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
+    },
+    {
+      "file": "pages/settings/NotificationRulesMatrix.tsx",
+      "line": 152,
+      "category": "duration",
+      "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
+    },
+    {
+      "file": "pages/settings/PacksPanel.tsx",
+      "line": 85,
+      "category": "color",
+      "snippet": "(issue #3490). It offered a URL the local connector set \"refreshes from\" and no refresh"
+    },
+    {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "line": 107,
+      "category": "color",
+      "snippet": "it (issue #3490). It PATCHed 200 and survived a reload while NOTHING counted a request"
+    },
+    {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "line": 140,
+      "category": "color",
+      "snippet": "(measured rgb(30,31,32) on rgb(30,31,32) dark, rgb(255,255,255) on rgb(255,255,255)"
+    },
+    {
+      "file": "pages/workflows/LedgerRailsPanel.tsx",
+      "line": 127,
+      "category": "color",
+      "snippet": "uses for the identical fact over the identical `step_completed` rows (#3400). Before"
+    },
+    {
+      "file": "ui/AgentOrb.tsx",
+      "line": 116,
+      "category": "color",
+      "snippet": "return `rgb(${r}, ${g}, ${b})`"
+    },
+    {
+      "file": "ui/composer/liveMarkdown.ts",
+      "line": 121,
+      "category": "radius",
+      "snippet": "'.cm-rmd-code': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.9em', c"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+/* Ember (mono + spark). Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="ember"] {
+  /* layer 1: the steps the base sheet does not have */
+  --gray-466: #5a5a56;
+  --gray-472: #565c64;
+  --gray-510: #6a6560;
+  --gray-604: #8a7f78;
+  --gray-620: #8a8580;
+  --gray-685: #9a9a96;
+  --gray-703: #99a0a8;
+  --gray-727: #b0a49e;
+  --gray-911: #f0ddd6;
+  --orange-703: #b09a92;
+  --red-209: #2a0f08;
+  --red-276: #3a2018;
+  --red-463: #9a2e17;
+  --red-505: #af3218;
+  --red-605: #d1543a;
+  --red-729: #ff7a5c;
+  --red-813: #ffa98f;
+  /* layer 2, dark */
+  --color-primary: var(--red-729);
+  --color-primary-emphasis: var(--red-813);
+  --color-on-primary: var(--red-209);
+  --color-primary-container: var(--red-276);
+  --color-secondary: var(--gray-685);
+  --color-info: var(--gray-703);
+  --grad-1: var(--gray-510);
+  --grad-2: var(--red-729);
+  --grad-3: var(--orange-703);
+  --grad-4: var(--gray-620);
+  --glow-a: var(--red-729);
+  --glow-b: var(--gray-727);
+}
+:root.light[data-theme="ember"] {
+  --color-primary: var(--red-505);
+  --color-primary-emphasis: var(--red-463);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--gray-911);
+  --color-secondary: var(--gray-466);
+  --color-info: var(--gray-472);
+  --grad-1: var(--gray-510);
+  --grad-2: var(--red-505);
+  --grad-3: var(--gray-604);
+  --grad-4: var(--gray-620);
+  --glow-a: var(--red-605);
+  --glow-b: var(--gray-604);
+}

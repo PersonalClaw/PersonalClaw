@@ -1,0 +1,53 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Import / Export
+  - heading "Import / Export" [level=#]
+  - paragraph: Take your data out of this instance, or bring an archive in from another one.
+  - heading "Export" [level=#]
+  - paragraph: Download your data as a portable archive. Credentials are never included.
+  - button "Export everything"
+  - text: Every non-derived store PersonalClaw holds. Credentials never travel.
+  - button "Export knowledge"
+  - text: Your documents — the files/ originals, plus the knowledge and lexicon stores.
+  - button "Export memory"
+  - text: "The assistant's own memory: what it recorded about you, and its learning log."
+  - paragraph: Rebuildable caches (search indexes, model files) are left out — they regenerate, and a stale index restored next to newer data is worse than none. Large workspaces can take a minute to package.
+  - heading "Import" [level=#]
+  - paragraph: Bring settings and data in from another PersonalClaw instance.
+  - text: Importing merges the archive's data into this instance — nothing you already have is overwritten. Choosing a file checks it first and shows what it contains.
+  - button "Choose archive…"
+  - button "Import" [disabled]

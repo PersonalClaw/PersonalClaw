@@ -1,0 +1,470 @@
+"""Evals routes — the judge tier table, pre-registered studies,
+the harness ablation report and the skill-impact benchmark.
+
+GET /api/evals/judge-bench           the newest benchmark run's table + recommendations
+GET /api/evals/field-metrics         one lab|gate|field row per subject + divergence
+GET /api/evals/studies               one row per pre-registered study
+GET /api/evals/studies/{study_id}    one study's verdict, agreement rate and per-run rows
+GET /api/evals/ablation              the newest keep/remove/lighten report + the registry
+GET /api/evals/learning-benchmark    the newest skills-on/off report + the frozen register
+
+**Read-only on purpose.** The full shipped matrix is 540 judge calls; a POST that started
+one would hold a request open for minutes and spend real money on a click. So the RUN is
+`personalclaw judge-bench` — a deliberate, previewable invocation with its own spend
+preflight — and this route publishes what it produced. That is also the posture verbatim:
+the harness recommends, the human rebinds on the existing Models panel.
+
+**Switched off is a decided answer, not an error.** While ``evals.enabled`` is off, the six
+report reads the Learning page loads on every visit (judge-bench, field-metrics, studies,
+retrieval, ablation, learning-benchmark) answer ``200 {"enabled": false}``, which the page
+renders as its off notice. That is how every other switched-off read here answers — the
+terminal list and auto-nudge (``{"enabled": false, …}``), the routing policy, knowledge
+embeddings, and the triage digest (``state: "off"``, whose off-card copy the eval panels
+already share). These reads used to 404 ``evals_disabled``, so a default install logged six
+console errors per visit for a feature it had merely not turned on. A drill-down (one study,
+one store's label card) and the one write still refuse with 404 ``evals_disabled``: they
+address an artifact of a switched-off surface, and the page never asks for one while the
+report read says off.
+
+"Nothing has run yet" is a decided answer too: ``200 {"ran": false}`` from the four report reads
+that publish a run (judge-bench, ablation, learning-benchmark, retrieval). It stays distinct from
+``{"enabled": false}`` — "no benchmark yet" and "the feature is off" send a user to two different
+places, the command and the switch — and each panel says which command produces its report. These
+used to 404 with a code per route, and the Models page reads judge-bench on every visit for its
+"recommended" chip, so with evals on and no CLI run yet every Models load logged a failed request.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from aiohttp import web
+
+from personalclaw.http_errors import json_error
+
+logger = logging.getLogger(__name__)
+
+
+def _enabled() -> bool:
+    """The `evals.enabled` kill-switch.
+
+    Fails CLOSED on an unreadable config: this surface publishes measurement artifacts
+    from a home directory, so "we could not read the switch" must not resolve to "serve
+    it". The panel renders the refusal rather than an empty table.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().evals.enabled)
+    except Exception:
+        logger.debug("evals enabled check failed — treating as disabled", exc_info=True)
+        return False
+
+
+def _off() -> web.Response:
+    """What a report read answers while the switch is off — see the module docstring.
+
+    One body for all six, and no empty collection beside the flag: ``{"studies": []}`` would
+    tell a client that ignores ``enabled`` "no study has been registered", which is a
+    different fact from "the substrate is off".
+    """
+    return web.json_response({"enabled": False})
+
+
+def _not_run() -> web.Response:
+    """What a report read answers when the switch is on and its run has not happened yet — see the
+    module docstring. The flag alone, for the reason ``_off`` gives."""
+    return web.json_response({"ran": False})
+
+
+def _benchmark_not_run() -> web.Response:
+    """The skill-impact benchmark's not-run answer, which also names the home its run must use.
+
+    The runner writes its report under the home it runs in, and the panel shows its command. On a
+    gateway whose home is not the default one, the bare command would write the report into the
+    default home, where this page never reads it; so the answer names this home, and the panel
+    puts it in front of the command. The default home needs no name, and gets none."""
+    from personalclaw.config import loader as config_loader
+
+    try:
+        default = config_loader.uses_default_home()
+    except OSError:
+        default = False
+    if default:
+        return _not_run()
+    return web.json_response({"ran": False, "home": str(config_loader.resolve_config_dir())})
+
+
+async def api_evals_judge_bench(request: web.Request) -> web.Response:
+    """GET /api/evals/judge-bench — the newest tier-recommendation table.
+
+    The whole payload is computed by `judge_bench` and merely serialized here: adequacy,
+    the floors it was judged against, and the inadequacy reasons all arrive decided. A
+    frontend that re-derived "is this tier good enough" would eventually disagree with the
+    harness, and the copy shipping the permissive answer would be the UI.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals.judge_bench import latest_bench_view
+
+    try:
+        view = latest_bench_view()
+    except Exception:
+        logger.warning("judge bench view failed", exc_info=True)
+        return json_error(
+            "judge_bench_unreadable",
+            message="The benchmark artifacts could not be read.",
+            status=500,
+        )
+    if view is None:
+        return _not_run()
+    _audit(request, "evals_judge_bench", "read", f"bench_id={view.get('bench_id')}")
+    return web.json_response(view)
+
+
+async def api_evals_studies(request: web.Request) -> web.Response:
+    """GET /api/evals/studies — one compact row per pre-registered study.
+
+    Read-only for the same reason the bench table is: a k=5 paired study is ten template
+    runs plus six judge calls per pair, so starting one from a click would spend real money
+    and hold the request open. Registration is a proposal-queue item and the run is a
+    deliberate invocation; this publishes what they produced.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals.studies import study_index
+
+    try:
+        rows = study_index()
+    except Exception:
+        logger.warning("study index failed", exc_info=True)
+        return json_error(
+            "studies_unreadable",
+            message="The study artifacts could not be read.",
+            status=500,
+        )
+    _audit(request, "evals_studies", "read", f"count={len(rows)}")
+    return web.json_response({"studies": rows})
+
+
+async def api_evals_study(request: web.Request) -> web.Response:
+    """GET /api/evals/studies/{study_id} — one study's verdict, agreement and per-run rows.
+
+    🔴 The payload comes from `studies.study_view`, which deliberately omits the rubric TEXT
+    and the ``locked/`` checks. That omission is an integrity control, not a size optimization: a
+    dashboard is one `curl` away from an agent's context, so a route that served the hidden
+    checks would defeat the rule the whole study is built around. The rubric's HASH is
+    published instead — enough to prove the pin, not enough to satisfy it.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "study results.",
+            status=404,
+        )
+    study_id = request.match_info.get("study_id", "")
+    from personalclaw.evals.studies import study_view
+
+    try:
+        view = study_view(study_id)
+    except Exception:
+        logger.warning("study view failed for %s", study_id, exc_info=True)
+        return json_error(
+            "studies_unreadable",
+            message="The study artifacts could not be read.",
+            status=500,
+        )
+    if view is None:
+        return json_error(
+            "study_absent",
+            message=f"No study {study_id!r} is registered.",
+            status=404,
+        )
+    _audit(request, "evals_study", "read", f"study_id={study_id}")
+    return web.json_response(view)
+
+
+def _audit(request: web.Request, operation: str, outcome: str, resources: str) -> None:
+    """SEL-log the read. The table names which model a judge should be bound to, so who
+    read it is an audit question — best-effort, and never breaks the response."""
+    try:
+        import personalclaw.dashboard.handlers as _pkg
+
+        _pkg.sel().log_api_access(
+            caller=str(request.get("app") or request.get("user") or "unknown"),
+            operation=operation,
+            outcome=outcome,
+            source="dashboard",
+            resources=resources,
+        )
+    except Exception:
+        logger.debug("evals SEL audit failed", exc_info=True)
+
+
+async def api_evals_ablation(request: web.Request) -> web.Response:
+    """GET /api/evals/ablation — the newest keep/remove/lighten report.
+
+    Read-only for the same reason judge-bench is: a POST that started an ablation would hold
+    a request open for a multi-cell matrix and spend real money on a click. The RUN is
+    ``personalclaw ablation`` (with its own preflight) or the monthly cadence; this publishes
+    what those produced.
+
+    A ``remove`` verdict ALSO reaches the user as a retirement proposal in the
+    inbox — that is the actionable surface. This route is the evidence behind it, and the only
+    surface a ``keep``/``lighten`` verdict has at all.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals.ablation import latest_ablation_view
+
+    try:
+        view = latest_ablation_view()
+    except Exception:
+        logger.warning("ablation view failed", exc_info=True)
+        return json_error(
+            "ablation_unreadable",
+            message="The ablation artifacts could not be read.",
+            status=500,
+        )
+    if view is None:
+        # Distinct from "evals disabled": that sends a user to the switch, this to the registry
+        # and the command, which the panel names.
+        return _not_run()
+    _audit(request, "evals_ablation", "read", f"matrix_id={view['report'].get('matrix_id')}")
+    return web.json_response(view)
+
+
+async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
+    """GET /api/evals/learning-benchmark — the newest skill-impact benchmark report.
+
+    Read-only for a sharper reason than the other routes here: it pairs ``k = 5`` trials per
+    arm over ten tasks — 100 real model calls — so a POST that started one would spend serious
+    money on a click. The RUN is ``python scripts/learning_benchmark.py --run``, which has
+    ``--preflight`` and ``--dry-run`` modes that call nothing, and this route publishes what it
+    produced.
+
+    **The verdict is READ, never computed here.** The thresholds live in
+    ``harness/fanout_measure.py``, a dev package outside the wheel; the runner computes the
+    verdict and writes it into the report. So this route cannot synthesise a verdict or a score
+    it was not given, and a task the runner did not measure arrives with ``verdict: null`` for
+    the panel to render as "not measured" rather than as ``0.000``.
+
+    Three distinct codes, like the ablation route's, because they send a user to three different
+    places: the config switch, the runner, and a broken artifact.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals import learning_bench
+
+    try:
+        report = learning_bench.latest_report()
+    except Exception:
+        logger.warning("learning benchmark report read failed", exc_info=True)
+        return json_error(
+            "learning_benchmark_unreadable",
+            message="The benchmark report could not be read.",
+            status=500,
+        )
+    if report is None:
+        return _benchmark_not_run()
+    _audit(request, "evals_learning_benchmark", "read", f"run_id={report.get('run_id')}")
+    return web.json_response(
+        {
+            "report": report,
+            # The register travels WITH the report so the panel can name a task the report does
+            # not carry — a task the runner skipped is absent from `tasks`, and a panel that
+            # only knew about rows it received would silently narrow the task set.
+            "register": [
+                {"task_id": t.task_id, "skill": t.skill, "observable": t.observable}
+                for t in learning_bench.BENCH_TASKS
+            ],
+            "task_set_version": learning_bench.TASK_SET_VERSION,
+            "protocol_doc": learning_bench.PROTOCOL_DOC,
+            "stated_variance": list(learning_bench.REPRODUCTION_CONDITIONS),
+        }
+    )
+
+
+async def api_evals_retrieval(request: web.Request) -> web.Response:
+    """GET /api/evals/retrieval — the newest per-arm P@k/R@k table for BOTH stores.
+
+    Read-only, like every other route here, but for a different reason than judge-bench's:
+    retrieval costs no model calls, yet the constraint is that the harness never writes
+    to knowledge.db or memory.db, and the cheapest way to keep that promise on a web
+    surface is to have no run trigger on it at all. The RUN is
+    ``personalclaw retrieval-eval``.
+
+    Both stores are always present in the payload, each with its own table — the benchmark runs them
+    SEPARATELY and never shares a corpus, so a merged table would be the one shape the
+    boundary forbids.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals import retrieval_bench as rb
+
+    try:
+        view = rb.latest_retrieval_view()
+    except Exception:
+        logger.warning("retrieval view failed", exc_info=True)
+        return json_error(
+            "retrieval_unreadable",
+            message="The retrieval benchmark artifacts could not be read.",
+            status=500,
+        )
+    runs = {kind: data.get("run") or "" for kind, data in (view.get("stores") or {}).items()}
+    if not any(runs.values()):
+        # Distinct from "evals disabled": that sends a user to the switch, this to the command.
+        return _not_run()
+    _audit(request, "evals_retrieval", "read", f"runs={runs}")
+    return web.json_response(view)
+
+
+async def api_evals_retrieval_card(request: web.Request) -> web.Response:
+    """GET /api/evals/retrieval/card?store=knowledge|memory — the hand-labeling card.
+
+    The card is the human half of the qrels set: mined weak labels answer the tail, and the
+    head queries need someone to say which results actually answer them. Read-only against
+    the stores (the builder is wrapped in the same byte-identical rail the run uses); the
+    only thing it writes is the benchmark file under ``evals/``.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to label "
+            "retrieval qrels.",
+            status=404,
+        )
+    from personalclaw.evals import retrieval_bench as rb
+
+    store_kind = (request.query.get("store") or "").strip()
+    if store_kind not in rb.STORES:
+        # No default: the two stores never share a corpus, so a card built for the wrong one
+        # would collect labels against ids the other store has never heard of.
+        return json_error(
+            "store_required",
+            message=f"Pass ?store= one of {', '.join(rb.STORES)}.",
+            status=400,
+        )
+    try:
+        # In a worker thread: the read-only rail hashes both whole databases, before and after.
+        card = await asyncio.to_thread(rb.card_for_store, store_kind)
+    except rb.StoreMutatedError as exc:
+        return json_error("store_mutated", message=str(exc), status=500)
+    except Exception:
+        logger.warning("retrieval card failed for %s", store_kind, exc_info=True)
+        return json_error(
+            "card_unavailable",
+            message=f"The {store_kind} store could not be read for labelling.",
+            status=500,
+        )
+    _audit(request, "evals_retrieval_card", "read", f"store={store_kind}")
+    return web.json_response(card)
+
+
+async def api_evals_retrieval_labels(request: web.Request) -> web.Response:
+    """POST /api/evals/retrieval/labels — save a completed hand-label card.
+
+    Body: ``{"store": "...", "labels": {"<query>": ["<id>", ...]}}``. An EMPTY list for a
+    query is a real judgement ("none of these answer it") and is stored as such — treating
+    it as "nothing submitted" would silently re-inherit the mined weak label the human just
+    overruled.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to label "
+            "retrieval qrels.",
+            status=404,
+        )
+    from personalclaw.evals import retrieval_bench as rb
+
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", message="Body must be JSON.", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_json", message="Body must be a JSON object.", status=400)
+    store_kind = str(body.get("store") or "").strip()
+    if store_kind not in rb.STORES:
+        return json_error(
+            "store_required",
+            message=f"`store` must be one of {', '.join(rb.STORES)}.",
+            status=400,
+        )
+    raw = body.get("labels")
+    if not isinstance(raw, dict):
+        return json_error(
+            "labels_required",
+            message='`labels` must be an object of {"<query>": ["<id>", ...]}.',
+            status=400,
+        )
+    labels = {str(q): [str(i) for i in (v or [])] for q, v in raw.items() if str(q)}
+    try:
+        benchmark = rb.apply_labels_for_store(store_kind, labels)
+    except rb.RetrievalBenchError as exc:
+        _audit(request, "evals_retrieval_labels", "rejected", f"store={store_kind}")
+        return json_error("labels_rejected", message=str(exc), status=400)
+    hand = sum(1 for q in benchmark.queries if q.source == rb.SOURCE_HAND_LABEL)
+    _audit(
+        request,
+        "evals_retrieval_labels",
+        "ok",
+        f"store={store_kind} labelled={hand} queries={len(benchmark.queries)}",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "store": store_kind,
+            "queries": len(benchmark.queries),
+            "hand_labelled": hand,
+            "subject_sha256": benchmark.sha256,
+        }
+    )
+
+
+async def api_evals_field_metrics(request: web.Request) -> web.Response:
+    """GET /api/evals/field-metrics — Loop-3 field metrics beside lab results.
+
+    One row per subject: lab score (Loop 1, pinned) | gate status (Loop 2) | field trend
+    (Loop 3), plus the ``lab_field_divergence`` verdict, all computed on request and
+    stored nowhere. Read-only like every route in this file, and with one extra reason:
+    the divergence flag FILES A DEMOTION when the gateway sweep acts on it, and a GET
+    that demoted things would make refreshing a dashboard a security-relevant act — so
+    this route only ever reports what the sweep would see.
+
+    Off the event loop because the query walks the SEL tail once per action type and a
+    journal per recent run — the same reason ``ladder_view`` and ``api_attention`` are
+    threaded.
+    """
+    if not _enabled():
+        return _off()
+    from personalclaw.evals import field_metrics as fm
+
+    try:
+        rows = await asyncio.to_thread(fm.subject_rows)
+    except Exception:
+        logger.warning("field metrics view failed", exc_info=True)
+        return json_error(
+            "field_metrics_unreadable",
+            message="The lab/field metric sources could not be read.",
+            status=500,
+        )
+    diverged = sum(1 for r in rows if r.lab_field_divergence)
+    _audit(request, "evals_field_metrics", "read", f"subjects={len(rows)} diverged={diverged}")
+    return web.json_response({"subjects": [r.to_dict() for r in rows]})
+
+
+def register_evals_routes(app: web.Application) -> None:
+    """Register /api/evals/* — the judge tier table, the studies, the ablation report and
+    the retrieval per-arm ablation (+ its hand-label card)."""
+    app.router.add_get("/api/evals/judge-bench", api_evals_judge_bench)
+    app.router.add_get("/api/evals/field-metrics", api_evals_field_metrics)
+    app.router.add_get("/api/evals/studies", api_evals_studies)
+    app.router.add_get("/api/evals/studies/{study_id}", api_evals_study)
+    app.router.add_get("/api/evals/ablation", api_evals_ablation)
+    app.router.add_get("/api/evals/learning-benchmark", api_evals_learning_benchmark)
+    app.router.add_get("/api/evals/retrieval", api_evals_retrieval)
+    app.router.add_get("/api/evals/retrieval/card", api_evals_retrieval_card)
+    app.router.add_post("/api/evals/retrieval/labels", api_evals_retrieval_labels)

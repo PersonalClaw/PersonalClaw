@@ -1,0 +1,1290 @@
+"""Tests for MCP discovery module."""
+
+import asyncio
+import json
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from mcp_owner_allowed import allow
+
+from personalclaw.mcp_discovery import (
+    McpServerInfo,
+    _cache_probe,
+    _get_cached,
+    _probe_cache,
+    discover_servers_to_sync,
+    list_servers,
+    probe_server,
+    sync_to_agent_config,
+)
+
+
+def _clear_cache() -> None:
+    _probe_cache.clear()
+
+
+class TestMcpServerInfo:
+    def test_to_dict(self) -> None:
+        info = McpServerInfo(
+            name="test-mcp",
+            command="/usr/bin/test",
+            args=["--foo"],
+            status="ok",
+            tools=["tool_a", "tool_b"],
+            source="agent",
+        )
+        d = info.to_dict()
+        assert d["name"] == "test-mcp"
+        assert d["transport"] == "stdio"
+        assert d["status"] == "ok"
+        assert d["tools"] == ["tool_a", "tool_b"]
+        assert d["source"] == "agent"
+        # The browser gets a server's state, never its definition (arguments can carry a token).
+        for key in ("command", "args", "url", "headers", "cwd"):
+            assert key not in d
+
+    def test_defaults(self) -> None:
+        info = McpServerInfo(name="x")
+        assert info.command == ""
+        assert info.args is None
+        assert info.env == {}
+        assert info.url == ""
+        assert info.headers == {}
+        assert info.status == "unknown"
+        assert info.tools == []
+        assert info.error == ""
+        assert info.source == "agent"
+
+    def test_remote_server_fields(self) -> None:
+        info = McpServerInfo(
+            name="deepwiki",
+            url="https://mcp.deepwiki.com/mcp",
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert info.is_remote is True
+        assert info.command == ""
+        # A URL that declares no transport is SSE, what it always meant to the native client.
+        assert info.transport == "sse"
+        d = info.to_dict()
+        assert d["transport"] == "sse"
+        assert "url" not in d and "headers" not in d
+
+    def test_is_remote_false_for_local(self) -> None:
+        info = McpServerInfo(name="x", command="cmd")
+        assert info.is_remote is False
+
+    def test_cwd_round_trips_from_spec(self) -> None:
+        # An app-shipped stdio server carries a cwd (its app dir) so relative
+        # args resolve on probe. Parse from spec + expose in to_dict.
+        from personalclaw.mcp_discovery import _server_from_spec
+
+        info = _server_from_spec(
+            "app:local",
+            {"command": "python3", "args": ["backend/mcp_server.py"], "cwd": "/opt/app"},
+            "mcp.json",
+        )
+        assert info.cwd == "/opt/app"
+        # No cwd → field stays empty.
+        bare = _server_from_spec("x", {"command": "c"}, "mcp.json")
+        assert bare.cwd == ""
+
+    def test_is_remote_false_when_both(self) -> None:
+        """If both url and command are set, treat as local (command takes precedence)."""
+        info = McpServerInfo(name="x", command="cmd", url="http://localhost")
+        assert info.is_remote is False
+
+
+class TestListServers:
+    def setup_method(self) -> None:
+        _clear_cache()
+
+    def test_list_merges_installed_config(self, tmp_path, monkeypatch) -> None:
+        """defaults.json has no mcpServers; installed personalclaw.json does."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        installed = {
+            "mcpServers": {
+                "personalclaw-schedule": {"command": "personalclaw", "args": ["mcp-schedule"]}
+            }
+        }
+        (agents_dir / "personalclaw.json").write_text(json.dumps(installed))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr(
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
+        )
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "personalclaw-schedule" in names
+
+    def test_list_from_agent_config(self, tmp_path, monkeypatch) -> None:
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {
+            "mcpServers": {
+                "my-server": {"command": "/usr/bin/srv", "args": ["run"]},
+                "other-srv": {"command": "other"},
+            }
+        }
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "my-server" in names
+        assert "other-srv" in names
+
+    def test_list_empty_no_config(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        servers = list_servers()
+        assert servers == []
+
+    def test_mcp_json_servers_merged(self, tmp_path, monkeypatch) -> None:
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"agent-srv": {"command": "a"}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps({"mcpServers": {"ext-srv": {"command": "b", "args": ["--x"]}}})
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "agent-srv" in names
+        assert "ext-srv" in names
+        ext = [s for s in servers if s.name == "ext-srv"][0]
+        assert ext.source == "mcp.json"
+
+    def test_mcp_json_no_duplicate(self, tmp_path, monkeypatch) -> None:
+        """A server both files name is listed once, as ``mcp.json`` defines it: the agent config
+        holds a copy of it with the command resolved to a path, and what the owner allowed is
+        the definition in ``mcp.json`` (`mcp_grants`)."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"shared": {"command": "agent-cmd"}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"shared": {"command": "mcp-cmd"}}}))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        servers = list_servers()
+        shared = [s for s in servers if s.name == "shared"]
+        assert len(shared) == 1
+        assert (shared[0].command, shared[0].source) == ("mcp-cmd", "mcp.json")
+
+    def test_list_skips_disabled_servers(self, tmp_path, monkeypatch) -> None:
+        """Servers with disabled=true are excluded from listing."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {
+            "mcpServers": {
+                "enabled-srv": {"command": "a"},
+                "disabled-srv": {"command": "b", "disabled": True},
+            }
+        }
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "enabled-srv" in names
+        assert "disabled-srv" not in names
+
+    def test_list_skips_disabled_mcp_json_servers(self, tmp_path, monkeypatch) -> None:
+        """Disabled servers in mcp.json are also excluded."""
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "active": {"command": "a"},
+                        "inactive": {"command": "b", "disabled": True},
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "active" in names
+        assert "inactive" not in names
+
+    def test_mcp_json_holds_the_switch_of_a_server_it_defines(self, tmp_path, monkeypatch) -> None:
+        """A server ``mcp.json`` defines is on or off as ``mcp.json`` says. The agent config's copy
+        is rebuilt to match, and a stale ``disabled`` in it read the owner's switch-on as off."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(
+            json.dumps({"mcpServers": {"srv": {"command": "a", "disabled": True}}})
+        )
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"srv": {"command": "b"}}}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        [srv] = [s for s in list_servers() if s.name == "srv"]
+        assert (srv.command, srv.disabled) == ("b", False)
+
+    def test_disabled_mcp_json_still_carries_disabled_tools(self, tmp_path, monkeypatch) -> None:
+        """An entry in ``mcp.json`` that defines nothing holds the owner's state for a server the
+        agent config defines: switched off there, it is not listed for a probe, and the list the
+        pages draw shows it switched off with its disabledTools."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(
+            json.dumps({"mcpServers": {"srv": {"command": "a"}}})
+        )
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps({"mcpServers": {"srv": {"disabled": True, "disabledTools": ["t1"]}}})
+        )
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        assert list_servers() == []
+        [srv] = list_servers(include_disabled=True)
+        assert (srv.name, srv.disabled, srv.disabled_tools) == ("srv", True, ["t1"])
+
+    def test_list_remote_server(self, tmp_path, monkeypatch) -> None:
+        """Remote (url-based) servers are listed with url and headers."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {
+            "mcpServers": {
+                "deepwiki": {
+                    "url": "https://mcp.deepwiki.com/mcp",
+                    "headers": {"X-Key": "val"},
+                }
+            }
+        }
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        servers = list_servers()
+        assert len(servers) == 1
+        s = servers[0]
+        assert s.name == "deepwiki"
+        assert s.url == "https://mcp.deepwiki.com/mcp"
+        assert s.headers == {"X-Key": "val"}
+        assert s.command == ""
+        assert s.is_remote is True
+
+    def test_mcp_json_merges_multiple_files(self, tmp_path, monkeypatch) -> None:
+        """Both mcp.json files are read and merged; first path wins on conflict."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"mcpServers": {}}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        _clear_cache()
+
+        legacy_mcp = tmp_path / "legacy_mcp.json"
+        legacy_mcp.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "shared": {"command": "legacy-cmd"},
+                        "legacy-only": {"command": "k"},
+                    }
+                }
+            )
+        )
+        personalclaw_mcp = tmp_path / "personalclaw_mcp.json"
+        personalclaw_mcp.write_text(
+            json.dumps(
+                {"mcpServers": {"shared": {"command": "personalclaw"}, "mc-only": {"command": "m"}}}
+            )
+        )
+        monkeypatch.setattr(
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (legacy_mcp, personalclaw_mcp)
+        )
+
+        servers = list_servers()
+        names = {s.name for s in servers}
+        assert "legacy-only" in names
+        assert "mc-only" in names
+        assert "shared" in names
+        shared = [s for s in servers if s.name == "shared"][0]
+        assert shared.command == "legacy-cmd"  # first path wins
+
+    def test_mcp_json_malformed_file_skipped(self, tmp_path, monkeypatch) -> None:
+        """A malformed mcp.json is skipped; valid file still loads."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"mcpServers": {}}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        _clear_cache()
+
+        bad = tmp_path / "bad.json"
+        bad.write_text("{invalid json")
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (bad, good))
+
+        servers = list_servers()
+        assert any(s.name == "srv" for s in servers)
+
+    def test_mcp_json_non_dict_servers_skipped(self, tmp_path, monkeypatch) -> None:
+        """Non-dict mcpServers value is skipped; other file still loads."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"mcpServers": {}}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        _clear_cache()
+
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"mcpServers": ["not", "a", "dict"]}))
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (bad, good))
+
+        servers = list_servers()
+        assert any(s.name == "srv" for s in servers)
+
+    def test_mcp_json_permission_error_skipped(self, tmp_path, monkeypatch) -> None:
+        """PermissionError from safe_read_file is caught; other file loads."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"mcpServers": {}}))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        _clear_cache()
+
+        blocked = tmp_path / "blocked.json"
+        blocked.write_text("{}")
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (blocked, good))
+
+        original = __import__("personalclaw.hooks", fromlist=["safe_read_file"]).safe_read_file
+
+        def _mock_safe_read(path: str) -> str:
+            if "blocked" in path:
+                raise PermissionError("Blocked: sensitive path")
+            return original(path)
+
+        monkeypatch.setattr("personalclaw.mcp_discovery.safe_read_file", _mock_safe_read)
+
+        servers = list_servers()
+        assert any(s.name == "srv" for s in servers)
+
+
+class TestDiscoverNew:
+    def test_discover_new(self, tmp_path, monkeypatch) -> None:
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"existing": {"command": "a"}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "existing": {"command": "a"},
+                        "brand-new": {"command": "b"},
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        new = discover_servers_to_sync()
+        assert len(new) == 1
+        assert new[0].name == "brand-new"
+        assert new[0].source == "discovered"
+
+    def test_discover_none_when_all_known(self, tmp_path, monkeypatch) -> None:
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"srv": {"command": "a"}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"srv": {"command": "a"}}}))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        new = discover_servers_to_sync()
+        assert new == []
+
+    def test_discover_includes_existing_with_divergent_env(self, tmp_path, monkeypatch) -> None:
+        """Existing servers with new env keys in mcp.json are included."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"srv": {"command": "a", "env": {}}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        result = discover_servers_to_sync()
+        assert len(result) == 1
+        assert result[0].name == "srv"
+        assert result[0].env == {"KEY": "val"}
+
+    def test_discover_skips_existing_with_identical_env(self, tmp_path, monkeypatch) -> None:
+        """Existing servers with identical env are not flagged for sync."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        result = discover_servers_to_sync()
+        assert result == []
+
+    def test_discover_skips_existing_when_source_env_is_subset(self, tmp_path, monkeypatch) -> None:
+        """Server not flagged when all mcp.json env keys already exist in agent config."""
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"srv": {"command": "a", "env": {"EXISTING": "keep", "NEW": "val"}}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"NEW": "val"}}}})
+        )
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
+        result = discover_servers_to_sync()
+        assert result == []
+
+
+class TestSyncToAgentConfig:
+    def test_sync_delegates_to_rebuild_agent_config(self, tmp_path, monkeypatch) -> None:
+        """sync_to_agent_config delegates the merge to rebuild_agent_config() for new servers.
+
+        Registration is no longer done by shelling out to a CLI — rebuild_agent_config()
+        is the single authoritative merge function that reads the source files and
+        writes personalclaw.json.
+        """
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps({"mcpServers": {}, "tools": [], "allowedTools": []}))
+
+        install_called: list[bool] = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        new_srv = McpServerInfo(name="new-srv", command="b", args=["--x"])
+        ok = sync_to_agent_config([new_srv])
+        assert ok is True
+        assert install_called, "rebuild_agent_config() should be called to merge the config"
+
+    def test_sync_fallback_writes_json(self, tmp_path, monkeypatch) -> None:
+        """Without personalclaw-cli, delegates to rebuild_agent_config() for config merge."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg = {
+            "mcpServers": {"existing": {"command": "a"}},
+            "tools": ["execute_bash"],
+            "allowedTools": [],
+        }
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        new_srv = McpServerInfo(name="new-srv", command="b", args=["--x"])
+        ok = sync_to_agent_config([new_srv])
+        assert ok is True
+        assert install_called, "rebuild_agent_config() should be called"
+
+    def test_sync_no_installed_config(self, tmp_path, monkeypatch) -> None:
+        """Works even when no config exists yet — rebuild_agent_config creates it."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        config_path = agents_dir / "personalclaw.json"
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(name="srv", command="x")
+        ok = sync_to_agent_config([srv])
+        assert ok is True
+        assert install_called
+
+    def test_sync_remote_server_writes_url(self, tmp_path, monkeypatch) -> None:
+        """Remote servers are handled by rebuild_agent_config() via source file merge."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg: dict = {"mcpServers": {}, "tools": [], "allowedTools": []}
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(
+            name="deepwiki",
+            url="https://mcp.deepwiki.com/mcp",
+            headers={"X-Key": "val"},
+        )
+        ok = sync_to_agent_config([srv])
+        assert ok is True
+        assert install_called
+
+    def test_sync_handles_remote_and_local_via_rebuild_agent_config(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Both remote (url) and local (command) servers are merged via rebuild_agent_config()."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps({"mcpServers": {}, "tools": [], "allowedTools": []}))
+
+        install_called: list[bool] = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        remote = McpServerInfo(name="deepwiki", url="https://mcp.deepwiki.com/mcp")
+        local = McpServerInfo(name="local-srv", command="some-cmd")
+        ok = sync_to_agent_config([remote, local])
+
+        assert ok is True
+        assert install_called, "rebuild_agent_config() should be called once to merge both servers"
+
+    def test_sync_merges_env_for_existing_local_server(self, tmp_path, monkeypatch) -> None:
+        """Existing server env changes are handled by rebuild_agent_config() re-merge."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg = {
+            "mcpServers": {"email-mcp": {"command": "node", "args": ["server.js"], "env": {}}},
+            "tools": ["@email-mcp"],
+            "allowedTools": ["@email-mcp"],
+        }
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(
+            name="email-mcp",
+            command="node",
+            args=["server.js"],
+            env={"OUTLOOK_MCP_ENABLE_WRITES": "true"},
+        )
+        sync_to_agent_config([srv])
+        assert install_called, "rebuild_agent_config() handles env merge"
+
+    def test_sync_preserves_existing_env_keys(self, tmp_path, monkeypatch) -> None:
+        """Env merge is handled by rebuild_agent_config() reading source files."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg = {
+            "mcpServers": {
+                "my-mcp": {
+                    "command": "node",
+                    "args": [],
+                    "env": {"EXISTING_KEY": "keep"},
+                }
+            },
+            "tools": ["@my-mcp"],
+            "allowedTools": ["@my-mcp"],
+        }
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(
+            name="my-mcp",
+            command="node",
+            args=[],
+            env={"NEW_KEY": "val"},
+        )
+        sync_to_agent_config([srv])
+        assert install_called, "rebuild_agent_config() handles env merge"
+
+    def test_sync_updates_command_for_existing_local_server(self, tmp_path, monkeypatch) -> None:
+        """Existing servers are refreshed via rebuild_agent_config() which reads source files."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg = {
+            "mcpServers": {"my-mcp": {"command": "old-cmd", "args": ["--old"], "env": {}}},
+            "tools": ["@my-mcp"],
+            "allowedTools": ["@my-mcp"],
+        }
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        # rebuild_agent_config() is called internally — mock it to verify delegation
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(name="my-mcp", command="new-cmd", args=["--new"])
+        result = sync_to_agent_config([srv])
+        assert result is True
+        assert install_called, "rebuild_agent_config() should be called to re-merge config"
+
+    def test_sync_source_env_overrides_existing_on_conflict(self, tmp_path, monkeypatch) -> None:
+        """Config changes are handled by rebuild_agent_config() re-merge, not direct edit."""
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        cfg = {
+            "mcpServers": {
+                "my-mcp": {
+                    "command": "node",
+                    "args": [],
+                    "env": {"SHARED": "old", "ONLY_EXISTING": "keep"},
+                }
+            },
+            "tools": ["@my-mcp"],
+            "allowedTools": ["@my-mcp"],
+        }
+        config_path = agents_dir / "personalclaw.json"
+        config_path.write_text(json.dumps(cfg))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+        monkeypatch.setattr("shutil.which", lambda x, **kw: None)
+
+        install_called = []
+        monkeypatch.setattr(
+            "personalclaw.agent.rebuild_agent_config",
+            lambda **kw: install_called.append(True) or config_path,
+        )
+
+        srv = McpServerInfo(
+            name="my-mcp",
+            command="node",
+            args=[],
+            env={"SHARED": "new", "ONLY_SOURCE": "added"},
+        )
+        result = sync_to_agent_config([srv])
+        assert result is True
+        assert install_called, "rebuild_agent_config() should be called to re-merge config"
+
+
+class TestProbeCache:
+    def setup_method(self) -> None:
+        _clear_cache()
+
+    def teardown_method(self) -> None:
+        _clear_cache()
+
+    def test_cache_miss_returns_unknown(self) -> None:
+        status, tools, error, _ = _get_cached(McpServerInfo(name="nonexistent", command="x"))
+        assert status == "unknown"
+        assert tools == []
+        assert error == ""
+
+    def test_cache_hit_for_the_same_definition(self) -> None:
+        server = McpServerInfo(
+            name="test-srv", command="x", status="ok", tools=["t1", "t2"], error=""
+        )
+        _cache_probe(server)
+        status, tools, error, _ = _get_cached(McpServerInfo(name="test-srv", command="x"))
+        assert status == "ok"
+        assert tools == ["t1", "t2"]
+        assert error == ""
+
+    def test_a_result_for_another_definition_is_not_this_servers(self) -> None:
+        _cache_probe(McpServerInfo(name="test-srv", command="x", status="ok", tools=["t1"]))
+        status, tools, _, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
+        assert (status, tools) == ("unknown", [])
+
+    def test_cache_error_preserved(self) -> None:
+        server = McpServerInfo(
+            name="err-srv", command="x", status="error", tools=[], error="timeout"
+        )
+        _cache_probe(server)
+        status, tools, error, _ = _get_cached(McpServerInfo(name="err-srv", command="x"))
+        assert status == "error"
+        assert error == "timeout"
+
+    def test_list_servers_merges_cache(self, tmp_path, monkeypatch) -> None:
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        cfg = {"mcpServers": {"my-srv": {"command": "cmd"}}}
+        (agent_dir / "defaults.json").write_text(json.dumps(cfg))
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
+
+        # Before probe: unknown
+        servers = list_servers()
+        assert servers[0].status == "unknown"
+
+        # Cache a probe result
+        _cache_probe(McpServerInfo(name="my-srv", command="cmd", status="ok", tools=["a"]))
+
+        # After probe: cached status and tools merged
+        servers = list_servers()
+        assert servers[0].status == "ok"
+        assert servers[0].tools == ["a"]
+
+
+class TestProbeRemote:
+    def setup_method(self) -> None:
+        _probe_cache.clear()
+
+    def teardown_method(self) -> None:
+        _probe_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_probe_dispatches_to_remote(self) -> None:
+        """probe_server dispatches to _probe_remote for url-based servers."""
+        server = McpServerInfo(name="remote", url="https://example.com/mcp")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
+
+        with patch(
+            "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
+        ) as mock_remote:
+            mock_remote.return_value = server
+            result = await probe_server(server)
+
+        mock_remote.assert_awaited_once_with(server)
+        assert result is server
+
+    @pytest.mark.asyncio
+    async def test_probe_local_not_dispatched_to_remote(self) -> None:
+        """probe_server does NOT dispatch to _probe_remote for command-based servers."""
+        server = McpServerInfo(name="local", command="nonexistent-cmd-xyz")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
+
+        with patch(
+            "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
+        ) as mock_remote:
+            result = await probe_server(server)
+
+        mock_remote.assert_not_awaited()
+        assert result.status == "error"
+
+
+class TestRebuildAgentConfigRemote:
+    """Test that rebuild_agent_config preserves remote url-based MCP servers."""
+
+    def test_install_preserves_remote_server(self, tmp_path, monkeypatch) -> None:
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        existing = {
+            "mcpServers": {
+                "deepwiki": {"url": "https://mcp.deepwiki.com/mcp"},
+                "local-srv": {"command": "nonexistent-cmd-xyz"},
+            },
+            "tools": [],
+            "allowedTools": [],
+        }
+        (agents_dir / "personalclaw.json").write_text(json.dumps(existing))
+
+        # Single user MCP source: ~/.personalclaw/mcp.json (none here).
+        user_dir = tmp_path / ".personalclaw"
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "deepwiki" in data["mcpServers"]
+        assert data["mcpServers"]["deepwiki"]["url"] == "https://mcp.deepwiki.com/mcp"
+        assert "local-srv" not in data["mcpServers"]
+
+    def test_install_merges_user_mcp_json(self, tmp_path, monkeypatch) -> None:
+        """rebuild_agent_config picks up servers from ~/.personalclaw/mcp.json."""
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+
+        # Single consolidated user MCP source: ~/.personalclaw/mcp.json
+        user_dir = tmp_path / ".personalclaw"
+        (user_dir / "mcp.json").write_text(
+            json.dumps({"mcpServers": {"deepwiki": {"url": "https://mcp.deepwiki.com/mcp"}}})
+        )
+
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "deepwiki" in data["mcpServers"]
+        assert data["mcpServers"]["deepwiki"]["url"] == "https://mcp.deepwiki.com/mcp"
+
+
+class TestGetProbeTimeout:
+    """Tests for the config-aware _get_probe_timeout() getter."""
+
+    def test_get_probe_timeout_reads_config(self) -> None:
+        """_get_probe_timeout() returns the config value when available."""
+        from personalclaw.mcp_discovery import _get_probe_timeout
+
+        mock_cfg = MagicMock()
+        mock_cfg.dashboard.mcp_probe_timeout_secs = 45
+        mock_cls = MagicMock()
+        mock_cls.load.return_value = mock_cfg
+
+        with patch("personalclaw.config.loader.AppConfig", mock_cls):
+            result = _get_probe_timeout()
+        assert result == 45
+
+    def test_get_probe_timeout_fallback(self) -> None:
+        """_get_probe_timeout() returns 15 when config is unavailable."""
+        from personalclaw.mcp_discovery import _PROBE_TIMEOUT_SECS, _get_probe_timeout
+
+        mock_cls = MagicMock()
+        mock_cls.load.side_effect = RuntimeError("no config")
+
+        with patch("personalclaw.config.loader.AppConfig", mock_cls):
+            result = _get_probe_timeout()
+        assert result == _PROBE_TIMEOUT_SECS
+        assert result == 15
+
+
+class TestProbeServerTimeout:
+    """A stdio probe gives its server the configured time to answer (`_get_probe_timeout()`), and
+    the start it makes is an agent connection's own (`mcp_client.try_start`)."""
+
+    @staticmethod
+    async def _deadline_asked(server: McpServerInfo) -> float:
+        from personalclaw.mcp_client import StartResult
+
+        asked: list[float] = []
+
+        async def fake_start(name, spec, *, deadline, seal):
+            asked.append(deadline)
+            return StartResult(
+                tools=[], error="x did not answer", detail="", sign_in_needed=False, timed_out=True
+            )
+
+        with patch("personalclaw.mcp_client.try_start", fake_start):
+            result = await probe_server(server)
+        assert result.status == "error"
+        [deadline] = asked
+        return deadline
+
+    @pytest.mark.asyncio
+    async def test_probe_server_gives_its_server_the_configured_time(self) -> None:
+        server = McpServerInfo(name="slow-server", command="/nonexistent/pc-fixture-mcp")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
+        with patch("personalclaw.config.loader.AppConfig") as mock_cls:
+            mock_cls.load.return_value.dashboard.mcp_probe_timeout_secs = 42
+            assert await self._deadline_asked(server) == 42
+
+    @pytest.mark.asyncio
+    async def test_probe_server_config_fallback_on_error(self) -> None:
+        """probe_server falls back to 15s when config loading fails."""
+        server = McpServerInfo(name="test", command="/nonexistent/pc-fixture-mcp")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
+        with patch("personalclaw.config.loader.AppConfig") as mock_cls:
+            mock_cls.load.side_effect = RuntimeError("corrupt config")
+            assert await self._deadline_asked(server) == 15
+
+
+class TestProbeRemoteTimeout:
+    """The remote probe is bounded by the configured probe timeout."""
+
+    @pytest.mark.asyncio
+    async def test_probe_remote_timeout_uses_config(self) -> None:
+        """A server that never answers says so after ``_get_probe_timeout()``, once its host's
+        name is known to resolve (looked up here without the network).
+
+        The name is looked up twice before the connection is opened: by the egress guard, which
+        the start asks about the server's URL (``net.guard._resolve``), and by the probe once the
+        server has not answered (``mcp_discovery._look_up``). Both are answered here. With only
+        the second patched, the guard looked ``example.com`` up for real within the same 0.2 s,
+        and a runner whose lookup took longer read "Looking up example.com did not finish"."""
+        from personalclaw.mcp_discovery import _probe_remote
+
+        server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
+
+        async def never_answers(self, stack):
+            # The connection is opened and nothing ever answers: the probe's own deadline ends it.
+            await asyncio.sleep(30)
+
+        async def resolves(host: str) -> None:
+            return None
+
+        with (
+            patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
+            patch("personalclaw.mcp_discovery._look_up", resolves),
+            patch("personalclaw.net.guard._resolve", lambda host: ["93.184.215.14"]),
+            patch("personalclaw.mcp_client.McpServerConn._open_transport", never_answers),
+        ):
+            started = time.monotonic()
+            result = await _probe_remote(server)
+
+        assert result.status == "error"
+        assert result.error == "example.com did not answer within 0.2 seconds."
+        assert time.monotonic() - started < 5, "the probe outlived its configured timeout"
+
+
+class TestFixStaleManagedCommand:
+    """Tests for _fix_stale_managed_command."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self):
+        import personalclaw.mcp_discovery as _d
+
+        _d._resolved_managed_bin = None
+        yield
+        _d._resolved_managed_bin = None
+
+    def test_resolves_to_running_binary_via_which(self):
+        """Resolve managed-server command to the personalclaw binary on PATH."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        spec = {"command": "/stale/build/bin/personalclaw", "args": ["mcp-core"]}
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/runtime/bin/personalclaw"
+        ):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == "/runtime/bin/personalclaw"
+
+    def test_no_resolution_leaves_command_unchanged(self):
+        """When `personalclaw` is not on PATH, the stored command is left as-is."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        spec = {"command": "/old/personalclaw", "args": ["mcp-core"]}
+        with patch("personalclaw.mcp_discovery.shutil.which", return_value=None):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == "/old/personalclaw"
+
+    def test_skips_non_managed_server(self):
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        spec = {"command": "/nonexistent/path/other", "args": []}
+        _fix_stale_managed_command("other-server", spec)
+        assert spec["command"] == "/nonexistent/path/other"
+
+    def test_always_re_resolves_to_running_binary(self, tmp_path):
+        """Even if the stored path exists, re-resolve to the running binary."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        real = tmp_path / "personalclaw"
+        real.write_text("#!/bin/sh")
+        # `personalclaw-core` because `personalclaw-schedule` is no longer a MANAGED server (it was
+        # retired) — and this function is scoped to managed names, so the old sample made the
+        # test assert against a no-op.
+        spec = {"command": str(real), "args": ["mcp-core"]}
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/new/path/personalclaw"
+        ):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == "/new/path/personalclaw"
+
+    def test_no_change_when_already_correct(self):
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        spec = {"command": "/current/bin/personalclaw", "args": ["mcp-core"]}
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/current/bin/personalclaw"
+        ):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == "/current/bin/personalclaw"
+
+    def test_resolution_is_cached_across_calls(self):
+        """The resolved binary is cached so later managed servers reuse it."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        # Two calls for the SAME managed server rather than two different ones: `personalclaw-core`
+        # is the only managed server left, and the property under test is that the resolved
+        # binary is cached across calls — not that two particular names exist.
+        spec1 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
+        spec2 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/resolved/personalclaw"
+        ) as mock_which:
+            _fix_stale_managed_command("personalclaw-core", spec1)
+            _fix_stale_managed_command("personalclaw-core", spec2)
+        assert spec1["command"] == "/resolved/personalclaw"
+        assert spec2["command"] == "/resolved/personalclaw"
+        # Second call uses the cache — which() is only invoked once.
+        assert mock_which.call_count == 1
+
+
+class TestSharedServerToolsRegistration:
+    """Tests for shared MCP servers being added to tools/allowedTools."""
+
+    def test_shared_servers_added_to_tools_and_allowedtools(self, tmp_path, monkeypatch) -> None:
+        """Enabled shared servers appear in both tools and allowedTools."""
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+
+        user_dir = tmp_path / ".personalclaw"
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv"},
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "my-srv" in data["mcpServers"]
+        assert "@my-srv" in data.get("tools", [])
+        assert "@my-srv" in data.get("allowedTools", [])
+
+    def test_disabled_shared_server_removed_from_tools(self, tmp_path, monkeypatch) -> None:
+        """Disabled shared server is removed from tools/allowedTools."""
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "personalclaw.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"my-srv": {"command": "srv"}},
+                    "tools": ["@my-srv"],
+                    "allowedTools": ["@my-srv"],
+                }
+            )
+        )
+
+        user_dir = tmp_path / ".personalclaw"
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv", "disabled": True},
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "@my-srv" not in data.get("tools", [])
+        assert "@my-srv" not in data.get("allowedTools", [])
+
+    def test_reenabled_server_added_back(self, tmp_path, monkeypatch) -> None:
+        """Server re-enabled in mcp.json gets added back to tools/allowedTools."""
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "personalclaw.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"my-srv": {"command": "srv", "disabled": True}},
+                    "tools": [],
+                    "allowedTools": [],
+                }
+            )
+        )
+
+        user_dir = tmp_path / ".personalclaw"
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv"},
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "@my-srv" in data.get("tools", [])
+        assert "@my-srv" in data.get("allowedTools", [])
+        assert "disabled" not in data["mcpServers"]["my-srv"]
+
+    def test_disabled_removal_no_tools_key(self, tmp_path, monkeypatch) -> None:
+        """Disabled removal doesn't crash when config has no tools key."""
+        from personalclaw.agent import rebuild_agent_config
+
+        agent_dir = tmp_path / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "defaults.json").write_text(json.dumps({"name": "personalclaw"}))
+        (agent_dir / "prompt.md").write_text("prompt")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+        agents_dir = tmp_path / ".personalclaw" / "agents"
+        agents_dir.mkdir(parents=True)
+
+        user_dir = tmp_path / ".personalclaw"
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "disabled-srv": {"command": "srv", "disabled": True},
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
+        monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
+        monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
+
+        rebuild_agent_config()
+
+        data = json.loads((agents_dir / "personalclaw.json").read_text())
+        assert "@disabled-srv" not in data.get("tools", [])
+        assert "@disabled-srv" not in data.get("allowedTools", [])

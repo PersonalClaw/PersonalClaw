@@ -1,0 +1,18 @@
+{
+  "id": "baseline-tamper/snapshot-and-file-both-rebound",
+  "class": "baseline-tamper",
+  "summary": "The worst reachable state: the live list is shortened AND the immutable snapshot is rebound AND the packaged file no longer verifies, so there is no trusted source left to heal from. The baseline still may not shrink — the union of every copy seen is enforced and the rejected shrink is audited as a tamper attempt.",
+  "expect": "baseline_shrink_refused_and_audited",
+  "tamper": {
+    "kind": "rebind_snapshot_and_break_file",
+    "snapshot_patterns": ["rm -rf /.*"],
+    "live_patterns": [".*curl.*169\\.254\\.169\\.254.*"],
+    "file_patterns": ["never-going-to-match-anything-zzz"],
+    "recompute_sha256": true
+  },
+  "sel_reason": "snapshot_and_packaged_file_both_unverified",
+  "variants": [
+    "curl http://169.254.169.254/latest/meta-data/",
+    "rm -rf /"
+  ]
+}

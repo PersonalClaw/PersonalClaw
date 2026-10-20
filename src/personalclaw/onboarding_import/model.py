@@ -1,0 +1,483 @@
+"""The onboarding-import vocabulary — scan results, items, plans and write outcomes.
+
+One shape for "something another local agent tool has that PersonalClaw could adopt"
+(:class:`ImportItem`), one shape for what a scan found (:class:`ScanResult`), one closed
+four-value vocabulary for what importing an item WOULD do (:class:`ItemState`, asked
+before anything is written) and one for what a writer DID (:class:`WriteOutcome`).
+
+Three properties are load-bearing and live here rather than in each scanner:
+
+- **Fingerprint idempotence.** An item's identity is ``sha256(source\\0category\\0key)``
+  — stable across re-scans and independent of the item's body, so re-importing an
+  edited file updates nothing it already owns and never creates a second copy.
+- **The fingerprint is the only thing a choice carries.** The step picks items by
+  fingerprint and the import re-scans and keeps only the fingerprints ITS scan found, so
+  ids travel and content never does: a caller cannot name a path or supply a body.
+- **One secret policy.** Text an item carries (``text``, and a conversation's messages when the
+  import reads them) has every credential the platform's detector finds redacted, and counted.
+  An MCP server's ``env`` and
+  ``headers`` values stay in its ``payload`` because the MCP writer keeps them in the credential
+  store, as Tools › Import does. A file or entry that would carry a credential anywhere else is
+  left out and counted (``ScanResult.secrets_skipped``, and the item's own share of it). A payload
+  never leaves the server: it is not in :meth:`ImportItem.to_dict` or the item's ``repr``, and no
+  value reaches a note, a log line or an error message.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from collections import Counter
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+
+
+class ImportCategory(str, Enum):
+    """What KIND of thing an item is — and therefore which writer owns it.
+
+    Closed on purpose: every member has a scanner that produces it AND a writer
+    that consumes it (``writers._WRITERS`` is exhaustive over this enum and raises
+    on an unmapped member). A category with no destination is not declared here.
+    """
+
+    INSTRUCTIONS = "instructions"  # CLAUDE.md / AGENTS.md / rules → standing instructions
+    MEMORIES = "memories"  # a tool's own memory notes → memory store
+    MCP_SERVERS = "mcp_servers"  # .claude.json / .mcp.json / config.toml → <home>/mcp.json
+    SKILLS = "skills"  # skills/<name>/ → skills/imported/<source>/<name>/
+    AGENTS = "agents"  # subagent definitions → config.json agents (the Agents page)
+    PROMPTS = "prompts"  # slash commands / custom prompts → <home>/prompts/<name>.yaml
+    CONVERSATIONS = "conversations"  # session transcripts → <home>/sessions (Chat history)
+    DENIED_COMMANDS = "denied_commands"  # commands a tool refuses → config.json shell denylist
+
+
+class WriteOutcome(str, Enum):
+    """What a writer did with one item. Four values, no fifth.
+
+    ``imported`` — the item reached its destination.
+    ``existing`` — this exact item is already there; nothing was written.
+    ``conflict`` — something of the same name is there and DIFFERS. The existing
+    thing is kept untouched and the conflict is reported for human review; a
+    writer never resolves a conflict by overwriting.
+    ``rejected`` — a security floor refused it (sensitive path, or the skill
+    supply-chain scan blocked it).
+    """
+
+    IMPORTED = "imported"
+    EXISTING = "existing"
+    CONFLICT = "conflict"
+    REJECTED = "rejected"
+
+
+class ItemState(str, Enum):
+    """What importing ONE item would do right now — read off the destination, nothing written.
+
+    ``new`` — the destination is free; importing writes it. The only state a choice changes.
+    ``existing`` — this exact item is already there; importing writes nothing.
+    ``conflict`` — something different is there and is KEPT; importing writes nothing.
+    ``rejected`` — a floor refuses it before a byte is copied (a missing or sensitive source).
+
+    The same facts :class:`WriteOutcome` reports, asked BEFORE the write instead of after it.
+    ``new`` is deliberately not ``imported``: nothing has happened yet. A writer consults the
+    very :class:`Plan` the scan showed, so what the step said an item would do and what the
+    import then did cannot come from two different readings of the destination.
+    """
+
+    NEW = "new"
+    EXISTING = "existing"
+    CONFLICT = "conflict"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class Plan:
+    """A writer's read-only answer for one item: what importing it would do, and where."""
+
+    state: ItemState
+    destination: str
+    #: Why — value-free, and worded to be true both before the import and after it, because
+    #: the scan and the report show the same sentence.
+    detail: str = ""
+
+
+#: The shape of every fingerprint :func:`fingerprint_of` mints — and so the only shape a
+#: selection may carry. Anything else in a request is refused before a scan runs.
+FINGERPRINT_RE = re.compile(r"[0-9a-f]{16}")
+
+
+def fingerprint_of(source: str, category: ImportCategory | str, key: str) -> str:
+    """``sha256(source\\0category\\0key)`` — the idempotence key and the selection id.
+
+    NUL-joined so no combination of source/category/key can collide with another by
+    concatenation. Truncated to 16 hex chars: enough to be collision-free over a
+    machine's config files, short enough to read in a UI.
+    """
+    cat = category.value if isinstance(category, ImportCategory) else str(category)
+    raw = "\0".join((source, cat, key)).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class SkillScan:
+    """What the supply-chain scan says about a skill before it is imported.
+
+    The scan an install makes (``skills.marketplace.scan_before_install``), made at scan time so
+    the step can show it before anything is chosen. ``findings`` are the warnings and dangerous
+    matches, each ``{"rule", "severity", "path", "evidence"}`` with the evidence through the
+    credential detector. ``consent`` (``skills.marketplace.warnings_consent``) is a digest of the
+    warnings and the files they were found in: the value a person's acceptance carries, so an
+    install goes ahead only over the warnings they read, on the bytes they were read on.
+    """
+
+    verdict: str
+    findings: tuple[dict, ...] = ()
+    consent: str = ""
+
+    @property
+    def needs_acceptance(self) -> bool:
+        """A WARNING verdict: the skill comes over only when its warnings are accepted."""
+        return self.verdict == "warning"
+
+    def to_dict(self) -> dict:
+        return {
+            "verdict": self.verdict,
+            "findings": [dict(finding) for finding in self.findings],
+            "consent": self.consent,
+        }
+
+
+@dataclass(frozen=True)
+class ImportItem:
+    """One importable thing found by a scanner. Pure data — no store, no session.
+
+    ``text`` is the redacted body (instructions, memories, an agent's or a prompt's
+    instructions); ``payload`` is the structured value (an MCP server's definition with its
+    values, which the writer stores as credential references; an agent's description; a
+    denylist pattern); ``path`` is what the import reads when it runs — a skill's directory, a
+    conversation's transcript. A conversation is read there and then, one at a time, rather than
+    held by the scan: a months-long history is gigabytes of transcripts.
+    """
+
+    source: str
+    category: ImportCategory
+    key: str
+    title: str = ""
+    text: str = ""
+    #: Out of ``repr`` too: an MCP server's values are in it, bound for the credential store.
+    payload: dict = field(default_factory=dict, repr=False)
+    path: str = ""
+    #: The name the item takes at its destination — an MCP server's name, an agent's, a
+    #: prompt's. Empty means ``key``. Separate from ``key`` because a key must be unique per
+    #: source and category while two scopes of one tool can hold a server of the same name:
+    #: they are two items with two fingerprints and ONE destination, so the second is a
+    #: conflict or already there, never a silent overwrite.
+    name: str = ""
+    #: Where in the tool the item was found, in words ("Local scope · /Users/you/work/api",
+    #: "Project · ~/src/app"). Empty when the tool has one place for this kind. Value-free.
+    origin: str = ""
+    #: What the import leaves out of this item or changes about it, in words true before and
+    #: after the import ("Claude Code's tools list is not carried over"). Value-free.
+    note: str = ""
+    #: Whether the step starts with this item ticked. False for an item the other tool itself
+    #: does not use as it stands — a project's own ``.mcp.json`` server nobody approved there, an
+    #: ``AGENTS.md`` Codex reads an override of instead — and for a skill whose ``scan`` warned, so
+    #: bringing it over is a choice the user makes, not one the step makes for them. The item's
+    #: ``note`` says why.
+    preselect: bool = True
+    #: How many credential/exfiltration-URL redactions were applied to ``text``.
+    #: A count, never the matched value.
+    redactions: int = 0
+    #: How many credential files were left OUT of this item: a credential file inside a skill,
+    #: which is never installed. This item's share of ``ScanResult.secrets_skipped``, which also
+    #: counts what belongs to no item (a credential file at the root, a refused command that
+    #: holds a credential). A count, never the value.
+    secrets_skipped: int = 0
+    #: A skill's supply-chain scan, made when the tool was scanned. ``None`` for anything else.
+    scan: SkillScan | None = None
+    #: True while what is said of the item comes from only the start of its file: a conversation
+    #: the scan looked into but has not read in full yet. Its title and origin name it; its note
+    #: says it is not read yet rather than giving a count, and ``redactions`` is not a count yet.
+    provisional: bool = False
+    #: The ``consent`` of the warnings the person accepted for THIS import. Set by
+    #: :func:`~.engine.run_import` from the request, never by a scanner, and never on the wire.
+    accepted_warnings: str = ""
+
+    @property
+    def fingerprint(self) -> str:
+        return fingerprint_of(self.source, self.category, self.key)
+
+    @property
+    def target(self) -> str:
+        """The name this item takes at its destination (:attr:`name`, else :attr:`key`)."""
+        return self.name or self.key
+
+    def to_dict(self) -> dict:
+        return {
+            "fingerprint": self.fingerprint,
+            "source": self.source,
+            "category": self.category.value,
+            "key": self.key,
+            "title": self.title or self.key,
+            "origin": self.origin,
+            "note": self.note,
+            "preselected": self.preselect,
+            "secrets_skipped": self.secrets_skipped,
+            "redactions": self.redactions,
+            "scan": self.scan.to_dict() if self.scan is not None else None,
+            "provisional": self.provisional,
+        }
+
+
+def offer(item: ImportItem, plan: Plan) -> dict:
+    """One item as the person choosing it sees it: what it is, and what importing it would do.
+
+    The one composer for that shape — the scan's items and the report's ``unselected`` rows
+    are both this, so the step reads a single item vocabulary on either side of the import.
+    """
+    return {
+        **item.to_dict(),
+        "state": plan.state.value,
+        "destination": plan.destination,
+        "detail": plan.detail,
+    }
+
+
+def withheld_notes(*, secrets_skipped: int, redactions: int) -> list[str]:
+    """The ONE place the two withheld-credential sentences are composed.
+
+    They were written twice — here (via :meth:`ScanResult.note_withheld`) and again inline in
+    ``writers.import_report`` — and the two copies said the same thing in the same words, which is
+    exactly how a copy stops being the same thing. Both classes carry the identical
+    ``secrets_skipped`` / ``redactions`` / ``notes`` fields, so a free function serves both without
+    either one growing a base class.
+
+    🔑 The counts are stated with real plurals rather than a ``(s)`` hedge, and the VERB agrees too.
+    Two nouns joined by "or" still take a number: at one it is "1 credential value or file **was**
+    skipped", at three "3 credential values or files **were** skipped". A parenthetical would have
+    hidden that second disagreement entirely.
+
+    🪤 The sentence is deliberately identical in shape to the pre-import one the frontend
+    composes (`app/onboarding/ImportStep.tsx`: "N credential values or files will not be
+    imported") because a user meets both in one flow — the warning before, this note after. If
+    one is reworded, reword both, and note that the frontend's is a SEPARATE producer (a React
+    expression, not this function): the two cannot be shared across the language boundary, only
+    kept in step.
+
+    Says how much was withheld. Never what — no value, path or key appears here.
+    """
+    notes: list[str] = []
+    if secrets_skipped:
+        plural = secrets_skipped != 1
+        notes.append(
+            f"{secrets_skipped} credential value{'s' if plural else ''} or "
+            f"file{'s' if plural else ''} {'were' if plural else 'was'} skipped and not imported."
+        )
+    if redactions:
+        plural = redactions != 1
+        notes.append(
+            f"{redactions} credential-like string{'s' if plural else ''} "
+            f"{'were' if plural else 'was'} redacted from imported text."
+        )
+    return notes
+
+
+@dataclass(frozen=True)
+class NotImported:
+    """A kind of thing the scan FOUND in the tool and does not bring over, and why.
+
+    The difference between "we left this behind" and "we never looked" is the whole point:
+    a scanner that reads four of a tool's six kinds and says nothing about the other two
+    reads, to the person choosing, as a tool that only had four. So every kind a scanner
+    knows the tool keeps and PersonalClaw has no place for is counted and named here, and
+    the step shows it beside what does come over.
+    """
+
+    #: The kind, in the user's words ("Prompt history").
+    what: str
+    #: How many were found — prompts, files, rules — so "left behind" has a size.
+    count: int
+    #: Why it is not imported, as a sentence true before and after the import.
+    why: str
+
+    def to_dict(self) -> dict:
+        return {"what": self.what, "count": self.count, "why": self.why}
+
+
+@dataclass(frozen=True)
+class UnreadableFile:
+    """A file the tool keeps that IS there and could not be read.
+
+    Never the same answer as a file that is not there. An absent config means the tool keeps
+    nothing of that kind; an unreadable one means nobody knows what it keeps, so whatever it
+    holds is missing from the listing, and the step says which file and why instead of letting
+    the gap read as "nothing to import".
+    """
+
+    #: The file, as the step shows paths (``~/.claude.json``).
+    path: str
+    #: Why it could not be read, in words: the system's reason, or the kind of document it is
+    #: not. Never its contents.
+    why: str
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "why": self.why}
+
+
+@dataclass
+class ScanResult:
+    """What one source's scanner found. Serializable, secret-free, comparable.
+
+    ``present`` distinguishes "the tool isn't installed" (no root) from "the tool is
+    installed but has nothing to import" — the onboarding step words those very
+    differently. Both are answers only when ``looked``: a tool whose setup PersonalClaw may not
+    read for this request (``outside_home.readable``) is not opened, listed or even checked for,
+    so whether it is there is not known, and the step offers to look instead.
+    """
+
+    source: str
+    display_name: str
+    root: str
+    present: bool
+    #: Whether the scan read the tool's setup at all. False: nothing of it was opened.
+    looked: bool = True
+    items: list[ImportItem] = field(default_factory=list)
+    #: Credential-bearing files refused unread, and entries left out whole because they hold a
+    #: credential. A count the user is shown so they learn something was withheld. Each item
+    #: carries its own share; the rest (:meth:`secrets_outside_items`) belongs to no item.
+    secrets_skipped: int = 0
+    #: Redactions applied to text that WAS imported (the body kept, the secret gone).
+    redactions: int = 0
+    #: Human-readable, value-free explanations ("skipped 1 credential file").
+    notes: list[str] = field(default_factory=list)
+    #: What the tool holds that is not brought over, each with its count and reason.
+    not_imported: list[NotImported] = field(default_factory=list)
+    #: How many conversation files the scan found, read in full or not.
+    conversation_files: int = 0
+    #: The conversation files not read in full yet (a scan that only LOOKS): each is either an item
+    #: marked ``provisional`` or, when its start held no prompt, not an item until it is read. What
+    #: depends on reading them — their counts, and "Not brought over" rows about files that cannot
+    #: be read — is not final while any remain. Paths, so never on the wire: :meth:`to_dict` says
+    #: how many.
+    unread: list[Path] = field(default_factory=list)
+    #: The tool's files that are there and could not be read, once each. Unlike ``unread`` (not
+    #: read YET), these failed: what they hold is not in ``items``.
+    unreadable_files: list[UnreadableFile] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        """Per-category item counts. The step counts from ``items`` instead, because its
+        numbers follow the user's choice and a scan-time total cannot."""
+        counter = Counter(item.category.value for item in self.items)
+        return {cat.value: counter.get(cat.value, 0) for cat in ImportCategory}
+
+    def by_category(self, category: ImportCategory) -> list[ImportItem]:
+        return [item for item in self.items if item.category is category]
+
+    def fingerprints(self) -> set[str]:
+        return {item.fingerprint for item in self.items}
+
+    def secrets_outside_items(self) -> int:
+        """What was withheld that belongs to no item — a credential file at the root, or a
+        refused command left out whole because it holds a credential. Left behind whatever is
+        picked, so an import from this source always reports it."""
+        return self.secrets_skipped - sum(item.secrets_skipped for item in self.items)
+
+    def note_withheld(self) -> None:
+        """Say that something was withheld, and how much. Never what.
+
+        Every scanner ends with this so the user always learns a credential existed
+        without the credential appearing in a note, a log, or a UI string.
+        """
+        self.notes.extend(
+            withheld_notes(secrets_skipped=self.secrets_skipped, redactions=self.redactions)
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "display_name": self.display_name,
+            "root": self.root,
+            "present": self.present,
+            "looked": self.looked,
+            "counts": self.counts(),
+            "items": [item.to_dict() for item in self.items],
+            "secrets_skipped": self.secrets_skipped,
+            "redactions": self.redactions,
+            "notes": list(self.notes),
+            "not_imported": [entry.to_dict() for entry in self.not_imported],
+            "unreadable_files": [entry.to_dict() for entry in self.unreadable_files],
+            "reading": {
+                "read": self.conversation_files - len(self.unread),
+                "of": self.conversation_files,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class WriteResult:
+    """What happened to one item at its destination."""
+
+    fingerprint: str
+    source: str
+    category: ImportCategory
+    key: str
+    outcome: WriteOutcome
+    destination: str = ""
+    #: Why — value-free ("mcp server 'x' already configured with a different command").
+    detail: str = ""
+    #: Credential-like strings redacted from the text THIS write brought over. A count, and 0 for
+    #: anything but ``imported``: nothing else lands.
+    redactions: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "fingerprint": self.fingerprint,
+            "source": self.source,
+            "category": self.category.value,
+            "key": self.key,
+            "outcome": self.outcome.value,
+            "destination": self.destination,
+            "detail": self.detail,
+        }
+
+
+@dataclass
+class ImportReport:
+    """The result of one import run — per-item outcomes, the rest of the choice, and the
+    withheld counts.
+
+    ``results`` is what happened to every CHOSEN item the run's own re-scan found. The other
+    lists are what makes the report a record of the choice rather than of the writes alone:
+    ``unselected`` is everything that re-scan found and the caller did not pick, each with the
+    plan it had just before the writes (so "left out by you" and "already here" stay
+    distinguishable), ``missing`` is every chosen fingerprint the re-scan could not find, and
+    ``not_reached`` every chosen one the run stopped before — reported, never dropped in silence.
+    """
+
+    results: list[WriteResult] = field(default_factory=list)
+    unselected: list[tuple[ImportItem, Plan]] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    secrets_skipped: int = 0
+    redactions: int = 0
+    notes: list[str] = field(default_factory=list)
+    #: Chosen items the run never reached because it was stopped — asked to, or by the gateway
+    #: shutting down. Nothing was written for them, so importing again brings them over.
+    not_reached: list[str] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        counter = Counter(r.outcome.value for r in self.results)
+        return {out.value: counter.get(out.value, 0) for out in WriteOutcome}
+
+    def conflicts(self) -> list[WriteResult]:
+        return [r for r in self.results if r.outcome is WriteOutcome.CONFLICT]
+
+    def to_dict(self) -> dict:
+        return {
+            "counts": self.counts(),
+            "results": [r.to_dict() for r in self.results],
+            "unselected": [offer(item, plan) for item, plan in self.unselected],
+            "missing": list(self.missing),
+            "not_reached": list(self.not_reached),
+            "secrets_skipped": self.secrets_skipped,
+            "redactions": self.redactions,
+            "notes": list(self.notes),
+        }

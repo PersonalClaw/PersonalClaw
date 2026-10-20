@@ -1,0 +1,1709 @@
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, CircleAlert, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { ListControls } from '../../ui/ListControls'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { SidePanel } from '../../ui/SidePanel'
+import { Modal } from '../../ui/Modal'
+import { Button } from '../../ui/Button'
+import { Eyebrow } from '../../ui/Eyebrow'
+import { Segmented } from '../../ui/Segmented'
+import { Field, FieldError, TextArea, TextInput } from '../../ui/forms'
+import { Markdown } from '../../ui/Markdown'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
+import { Toggle as SharedToggle } from '../../ui/Toggle'
+import { confirm } from '../../ui/dialog'
+import { reportingWrite } from '../../app/reportingWrite'
+import { copyText } from '../../app/clipboard'
+import { notify } from '../../app/appSdk'
+import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { refreshKinds, useChatSocket } from '../../lib/useChatSocket'
+import { readableErrText } from '../../lib/errText'
+import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ImportableTool, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
+import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
+import { schemaProps } from './schema'
+import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSave, formatArgs, parseArgs, type McpServerForm } from './mcpServerEnv'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { ConsentDeclined } from '../../lib/securityConsent'
+import { prepareExternalPage, type OpenedPage } from '../../lib/externalPage'
+import { ToolInspector } from './ToolInspector'
+import { ToolGroupsTile } from './ToolGroupsTile'
+import { ReadOnlyTrustReview, trustChangeSentence, trustChanges, trustQuestion } from './ReadOnlyTrustReview'
+import { PageTitle } from '../../ui/PageTitle'
+
+/** Tools = the capability catalog agents invoke. Grouped by provider — native
+ *  built-in providers plus connected MCP servers (shown with health + inline
+ *  enable/disable, even when erroring or contributing zero tools). Click a tool
+ *  to inspect its full signature and run it. */
+
+// Native providers the platform can't run without — no provider-level toggle,
+// no delete (mirrors the backend LOCKED_PROVIDERS guard). Everything else (other
+// native app-providers, MCP servers, OpenAI servers) is toggleable + removable.
+const LOCKED_NATIVE_PROVIDER = 'personalclaw-filesystem'
+
+interface Group {
+  key: string
+  label: string
+  kind: 'native' | 'mcp'
+  tools: ToolItem[]
+  server?: McpServer        // present for mcp groups
+  providerDisabled?: boolean  // whole native provider turned off
+  providerLocked?: boolean    // platform provider — not toggleable/removable
+  group?: string              // activation group; unset when grouping is off
+  /** Where this provider CAME FROM — `supply_chain.TrustTier` off the wire (#2627).
+   *  Read off the group's tools, which all share a provider and therefore a tier. */
+  tier?: string
+}
+
+/** The built-in app that carries every external MCP server's tools to an agent — named in COPY
+ *  only. Whether an agent can call a server is the gateway's answer (`status: 'unserved'` when
+ *  nothing serves those tools), never a check of this name. It ships with PersonalClaw, so there
+ *  is nothing to install: the only ways it is not serving are a switch-off or a failed load. */
+const MCP_TOOLS_LABEL = 'MCP Tool Servers'
+
+/** Exported for test: which words a server's state comes out as is only observable by rendering. */
+export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
+  // Before `enabled`: a server that waits is off until its Allow, which also switches it on.
+  if (s.status === 'waiting') return { state: 'waiting for your Allow', tone: 'var(--color-warn)', detail: s.error }
+  if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
+  if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
+  // It failed to start again and again, and nothing starts it until Retry (`mcp_status.STOPPED`).
+  if (s.status === 'stopped') return { state: 'failed — stopped retrying', tone: 'var(--color-danger)', detail: s.error }
+  if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
+  if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
+  if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
+  // The gateway is checking it, after a change or for the first time: no result is shown for it
+  // yet, because the last one was about something else (`mcp_discovery._get_cached`). Or it is
+  // still starting, left to finish installing what it runs, and the gateway's sentence says so.
+  if (s.status === 'probing') return { state: 'checking', tone: 'var(--color-on-surface-low)', detail: s.error || undefined }
+  return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
+}
+
+/** What an MCP server's card says in place of the tools it does not list, and why.
+ *
+ *  "Not connected", not "Not responding": a server that refused the connection for want of a token,
+ *  or whose host has no name to look up, did not fail to respond, and the reason after the dash is
+ *  the gateway's own sentence. Exported for test. */
+export function noToolsLine(server: McpServer | undefined, healthState: string | undefined, signInState: string | undefined): string {
+  if (!server?.enabled) return 'Server disabled.'
+  if (healthState === 'error') return `Not connected — ${(server.error || 'no tools available').replace(/[.\s]+$/, '')}.`
+  if (server.status === 'probing') {
+    return server.error ? `Checking the server — ${server.error.replace(/[.\s]+$/, '')}.` : 'Checking the server…'
+  }
+  if (signInState && signInState !== 'signed_in') return 'Its tools show here once you sign in.'
+  return 'No tools exposed yet.'
+}
+
+/** What a server wrote to its error output when its last start failed, behind Details: the headline
+ *  is the gateway's one line (`mcp_status`), and a traceback is not a reason. */
+function StartDetails({ detail }: { detail?: string }) {
+  if (!detail) return null
+  return (
+    <details className="group">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-xs text-on-surface">
+        <ChevronRight size={12} className="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+        Details
+      </summary>
+      <pre data-type="caption" className="mt-s max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-high p-s font-mono text-on-surface-low">{detail}</pre>
+    </details>
+  )
+}
+
+/** How long the page keeps looking for a sign-in to finish elsewhere before it stops. */
+const SIGN_IN_WAIT_MS = 5 * 60_000
+
+/** A sign-in the owner started from this page and is finishing elsewhere: in a tab of this
+ *  browser, in the system browser the desktop app opened, or in whichever she opens the link in. */
+interface PendingSignIn { name: string; url: string; since: number; opened: OpenedPage }
+/** An authorization server that does not let PersonalClaw register itself: the app to register. */
+interface ClientPrompt extends McpSignInClientNeeded { server: string; message: string }
+
+/** A peripheral read that FAILED, kept apart from an empty answer so the page can say which. `[]`
+ *  for a failure read as "no MCP servers set up" and "nothing to import". The gateway's sentence is
+ *  kept as text, so the cached copy (`persist: true`) still says what failed after a reload. */
+interface FailedRead { failed: string }
+const failedRead = (e: unknown): FailedRead => ({ failed: readableErrText(e) })
+function isFailedRead(v: unknown): v is FailedRead {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && 'failed' in v
+}
+
+interface ToolsIndexData {
+  tools: ToolItem[]
+  loadFailures: ToolLoadFailure[]
+  /** `null` when the other tools could not be looked through, with `importableError` saying why. */
+  importable: ImportableMcpServer[] | null
+  importableError: string
+  /** The other tools' MCP settings files that are there and could not be read: the servers they
+   *  hold are missing from `importable`. Absent from a copy cached before it existed. */
+  importUnreadable?: ImportableMcpList['unreadable']
+  /** Every tool the import list can look in, and whether this read did: only those turned on in
+   *  Settings › Security, since this read names none. Absent from a copy cached before it existed. */
+  importTools?: ImportableTool[]
+  /** `null` when the pool could not be read: the tile is then not drawn at all. */
+  poolStats: McpPoolStats | null
+  groups: ToolGroupsData | null
+  // The names of servers granted `elicitation/create` — the per-server right to
+  // interrupt a tool call and ask the user a question. Empty on a fresh install; `null` when
+  // the grants could not be read, which is a different answer (see the fetcher).
+  elicitationServers: string[] | null
+}
+
+export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
+  const { data, error: loadErr, refresh } = useQuery<ToolsIndexData>('tools:index', async () => {
+    const [idx, importable, poolStats, groups, elicitationServers] = await Promise.all([
+      // 🔴 The reads below are tolerated on purpose — a dead MCP server or an unreachable pool
+      // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
+      // this surface. The INDEX is different in kind: it IS the collection, so substituting `[]` for
+      // its rejection made a failed read render "No tools · Tools are the capabilities agents can
+      // invoke…" — the newcomer empty state, on an install whose tools are all present. Same
+      // asymmetry `fetchAgentGroups` draws between its native slice and its provider slices.
+      //
+      // 🔑 TOLERATED IS NOT FABRICATED. The import list keeps its catch but carries the failure
+      // (`failedRead`), never `[]`: a failed import read painted "nothing to import", and it is said
+      // where its answer would be instead. The server list does the same, in its own read below.
+      api.toolsIndex(),
+      // Names no tool to look in: another tool's setup is read only for her Look in press below,
+      // or on every visit once she turned it on in Settings › Security.
+      api.importableMcp().catch(failedRead),
+      api.mcpPoolStats().catch(() => null),
+      api.toolGroups().catch(() => null),
+      // Tolerated like the four above — an unreadable config must not hide the tool list — but
+      // with `null`, never `[]`. `[]` was defended here as the fail-closed answer, and for the
+      // DISPLAY it was: every grant rendered off. But a fabricated `[]` also paints a granted
+      // server as not granted, so its switch would offer to grant what is already granted and
+      // could never revoke it. Unknown grants disable the control instead.
+      api.mcpElicitationServers().catch(() => null),
+    ])
+    return {
+      tools: idx.tools, loadFailures: idx.load_failures ?? [],
+      importable: isFailedRead(importable) ? null : importable.servers, importableError: isFailedRead(importable) ? importable.failed : '',
+      importUnreadable: isFailedRead(importable) ? [] : importable.unreadable,
+      importTools: isFailedRead(importable) ? [] : (importable.tools ?? []),
+      poolStats, groups, elicitationServers,
+    }
+  }, { persist: true })
+  // 🔴 THE SERVER CARDS ARE THEIR OWN READ, AND THE GATEWAY SAYS WHEN TO READ THEM AGAIN. They were
+  // one `Promise.all` with the tool list, which waits for each server it lists to answer, so after
+  // an Allow the card of a server that was still starting kept its "waiting for your Allow" for as
+  // long as the server took (31 s, measured), and the page read the list again only on a timer
+  // while a server read `probing`. Now the cards are `GET /api/mcp` alone, which never waits on a
+  // server, and they are read again whenever the gateway says one changed: the `refresh` frame
+  // naming `mcp` (`mcp_status.announce`), sent when a server is being checked, when what its last
+  // start found lands, whoever started it, and on every write that changes one.
+  const { data: serverData, error: serversLoadErr, refresh: refreshServers } = useQuery<McpServer[] | FailedRead>(
+    'tools:mcp-servers', () => api.mcpServers().catch(failedRead), { persist: true })
+  // A read that never answered (the request deadline) failed too, and is said where the cards would
+  // be; it is not left to read as one still in flight.
+  const serverRead = serverData ?? (serversLoadErr ? failedRead(serversLoadErr) : undefined)
+  const tools = data?.tools ?? null
+  const loadFailures = data?.loadFailures ?? []
+  // A failed read groups like an empty one, but says so: the notices below read these two.
+  const servers = Array.isArray(serverRead) ? serverRead : []
+  const serversUnread = isFailedRead(serverRead)
+  const serversError = isFailedRead(serverRead) ? serverRead.failed : ''
+  const importable = data?.importable ?? []
+  const importUnread = !!data && data.importable === null
+  const importableError = data?.importableError ?? ''
+  const importUnreadable = data?.importUnreadable ?? []
+  const importTools = data?.importTools ?? []
+  const poolStats = data?.poolStats ?? null
+  /** `null` while unread or unreadable: no grant can be written from it. */
+  const elicitationServers = data?.elicitationServers ?? null
+  const groupsInfo = data?.groups ?? null
+  const groupsEnabled = !!groupsInfo?.enabled
+  const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
+  // Risk filter (tool risk taxonomy): let a security-conscious user narrow to
+  // "what can do caution/destructive things". URL-param so it's shareable, like q.
+  const [risk, setRisk] = useQueryParam(query, setQuery, 'risk', 'all', { replace: true })
+  const [openNameRaw, setOpenName] = useQueryParam(query, setQuery, 'open', '')
+  const openName = openNameRaw || null
+
+  const [probing, setProbing] = useState(false)
+  const [addOpen, setAddOpen] = useQueryFlag(query, setQuery, 'add')
+  // The server whose definition the edit form is open on ('' = closed). A query param like `add`,
+  // so the open form survives a reload and can be linked to. Not `edit`: that key is the canonical
+  // view↔edit MODE flag (`useEditFlag`, `?edit=1`), and this one names a record.
+  const [editing, setEditing] = useQueryParam(query, setQuery, 'editServer', '')
+  const load = () => { invalidateKeys('tools:index'); invalidateKeys('tools:mcp-servers'); refresh(); refreshServers() }
+
+  // 🔴 ANOTHER TOOL'S SETUP IS READ ONLY WHEN SHE ASKS. The index read above, sent on every visit
+  // and every refresh, read Claude Code's and Codex's settings each time, while Settings › Security
+  // says PersonalClaw reads only inside its home unless a place is turned on. Now it names no tool,
+  // and a Look in press reads the one it names, once: what that found lives HERE, never in the
+  // index's cache, so no refresh reads that tool again. An Import is a press too, and reads the
+  // list again from the tools she looked in.
+  const [look, setLook] = useState<{ places: string[]; list: ImportableMcpList } | null>(null)
+  const [looking, setLooking] = useState<string | null>(null)
+  const [lookFailed, setLookFailed] = useState('')
+  async function lookIn(places: string[], pressed: string) {
+    setLooking(pressed)
+    setLookFailed('')
+    try { setLook({ places, list: await api.importableMcp(places) }) }
+    catch (e) { setLookFailed(readableErrText(e)) }
+    finally { setLooking(null) }
+  }
+  // `refresh`, not `load`: a read already on the wire is joined, never stacked behind another. A
+  // frame lost while the socket was down is made up for by reading again when it reconnects.
+  useChatSocket((m) => { if (refreshKinds(m).includes('mcp')) refreshServers() }, refreshServers)
+  // A server that has just connected lists its tools in the tool index, so that is read again too,
+  // once per server that comes up. Not on every frame: the index starts the servers it lists.
+  const connectedNames = servers
+    .filter((sv) => sv.status === 'ok' || sv.status === 'ready' || sv.status === 'connected' || sv.status === 'unserved')
+    .map((sv) => sv.name).sort().join('\n')
+  const listedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (serverRead === undefined) return
+    if (listedFor.current !== null && listedFor.current !== connectedNames) refresh()
+    listedFor.current = connectedNames
+  }, [connectedNames, serverRead, refresh])
+
+  async function reprobe() {
+    setProbing(true)
+    // The 🔑 note below names this bug for `removeServer`: "Surface the backend's message instead of
+    // silently 'refreshing'". A swallowed reprobe did exactly that — the spinner ran, the list
+    // reloaded unchanged, and nothing said the probe had not happened.
+    try {
+      if (await reportingWrite('re-probe the MCP servers', () => api.probeMcp())) load()
+    } finally { setProbing(false) }
+  }
+
+  // 🔑 THE FILE ALREADY NAMES THIS BUG. `removeServer` above unwraps the backend's message and reports
+  // it, with the comment "Surface the backend's message instead of silently 'refreshing' (the bug)". The
+  // four toggles below were doing exactly that bug: swallow, then `setTimeout(load)`.
+  //
+  // These switches are DATA-DRIVEN (`<Toggle on={!!g.server.enabled} />` reads the refetched list), not
+  // optimistic — so a failed write does not leave a lying control, it leaves NOTHING. The user clicks, the
+  // switch does not move, no message appears, and the only reasonable guess is to click again. An action
+  // that silently did not happen is its own defect, distinct from the optimistic-lie shape.
+  //
+  // One helper rather than four copies of removeServer's catch, and it returns the outcome so a caller
+  // can skip the refetch when the write never landed. It moved to `app/reportingWrite` when
+  // `knowledge/KnowledgeListPage` became its second adopter — one implementation, not two copies.
+  async function toggleServer(s: McpServer) {
+    // A server that waits reads off, and switching it on is its Allow: the switch alone would leave
+    // it waiting, with nothing said.
+    if (s.allowed === false) { await allowServer(s); return }
+    const ok = await reportingWrite(`${s.enabled ? 'disable' : 'enable'} "${s.name}"`,
+      () => api.toggleMcpServer(s.name, !s.enabled))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // The owner's yes to a server that waits (`mcp_grants`): one imported, brought over, set up by a
+  // pack or an app, or changed since it was allowed. The gateway asks first, with exactly what the
+  // server runs, and starts it only once they agree. Declining leaves it waiting, which is what the
+  // owner chose, so nothing is reported.
+  const [allowing, setAllowing] = useState<string | null>(null)
+  async function allowServer(s: McpServer) {
+    const revision = s.allowRevision
+    if (!revision) return
+    setAllowing(s.name)
+    let declined = false
+    try {
+      const ok = await reportingWrite(`allow "${s.name}"`, () => api.allowMcpServer(s.name, revision).catch((e) => {
+        if (e instanceof ConsentDeclined) { declined = true; return }
+        // What it runs changed after this page read it: the row is read again, with the new definition.
+        if (hasApiCode(e, 'stale_write')) load()
+        throw e
+      }))
+      if (ok && !declined) {
+        notify(`Allowed “${s.name}”. It starts now.`, 'success')
+        setTimeout(load, 400)
+      }
+    } finally { setAllowing(null) }
+  }
+
+  // Grant or revoke ONE server's right to ask the user a question mid-tool-call.
+  //
+  // 🔴 ONE SERVER'S GRANT, NEVER THE LIST. The allowlist used to be sent whole, with this name
+  // spliced into the page's copy of it — so a tab opened before another tab granted a server
+  // revoked that grant the moment it touched any other server, under a dialog promising "No other
+  // server is affected." The gateway now applies the one name to the stored list when the write
+  // lands, so that sentence is true whatever any other tab did. Data-driven like the four toggles
+  // above (the pressed state reads the refetched list), so a failed write leaves the switch where
+  // it was instead of claiming a grant that never landed.
+  //
+  // Revoking takes effect on the server's NEXT handshake — the grant is read at session
+  // construction — which is why the confirmation copy says "reconnect", not "immediately".
+  async function toggleElicitation(s: McpServer) {
+    // The control is disabled while this is `null`: which way to flip it is only known once the
+    // grants have been read.
+    if (!elicitationServers) return
+    const granted = elicitationServers.includes(s.name)
+    if (!granted && !(await confirm({
+      title: `Let "${s.name}" ask you questions?`,
+      body: 'This MCP server will be able to interrupt its own tool calls to ask you something. '
+        + 'Each question appears as an approval card you answer yourself — the server never gets a default answer. '
+        + 'No other server is affected.',
+      confirmLabel: 'Allow questions',
+    }))) return
+    // A grant was just consented to in the dialog above; the flag says so, so the gateway's own
+    // consent step does not ask again. Revoking needs no consent.
+    const ok = await reportingWrite(
+      `${granted ? 'stop' : 'let'} "${s.name}" ${granted ? 'asking' : 'ask'} you questions`,
+      () => (granted ? api.revokeMcpElicitation(s.name) : api.grantMcpElicitation(s.name, true)))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // Whether a server's own "read-only" labels are believed. Until they are, every one of its
+  // tools is treated as a change: it asks, Ask and Plan mode refuse it, and Trust reads never
+  // approves it. Trusting them lets the tools it labels read-only run as reads do, which is the
+  // owner's call per server — so it asks first, naming those tools, and saying no again needs no
+  // question. The trust covers the tools the card showed, each sent back with the digest of its
+  // definition the card carried (`readOnlyTrust.listed`): a tool the server adds or changes later
+  // asks until she reviews it. With no listing yet there is nothing to show her, so nothing to trust.
+  async function toggleReadOnlyTrust(s: McpServer) {
+    const trust = s.readOnlyTrust
+    if (!trust) return
+    const trusted = trust.trusted
+    const listed = trust.listed ?? {}
+    if (!trusted && !trust.listed) return
+    if (!trusted && !(await confirm({ ...trustQuestion(s), confirmLabel: 'Trust its labels' }))) return
+    const ok = await reportingWrite(
+      `${trusted ? 'stop trusting' : 'trust'} "${s.name}"'s read-only labels`,
+      () => (trusted ? api.distrustMcpReadOnly(s.name) : api.trustMcpReadOnly(s.name, listed)))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // Review: a trusted server listed tools it added or changed since she trusted it, and each one
+  // asks until she looks. The dialog shows each change as the server lists it now, and her yes seals
+  // the tools again exactly as the card showed them.
+  async function reviewReadOnlyTrust(s: McpServer) {
+    const changes = trustChanges(s.readOnlyTrust)
+    const listed = s.readOnlyTrust?.listed
+    if (!changes || !listed) return
+    if (!(await confirm({
+      title: `Trust what "${s.name}" changed?`,
+      body: <ReadOnlyTrustReview server={s} changes={changes} />,
+      confirmLabel: 'Trust them as they are now',
+    }))) return
+    const ok = await reportingWrite(`trust what "${s.name}" changed`, () => api.trustMcpReadOnly(s.name, listed))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // Reconnect ONE server (re-probe just it) — recover a timed-out/errored provider
+  // without re-probing the whole fleet.
+  const [reconnecting, setReconnecting] = useState<string | null>(null)
+  async function reconnectServer(s: McpServer) {
+    setReconnecting(s.name)
+    try { await api.reconnectMcp(s.name) } catch { /* status surfaces on reload */ }
+    finally { setReconnecting(null); load() }
+  }
+
+  // Sign in to a server at a URL with OAuth. Where the authorization server's page opens is settled
+  // HERE, inside the click, before the gateway is asked (`prepareExternalPage`): a tab of its own in a
+  // browser, cut off from this page; the system's default browser in the desktop app, whose windows
+  // refuse a blank one. The gateway's callback finishes the sign-in, and this page looks for it
+  // (`pendingSignIn`) until the server reads signed in, saying meanwhile where the page opened, or
+  // offering it to open by hand when it did not.
+  const [pendingSignIn, setPendingSignIn] = useState<PendingSignIn | null>(null)
+  const [clientPrompt, setClientPrompt] = useState<ClientPrompt | null>(null)
+  async function signIn(s: McpServer, client?: { clientId: string; clientSecret?: string }): Promise<boolean> {
+    const page = prepareExternalPage()
+    try {
+      const started = await api.startMcpSignIn(s.name, client)
+      const opened = await page.open(started.authorizationUrl)
+      setClientPrompt(null)
+      setPendingSignIn({ name: s.name, url: started.authorizationUrl, since: Date.now(), opened })
+      return true
+    } catch (e) {
+      page.discard()
+      if (hasApiCode(e, 'mcp_sign_in_needs_client_id') && e instanceof ApiError) {
+        const need = e.detail as McpSignInClientNeeded | undefined
+        if (need?.redirectUri) {
+          setClientPrompt({ server: s.name, message: e.message, redirectUri: need.redirectUri, issuer: need.issuer })
+          return false
+        }
+      }
+      notify(`Couldn't start signing in to "${s.name}": ${readableErrText(e) || 'the gateway did not answer'}`, 'error')
+      // A server that turns out to have no sign-in is probed again by the gateway: the card is read
+      // again, so it stops offering Sign in and says, in place, what the server wants instead. A
+      // toast alone left the card still saying "asks you to sign in".
+      load()
+      return false
+    }
+  }
+
+  async function signOut(s: McpServer) {
+    if (!(await confirm({
+      title: `Sign out of "${s.name}"?`,
+      body: 'PersonalClaw deletes the tokens it holds for this server, and its tools stop working until you sign in again. '
+        + 'Your account there may still list PersonalClaw as allowed; remove it there to take the access back.',
+      confirmLabel: 'Sign out',
+    }))) return
+    const ok = await reportingWrite(`sign out of "${s.name}"`, () => api.signOutMcp(s.name))
+    if (ok) { setPendingSignIn(null); setTimeout(load, 400) }
+  }
+
+  // While a sign-in is finishing elsewhere, the card is read again when the gateway's callback lands
+  // (it probes the server again, which the `mcp` frame announces) and when this window regains
+  // focus, until the server reads signed in (then say so) or the wait runs out.
+  useEffect(() => {
+    if (!pendingSignIn) return
+    const done = servers.find((sv) => sv.name === pendingSignIn.name)?.auth?.state === 'signed_in'
+    if (done) {
+      notify(`Signed in to "${pendingSignIn.name}".`, 'success')
+      setPendingSignIn(null)
+      return
+    }
+    const left = SIGN_IN_WAIT_MS - (Date.now() - pendingSignIn.since)
+    if (left <= 0) { setPendingSignIn(null); return }
+    const timer = window.setTimeout(() => setPendingSignIn(null), left)
+    window.addEventListener('focus', load)
+    return () => { window.clearTimeout(timer); window.removeEventListener('focus', load) }
+  }, [pendingSignIn, servers])
+
+  async function removeServer(s: McpServer) {
+    // The body names the whole blast radius: the delete takes the server out of mcp.json AND the
+    // agent config, which deletes every value it owns in the credential store (`remove_mcp_servers`).
+    // It never touches another tool's config, so a server imported from Claude Code stays there.
+    if (!(await confirm({ title: `Remove MCP server "${s.name}"?`, body: 'Its tools will no longer be available, and the values saved for it are deleted from your credential store.', danger: true, confirmLabel: 'Remove' }))) return
+    try {
+      await api.removeMcpServer(s.name)
+    } catch (e) {
+      // An app-contributed server (409 ownedByApp) can't be removed here — it's
+      // owned by its app. Surface the backend's message instead of silently
+      // "refreshing" (the bug), so the user knows to uninstall the app.
+      let msg = e instanceof Error ? e.message : 'Failed to remove server'
+      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
+      notify(msg, 'error')
+    }
+    setTimeout(load, 400)
+  }
+
+  // Per-tool enable/disable. An MCP server's tool writes that server's `disabledTools` in
+  // mcp.json, under the name the SERVER gives it (`serverTool`): that list is what an ACP agent
+  // and the gateway's own check read, and `mcp/<server>/<tool>` in it matches nothing. Native
+  // tools write tool_prefs.json. Locked tools never reach here (switch disabled).
+  async function toggleTool(g: Group, t: ToolItem) {
+    const enabled = t.disabled === true  // flipping → if currently disabled, enable
+    const what = `${enabled ? 'enable' : 'disable'} "${t.name}"`
+    const ok = g.kind === 'mcp' && g.server && t.serverTool
+      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.serverTool!, enabled))
+      : await reportingWrite(what, () => api.toggleTool(t.provider, t.name, enabled))
+    if (ok) setTimeout(load, 300)
+  }
+
+  // Whole-provider enable/disable. A native provider writes tool_prefs.json
+  // (disabledProviders); an MCP server reuses the server toggle. One write path
+  // per kind — the runtime + all surfaces read it back.
+  async function toggleProvider(g: Group) {
+    if (g.kind === 'mcp' && g.server) { await toggleServer(g.server); return }
+    const ok = await reportingWrite(`${g.providerDisabled ? 'enable' : 'disable'} "${g.key}"`,
+      () => api.toggleToolProvider(g.key, !!g.providerDisabled))
+    if (ok) setTimeout(load, 300)
+  }
+
+  const groups = useMemo<Group[] | null>(() => {
+    // Both reads, before the first paint: without the server list an MCP server's tools would be
+    // drawn as a native provider's.
+    if (!tools || serverRead === undefined) return null
+    // The activation group a provider's tools belong to — shown as a badge only
+    // when grouping is ON (off, every group is loaded, so naming one is noise).
+    // Providers are group-grain by construction, so the provider's tools agree;
+    // a core-locked tool can differ (it's always `core`), so take the majority
+    // rather than the first, and show nothing if it's genuinely mixed.
+    const groupOf = (list: ToolItem[]): string | undefined => {
+      if (!groupsEnabled) return undefined
+      const counts = new Map<string, number>()
+      for (const t of list) {
+        if (!t.group) continue
+        counts.set(t.group, (counts.get(t.group) ?? 0) + 1)
+      }
+      let best: string | undefined
+      let bestCount = 0
+      for (const [name, count] of counts) if (count > bestCount) { best = name; bestCount = count }
+      return best
+    }
+    const needle = q.trim().toLowerCase()
+    // A "narrowing" filter is active when there's a search needle OR a risk filter
+    // — both hide empty native groups (an empty group only shows in the unfiltered
+    // browse view, so an errored/0-tool provider stays discoverable).
+    const active = !!needle || risk !== 'all'
+    const match = (t: ToolItem) =>
+      (!needle || `${t.name} ${t.description}`.toLowerCase().includes(needle)) &&
+      (risk === 'all' || (t.risk_level ?? 'safe') === risk)
+    const byProvider = new Map<string, ToolItem[]>()
+    for (const t of tools) { const p = t.provider || 'other'; (byProvider.get(p) ?? byProvider.set(p, []).get(p)!).push(t) }
+    // The backend only surfaces MCP servers configured in PersonalClaw scope —
+    // Claude-Code-only servers are offered as import suggestions instead (see
+    // ImportSuggestions), never as live server groups here.
+    const serverNames = new Set(servers.map((s) => s.name))
+
+    const out: Group[] = []
+    // native providers (those not backed by an MCP server)
+    for (const [p, list] of byProvider) {
+      if (serverNames.has(p)) continue
+      // With the server list unread, an MCP server's tools cannot be told from a native provider's
+      // by name, and drawn as one they would offer a native provider's switch for an MCP server.
+      // Their rows still say who they belong to: `serverTool` is set only on an MCP tool.
+      if (serversUnread && list.some((t) => t.serverTool !== undefined)) continue
+      const filtered = list.filter(match)
+      // a provider is "off" when ALL its tools report providerDisabled (the backend
+      // sets that flag per-tool when the whole provider is disabled).
+      const provOff = list.length > 0 && list.every((t) => t.providerDisabled)
+      if (filtered.length || !active) out.push({
+        key: p, label: p, kind: 'native', tools: filtered,
+        providerDisabled: provOff, providerLocked: p === LOCKED_NATIVE_PROVIDER,
+        group: groupOf(list),
+        // Off the UNFILTERED list: a group can render with `tools: []` when nothing is
+        // narrowing the view, and provenance must not vanish with the last matching tool.
+        tier: list[0]?.tier,
+      })
+    }
+    out.sort((a, b) => a.label.localeCompare(b.label))
+    // MCP servers configured in PersonalClaw (shown even at 0 tools / errored)
+    for (const s of servers) {
+      const list = (byProvider.get(s.name) ?? []).filter(match)
+      out.push({ key: s.name, label: s.name, kind: 'mcp', tools: list, server: s, group: groupOf(byProvider.get(s.name) ?? []) })
+    }
+    // With a filter active, drop groups with no matching tools — including MCP
+    // groups (an errored/0-tool server is only worth showing in the browse view).
+    return out.filter((g) => g.tools.length > 0 || (g.kind === 'mcp' && !active) || !active)
+  }, [tools, serverRead, servers, serversUnread, q, risk, groupsEnabled])
+
+  const open = tools?.find((t) => t.name === openName) ?? null
+  const openServer = open ? servers.find((s) => s.name === open.provider) : undefined
+  // View is "filtered" when a search needle or a risk filter is narrowing it —
+  // suppresses the browse-only affordances (load failures, import suggestions).
+  const filtered = !!q.trim() || risk !== 'all'
+  // Announce the count of TOOLS, not of the groups holding them: "3 tools" is the fact a user
+  // asked for, and the same `groups` the body renders — so the number can never disagree with
+  // what is on screen.
+  const shownTools = (groups ?? []).reduce((n, g) => n + g.tools.length, 0)
+  // Where the import list goes, the same in both bodies: the list, each other tool's settings file
+  // that could not be read (its servers are missing from the list), or the failed look itself, and
+  // for each tool not looked in, the press that looks. What a press found stands until the next.
+  const pressed = look?.places ?? []
+  const importList: ImportableMcpList | null = look?.list
+    ?? (importUnread ? null : { servers: importable, unreadable: importUnreadable, tools: importTools })
+  const importSection = filtered ? null : !importList
+    ? <ImportUnread error={importableError} onRetry={load} />
+    : (
+      <OtherToolsImport list={importList} pressed={pressed} looking={looking} lookFailed={lookFailed}
+        onLook={(place) => lookIn([...new Set([...pressed, place])], place)}
+        onRetry={look ? () => lookIn(pressed, '') : load}
+        onImported={() => { setTimeout(load, 300); if (look) void lookIn(pressed, '') }} />
+    )
+
+  return (
+    <WorkbenchLayout
+      topBar={
+        <TopBar
+          keepCornerPadding
+          left={<PageTitle>Tools</PageTitle>}
+          right={
+            <HeaderActions>
+              <HeaderControl icon={Plus} label="Add tool server" priority="primary" onClick={() => setAddOpen(true)} />
+              <HeaderControl icon={probing ? Loader2 : RefreshCw} label="Re-probe MCP servers" priority="low" disabled={probing} onClick={reprobe} />
+            </HeaderActions>
+          }
+        />
+      }
+      controls={(tools === null || tools.length > 0)
+        ? <ListControls
+            search={{ value: q, onChange: setQ, placeholder: 'Search tools', label: 'Search tools' }}
+            results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }}
+            filter={{
+              value: risk, onChange: setRisk, ariaLabel: 'Filter by risk level',
+              options: [
+                { key: 'all', label: 'All' },
+                { key: 'safe', label: 'Safe', tone: 'var(--color-ok)' },
+                { key: 'caution', label: 'Caution', tone: 'var(--color-warn)' },
+                { key: 'destructive', label: 'Destructive', tone: 'var(--color-danger)' },
+              ],
+            }}
+          />
+        : undefined}
+      panel={open && (
+        <SidePanel key={open.name} fillHeight storeKey="tool-panel-w" icon={<Wrench size={18} className="text-primary" />} title={<span className="font-mono text-[1.0625rem]">{open.name}</span>} onClose={() => setOpenName("")}>
+          <ToolInspector tool={open} serverStatus={openServer ? serverHealth(openServer) : undefined} />
+        </SidePanel>
+      )}
+    >
+      <>
+        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+          {tools === null && loadErr ? (
+            <LoadError what="tools" error={loadErr} onRetry={load} />
+          ) : groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (
+            // No group survived: nothing matched the filter, or (unfiltered) there are no
+            // tools at all. `importable` must NOT gate this — importable servers are ones
+            // you COULD add, never search results, so gating on them made the state
+            // unreachable on any install with a discoverable MCP config and left a blank
+            // body on every no-match search. Import suggestions still render underneath,
+            // so on a genuinely empty install adding a server stays one click away.
+            <div className="flex flex-col gap-2xl">
+              <EmptyState icon={Wrench} title={filtered ? 'No matching tools' : 'No tools'} hint={filtered ? (risk !== 'all' && !q ? `No ${risk} tools.` : 'Try a different search term.') : 'Tools are the capabilities agents can invoke — built-in actions plus anything from connected MCP servers.'} />
+              {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
+              {importSection}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2xl">
+              {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
+              {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
+              {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
+              {!filtered && <McpPoolTile stats={poolStats} />}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onToggleReadOnlyTrust={toggleReadOnlyTrust} onReviewReadOnlyTrust={(sv) => { void reviewReadOnlyTrust(sv) }} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
+              {importSection}
+            </div>
+          )}
+        </div>
+
+        {addOpen && <AddToolServerModal onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); setTimeout(load, 300) }} />}
+        {editing && <EditToolServerModal name={editing} onClose={() => setEditing('')} onSaved={() => { setEditing(''); setTimeout(load, 300) }} />}
+        {clientPrompt && <SignInClientModal prompt={clientPrompt} onClose={() => setClientPrompt(null)}
+          onSubmit={(client) => { const sv = servers.find((x) => x.name === clientPrompt.server); return sv ? signIn(sv, client) : Promise.resolve(false) }} />}
+      </>
+    </WorkbenchLayout>
+  )
+}
+
+/** The MCP connection-pool observability tile — surfaces the live pool snapshot
+ *  (shared vs per-session connections) + lifetime spawn/reuse counters so the user can
+ *  see pooling working. Hidden when the pool could not be read or knows no server yet
+ *  (no pool activity → no tile clutter). */
+/** Exported for test: the gate (which pool states render at all) and the conditional Evicted cell
+ *  are only observable by rendering the tile against a stubbed stats object — jsdom reports every
+ *  box as 0, so nothing about them is measurable from layout. */
+export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
+  // `configured_servers` joins the gate: the old condition was `live_connections || spawns`, so a
+  // pool with servers CONFIGURED but none spawned yet rendered nothing — exactly the state where
+  // "the pool knows about N servers and has opened none" is the useful fact. A configured pool with
+  // no activity is a real answer; an empty pool is the only thing worth hiding.
+  if (!stats) return null
+  if (!(stats.live_connections || stats.spawns || stats.configured_servers)) return null
+  const cells: Array<{ label: string; value: number | undefined; hint: string }> = [
+    // Configured leads: it is the denominator the other numbers are read against — 0 live out of 1
+    // configured means something different from 0 live out of 6.
+    { label: 'Configured', value: stats.configured_servers, hint: 'MCP servers the pool knows about, whether or not a connection is open' },
+    { label: 'Live', value: stats.live_connections, hint: 'Open MCP connections right now' },
+    { label: 'Shared', value: stats.shared_conns, hint: 'Poolable servers shared across sessions (one process each)' },
+    { label: 'Per-session', value: stats.session_conns, hint: 'Stateful servers isolated to one session' },
+    { label: 'Reused', value: stats.reused, hint: 'Calls served by an existing connection instead of a new spawn' },
+    { label: 'Spawns', value: stats.spawns, hint: 'Connections started this process lifetime' },
+    { label: 'Reaped', value: stats.reaps, hint: 'Idle connections swept to reclaim memory' },
+    // Evicted is the ONLY counter here tied to session lifecycle rather than pooling: session
+    // expiry drops that session's isolated connections (shared ones are untouched). Shown only
+    // when non-zero — on the common single-session install it is permanently 0, and a zero cell
+    // beside six live ones reads as a metric that is broken rather than one that has not happened.
+    ...(stats.evicted ? [{ label: 'Evicted', value: stats.evicted, hint: 'Per-session connections dropped when their session expired (shared connections are untouched)' }] : []),
+  ]
+  return (
+    <div>
+      <div className="mb-s flex items-center gap-s">
+        <Server size={14} className="text-on-surface-low" />
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">MCP connection pool</span>
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
+        {cells.map((c) => (
+          <div key={c.label} title={c.hint}
+            className="rounded-lg border border-outline-variant/40 bg-surface-container/50 px-3 py-2">
+            <div className="text-on-surface text-[1.25rem] tabular-nums leading-tight">{c.value ?? 0}</div>
+            <div data-type="caption" className="text-on-surface-low">{c.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** THE PROVENANCE BADGE on a native provider group — THREE states, not two (#2627).
+ *
+ *  🔑 IT USED TO BE A BINARY, AND THE BINARY WAS WRONG IN THE REASSURING DIRECTION.
+ *  `providerLocked ? 'platform' : 'built-in'` meant every native group that is not locked read
+ *  `built-in` — and an installed community bundle is exactly that shape: native kind, not locked.
+ *  So the install dialog disclosed "Unsigned — community tier", the user consented to *that*, and
+ *  the page they later audit from ("what is running here, and where did it come from?") answered
+ *  with the word core's own first-party providers get. The tiers exist to inform consent; erasing
+ *  one on the audit surface inverts their point.
+ *
+ *  So the third state derives from WHERE THE PROVIDER CAME FROM (`tier`, off the wire) rather than
+ *  from whether it happens to be locked:
+ *    • `platform`   — provider-locked core. Still the strongest statement, so it still wins.
+ *    • `built-in`   — core, unlocked. `tier === 'builtin'`, which is what the catalog reports for a
+ *                     provider no installed app contributed.
+ *    • the tier     — an installed bundle, spelled by `lib/trustTier` — the SAME map the install
+ *                     dialog's signature row reads. Not a second literal: two literals is how the
+ *                     two surfaces came to disagree, and would be how they drift again.
+ *
+ *  🪤 `null` when the tier is UNKNOWN, and that is deliberate — see `isKnownTrustTier`. Defaulting
+ *  absence to `built-in` is the defect itself; defaulting it to `community tier` cries wolf about
+ *  the platform's own providers. Exported for test: the three states are only observable by
+ *  rendering, and the whole point of the fix is which word comes out.
+ */
+export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { label: string; title: string } | null {
+  if (g.providerLocked) {
+    return { label: 'platform', title: "Ships with PersonalClaw and is required by platform features — it can't be disabled" }
+  }
+  if (!isKnownTrustTier(g.tier)) return null
+  return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
+}
+
+function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onToggleReadOnlyTrust, onReviewReadOnlyTrust, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onToggleReadOnlyTrust: (s: McpServer) => void; onReviewReadOnlyTrust: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
+  const health = g.server ? serverHealth(g.server) : null
+  const waiting = g.server?.status === 'waiting'
+  // Stopped after failing to start again and again: its line below says why, with Retry.
+  const stopped = !!g.server?.enabled && g.server.status === 'stopped'
+  // A server that waits is off: nothing runs it until its Allow, which switches it on too.
+  const serverOn = !!g.server?.enabled && !waiting
+  const signInState = g.server?.auth?.state
+  // The owner's trust in the server's read-only labels, and what its tools are now against what she
+  // trusted. None at all for PersonalClaw's own server, whose tools say what they do themselves.
+  const readOnlyTrust = g.server?.readOnlyTrust
+  const readOnlyTrusted = !!readOnlyTrust?.trusted
+  const trustChanged = trustChanges(readOnlyTrust)
+  // A native provider (not the locked platform one) gets a whole-provider toggle.
+  const nativeToggleable = g.kind === 'native' && !g.providerLocked
+  const badge = g.kind === 'native' ? providerBadge(g) : null
+  return (
+    <div className={g.providerDisabled ? 'opacity-55' : ''}>
+      <div className="mb-s flex items-center gap-s">
+        {g.kind === 'mcp' ? <Server size={14} className="text-on-surface-low" /> : <Cpu size={14} className="text-on-surface-low" />}
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{g.label}</span>
+        {g.kind === 'native'
+          ? badge && <span data-type="caption" title={badge.title} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{badge.label}</span>
+          : health && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
+        {signInState === 'signed_in' && (
+          <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center gap-1 text-on-surface-low"
+            title="Signed in with OAuth. PersonalClaw renews the sign-in by itself, and says so here if it ends.">
+            <KeyRound size={11} /> signed in
+          </span>
+        )}
+        <span data-type="caption" className="text-on-surface-low">· {g.tools.length}</span>
+        {/* Which activation GROUP these tools belong to — the
+            page already groups by provider, which IS the group grain, so this just
+            names it. Only shown when grouping is on, since it's meaningless off. */}
+        {g.group && (
+          <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low"
+            title={g.group === 'core'
+              ? 'Always loaded — the primitives an agent cannot work without'
+              : `Group "${g.group}" — loaded on demand; a session that doesn't need it doesn't pay for its schemas`}>
+            {g.group === 'core' ? 'always loaded' : `group: ${g.group}`}
+          </span>
+        )}
+        {g.server && (
+          <div className="ml-auto flex items-center gap-1">
+            {/* The per-server elicitation grant, the ONE selector over the
+                capability. Without a control here the field would be config-file-only,
+                which is the exact trap the capability census recorded for the auth
+                selector: a complete verifier with nothing over it.
+
+                🪤 NOT a second bare `<Toggle>`. The enable/disable switch already sits two
+                nodes right, and two unlabelled switches on one row cannot say which one
+                grants what. `SquareIconButton`'s `on` gives the coral tint AND
+                `aria-pressed`, so the state is readable by sight and by screen reader, and
+                the accessible name states the grant rather than the verb. */}
+            {/* `null` = the grants could not be read: the name claims neither state, and the
+                control is disabled, because whether a click grants or revokes is unknown
+                (`toggleElicitation`). */}
+            <SquareIconButton label={elicitationGranted === null
+              ? `Questions from ${g.server.name}`
+              : elicitationGranted
+                ? `Stop ${g.server.name} asking you questions`
+                : `Let ${g.server.name} ask you questions`}
+              title={elicitationGranted === null
+                ? `Whether ${g.server.name} may ask you questions`
+                : elicitationGranted
+                  ? 'This server may interrupt a tool call to ask you a question. Each one comes to you as an approval card.'
+                  : 'This server cannot ask you questions. PersonalClaw does not advertise the capability to it, and refuses if it asks anyway.'}
+              disabled={elicitationGranted === null}
+              disabledReason="couldn't read which servers may ask you questions, so none can be changed. Reload the page to try again."
+              on={!!elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
+              <MessageCircleQuestion size={13} />
+            </SquareIconButton>
+            {/* Whether this server's own "read-only" labels are believed — the same shape as the
+                elicitation grant beside it. The trust covers the tools the card shows, so with no
+                listing of the server yet there is nothing to trust, and the control says why. */}
+            {readOnlyTrust && (
+              <SquareIconButton label={readOnlyTrusted
+                ? `Stop trusting ${g.server.name}'s read-only labels`
+                : `Trust ${g.server.name}'s read-only labels`}
+                title={readOnlyTrusted
+                  ? "Its tools labelled read-only run as reads do, as they were when you trusted them: without asking, and in Ask and Plan mode. A tool it adds or changes asks until you review it, and its other tools still ask."
+                  : "None of its tools is treated as read-only, whatever it says: each one asks, and Ask and Plan mode refuse them."}
+                disabled={!readOnlyTrusted && !readOnlyTrust.listed}
+                disabledReason="its tools have not been listed yet, so there is nothing to trust. Reconnect it, then trust its labels."
+                on={readOnlyTrusted} iconSize={13} onClick={() => onToggleReadOnlyTrust(g.server!)}>
+                <ShieldCheck size={13} />
+              </SquareIconButton>
+            )}
+            {signInState === 'signed_in' && (
+              <SquareIconButton icon={LogOut} iconSize={13} label={`Sign out of ${g.server.name}`}
+                title="Sign out: PersonalClaw deletes the tokens it holds for this server" onClick={() => onSignOut(g.server!)} />
+            )}
+            {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored
+                provider without re-probing all. Spins while in flight. */}
+            <SquareIconButton label={`Reconnect ${g.server.name}`} title="Reconnect this server"
+              loading={reconnecting === g.server.name} iconSize={13} onClick={() => onReconnect(g.server!)}>
+              <RefreshCw size={13} />
+            </SquareIconButton>
+            <button onClick={() => onToggleServer(g.server!)}
+              title={waiting ? 'Allow and switch on: first shows you what it runs' : serverOn ? 'Disable server' : 'Enable server'}
+              aria-label={`${serverOn ? 'Disable' : 'Enable'} server ${g.server.name}`}>
+              <Toggle on={serverOn} />
+            </button>
+            {/* An app-contributed MCP server is namespaced "{app}:{server}" and owned
+                by its app — it re-registers on app enable, so it's not standalone-
+                deletable here. Show a "via app" marker (delete = uninstall the app)
+                instead of a Trash button that would 409 + look broken. */}
+            {g.server.name.includes(':') ? (
+              <span data-type="caption" className="text-on-surface-low" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
+            ) : (<>
+              {/* Edit reads the server's definition from the gateway: names, plain values, and for a
+                  stored value only that one is saved — for a command and for a URL alike. A server
+                  the form does not own (PersonalClaw's own) opens to the sentence that says why. */}
+              <SquareIconButton icon={Pencil} iconSize={13}
+                label={`Edit ${g.server.name}`} title="Edit server" onClick={() => onEditServer(g.server!)} />
+              <SquareIconButton icon={Trash2} iconSize={13} tone="danger"
+                label={`Remove ${g.server.name}`} title="Remove server" onClick={() => onRemoveServer(g.server!)} />
+            </>)}
+          </div>
+        )}
+        {nativeToggleable && (
+          <div className="ml-auto flex items-center gap-1">
+            <button onClick={() => onToggleProvider(g)} title={g.providerDisabled ? 'Enable this provider' : 'Disable this whole provider'}
+              aria-label={`${g.providerDisabled ? 'Enable' : 'Disable'} provider ${g.label}`}>
+              <Toggle on={!g.providerDisabled} />
+            </button>
+          </div>
+        )}
+        {g.providerLocked && (
+          <span data-type="caption" className="ml-auto text-on-surface-low" title="Required by platform features — can't be disabled">required</span>
+        )}
+      </div>
+      {/* The header's state is a caption with its reason in a `title`, which a touch screen never
+          shows. "Why can't an agent use this, and what do I do" is the one state whose answer is
+          an action, so it is said in the page, with the way to take it. */}
+      {/* A server that will not connect until its owner signs in says so in the page, with the one
+          action that answers it — the same reason the "no agent can call it" line below is not a
+          caption `title`. While a sign-in is finishing in the other tab, the line says that instead,
+          with the page to open again in case the browser blocked the tab. */}
+      {/* A server that waits for the owner's yes says so in the page, with the one action that
+          answers it. Allow first shows exactly what the server runs, in the gateway's words. */}
+      {/* A trusted server whose tools changed since she trusted its labels says so in the page:
+          which it added, changed and removed, and that the new and changed ones ask until she
+          reviews them, with the one action that answers it. */}
+      {trustChanged && g.server && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-m text-on-surface-low flex flex-wrap items-center gap-s">
+          <ShieldAlert size={14} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">{trustChangeSentence(g.server.name, trustChanged)}</span>
+          <Button size="sm" onClick={() => onReviewReadOnlyTrust(g.server!)}
+            ariaLabel={`Review what ${g.server.name} changed`}>Review</Button>
+        </div>
+      )}
+      {waiting && g.server && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-m text-on-surface-low flex flex-wrap items-center gap-s">
+          <ShieldAlert size={14} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="text-on-surface">{g.server.name}</span> has not run. PersonalClaw starts it only once you allow what it runs.
+          </span>
+          <Button size="sm" onClick={() => onAllow(g.server!)} loading={allowing === g.server.name}
+            ariaLabel={`Allow ${g.server.name}`}>Allow</Button>
+        </div>
+      )}
+      {/* A server PersonalClaw stopped starting says so in the page, with what its last start found
+          and the one action that answers it: Retry starts it again, once. */}
+      {stopped && g.server && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-m text-on-surface-low flex flex-col gap-s">
+          <div className="flex flex-wrap items-center gap-s">
+            <CircleAlert size={14} className="shrink-0 text-danger" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{g.server.error}</span>
+            <Button size="sm" onClick={() => onReconnect(g.server!)} loading={reconnecting === g.server.name}
+              ariaLabel={`Retry ${g.server.name}`}>Retry</Button>
+          </div>
+          <StartDetails detail={g.server.detail} />
+        </div>
+      )}
+      {g.server?.enabled && (signInState === 'required' || signInState === 'signed_out') && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-wrap items-center gap-s">
+          <KeyRound size={14} className="shrink-0" />
+          {pendingSignIn ? <SignInPending name={g.server.name} pending={pendingSignIn} /> : (<>
+            <span className="min-w-0 flex-1">
+              {signInState === 'required'
+                ? <><span className="text-on-surface">{g.server.name}</span> asks you to sign in before its tools can be used.</>
+                : <>You are signed out of <span className="text-on-surface">{g.server.name}</span>. Its tools cannot be used until you sign in again.</>}
+            </span>
+            <Button size="sm" onClick={() => onSignIn(g.server!)}>{signInState === 'required' ? 'Sign in' : 'Sign in again'}</Button>
+          </>)}
+        </div>
+      )}
+      {g.server?.enabled && g.server.status === 'unserved' && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
+          <Plug size={14} className="shrink-0" />
+          <span>
+            No agent can call these tools right now. They reach an agent through the built-in <span className="text-on-surface">{MCP_TOOLS_LABEL}</span> provider, which is switched off or failed to load. A load error, if there is one, is listed on this page.
+          </span>
+        </div>
+      )}
+      {/* 🔴 TWO COLUMNS WITH NO BREAKPOINT MADE THE TOOL NAME INVISIBLE ON A PHONE. The grid in the
+          else-branch below holds, per cell, a wrench, the name, an approval shield, a risk badge and
+          sometimes a "Disabled" pill — so at 390px a ~172px half-width cell leaves the name nothing.
+          Measured across 99 tools: visible width 0–83px, MEDIAN 65px, several at 0 or 1px;
+          `artifact_delete` painted at literally 0px while needing 117. At 768px and 1440px every name
+          renders in full (101/101px), so this is purely the phone column count.
+          🪤 A `title` WOULD HAVE BEEN THE WRONG FIX, which is why the truncation census classifies
+          before it edits: a tooltip needs a pointer and this defect exists only on touch. The name has
+          to be VISIBLE, not recoverable — hence one column below `sm:`, the idiom nine other grids here
+          already use (SecurityPanel, ArtifactGrid, ArtifactCompare, ScheduleForm, AgentForm,
+          AuditPanel, PresetEmptyState, DesignCockpitPage ×2).
+          🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
+          ternary branch is a second child where one expression is allowed, and it does not compile. */}
+      {/* A server that waits, or that was stopped, has no tools to show, and its line above already
+          says why. */}
+      {waiting || stopped ? null : g.kind === 'mcp' && g.tools.length === 0 ? (
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-col gap-s">
+          <div className="flex items-center gap-s">
+            <Plug size={14} className="shrink-0" />
+            <span className="min-w-0">{noToolsLine(g.server, health?.state, signInState)}</span>
+          </div>
+          {health?.state === 'error' && <StartDetails detail={g.server?.detail} />}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-s sm:grid-cols-2">
+          {g.tools.map((t) => {
+            const { props } = schemaProps(t.parameters)
+            const off = t.disabled === true
+            return (
+              <div key={t.name}
+                className={`group flex items-start gap-s rounded-lg bg-surface-container px-m py-m transition-colors hover:bg-surface-high ${off ? 'opacity-55' : ''}`}>
+                <button onClick={() => onOpen(t.name)} className="flex min-w-0 flex-1 items-start gap-s text-left">
+                  <Wrench size={16} className="text-primary shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {/* `title` on a monospace IDENTIFIER. Measured at 390px on a populated home:
+                          `automation_delete_all` shows 162px of 164px and `template_save_from_session`
+                          184px of 203px — 1.01x and 1.1x, which sounds like nothing and is not. A tool
+                          name's DISTINGUISHING part is its tail (`automation_delete_all` vs
+                          `automation_delete_one`), and losing the last few characters of a snake_case
+                          identifier is losing the word that says what it does. Same reasoning as the
+                          agent-row fix; the app's settled recovery for a truncating element. */}
+                      <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={t.name}>{t.name}</span>
+                      {/* 🔴 THIS SHIELD IS THE ONLY THING THAT SAYS "THIS TOOL WILL ASK FIRST", and it
+                          said it in a 12px glyph and nothing else. Measured on the live tree against
+                          `demo-home`: **82 of these render, 0 carried an accessible name** — no
+                          `aria-label`, no `title`, no `<title>` in the svg — so a screen-reader user
+                          learned nothing about approval on any of 114 tools.
+
+                          The inconsistency is on this very line: its neighbour `RiskBadge` states its
+                          dimension in VISIBLE text (`Caution` / `Destructive`, 41 rendered) while this
+                          one, a security-relevant behaviour, stayed mute.
+
+                          Named directly on the glyph, which is the settled form here for an
+                          informational lucide icon — `AuditPanel:296` names this same `ShieldAlert`
+                          ("Integrity check failed…"), `SkillsPage:161` pairs `role="img"` with
+                          `aria-label` on its integrity shield, and `ProjectsSection`/`KnowledgeListPage`
+                          name their `Star`/`Lock` glyphs the same way. `role="img"` is included because
+                          `design/ariaProhibitedAttr.test.ts` declares it for "a graphic whose label is
+                          its only text".
+
+                          🪤 NO `title` — lucide's `LucideProps` rejects it (TS2322), which is why all six
+                          precedent sites carry `aria-label` alone or `aria-label` + `role`. A hover would
+                          need a wrapping element none of them use, so the label is the whole fix here.
+
+                          NOT a visible badge: this row already truncates the tool NAME (`truncate` on a
+                          font-mono identifier whose tail is the distinguishing part), and a second chip
+                          beside `RiskBadge` would take width from it. Same call as the agent-row counts. */}
+                      {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" role="img" aria-label="Asks for approval before it runs" />}
+                      <RiskBadge risk={t.risk_level} />
+                      {off && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">Disabled</span>}
+                    </div>
+                    {/* `inline`: this row is the inside of a `<button>` AND is `line-clamp`-ed,
+                        so the block renderer is barred twice over — a link in the prose would
+                        nest an interactive element inside the row's click target (axe
+                        `nested-interactive`), and a block child would break the clamp. Inline
+                        mode renders a link as plain underlined text, so the description in the
+                        inspector one click away is the surface that carries the real link. */}
+                    <p data-type="caption" className="mt-0.5 line-clamp-2 text-on-surface-low leading-snug">
+                      <Markdown inline>{t.description}</Markdown>
+                    </p>
+                    {props.length > 0 && <div data-type="caption" className="mt-1 text-on-surface-low">{props.length} param{props.length === 1 ? '' : 's'}</div>}
+                  </div>
+                </button>
+                {/* per-tool enable/disable. Locked tools show a disabled switch with
+                    an explanation; the rest toggle (native → tool_prefs, MCP → mcp.json). */}
+                <button
+                  onClick={() => { if (!t.locked) onToggleTool(g, t) }}
+                  disabled={t.locked}
+                  title={t.locked ? 'Required by platform features — can’t be disabled' : off ? 'Enable this tool' : 'Disable this tool'}
+                  aria-label={`${off ? 'Enable' : 'Disable'} ${t.name}`}
+                  className={`shrink-0 mt-0.5 ${t.locked ? 'cursor-not-allowed opacity-40' : ''}`}>
+                  <Toggle on={!off} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Risk indicator on a tool row (tool risk taxonomy). SAFE is the norm — showing
+ *  it on every read tool would be noise — so only caution/destructive get a chip.
+ *  Declared (static) risk; the approval gate resolves per-invocation effective risk. */
+function RiskBadge({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
+  if (!risk || risk === 'safe') return null
+  const color = risk === 'destructive' ? 'var(--color-danger)' : 'var(--color-warn)'
+  const label = risk === 'destructive' ? 'Destructive' : 'Caution'
+  return (
+    <span data-type="caption" className="rounded-pill px-1.5 py-0.5 shrink-0" title={`Risk: ${label}`}
+      style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
+      {label}
+    </span>
+  )
+}
+
+/** A sentence that ends like one, whatever the gateway's text ended with. */
+const asSentence = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`)
+
+/** A read beside the tool list that failed, said where its answer would have been. A status, not an
+ *  alert: the page did not fail — one part of it could not be read, and the rest is on screen. */
+function ReadFailed({ children, details, onRetry }: {
+  children: React.ReactNode
+  /** One line per thing that failed, under the sentence, when there is more than one. */
+  details?: React.ReactNode[]
+  onRetry: () => void
+}) {
+  return (
+    <div data-type="body-s" role="status" className="rounded-lg bg-surface-container px-m py-m">
+      <p className="text-warn">{children}</p>
+      {details && details.length > 0 && (
+        <ul className="mt-xs flex flex-col gap-xs">
+          {details.map((line, i) => <li key={i} data-type="caption" className="text-on-surface-var">{line}</li>)}
+        </ul>
+      )}
+      <Button size="xs" variant="ghost" className="mt-xs" onClick={onRetry}>Try again</Button>
+    </div>
+  )
+}
+
+/** The server list could not be read, so no MCP server is drawn — which must not read as "none set
+ *  up". */
+function ServersUnread({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <ReadFailed onRetry={onRetry}>
+      {asSentence(`Couldn't read your MCP servers${error ? `: ${error}` : ''}`)} Their tools are left out of
+      this list until it loads, and nothing about the servers changed.
+    </ReadFailed>
+  )
+}
+
+/** The other tools could not be looked through, so there is no import list — which must not read
+ *  as "nothing to import". The gateway's sentence names what it could not read. */
+function ImportUnread({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <ReadFailed onRetry={onRetry}>
+      {error
+        ? <>{asSentence(error)} Nothing was imported or changed. Fix what it names, then try again.</>
+        : <>Couldn't check your other tools for MCP servers to import: the gateway did not answer. Nothing was imported or changed.</>}
+    </ReadFailed>
+  )
+}
+
+/** Another tool's MCP settings file is there and could not be read, so the servers it holds are not
+ *  in the import list — which must not read as "nothing to import" from that tool. Beside the
+ *  list, because the other tools' servers were read and are still offered. */
+function ImportFilesUnread({ files, onRetry }: { files: ImportableMcpList['unreadable']; onRetry: () => void }) {
+  if (files.length === 1) {
+    const [file] = files
+    return (
+      <ReadFailed onRetry={onRetry}>
+        Couldn't read {file.backend}'s {file.path}: {file.why}. The MCP servers it holds are not listed
+        until it can be read, and nothing was imported or changed. Fix the file, then try again.
+      </ReadFailed>
+    )
+  }
+  return (
+    <ReadFailed onRetry={onRetry}
+      details={files.map((file) => `${file.backend}'s ${file.path}: ${file.why}.`)}>
+      Couldn't read {files.length} of your other tools' MCP settings files, so the servers they hold
+      are not listed until they can be read, and nothing was imported or changed. Fix each, then try
+      again.
+    </ReadFailed>
+  )
+}
+
+/** Operator-visible tool-source load failures — a broken provider/MCP source
+ *  that contributed zero tools, with the captured error. Without this a failed
+ *  source is invisible (the tools just never appear). */
+function LoadFailures({ failures }: { failures: ToolLoadFailure[] }) {
+  return (
+    <div className="rounded-lg border px-m py-3" style={{ borderColor: 'color-mix(in srgb, var(--color-danger) 35%, transparent)', background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)' }}>
+      <div className="mb-2 flex items-center gap-s">
+        <ShieldAlert size={15} className="text-danger" />
+        {/* `font-medium` became `fw-500`: a role's `font-variation-settings` beats a Tailwind
+            font-weight class outright, so keeping `font-medium` beside `label-s` would have
+            rendered this line at 470 instead of the 500 it has always been. */}
+        <span data-type="label-s" className="text-on-surface fw-500">{failures.length} tool source{failures.length === 1 ? '' : 's'} failed to load</span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {failures.map((f) => (
+          <div key={f.provider} data-type="caption" className="leading-snug">
+            <span className="font-mono text-on-surface">{f.provider}</span>
+            <span className="text-on-surface-low"> — {f.error}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Display-only switch — routes through the canonical readOnly Toggle (a span, so
+// it can nest inside the larger clickable tool row without a nested button). It's
+// `decorative` because every call site wraps it in a <button aria-label> that IS
+// the accessible control — this keeps the switch out of the a11y tree so it
+// doesn't surface as a second, unnamed switch duplicating the button.
+function Toggle({ on }: { on: boolean }) {
+  return <SharedToggle on={on} readOnly decorative size="sm" />
+}
+
+/** The three ways to reach an MCP server, in the words the Add and Edit forms and the import list
+ *  all use, so one server reads one way everywhere. */
+const TRANSPORT_OPTIONS: Array<{ key: McpTransport; label: string }> = [
+  { key: 'stdio', label: 'Command' },
+  { key: 'http', label: 'HTTP' },
+  { key: 'sse', label: 'SSE' },
+]
+const transportLabel = (t: McpTransport) => TRANSPORT_OPTIONS.find((o) => o.key === t)?.label ?? t
+const TRANSPORT_HINT = 'How PersonalClaw reaches the server: it starts a command, or connects to a URL over Streamable HTTP or the older SSE transport.'
+const URL_HINT = "The server's MCP endpoint, e.g. https://mcp.example.com/mcp."
+const HEADERS_HINT = 'One Name: value per line (optional), sent with every request. Each value is kept in your credential store, never in mcp.json or an export.'
+const EDIT_HEADERS_HINT = `One Name: value per line, sent with every request. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, or type over it to replace it. Delete a line to stop sending the header.`
+
+/** Where an importable server runs, as its row shows it. Every credential in it arrived masked. */
+function importedTarget(s: ImportableMcpServer): string {
+  return s.transport === 'stdio' ? [s.command, formatArgs(s.args ?? [])].filter(Boolean).join(' ') : s.url
+}
+
+/** What an importable server sets, by NAME: its environment variables and a remote one's headers.
+ *  `''` when it sets neither. */
+function importedValues(s: ImportableMcpServer): string {
+  const env = (s.env ?? []).map((v) => v.name)
+  const headers = (s.headers ?? []).map((h) => h.name)
+  const said = [
+    env.length ? `sets ${env.join(', ')}` : '',
+    headers.length ? `sends the ${headers.join(', ')} header${headers.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+  return said.charAt(0).toUpperCase() + said.slice(1)
+}
+
+/** The import list: what the other tools hold that PersonalClaw does not, each of their files that
+ *  could not be read, and the Look in press for every tool not looked in. A tool a press looked in
+ *  that has nothing to offer says so, since the press asked a question and silence is no answer. */
+function OtherToolsImport({ list, pressed, looking, lookFailed, onLook, onRetry, onImported }: {
+  list: ImportableMcpList
+  /** The places a Look in press named on this visit. */
+  pressed: string[]
+  looking: string | null
+  lookFailed: string
+  onLook: (place: string) => void
+  onRetry: () => void
+  onImported: () => void
+}) {
+  const tools = list.tools ?? []
+  const unlooked = tools.filter((t) => !t.looked)
+  const empty = tools.filter((t) => t.looked && pressed.includes(t.place)
+    && !list.servers.some((s) => s.place === t.place) && !list.unreadable.some((u) => u.backend === t.name))
+  return (
+    <div className="flex flex-col gap-m">
+      {list.unreadable.length > 0 && <ImportFilesUnread files={list.unreadable} onRetry={onRetry} />}
+      {/* Opened by a press: she asked to see what the tool holds. */}
+      {list.servers.length > 0 && <ImportSuggestions key={pressed.join('\n')} servers={list.servers} startOpen={pressed.length > 0} onImported={onImported} />}
+      {empty.length > 0 && (
+        <p role="status" data-type="body-s" className="text-on-surface-low">
+          Nothing to import from {empty.map((t) => t.name).join(' or ')}: {empty.length === 1 ? 'it has' : 'they have'} no MCP server PersonalClaw doesn't already have.
+        </p>
+      )}
+      {unlooked.length > 0 && <LookInOtherTools tools={unlooked} looking={looking} failed={lookFailed} onLook={onLook} />}
+      {unlooked.length === 0 && lookFailed && <FieldError>{asSentence(`Couldn't look again: ${lookFailed}`)}</FieldError>}
+    </div>
+  )
+}
+
+/** The tools whose setup this page has not looked in, each with the press that does. PersonalClaw
+ *  reads another tool's settings only when she asks, or on every visit once she turns that tool on
+ *  in Settings › Security, so this is a question the page asks rather than a list it fills. */
+function LookInOtherTools({ tools, looking, failed, onLook }: {
+  tools: ImportableTool[]; looking: string | null; failed: string; onLook: (place: string) => void
+}) {
+  const headingId = useId()
+  return (
+    <div role="group" aria-labelledby={headingId} className="flex flex-col gap-s rounded-lg bg-surface-container px-m py-s">
+      <div className="flex items-center gap-s text-on-surface-low">
+        <Download size={14} aria-hidden="true" />
+        <Eyebrow as="span" id={headingId}>Import from other tools</Eyebrow>
+      </div>
+      <p data-type="body-s" className="text-on-surface-var">
+        PersonalClaw has not looked in {tools.map((t) => t.name).join(' or ')} for MCP servers to import. It
+        reads another tool's settings only when you ask, or on every visit once you turn that tool on
+        in <TextLink href="#/settings/security" ink="emphasis">Settings › Security</TextLink>.
+      </p>
+      <div className="flex flex-wrap items-center gap-s">
+        {tools.map((t) => (
+          <Button key={t.place} variant="secondary" size="sm" loading={looking === t.place}
+            loadingLabel={`Looking in ${t.name}…`}
+            disabled={looking !== null && looking !== t.place}
+            disabledReason="Wait for the look already running to finish"
+            onClick={() => onLook(t.place)}>
+            <Download size={13} /> Look in {t.name}
+          </Button>
+        ))}
+      </div>
+      {failed && <FieldError>{asSentence(`Couldn't look: ${failed}`)}</FieldError>}
+    </div>
+  )
+}
+
+/** Collapsed "Discovered in other tools" list — MCP servers configured in another tool (Claude
+ *  Code, Codex) but not yet in PersonalClaw, from every scope it keeps them in: yours everywhere,
+ *  yours in one project, and a project's own `.mcp.json`. Importing one copies its spec into
+ *  ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and imported by its
+ *  `id`, because two scopes (or two tools) can hold a server of the same name. */
+function ImportSuggestions({ servers, startOpen, onImported }: { servers: ImportableMcpServer[]; startOpen: boolean; onImported: () => void }) {
+  const [open, setOpen] = useState(startOpen)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const importOne = async (s: ImportableMcpServer) => {
+    setBusy(s.id)
+    // Reported, not swallowed: an import that did not land (a refusal, or a 200 whose change carries
+    // an `error`, which `importMcpServer` throws) used to leave the row sitting here with no word.
+    try {
+      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s))) {
+        notify(`Imported “${s.name}”. It runs once you allow it on its row.`, 'success')
+        onImported()
+      }
+    } finally { setBusy(null) }
+  }
+
+  return (
+    <div>
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-s flex min-h-6 -my-0.5 items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
+        <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
+        <Download size={14} />
+        <span data-type="caption" className="uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
+      </button>
+      {open && (
+        <>
+          <p data-type="caption" className="mb-2 text-on-surface-low leading-snug">
+            These MCP servers are configured in another backend but not in PersonalClaw. Import one to copy its
+            configuration here. It does not run until you allow it on its row, which shows exactly what it runs.
+            The values it sets go to your credential store, and the other backend's own configuration is left as it is.
+          </p>
+          <div className="flex flex-col gap-2">
+            {servers.map((s) => (
+              <div key={s.id} className="flex items-center gap-3 rounded-lg bg-surface-container px-m py-2.5">
+                <Server size={15} className="shrink-0 text-on-surface-low" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={s.name}>{s.name}</span>
+                    <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
+                    <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
+                  </div>
+                  {/* Which of the tool's scopes it is in: yours everywhere, yours in one project,
+                      or a project's own file. Empty for a tool with one place for them (Codex's
+                      config.toml), where the backend pill already says it all. */}
+                  {s.origin && <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>}
+                  {/* The server line is a URL or a command line — the most tail-heavy string on the
+                      surface, and the half that says WHICH server this is. It did not clip with this
+                      seed's data, but it truncates by the same rule and a `title` costs nothing; the
+                      alternative is a row whose name recovers and whose address does not. The gateway
+                      sends it with every credential masked (`/api/mcp/importable`). */}
+                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={importedTarget(s)}>{importedTarget(s)}</p>
+                  {/* Names only: the listing never carries a value (`/api/mcp/importable`). */}
+                  {importedValues(s) && (
+                    <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={importedValues(s)}>{importedValues(s)}</p>
+                  )}
+                  {/* What to know before importing: a project's server nobody approved, a variable
+                      nothing sets. Wrapped, not truncated — it is a sentence to read. */}
+                  {s.note && <p data-type="caption" className="mt-0.5 text-on-surface-var">{s.note}</p>}
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.id}><Download size={13} /> Import
+                </Button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// `mcpInputCls` was DELETED with its last consumer: the raw <textarea> above migrated to the
+// shared TextArea, and it had been the only remaining user of this hand-copied field chrome.
+
+/** The Arguments hint, one sentence for both forms: they parse the field the same way (`parseArgs`). */
+const ARGS_HINT = 'Space-separated args passed to the command (optional). Put an argument with a space in "double quotes".'
+/** The two environment hints, shared by the Add and Edit forms so one field reads one way. */
+const ENV_HINT = 'One KEY=value per line (optional). Each value is kept in your credential store, never in mcp.json or an export.'
+const PLAIN_HINT = 'Settings that are not secret, one KEY=value per line (optional). Kept readable in mcp.json, so they travel with an export. A name ending in TOKEN, SECRET, PASSWORD or API_KEY goes to the credential store anyway.'
+
+/** Add a tool server — either an MCP server, started with a command or reached at a URL (→ PUT
+ *  /api/mcp/servers/{name}, writes ~/.personalclaw/mcp.json) OR an OpenAI-compatible REST tool
+ *  server (→ an `openai-tools` provider instance). The "+" offers both tool-provider types so the
+ *  user isn't forced into MCP. */
+function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const [kind, setKind] = useState<'mcp' | 'openai'>('mcp')
+  // MCP fields
+  const [name, setName] = useState('')
+  const [transport, setTransport] = useState<McpTransport>('stdio')
+  const [command, setCommand] = useState('')
+  const [args, setArgs] = useState('')
+  const [env, setEnv] = useState('')
+  const [plainEnv, setPlainEnv] = useState('')
+  const [url, setUrl] = useState('')
+  const [headers, setHeaders] = useState('')
+  const remote = transport !== 'stdio'
+  // OpenAI tool-server fields
+  const [oaName, setOaName] = useState('')
+  const [endpoint, setEndpoint] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [toolFilter, setToolFilter] = useState('')
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const validName = /^[a-zA-Z0-9_-]{1,64}$/.test(name)
+  const apiErr = (e: unknown) => {
+    let msg = e instanceof Error ? e.message : 'Failed to add server'
+    try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw */ }
+    return msg
+  }
+
+  const submitMcp = async () => {
+    if (!validName) { setErr('Name must be letters, digits, dashes, underscores (1–64).'); return }
+    if (remote && !url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
+    if (!remote && !command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    setSaving(true); setErr('')
+    try {
+      if (remote) {
+        await api.addMcpServer(name.trim(), { transport, url: url.trim(), ...buildMcpHeaders(headers) })
+      } else {
+        const argv = parseArgs(args)
+        await api.addMcpServer(name.trim(), {
+          transport: 'stdio',
+          command: command.trim(),
+          args: argv.length ? argv : undefined,
+          ...buildMcpEnv(env, plainEnv),
+        })
+      }
+      onAdded()
+    } catch (e) {
+      // The owner said no to what it would run: nothing was saved, and the form stays as typed.
+      if (e instanceof ConsentDeclined) { setSaving(false); return }
+      // The name is taken: adding replaces nothing, so the gateway will not let it replace the server
+      // already configured under that name. It used to, silently.
+      setErr((e as { code?: unknown }).code === 'revision_required'
+        ? `A server named “${name.trim()}” is already configured — edit it from its row instead.`
+        : apiErr(e))
+      setSaving(false)
+    }
+  }
+
+  const submitOpenai = async () => {
+    if (!endpoint.trim()) { setErr('Endpoint URL is required (e.g. https://tools.example.com).'); return }
+    setSaving(true); setErr('')
+    try {
+      await api.createProviderInstance('openai-tools', {
+        display_name: oaName.trim() || endpoint.trim(),
+        config: {
+          endpoint: endpoint.trim(),
+          ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+          ...(toolFilter.trim() ? { tool_filter: toolFilter.trim() } : {}),
+        },
+      })
+      onAdded()
+    } catch (e) { setErr(apiErr(e)); setSaving(false) }
+  }
+
+  const canSubmit = kind === 'mcp' ? (!!name && !!(remote ? url : command).trim()) : !!endpoint.trim()
+
+  return (
+    <Modal title="Add tool server" icon={<Server size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        {/* type picker — MCP (stdio) vs OpenAI-compatible REST tool server */}
+        <Segmented ariaLabel="Server type" value={kind} onChange={(k) => { setKind(k as 'mcp' | 'openai'); setErr('') }}
+          options={[{ key: 'mcp', label: 'MCP server' }, { key: 'openai', label: 'OpenAI tool server' }]} />
+
+        {kind === 'mcp' ? (<>
+          <Field label="Name" hint="A unique handle (letters, digits, dashes, underscores).">
+            <TextInput value={name} onChange={setName} placeholder="filesystem-mcp" size="md" surface="high" />
+          </Field>
+          <Field label="Transport" hint={TRANSPORT_HINT}>
+            <Segmented value={transport} onChange={(t) => { setTransport(t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
+          </Field>
+          {remote ? (<>
+            <Field label="URL" hint={URL_HINT}>
+              <TextInput value={url} onChange={setUrl} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+            </Field>
+            <Field label="Headers" hint={HEADERS_HINT}>
+              <TextArea value={headers} onChange={setHeaders} rows={2} placeholder="Authorization: Bearer …" mono size="md" />
+            </Field>
+          </>) : (<>
+            <Field label="Command" hint="The executable that starts the server over stdio.">
+              <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+            </Field>
+            <Field label="Arguments" hint={ARGS_HINT}>
+              <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+            </Field>
+            <Field label="Environment" hint={ENV_HINT}>
+              {/* The one raw control left in this modal after the Field migration. A raw element
+                  cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
+                  were fixed. `TextArea` claims the Field label the same way they do — and this also
+                  retires the `mcpInputCls.replace('h-9', …)` string surgery, which reached into a
+                  class string to undo a height the primitive never sets. */}
+              <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
+            </Field>
+            <Field label="Plain values" hint={PLAIN_HINT}>
+              <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+            </Field>
+          </>)}
+        </>) : (<>
+          <Field label="Name" hint="A label for this tool server (optional — defaults to the endpoint).">
+            <TextInput value={oaName} onChange={setOaName} placeholder="my-tools" size="md" surface="high" />
+          </Field>
+          <Field label="Endpoint URL" hint="Base URL of an OpenAI-compatible tool server (GET /tools, POST /tools/{name}).">
+            <TextInput value={endpoint} onChange={setEndpoint} placeholder="https://tools.example.com" size="md" surface="high" mono />
+          </Field>
+          <Field label="API Key" hint="Optional bearer token for authentication.">
+            <TextInput value={apiKey} onChange={setApiKey} placeholder="sk-…" type="password" size="md" surface="high" mono />
+          </Field>
+          <Field label="Tool filter" hint="Comma-separated tool names to expose. Empty = all.">
+            <TextInput value={toolFilter} onChange={setToolFilter} placeholder="search, fetch" size="md" surface="high" mono />
+          </Field>
+        </>)}
+
+        <div className="flex items-center gap-2">
+          {/* `canSubmit` asks for different fields per kind, so the reason follows the kind;
+              omitted while `saving`, where the label already reads "Adding…". */}
+          <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} loading={saving} loadingLabel="Adding…" disabled={saving || !canSubmit}
+            disabledReason={saving ? undefined
+              : kind === 'mcp' ? (remote ? 'Name the server and give it a URL' : 'Name the server and give it a command')
+                : "Enter the server's endpoint URL"}>Add server</Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          {err && <span role="alert" data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** The Environment hint on the EDIT form: what the mask is and the three things a line can do. */
+const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
+
+/** The EDIT form's hints for a command line or an address the gateway sent with a credential in it
+ *  masked (`mcp_discovery.masked_args`, the Allow question's mask). A credential the gateway can
+ *  place (after a flag that names it, in a header or an address, or in a key's format) is in the
+ *  credential store and mcp.json holds a reference (`mcp_argument_secrets`); one masked only for its
+ *  shape, and anything in the command itself, is kept in mcp.json as written. These say which. */
+const EDIT_ARGS_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. A key or token after a flag that names it, in a header or an address, or in a known key format is kept in your credential store, and mcp.json holds a reference to it; one hidden only for its shape is kept in mcp.json as written, so put that one in Environment instead.`
+const EDIT_COMMAND_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. The command is kept in mcp.json as written; put a token in Environment instead.`
+const EDIT_URL_MASK_HINT = `${STORED_VALUE_MASK} hides a part of the address that can carry a credential, which this page is not shown. Leave the URL as it is to keep it; to change it, type it in full, the credential included. A login, key or token in it is kept in your credential store, and mcp.json holds a reference to it.`
+
+/** A field's hint, with what its mask means when the value it was seeded with holds one. */
+function maskedHint(base: string, seeded: string | undefined, maskHint: string): string {
+  return seeded?.includes(STORED_VALUE_MASK) ? `${base} ${maskHint}` : base
+}
+
+/** One server's definition as the edit form reads it, with the revision that read reported. */
+type McpServerRead = McpServerDefinition & { revision: string }
+
+/** Edit an existing MCP server — the Add form's fields over the same write
+ *  (`PUT /api/mcp/servers/{name}`), for a server started with a command and for one at a URL. The
+ *  gateway sends names, plain values and, for a stored value (a secret variable, any header), only
+ *  that one is saved; such a line shows the mask, and left as it is the saved value is kept
+ *  (`keepEnv`, `keepHeaders`), so a secret never comes to the browser and back. Switching the
+ *  transport replaces the definition whole. A server the form does not own (PersonalClaw's own, an
+ *  app's) opens to the gateway's sentence saying why. */
+function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
+  const key = `tools:mcp-server:${name}`
+  const { data: def, error: loadErr, refresh } = useQuery<McpServerRead>(key, () => api.mcpServerDefinition(name))
+  // 🔴 THE DEFINITION IS SAVED WHOLE, OVER THE COPY THE FORM WAS SEEDED FROM. The form sends every field
+  // as it was seeded when it opened, so a change made since — Settings → Providers editing the same
+  // server, another tab's edit — was replaced by this copy without a word. `base` is that copy with the
+  // revision the same read reported. Seeded ONCE: a revalidation landing mid-edit must not replace what
+  // is typed, nor move the base out from under it.
+  const [base, setBase] = useState<Revisioned<McpServerForm> | null>(null)
+  const [form, setForm] = useState<McpServerForm | null>(null)
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+  const seed = (d: McpServerRead) => {
+    if (!d.editable) return
+    const seeded = { value: definitionForm(d), revision: d.revision }
+    setBase(seeded)
+    setForm(seeded.value)
+  }
+  useEffect(() => { if (!base && def) seed(def) }, [def, base])
+  const guard = useStaleWriteGuard<McpServerForm>({
+    read: async () => {
+      const d = await api.mcpServerDefinition(name)
+      if (!d.editable) throw new Error(d.reason)
+      return { value: definitionForm(d), revision: d.revision }
+    },
+    write: (next, revision) => api.saveMcpServer(name, formSave(next), revision),
+    onSaved: () => { invalidateKeys(key); onSaved() },
+    // Dropping the change puts the form back on what is stored now, read afresh.
+    onDiscard: () => {
+      invalidateKeys(key)
+      api.mcpServerDefinition(name).then(seed, (e) => setErr(readableErrText(e) || "Couldn't read this server's settings."))
+    },
+  })
+  const set = <K extends keyof McpServerForm>(k: K, v: McpServerForm[K]) => setForm((f) => (f ? { ...f, [k]: v } : f))
+  const transport = form?.transport ?? 'stdio'
+  const remote = transport !== 'stdio'
+
+  const submit = async () => {
+    if (!form || !base) return
+    if (remote && !form.url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
+    if (!remote && !form.command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    setSaving(true); setErr('')
+    // A refusal keeps the form as typed, with the notice below offering the way back.
+    try { await guard.save(base, form, rebaseRecord(base.value, form)) }
+    catch (e) {
+      // Declined in the dialog that says what it would run: nothing was saved, the form stays as typed.
+      if (!(e instanceof ConsentDeclined)) setErr(readableErrText(e) || "Couldn't save the server.")
+    }
+    finally { setSaving(false) }
+  }
+
+  const editable = !!def && def.editable && !!form
+  return (
+    <Modal title={`Edit ${name}`} icon={<Pencil size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        {!def && loadErr ? (
+          <LoadError what="server settings" error={loadErr} onRetry={refresh} />
+        ) : !def || (def.editable && !form) ? (
+          <ListSkeleton rows={3} what="server settings" />
+        ) : !def.editable ? (
+          <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
+        ) : form && (<>
+          <HeldChange guard={guard}>
+            <Field label="Transport" hint={TRANSPORT_HINT}>
+              <Segmented value={transport} onChange={(t) => { set('transport', t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
+            </Field>
+            {remote ? (<>
+              <Field label="URL" hint={maskedHint(URL_HINT, base?.value.url, EDIT_URL_MASK_HINT)}>
+                <TextInput value={form.url} onChange={(v) => set('url', v)} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+              </Field>
+              <Field label="Headers" hint={EDIT_HEADERS_HINT}>
+                <TextArea value={form.headers} onChange={(v) => set('headers', v)} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
+              </Field>
+            </>) : (<>
+              <Field label="Command" hint={maskedHint('The executable that starts the server over stdio.', base?.value.command, EDIT_COMMAND_MASK_HINT)}>
+                <TextInput value={form.command} onChange={(v) => set('command', v)} placeholder="npx" size="md" surface="high" mono />
+              </Field>
+              <Field label="Arguments" hint={maskedHint(ARGS_HINT, base?.value.args, EDIT_ARGS_MASK_HINT)}>
+                <TextInput value={form.args} onChange={(v) => set('args', v)} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+              </Field>
+              <Field label="Environment" hint={EDIT_ENV_HINT}>
+                <TextArea value={form.env} onChange={(v) => set('env', v)} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
+              </Field>
+              <Field label="Plain values" hint={PLAIN_HINT}>
+                <TextArea value={form.plainEnv} onChange={(v) => set('plainEnv', v)} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+              </Field>
+            </>)}
+          </HeldChange>
+          <StaleWriteNotice guard={guard} what={`The server “${name}”`} />
+        </>)}
+        <div className="flex items-center gap-2">
+          {editable && form && (
+            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…"
+              disabled={saving || guard.conflict !== null || !(remote ? form.url : form.command).trim()}
+              disabledReason={saving ? undefined : guard.conflict !== null ? HELD_CHANGE_REASON
+                : remote ? 'Give the server a URL' : 'Give the server a command'}>Save</Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>{editable ? 'Cancel' : 'Close'}</Button>
+          {err && <span role="alert" data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// The local `Field` was DELETED here (it reimplemented ui/forms' Field with a plain label div).
+// That was not a style divergence — it was an ACCESSIBILITY defect. `TextInput` reads
+// `useFieldLabelId()` and claims its Field's published label via `aria-labelledby`; the shared
+// Field is what publishes that id through `FieldLabelCtx`. A local Field provides no context, so
+// `claimsFieldLabel` was false and no `ariaLabel` was passed either — measured on the live DOM,
+// all seven inputs in this modal had `aria-label: null`, `aria-labelledby: null`, `name: null`.
+// A placeholder is not an accessible name.
+
+/** The host of `url`, or `''` when it is not a URL. */
+function hostOf(url: string): string {
+  try { return new URL(url).host } catch { return '' }
+}
+
+/** A server's sign-in line while the sign-in it started is finishing elsewhere: where the sign-in
+ *  page opened, or that it did not, with the way to open it by hand. A page that did not open is
+ *  never described as one that did. */
+function SignInPending({ name, pending }: { name: string; pending: PendingSignIn }) {
+  const [copied, setCopied] = useState(false)
+  const server = <span className="text-on-surface">{name}</span>
+  const link = <TextLink href={pending.url} external ink="emphasis" className="underline">Open the sign-in page</TextLink>
+  const { opened } = pending
+  if (opened.where === 'tab') return (<>
+    <span className="min-w-0 flex-1">Finish signing in to {server} in the tab that opened. This page updates when you are done.</span>
+    {link}
+  </>)
+  if (opened.where === 'browser') return (<>
+    <span className="min-w-0 flex-1">The sign-in page for {server} opened in your browser. Finish signing in there; this page updates when you are done.</span>
+    {link}
+  </>)
+  if (opened.where === 'no-tab') return (<>
+    <span className="min-w-0 flex-1">The sign-in page for {server} did not open. Open it to sign in; this page updates when you are done.</span>
+    {link}
+  </>)
+  // The desktop app could not open the system browser, so a link would only ask it again: the
+  // address is offered to copy into a browser instead.
+  const copy = async () => { if (await copyText(pending.url, 'the sign-in link')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
+  return (<>
+    <span className="min-w-0 flex-1">
+      PersonalClaw could not open your browser: {opened.reason.replace(/[.\s]+$/, '')}. Copy the sign-in link and open it in a browser to sign in to {server}; this page updates when you are done.
+    </span>
+    <Button size="sm" onClick={() => { void copy() }}>{copied ? 'Copied' : 'Copy the sign-in link'}</Button>
+  </>)
+}
+
+/** An authorization server that does not let PersonalClaw register itself: the owner registers an
+ *  app there, with the redirect URL shown here, and types its client ID (and secret, if it gave one).
+ *  The secret goes to the gateway with the sign-in and is kept in the credential store once it is done. */
+function SignInClientModal({ prompt, onClose, onSubmit }: { prompt: ClientPrompt; onClose: () => void; onSubmit: (client: { clientId: string; clientSecret?: string }) => Promise<boolean> }) {
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await onSubmit({ clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) })
+    } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={`Sign in to ${prompt.server}`} icon={<KeyRound size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <p data-type="body-s" className="text-on-surface-low">{prompt.message}</p>
+        <Field label="Redirect URL" hint="Give this address to the app you register, as its redirect (or callback) URL.">
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md bg-surface-high px-2 py-1.5 font-mono text-[0.8125rem] text-on-surface" title={prompt.redirectUri}>{prompt.redirectUri}</code>
+            <SquareIconButton icon={Copy} iconSize={13} label="Copy the redirect URL" title="Copy the redirect URL"
+              onClick={() => { void copyText(prompt.redirectUri, 'the redirect URL') }} />
+          </div>
+        </Field>
+        <Field label="Client ID" hint={`The ID ${hostOf(prompt.issuer) || 'the authorization server'} gave the app you registered.`}>
+          <TextInput value={clientId} onChange={setClientId} size="md" surface="high" mono />
+        </Field>
+        <Field label="Client secret" hint="Only if it gave the app one. It is kept in your credential store.">
+          <TextInput value={clientSecret} onChange={setClientSecret} size="md" surface="high" mono type="password" />
+        </Field>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={submit} loading={busy} loadingLabel="Starting…" disabled={busy || !clientId.trim()}
+            disabledReason={busy ? undefined : 'Enter the client ID'}>Sign in</Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

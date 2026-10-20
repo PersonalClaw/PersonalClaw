@@ -1,0 +1,38 @@
+import { Bot, Cpu } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+
+/** Provider id → display label + icon + tone for the Agents list.
+ *
+ *  An agent CLI's label is the runtime's own name as the gateway sends it (`RuntimeGroup.label`,
+ *  its app's name for it in the Store), so a picker, a card and the chat's sentences name it the
+ *  same way; before that is read, the cli name in title case. */
+export interface ProviderMeta { label: string; icon: LucideIcon; tone: string }
+export function providerMeta(providerId: string, label = ''): ProviderMeta {
+  if (providerId === 'native' || !providerId) return { label: 'Native', icon: Bot, tone: 'var(--color-primary)' }
+  const named = label || providerId.replace(/^acp:/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  if (providerId.includes('claude')) return { label: named, icon: Cpu, tone: 'var(--color-info)' }
+  if (providerId.includes('codex')) return { label: named, icon: Cpu, tone: 'var(--color-warn)' }
+  return { label: named, icon: Cpu, tone: 'var(--color-on-surface-low)' }
+}
+
+export const APPROVAL_MODES = [
+  { key: '', label: 'Default (hook-based)' },
+  { key: 'auto', label: 'Auto-approve all' },
+]
+
+/** Reserved built-in agents (the background-chore worker + the goal-loop worker
+ *  and goal-planner) are vended by the native provider but the system depends on their fixed
+ *  definition, so they're shown READ-ONLY — not editable or deletable. The
+ *  server is the source of truth: `/api/agents` marks each agent `reserved`. */
+export function isReservedAgent(a: { reserved?: boolean }): boolean {
+  return a.reserved === true
+}
+
+/** The built-in default agent — the seeded `PersonalClaw`, matched case-insensitively
+ *  exactly as the server's `is_default_agent` matches it. It ships with no prompt of its
+ *  own ON PURPOSE: with none, a turn is served the prompt bound in Settings → Prompts
+ *  (Chat, or Background for unattended runs), rendered with the names in Settings →
+ *  Account. A prompt written into the agent REPLACES that binding. */
+export function isBuiltinDefaultAgent(a: { name: string }): boolean {
+  return String(a.name ?? '').trim().toLowerCase() === 'personalclaw'
+}

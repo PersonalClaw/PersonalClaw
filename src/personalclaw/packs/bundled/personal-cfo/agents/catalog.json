@@ -1,0 +1,20 @@
+[
+  {
+    "slug": "cfo",
+    "name": "Personal CFO",
+    "description": "Closes the month and explains the deltas.",
+    "label": "Finance",
+    "icon": "wallet",
+    "color": "emerald",
+    "activation": "always"
+  },
+  {
+    "slug": "cfo-tax-analyst",
+    "name": "Tax Analyst",
+    "description": "Assembles the quarterly deduction picture.",
+    "label": "Finance",
+    "icon": "receipt",
+    "color": "amber",
+    "activation": "phase-2"
+  }
+]

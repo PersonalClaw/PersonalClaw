@@ -1,0 +1,153 @@
+"""Per-session active-job tracker.
+
+A small formalization of what is otherwise an internal semaphore: a map from
+session key → the ``ActiveJob`` currently running on it. This is **bookkeeping over
+existing state, not a scheduler** — it records what a turn's origin is (webui / a
+channel / cron / loop / subagent) so the cancel-and-replace decision can tell
+an interactive turn a user is watching apart from unattended work that must never be
+cancelled out from under itself.
+
+Consumers: the cancel-and-replace eligibility guard, a channel typing/busy signal,
+the Doctor ("3 sessions mid-turn"), and the FE queue indicator.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from personalclaw import session_keys
+
+# Origin classes. Only ``webui`` and ``channel:*`` are INTERACTIVE (a human is
+# waiting on the stream); the rest are unattended and are never cancel-and-replace
+# targets — a user message landing on a busy loop/cron/subagent session queues.
+_INTERACTIVE = ("webui", "channel:")
+
+
+@dataclass(frozen=True)
+class ActiveJob:
+    """The turn currently running on a session key."""
+
+    job_id: str
+    origin: str  # webui | channel:<name> | cron | loop | subagent | heartbeat | other
+    started_at: float
+
+    @property
+    def interactive(self) -> bool:
+        return self.origin == "webui" or self.origin.startswith("channel:")
+
+
+#: The origin class of each kind of key a turn's origin is read from (``session_keys``). A
+#: heartbeat task's run is told apart first: its key is a trigger's kind (``cron:``).
+_ORIGIN_OF_KIND: tuple[tuple[session_keys.SessionKind, str], ...] = (
+    (session_keys.LOOP, "loop"),
+    (session_keys.LOOP_COLON, "loop"),
+    (session_keys.TRIGGER, "cron"),
+    (session_keys.SUBAGENT, "subagent"),
+    (session_keys.DASHBOARD, "webui"),
+    (session_keys.CHAT, "webui"),
+    (session_keys.CHAT_FILE, "webui"),
+    (session_keys.SCHEDULE_CHAT, "webui"),
+)
+
+
+def classify_origin(session_key: str) -> str:
+    """Map a session key to its origin class, by the kind the key is judged as
+    (``session_keys.judged_kind``, :data:`_ORIGIN_OF_KIND`):
+
+    * ``cron:system:heartbeat-tasks:<run>``                     → ``heartbeat``
+    * a loop's own session (``loop-<id>``, ``loop-<id>-<task>``,
+      ``loop-plan-<id>``, in either form)                       → ``loop``
+    * ``cron:<job>``                                            → ``cron``
+    * ``subagent:<id>``                                         → ``subagent``
+    * a chat: ``dashboard:<session>``, ``chat-…``, ``dashboard_…``,
+      a scheduled job's chat (``cron-<job>``), and a chat's own
+      name, which no kind names                                 → ``webui``
+    * a key of any other kind (an outside caller's, a webhook's,
+      a side question's …)                                      → ``other`` (non-interactive)
+
+    A channel transport turn is tagged ``channel:<name>`` by the caller (the inbound
+    path knows the transport), not derivable from the key here.
+    """
+    from personalclaw.action_providers.heartbeat_tasks_provider import TASK_SESSION_PREFIX
+
+    key = session_key or ""
+    if key.startswith(TASK_SESSION_PREFIX):
+        return "heartbeat"
+    kind = session_keys.judged_kind(key)
+    if kind is None:
+        return "webui"
+    return next((origin for row, origin in _ORIGIN_OF_KIND if row is kind), "other")
+
+
+class ActiveJobTracker:
+    """Session key → the ``ActiveJob`` running on it. Registered at turn start,
+    cleared at turn end. Purely in-memory (one gateway); never persisted."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[str, ActiveJob] = {}
+        # Per-session timestamp of the last cancel-and-replace, for the debounce
+        # guard — a burst of rapid messages produces ONE cancel.
+        self._last_cancel_at: dict[str, float] = {}
+
+    # ── turn lifecycle ────────────────────────────────────────────────────
+    def register(self, session_key: str, *, origin: Optional[str] = None, now: float) -> ActiveJob:
+        """Record a turn starting on ``session_key``. ``origin`` overrides the
+        key-derived classification (the channel inbound path passes ``channel:<name>``)."""
+        job = ActiveJob(
+            job_id=f"{session_key}@{now:.3f}",
+            origin=origin or classify_origin(session_key),
+            started_at=now,
+        )
+        self._jobs[session_key] = job
+        return job
+
+    def clear(self, session_key: str) -> None:
+        """Record a turn ending (idempotent)."""
+        self._jobs.pop(session_key, None)
+
+    def get(self, session_key: str) -> Optional[ActiveJob]:
+        return self._jobs.get(session_key)
+
+    def active(self) -> list[ActiveJob]:
+        """Every in-flight job (the Doctor's 'N sessions mid-turn')."""
+        return list(self._jobs.values())
+
+    def interactive_count(self) -> int:
+        return sum(1 for j in self._jobs.values() if j.interactive)
+
+    # ── cancel-and-replace debounce ───────────────────────────────────────
+    def within_debounce(self, session_key: str, min_interval_secs: float, *, now: float) -> bool:
+        """True if a cancel-and-replace fired on this session within
+        ``min_interval_secs`` — the caller should coalesce (queue) instead of firing
+        a second cancel."""
+        last = self._last_cancel_at.get(session_key)
+        return last is not None and (now - last) < max(0.0, min_interval_secs)
+
+    def mark_cancel(self, session_key: str, *, now: float) -> None:
+        self._last_cancel_at[session_key] = now
+
+
+def is_cancellable_origin(origin: str) -> bool:
+    """Whether a turn of this origin may be cancel-and-replaced — interactive turns
+    only. Loop/cron/subagent/heartbeat work is NEVER cancelled by a user message;
+    it queues regardless of policy."""
+    return origin == "webui" or origin.startswith("channel:")
+
+
+# Process-global tracker (one gateway). The chat runner registers/clears turns on
+# it; the mid-turn handler reads it for the cancel-and-replace decision.
+_TRACKER: Optional[ActiveJobTracker] = None
+
+
+def get_tracker() -> ActiveJobTracker:
+    global _TRACKER
+    if _TRACKER is None:
+        _TRACKER = ActiveJobTracker()
+    return _TRACKER
+
+
+def reset_tracker() -> None:
+    """Test isolation — drop the process-global tracker."""
+    global _TRACKER
+    _TRACKER = None

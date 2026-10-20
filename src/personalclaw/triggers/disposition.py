@@ -1,0 +1,222 @@
+"""The disposition table, as code.
+
+The unified trigger store came with a table saying what happens to every automation-adjacent
+surface in the codebase: ABSORBED, KEPT, or KEPT-and-gains-a-duty. It is the most consequential
+decision of the migration — a surface absorbed by mistake loses its semantics, and a surface kept
+by mistake means two schedulers running at once.
+
+It lives here as data rather than only in prose because a table in a markdown file cannot be checked
+against the tree. `missing_surfaces()` verifies every module the table
+names still exists, so a rename
+during the migration fails a test instead of leaving a row pointing at nothing. That is the same
+reasoning as the `LEGACY_FIELD_MAP`: the mapping is the artifact, and an unchecked mapping is a
+document that is true when written and wrong later.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Verdict(str, Enum):
+    """What happens to a surface.
+
+    `KEPT_WITH_DUTY` is separate from `KEPT` because the two produce
+    different work: a kept surface is
+    untouched, while one that gains a duty needs an edit in the migration. Collapsing them lets a
+    required emission (fs_watch publishing `FileChanged`, the inbox emitting `InboxItemIngested`)
+    read as "nothing to do here".
+    """
+
+    ABSORBED = "absorbed"
+    KEPT = "kept"
+    KEPT_WITH_DUTY = "kept_with_duty"
+
+
+@dataclass(frozen=True)
+class Row:
+    """One surface's disposition."""
+
+    surface: str
+    module: str
+    verdict: Verdict
+    #: What must be preserved VERBATIM, for an absorbed surface. Named per row because "absorbed"
+    #: without this list is how a rewrite loses the semantics a rename would have kept.
+    keeps: tuple[str, ...] = ()
+    note: str = ""
+
+
+#: The table.
+DISPOSITION: tuple[Row, ...] = (
+    Row(
+        surface="schedule.py machinery",
+        module="personalclaw.schedule",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "single re-armed asyncio timer (<=30s poll)",
+            "croniter minute-match dueness",
+            "same-minute refire guard",
+            "deterministic per-id BLAKE2b jitter",
+            "IANA tz + skip_dates",
+            "mtime _sync for external edits",
+            "fcntl .crons.lock",
+            "per-job timeout + reaper (SIGKILL escalation, PID-recycle checks)",
+            "_merge_job_result runtime-field merge-back",
+            "canonical action {provider, config} execution model",
+        ),
+        note="Rename, not rewrite. The crash discipline is layered ON this mechanism.",
+    ),
+    Row(
+        surface="schedule_history.py ScheduleRun",
+        module="personalclaw.schedule_history",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "honest launched != succeeded",
+            "dry-run replay",
+            "JSONL caps 100/job + index",
+            "last_run_status() reads history, not the volatile job field",
+        ),
+        note="Becomes the ledger-only fire record, extended with the typed outcomes.",
+    ),
+    Row(
+        surface="hooks.py ScriptHooks",
+        module="personalclaw.hooks",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "blocking PreToolUse stays synchronous",
+            "agent scoping via fire_for_ids",
+            "__hook_depth cap folds into __wf_depth",
+        ),
+        note="Only 7 of 15 events fired when this table was drawn; the other 8 needed wiring.",
+    ),
+    Row(
+        surface="hooks.py HookManager (declarative rules)",
+        module="personalclaw.hooks",
+        verdict=Verdict.KEPT,
+        note="A policy layer, not an automation. Stays in config.json.",
+    ),
+    Row(
+        surface="event_triggers.py",
+        module="personalclaw.event_triggers",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "max_fires / debounce become trigger gates",
+            "the rate cap becomes the event router's storm guard",
+        ),
+        note="Its store, engine and dispatch are gone: event rows live in triggers.json (a legacy "
+        "event_triggers.json is absorbed at boot), the gateway's router admits them through the "
+        "tick's gate walk and fires them through the one store dispatch, and an event raised in "
+        "a process without the router spools. The module that remains is the bus and the "
+        "pattern grammar.",
+    ),
+    Row(
+        surface="autonudge.py",
+        # ABSORBED and DELETED. The module named here is the surviving
+        # adapter — nudge loops are `kind:idle` rows fired off the substrate tick, and the old
+        # `personalclaw.autonudge` (private store + per-loop asyncio timers) no longer exists.
+        # `missing_surfaces()` imports this module, so the row points at the code that now
+        # carries the kept semantics rather than at a deleted path.
+        module="personalclaw.triggers.nudge",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "reactive re-arm",
+            "delivered-only cycle counting",
+            "mid-turn drop == overlap: skip",
+            "stop-sentinel",
+            "error_count deactivation",
+        ),
+        note="ABSORBED LAST — landed once the loop tick engine "
+        "rode kind:idle (spec.message routes the fire to the nudge deliverer), and "
+        "autonudge.py was deleted in the same change.",
+    ),
+    Row(
+        surface="heartbeat.py tasks",
+        module="personalclaw.action_providers.heartbeat_tasks_provider",
+        verdict=Verdict.ABSORBED,
+        keeps=("HEARTBEAT_KEEP retention: an unfinished task stays for the next pass",),
+        note="The HEARTBEAT.md queue is the `system:heartbeat-tasks` trigger: listed on the "
+        "Triggers page with its cadence, its runs and its switch. The file format and the "
+        "retention rule stay in `personalclaw.heartbeat.run_tasks`.",
+    ),
+    Row(
+        surface="Inbox poll loop",
+        module="personalclaw.inbox",
+        verdict=Verdict.KEPT_WITH_DUTY,
+        note="Provider polling is plumbing, not user automation. ONE new duty: emit "
+        "InboxItemIngested onto the bus.",
+    ),
+    Row(
+        surface="fs_watch.py",
+        module="personalclaw.fs_watch",
+        verdict=Verdict.KEPT_WITH_DUTY,
+        note="Stays the SSE refresh engine; additionally publishes FileChanged. kind:file "
+        "triggers register EXPLICIT watch roots with a path cap — the poller must not become "
+        "a battery drain.",
+    ),
+    Row(
+        surface="after_turn_review.py",
+        module="personalclaw.after_turn_review",
+        verdict=Verdict.KEPT,
+        note="Hot-path and cheap; per-turn run records would be journal spam. Surfaced as a "
+        "read-only row marked execution: external so the substrate's invariant stays honest.",
+    ),
+    Row(
+        surface="suggestions.py",
+        module="personalclaw.suggestions",
+        verdict=Verdict.KEPT,
+        note="Read-time computation. The counter-example stays the counter-example.",
+    ),
+    Row(
+        surface="engagement_signals.py",
+        module="personalclaw.engagement_signals",
+        verdict=Verdict.KEPT,
+    ),
+    Row(
+        surface="/api/triggers facade",
+        module="personalclaw.dashboard.handlers.triggers",
+        verdict=Verdict.KEPT,
+        note="Becomes the single API: re-pointed at triggers.json instead of three stores. The id "
+        "namespace becomes the migration map.",
+    ),
+    Row(
+        surface="App crons",
+        module="personalclaw.apps.app_crons",
+        verdict=Verdict.ABSORBED,
+        keeps=(
+            "manifest jobs reconcile at startup (pruned/converged)",
+            "gated on can_use_cron and the app's agent tier, which each job's agent runs at",
+            "force-silent because the pseudo-user cannot receive a DM",
+        ),
+    ),
+)
+
+
+def absorbed() -> tuple[Row, ...]:
+    return tuple(r for r in DISPOSITION if r.verdict is Verdict.ABSORBED)
+
+
+def gains_a_duty() -> tuple[Row, ...]:
+    """Surfaces that are kept but need an edit in the migration.
+
+    The list the event bus cares about: these are the emissions it depends on, and a kept
+    surface that never gained its duty is a bus with no publishers.
+    """
+    return tuple(r for r in DISPOSITION if r.verdict is Verdict.KEPT_WITH_DUTY)
+
+
+def missing_surfaces() -> list[str]:
+    """Modules the table names that do not import.
+
+    Run by a test so a rename during the migration fails loudly rather than leaving a table row
+    pointing at nothing. A disposition table nobody checks is a document that was true when written.
+    """
+    import importlib
+
+    missing: list[str] = []
+    for row in DISPOSITION:
+        try:
+            importlib.import_module(row.module)
+        except Exception:
+            missing.append(f"{row.surface} -> {row.module}")
+    return missing

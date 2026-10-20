@@ -1,0 +1,421 @@
+import { useState } from 'react'
+import { FieldError } from '../../ui/forms'
+import { Trash2, Play, FlaskConical, AlertTriangle } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { Toggle } from '../../ui/Toggle'
+import { confirmDelete } from '../../ui/dialog'
+import { api, ApiError, type ActionProvider, type Trigger as WireTrigger, type TriggerCheck, type TriggerRunResult } from '../../lib/api'
+import { RunHistory } from '../schedule/ScheduleDetail'
+import { triggerStatusMeta, explainsCause, runFlashMeta, relPast, absTime } from '../schedule/scheduleMeta'
+import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
+import { watchCheckMeta } from './watchCheck'
+import { DryRunResult } from './DryRunResult'
+import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
+import { HeldBackNote } from './HeldBackNote'
+import { WorkflowVersionNote } from './WorkflowVersionNote'
+import { RestoreHoldNote } from './RestoreHold'
+import { WebhookDoorSection } from './WebhookDoorSection'
+import { KeptByAppNote, ReadOnlyNote } from './ReadOnlyNote'
+import { reportingWrite } from '../../app/reportingWrite'
+import { BUSY_REASON } from '../../ui/unavailable'
+
+/** Inspector for a store-backed trigger (file/web_watch/idle/…, a data event) in the SidePanel.
+ *
+ *  Read-only by design: these automations are AUTHORED in chat ("when a file in ~/notes changes,
+ *  summarize it…") through the automation_* tools, so the create/edit surface is the conversation,
+ *  not a form. What the page owns is management — pause/resume, run/dry-run, delete — which is
+ *  exactly what the user cannot do from chat once the automation exists. Every mutation routes
+ *  through the same /api/triggers store namespace the backend added, which itself reuses the
+ *  chat tools' own functions, so this panel and a chat command cannot answer differently.
+ */
+export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDeleted }: {
+  trigger: WireTrigger
+  providers?: ActionProvider[]
+  onChanged: () => void
+  onDeleted: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  // Which run button's request is in flight, which `busy` cannot say: it is this panel's one flag,
+  // shared by the switch, Allow and Delete, so it dims every action while any of them runs. Only the
+  // button that was pressed spins (`loading`, which is what publishes `aria-busy`), so a Delete in
+  // flight no longer reads as a Run now working.
+  const [running, setRunning] = useState<'run' | 'dry' | null>(null)
+  const [runFlash, setRunFlash] = useState<string | null>(null)
+  // A dry run's response, rendered by the SAME `DryRunResult` the schedule panel uses — two
+  // inspectors that described one dry run two ways is how a user learns to trust neither.
+  const [dry, setDry] = useState<TriggerRunResult | null>(null)
+  // Bumped after a real run so the history reloads — a fire the user just triggered has to appear
+  // without a manual refresh, or the panel looks like it did nothing.
+  const [histKey, setHistKey] = useState(0)
+  const [err, setErr] = useState('')
+
+  // The SERVER's verdict, not a comparison this panel makes: `read_only` is computed with
+  // the same `ownership.is_owner_authored` the arm path uses, so the controls this hides are exactly
+  // the ones the backend would refuse to honour.
+  const readOnly = trigger.read_only === true
+  const broken = trigger.broken ?? []
+  // The row's advisories, in words — the list badges them ("check schedule", or "can't fire" for a
+  // watch whose last check leaves it unable to), and this panel is where a user comes to learn why.
+  // Yields to `broken`, as the list's badge does.
+  const warnings = broken.length === 0 ? (trigger.warnings ?? []) : []
+  const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
+  // A `manual` trigger never fires on its own (`Trigger.fires_automatically`), so it has no
+  // "firing" state to report and its Enabled switch would change nothing — a control that does
+  // nothing is worse than none. Run now is how it runs.
+  const isManual = trigger.store_kind === 'manual'
+  // A data event is described by the pattern it listens for and the one matcher that pattern
+  // reads, from the same table the create form uses. An unknown pattern is shown as stored.
+  const spec = (trigger.spec ?? {}) as Record<string, unknown>
+  const eventPattern = trigger.store_kind === 'event' ? String(spec.pattern ?? '') : ''
+  const pm = EVENT_PATTERN_META.find((row) => row.pattern === eventPattern) ?? null
+  const matcher = pm ? eventMatcherValue(spec, pm.matcher) : ''
+  // A web watch, described by the page it watches and the last check it made of it — the server's
+  // record (`last_check`), said in the server's own sentence.
+  const isWatch = trigger.store_kind === 'web_watch'
+  const watchUrl = isWatch && typeof spec.url === 'string' ? spec.url : ''
+  const check = isWatch ? (trigger.last_check ?? null) : null
+
+  async function toggle() {
+    setBusy(true)
+    setErr('')
+    try {
+      await api.toggleStoreTrigger(trigger.raw_id, !trigger.enabled)
+      onChanged()
+    } catch (e) {
+      // A broken row refuses to enable, surfaced by the API as an error — show WHY rather
+      // than flipping a switch that silently did nothing.
+      setErr(e instanceof Error ? e.message : 'Could not change this automation')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Allow on a trigger that is already on: the switch sent ON again, which is where the gateway asks
+  // for the grant its action needs (`needs_grant`) — so it asks first, like switching on does.
+  async function allow() {
+    setBusy(true)
+    setErr('')
+    try {
+      await api.toggleStoreTrigger(trigger.raw_id, true)
+      onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not allow this automation')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 🔴 The lifecycle state, in words. This panel's only status line was
+  // `enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'`, so an
+  // AUTOPAUSED automation (five consecutive failures) and a QUARANTINED one (a payload matched an
+  // injection pattern) both read as if the USER had paused them. `TriggerState`'s own docstring
+  // names the failure: *"Showing both as 'paused' would make the user look for a switch they never
+  // flipped."* Measured — all three states produced that identical sentence.
+  //
+  // 🔴 THE DOT ITSELF REACHED AROUND THE RECONCILER (issue 3396). This used to call
+  // `triggerHealthMeta` directly — passing `trigger.health` and `trigger.state` with no `hasRun`
+  // gate at all — the one call `triggerStatusMeta`'s own docstring says does not exist ("Every
+  // surface calls this and nothing else"). `health` DEFAULTS to `ok` on a trigger that has never
+  // fired, so a just-created automation with `run_count: 0` drew an ok-green tick reading "Firing
+  // on its own" one click after the list drew the neutral never-run dot for the same row. `hasRun`
+  // is `storeToTrigger`'s own gate (`triggerMeta.ts`), reused verbatim rather than re-derived, so
+  // this panel and the list can never read `run_count` two different ways.
+  const hasRun = (trigger.run_count ?? 0) > 0
+  const lc = triggerStatusMeta({ health: trigger.health, state: trigger.state, hasRun })
+  // Brought over from an older version and not allowed to run here yet (the server's verdict).
+  const needsReview = trigger.needs_review === true
+  // Not allowed to run what its action uses — Run now and every fire are refused until the owner
+  // allows it (the server's verdict). An imported row says so in its own note.
+  const needsGrant = !needsReview ? (trigger.needs_grant ?? []) : []
+  // Switched off by a restore, and where its snapshot came from (the server's verdict). Ahead of the
+  // lifecycle states: a row the snapshot had parked does not resume on its own here.
+  const restoreHold = trigger.enabled ? '' : (trigger.restore_hold ?? '')
+  const statusLine = needsReview
+    ? 'Waiting for your review — it does not run until you switch it on'
+    : needsGrant.length > 0 && trigger.enabled
+      ? 'Not allowed to run — it does nothing until you allow it'
+      : restoreHold
+        ? 'Paused by the restore — it does not run until you resume it'
+        : trigger.state === 'autopaused'
+        ? 'Stopped by the system after repeated failures'
+        : trigger.state === 'quarantined'
+          ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
+          : trigger.state === 'parked'
+            ? 'Parked — a resource it needs is busy; it resumes on its own'
+            : isManual
+              ? 'Runs only when you run it — it never fires on its own'
+              : !trigger.enabled
+                ? 'Paused — it will not fire until re-enabled'
+                : eventPattern
+                  ? 'Listening — it fires when a matching event arrives'
+                  // 🔴 A watch whose checks are refused, or find nothing on the page to track,
+                  // cannot fire; this read "Firing on its own" through every one of them.
+                  : check && !check.can_fire
+                    ? (watchCheckMeta(check.outcome).notFiring ?? 'Not firing — see its last check')
+                    : 'Firing on its own'
+
+  async function run(isDry: boolean) {
+    setBusy(true)
+    setRunning(isDry ? 'dry' : 'run')
+    setErr('')
+    setRunFlash(null)
+    setDry(null)
+    try {
+      const r = await api.runStoreTrigger(trigger.raw_id, isDry)
+      if (isDry) {
+        // The response IS the dry run's result — nothing ran and nothing was recorded, so there is
+        // no history to reload and nothing to wait for. `ok: false` is a row that cannot even plan.
+        if (r.ok === false) { setErr(r.text || 'This automation cannot be dry-run.'); return }
+        setDry(r)
+        return
+      }
+      // 🔴 A 200 is not a success (#395). The backend answers `ok: false` when the fire was refused
+      // (incident mode) or the action could not be resolved — flashing "Ran" for those is how a
+      // silent no-op looked like a completed run for a whole release. `result`/`refused` carry the
+      // reason, so show it instead of inventing one.
+      if (r.ok === false) {
+        setErr(r.refused || (typeof r.result === 'string' && r.result) || 'This automation did not run.')
+        return
+      }
+      // What the run recorded, as its history row below says it: "Waiting for you" for a run that
+      // stopped for you, not "Ran" for every run that did not fail.
+      setRunFlash(runFlashMeta(r.status).label)
+      setHistKey((k) => k + 1)
+      onChanged()
+    } catch (e) {
+      // 409: a run is already in flight — a scheduled fire, or a Run now from another tab.
+      if (e instanceof ApiError && e.status === 409) setErr('This automation is already running.')
+      else setErr(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setBusy(false)
+      setRunning(null)
+    }
+  }
+
+  async function remove() {
+    if (!(await confirmDelete('automation', trigger.name))) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite(`delete ${trigger.name}`, () => api.deleteStoreTrigger(trigger.raw_id)))) return
+      onDeleted()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-l px-m py-m">
+      {broken.length > 0 && (
+        <div
+          className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
+          style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}
+        >
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <div>
+            <div style={{ fontWeight: 500 }}>This automation has a problem and will not fire.</div>
+            <div className="mt-0.5">{broken[0]}</div>
+          </div>
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div role="note" className="flex items-start gap-s text-warn">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div data-type="body-s" className="flex min-w-0 flex-1 flex-col gap-xs">
+            {warnings.map((w) => <p key={w} className="break-words">{w}</p>)}
+          </div>
+        </div>
+      )}
+      {needsReview && <ReviewNote />}
+      {needsGrant.length > 0 && !readOnly && (
+        <GrantNote labels={needsGrant} enabled={trigger.enabled} busy={busy} onAllow={allow} />
+      )}
+      {trigger.held_back && (
+        <HeldBackNote heldBack={trigger.held_back} onTrusted={onChanged} readOnly={readOnly} busy={busy} />
+      )}
+      {trigger.workflow_version && (
+        <WorkflowVersionNote
+          triggerId={`store:${trigger.raw_id}`} version={trigger.workflow_version} onChanged={onChanged}
+          readOnly={readOnly} busy={busy}
+        />
+      )}
+      {/* Resume is the switch sent on, so a row whose action needs your yes asks first. */}
+      {restoreHold && !readOnly && <RestoreHoldNote hold={restoreHold} busy={busy} onResume={allow} />}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Status</div>
+          <div className="flex items-center gap-1.5">
+            <lc.icon size={13} style={{ color: lc.tone }} />
+            <span className="text-on-surface text-[0.8125rem]">{statusLine}</span>
+          </div>
+          {/* 🔴 The CAUSE, which this panel never showed. `last_error` has been on the wire
+              all along and had no reader here, so an autopaused automation offered no way to learn
+              WHY — the user had to go digging, which is exactly what `attention_card`'s docstring
+              says the error text exists to prevent.
+              🔴 AND IT WAS GATED TOO NARROWLY (issue 496). The gate was `autopaused || quarantined`,
+              so a DEGRADED automation — health non-ok, still firing, and precisely what the reaper
+              writes when it kills an overrunning turn — showed the dot and withheld the reason.
+              `Docs mirror`, `health: degraded`, `last_error: "Reaped
+              after 1811s (exceeded 1800s deadline)"`, nothing on screen.
+              `explainsCause` is the shared gate, and it stays a gate rather than "always show"
+              because `last_error_summary` is never cleared on recovery: printing it beside a green
+              tick would report a fault that is already fixed. */}
+          {explainsCause(lc) && trigger.last_error && (
+            <div className="mt-0.5 font-mono text-on-surface-low text-[0.75rem] break-all">
+              {trigger.last_error}
+            </div>
+          )}
+        </div>
+        {/* A FOREIGN row shows STATE, not a control: its
+            author's harness decides whether it is enabled, and this one will never arm or fire it,
+            so a toggle here would report a change it cannot make. A `disabled` Toggle was the
+            other option and is worse — it says "you may not", where the truth is "this is not
+            yours to set". */}
+        {isManual
+          ? null
+          : readOnly
+            ? <span className="shrink-0 text-on-surface-var text-[0.8125rem]">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
+            : <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />}
+      </div>
+
+      {readOnly
+        ? <ReadOnlyNote author={trigger.author} />
+        : trigger.served_by ? <KeptByAppNote app={trigger.served_by} /> : null}
+
+      <Section label="When it runs">
+        <div data-type="body-m" className="text-on-surface">
+          {eventPattern ? (pm ? pm.label : `A data event (${eventPattern})`) : storeKindLabel(trigger.store_kind)}
+        </div>
+        {pm && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{pm.desc}</div>}
+        {pm?.matcher && (
+          <div className="mt-1 text-[0.8125rem]">
+            <span className="text-on-surface-low">{pm.matcherLabel}: </span>
+            {/* An AppEvent's empty glob is its documented catch-all; every other matcher is
+                required, so an empty one only appears on a row that failed validation. */}
+            {matcher
+              ? <span className="font-mono text-on-surface break-all">{matcher}</span>
+              : <span className="text-on-surface-low">{pm.matcherRequired ? 'none — this trigger cannot fire' : 'every event'}</span>}
+          </div>
+        )}
+        {paths.length > 0 && (
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {paths.map((p) => (
+              <li key={p} className="font-mono text-on-surface-low text-[0.8125rem] break-all">{p}</li>
+            ))}
+          </ul>
+        )}
+        {/* Which page: the panel said only "When a watched web page changes". */}
+        {watchUrl && <div data-type="body-s" className="mt-xs font-mono text-on-surface-low break-all">{watchUrl}</div>}
+      </Section>
+
+      {/* Where a program posts to fire it, and the sender tokens made for it. Not on a row someone
+          else wrote: this harness never fires that one. */}
+      {trigger.webhook && !readOnly && (
+        <Section label="Its webhook">
+          <WebhookDoorSection automationId={trigger.id} automationName={trigger.name}
+            door={trigger.webhook} onChanged={onChanged} />
+        </Section>
+      )}
+
+      {isWatch && (
+        <Section label="Last check">
+          {check
+            ? <WatchCheckLine check={check} saidAbove={warnings.includes(check.said)} />
+            : <div data-type="body-s" className="text-on-surface-low">Not checked yet. Its first check records what is on the page and fires nothing.</div>}
+        </Section>
+      )}
+
+      <Section label="What it runs">
+        <div data-type="body-m" className="text-on-surface">{actionLabel(trigger.action?.provider)}</div>
+        {/* The step itself, for the row the owner has to decide about: "Run a shell command" is not
+            enough to allow one — the command is. */}
+        {(needsReview || needsGrant.length > 0) && <ConfigReadout config={trigger.action?.config} />}
+      </Section>
+
+      {/* 🔴 A store trigger's run history, which this panel never showed. The backend has
+          served the list and the per-run detail, and the only UI for either
+          lived inside `ScheduleDetail` behind a hardcoded `schedule:` id — so a `web_watch` or
+          `file` automation showed "When it runs" and "What it runs" and nothing about whether it
+          ever HAD. Reusing the exported `RunHistory` rather than writing a second one: a duplicate
+          renderer is how two surfaces start disagreeing about what a run looks like.
+          The key carries `run_count` as well as the Run-now counter: a fire the automation made on
+          its own while the panel was open advances `run_count` (the list poll carries it), and the
+          history has to re-read with it rather than keep saying "No runs recorded yet." */}
+      <RunHistory triggerId={trigger.id} reloadKey={`${histKey}:${trigger.run_count ?? 0}`} />
+
+      {trigger.created_by === 'agent' && (
+        <div className="text-on-surface-low text-[0.75rem]">Created for you automatically. Manage it here or ask in chat to change it.</div>
+      )}
+
+      {err && <FieldError>{err}</FieldError>}
+      {/* What the run this press started recorded, in its history row's words. A status, so it is
+          announced, as the schedule panel's is. */}
+      {runFlash && !err && <p role="status" className="text-on-surface-low text-[0.8125rem]">{runFlash}</p>}
+      {dry && <DryRunResult result={dry} providers={providers} onDismiss={() => setDry(null)} />}
+
+      {/* No action row at all for a foreign automation — Run now, Dry run and Delete are all
+          writes to somebody else's row. Rendering them disabled would still assert they are
+          things that could apply to it. */}
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={() => run(false)} loading={running === 'run'}
+            loadingLabel="Running…" disabled={busy} disabledReason={BUSY_REASON}>
+            <Play size={14} /> Run now
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => run(true)} loading={running === 'dry'}
+            disabled={busy} disabledReason={BUSY_REASON}>
+            <FlaskConical size={14} /> Dry run
+          </Button>
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} disabledReason={BUSY_REASON} className="text-danger">
+            <Trash2 size={14} /> Delete
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** A web watch's last check: what it came to, when, and how many checks in a row came to it — so a
+ *  refused watch reads "3 checks in a row since …", not only its newest refusal. The server's sentence
+ *  is said here unless the warning above already says it (`saidAbove`). */
+function WatchCheckLine({ check, saidAbove }: { check: TriggerCheck; saidAbove: boolean }) {
+  const meta = watchCheckMeta(check.outcome)
+  return (
+    <div className="flex flex-col gap-xs">
+      <div data-type="body-s" className="flex flex-wrap items-center gap-x-s gap-y-xs">
+        <span className="inline-flex items-center gap-s">
+          <meta.icon size={14} style={{ color: meta.tone }} className="shrink-0" aria-hidden="true" />
+          <span className="text-on-surface">{meta.label}</span>
+        </span>
+        <span data-type="caption" className="text-on-surface-low">{relPast(check.at)}</span>
+      </div>
+      {check.checks > 1 && (
+        <div data-type="caption" className="text-on-surface-low">{check.checks} checks in a row since {absTime(check.since)}</div>
+      )}
+      {!saidAbove && <p data-type="body-s" className="text-on-surface-var break-words">{check.said}</p>}
+    </div>
+  )
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
+      {children}
+    </div>
+  )
+}
+
+function storeKindLabel(kind?: string): string {
+  const map: Record<string, string> = {
+    file: 'When a watched file changes',
+    web_watch: 'When a watched web page changes',
+    idle: 'After a period of inactivity',
+    run_completed: 'When a workflow run finishes',
+    view: 'When its surface is viewed',
+    webhook: 'When a program posts to its webhook',
+    manual: 'Only when you run it',
+  }
+  return map[kind ?? ''] ?? (kind || 'Automation')
+}

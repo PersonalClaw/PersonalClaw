@@ -1,0 +1,297 @@
+"""Abstract base for artifact providers.
+
+Mirrors the Task/Prompt entity shape: a thin ABC over a backend (filesystem,
+object store, remote service). The bundled :class:`NativeArtifactProvider` is the
+on-disk implementation; the REST/MCP/CLI layers all dispatch through the
+registry so a second backend drops in with no caller change.
+
+The interface is synchronous: the native provider is filesystem I/O under a
+coarse lock, and the in-process MCP tools call it directly. Async backends can
+wrap their I/O; nothing in the call sites awaits a provider method.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from personalclaw.artifacts.bases import BodyChange, newest_body_change
+from personalclaw.artifacts.models import Artifact
+
+
+class ArtifactProvider(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique provider identifier (e.g. 'native')."""
+        ...
+
+    @property
+    @abstractmethod
+    def display_name(self) -> str:
+        """Human-readable provider label."""
+        ...
+
+    @abstractmethod
+    def list(
+        self,
+        *,
+        tag: str | None = None,
+        kind: str | None = None,
+        q: str | None = None,
+        source: str | None = None,
+        source_path: str | None = None,
+        project_id: str | None = None,
+        collection: str | None = None,
+        folder: str | None = None,
+    ) -> list[Artifact]:
+        """Return matching artifacts (without ``content``).
+
+        ``q`` matches everything the user can see of an artifact: name, slug,
+        description, tags, collection, and body content. Providers may keep
+        unfiltered listings metadata-only; the body read is only required when a
+        query is present, and only for rows whose metadata did not already match.
+
+        ``folder`` is present-vs-absent, not truthy: ``None`` means every folder
+        (no filter), ``""`` means only *unfiled* artifacts, and an id means that
+        folder. A truthy check would make the unfiled bucket unaskable.
+        """
+        ...
+
+    def find_similar(
+        self, name: str, *, kind: str | None = None, project_id: str | None = None
+    ) -> Artifact | None:
+        """The existing artifact whose name matches *name* by slug, or None — the
+        list-before-save dedup hint. Default returns None (a backend opts in).
+
+        ``project_id`` is present-vs-absent like ``list``'s ``folder``, and deliberately
+        unlike ``list``'s own truthy ``project_id``: ``None`` means every Project (no
+        filter), ``""`` means only *unscoped* artifacts, and an id means that Project. A
+        truthy check would read ``""`` as "no filter", so an unscoped save would dedup
+        against every Project's library — which is how one Project's document overwrote
+        another's (#3309).
+
+        That spelling is **fail-safe, not stylistic**: ``_current_project_id`` returns ``""``
+        for an unscoped session *and* on any resolution failure. Under a truthy filter a
+        failure degrades to "dedup against every Project" and can still overwrite another
+        Project's document; here it degrades to "dedup against unscoped only", which mints
+        a new row. No test can bind that failure path, so the spelling is its only guard.
+        """
+        return None
+
+    def set_folder(self, slug: str, folder_id: str) -> Artifact | None:
+        """File *slug* into a library folder (``""`` = unfiled). Metadata only.
+
+        Deliberately NOT part of ``update``: filing is organization, not a content
+        change, so it must not bump ``updated_at`` (that would reorder every
+        recency-sorted view the moment a user tidied their library) and must not
+        snapshot a version. Default returns None (a backend opts in).
+        """
+        return None
+
+    @abstractmethod
+    def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
+        """Return one artifact with ``content`` populated, or None.
+
+        ``version=None`` returns the live view (disk for file-backed, else the
+        latest ``current`` content); ``version=N`` returns the immutable snapshot.
+        """
+        ...
+
+    def newest_change(self, slug: str) -> BodyChange | None:
+        """Who made *slug*'s live body: the newest event that changed it, or None when no such
+        artifact (or no recorded change) exists. A backend that can tell a body changed outside
+        it (the native store's file-backed artifacts) says so too."""
+        art = self.get(slug)
+        return newest_body_change(art) if art is not None else None
+
+    @abstractmethod
+    def create(
+        self,
+        *,
+        name: str,
+        #: The body. ``None`` is NO text of its own, which is not an empty body: a file-backed
+        #: artifact then starts as the file ``source_path`` names and never writes it, and any
+        #: other artifact starts empty. Only a ``str`` is written through to the file.
+        content: str | None = None,
+        kind: str = "widget",
+        source: str = "chat",
+        slug: str | None = None,
+        source_path: str = "",
+        description: str = "",
+        tags: list[str] | None = None,  # type: ignore[valid-type]
+        actor: str | None = None,
+        session_id: str | None = None,
+        project_id: str = "",
+        collection: str = "",
+        #: Provenance recorded on the lifecycle EVENT. `ArtifactEvent.metadata` and
+        #: `clean_event_metadata` already existed but only `record_impression` could reach
+        #: them, so a workflow could compute a run/node lineage and had nowhere to put it —
+        #: the artifact landed with no record of what produced it. A named parameter, not an
+        #: open passthrough.
+        event_metadata: dict | None = None,
+        #: Freeze the body at creation. A provider that cannot enforce it must
+        #: raise rather than create a mutable artifact that merely claims to be frozen.
+        readonly: bool = False,
+    ) -> Artifact: ...
+
+    @abstractmethod
+    def update(
+        self,
+        slug: str,
+        *,
+        content: str | None = None,
+        snapshot: bool = False,
+        event_type: str | None = None,
+        actor: str | None = None,
+        session_id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]
+        collection: str | None = None,
+        event_metadata: dict | None = None,
+        #: ADOPT an existing artifact as the live pointer to a file (#290). `create` takes
+        #: `source_path` and `update` did not, so the only way to make an already-saved
+        #: artifact file-backed was to create a second one — which is precisely how a
+        #: completed loop ended up with two byte-identical rows, one file-backed and one a
+        #: snapshot. `None` leaves it untouched; `""` detaches.
+        source_path: str | None = None,
+        #: The revision of the body the caller's `content` was built from — the precondition of
+        #: a page's whole-body save (`personalclaw/stale_write.py`) and of the agent's writes
+        #: (`artifacts/bases.py`). Compared UNDER THE SAME LOCK as the write, against the body as
+        #: a read presents it (`models.redacted`), and a mismatch raises `ArtifactStaleWrite`
+        #: before anything is written. `None` names no copy: the write is built from no read of
+        #: the body (a workflow's step writes what its run made). Either way, a body another
+        #: writer left that no version holds is kept as its own version before the write replaces
+        #: it, unless the write is the owner's own save, which names what her editor showed her.
+        expect_revision: str | None = None,
+        #: Tag names to add to / remove from the tags stored at the moment of the write. One name
+        #: in or out cannot undo another writer's tag, so these need no revision; `tags` replaces
+        #: the whole list.
+        add_tags: list[str] | None = None,  # type: ignore[valid-type]
+        remove_tags: list[str] | None = None,  # type: ignore[valid-type]
+    ) -> Artifact | None: ...
+
+    def revert(
+        self,
+        slug: str,
+        from_version: int,
+        *,
+        actor: str | None = None,
+        session_id: str | None = None,
+    ) -> Artifact | None:
+        """Restore a historical version's body as a new current version.
+
+        Sourced server-side from the on-disk snapshot (kind-agnostic: text or
+        binary), so the caller never round-trips content — the one correct path
+        for binary artifacts. Default raises so a backend declares support
+        explicitly; the native provider implements it."""
+        raise NotImplementedError(f"{self.name} does not support revert")
+
+    # ── binary bodies (kind:image et al — bytes on disk, not text) ──
+    # Default raises so a text-only backend declares its limitation explicitly
+    # rather than silently mishandling bytes; the native provider implements them.
+    def create_binary(
+        self,
+        *,
+        name: str,
+        data: bytes,
+        mime: str,
+        kind: str = "image",
+        source: str = "chat",
+        slug: str | None = None,
+        description: str = "",
+        tags: list[str] | None = None,  # type: ignore[valid-type]
+        actor: str | None = None,
+        session_id: str | None = None,
+        project_id: str = "",
+        source_path: str = "",
+    ) -> Artifact:
+        """Create a binary artifact (image). ``data`` is the raw bytes.
+
+        ``source_path`` names the file a copy was saved from: provenance, never a live pointer.
+        A *mime* of another kind than *kind* raises
+        :class:`~personalclaw.artifacts.models.ArtifactKindMismatch`.
+        """
+        raise NotImplementedError(f"{self.name} does not support binary artifacts")
+
+    def update_binary(
+        self,
+        slug: str,
+        *,
+        data: bytes,
+        mime: str = "",
+        actor: str | None = None,
+        session_id: str | None = None,
+        event_type: str | None = None,
+        expect_version: int | None = None,
+    ) -> Artifact | None:
+        """Append a new binary version (an edit result).
+
+        ``expect_version`` is the optimistic-concurrency precondition: when supplied,
+        the write proceeds only if the artifact is at that version, and raises
+        :class:`~personalclaw.artifacts.models.ArtifactVersionConflict` otherwise. It
+        belongs on the PROVIDER rather than in a handler because the comparison has to
+        happen under the same lock as the write — checking the version first and
+        writing second leaves exactly the race a whole-document save exists to detect.
+        The editor's saves and the agent's document tools pass it. ``None`` means
+        last-write-wins; every binary write cuts a version, so the
+        body it replaces stays in the history either way.
+
+        A body not of the artifact's kind raises
+        :class:`~personalclaw.artifacts.models.ArtifactKindMismatch` before anything is written:
+        a text artifact takes no bytes, and a *mime* of another binary kind is not this
+        artifact's next version. ``update`` refuses a text body for a binary artifact the same way.
+        """
+        raise NotImplementedError(f"{self.name} does not support binary artifacts")
+
+    def raw_bytes(self, slug: str, *, version: int | None = None) -> tuple[bytes, str] | None:
+        """Return ``(data, mime)`` for a binary artifact body, or None."""
+        return None
+
+    def store_version_file(self, slug: str, filename: str, data: bytes) -> bool:
+        """Write a content-addressed companion file beside an artifact's versions.
+
+        A published body that references a workspace file breaks the moment that file moves, which
+        is the failure the version dir exists to prevent — so a publish copies what it references in
+        under a ``<stem>@<hash>.<ext>`` name. Content-addressed, so the same
+        unchanged file re-referenced by a later version resolves to the SAME copy rather than
+        accumulating byte-identical duplicates.
+
+        Default returns False so a backend that cannot host companion files declares it rather than
+        silently accepting bytes it drops; the publish path then reports the references it could not
+        make self-contained instead of claiming it did.
+        """
+        return False
+
+    @abstractmethod
+    def delete(self, slug: str) -> bool: ...
+
+    @abstractmethod
+    def list_versions(self, slug: str) -> list[int]: ...  # type: ignore[valid-type]
+
+    @abstractmethod
+    def find_by_source_path(self, source_path: str) -> Artifact | None:
+        """Return the artifact whose live-pointer matches ``source_path`` (dedup)."""
+        ...
+
+    @abstractmethod
+    def record_impression(
+        self,
+        slug: str,
+        *,
+        by: str | None = None,
+        session_id: str | None = None,
+        message_ts: str | None = None,
+        widget_index: int | None = None,
+    ) -> tuple[Artifact | None, bool]:
+        """Append a per-session ``referenced`` breadcrumb. Returns (artifact, appended)."""
+        ...
+
+    @property
+    def readonly(self) -> bool:
+        return False
+
+    # Optional hook for metadata used by the UI; default no-op.
+    def stats(self) -> dict[str, Any]:
+        return {}

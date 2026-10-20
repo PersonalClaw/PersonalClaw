@@ -1,0 +1,47 @@
+/* Lavender. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="lavender"] {
+  /* layer 1: the steps the base sheet does not have */
+  --blue-482: #0057c2;
+  --blue-538: #1668d8;
+  --blue-658: #4e8ff8;
+  --blue-703: #619eff;
+  --indigo-249: #21134f;
+  --indigo-310: #2e2168;
+  --indigo-449: #5235b9;
+  --indigo-509: #6549ca;
+  --indigo-528: #6a4fd0;
+  --indigo-703: #9d8bff;
+  --indigo-817: #b6bdff;
+  --pink-648: #d8627e;
+  --violet-596: #9168c0;
+  --violet-610: #8e75b2;
+  --violet-759: #c597ff;
+  --violet-918: #e7deff;
+  /* layer 2, dark */
+  --color-primary: var(--indigo-703);
+  --color-primary-emphasis: var(--indigo-817);
+  --color-on-primary: var(--indigo-249);
+  --color-primary-container: var(--indigo-310);
+  --color-secondary: var(--blue-658);
+  --color-info: var(--blue-703);
+  --grad-1: var(--violet-610);
+  --grad-2: var(--indigo-703);
+  --grad-3: var(--violet-759);
+  --grad-4: var(--pink-648);
+  --glow-a: var(--indigo-703);
+  --glow-b: var(--violet-759);
+}
+:root.light[data-theme="lavender"] {
+  --color-primary: var(--indigo-509);
+  --color-primary-emphasis: var(--indigo-449);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--violet-918);
+  --color-secondary: var(--blue-538);
+  --color-info: var(--blue-482);
+  --grad-1: var(--violet-610);
+  --grad-2: var(--indigo-509);
+  --grad-3: var(--violet-596);
+  --grad-4: var(--pink-648);
+  --glow-a: var(--indigo-528);
+  --glow-b: var(--violet-596);
+}

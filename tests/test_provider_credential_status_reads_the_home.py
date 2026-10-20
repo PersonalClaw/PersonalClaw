@@ -1,0 +1,121 @@
+"""`GET /api/model-providers` reported every provider's stored key as missing.
+
+(The field was `credential_status`; it is `key_in_store` now — whether the instance's key
+lives in the credential store. Whether an instance CONNECTS is its measured `connection`,
+see `providers/connection.py`, and no longer inferred from a credential's presence.)
+
+Co-located with issue 2217's census work: the census resolves `credentials.json` from
+`dashboard/handlers/providers.py`, and reading that one write path is what surfaced this.
+
+`CredentialStore.__init__` takes a **home directory**; it then read `<home>/credentials.json`
+and `<home>/.env`, and now reads `<home>/.env` and the OS keychain, the store Settings → Secrets
+writes. Measured on the tree: eleven call sites constructed one, and ten passed a home. This one
+passed `config_dir() / "credentials.json"`, so the store looked beneath a file, found nothing,
+and `resolve()` raised `KeyError` for every name — swallowed by the handler's
+`except Exception` into `"missing"`.
+
+So a correctly configured provider rendered as having no credential, on the surface whose
+whole job is to report whether the credential is there.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+
+import pytest
+
+
+@dataclass
+class _Entry:
+    name: str
+    type: str
+    model: str
+    credential: str | None
+    declared_capabilities: tuple = field(default_factory=tuple)
+    options: dict = field(default_factory=dict)
+
+
+class _Registry:
+    def __init__(self, entries):
+        self._entries = entries
+
+    def list_entries(self):
+        return self._entries
+
+    def capability_of(self, _type):  # no static descriptor — handler falls back
+        raise LookupError("no capability descriptor")
+
+    def build_catalog(self, _entry):  # no catalog: its connection reads "untestable"
+        return None
+
+
+async def _statuses(monkeypatch, home, entries) -> dict[str, bool]:
+    """Drive the real handler and return {provider name: key_in_store}."""
+    from personalclaw.config import loader as config_loader
+    from personalclaw.dashboard.handlers import providers as handler
+    from personalclaw.llm import registry as llm_registry
+
+    monkeypatch.setattr(config_loader, "config_dir", lambda: home)
+    monkeypatch.setattr(llm_registry, "get_default_registry", lambda: _Registry(entries))
+    resp = await handler.api_providers_list(object())
+    return {p["name"]: p["key_in_store"] for p in json.loads(resp.text)["providers"]}
+
+
+@pytest.mark.asyncio
+async def test_a_configured_credential_reports_ok_not_missing(monkeypatch, tmp_path):
+    """The defect, at the endpoint. `fake-key-configured` is right there in the home's store."""
+    (tmp_path / ".env").write_text("MY_KEY=fake-key-configured\n", encoding="utf-8")
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]
+
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": True}
+
+
+@pytest.mark.asyncio
+async def test_a_value_left_in_the_retired_credentials_file_reports_missing(monkeypatch, tmp_path):
+    """The pair: "always there" would satisfy the test above and be just as wrong. A value in
+    `credentials.json`, which nothing reads any more, is not a stored credential."""
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"MY_KEY": {"type": "api_key", "value": "fake-key-in-the-old-file"}}),
+        encoding="utf-8",
+    )
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]
+
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
+
+
+@pytest.mark.asyncio
+async def test_an_unstored_credential_name_still_reports_missing(monkeypatch, tmp_path):
+    """The `KeyError` branch, kept reachable for the reason it exists rather than as a
+    side-effect of pointing the store at a path that cannot hold anything."""
+    (tmp_path / ".env").write_text("OTHER=v\n", encoding="utf-8")
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "ABSENT_KEY")]
+
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
+
+
+@pytest.mark.asyncio
+async def test_a_provider_declaring_no_credential_has_no_key_in_the_store(monkeypatch, tmp_path):
+    """`credential=None` never reaches the store at all. It used to read "ok" here — which
+    is how an instance with no key anywhere was badged "✓ Configured"."""
+    entries = [_Entry("ollama", "openai_compatible", "llama3", None)]
+
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"ollama": False}
+
+
+def test_the_rail_would_catch_the_defect_it_was_written_for():
+    """Floor: the regex must match the line this issue fixed, or the rail above is vacuous.
+
+    Written red-first and it EARNED its keep: the first version used `[^)]*`, which can never
+    cross the `)` in `config_dir()`, so it matched nothing and would have passed over the very
+    line it was written to ban.
+    """
+    pattern = re.compile(r"CredentialStore\([^#]*?credentials\.json")
+    assert pattern.search('store = CredentialStore(config_dir() / "credentials.json")')
+    assert pattern.search('CredentialStore(home / "credentials.json")')
+    assert not pattern.search("store = CredentialStore(config_dir())")
+    assert not pattern.search("CredentialStore(home)")
+    assert not pattern.search(
+        "store = CredentialStore(config_dir())  # derives credentials.json itself"
+    ), "a comment naming the file must not read as a call site passing it"

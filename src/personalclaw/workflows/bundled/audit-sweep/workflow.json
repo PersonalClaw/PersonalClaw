@@ -1,0 +1,176 @@
+{
+  "name": "audit-sweep",
+  "description": "Find issues from several angles at once, adversarially verify each one, fix what survives, and loop until a round finds nothing new.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "audit",
+    "review"
+  ],
+  "inputs": {
+    "target": {
+      "type": "string",
+      "required": true,
+      "help": "What to audit — a path, a module, a document, a config."
+    },
+    "focus": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Narrow the sweep. Left empty, the finders use their own judgment."
+    },
+    "fix": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "help": "Whether to fix confirmed findings. Off by default: an audit that edits is no longer an independent check."
+    }
+  },
+  "metadata": {
+    "risk": "medium",
+    "capabilities": [
+      "review",
+      "write"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Audit src/personalclaw/auth/ for credential-handling problems. Report only; don't fix."
+      },
+      {
+        "event": "mutation",
+        "description": "Two of the confirmed findings are the same bug seen from different angles — merge them and re-run the fix leg once."
+      }
+    ],
+    "keywords": [
+      "audit",
+      "review",
+      "find issues",
+      "find problems",
+      "sweep",
+      "check for bugs"
+    ],
+    "example_outputs": [
+      "a ranked list of confirmed findings with fixes"
+    ],
+    "shapes": [
+      "review"
+    ],
+    "when_not_to_use": "not for writing new code — use code-project"
+  },
+  "root": {
+    "kind": "loop",
+    "id": "sweep_until_dry",
+    "config": {
+      "mode": "until_dry",
+      "streak": 2,
+      "max_iterations": 3
+    },
+    "body": {
+      "kind": "sequence",
+      "id": "round",
+      "children": [
+        {
+          "kind": "parallel",
+          "id": "finders",
+          "children": [
+            {
+              "kind": "infer",
+              "id": "find_correctness",
+              "config": {
+                "model_tier": "reasoning",
+                "prompt": "Find CORRECTNESS problems: logic that is wrong, cases not handled, states that cannot be represented, assumptions never checked.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
+              }
+            },
+            {
+              "kind": "infer",
+              "id": "find_safety",
+              "config": {
+                "model_tier": "reasoning",
+                "prompt": "Find SAFETY problems: anything that could destroy data, leak a credential, escape its scope, or fire an irreversible action without a check.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
+              }
+            },
+            {
+              "kind": "infer",
+              "id": "find_clarity",
+              "config": {
+                "model_tier": "standard",
+                "prompt": "Find CLARITY problems: things a competent reader would misread, names that lie about what they do, and behaviour no comment explains where the reason is not obvious.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "kind": "transform",
+          "id": "collected",
+          "config": {
+            "expr": {
+              "findings": [
+                "{{nodes.find_correctness.output.findings | tag('lens', 'correctness')}}",
+                "{{nodes.find_safety.output.findings | tag('lens', 'safety')}}",
+                "{{nodes.find_clarity.output.findings | tag('lens', 'clarity')}}"
+              ]
+            }
+          }
+        },
+        {
+          "macro": "verify_panel",
+          "id": "verify",
+          "config": {
+            "findings": "{{nodes.collected.output.findings | flatten}}",
+            "context": "{{inputs.target}}",
+            "guidance": "The finders were asked to be thorough, which makes some of these plausible rather than real. Refute the ones that are."
+          }
+        },
+        {
+          "kind": "branch",
+          "id": "fix_or_report",
+          "config": {
+            "on": "{{inputs.fix}}"
+          },
+          "cases": {
+            "true": {
+              "kind": "stage",
+              "id": "apply_fixes",
+              "config": {
+                "prompt": "Fix the findings below — the ones no verifier refuted. Each carries its verdict: `refuted: false` survived a verifier's attempt to disprove it; `refuted: null` was never ruled on, so check it against the target yourself before you change anything for it.\n\nFix the cause, not the symptom, and stop if a fix would need a decision you cannot make; a half-applied fix is worse than a reported finding.\n\nTarget:\n{{inputs.target}}\n\nFindings to fix:\n{{nodes.verify_confirmed.output.kept}}"
+              }
+            }
+          },
+          "default": {
+            "kind": "transform",
+            "id": "report_only",
+            "config": {
+              "expr": {
+                "fixed": false,
+                "note": "Fixing is off for this run, so the confirmed findings are reported and nothing was changed."
+              }
+            }
+          }
+        },
+        {
+          "kind": "infer",
+          "id": "completeness_critic",
+          "config": {
+            "model_tier": "reasoning",
+            "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. Return an empty list when the round genuinely covered everything — that is what stops the loop.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round's findings, none of them refuted:\n{{nodes.verify_confirmed.output.kept}}",
+            "schema": {
+              "new_findings": "array",
+              "uncovered": "array"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

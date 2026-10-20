@@ -1,0 +1,70 @@
+{
+  "name": "refine-template",
+  "version": 1,
+  "description": "Read a template's own run-ledger failures and, when the evidence is defensible, propose one typed improvement to it — never applying anything, only filing a reviewable proposal.",
+  "source": "bundled",
+  "provenance": "user",
+  "tags": [
+    "learning",
+    "refiner"
+  ],
+  "inputs": {
+    "workflow_name": {
+      "type": "string",
+      "required": true,
+      "help": "The template to refine — its own run ledger is the only evidence considered."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "read"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Look at why code-project keeps failing its audit gate and propose a fix if the evidence supports one"
+      },
+      {
+        "event": "mutation",
+        "description": "Only propose against the single most frequent unresolved failure — leave the one-off flakes alone"
+      }
+    ],
+    "keywords": [
+      "refine",
+      "improve template",
+      "propose fix",
+      "template diff",
+      "learn from runs"
+    ],
+    "example_outputs": [
+      "a single typed template-diff proposal citing the runs that motivate it, or nothing when no failure clears the bar"
+    ],
+    "shapes": [
+      "triage"
+    ],
+    "when_not_to_use": "not for running a template — this only reads its history and proposes edits"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "refine",
+        "config": {
+          "agent": "personalclaw-template-refiner",
+          "model_tier": "reasoning",
+          "tools_posture": "verify",
+          "prompt": "You improve ONE workflow template from its own run history. You may only READ and PROPOSE — you cannot apply an edit, install a skill, or write a template. That is enforced by your tool set; do not fight it.\n\nTemplate to refine:\n{{inputs.workflow_name}}\n\nMethod, in order — each step earns the next:\n  1. Call `refiner_evidence` for this template. It returns failure clusters (already screened and fenced) ranked worst-first, plus the top cluster worth targeting.\n  2. If there is no top cluster, STOP and propose nothing. Zero failures is not a problem to fix, and a cluster that never recurs is not worth an edit.\n  3. Otherwise, target the top cluster ONLY. Decide the smallest typed change that would prevent it — reword a prompt, add a retry or an on_error, add a gate where users keep intervening, delete a step users keep skipping.\n  4. Express it as typed ops (`update_node` / `insert` / `delete` / `move` / `set_input`). You may NOT touch the template's id, name, triggers, or surfacing metadata — those decide WHEN it runs and are frozen.\n  5. Call `propose_template_diff` with those ops, a rationale grounded in the cluster, and the run ids that motivate it. If the ops are rejected as illegal or frozen, do not retry with a workaround — report that no safe edit is available.\n\nA proposal a reviewer will not read is worse than none. Cite the runs; do not speculate. One defensible proposal, or none.\n\nReturn JSON: {\"proposed\": boolean, \"target_signature\": string, \"rationale\": string, \"proposal_id\": string}",
+          "schema": {
+            "proposed": "boolean",
+            "target_signature": "string",
+            "rationale": "string",
+            "proposal_id": "string"
+          }
+        }
+      }
+    ]
+  }
+}

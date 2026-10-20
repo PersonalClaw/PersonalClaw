@@ -1,0 +1,426 @@
+"""Durable signing key + session records.
+
+The bug being fixed: `token_auth._SECRET = os.urandom(32)` at module scope plus an in-memory
+nonce set meant **every gateway restart invalidated every token**. Locally you re-ran
+`personalclaw token`; off-network you were locked out, because minting a URL requires being on
+the machine.
+
+Both halves matter and are tested as a pair. A persisted key alone is not enough: the token's
+signature would verify and then be refused for having no session record — the same lockout with
+a more confusing reason.
+
+The security half gets equal weight. Persisting sessions creates a new way to get revocation
+wrong (a revoke that un-revokes on reboot), and a new file that must not be readable by another
+local account.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+
+from personalclaw.dashboard import session_store as ss
+
+
+@pytest.fixture()
+def home(tmp_path, monkeypatch):
+    monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+# ── The signing key ─────────────────────────────────────────────────────
+
+
+def test_key_is_created_on_first_use(home):
+    key = ss.load_or_create_key()
+    assert len(key) == ss.KEY_BYTES
+    assert ss.key_path().is_file()
+
+
+def test_key_is_stable_across_calls(home):
+    """THE fix: the same key comes back, so a token outlives the process that minted it."""
+    assert ss.load_or_create_key() == ss.load_or_create_key()
+
+
+def test_key_is_owner_only_from_creation(home):
+    """A key that is briefly world-readable has already leaked."""
+    ss.load_or_create_key()
+    assert oct(ss.key_path().stat().st_mode)[-3:] == "600"
+
+
+def test_a_loosened_key_is_tightened_on_read(home):
+    """A key another local account can read is one it can mint a session with."""
+    ss.load_or_create_key()
+    ss.key_path().chmod(0o644)
+    ss.load_or_create_key()
+    assert oct(ss.key_path().stat().st_mode)[-3:] == "600"
+
+
+def test_a_truncated_key_is_regenerated_not_used(home, caplog):
+    """A short key is corruption, not a valid smaller key — signing with it would be weaker."""
+    ss.key_path().write_bytes(b"tiny")
+    with caplog.at_level("WARNING"):
+        key = ss.load_or_create_key()
+    assert len(key) == ss.KEY_BYTES
+    assert "too short" in caplog.text
+
+
+def test_rotation_changes_the_key(home):
+    first = ss.load_or_create_key()
+    second = ss.write_new_key()
+    assert first != second
+    assert ss.load_or_create_key() == second
+
+
+def test_retiring_the_key_ends_every_session_and_remembers_why(home):
+    """A nonce whose signature can no longer verify is not a session — but its holder is owed the
+    reason, so the ending is remembered, with the key that can recognise its token."""
+    old = ss.load_or_create_key()
+    ss.remember_session("n1", time.time() + 3600)
+    ended = ss.retire_key(old)
+    assert [nonce for nonce, _record in ended] == ["n1"]
+    assert ss.load_sessions() == {}
+    assert ss.ended_session("n1").reason == ss.END_KEY_REPLACED
+    assert ss.retired_key() == old
+
+
+# ── Session records ─────────────────────────────────────────────────────
+
+
+def test_sessions_round_trip(home):
+    exp = time.time() + 3600
+    ss.remember_session("n1", exp)
+    assert ss.load_sessions() == {"n1": exp}
+
+
+def _records(**by_nonce: float) -> dict[str, ss.SessionRecord]:
+    return {n: ss.SessionRecord(expiry=e) for n, e in by_nonce.items()}
+
+
+def test_expired_sessions_are_dropped_on_read(home):
+    ss.remember_session("live", time.time() + 3600)
+    ss.save_session_records(_records(live=time.time() + 3600, dead=time.time() - 1))
+    assert set(ss.load_sessions()) == {"live"}
+
+
+def test_ending_removes_one_session_and_remembers_why(home):
+    ss.remember_session("a", time.time() + 3600)
+    ss.remember_session("b", time.time() + 3600)
+    ended = ss.end_sessions(["a"], ss.END_SIGNED_OUT_ELSEWHERE)
+    assert [nonce for nonce, _ in ended] == ["a"]
+    assert set(ss.load_sessions()) == {"b"}
+    assert ss.ended_session("a").reason == ss.END_SIGNED_OUT_ELSEWHERE
+    assert ss.ended_session("b") is None
+
+
+def test_ending_an_unknown_session_is_a_no_op(home):
+    ss.remember_session("a", time.time() + 3600)
+    assert ss.end_sessions(["nope"], ss.END_SIGNED_OUT) == []
+    assert set(ss.load_sessions()) == {"a"}
+    assert ss.ended_session("nope") is None
+
+
+def test_an_unknown_end_reason_is_refused(home):
+    """The reason is what a device is told; a free-form one would be untested copy."""
+    with pytest.raises(ValueError):
+        ss.end_sessions(["a"], "because")
+
+
+def test_a_row_without_a_device_block_is_listed_with_a_stable_handle(home):
+    """A row written before every row carried a device block must still be listable and
+    revocable — with a handle that is the same on every read, and is not the nonce."""
+    ss.sessions_path().write_text(
+        json.dumps({"sessions": {"old-nonce": {"exp": time.time() + 3600, "issuer": "unknown"}}}),
+        encoding="utf-8",
+    )
+    first = ss.load_session_records()["old-nonce"].device.id
+    assert first == ss.load_session_records()["old-nonce"].device.id
+    assert first and "old-nonce" not in first
+    assert ss.nonces_for_session(first) == ["old-nonce"]
+
+
+def test_a_store_the_previous_release_wrote_signs_nobody_out(home):
+    """The upgrade promise: every live row survives, a paired phone stays paired under its name
+    (the pairing-only capabilities key on its door), and a bare row counts as a browser, so a
+    burst of script tokens after the upgrade cannot push it out."""
+    now = time.time()
+    phone = {"id": "a1b2c3", "name": "Jordan's iPhone", "kind": "mobile", "minted_at": now - 60}
+    ss.sessions_path().write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "phone-nonce": {
+                        "exp": now + 3600,
+                        "issuer": "pair",
+                        "device": {**phone, "last_seen": now - 5},
+                    },
+                    "browser-nonce": {"exp": now + 3600, "issuer": "unknown"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    records = ss.load_session_records()
+    assert set(records) == {"phone-nonce", "browser-nonce"}
+    assert set(ss.paired_sessions()) == {"phone-nonce"}
+    kept = records["phone-nonce"].device
+    assert (kept.id, kept.name, kept.kind) == ("a1b2c3", "Jordan's iPhone", "mobile")
+    assert ss.pool_of(records["phone-nonce"]) == ss.POOL_DEVICE
+    assert ss.pool_of(records["browser-nonce"]) == ss.POOL_BROWSER
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        ("node", ("Script", "cli")),  # Node's own fetch, measured: exactly this
+        ("Deno/1.46.3", ("Script", "cli")),
+        ("curl/8.7.1", ("curl", "cli")),
+        ("python-requests/2.32.3", ("Python script", "cli")),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            ("Chrome on Mac", "browser"),
+        ),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) PersonalClaw/0.2.0 Chrome/140.0.0.0 Electron/38.2.0 Safari/537.36",
+            ("PersonalClaw desktop app", "desktop"),
+        ),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+            ("Safari on iPhone", "mobile"),
+        ),
+        # A runtime's name ANYWHERE but first is a coincidence, not an identity.
+        ("Mozilla/5.0 (X11; Linux x86_64) node Firefox/140.0", ("Firefox on Linux", "browser")),
+        ("", ("", "unknown")),
+    ],
+)
+def test_a_client_is_named_from_what_its_user_agent_says(user_agent, expected):
+    assert ss.describe_user_agent(user_agent) == expected
+
+
+def test_an_empty_nonce_is_not_stored(home):
+    ss.remember_session("", time.time() + 3600)
+    assert ss.load_sessions() == {}
+
+
+def test_missing_store_reads_as_empty(home):
+    assert ss.load_sessions() == {}
+
+
+def test_malformed_store_reads_as_empty_fail_closed(home, caplog):
+    """An unreadable store must mean "no session", never "accept everything"."""
+    ss.sessions_path().write_text("{not json", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert ss.load_sessions() == {}
+
+
+@pytest.mark.parametrize("root", ["[]", '"a string"', "42", "null"])
+def test_non_object_store_reads_as_empty(home, root):
+    ss.sessions_path().write_text(root, encoding="utf-8")
+    assert ss.load_sessions() == {}
+
+
+def test_non_numeric_expiry_is_skipped(home):
+    ss.sessions_path().write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "good": {"exp": time.time() + 3600, "issuer": ss.ISSUER_UNKNOWN},
+                    "bad": {"exp": "soon", "issuer": ss.ISSUER_UNKNOWN},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert set(ss.load_sessions()) == {"good"}
+
+
+def test_the_store_is_owner_only(home):
+    """It names live sessions; another local account reading it learns valid nonces."""
+    ss.remember_session("n1", time.time() + 3600)
+    assert oct(ss.sessions_path().stat().st_mode)[-3:] == "600"
+
+
+def test_the_store_is_capped(home):
+    """An unbounded file is a slow disk leak if something mints in a loop."""
+    now = time.time()
+    ss.save_session_records(
+        _records(**{f"n{i}": now + 3600 + i for i in range(ss.MAX_SESSIONS + 50)})
+    )
+    assert len(ss.load_sessions()) == ss.MAX_SESSIONS
+
+
+def test_the_cap_keeps_the_longest_lived(home):
+    """A session about to expire anyway is the cheapest one to lose."""
+    now = time.time()
+    ss.save_session_records(
+        _records(**{f"n{i}": now + 100 + i for i in range(ss.MAX_SESSIONS + 10)})
+    )
+    kept = ss.load_sessions()
+    assert f"n{ss.MAX_SESSIONS + 9}" in kept, "the longest-lived survived"
+    assert "n0" not in kept, "the soonest-to-expire was dropped"
+
+
+def test_a_write_failure_is_survivable(home, monkeypatch):
+    """Failing to persist must not break the mint it was recording."""
+    monkeypatch.setattr(ss, "atomic_write", lambda *a, **k: (_ for _ in ()).throw(OSError("full")))
+    ss.remember_session("n1", time.time() + 3600)  # must not raise
+
+
+def test_stats_never_leak_the_nonces(home):
+    """The doctor surface reports counts; a nonce in a status payload is a credential."""
+    ss.remember_session("secret-nonce", time.time() + 3600)
+    stats = ss.session_stats()
+    assert stats["sessions"] == 1
+    assert "secret-nonce" not in json.dumps(stats)
+
+
+# ── The pair, end to end ────────────────────────────────────────────────
+
+
+class TestSurvivesRestart:
+    """The user-visible fix, exercised through the real token functions."""
+
+    def _fresh_process(self, monkeypatch, tmp_path):
+        """Simulate a restart: same home, cleared in-memory state and key cache."""
+        from personalclaw.dashboard import token_auth as ta
+
+        monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
+        ta.use_persistent_secret()  # this is the whole point: use the ON-DISK key
+        ta._state.clear_all()
+        return ta
+
+    def test_a_token_survives_a_restart(self, tmp_path, monkeypatch):
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        token = ta.generate_token("user1", ttl_seconds=3600)
+        assert ta.validate_token(token)[0] is True
+
+        # …restart: memory gone, disk intact.
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        valid, uid, reason = ta.validate_token(token)
+        assert valid is True, f"token died across the restart: {reason}"
+        assert uid == "user1"
+
+    def test_a_rotated_key_invalidates_the_token(self, tmp_path, monkeypatch):
+        """The panic button must actually work."""
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        token = ta.generate_token("user1", ttl_seconds=3600)
+        ta.rotate_signing_key(actor="owner")
+        assert ta.validate_token(token)[0] is False
+        # …and across a restart too: the new key is the one on disk.
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        assert ta.validate_token(token)[0] is False
+
+    def test_revoke_survives_a_restart(self, tmp_path, monkeypatch):
+        """A revoke that un-revokes on reboot is worse than none — you'd believe you'd cut
+        access off. Caught by test_token_rejected_when_no_nonces_registered."""
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        token = ta.generate_token("user1", ttl_seconds=3600)
+        ta.revoke_all_sessions()
+        assert ta.validate_token(token)[0] is False
+
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        assert ta.validate_token(token)[0] is False, "revocation came back from the dead"
+
+    def test_an_expired_stored_session_is_refused(self, tmp_path, monkeypatch):
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        token = ta.generate_token("user1", ttl_seconds=1)
+        ss.save_session_records(_records(**{n: time.time() - 1 for n in ss.load_sessions()}))
+        ta._state.clear_all()
+        valid, _, reason = ta.validate_token(token)
+        assert valid is False
+        assert reason in ("session expired", "no active sessions")
+
+    def test_a_token_from_a_different_key_is_refused(self, tmp_path, monkeypatch):
+        """Two homes must not share sessions."""
+        ta = self._fresh_process(monkeypatch, tmp_path)
+        token = ta.generate_token("user1", ttl_seconds=3600)
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.setattr(ss, "config_dir", lambda: other)
+        ta.reset_secret_cache()
+        ta._state.clear_all()
+        assert ta.validate_token(token)[0] is False
+
+
+# ── Lifetimes ───────────────────────────────────────────────────────────
+
+
+def test_browser_default_is_thirty_days():
+    """Browser sessions last 30 days by default, inside the 90-day limit."""
+    from personalclaw.dashboard.token_auth import (
+        DEFAULT_BROWSER_SESSION_TTL_SECS,
+        MAX_SESSION_TTL_SECS,
+    )
+
+    assert DEFAULT_BROWSER_SESSION_TTL_SECS == 30 * 24 * 3600
+    assert DEFAULT_BROWSER_SESSION_TTL_SECS < MAX_SESSION_TTL_SECS
+
+
+def test_the_whole_90_day_limit_can_be_asked_for(tmp_path, monkeypatch):
+    """A token asked to last the limit exactly does — the limit refuses LONGER, not up to it."""
+    from personalclaw.dashboard import token_auth as ta
+
+    monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
+    ta.reset_secret_cache()
+    ta._state.clear_all()
+    token = ta.generate_token("cli", ttl_seconds=ta.MAX_SESSION_TTL_SECS)
+    payload = json.loads(
+        ta._b64url_decode(token.split(".")[0]).decode()  # noqa: SLF001 — asserting the claim
+    )
+    assert payload["session_exp"] - payload["iat"] == pytest.approx(ta.MAX_SESSION_TTL_SECS, abs=5)
+
+
+def test_the_startup_url_uses_the_browser_default():
+    """The two gateway mint sites open a URL a HUMAN clicks, so the browser lifetime applies:
+    30 days by default, not the 90-day limit."""
+    from types import SimpleNamespace
+
+    import personalclaw.gateway as gw
+    from personalclaw.dashboard import token_auth as ta
+
+    for issuer in (ta.ISSUER_STARTUP, ta.ISSUER_READY):
+        minted = gw.mint_startup_token(issuer, SimpleNamespace(session_ttl="30d"))
+        assert minted.lifetime_secs == ta.DEFAULT_BROWSER_SESSION_TTL_SECS
+        assert minted.lifetime_secs < ta.MAX_SESSION_TTL_SECS
+
+
+def test_ephemeral_secret_is_an_explicit_opt_in(tmp_path, monkeypatch):
+    """A swallowed key failure would silently re-introduce the logged-out-on-restart bug."""
+    from personalclaw.dashboard import token_auth as ta
+
+    monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
+    ta.use_ephemeral_secret(b"x" * 32)
+    try:
+        assert ta._secret() == b"x" * 32
+        assert not ss.key_path().exists(), "an ephemeral run must not write a key"
+    finally:
+        ta.use_persistent_secret()
+
+
+def test_the_ephemeral_toggle_is_not_overloaded():
+    """`use_ephemeral_secret(None)` must GENERATE a key, never mean "turn this off".
+
+    The first version overloaded `None` to mean both, so a test calling it to *disable*
+    ephemeral mode silently enabled it — and the "token survives a restart" test failed with
+    "invalid signature", pointing at the persistence code when the bug was in this toggle.
+    Two functions, two meanings.
+    """
+    from personalclaw.dashboard import token_auth as ta
+
+    try:
+        ta.use_ephemeral_secret()
+        first = ta._secret()
+        assert len(first) == 32
+
+        ta.use_ephemeral_secret(b"y" * 32)
+        assert ta._secret() == b"y" * 32
+
+        ta.use_persistent_secret()
+        assert ta._EPHEMERAL_SECRET is None, "persistent mode must clear the override"
+    finally:
+        ta.use_persistent_secret()

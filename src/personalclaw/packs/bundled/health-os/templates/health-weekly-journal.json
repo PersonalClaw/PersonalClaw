@@ -1,0 +1,46 @@
+{
+  "name": "health-weekly-journal",
+  "description": "Assemble the week's health entries and report what routine care is now due.",
+  "source": "pack",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["health", "weekly"],
+  "inputs": {
+    "week_of": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Monday of the week to assemble (YYYY-MM-DD). Empty uses the week just ended."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["read"],
+    "keywords": ["health log", "journal", "checkups due"],
+    "when_not_to_use": "never for medical interpretation — this assembles a log, nothing more"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "weekly_health",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "assemble",
+        "config": {
+          "agent": "health-companion",
+          "skills": ["health-journal"],
+          "prompt": "Assemble the health entries for the week of {{inputs.week_of}} (empty = the week just ended). List the days with no entry rather than averaging over them."
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "cadence",
+        "config": {
+          "agent": "health-companion",
+          "skills": ["health-checkup-tracker"],
+          "prompt": "Given {{nodes.assemble.output}}, report which routine checkups are due or overdue, oldest first, showing the arithmetic. Do not interpret anything medically."
+        }
+      }
+    ]
+  }
+}

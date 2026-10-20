@@ -1,0 +1,15 @@
+{
+  "id": "hacker-news",
+  "displayName": "Hacker News front page",
+  "description": "New stories via the Algolia API, newest first. Each story carries a stable id, so the same story arriving twice is one item.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://news\\.ycombinator\\.com(?:/(?:news|newest)?)?/?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste https://news.ycombinator.com — the API endpoint is filled in for you.",
+  "spec": {
+    "preset": "hn_algolia"
+  },
+  "tags": ["news", "discovery"]
+}

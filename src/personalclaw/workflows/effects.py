@@ -1,0 +1,406 @@
+"""The effect ledger — external side effects get identity, status, and a teardown path.
+
+The journal cache memoizes *outputs* only. Without effect identity, resume/rewind/fork
+double-fire external effects — a Slack message sent twice, a task created twice, a VM
+provisioned twice. That is the biggest correctness hole in a journaled-replay design,
+and this module is the fix: every tool-bearing dispatch records a
+typed effect event in `events.jsonl`, keyed by an idempotency key derived from the
+execution identity, not the wall clock.
+
+Three rules the controller enforces with what lives here:
+
+* **A committed effect is a boundary.** Re-executing a node whose effect COMMITTED in a
+  previous epoch requires an explicit `redo_effects: true` on the node — silently
+  re-running it is exactly the double-fire this ledger exists to prevent. (The mutation
+  cascade preview *surfaces* the boundary before a rewind; the
+  runtime refusal lives here.)
+* **Teardown before redo.** A provisioning effect that declared a `teardown` command gets
+  it run — with the committed output id — before the region re-executes. The BYOI
+  contract requires teardown to be idempotent, so running it against an already-gone
+  resource is safe.
+* **Callers get dedupe.** `workflow_start`/`workflow_edit` accept a caller idempotency
+  key with a short-lived cache, so a retried chat tool call returns the existing run id
+  instead of minting a second run (the tool surface lands; the cache is
+  built and tested here so the seam exists).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import shlex
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from personalclaw import run_processes
+from personalclaw.cancellation import kill_timed_out, terminate_and_reap
+from personalclaw.safety_flags import yes_or_no
+from personalclaw.workflows import store
+from personalclaw.workflows.models import Failure, FailureClass
+
+logger = logging.getLogger(__name__)
+
+
+class EffectStatus(str, Enum):
+    """One effect's lifecycle. `ATTEMPTED` is written BEFORE dispatch — a crash between
+    attempt and outcome must leave evidence that an effect may have fired, because
+    "unknown, possibly fired" and "never fired" demand different recovery."""
+
+    ATTEMPTED = "attempted"
+    COMMITTED = "committed"
+    RETRIED = "retried"
+    COMPENSATED = "compensated"
+    SKIPPED = "skipped"
+
+
+def idempotency_key(run_id: str, instance_path: str, epoch: int) -> str:
+    """The effect's identity: sha256(run_id + instance_path + epoch).
+
+    Epoch participates so a deliberate re-execution after a rewind gets a NEW key — the
+    external system sees a genuinely new request, while a same-epoch retry reuses the
+    key and an idempotent receiver can dedupe it.
+    """
+    raw = f"{run_id}|{instance_path}|{epoch}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def effect_key(run_id: str, instance_path: str, epoch: int, records: list[EffectRecord]) -> str:
+    """The key a dispatch of this effect goes out under: its attempt's, once there is one.
+
+    The newest record at the SAME epoch names the attempt this dispatch repeats, and its key is
+    reused — across a fork too. A Retry forks the failed run, and the child's ledger opens with
+    the parent's effect records (`checkpoints._copy_journal_prefix`); minted from the child's own
+    run id instead, the re-sent effect reached its receiver as a new request it could not
+    recognise as the attempt it retries. A COMPENSATED record is skipped: it carries the key of
+    the resource it tore down. A different epoch is a deliberate re-execution, so it mints.
+    """
+    for rec in reversed(records):
+        if (
+            rec.epoch == epoch
+            and rec.idempotency_key
+            and rec.effect_status is not EffectStatus.COMPENSATED
+        ):
+            return rec.idempotency_key
+    return idempotency_key(run_id, instance_path, epoch)
+
+
+def committed_effect_refusal(node_label: str, committed_epoch: int) -> Failure:
+    """The node is refused: re-running it would fire an effect already committed."""
+    return Failure(
+        failure_class=FailureClass.USER,
+        cause_plain=(
+            f"node {node_label} has a committed external effect from epoch {committed_epoch}; "
+            "re-running would fire it again"
+        ),
+        remediation=(
+            "set `redo_effects: true` on the node to deliberately re-fire "
+            "(a declared teardown runs first), or skip the node"
+        ),
+        terminal_reason="committed_effect",
+    )
+
+
+def teardown_refusal(detail: str) -> Failure:
+    """The teardown before a redo failed, so the external state is UNKNOWN: proceeding would
+    stack a second resource on top of a live first one."""
+    return Failure(
+        failure_class=FailureClass.INTERNAL,
+        cause_plain=f"effect teardown failed: {detail}"[:500],
+        remediation="fix the teardown command, or clean up the external "
+        "resource manually and clear redo_effects",
+        terminal_reason="teardown_failed",
+    )
+
+
+@dataclass
+class EffectRecord:
+    """One journaled effect event, read back from `events.jsonl`."""
+
+    instance_path: str = ""
+    idempotency_key: str = ""
+    effect_status: EffectStatus = EffectStatus.ATTEMPTED
+    epoch: int = 0
+    node_id: str = ""
+    provider: str = ""
+    #: The external resource's own id, pulled from the provider's JSON output — what a
+    #: teardown command receives so it can find the thing to tear down.
+    output_id: str = ""
+    #: The paired teardown command, captured at commit time. Captured rather than
+    #: re-read from the spec, because a later spec edit must not change what tears down
+    #: an ALREADY-provisioned resource.
+    compensation_ref: str = ""
+
+    @classmethod
+    def from_event(cls, rec: dict[str, Any]) -> EffectRecord:
+        raw = str(rec.get("effect_status", "attempted") or "attempted")
+        try:
+            status = EffectStatus(raw)
+        except ValueError:
+            status = EffectStatus.ATTEMPTED  # tolerant: an unknown status is not fatal
+        return cls(
+            instance_path=str(rec.get("instance_path", "") or ""),
+            idempotency_key=str(rec.get("idempotency_key", "") or ""),
+            effect_status=status,
+            epoch=int(rec.get("epoch", 0) or 0),
+            node_id=str(rec.get("node_id", "") or ""),
+            provider=str(rec.get("provider", "") or ""),
+            output_id=str(rec.get("output_id", "") or ""),
+            compensation_ref=str(rec.get("compensation_ref", "") or ""),
+        )
+
+
+# ── ledger reads ─────────────────────────────────────────────────────────────
+
+
+def effect_history(run_id: str) -> dict[str, list[EffectRecord]]:
+    """Fold the run's effect events into path → ordered records. Order is the journal's
+    append order, which is the only order that matters: the LAST record for a path is
+    its current standing."""
+    from personalclaw.workflows.journal import EFFECT, EVENTS_FILE
+
+    out: dict[str, list[EffectRecord]] = {}
+    for rec in store.read_jsonl(run_id, EVENTS_FILE):
+        if rec.get("kind") != EFFECT:
+            continue
+        record = EffectRecord.from_event(rec)
+        out.setdefault(record.instance_path, []).append(record)
+    return out
+
+
+def committed_effect(records: list[EffectRecord]) -> EffectRecord | None:
+    """The path's standing committed effect, or None.
+
+    A later COMPENSATED for the same key retires the commitment: the resource was torn
+    down, so re-execution is no longer a double-fire. Walked newest-first so the most
+    recent standing decides.
+    """
+    compensated: set[str] = set()
+    for rec in reversed(records):
+        if rec.effect_status == EffectStatus.COMPENSATED:
+            compensated.add(rec.idempotency_key)
+        elif rec.effect_status == EffectStatus.COMMITTED:
+            if rec.idempotency_key in compensated:
+                return None
+            return rec
+    return None
+
+
+def redo_blocked(node_config: dict[str, Any], committed: EffectRecord | None, epoch: int) -> bool:
+    """True when re-execution must be refused.
+
+    Only a DIFFERENT epoch triggers the gate: a same-epoch retry reuses the same
+    idempotency key, which an idempotent receiver dedupes — that is the retry working as
+    designed, not a double-fire.
+
+    The node re-fires only when its config says yes (`safety_flags.yes_or_no`). A definition an
+    agent writes carries `"redo_effects": "false"` as often as `false`, and `bool("false")` is
+    True, so that node fired its effect again; anything that spells neither keeps the boundary.
+    """
+    if committed is None or committed.epoch == epoch:
+        return False
+    return yes_or_no((node_config or {}).get("redo_effects")) is not True
+
+
+# ── BYOI output + teardown ───────────────────────────────────────────────────
+
+
+def parse_byoi_output(stdout: str) -> dict[str, Any] | None:
+    """Enforce the BYOI stdout contract: exactly ONE JSON object.
+
+    Stricter than the engine's loose parser on purpose — a provisioning provider that
+    prints two objects is ambiguous about which resource id the teardown should receive,
+    and guessing wrong orphans a resource. Ambiguity is a contract violation, not a
+    parsing puzzle.
+    """
+    raw = (stdout or "").strip()
+    if not raw:
+        return None
+    try:
+        decoder = json.JSONDecoder()
+        obj, end = decoder.raw_decode(raw)
+    except ValueError:
+        return None
+    if raw[end:].strip():
+        return None  # trailing content = more than one object = ambiguous
+    return obj if isinstance(obj, dict) else None
+
+
+def output_id_of(output: Any) -> str:
+    """The external resource id a teardown receives, from the provider's JSON output."""
+    if isinstance(output, dict):
+        return str(output.get("id", "") or "")
+    return ""
+
+
+async def run_teardown(
+    command: str,
+    output_id: str,
+    *,
+    runner: Any = None,
+    timeout: float = 60.0,
+) -> tuple[bool, str]:
+    """Run the paired teardown, handing it the committed output id.
+
+    The id goes both as the final argv element and as `EFFECT_OUTPUT_ID` in the
+    environment — argv for scripts, env for commands whose arg shape is fixed. No shell:
+    a teardown command runs against real external resources and must not be a quoting
+    injection surface.
+
+    Returns `(ok, detail)`. The BYOI contract requires the command itself to be
+    idempotent, so calling it for an already-gone resource must exit 0.
+    """
+    if runner is not None:
+        try:
+            return await runner(command, output_id)
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"[:500]
+    import os
+    import shutil
+
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.guardrails.denylist import check_command
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+    from personalclaw.shell_denylist import denied_command
+
+    # The action denylist, then the shell denylist every command path asks. A teardown runs with
+    # nobody answering it, so among the first one's rules a teardown that would stop or replace
+    # the PersonalClaw its run lives in is refused. A refused teardown is a failed one: the redo
+    # it guards stays blocked (`effect_boundary`), so no second resource lands on a live first.
+    # It starts in the gateway's own folder (`cwd=""`), which it may not delete either.
+    held = check_command(command, session_key=unattended_dispatch_key("workflow:teardown"), cwd="")
+    if held.blocked:
+        audit_command_refusal(command, held, source="workflow", operation="teardown")
+        return False, held.refusal()
+    if (denied := denied_command(command)) is not None:
+        audit_command_refusal(command, denied, source="workflow", operation="teardown")
+        return False, denied.refusal()
+    argv = shlex.split(command)
+    if not argv:
+        return False, "empty teardown command"
+    # Resolve the binary up front so a missing command stays a TYPED "not found" failure.
+    # The ceiling shim (below) execs the target only in the child, so a bad command would
+    # otherwise surface as a generic non-zero exit ("cannot exec") rather than the typed
+    # error the BYOI contract promises. A path-form command must exist on disk; a bare
+    # name must resolve on PATH.
+    _cmd = argv[0]
+    _found = os.path.exists(_cmd) if os.path.sep in _cmd else bool(shutil.which(_cmd))
+    if not _found:
+        return False, f"teardown command not found: {_cmd}"
+    argv.append(output_id)
+    from personalclaw import sandbox
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    # A teardown runs with nobody answering it, held to the egress tier of unattended work: where
+    # that gives it no network, it runs in the OS sandbox without one, and a failure says so.
+    held_to = unattended_dispatch_key("workflow:teardown")
+    try:
+        launch, cleanup = sandbox.egress_bound_argv(argv, run=held_to)
+    except sandbox.SandboxEnforcementUnavailable as exc:
+        audit_command_refusal(
+            command, str(exc), source="workflow", operation="teardown", control="sandbox"
+        )
+        return False, str(exc)
+    # Resource ceiling: a BYOI teardown command is agent-influenced (a workflow
+    # effect ran it). Deliver the ``tool`` ceiling via the post-exec shim — no preexec_fn,
+    # so this spawn never wedges the event loop.
+    from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
+
+    # Workflow-authored, so the child allowlist and the output id (`build_child_env`), like a
+    # hook or a cron script: never a copy of the gateway's environment and the secrets in it. It
+    # is a run of its own (`run_processes`): what it leaves running ends when it exits.
+    run = run_processes.own()
+    env = build_child_env(
+        site="workflow-teardown",
+        extra={"EFFECT_OUTPUT_ID": output_id, run_processes.RUN_VARIABLE: run.mark},
+    )
+
+    try:
+        # start_new_session: a teardown command is workflow-authored text, so it is
+        # routinely a wrapper that forks (a `docker`/`terraform` CLI, a shell one-liner).
+        # Only a GROUP signal reaches what it forked. See kill_timed_out.
+        proc = await create_subprocess_limited(
+            *launch,
+            profile=PROFILE_TOOL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            start_new_session=True,
+        )
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # kill_timed_out, not a bare `proc.kill()`. The bare kill returned WITHOUT
+            # reaping — so the child stayed a zombie holding its end of the pipe until
+            # the loop's watcher got to it — and reached only the direct child: measured
+            # against a forking teardown stub, ONE live orphan grandchild survived every
+            # timed-out teardown. The owner signals the group and reaps under a bound.
+            await kill_timed_out(proc)
+            return False, f"teardown timed out after {timeout}s"
+        except asyncio.CancelledError:
+            await terminate_and_reap(proc)
+            raise
+        finally:
+            await run.ended(proc.pid)
+    except FileNotFoundError:
+        return False, f"teardown command not found: {argv[0]}"
+    except OSError as exc:
+        return False, f"teardown could not start: {exc}"[:500]
+    finally:
+        sandbox.remove_wrap(cleanup)
+    if proc.returncode == 0:
+        return True, (out or b"").decode("utf-8", "replace")[:2000]
+    detail = (err or b"").decode("utf-8", "replace")[:2000]
+    note = sandbox.no_network_note(held_to)
+    return False, f"teardown exited {proc.returncode}: {detail}" + (f" {note}" if note else "")
+
+
+# ── caller idempotency dedupe (start/edit) ───────────────────────────────────
+
+
+@dataclass
+class CallerDedupe:
+    """Short-lived caller-key → run-id cache.
+
+    A chat tool call that times out client-side gets retried with the SAME caller key;
+    without this cache the retry mints a second run doing the same work. Deliberately
+    in-memory and short-TTL: the window it protects is the seconds-scale tool-retry
+    window, not cross-restart history — the run store already answers "does this run
+    exist" durably.
+    """
+
+    ttl_secs: float = 900.0
+    clock: Any = time.monotonic
+    _entries: dict[str, tuple[str, float]] = field(default_factory=dict)
+
+    def remember(self, caller_key: str, run_id: str) -> None:
+        if not caller_key:
+            return
+        self._sweep()
+        self._entries[caller_key] = (run_id, float(self.clock()))
+
+    def lookup(self, caller_key: str) -> str | None:
+        if not caller_key:
+            return None
+        entry = self._entries.get(caller_key)
+        if entry is None:
+            return None
+        run_id, stamped = entry
+        if float(self.clock()) - stamped > self.ttl_secs:
+            self._entries.pop(caller_key, None)
+            return None
+        return run_id
+
+    def _sweep(self) -> None:
+        now = float(self.clock())
+        doomed = [k for k, (_rid, ts) in self._entries.items() if now - ts > self.ttl_secs]
+        for k in doomed:
+            self._entries.pop(k, None)
+
+
+#: The process-wide cache the workflow chat-tool surface consults. One instance, because two
+#: caches would let a retry land in the one that has not seen the first call.
+START_DEDUPE = CallerDedupe()

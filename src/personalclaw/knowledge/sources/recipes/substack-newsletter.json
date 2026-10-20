@@ -1,0 +1,16 @@
+{
+  "id": "substack-newsletter",
+  "displayName": "Substack newsletter",
+  "description": "Every Substack publication serves a full RSS feed at /feed, so a newsletter needs no selector tuning at all.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://(?P<publication>[A-Za-z0-9][A-Za-z0-9-]*)\\.substack\\.com/?(?:[^?#]*)?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste the newsletter's home page, e.g. https://example.substack.com.",
+  "spec": {
+    "preset": "atom",
+    "url": "https://{{publication}}.substack.com/feed"
+  },
+  "tags": ["blogs", "newsletter"]
+}

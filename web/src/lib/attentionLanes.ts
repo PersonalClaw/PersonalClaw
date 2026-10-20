@@ -1,0 +1,625 @@
+/** Which attention lane an item belongs to, as a pure function over the wire types.
+ *
+ *  Mission Control renders four lanes (Needs-approval / Your-turn / Working / Idle). This module
+ *  owns the RULE; the component owns the pixels. Split out deliberately: lane assignment is the part
+ *  most likely to be subtly wrong, and a wrong lane is invisible in a screenshot — everything still
+ *  renders, just in the wrong column, with counts that read as authoritative.
+ *
+ *  ── THE THREE MEASURED FACTS THIS RULE RESTS ON ────────────────────────────────────────────────
+ *
+ *  1. **`inbox.py` already partitions the kinds; this file does not invent a third partition.**
+ *     `ItemKind` is exactly nine members. Two frozensets sit right below it:
+ *     `NON_CHANNEL_KINDS` = {agent_request, proposal, needs_input, digest, system, user_note} —
+ *     core's own attention vocabulary, raised only through `emit_attention_item` with the `refs`
+ *     that make a row actionable — and `SOURCE_DECLARABLE_KINDS` = {message, mention, email}, the
+ *     channel-shaped kinds a message source may claim. `BASE_LANE` below is keyed off that same
+ *     split: the three channel-shaped kinds map to `null`, the six attention kinds map to a lane.
+ *
+ *  2. **A pending approval appears TWICE on the wire, so a naive concat double-counts it.**
+ *     The pending-approval registry (`DashboardState._hold_approval`) raises an `agent_request`
+ *     Inbox row carrying `refs = {session, approval: <registry id>}` for every pending approval,
+ *     the moment it is pending — and `PendingApproval.id` IS that registry id. So one blocked
+ *     decision is one row in `GET /api/approvals` and a second row in `GET /api/inbox`. `toLanes`
+ *     suppresses the row when its `refs.approval` matches an approval in the same snapshot, and
+ *     Home's To triage and approvals count apply the same rule through `mirroredApprovalId`. This
+ *     is not a hypothetical precedence puzzle; it is the shipped behaviour of the two endpoints
+ *     every attention surface reads.
+ *
+ *  3. **🔴 "Working" is NOT derivable from the attention store. Nothing in the inbox says
+ *     "in flight".** `ItemStatus`'s own docstring (inbox.py:49) declares the lifecycle as
+ *     `PENDING → SEEN → HANDLED | DISMISSED` — two open states, two closed ones, and no in-flight
+ *     one. The nearest candidate, `SENT`, measures as an **enum member nobody writes**: a census of
+ *     `src/personalclaw/` finds `ItemStatus.SENT` assigned at zero sites (the only hits are its own
+ *     declaration and the comment conceding it "predates the others"). Keying the Working lane off
+ *     `sent` would have produced a permanently empty lane wearing a confident label.
+ *     `PendingApproval` carries no status at all — being in the list IS pending.
+ *
+ *     So Working is fed from the sources that actually observe running work: `ChatSession`
+ *     (`GET /api/chat/sessions`), whose `run_state` is the chat's last phase frame, the loop
+ *     listing (`GET /api/loops`) and the running workflow runs (`GET /api/workflows/runs`). Each
+ *     is an optional argument, so `toLanes(items, approvals)` stays valid; pass nothing and
+ *     Working is honestly empty rather than filled by a timestamp heuristic. **`laneFor` never
+ *     returns `'working'`** — no single inbox item can prove it, and `laneFor` only sees inbox
+ *     items.
+ *
+ *  ── THE TWO `null`s, AND WHY UNKNOWN IS NOT `idle` ─────────────────────────────────────────────
+ *
+ *  `laneFor` returns `null` for "not on this surface", which covers three distinct cases: a
+ *  channel-shaped kind (a different concern — those belong to the inbox proper, with reply
+ *  machinery), a closed item, and an unrecognised kind. **An unrecognised kind must not land in
+ *  `idle`.** `idle` is a real lane that reads to a user as "nothing is needed from you"; quietly
+ *  routing a kind this build has never heard of into it would state the one thing we cannot know.
+ *  Use `isKnownKind()` to tell the unknown `null` from the deliberate ones.
+ *
+ *  🪤 The two unknowns fail in OPPOSITE directions, on purpose. An unknown **kind** fails closed
+ *  (off-surface): we cannot say what it wants, so we refuse to claim. An unknown or missing
+ *  **status** fails open (still asking): the question is only "is this resolved?", and an unresolved
+ *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
+ *  shown. Neither is a fallthrough — both branches are written out.
+ */
+import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal, WorkflowRunSummary } from './api'
+import { loopRoute } from './loopKind'
+import { shownCycle } from './loopStatus'
+import { sessionTitle } from './sessionTitle'
+import type { ApprovalCardInput } from '../pages/chat/approvalSegment'
+
+export const LANES = ['needs-approval', 'your-turn', 'working', 'idle'] as const
+export type Lane = (typeof LANES)[number]
+
+/** The fields of a wire `InboxItem` this derivation actually reads. `Pick<>` rather than a
+ *  hand-rolled interface so renaming or retyping a field in `api.ts` breaks compilation HERE
+ *  instead of silently mis-laning every row at runtime. */
+export type AttentionInput = Pick<
+  InboxItem,
+  'id' | 'item_kind' | 'status' | 'created_at' | 'ts' | 'message' | 'context_summary' | 'sender_name' | 'channel_name' | 'refs'
+>
+
+/** `GET /api/approvals` rows. No status field exists on `PendingApproval` — presence in the list is
+ *  the pending-ness — so every one of these is a Needs-approval card, and the card is the one
+ *  approval card (`app/PendingApprovalCard`), which reads the call off it. */
+export type ApprovalInput = ApprovalCardInput & Pick<PendingApproval, 'ts'>
+
+/** The only in-flight evidence on the wire (see fact 3). `run_state` is observed, not inferred: the
+ *  chat's last phase frame, which names a turn while one runs and says whether a stop is asked of
+ *  it. Optional: omit it and Working is empty rather than guessed.
+ *
+ *  `origin`/`source_id` are the list's own answer to "whose session is this" (`_origin_of`: a
+ *  loop's stage worker, its task workers and its planner all carry `origin: 'loop'` and the loop's
+ *  id), and the rest are what `sessionTitle` names a chat by. */
+export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'run_state'>
+  & Partial<Pick<ChatSessionSummary, 'origin' | 'source_id' | 'source_label' | 'prompt_preview' | 'last_message' | 'created' | 'last_activity_ts' | 'last_ts'>>
+
+/** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
+ *  carrying `run_id`) has no chat session at all: its stages are subagents, so the sessions
+ *  above never see it. Optional, like `activity`. */
+export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id' | 'held'>
+
+/** `GET /api/workflows/runs?status=running` rows — the third in-flight evidence. A run
+ *  started from Workflows, by a trigger or by a project is neither a chat session nor a loop, so
+ *  neither source above sees it. Optional, like the two before it. */
+export type RunInput = Pick<WorkflowRunSummary, 'id' | 'workflow_name' | 'title' | 'status' | 'started_at' | 'created_at' | 'parent_run_id' | 'held'>
+
+/** `GET /api/skills/proposals` rows — the skills waiting on your yes or no. Optional, like the
+ *  in-flight sources: omit them and a proposal still shows, as its Inbox row. */
+export type ProposalInput = Pick<SkillProposal, 'id' | 'slug' | 'description' | 'created_at'>
+
+/** What every card has, whichever source it came from.
+ *  `at` is epoch **seconds** — the unit both `InboxItem.created_at` and `PendingApproval.ts` arrive
+ *  in (`time.time()` on the backend) — or `null` when the source carried no timestamp at all. */
+interface LaneCardBase {
+  /** Unique across all four sources: `${origin}:${id}`. Two sources can mint the same id. */
+  key: string
+  lane: Lane
+  id: string
+  title: string
+  subtitle?: string
+  /** What raised an approval or an Inbox card, in words: "Workflow · release", "Trigger · Check my
+   *  balance", "Loop", and an approval by the registry's `source_label` (`inboxRaisedBy`). */
+  raisedBy?: string
+  at: number | null
+  refs?: Record<string, unknown>
+}
+
+/** One card, normalised across the four sources so a lane renders uniformly — and carrying the
+ *  ONE source object its verbs act on, discriminated by `origin`.
+ *
+ *  🔴 Why a union and not optional fields. Mission Control's own card type declared `approval?`,
+ *  `item?` and `detail?`, which this module never set; every field being optional made the two
+ *  shapes assignable, so typecheck passed while the surface that says "Approve, reject, and answer
+ *  from here" rendered no Approve, no Reject and no answer on any card (measured, day 8). Here a
+ *  view reaches `approval` only after narrowing to an approval card, and a card built without its
+ *  source object does not compile, so the verbs cannot silently lose their input again. */
+export type LaneCard =
+  | (LaneCardBase & { origin: 'approval'; approval: ApprovalInput })
+  | (LaneCardBase & { origin: 'inbox'; item: AttentionInput })
+  | (LaneCardBase & { origin: 'session'; session: ActivityInput })
+  | (LaneCardBase & { origin: 'loop'; loop: LoopInput })
+  | (LaneCardBase & { origin: 'run'; run: RunInput })
+  | (LaneCardBase & { origin: 'proposal'; proposal: ProposalInput })
+
+/** Base kind → lane, mirroring `inbox.py`'s two frozensets (fact 1).
+ *
+ *  Typed as an EXHAUSTIVE `Record<InboxItemKind, …>` on purpose: adding a member to the
+ *  `InboxItemKind` union in `api.ts` fails this object literal to compile, which forces whoever
+ *  widens the wire vocabulary to make the lane decision here rather than inherit a default.
+ *  `agent_request` is the one entry a per-item condition can upgrade — see `laneFor`. */
+const BASE_LANE: Record<InboxItemKind, Lane | null> = {
+  // SOURCE_DECLARABLE_KINDS — channel-shaped. A conversation is not an attention lane: it has a
+  // draft, reply routing and a send affordance, all of which Mission Control deliberately lacks.
+  message: null,
+  mention: null,
+  email: null,
+  // NON_CHANNEL_KINDS — core's own attention vocabulary. These three are asking you something.
+  agent_request: 'your-turn',
+  proposal: 'your-turn',
+  needs_input: 'your-turn',
+  // …and these two are telling you something. Nothing is blocked on you, so: Idle.
+  digest: 'idle',
+  system: 'idle',
+  // A note the user wrote. `your-turn`, NOT `idle`: capturing a note is how someone
+  // says "come back to this", so it is open work they addressed to themselves. Filing it as
+  // idle would state the one thing the capture disproves. It also inherits the your-turn sort
+  // (oldest first), which is right — the note that has waited longest is the most overdue.
+  user_note: 'your-turn',
+}
+
+/** Which statuses still want something. Exhaustive over `InboxItemStatus` for the same reason
+ *  `BASE_LANE` is exhaustive over `InboxItemKind`.
+ *
+ *  `filtered` is off-surface but NOT resolved — inbox.py:66 calls it "withheld by verification;
+ *  restorable to PENDING". Mission Control showing a row the verifier withheld would
+ *  undo that decision, so it reads as closed here.
+ *  `sent` is the dead member from fact 3; the branch is defensive, not load-bearing.
+ *
+ *  🔑 **The frontend's ONE definition of open, for every surface — not just the lanes.**
+ *  `pages/inbox/inboxMeta` re-exports `isOpen`/`OPEN_STATUSES` straight off this map, so the inbox
+ *  header, its filter counts, its kind chips and these lane counts cannot disagree about which rows
+ *  are waiting. They did disagree: `/api/inbox/status` published a PENDING-only `pending_count` for
+ *  the header while every filter used this predicate — 33 against 37 on one screen, and a glance
+ *  (which marks a row SEEN) silently decremented the header while resolving nothing (issue 493).
+ *  The server half is `inbox.OPEN_STATUSES`, and `tests/test_inbox_open_status_is_one_owner.py`
+ *  parses this record to pin the two together — the frontend cannot import Python, so parity is
+ *  asserted from the one side that can read both. */
+export const STATUS_OPEN: Record<InboxItemStatus, boolean> = {
+  pending: true,
+  seen: true, // the read/unread boundary — surfaced, not yet resolved. Still your turn.
+  sent: false,
+  handled: false,
+  dismissed: false,
+  filtered: false,
+  expired: false, // ended before anyone answered it; `refs.ended` says why
+}
+
+/** The open statuses as a list, DERIVED from `STATUS_OPEN` rather than spelled out a second time. */
+export const OPEN_STATUSES: InboxItemStatus[] = (Object.keys(STATUS_OPEN) as InboxItemStatus[])
+  .filter((s) => STATUS_OPEN[s])
+
+/** Is this row still asking for something?
+ *
+ *  A MISSING status reads as `pending` — the default `inbox.py` gives the field, so a row written
+ *  before the field existed is open — and an UNRECOGNISED one fails OPEN, per the trap note in the
+ *  header: on an attention surface, hiding an unresolved row is worse than showing a resolved one. */
+export function isOpenStatus(status?: string): boolean {
+  if (!status) return true
+  const known = STATUS_OPEN[status as InboxItemStatus]
+  return known === undefined ? true : known
+}
+
+/** The nine kinds this build knows. Exported so a caller can distinguish "off-surface by decision"
+ *  from "off-surface because we have never heard of this kind" — the second is worth counting. */
+export const KNOWN_KINDS = Object.keys(BASE_LANE) as InboxItemKind[]
+
+export function isKnownKind(kind: unknown): kind is InboxItemKind {
+  return typeof kind === 'string' && Object.prototype.hasOwnProperty.call(BASE_LANE, kind)
+}
+
+/** Lanes that rank OLDEST first, because they are the ones asking you something and the oldest
+ *  unanswered question is the most overdue. An attention surface where the thing that has waited
+ *  longest sinks to the bottom hides exactly what it exists to show. Working and Idle rank NEWEST
+ *  first: nothing there is overdue, and the interesting row is the latest one. */
+const OLDEST_FIRST: ReadonlySet<Lane> = new Set<Lane>(['needs-approval', 'your-turn'])
+
+/** The timestamp a row sorts by, in epoch seconds.
+ *
+ *  🪤 `created_at` is `number | undefined` while `ts` is a `string` — inbox.py mints ids as
+ *  `{kind}_{uuid8}_{ts}` and `InboxItem.ts` is the rsplit tail of that id, so it is a stringified
+ *  float. Both are optional on the wire; `null` means "no evidence of age" and sorts LAST in either
+ *  direction, so an undated row can never squat the top of an oldest-first lane. */
+function timeOf(item: AttentionInput): number | null {
+  if (typeof item.created_at === 'number' && Number.isFinite(item.created_at)) return item.created_at
+  if (typeof item.ts === 'string' && item.ts.trim() !== '') {
+    const parsed = Number.parseFloat(item.ts)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+/** The registry id of the pending approval this Inbox row is the listing of, or '' when it is an
+ *  agent's own question (fact 2). `refs.approval` holds `PendingApproval.id`.
+ *
+ *  THE one test for "this Inbox row and that approval are the same item" — every surface that
+ *  lists both (Mission Control's lanes, Home's To triage, Home's inbox count) asks it here, so none
+ *  of them can count one blocked decision twice. */
+export function mirroredApprovalId(item: Pick<InboxItem, 'refs'>): string {
+  const raw = item.refs?.approval
+  return typeof raw === 'string' && raw !== '' ? raw : ''
+}
+
+/** The skill proposal this Inbox row is the listing of (`refs.skill_proposal`), or ''.
+ *
+ *  THE one test for "this Inbox row and that proposal are the same item", as `mirroredApprovalId`
+ *  is for an approval: Home's To triage and Mission Control's Your turn both list the proposal and
+ *  drop its row, so neither shows one skill twice. */
+export function mirroredProposalId(item: Pick<InboxItem, 'refs'>): string {
+  const raw = item.refs?.skill_proposal
+  return typeof raw === 'string' && raw !== '' ? raw : ''
+}
+
+/** A skill proposal's name and summary, as every surface that decides one shows it — the skill
+ *  it is about, and what it would change. Mission Control's card read "Refine a skill" three times
+ *  over, with no skill named, beside Home's rows that named each; both read these now. */
+export function proposalTitle(p: Pick<ProposalInput, 'slug'>): string {
+  return `Skill: ${p.slug}`
+}
+export function proposalSummary(p: Pick<ProposalInput, 'description'>): string {
+  return p.description?.slice(0, 90) || ''
+}
+
+/** Which lane one inbox item belongs to, or `null` for "not on this surface".
+ *
+ *  PRECEDENCE — `needs-approval` > `your-turn` > `working` > `idle`, applied strictly so an item
+ *  that qualifies twice lands once. Only one item can qualify twice: an `agent_request` carrying
+ *  `refs.approval` is both an unresolved question (your-turn) and a blocked tool decision
+ *  (needs-approval). Needs-approval wins because it is the narrower and more consequential claim —
+ *  a tool is halted mid-run waiting on an approve/reject, and the user's next action is a decision
+ *  with a side effect, not a reply. Demoting it to your-turn would bury a halted run among
+ *  ordinary questions.
+ *
+ *  Never returns `'working'`: no single inbox item carries evidence that anything is running
+ *  (fact 3). That is a measurement, not an omission.
+ */
+export function laneFor(item: AttentionInput): Lane | null {
+  // Render path: a malformed row must not take the surface down with it.
+  if (item === null || typeof item !== 'object') return null
+
+  // Kind is optional on the wire and defaults to `message` on the backend (inbox.py:71-73: "MESSAGE
+  // is the default so every item written before this existed stays valid"). Honour that default
+  // rather than treating absence as unknown — those legacy rows really are channel messages.
+  const kind = item.item_kind === undefined || item.item_kind === null ? 'message' : item.item_kind
+
+  // Unrecognised kind → off-surface. NOT `idle`: see the header. A kind this build cannot name
+  // cannot be truthfully claimed to need nothing.
+  if (!isKnownKind(kind)) return null
+
+  // Closed items leave the surface. An unknown or missing status fails OPEN (still asking) — the
+  // opposite direction from an unknown kind, argued in the header. Both of those defaults now live
+  // in `isOpenStatus`, the one predicate every other surface reads, rather than being re-derived
+  // from `STATUS_OPEN` here (issue 493).
+  if (!isOpenStatus(typeof item.status === 'string' ? item.status : undefined)) return null
+
+  const base = BASE_LANE[kind]
+  if (base === null) return null
+
+  // The one precedence upgrade (fact 2).
+  if (kind === 'agent_request' && mirroredApprovalId(item) !== '') return 'needs-approval'
+  return base
+}
+
+/** An ISO timestamp as epoch seconds (the unit every other card's `at` is in), or `null`. */
+function isoSeconds(raw: unknown): number | null {
+  if (typeof raw !== 'string' || raw === '') return null
+  const ms = Date.parse(raw)
+  return Number.isFinite(ms) ? ms / 1000 : null
+}
+
+/** A loop's card title: its name, else its task's first line. The sidebar's thread rows name a
+ *  loop by it too (`useThreads`). */
+export function loopTitle(l: Pick<LoopInput, 'name' | 'task'>): string {
+  return firstLine(l.name) || firstLine(l.task) || 'Loop'
+}
+
+function firstLine(text: unknown): string {
+  if (typeof text !== 'string') return ''
+  const trimmed = text.trim()
+  if (trimmed === '') return ''
+  const nl = trimmed.indexOf('\n')
+  return nl === -1 ? trimmed : trimmed.slice(0, nl)
+}
+
+// ── WHO RAISED A CARD ──────────────────────────────────────────────────────────────────────────
+//
+// 🔴 Every card a workflow's gate, a trigger's question, a loop or the
+// control bridge raised read "loop". Those Inbox rows ride the `loop/needs_input` notification
+// pair — the one a user's "always interrupt me for needs_input" rule keys on — and
+// `emit_attention_item` writes the pair's source as the row's `sender_name`, so the one word a
+// card showed about where it came from named a delivery rule. The refs each emitter stamps say
+// which work asked (`workflow`, `trigger_park`, `loop`), so the label is read off those. An
+// approval says it itself: the registry names where it came from (`source_label`), once, for
+// every surface and every channel, and its Inbox row keeps those words in its refs.
+
+function named(what: string, name: unknown): string {
+  const n = firstLine(name)
+  return n ? `${what} · ${n}` : what
+}
+
+function refString(refs: Record<string, unknown> | undefined, key: string): string {
+  const v = refs?.[key]
+  return typeof v === 'string' ? v : ''
+}
+
+/** A registry label as a card's first line: `loop “Fix the README”` reads `Loop “Fix the README”`. */
+function sentenceStart(label: string): string {
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''
+}
+
+/** What raised an Inbox card: the work its refs name, the app that raised it by the name it goes by,
+ *  else its sender, as before. Home's To triage, Mission Control's Your turn and the phone's Inbox
+ *  name a row by this, so none of them prints the notification source a platform row rides as its
+ *  sender (`app:<name>`, `loop`). */
+export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' | 'channel_name'>): string {
+  const refs = item.refs
+  if (refString(refs, 'trigger_park')) {
+    return named('Trigger', refString(refs, 'trigger_name') || refString(refs, 'trigger_park'))
+  }
+  // A loop that runs as a workflow run stamps both: it is the loop that asked.
+  if (refString(refs, 'loop')) return 'Loop'
+  if (refString(refs, 'workflow')) return named('Workflow', refString(refs, 'workflow_name'))
+  if (refString(refs, 'source') === 'control_bridge') return 'Control bridge'
+  // An approval's own row, carded only once the approval has left the list (fact 2): it is named by
+  // the words the registry named the approval by. So is an agent's question to her: who asks, in
+  // which chat (`owner_questions`).
+  if ((mirroredApprovalId(item) !== '' || refString(refs, 'question')) && refString(refs, 'source_label')) {
+    return sentenceStart(refString(refs, 'source_label'))
+  }
+  // An app's proposal: the name the app goes by, which the platform keeps on the row when it is
+  // raised (`app_display_name`, the manifest's `displayName`), else the app's own name. Its sender
+  // is the notification source `app:<name>`, which named a delivery rule, not the app.
+  const app = refString(refs, 'app')
+  if (app) return firstLine(refString(refs, 'app_display_name')) || app
+  return firstLine(item.sender_name) || firstLine(item.channel_name)
+}
+
+/** Sort one lane in place. Nulls last in both directions; `key` breaks ties so the order is a total
+ *  one and a test cannot pass on incidental sort stability. */
+function sortLane(lane: Lane, cards: LaneCard[]): LaneCard[] {
+  const ascending = OLDEST_FIRST.has(lane)
+  return cards.sort((a, b) => {
+    if (a.at === null && b.at === null) return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+    if (a.at === null) return 1
+    if (b.at === null) return -1
+    if (a.at !== b.at) return ascending ? a.at - b.at : b.at - a.at
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+  })
+}
+
+function emptyLanes(): Record<Lane, LaneCard[]> {
+  // Built from LANES so all four keys always exist. A component that indexes a lane the derivation
+  // forgot to emit crashes the whole surface; `Object.keys(toLanes(…))` is always these four.
+  const out = {} as Record<Lane, LaneCard[]>
+  for (const lane of LANES) out[lane] = []
+  return out
+}
+
+/** Every attention source, folded into the four lanes, each item appearing exactly ONCE.
+ *
+ *  `activity` is optional so the fixed two-argument call stays valid; it is the only input that can
+ *  populate Working (fact 3). Every argument is defended as if it came straight off a failed fetch:
+ *  a non-array, a `null` element or a non-object element is skipped, never thrown on. This runs on
+ *  a render path, where one exception blanks the entire surface instead of one card.
+ */
+export function toLanes(
+  items: AttentionInput[],
+  approvals: ApprovalInput[],
+  activity: ActivityInput[] = [],
+  loops: LoopInput[] = [],
+  runs: RunInput[] = [],
+  proposals: ProposalInput[] = [],
+): Record<Lane, LaneCard[]> {
+  const out = emptyLanes()
+
+  // ── Skill proposals: a skill waiting on your yes or no, carded as the proposal — named, with
+  // Accept and Reject — rather than as its Inbox row, whose first line is the same "Refine a skill"
+  // for every one. Its row is dropped below while the proposal is in this snapshot; a row whose
+  // proposal is not stays, as an approval's does (fact 2).
+  const proposalIds = new Set<string>()
+  for (const p of Array.isArray(proposals) ? proposals : []) {
+    if (p === null || typeof p !== 'object') continue
+    const id = typeof p.id === 'string' ? p.id : ''
+    if (id === '' || typeof p.slug !== 'string' || p.slug === '') continue
+    proposalIds.add(id)
+    out['your-turn'].push({
+      key: `proposal:${id}`,
+      lane: 'your-turn',
+      origin: 'proposal',
+      id,
+      title: proposalTitle(p),
+      subtitle: proposalSummary(p) || undefined,
+      raisedBy: 'Skills',
+      at: isoSeconds(p.created_at),
+      proposal: p,
+    })
+  }
+
+  // ── Approvals: the authoritative form of a blocked decision, so they go in first and own the id.
+  const approvalIds = new Set<string>()
+  for (const a of Array.isArray(approvals) ? approvals : []) {
+    if (a === null || typeof a !== 'object') continue
+    const id = typeof a.id === 'string' ? a.id : ''
+    if (id === '') continue
+    approvalIds.add(id)
+    const raisedBy = typeof a.source_label === 'string' ? sentenceStart(a.source_label) : ''
+    out['needs-approval'].push({
+      key: `approval:${id}`,
+      lane: 'needs-approval',
+      origin: 'approval',
+      id,
+      title: firstLine(a.tool) || 'a tool',
+      // What the call is for. This fell back to the bare session key (`workflow:df5827ca:sweep`);
+      // `raisedBy` says who asked, in the registry's words.
+      subtitle: firstLine(a.tool_purpose) || undefined,
+      raisedBy: raisedBy || undefined,
+      at: typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : null,
+      approval: a,
+    })
+  }
+
+  // ── Inbox items.
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item === null || typeof item !== 'object') continue
+    const lane = laneFor(item)
+    if (lane === null) continue
+    const id = typeof item.id === 'string' ? item.id : ''
+    if (id === '') continue
+
+    // Fact 2's dedup. Suppressed only when the approval is in THIS snapshot: if the approval has
+    // already been answered while the mirror row is still open, the item keeps its own card rather
+    // than vanishing — losing a row is worse than showing a stale one on an attention surface.
+    const mirrored = mirroredApprovalId(item)
+    if (mirrored !== '' && approvalIds.has(mirrored)) continue
+    if (proposalIds.has(mirroredProposalId(item))) continue
+
+    out[lane].push({
+      key: `inbox:${id}`,
+      lane,
+      origin: 'inbox',
+      id,
+      title: firstLine(item.message) || firstLine(item.context_summary) || '(no message)',
+      // Its sender was this card's only line about where it came from; `raisedBy` is that line now.
+      raisedBy: inboxRaisedBy(item) || undefined,
+      at: timeOf(item),
+      item,
+    })
+  }
+
+  // ── Running LOOPS. A General loop was working while this lane said "Nothing
+  // is running right now" — it is run-backed, so no chat session carried it. A loop is carded when
+  // it is `running` and nothing holds it (a parked loop is not working — paused, or held by incident
+  // mode, whose status stays `running` — and one waiting on the user is already an inbox row). A loops-table loop's workers ARE chat sessions, so every session of a carded loop is
+  // skipped below: one loop, one card, and the loop's card is the one that names it and opens its
+  // cockpit. `carded` holds the loops given a card here; `loopsById` every loop in the snapshot.
+  const loopsById = new Map<string, LoopInput>()
+  const loopBySessionKey = new Map<string, string>()
+  const carded = new Set<string>()
+  for (const l of Array.isArray(loops) ? loops : []) {
+    if (l === null || typeof l !== 'object') continue
+    const id = typeof l.id === 'string' ? l.id : ''
+    if (id === '') continue
+    loopsById.set(id, l)
+    if (typeof l.session_key === 'string' && l.session_key !== '') loopBySessionKey.set(l.session_key, id)
+    if (l.status !== 'running' || l.held) continue
+    carded.add(id)
+    const cycle = shownCycle(l.status, Number(l.total_cycles) || 0)
+    out['working'].push({
+      key: `loop:${id}`,
+      lane: 'working',
+      origin: 'loop',
+      id,
+      title: loopTitle(l),
+      subtitle: l.max_cycles > 0 ? `running · cycle ${cycle}/${l.max_cycles}` : `running · cycle ${cycle}`,
+      at: typeof l.started_at === 'number' && Number.isFinite(l.started_at) ? l.started_at : null,
+      refs: { link: `#/${loopRoute(l)}` },
+      loop: l,
+    })
+  }
+
+  // ── Running workflow RUNS. A run started from Workflows was working while this
+  // lane said "Nothing is running right now" — it is neither a chat session nor a loop. One piece of
+  // work is one card, so a run that backs a loop is left to the loop's card above (whatever the
+  // loop's status: a paused loop's run is not working either), and a sub-run is part of the run
+  // that spawned it. `running` without a start time is a run waiting for a concurrency slot
+  // (`containers.board_state_for` calls it queued), and the card says so rather than "running".
+  const loopRuns = new Set<string>()
+  for (const l of Array.isArray(loops) ? loops : []) {
+    if (l !== null && typeof l === 'object' && typeof l.run_id === 'string' && l.run_id !== '') loopRuns.add(l.run_id)
+  }
+  for (const r of Array.isArray(runs) ? runs : []) {
+    if (r === null || typeof r !== 'object') continue
+    const id = typeof r.id === 'string' ? r.id : ''
+    // A run incident mode holds is not working either, as a held loop is not (its status stays
+    // `running`; `held` says why).
+    if (id === '' || r.status !== 'running' || r.held || loopRuns.has(id)) continue
+    if (typeof r.parent_run_id === 'string' && r.parent_run_id !== '') continue
+    const started = typeof r.started_at === 'string' && r.started_at !== ''
+    out['working'].push({
+      key: `run:${id}`,
+      lane: 'working',
+      origin: 'run',
+      id,
+      title: firstLine(r.title) || firstLine(r.workflow_name) || 'Workflow run',
+      subtitle: started ? 'running' : 'waiting for a slot',
+      at: isoSeconds(started ? r.started_at : r.created_at),
+      refs: { link: `#/workflows/runs/${id}` },
+      run: r,
+    })
+  }
+
+  // ── Running work. A session waiting on an approval is deliberately NOT mirrored into
+  // Needs-approval: `GET /api/approvals` already carries that row with the `tool_input` needed to
+  // decide. A session with no turn running contributes nothing — an idle session is not an
+  // attention item, and Idle is fed only by the informational inbox kinds.
+  //
+  // 🔴 A LOOP'S SESSIONS ARE ITS LOOP, NEVER A CARD OF THEIR OWN. Only the stage worker's key was
+  // skipped, so a Code loop running a per-task worker read twice: its own card, and a second one
+  // titled by the worker's internal key (`loop-<id>-<task>`), with no link. Every session the list
+  // attributes to a loop (its stage worker, its task workers, its planner) is now that loop: skipped
+  // when the loop has its card above, and otherwise carded ONCE as the loop — named, and opening it
+  // — however many of its sessions run. A chat is named the way every other surface names one
+  // (`sessionTitle`), never by its key.
+  const loopCardsFromSessions = new Set<string>()
+  for (const s of Array.isArray(activity) ? activity : []) {
+    if (s === null || typeof s !== 'object') continue
+    const key = typeof s.key === 'string' ? s.key : ''
+    if (key === '') continue
+    const rs = s.run_state
+    if (!rs || rs.turn === null || rs.turn === undefined) continue
+    // A turn a stop is asked of still counts as working: it is winding down, not idle.
+    const doing = rs.stopping === true ? 'stopping' : 'running'
+    const loopId = (s.origin === 'loop' && typeof s.source_id === 'string' && s.source_id)
+      || loopBySessionKey.get(key) || ''
+    if (loopId !== '') {
+      if (carded.has(loopId) || loopCardsFromSessions.has(loopId)) continue
+      loopCardsFromSessions.add(loopId)
+      const l = loopsById.get(loopId)
+      if (l) {
+        out['working'].push({
+          key: `loop:${loopId}`,
+          lane: 'working',
+          origin: 'loop',
+          id: loopId,
+          title: loopTitle(l),
+          subtitle: l.status === 'planning' ? 'planning' : doing,
+          at: null,
+          refs: { link: `#/${loopRoute(l)}` },
+          loop: l,
+        })
+        continue
+      }
+      // A loop this snapshot does not hold (it went while the lists were read): named by the label
+      // the session list gives it, still never by the session's key.
+      out['working'].push({
+        key: `session:${key}`,
+        lane: 'working',
+        origin: 'session',
+        id: key,
+        title: firstLine(s.source_label) || 'Loop',
+        subtitle: doing,
+        at: null,
+        session: s,
+      })
+      continue
+    }
+    out['working'].push({
+      key: `session:${key}`,
+      lane: 'working',
+      origin: 'session',
+      id: key,
+      title: sessionTitle(s),
+      subtitle: doing,
+      at: null,
+      session: s,
+    })
+  }
+
+  for (const lane of LANES) sortLane(lane, out[lane])
+  return out
+}

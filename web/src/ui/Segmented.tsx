@@ -1,0 +1,314 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { withWeight } from '../design/fontWeight'
+import { ChevronDown } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { fvs } from '../design/fontWeight'
+import { Popover, MenuRow } from './Popover'
+import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
+import { useFieldLabelId } from './forms'
+
+export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
+
+/** The ONE canonical segmented single-select for the whole app — a slider-style
+ *  pill group. Use this for every "pick one of N" choice (filters, view
+ *  switches, mode toggles, tab strips) so they look identical everywhere.
+ *
+ *  🔑 IT IS A RADIOGROUP, AND THAT WAS AN OPEN QUESTION UNTIL #3472. It declared
+ *  `role="tablist"` / `role="tab"` / `aria-selected` across **50 call sites with ZERO
+ *  `role="tabpanel"` in the entire app** — the only two tabpanels live in
+ *  `pages/chat/ChatActivityPanel`, which does not use this control. So a screen reader
+ *  announced "tab 2 of 6" for the task form's Status field: the user was told they were
+ *  navigating a tabbed interface that does not exist, and was told nothing about the values
+ *  being mutually exclusive alternatives of one field. `tablist` also promises manual
+ *  activation and an associated panel, and neither ever held here.
+ *
+ *  It also broke test authoring in a way that hid the problem, which is how it survived
+ *  fifty adoptions: `getByRole('button', { name: 'High' })` times out against a `role="tab"`,
+ *  so the next author reaches for `getByRole('tab')` and encodes the wrong semantics as
+ *  correct. Twenty-four such queries existed; they now read `role="radio"`.
+ *
+ *  A `tablist` is still the right vocabulary for a strip that reveals a panel, and the six
+ *  that do (`ChatActivityPanel`, `MemoryPanel`, `LoopCockpitPage`, `FilesSection`,
+ *  `TerminalPage`, `TerminalDrawer`) keep it — they are hand-rolled and untouched here.
+ *
+ *  Selected styling: solid `--color-primary` by default (clear, high-contrast),
+ *  or the option's own `tone` when supplied (for semantic coloring like task
+ *  status). Inner option height is h-8 to line up with `Button size="sm"` and
+ *  search inputs in a header row. `iconOnly` renders square icon buttons (for a
+ *  compact view-switch); otherwise icon + label. */
+export function Segmented({ options, value, onChange, iconOnly = false, ariaLabel, disabled = false, size = 'md', collapse }: {
+  options: SegOption[]
+  value: string
+  onChange: (k: string) => void
+  iconOnly?: boolean
+  ariaLabel?: string
+  disabled?: boolean
+  /** 'sm' renders a compact, low-key strip (shorter, smaller text, muted
+   *  surface) for inconspicuous secondary controls. */
+  size?: 'md' | 'sm'
+  /** Responsive behavior when the full strip is wider than its container:
+   *  - unset (default): no measuring, always the inline strip (all existing
+   *    callers are unaffected — the liquid layoutId indicator is untouched).
+   *  - 'scroll': keep the strip, let it scroll horizontally on overflow.
+   *  - 'menu': below the fit threshold, collapse to a single pill showing the
+   *    active option that opens the full list in a Popover.
+   *  - 'wrap': the options wrap onto further rows inside the container, so every
+   *    one stays visible — for a FORM field in a narrow panel, where the value is
+   *    chosen once and hiding options behind a scroll or a menu costs a reader the
+   *    alternatives. Still one radiogroup, same arrow-key order. */
+  collapse?: 'scroll' | 'menu' | 'wrap'
+}) {
+  const sm = size === 'sm'
+  // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
+  // `ariaLabel` always WINS, otherwise the published label id names the group. Measured before this —
+  // a DOM census of 14 routes found **7 unnamed groups** (9 named), so a screen-reader user heard
+  // "Critical / High / Medium / Low" with no statement of WHAT was being chosen. Six of those sit
+  // inside a `Field` whose visible label already says it ("Status", "Priority", "When", "Runs",
+  // "Approval mode", "Trigger kind") — the label existed, the group just never claimed it.
+  const fieldLabelId = useFieldLabelId()
+  const claimsFieldLabel = !!fieldLabelId && !ariaLabel
+  // Responsive collapse (collapse='menu'): measure the natural strip width against
+  // the container and flip to the compact pill when it can't fit. A hidden probe
+  // renders the real strip off-flow so we get its true intrinsic width regardless
+  // of the current mode; a ResizeObserver on the container re-evaluates on resize.
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const probeRef = useRef<HTMLDivElement>(null)
+  const [collapsed, setCollapsed] = useState(false)
+  useLayoutEffect(() => {
+    if (collapse !== 'menu') { setCollapsed(false); return }
+    const wrap = wrapRef.current
+    const parent = wrap?.parentElement
+    if (!wrap || !parent) return
+    const measure = () => {
+      const need = probeRef.current?.scrollWidth ?? 0
+      if (need <= 0) return
+      // AVAILABLE width = the wrap's own laid-out width PLUS the parent's remaining
+      // free space (parent.clientWidth − sum of all children's laid-out widths). We
+      // must add the wrap's current width back because when collapsed the wrap has
+      // shrunk to the pill, so "free space" alone understates the room the strip
+      // could reclaim. Measuring wrap.clientWidth ALONE was the bug: it tracks the
+      // collapsed content, so the control could never see enough room to re-expand —
+      // a one-way latch that stuck the dial collapsed even on a wide desktop.
+      //
+      // 🔴 THE WRAP IS GIVEN THE STRIP'S WIDTH FOR THE READING, or the latch comes back through the
+      // parent. A header rail is CONTENT-SIZED: with no cap it is exactly as wide as what it holds,
+      // so once the strip had folded the row shrank to the pill, its free space read 0, and the
+      // room came out as the pill's own 32px — the dial stayed folded for the rest of the visit.
+      // Measured on the Knowledge view switcher: some loads showed every view and others one pill,
+      // at the same width, depending on whether the rail was briefly capped while it settled.
+      // Widened to `need`, a content-sized row grows to hold it (room = need, so it expands) while
+      // a capped row cannot (free goes negative, so it stays folded). Both reads and the restore
+      // happen in one synchronous block, so the trial width never paints — `HeaderActions`'
+      // `slotWidths` reads its slot the same way.
+      const { width, flex } = wrap.style
+      wrap.style.flex = '0 0 auto'
+      wrap.style.width = `${need}px`
+      let childrenWidth = 0
+      for (const c of Array.from(parent.children)) childrenWidth += (c as HTMLElement).getBoundingClientRect().width
+      // free can be NEGATIVE when the row already overflows — don't clamp it, or an
+      // overflowing expanded strip would wrongly stay expanded. avail then correctly
+      // drops below `need` and collapses. (childrenWidth includes the wrap, so this
+      // reduces to parent.clientWidth − siblings = the wrap's true available slot,
+      // identical whether currently collapsed or expanded → no latch, reversible.)
+      const free = parent.clientWidth - childrenWidth
+      const avail = wrap.getBoundingClientRect().width + free
+      wrap.style.width = width
+      wrap.style.flex = flex
+      setCollapsed(need > avail + 1)  // +1px slack so sub-pixel rounding doesn't flap
+    }
+    measure()
+    // Observe BOTH the wrap and its parent (the flex row that actually constrains it),
+    // so a resize either way re-evaluates — widening re-expands the strip, not just
+    // narrowing collapsing it.
+    const ro = new ResizeObserver(measure)
+    ro.observe(wrap)
+    ro.observe(parent)
+    return () => ro.disconnect()
+  }, [collapse, options, iconOnly, sm])
+  // WAI-ARIA radiogroup keyboard nav: ←/→/↑/↓ (and Home/End) move selection between
+  // options, with a roving tabindex (only the checked option is in the tab order).
+  //
+  // 🔑 THIS HANDLER DID NOT CHANGE WHEN THE ROLES DID (#3472), and that is the evidence the
+  // roles were the only thing wrong. A radiogroup's arrow model is "move AND select" — which
+  // is exactly what this already did — whereas a tablist's is manual activation, where arrows
+  // move focus and Enter/Space activates. The keys were already a radiogroup's; only the
+  // words announced to the user said otherwise.
+  const move = (e: React.KeyboardEvent, idx: number) => {
+    let next = -1
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % options.length
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + options.length) % options.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = options.length - 1
+    else return
+    e.preventDefault()
+    const o = options[next]
+    if (o) {
+      onChange(o.key)
+      const el = e.currentTarget.parentElement?.children[next] as HTMLElement | undefined
+      el?.focus()
+    }
+  }
+  // Options are `shrink-0`. `size-8` / `px-m` set an option's size but NOT its floor, so in a
+  // constrained slot the flex parent squeezed them: measured on the #/skills header at 390px, where
+  // this control deliberately collapses to icon-only, the two icon options rendered **15.3 x 32**
+  // instead of 32 x 32 — under the 24px SC 2.5.8 minimum, with the 15px glyph filling the box edge to
+  // edge. Overflow is the job of `collapse` ('scroll' / 'menu'), not of silently crushing every
+  // target: a strip that cannot fit should scroll or fold, and an option 15px wide is neither
+  // legible nor tappable.
+  // `wrap` keeps `inline-flex` (the track still shrinks to its options when they fit, so an
+  // unwrapped strip is unchanged) and caps it at the container, which is what makes the options
+  // wrap. The track's radius is HALF ONE ROW's height (`lgi` = 20px of a 40px row, `lg` clamps to
+  // 14px of a 28px one) rather than `rounded-pill`: one row still reads as the pill, and two rows
+  // read as a rounded panel instead of a stadium whose curve cuts across the corner options.
+  const wrap = collapse === 'wrap'
+  const shape = wrap ? `flex-wrap max-w-full ${sm ? 'rounded-lg' : 'rounded-lgi'}` : 'rounded-pill'
+  const strip = (
+    <div role="radiogroup"
+      aria-labelledby={claimsFieldLabel ? fieldLabelId : undefined}
+      aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      className={`inline-flex items-center gap-0.5 ${shape} ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      {options.map((o, idx) => {
+        const on = o.key === value
+        const Icon = o.icon
+        // The active fill moves to the picked option at once, with the text/icon colour: a
+        // tab or option change is a high-frequency action, so the fill no longer slides and
+        // squishes between options, and a press no longer scales the option.
+        const activeBg = o.tone ? `color-mix(in srgb, ${o.tone} 20%, transparent)` : 'var(--color-primary)'
+        const fg = on
+          ? (o.tone ? o.tone : 'var(--color-on-primary)')
+          : 'var(--color-on-surface-low)'
+        return (
+          <button key={o.key} type="button" role="radio" aria-checked={on} disabled={disabled}
+            tabIndex={on ? 0 : -1} onKeyDown={(e) => move(e, idx)}
+            onClick={() => onChange(o.key)} title={o.title ?? o.label}
+            // `data-type` carries size + line-height; the WEIGHT stays what this control
+            // always rendered — fw-400 pins the sm tier back to 400 (caption's own
+            // 470 would bolden every unchecked option) and the checked option's inline
+            // 550 (below) wins over both.
+            data-type={sm ? 'caption' : 'body-s'}
+            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
+            style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
+            {on && (
+              <span
+                className="absolute inset-0 rounded-pill"
+                style={{ background: activeBg }}
+              />
+            )}
+            <span className="relative z-10 inline-flex items-center gap-1.5">
+              {Icon && <Icon size={sm ? 12 : 15} className="shrink-0" />}
+              {!iconOnly && o.label}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  // Default (no collapse) and 'wrap': the bare strip — no wrapper, no measuring, so every
+  // existing consumer + the liquid indicator are untouched. 'wrap' needs nothing measured: the
+  // browser's own line breaking is the fit decision.
+  if (!collapse || wrap) return strip
+
+  // collapse='scroll': keep the strip but let it scroll horizontally when it
+  // exceeds the container instead of wrapping/squishing.
+  if (collapse === 'scroll') {
+    return <div className="max-w-full overflow-x-auto no-scrollbar">{strip}</div>
+  }
+
+  // collapse='menu': render the strip when it fits; below the threshold swap to a
+  // compact pill that opens the options in a Popover. A hidden probe (the real
+  // strip, off-flow) always measures the intrinsic width for the fit decision.
+  return (
+    <div ref={wrapRef} className="relative min-w-0">
+      <div ref={probeRef} aria-hidden className="pointer-events-none invisible absolute -z-10 whitespace-nowrap">{strip}</div>
+      {collapsed ? (
+        <CollapsedSegmented options={options} value={value} onChange={onChange} sm={sm} disabled={disabled} ariaLabel={ariaLabel} iconOnly={iconOnly} />
+      ) : strip}
+    </div>
+  )
+}
+
+/** The collapsed form of a `collapse='menu'` Segmented — a single pill showing the
+ *  active option, opening the full option list in a Popover. Used only below the
+ *  fit threshold; the expanded strip (with its liquid layoutId indicator) is the
+ *  normal presentation. */
+function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel, iconOnly = false }: {
+  options: SegOption[]; value: string; onChange: (k: string) => void
+  sm: boolean; disabled: boolean; ariaLabel?: string
+  /** Drop the pill's own label + chevron too, leaving just the active option's glyph.
+   *  The collapsed pill is the LAST rung of the ladder, so when the caller is already
+   *  at its icon-only density this has to shrink with it: labelled, the pill is ~119px,
+   *  which still overflowed a phone header's ~42px control rail and rendered as a
+   *  clipped "☰ Li…". Icon-only it is ~32-40px and fits. The name survives on
+   *  `aria-label` (already set) and the popover still lists every option with its
+   *  full label, so nothing becomes unnameable. */
+  iconOnly?: boolean
+}) {
+  const active = options.find((o) => o.key === value) ?? options[0]
+  const ActiveIcon = active?.icon
+  // Without a glyph there would be nothing left to render, so keep the label as the
+  // fallback even when the caller asked for icon-only.
+  const bare = iconOnly && !!ActiveIcon
+  return (
+    <Popover
+      placement="bottom"
+      // 🔴 PORTAL, or this menu is INVISIBLE. Measured on `#/knowledge` at 430px with the list open:
+      // `document.elementFromPoint` at the listbox's own centre returned the page's search INPUT, not
+      // the menu — an `absolute z-30` flyout inside the header loses to the page body, which paints
+      // over the header row. `ui/HeaderActions`' mode pill portals for exactly this reason and says
+      // so; this sibling did not, so its options were operable by keyboard and unseeable by everyone.
+      portal
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} disabled={disabled}
+          aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
+          // Matches `ProjectPicker`, the sibling whose popup is also a listbox: the trigger says
+          // a listbox is coming, not just that something expanded.
+          aria-haspopup="listbox"
+          title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
+          data-type={sm ? 'caption' : 'body-s'}
+          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
+          style={fvs(550)}>
+          {ActiveIcon && <ActiveIcon size={sm ? 12 : 15} className="shrink-0" />}
+          {!bare && <span className="truncate">{active?.label ?? active?.key}</span>}
+          {!bare && <ChevronDown size={sm ? 12 : 14} className="shrink-0 text-on-surface-low" />}
+        </button>
+      )}
+    >
+      {(close) => <CollapsedOptions options={options} value={value} onChange={onChange} close={close} ariaLabel={ariaLabel} />}
+    </Popover>
+  )
+}
+
+/** The collapsed pill's option list. A separate component because `ui/Popover` mounts its children
+ *  only while open, which is what lets the cursor hook treat MOUNT as "opened" — no open flag has to
+ *  be threaded back out of the Popover.
+ *
+ *  Before this it was a bare `role="listbox"`: measured on `#/knowledge` at 430px (where the strip
+ *  collapses), focus stayed on the trigger, ArrowDown did nothing, and all five options carried
+ *  `tabindex="0"`. Escape/close already restored focus to the trigger — that half was Popover's. */
+function CollapsedOptions({ options, value, onChange, close, ariaLabel }: {
+  options: SegOption[]; value: string; onChange: (k: string) => void; close: () => void; ariaLabel?: string
+}) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const { move, tabIndexFor } = useMenuCursor({
+    containerRef: listRef,
+    count: options.length,
+    openKey: 'open',
+    initialIndex: Math.max(0, options.findIndex((o) => o.key === value)),
+  })
+  useEffect(() => {
+    // Escape is Popover's (it closes one layer and restores the trigger); this adds the arrows.
+    const onKey = (e: KeyboardEvent) => { menuCursorKeydown(e, { move, dismiss: close }) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [move, close])
+  return (
+    <div ref={listRef} role="listbox" aria-orientation="vertical" aria-label={ariaLabel}>
+      {options.map((o, i) => (
+        <MenuRow key={o.key} role="option" icon={o.icon ? <o.icon size={15} /> : undefined}
+          label={o.label ?? o.key} selected={o.key === value} tabIndex={tabIndexFor(i)}
+          onClick={() => { onChange(o.key); close() }} />
+      ))}
+    </div>
+  )
+}

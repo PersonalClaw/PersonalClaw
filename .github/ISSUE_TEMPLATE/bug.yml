@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in PersonalClaw behaves incorrectly.
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in the details below so it can be
+        reproduced. **Before pasting logs or config: redact API keys, tokens,
+        and any private file paths** — the agent logs can contain them.
+  - type: input
+    id: version
+    attributes:
+      label: PersonalClaw version
+      description: "Output of `personalclaw --version` (or the commit SHA for a git checkout)."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-kind
+    attributes:
+      label: Install kind
+      description: How is this instance installed?
+      options:
+        - uv tool / pipx / pip
+        - Docker Compose (container)
+        - Git checkout (from source)
+        - Desktop app
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: "macOS 15 (arm64) / Ubuntu 24.04 (x86_64) / Windows 11 + WSL2"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact sequence that triggers the bug.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected to happen, and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "Gateway log excerpts, console errors, or a stack trace. **Redact tokens/paths first.**"
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,1703 @@
+"""The Trigger entity, its per-kind specs, and the fire records.
+
+One record replaces three stores. The whole value is that a person edits ONE form and reads ONE
+history, so the shape has to hold everything `crons.json`, `event_triggers.json` and the hook/
+autonudge configs carry — measured field by field before this was written, and asserted per field
+by the tests rather than by inspection. A migration that silently dropped `skip_dates` would keep
+firing on a holiday and the user would never learn why.
+
+Two properties shape everything here:
+
+* **Never-throw structural validation.** A trigger authored by an agent with a near-miss field
+  name must become a WARNING chip, not a silently-dead row. `parse_trigger` therefore returns
+  `(trigger, issues)` and never raises — the trigger still loads, disabled if it must be, and the
+  issue says which key it did not recognize and what the closest known one is.
+* **Silent drops are banned.** Every suppressed or degenerate fire is a ledger row with a typed
+  outcome and a one-line reason. `Outcome` is that vocabulary, and it is closed: a fire that ends in
+  none of these is a fire nobody can account for.
+
+Pure records and decisions. No scheduling, no I/O, no firing.
+"""
+
+from __future__ import annotations
+
+import difflib
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from personalclaw.safety_flags import strict_bool
+
+# ── the closed vocabularies ──
+
+#: Trigger kinds. `pulse`/`observe` are NOT accepted yet: a kind the
+#: service cannot dispatch would let a user author a trigger that never fires, which is the failure
+#: the never-throw validation exists to make impossible.
+KINDS: tuple[str, ...] = (
+    "clock",
+    "event",
+    "run_completed",
+    "idle",
+    "file",
+    "webhook",
+    "view",
+    "web_watch",
+    "manual",
+)
+
+
+class TriggerState(str, Enum):
+    """Where a trigger is in its lifecycle.
+
+    `autopaused` is separate from `paused` because the two answer different questions: a paused
+    trigger is a user decision, an autopaused one is the system reporting five
+    true failures. Showing
+    both as "paused" would make the user look for a switch they never flipped.
+
+    `parked` is not a failure — it is "the resource this needs is busy", which resolves on its own.
+    `quarantined` is the injection-screen outcome and must never auto-retry.
+    """
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+    AUTOPAUSED = "autopaused"
+    PARKED = "parked"
+    QUARANTINED = "quarantined"
+    RETIRED = "retired"
+
+
+class RestoreHold(str, Enum):
+    """Where the snapshot came from, for an automation a replace restore holds.
+
+    The value of `Trigger.restore_hold`: what the restore could tell by comparing the home the
+    snapshot names with this one (`triggers.restore_hold.origin`), and so what the page may say
+    about why it waits. Another home may still be running every automation the snapshot holds; this
+    home's own snapshot has no other copy running; and a snapshot taken before snapshots named
+    their home says nothing either way, so it is read the cautious way.
+    """
+
+    ANOTHER_HOME = "another_home"
+    THIS_HOME = "this_home"
+    UNKNOWN = "unknown"
+
+
+class TriggerHealth(str, Enum):
+    """The rollup a list renders without scanning run history.
+
+    Persisted on the row deliberately: computing it per render means reading every run of every
+    trigger to draw one page of status dots.
+    """
+
+    OK = "ok"
+    DEGRADED = "degraded"
+    PARKED = "parked"
+    FAILING = "failing"
+
+
+class RunWeight(str, Enum):
+    """Two weights, because trigger history and run state are different concerns.
+
+    A single-action fire that mutated nothing does not earn a run directory and a journal; a
+    multi-node LLM workflow does. Giving everything the heavy shape is what produces 1440 run dirs a
+    day from a minutely trigger.
+    """
+
+    LEDGER = "ledger"
+    FULL = "full"
+
+
+class Outcome(str, Enum):
+    """Typed fire outcomes. The vocabulary that makes "silent drops are banned" checkable.
+
+    Every member is a REASON a fire did not produce work, or the one way it did. A surface switches
+    on these; prose would make the runs inbox unfilterable, and prose-matched reasons have already
+    bitten once (a message containing "secret" was matched as if it were one).
+    """
+
+    #: It ran and did something durable.
+    RAN = "ran"
+    #: It ran, later than scheduled — `scheduled_for` is recorded alongside `started_at`.
+    RAN_LATE = "ran_late"
+    #: It ran and did its work at a reduced tier: something it needs was unavailable (a model that
+    #: answered nothing), so it delivered its declared floor (`resilience/degraded.py`) and its
+    #: reason says what it went without. Not a failure, which a retry would spend on the same
+    #: outage, and not a plain run either.
+    DEGRADED = "degraded"
+    #: The overlap claim lock was held by a run already in flight.
+    SKIPPED_OVERLAP = "skipped_overlap"
+    #: A cost/action cap was breached BEFORE the claim, so nothing was spent.
+    SKIPPED_BUDGET = "skipped_budget"
+    #: quiet-hours / debounce / cooldown / condition-false.
+    SKIPPED_GATE = "skipped_gate"
+    #: It ran and mutated nothing durable — collapses to a ledger row and auto-archives.
+    SKIPPED_NOOP = "skipped_noop"
+    #: A triage stage said ignore. Carries the rationale: an unexplained skip is indistinguishable
+    #: from a bug.
+    SKIPPED_TRIAGE = "skipped_triage"
+    #: The user dismissed a missed-fire card.
+    SKIPPED_MISSED = "skipped_missed"
+    #: Parked / yielded / resource-busy. ONE row per episode, not per attempt — escalating backoff
+    #: would otherwise write a row a second.
+    DEFERRED = "deferred"
+    #: A policy refusal, or a run refused before its action ran because something it needs is gone
+    #: (its app, a secret, an action: `triggers.cannot_run`). Distinct from failed and from skipped,
+    #: with a mandatory human-readable reason posted back to the triggering surface.
+    REFUSED = "refused"
+    #: A pre-LLM injection-screen match. NEVER auto-retried, and it names the matched pattern.
+    BLOCKED_INJECTION = "blocked_injection"
+    #: It was running when PersonalClaw stopped or restarted, and did not finish: its reason says
+    #: which, and it waits on the Triggers page's review to be run again or dismissed. Not a
+    #: failure, so it never counts toward autopause: the automation did nothing wrong.
+    INTERRUPTED = "interrupted"
+    #: Someone stopped the work it started before it finished: its owner stopped the agent, or
+    #: cancelled the workflow run. Their own decision, so it is not a failure, never counts toward
+    #: autopause and sends no note; its reason says what stopped it.
+    STOPPED = "stopped"
+    #: A genuine failure — the only outcome that counts toward autopause.
+    FAILED = "failed"
+
+
+FIRE_OUTCOMES: tuple[str, ...] = tuple(o.value for o in Outcome)
+
+#: Outcomes that count toward the autopause-after-5 rule. Deliberately just `FAILED`: a trigger
+#: that skipped five times because its quiet-hours gate held is working exactly as configured, and
+#: autopausing it would punish the user for saying "not at night".
+TRUE_FAILURE_OUTCOMES: frozenset[str] = frozenset({Outcome.FAILED.value})
+
+#: Outcomes that mean "nothing was spent and nothing changed". These collapse to ledger rows and
+#: archive out of the default inbox view — the runs inbox is for what the machine DID.
+INERT_OUTCOMES: frozenset[str] = frozenset(
+    {
+        Outcome.SKIPPED_OVERLAP.value,
+        Outcome.SKIPPED_BUDGET.value,
+        Outcome.SKIPPED_GATE.value,
+        Outcome.SKIPPED_NOOP.value,
+        Outcome.SKIPPED_TRIAGE.value,
+        Outcome.SKIPPED_MISSED.value,
+    }
+)
+
+
+# ── structural issues ──
+
+
+@dataclass
+class Issue:
+    """One structural problem with an authored trigger.
+
+    `closest` is the point of the record: an agent that wrote `debounce_seconds` for
+    `debounce_secs` should be told which key it meant, not that its trigger is invalid. A validation
+    error with no suggestion is how a near-miss becomes a dead row nobody diagnoses.
+    """
+
+    path: str
+    message: str
+    severity: str = "warning"
+    closest: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "message": self.message,
+            "severity": self.severity,
+            "closest": self.closest,
+        }
+
+
+def _closest(name: str, known: tuple[str, ...] | frozenset[str]) -> str:
+    """The nearest known key, or "" when nothing is close enough.
+
+    A cutoff rather than always returning the best match: suggesting `timezone` for `xyzzy` is worse
+    than suggesting nothing, because the reader trusts the suggestion and goes looking for a
+    relationship that is not there.
+    """
+    matches = difflib.get_close_matches(name, list(known), n=1, cutoff=0.7)
+    return matches[0] if matches else ""
+
+
+# ── per-kind specs ──
+
+#: The keys each kind's `spec` may carry. Closed per kind, because an unrecognized key in a spec is
+#: the single most likely authoring mistake and the one with the quietest failure
+#: — the trigger loads,
+#: the service ignores the key, and the automation behaves in a way its author cannot explain.
+SPEC_KEYS: dict[str, frozenset[str]] = {
+    # Everything `schedule.py` carries today, verbatim. `jitter_secs` and `strict` are named here
+    # rather than left to the service so the migration has somewhere to put them.
+    "clock": frozenset(
+        {
+            "kind",
+            "expr",
+            # `at` is EPOCH SECONDS (a float), not an ISO string (#2520). Written down because
+            # every OTHER timestamp on this entity — `next_fire_at`, `expires_at`,
+            # `last_fired_at`, `last_success_at` — IS ISO, so the field name gives an author
+            # exactly the wrong expectation, and the failure is silent: `arm._positive()`
+            # coerces through `float()`, so an ISO value reads as 0.0 = "never fires".
+            "at",
+            # The `interval` clock kind's payload. Paired with `CLOCK_KINDS`' fourth member:
+            # without this key a migrated `every` cron parses its own spec as an unknown field and
+            # warns on the very number that defines when it fires.
+            "interval_secs",
+            # The `adaptive` clock kind's payload. TWO cadences and the state that picks
+            # between them, because an adaptive clock is not "an interval whose number changes":
+            # the two numbers are declared up front so the row is readable on the Triggers page
+            # without running the thing that would tell you which one is live.
+            #
+            # `health_state` is the ONLY spec key a system writer mutates after creation. It is
+            # here rather than on a runtime rollup field for the reason `cadence_next_fire` needs:
+            # arming must stay a PURE function of the spec, so the cadence cannot be made to
+            # depend on a subsystem the generic clock knows nothing about.
+            "interval_secs_healthy",
+            "interval_secs_degraded",
+            "health_state",
+            "timezone",
+            "jitter_secs",
+            "strict",
+            "skip_dates",
+            "delete_after_run",
+        }
+    ),
+    # A data event (`event_triggers`): the pattern, its derived source, and the ONE matcher key
+    # that pattern reads (`event_triggers.PATTERN_MATCHER`). `blocking` and `agent_scope` are the
+    # lifecycle-hook absorption's; no data event reads either, which the doctor
+    # names for `agent_scope` (`unenforced_agent_scope`).
+    "event": frozenset(
+        {
+            "source",
+            "pattern",
+            "key_glob",
+            "content_re",
+            "sender_glob",
+            "address_glob",
+            "event_glob",
+            "blocking",
+            "agent_scope",
+        }
+    ),
+    # What it runs after: a trigger's run (`source_trigger`), any run of a workflow (`source_def`),
+    # or one workflow run (`source_run`, its id).
+    "run_completed": frozenset({"source_trigger", "source_def", "source_run"}),
+    # `message`/`max_cycles`/`stop_sentinel_path` are the absorbed autonudge loop's payload
+    # — the same argument as the `interval` clock kind below: the store
+    # must be able to carry what the migration puts in it, or every migrated nudge loop would
+    # warn on the very fields that define it. A non-empty `message` is also the ROUTING
+    # discriminator: it sends the fire to the nudge deliverer (inject into the bound
+    # conversation) instead of the wake path (`idle_poll._is_nudge`).
+    "idle": frozenset(
+        {"scope", "idle_secs", "first_idle_secs", "message", "max_cycles", "stop_sentinel_path"}
+    ),
+    "file": frozenset({"paths", "dedup"}),
+    # Nothing: a webhook automation is fired with a sender token made for it, which the client
+    # registry holds as a hash (`inbound.webhook`), so its spec carries no credential of any kind.
+    "webhook": frozenset(),
+    "view": frozenset({"surface_binding", "ttl_secs"}),
+    "web_watch": frozenset(
+        {
+            "url",
+            "poll_interval",
+            "extraction",
+            "novelty_key",
+            # The opt-in headless-Chromium escalation tier. `escalate_headless` turns it
+            # on (default OFF, so an existing watch is byte-unchanged); `max_headless_requests`
+            # bounds the expensive render tier with its own daily budget.
+            "escalate_headless",
+            "max_headless_requests",
+        }
+    ),
+    "manual": frozenset(),
+}
+
+#: The `clock` spec's tagged-union discriminator values.
+#:
+#: **Beyond the original three-member union: `interval` is the fourth.** Found by
+#: driving the migration into the store: `migrate.convert_job` emits `{kind: "interval",
+#: interval_secs}` for a legacy `every` cron — deliberately, and its docstring explains why at
+#: length ("`{kind: cron}` is WRONG and `{kind: at}` is worse … would turn every recurring interval
+#: job into a one-shot that fires once and dies — the single most destructive possible
+#: mistranslation in this file"). But `CLOCK_KINDS` never gained the member, so every migrated
+#: interval cron parsed with `unknown clock kind 'interval'`, landed `enabled=False`, and would have
+#: been silently retired by the migration that was supposed to preserve it.
+#:
+#: Measured against the OWNER's real store: 4 jobs, of which 1 uses `every`. A three-kind union
+#: and the lossless-migration promise cannot both hold, and the promise is the
+#: one with data behind it. So the union widens rather than the migration lying.
+#: **`adaptive` is the fifth.** The remediation engine
+#: runs as ONE trigger on an adaptive clock kind — healthy → a long sleep, degraded → a short
+#: tick — replacing the heartbeat job that carried that cadence in `_remediation_next_ts`. It's a
+#: CLOCK kind rather than a new top-level trigger kind because it answers the clock's question
+#: ("when does this fire next?") and nothing else: the dispatch, the capability fence, the ledger
+#: and the delivery path are all the ordinary ones, which is the whole point of re-homing onto
+#: the substrate instead of keeping a private scheduler.
+CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval", "adaptive"})
+
+#: Minimum interval for an LLM-invoking clock trigger, in seconds. A floor rather than a hard
+#: rule: it is overridable, because a 5-minute local-model poll is a legitimate choice —
+#: it just should not be the accident you get from typing `* * * * *`.
+MIN_CLOCK_INTERVAL_SECS = 900
+
+#: Action providers that can never reach a model call, so the floor above does not govern them.
+#:
+#: 🔴 WHY THIS EXISTS. The floor warned on EVERY sub-900s clock. A
+#: `notify` trigger firing every 60s wore "60s is below the 900s floor for an LLM-invoking trigger"
+#: as its "check schedule" chip, on an automation that makes no model call at all. A floor that
+#: fires on work it does not govern is noise, and noise is how the one real warning gets trained
+#: away.
+#:
+#: Listed in THIS direction — the zero-token providers, not the model ones — so an unclassified
+#: provider keeps the floor: every app-contributed action, and any core provider added without a
+#: line here. The floor is an advisory, so a wrong warning costs a sentence while a missing one
+#: costs a per-minute model call nobody chose. The same direction `screen.READ_ONLY_PROVIDERS`
+#: takes.
+#:
+#: Each entry is classified from its own module, and "never" is the bar, not "usually": a provider
+#: whose run can queue or reach a model call stays OFF this list. That is why `knowledge-persist`
+#: (its enrichment rides the ingest queue: embedding and entity extraction), `knowledge-retrieve`
+#: (its vector tier embeds the query) and `self-remediation` (it can run the embedding re-index) are
+#: absent though their own docstrings say "zero-token" about the write itself, and why `inbox-op`
+#: is: a `reply_draft` given no text is drafted by the Inbox's drafting, a model call.
+ZERO_TOKEN_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "bash",  # a shell command — the schedule's deterministic mode
+        "run-script",  # a sandboxed `file.py:func` — "the zero-token counterpart to invoke-agent"
+        "notify",  # raises a dashboard notification
+        "send-message",  # posts rendered text to a channel (or a dashboard note)
+        "create-task",  # files a task row
+        "notification-digest",  # "Deterministic, no model call."
+        "usage-recap",  # "Deterministic, no model call."
+        "check-work",  # bounded filesystem reads, no command runner
+        "net-fetch",  # one guarded HTTP GET
+        "artifact-update",  # writes content the engine already resolved
+        "artifact_inspect",  # reads a run's own artifacts
+        "knowledge-health",  # deterministic store health report
+        "knowledge-gaps",  # referenced-but-unwritten entities, from the store alone
+        "knowledge-relate",  # persists relations a model ALREADY proposed upstream
+        "render-report",  # renders a declarative spec, no model call
+        "selfqa-triage",  # read-only git inspection
+        "selfqa-file-finding",  # one inbox item + one task
+        "selfqa-evidence",  # ffmpeg + hashes + one artifact
+    }
+)
+
+
+def action_invokes_model(workflow: Any) -> bool:
+    """Whether a trigger whose action is `workflow` can call a model when it fires.
+
+    Reads both stored action shapes — `{"inline": {provider, …}}` and the flat `{provider, …}` —
+    for the reason `schedule_view._inline_action` records: both exist in a real store. Anything
+    that names no provider (a `resume` target, a workflow `ref`, an unreadable row) answers True,
+    because a resumed or referenced workflow run is exactly the work the floor exists for.
+    """
+    if not isinstance(workflow, dict):
+        return True
+    inline = workflow.get("inline")
+    action = inline if isinstance(inline, dict) else workflow
+    return not provider_is_zero_token(action.get("provider"))
+
+
+def cadence_floor_governs(workflow: Any, created_by: str = "") -> bool:
+    """Whether the `MIN_CLOCK_INTERVAL_SECS` floor governs a trigger's cadence.
+
+    The floor guards against an ACCIDENT: a cadence somebody typed (`* * * * *`, "every 1 minute")
+    on an action that can call a model (`action_invokes_model`). A row the product registers itself
+    (`created_by == "system"` — the heartbeat pass, the digests, the reports) runs at the cadence
+    its own code chose on purpose, so there is no accident to flag. Warned anyway, the heartbeat
+    row told its owner "60s is below the 900s floor … confirm this is intended" on a trigger they
+    never created, about a choice they never made, with nothing to confirm it with. Editing such a
+    row's cadence still shows the floor where the new value is typed (the schedule form's hint).
+    """
+    return created_by != "system" and action_invokes_model(workflow)
+
+
+def provider_is_zero_token(provider: Any) -> bool:
+    """Whether the named action provider can never reach a model call (`ZERO_TOKEN_PROVIDERS`)."""
+    return isinstance(provider, str) and provider in ZERO_TOKEN_PROVIDERS
+
+
+#: Action providers whose every fire works through whatever is waiting, so a fire the gateway
+#: missed is done by the next one. A missed slot of any other action is a decision the user makes
+#: after a restart (`missed.review_at_boot`); one of these has nothing to decide. The
+#: HEARTBEAT.md queue runs every task still queued on each pass, so a pass missed while the
+#: gateway was down loses nothing, and a card offering to run it would follow every restart.
+MISSED_FIRE_SUPERSEDED_PROVIDERS: frozenset[str] = frozenset({"heartbeat-tasks"})
+
+
+def missed_fire_superseded(workflow: Any) -> bool:
+    """Whether a missed fire of a trigger whose action is `workflow` is done by its next fire."""
+    if not isinstance(workflow, dict):
+        return False
+    inline = workflow.get("inline")
+    action = inline if isinstance(inline, dict) else workflow
+    provider = action.get("provider")
+    return isinstance(provider, str) and provider in MISSED_FIRE_SUPERSEDED_PROVIDERS
+
+
+def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's `agent_scope`.
+
+    🔴 MEASURED: `agent_scope` was declared in `SPEC_KEYS["event"]`, persisted, round-tripped —
+    and validated by nothing. Every one of these stored with `ok: True` and zero issues:
+
+        agent_scope="not-a-list"        # a bare string
+        agent_scope=[]                  # an empty list
+        agent_scope=[123]               # non-string entries
+        agent_scope=["nonexistent"]     # an agent that does not exist
+
+    The contract is that the substrate PRESERVES agent scoping as an optional
+    `spec.agent_scope` and does not silently introduce a global chat firing path. A field that
+    accepts any shape and is read by nothing does not preserve scoping — it *promises* it. That is
+    worse than its absence, because an author who sets it believes their trigger is scoped.
+
+    Structure only, matching `validate_spec`'s own contract: whether the named agent EXISTS is a
+    semantic question the config layer answers, and rejecting an agent id at author time would
+    refuse a trigger that becomes valid the moment the agent is installed. What is checked is the
+    shape a reader must be able to rely on.
+
+    An EMPTY list is an error rather than a warning, deliberately. In the legacy path an empty id
+    list means `fire_for_ids` fires NOTHING (its resolver returns `[]` on failure precisely so a
+    broken lookup cannot fall back to global firing). So `agent_scope: []` is an automation that can
+    never fire — silently, forever — which is exactly the inert row the never-throw validation
+    exists to make visible.
+    """
+    raw = (spec or {}).get("agent_scope")
+    if raw is None:
+        return []
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope must be a list of agent ids; a "
+                f"{type(raw).__name__} is refused rather than coerced, because a scope that "
+                "silently read as one agent would fence the wrong thing",
+                severity="error",
+            )
+        ]
+    if not raw:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope is empty, so this trigger can never fire for any agent — "
+                "remove the key to leave it unscoped, or name the agents it belongs to",
+                severity="error",
+            )
+        ]
+    bad = [entry for entry in raw if not isinstance(entry, str) or not entry.strip()]
+    if bad:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message=f"agent_scope entries must be non-empty agent ids; got {bad!r}",
+                severity="error",
+            )
+        ]
+    return []
+
+
+def _event_spec_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's spec — every way it could fail to ever fire.
+
+    A data-event row fires when `event_triggers.matches` says so, and that function reads exactly
+    three things: `source`, `pattern`, and the one matcher key the pattern names. So each is checked
+    against what the matcher will do with it, and anything that would leave the row saved, listed
+    and permanently silent is an ERROR — the never-throw rule's whole point is that such a row is
+    visible as broken, not green:
+
+    * no pattern, or one the grammar does not know — it matches nothing;
+    * a source that is not the pattern's own — the source gate would admit only events the pattern
+      can never match (the writers derive the source; this catches a hand-edited row);
+    * a pattern whose matcher is required (`event_triggers.REQUIRED_MATCHER`) with that matcher
+      empty — an empty key glob or content regex matches no write, and an empty sender or address
+      glob matches no message.
+
+    A matcher key the pattern does NOT read is a warning: the row fires as its pattern says and the
+    key does nothing, which its author should be told. A catastrophic content regex is a warning
+    too, for the reason `catastrophic_regex_hint` gives.
+    """
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        MATCHER_KEYS,
+        PATTERN_MATCHER,
+        PATTERN_SOURCE,
+        REQUIRED_MATCHER,
+        catastrophic_regex_hint,
+    )
+
+    block = spec or {}
+    pattern = str(block.get("pattern", "") or "").strip()
+    if not pattern:
+        return [
+            Issue(
+                path="spec.pattern",
+                message=f"an event trigger needs a pattern — one of {list(EVENT_PATTERNS)}",
+                severity="error",
+            )
+        ]
+    if pattern not in PATTERN_SOURCE:
+        from personalclaw.hooks import HOOK_EVENTS
+
+        if pattern in HOOK_EVENTS:
+            # The chat routes "when a session ends" to this kind; the event it names exists, but it
+            # fires LIFECYCLE triggers (`hooks.json`), which no event row is matched against.
+            return [
+                Issue(
+                    path="spec.pattern",
+                    message=(
+                        f"{pattern} is an agent-lifecycle event, which fires lifecycle triggers "
+                        "(the Triggers page's 'Lifecycle event' type), not event triggers. An "
+                        "event trigger reacts to a memory write, an inbox message or an app "
+                        f"event: one of {list(EVENT_PATTERNS)}"
+                    ),
+                    severity="error",
+                )
+            ]
+        return [
+            Issue(
+                path="spec.pattern",
+                message=(
+                    f"unknown event pattern {pattern!r}; expected one of {list(EVENT_PATTERNS)}"
+                ),
+                severity="error",
+                closest=_closest(pattern, EVENT_PATTERNS),
+            )
+        ]
+    issues: list[Issue] = []
+    source = str(block.get("source", "") or "").strip()
+    wanted_source = PATTERN_SOURCE[pattern]
+    if not source:
+        issues.append(
+            Issue(path="spec.source", message="an event trigger needs a source", severity="error")
+        )
+    elif source != wanted_source:
+        issues.append(
+            Issue(
+                path="spec.source",
+                message=f"{pattern} listens to {wanted_source} events, so a source of {source!r} "
+                "would admit only events it can never match",
+                severity="error",
+            )
+        )
+    field = PATTERN_MATCHER[pattern]
+    if pattern in REQUIRED_MATCHER and field and not str(block.get(field, "") or "").strip():
+        issues.append(
+            Issue(
+                path=f"spec.{field}",
+                message=f"{pattern} needs a {field}; without one it can never fire",
+                severity="error",
+            )
+        )
+    for key in sorted(MATCHER_KEYS - {field}):
+        if str(block.get(key, "") or "").strip():
+            issues.append(
+                Issue(path=f"spec.{key}", message=f"{pattern} does not read {key!r}; it is ignored")
+            )
+    hint = catastrophic_regex_hint(str(block.get("content_re", "") or ""))
+    if hint:
+        issues.append(Issue(path="spec.content_re", message=hint))
+    return issues
+
+
+def validate_spec(
+    kind: str, spec: dict[str, Any], workflow: Any = None, *, created_by: str = ""
+) -> list[Issue]:
+    """Structural issues in one kind's spec. NEVER raises.
+
+    Reports unknown keys with a suggestion and missing required ones as errors.
+    Deliberately does NOT
+    validate a cron expression or a URL: those need the libraries the service owns, and a parse
+    failure at author time would reject a trigger the service could have run. Structure here,
+    semantics there.
+
+    `workflow` (the trigger's action) and `created_by` are read by exactly one rule: the interval
+    floor, which governs only what `cadence_floor_governs` says it does. Omitted, the action is
+    unknown and the floor applies — the direction a caller that cannot see the action should get.
+    """
+    issues: list[Issue] = []
+    known = SPEC_KEYS.get(kind)
+    if known is None:
+        return [
+            Issue(
+                path="kind",
+                message=f"unknown trigger kind {kind!r}; expected one of {list(KINDS)}",
+                severity="error",
+                closest=_closest(kind, KINDS),
+            )
+        ]
+    for key in sorted(spec or {}):
+        if key not in known:
+            issues.append(
+                Issue(
+                    path=f"spec.{key}",
+                    message=f"{kind} triggers do not use {key!r}",
+                    closest=_closest(key, known),
+                )
+            )
+
+    if kind == "clock":
+        clock_kind = str((spec or {}).get("kind", "") or "")
+        if not clock_kind:
+            issues.append(
+                Issue(
+                    path="spec.kind",
+                    message=f"a clock trigger needs one of {sorted(CLOCK_KINDS)}",
+                    severity="error",
+                )
+            )
+        elif clock_kind not in CLOCK_KINDS:
+            issues.append(
+                Issue(
+                    path="spec.kind",
+                    message=f"unknown clock kind {clock_kind!r}",
+                    severity="error",
+                    closest=_closest(clock_kind, CLOCK_KINDS),
+                )
+            )
+        elif clock_kind == "cron" and not str(spec.get("expr", "") or "").strip():
+            issues.append(
+                Issue(
+                    path="spec.expr", message="a cron clock needs an expression", severity="error"
+                )
+            )
+        elif clock_kind in {"at", "sequence"} and not spec.get("at"):
+            issues.append(
+                Issue(path="spec.at", message=f"an {clock_kind} clock needs `at`", severity="error")
+            )
+        elif clock_kind == "adaptive":
+            # BOTH cadences are required, and as an ERROR rather than a warning: an adaptive clock
+            # missing one of them has no computable next fire at all in that state, so it would arm
+            # to 0.0 and sit enabled-and-inert — the exact failure this module's never-throw
+            # validation exists to make visible instead of silent.
+            for key in ("interval_secs_healthy", "interval_secs_degraded"):
+                try:
+                    value = float((spec or {}).get(key) or 0)
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value <= 0:
+                    issues.append(
+                        Issue(
+                            path=f"spec.{key}",
+                            message=f"an adaptive clock needs a positive `{key}`",
+                            severity="error",
+                        )
+                    )
+        if clock_kind == "interval":
+            # 🔴 THE CADENCE FLOOR, finally enforced. `MIN_CLOCK_INTERVAL_SECS` was declared and
+            # read by NOTHING — measured: `create(spec={"kind":"interval","interval_secs":5})`
+            # persisted a 5-second LLM poll with `ok: True` and zero issues. The only live floor was
+            # the retired `schedule_add` schema's `min_val=60`, so retiring the alias would have
+            # removed the last check standing between a typo and an every-5-seconds model call.
+            #
+            # A WARNING, not an error, because the floor is overridable (a 5-minute
+            # local-model poll is a legitimate choice — it just should not be the accident you get
+            # from typing `* * * * *`). An error would refuse a trigger meant to be allowed; a
+            # silent pass is what let this go unnoticed. So: it fires, and it is visibly flagged.
+            #
+            # Only for an action that can call a model — the floor's own premise. A 60s `notify`
+            # spends nothing, and flagging it trains the user to skip the chip on a 60s agent turn.
+            try:
+                secs = int((spec or {}).get("interval_secs") or 0)
+            except (TypeError, ValueError):
+                secs = 0
+            if 0 < secs < MIN_CLOCK_INTERVAL_SECS and cadence_floor_governs(workflow, created_by):
+                issues.append(
+                    Issue(
+                        path="spec.interval_secs",
+                        message=(
+                            f"{secs}s is below the {MIN_CLOCK_INTERVAL_SECS}s floor for an "
+                            f"LLM-invoking trigger; it will still run, but confirm this is "
+                            f"intended"
+                        ),
+                    )
+                )
+    elif kind == "event":
+        issues.extend(_event_spec_issues(spec))
+        issues.extend(_agent_scope_issues(spec))
+    elif kind == "web_watch" and not str((spec or {}).get("url", "") or "").strip():
+        issues.append(
+            Issue(path="spec.url", message="a web_watch trigger needs a url", severity="error")
+        )
+    elif kind == "file" and not watched_paths(spec):
+        # An ERROR, as the url of a web watch is: a watch of no paths is skipped by every poll
+        # (`file_poll.poll_one`), so it would sit listed as watching and never fire. A bare string
+        # is refused too rather than read as a list: the poll would walk it one character at a time.
+        issues.append(
+            Issue(
+                path="spec.paths",
+                message=(
+                    "a file trigger needs at least one file, folder or glob to watch, as a list "
+                    "in `paths`"
+                ),
+                severity="error",
+            )
+        )
+    return issues
+
+
+def watched_paths(spec: Any) -> list[str]:
+    """The paths a `file` trigger's spec watches: its `paths` list, blank entries left out.
+
+    Empty for a spec that names none, and for a `paths` that is not a list: what the watch loop
+    polls (`file_poll.poll_one`) and what `validate_spec` requires, read one way.
+    """
+    paths = spec.get("paths") if isinstance(spec, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [str(path) for path in paths if str(path or "").strip()]
+
+
+# ── gates ──
+
+#: The gate vocabulary. Closed for the same reason the spec keys are: a gate the service does
+#: not read is a safety control the user believes they set.
+GATE_KEYS: frozenset[str] = frozenset(
+    {
+        "debounce_secs",
+        "rate_cap",
+        "max_fires",
+        "skip_dates",
+        "quiet_hours",
+        "max_cost_usd_per_run",
+        "max_actions_per_hour",
+        "cooldown_secs",
+        "idempotency",
+        "threshold",
+        "condition",
+        "max_runs_per_hour",
+        # The pluggable is-the-user-on-duty predicate. Shaped
+        # `{provider, config}` like an action, and classified FAIL-OPEN below —
+        # a broken calendar app must not silence every automation.
+        "duty_gate",
+    }
+)
+
+#: Gates that FAIL OPEN when their check cannot complete.
+#: Budget and storm guards
+#: time-box and fail open — a budget probe that hangs must not silently stop every automation on the
+#: machine. Security fences are absent from this set on purpose: capabilities, the injection screen
+#: and fencing fail CLOSED, because the cost of skipping them is unbounded while the cost of a
+#: skipped budget check is one extra run.
+#: 🔴 TWO VOCABULARIES, and this set has to answer for BOTH.
+#:
+#: `set(firepath.GATE_ORDER) & FAIL_OPEN_GATES` was **empty**. The names here were the
+#: per-trigger CAP KEYS a person edits (`max_cost_usd_per_run`, `rate_cap`, `duty_gate` — the
+#: `GATE_KEYS` vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`,
+#: `budget`, `claim`, `yield`, `capability`, `incident`). So every gate the engine actually runs
+#: read "closed",
+#: including
+#: `duty` — which `calendar.evaluate_duty` requires to fail OPEN, and which correctly
+#: DOES fail open in practice. The classifier disagreed with the code it was written to
+#: describe, and
+#: nothing outside tests read it, so nothing caught the drift.
+#:
+#: Both spellings are listed deliberately rather than renaming one side: a person's trigger config
+#: says `duty_gate` and the fire path's gate is `duty`, and both are correct in their own surface. A
+#: test asserts every `GATE_ORDER` entry resolves to the direction its gate actually implements.
+FAIL_OPEN_GATES: frozenset[str] = frozenset(
+    {
+        # ── per-trigger cap keys (`GATE_KEYS` vocabulary — what a person edits) ──
+        "max_cost_usd_per_run",
+        "max_actions_per_hour",
+        "max_runs_per_hour",
+        "rate_cap",
+        "condition",
+        # The duty gate calls OUT to a provider (a calendar app), so it is classified
+        # fail-open explicitly — uninstalling the app that supplied it must not silently stop
+        # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
+        "duty_gate",
+        # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
+        # `duty` is the same control as `duty_gate` above, under the name the walk uses.
+        "duty",
+        # `slot` belongs with the storm guards, not the fences: an unreadable
+        # claim store means "I cannot tell who holds the gpu", and refusing every slotted
+        # trigger over a filesystem hiccup would silence real automations. Contention costs
+        # a slow run; a stuck-closed slot gate costs the automation. It inherits
+        # `read_claim`'s own unreadable-reads-as-idle contract.
+        "slot",
+        # `active` is the `skip_if_active` liveness guard, and it belongs with the
+        # storm guards for the same reason `slot` does: a broken `git status` or an unreadable path
+        # means "I cannot tell if the target is busy", and deferring every guarded fire over that
+        # would silence a real automation forever — a stuck-closed liveness gate looks exactly
+        # like a dead trigger, while a stuck-open one costs at most one run against a target that
+        # turned out to be busy, which the resource-slot and claim gates still bound. The probe in
+        # `triggers.liveness.is_target_active` is written fail-open to match.
+        "active",
+        # `incident` is the kill switch. It inherits `incident_active()`'s own deliberate
+        # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
+        # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
+        # silently stops work the user depends on and looks exactly like a broken scheduler.
+        "incident",
+        # `spacing` is debounce + cooldown, and it belongs with the storm guards for the same
+        # reason `rate_cap` does: a malformed `debounce_secs` must not SILENCE an automation. The
+        # asymmetry is the point — a stuck-closed spacing gate looks exactly like a dead trigger,
+        # while a stuck-open one costs at most one duplicate run that the claim lock still bounds.
+        "spacing",
+        # `rate` is the hourly-cap gate. Fail-open for the same reason as `slot`: an
+        # unreadable ledger means "I cannot tell how often this fired", and suppressing every
+        # capped trigger over a filesystem hiccup would silence real automations. The cap's
+        # purpose — stop a RUNAWAY — still holds, because a runaway writes many good rows.
+        "rate",
+        # …and the cap keys under the spelling a person edits.
+        "debounce_secs",
+        "cooldown_secs",
+    }
+)
+
+#: Gates whose direction is asserted, not assumed. `budget` is deliberately CLOSED here even though
+#: the note above groups "budget/storm-guard" as fail-open, because the more specific rule wins and
+#: the code follows it: the budget check is fail-closed, as an unreadable budget is not an unlimited
+#: one.
+#: The per-trigger CAP keys above stay open; the fire path's pre-claim budget READ is closed. Those
+#: are different questions about the same word, which is exactly why this is written down.
+FAIL_CLOSED_GATES: frozenset[str] = frozenset(
+    {"screen", "quiet", "budget", "claim", "yield", "capability", "idempotency"}
+)
+
+
+def gate_failure_mode(gate: str) -> str:
+    """`open` or `closed` for one gate, when its own check cannot complete.
+
+    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `rate_cap`) or a fire-path gate
+    name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
+    that silently answered "closed" for the other namespace is the drift `FAIL_OPEN_GATES` records.
+
+    Named as a function rather than left implicit so a caller cannot get it wrong by omission: the
+    default for an unknown gate is CLOSED. A new gate that nobody classified should refuse the fire,
+    not wave it through — the safe direction for a control whose semantics are unknown.
+    """
+    return "open" if gate in FAIL_OPEN_GATES else "closed"
+
+
+def validate_gates(gates: dict[str, Any]) -> list[Issue]:
+    """Structural issues in the gates block. Never raises."""
+    issues: list[Issue] = []
+    for key in sorted(gates or {}):
+        if key not in GATE_KEYS:
+            issues.append(
+                Issue(
+                    path=f"gates.{key}",
+                    message=f"unknown gate {key!r}; it would be stored and never enforced",
+                    closest=_closest(key, GATE_KEYS),
+                )
+            )
+    return issues
+
+
+# ── the entity ──
+
+
+@dataclass
+class Trigger:
+    """One automation. The record that replaces `crons.json`, `event_triggers.json` and the hook
+    and autonudge configs.
+
+    Field notes worth keeping (the rest are self-describing):
+
+    * `id` is DETERMINISTIC where a feature mints it (`system:heartbeat:fts`), so re-registration on
+      every boot is idempotent rather than accumulating a row per restart.
+    * `capabilities` is frozen AT SAVE. Resolving it at fire time would let a trigger authored
+      when a provider was harmless inherit whatever that provider can do later.
+    * `next_fire_at` is persisted BEFORE execution — a crash mid-run must
+    not lose the schedule.
+    * The runtime rollups (`last_success_at`, `health_status`, …) live on the row so a list renders
+      status dots without reading every run.
+    """
+
+    id: str
+    name: str
+    kind: str
+    enabled: bool = True
+    created_by: str = "user"
+    #: WHO wrote this row, as an attribution username, not a
+    #: credential. Orthogonal to `created_by`, which records WHAT wrote it (`user`/`agent`/`system`)
+    #: on this machine — a shared store needs both: "the agent on Alice's machine" is one row.
+    #:
+    #: `""` means unattributed and reads as the OWNER's (`ownership.is_owner_authored`): every row
+    #: written before this field existed has it, and stopping every existing automation would be an
+    #: absurd cost for a field nobody asked for.
+    author: str = ""
+    #: WHICH HARNESS minted this row, as an origin-attribution
+    #: handle — this home's `durability` `machine_id`, REUSED not minted. Orthogonal to `author`
+    #: (WHO) and to `created_by` (WHAT): a shared trigger store needs all three — "the agent on
+    #: Alice's machine" is one row. Stamped at CREATE (`tools.create`); a row written before this
+    #: field existed, or one a `trigger` provider serves without an origin, reads back as ``""`` =
+    #: "this harness's" (a single-home install is byte-unchanged). A sidecar, never an id-format
+    #: change, so two harnesses' stores merge attributably even if a slugged id collides.
+    origin_harness: str = ""
+    spec: dict[str, Any] = field(default_factory=dict)
+    gates: dict[str, Any] = field(default_factory=dict)
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    workflow: dict[str, Any] = field(default_factory=dict)
+    overlap: str = "skip"
+    session: str = "fresh"
+    model_tier: str = "background"
+    delivery: str = "none"
+    #: A SEPARATE route for failures. Failures reach the inbox even when `delivery` is none:
+    #: an automation the user asked to stay quiet still has to be able to say it broke.
+    failure_delivery: str = "inbox"
+    failure_policy: dict[str, Any] = field(default_factory=dict)
+    yield_to_user: bool = False
+    resource_slots: list[str] = field(default_factory=list)
+    #: A fire-time LIVENESS guard. Declarative, and empty by default so a trigger
+    #: that does not opt in is NEVER deferred — non-breaking for every trigger authored before this
+    #: field existed. Where `resource_slots` serializes against a NAMED slot another running trigger
+    #: holds, this defers when the working STATE the fire would act on looks busy, using cheap
+    #: heuristics the service evaluates up front (`triggers.liveness.is_target_active`):
+    #:
+    #:   * ``paths: [glob, …]``   — defer if any matching path was modified within ``recent_secs``
+    #:                              (default 300s) → "the target was just modified".
+    #:   * ``recent_secs: <int>`` — the freshness window `paths` compares against.
+    #:   * ``lockfiles: [path, …]`` — defer if any exists → "a lock file is present".
+    #:   * ``dirty_git: <dir>``   — defer if that worktree has uncommitted changes → "dirty".
+    #:
+    #: A busy target yields a `deferred` ledger row, never a drop and never a hard error — the fire
+    #: is postponed and re-evaluates next tick, exactly like the resource-slot and yield gates. The
+    #: probe is fail-OPEN (a broken `git status` or an unreadable path reads as NOT busy) so a check
+    #: that can never pass cannot strand a trigger forever.
+    skip_if_active: dict[str, Any] = field(default_factory=dict)
+    catch_up: bool = False
+    expires_at: str = ""
+    # ── runtime rollups, written by the service and never by a form ──
+    next_fire_at: str = ""
+    last_run_id: str = ""
+    run_count: int = 0
+    last_success_at: str = ""
+    last_failure_at: str = ""
+    #: When this trigger last FIRED — set on a granted fire, beside `run_count`.
+    #:
+    #: 🔴 A THIRD timestamp, deliberately, and the reason is the whole point of the field. Spacing a
+    #: fire needs "when did this last fire", and neither existing timestamp answers it:
+    #: `last_success_at` and `last_failure_at` both describe an OUTCOME, and a fire that was
+    #: SUPPRESSED (quiet hours, budget, overlap) is neither — so debouncing off either one would
+    #: count a blocked fire as a fire and let a debounced trigger straight through. The retired
+    #: `event_triggers.EventTrigger` carried exactly this field, which is why debounce worked there
+    #: and not here. Event triggers are rows of this entity
+    #: now, and their `debounce_secs` spaces off this field like every other kind's.
+    #:
+    #: ISO, like every other timestamp on this entity. Absent on every row written,
+    #: which reads as "never fired" — the right answer for spacing: a trigger with no recorded
+    #: fire has nothing to space against, so its first fire is allowed.
+    last_fired_at: str = ""
+    health_status: str = TriggerHealth.OK.value
+    last_error_summary: str = ""
+    state: str = TriggerState.ACTIVE.value
+    #: When a PARKED trigger becomes eligible to try again (epoch seconds, 0 = immediately).
+    #:
+    #: 🔴 `autopause.evaluate` has always RETURNED `retry_after=now + PARK_COOLDOWN_SECS` on a
+    #: parking exit, and `unpark_due` has always implemented the clock decision — and this
+    #: entity had nowhere to keep the number, so the fire's recorder dropped it and it had no
+    #: caller. One transport outage parked a working trigger and it fired **0 times
+    #: over the next 5 slots and stayed `parked` indefinitely** — a 30-second network blip
+    #: permanently disabling an automation.
+    #:
+    #: Epoch rather than ISO, deliberately breaking this entity's timestamp convention: `unpark_due`
+    #: compares it against `now` as a float, and a conversion at each comparison site is a
+    #: chance to mix units. The ISO fields are the ones a HUMAN reads; only a scheduler reads
+    #: this one.
+    #:
+    #: Absent/0 reads as DUE — `unpark_due`'s own documented contract ("a park written before this
+    #: field existed cannot strand a trigger forever"), which is also the fail-open direction: a
+    #: missing cooldown must not become an infinite one.
+    park_retry_after: float = 0.0
+    #: Hash of the LAST failure whose alert went out, and when — what `dedupe_hash` needs.
+    #:
+    #: 🔴 `failure_policy.dedupe_hash` is written by the migration from the legacy
+    #: `last_failure_hash` and was read by nothing: the unified fire path kept the legacy
+    #: reminder-window constant and hash helper, and dropped the check that used them.
+    #: The SAME error on 6 consecutive fires produced 6 notifications.
+    #:
+    #: Hashed from the ERROR TEXT, not from `last_error_summary` — that field holds
+    #: `PauseDecision.reason` ("failure 1 of 5", "failure 2 of 5"), which changes on every failure
+    #: even when the cause is identical, so hashing it could never dedupe once.
+    #:
+    #: `last_alert_at` is epoch, matching `park_retry_after` and for the same reason: the window
+    #: comparison is float arithmetic, and a conversion at the comparison site is a chance to mix
+    #: units. Absent/0 never suppresses, so the first alert of anything always goes out.
+    last_alert_hash: str = ""
+    last_alert_at: float = 0.0
+    #: When a run of this trigger last stopped for a person: its action parked
+    #: (`outcome="needs_input"` — browse at a sign-in page) and the trigger's question is open.
+    #:
+    #: A third OUTCOME, beside `last_success_at` and `last_failure_at`, because it is neither: the
+    #: action did nothing it was asked yet, so it is not a success, and nothing failed. Both
+    #: recorders stamped `last_success_at` for it, which made a run that was waiting for you read
+    #: as one that had done its work. It is still a run that happened, so
+    #: `last_run_ts` reads the newest of the three — that is what clears a Run button
+    #: (`schedule_view._last_run_ts`).
+    #:
+    #: Declared after every field above it, so no positional constructor call shifts: `Trigger` is
+    #: on the SDK surface (`personalclaw.sdk.channel`).
+    last_waiting_at: str = ""
+    #: Why a replace restore switched this automation off until someone here resumes it: where the
+    #: snapshot it wrote this home back from was taken, as the restore could tell
+    #: (:class:`RestoreHold`). ``""`` when no restore holds it.
+    #:
+    #: A restore writes a home back from a snapshot whole, and an automation that ran on its own
+    #: where the snapshot was taken would run on its own here too, so a copy running beside an
+    #: original that still runs would do everything twice (`triggers.restore_hold`). Held, it says
+    #: so on the Triggers page, and Resume all or its own switch takes it on.
+    #:
+    #: Kept only on a row that is switched off: whoever switches it on, or off by hand, has decided,
+    #: so the row stops saying the restore paused it (`to_dict`, `parse_trigger`).
+    #:
+    #: The last field, for the reason `last_waiting_at` gives.
+    restore_hold: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "kind": self.kind,
+            "enabled": self.enabled,
+            "created_by": self.created_by,
+            "author": self.author,
+            "origin_harness": self.origin_harness,
+            "spec": dict(self.spec),
+            "gates": dict(self.gates),
+            "capabilities": dict(self.capabilities),
+            "workflow": dict(self.workflow),
+            "overlap": self.overlap,
+            "session": self.session,
+            "model_tier": self.model_tier,
+            "delivery": self.delivery,
+            "failure_delivery": self.failure_delivery,
+            "failure_policy": dict(self.failure_policy),
+            "yield_to_user": self.yield_to_user,
+            "resource_slots": list(self.resource_slots),
+            "skip_if_active": dict(self.skip_if_active),
+            "catch_up": self.catch_up,
+            "expires_at": self.expires_at,
+            "next_fire_at": self.next_fire_at,
+            "last_run_id": self.last_run_id,
+            "run_count": self.run_count,
+            "last_success_at": self.last_success_at,
+            "last_failure_at": self.last_failure_at,
+            "last_waiting_at": self.last_waiting_at,
+            "last_fired_at": self.last_fired_at,
+            "park_retry_after": self.park_retry_after,
+            "last_alert_hash": self.last_alert_hash,
+            "last_alert_at": self.last_alert_at,
+            "health_status": self.health_status,
+            "last_error_summary": self.last_error_summary,
+            "state": self.state,
+            # A row switched on holds nothing, whichever writer switched it on.
+            "restore_hold": "" if self.enabled else self.restore_hold,
+        }
+
+    @property
+    def fires_automatically(self) -> bool:
+        """Whether the service should ever fire this on its own.
+
+        A `manual` trigger never does, and neither does one in a non-active state. Asked as one
+        question so a scheduler cannot forget half of it — checking `enabled` without `state` is how
+        an autopaused trigger keeps firing.
+        """
+        return self.enabled and self.kind != "manual" and self.state == TriggerState.ACTIVE.value
+
+
+#: Every key `Trigger` recognizes, for the unknown-field warning. Derived from the dataclass rather
+#: than hand-listed — a hand-maintained copy drifts the first time a field is added, and then the
+#: parser warns about a field it actually supports.
+def _known_fields() -> frozenset[str]:
+    import dataclasses as _dc
+
+    return frozenset(f.name for f in _dc.fields(Trigger))
+
+
+def _inline_credential_issues(workflow: Any) -> list[Issue]:
+    """WARN when a trigger's action carries a credential LITERALLY.
+
+    🔴 Measured: the workflow lint flags `curl -H 'Authorization: Bearer sk-ant-api03-…'` as an
+    inline secret, and a TRIGGER stored the same string with `ok: True` and zero issues. The two
+    surfaces disagreed about the same mistake, so the guidance the workflow validator gives
+    ("reference credentials as {{secret:KEY}}") was unenforced for the automation half.
+
+    Reuses `workflows.secrets.find_inline_secrets` rather than re-deriving the credential shapes: a
+    second regex set would drift, and this one already skips the sanctioned `{{secret:...}}` form so
+    the fix for a finding never trips the finding again.
+
+    A WARNING, not an error. The trigger still fires — refusing would break every automation a user
+    already has with a token pasted in, which is exactly the population that most needs to keep
+    working while they migrate. The row is visibly flagged in the store, the doctor and the UI.
+    """
+    if not isinstance(workflow, dict):
+        return []
+    try:
+        from personalclaw.workflows.secrets import find_inline_secrets
+    except Exception:  # noqa: BLE001 - a lint that cannot import must not fail a parse
+        return []
+    try:
+        findings = find_inline_secrets(workflow)
+    except Exception:  # noqa: BLE001 - same; this module is pure validation and never logs
+        return []
+    return [
+        Issue(
+            path=f"workflow.{f.key}" if f.key else "workflow",
+            message=(
+                f"{f.key or 'the action'} looks like an inline credential ({f.hint}) — "
+                f"reference it as {{{{secret:KEY}}}} instead, which is resolved at dispatch and "
+                f"never stored"
+            ),
+        )
+        for f in findings
+    ]
+
+
+#: Every key a `workflow.resume` target recognizes, for the near-miss suggestion.
+_RESUME_TARGET_FIELDS: tuple[str, ...] = ("run_id", "project_id", "resume_token", "answer")
+
+#: The `workflow` keys that declare an ACTION to run. A resume target replaces the action rather
+#: than configuring it, so declaring both is an authoring error rather than a precedence question.
+_ACTION_KEYS: tuple[str, ...] = ("inline", "provider", "ref")
+
+
+def _resume_target_issues(workflow: Any) -> list[Issue]:
+    """What is wrong with a `workflow.resume` target (`wakeup.resume_target_of`'s authored form).
+
+    Validated HERE, at save time, because `resume_target_of` is deliberately fail-open on a
+    malformed target — it returns `{}`, and the trigger then fires a normal new-run wake. That is
+    the right runtime direction (an authoring slip must not silently disable an automation's normal
+    fire) but it means the runtime can never tell the author they mistyped. This is what does.
+
+    The both-declared case is an ERROR, not a precedence rule. `wakeup_for` picks the resume and the
+    inline action never runs; a trigger whose configured action is silently ignored is the
+    "mechanism present but inert" shape this codebase keeps paying for, and the author is the only
+    one who can say which they meant.
+    """
+    # Lazy, and the key comes from its OWNER rather than a second copy here — the same reason
+    # `Wakeup.droppable` delegates to `dispatch.droppable`: a hand-copied constant is the first
+    # thing to drift, and a validator checking a different key than the dispatcher reads would
+    # approve exactly the targets that cannot fire.
+    from personalclaw.triggers.wakeup import RESUME_TARGET_KEY
+
+    if not isinstance(workflow, dict):
+        return []
+    if RESUME_TARGET_KEY not in workflow:
+        return []
+    raw = workflow.get(RESUME_TARGET_KEY)
+    path = f"workflow.{RESUME_TARGET_KEY}"
+    if not isinstance(raw, dict):
+        return [
+            Issue(
+                path=path,
+                message=(
+                    "a resume target must be an object with a run_id, not " f"{type(raw).__name__}"
+                ),
+                severity="error",
+            )
+        ]
+    issues: list[Issue] = []
+    if not str(raw.get("run_id", "") or "").strip():
+        issues.append(
+            Issue(
+                path=f"{path}.run_id",
+                message=(
+                    "a resume target needs the run_id of the parked run to resume; without "
+                    "one this trigger starts a new run instead"
+                ),
+                severity="error",
+            )
+        )
+    for key in raw:
+        if key not in _RESUME_TARGET_FIELDS:
+            issues.append(
+                Issue(
+                    path=f"{path}.{key}",
+                    message=f"unknown resume-target field {key!r}",
+                    closest=_closest(str(key), _RESUME_TARGET_FIELDS),
+                )
+            )
+    declared = sorted(k for k in _ACTION_KEYS if workflow.get(k))
+    if declared:
+        issues.append(
+            Issue(
+                path=path,
+                message=(
+                    "this trigger declares both a resume target and an action "
+                    f"({', '.join(declared)}); a resume target REPLACES the action, so the "
+                    "action would never run — keep whichever you meant"
+                ),
+                severity="error",
+            )
+        )
+    return issues
+
+
+def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
+    """Parse one authored trigger. Returns `(trigger, issues)` and NEVER raises.
+
+    The never-throw contract is the whole point: an agent-authored near-miss must become a
+    WARNING chip on a loaded row, not an exception that drops the trigger out of the store. So a bad
+    kind still yields a Trigger — with `enabled=False`, because a trigger the
+    service cannot dispatch
+    must not sit in the active set pretending it will fire.
+
+    An unknown top-level key is reported with its closest match and otherwise ignored: keeping it
+    would make `to_dict` echo a field nothing reads, which is how a typo survives a round trip and
+    looks supported.
+    """
+    issues: list[Issue] = []
+    data = raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        issues.append(Issue(path="", message="a trigger must be an object", severity="error"))
+
+    known = _known_fields()
+    for key in sorted(data):
+        if key not in known:
+            issues.append(
+                Issue(
+                    path=key,
+                    message=f"unknown trigger field {key!r}",
+                    closest=_closest(key, known),
+                )
+            )
+
+    kind = str(data.get("kind", "") or "").strip().lower()
+    # Narrowed with an explicit annotation rather than a conditional expression: the ternary form
+    # types as `Any | dict | None`, which mypy correctly refuses at the `validate_*` call below.
+    raw_spec = data.get("spec")
+    raw_gates = data.get("gates")
+    spec: dict[str, Any] = dict(raw_spec) if isinstance(raw_spec, dict) else {}
+    gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
+    issues.extend(
+        validate_spec(
+            kind, spec, data.get("workflow"), created_by=str(data.get("created_by", "") or "")
+        )
+    )
+    issues.extend(validate_gates(gates))
+    issues.extend(_inline_credential_issues(data.get("workflow")))
+    issues.extend(_resume_target_issues(data.get("workflow")))
+
+    if not str(data.get("id", "") or "").strip():
+        issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))
+    if not str(data.get("name", "") or "").strip():
+        issues.append(Issue(path="name", message="a trigger needs a name", severity="error"))
+
+    overlap = str(data.get("overlap", "skip") or "skip")
+    if overlap not in {"skip", "queue", "parallel"}:
+        issues.append(
+            Issue(
+                path="overlap",
+                message=f"unknown overlap policy {overlap!r}",
+                closest=_closest(overlap, ("skip", "queue", "parallel")),
+            )
+        )
+        overlap = "skip"
+
+    state = str(data.get("state", TriggerState.ACTIVE.value) or TriggerState.ACTIVE.value)
+    if state not in {s.value for s in TriggerState}:
+        issues.append(
+            Issue(
+                path="state",
+                message=f"unknown state {state!r}",
+                closest=_closest(state, tuple(s.value for s in TriggerState)),
+            )
+        )
+        state = TriggerState.ACTIVE.value
+
+    # 🔴 `delivery` IS A VOCABULARY, and `or "none"` was hiding that (#450). The old read was
+    # `str(data.get("delivery", "none") or "none")`, which mapped a falsy `""` onto `"none"` — the
+    # SILENT value. Both handler write paths minted `""` for "not silent, no channel", so a user who
+    # turned Silent OFF got a row that loaded back as silent, and `PUT {"silent": false}` re-minted
+    # the same `""`: a switch you could turn on and never off. The coercion is what made a bad write
+    # an invisible one, so it is gone, and the value is now VALIDATED instead — `"emial"` used to
+    # parse through with zero issues and reach `deliver`, which mutes only `"none"`, so a typo
+    # stored a route nothing honoured and nothing reported.
+    #
+    # Absent / `None` / a non-string still take the declared default, exactly as `failure_delivery`
+    # distinguishes them: those mean "nothing was said", where `""` means a writer said
+    # blank. An unreadable value falls back to `"inbox"` and NOT to the dataclass default, because
+    # the default is silence and `delivery.is_muted` states the rule this obeys — "an empty
+    # destination is NOT muted … defaulting that to silence would let a bug turn into missing
+    # alerts". A route we cannot read is a bug; it must not quietly become a mute.
+    from personalclaw.triggers.delivery import is_valid_route
+
+    delivery = data["delivery"] if isinstance(data.get("delivery"), str) else Trigger.delivery
+    if not is_valid_route(delivery):
+        issues.append(
+            Issue(
+                path="delivery",
+                message=f"unknown delivery route {delivery!r}",
+                closest=_closest(delivery, ("", "inbox", "none")),
+            )
+        )
+        delivery = "inbox"
+
+    fatal = any(i.severity == "error" for i in issues)
+    # A stored switch is read as the word it spells (`strict_bool`): an agent's patch once stored
+    # one as sent, and `bool("false")` is True, so a row it switched off kept firing. One nothing
+    # can read is off.
+    switched_on = strict_bool(data.get("enabled", True), field="enabled", default=False)
+    trigger = Trigger(
+        id=str(data.get("id", "") or ""),
+        name=str(data.get("name", "") or ""),
+        kind=kind,
+        # A structurally broken trigger loads DISABLED. It stays visible and
+        # editable — which is what
+        # makes the warning chip actionable — but the service will not try to dispatch something it
+        # cannot interpret.
+        enabled=switched_on and not fatal,
+        created_by=str(data.get("created_by", "user") or "user"),
+        # 🔴 THE ONE PLACE an old-shape row acquires an author. Absent in every row written
+        # before the field existed AND in every row a `trigger` provider chooses not to attribute,
+        # and both mean the same thing here: `""`, which `ownership.is_owner_authored` reads as the
+        # owner's. That is a clean break with no migration and no dual read — the field is optional
+        # by design, so there is no old shape to convert, only an unattributed one to interpret. It
+        # is lowercased and stripped at the boundary so `Alice`, `alice ` and `alice` cannot become
+        # three authors of the same row (`identity.slugify_username` already guarantees the owner
+        # side is canonical, so only the incoming side needs normalizing).
+        author=str(data.get("author", "") or "").strip().lower(),
+        # Origin: an OPAQUE machine id, so it is read verbatim — never
+        # lowercased/stripped the way `author` (a username) is. Absent → "" = "this harness's". A
+        # provider-served row keeps whatever origin the minting harness stamped.
+        origin_harness=str(data.get("origin_harness", "") or ""),
+        spec=dict(spec),
+        gates=dict(gates),
+        capabilities=(
+            dict(data["capabilities"]) if isinstance(data.get("capabilities"), dict) else {}
+        ),
+        workflow=dict(data["workflow"]) if isinstance(data.get("workflow"), dict) else {},
+        overlap=overlap,
+        session=str(data.get("session", "fresh") or "fresh"),
+        model_tier=str(data.get("model_tier", "background") or "background"),
+        delivery=delivery,
+        # 🔴 AN EXPLICIT `""` SURVIVES, unlike its `delivery`/`session` neighbours.
+        # `delivery.route_for` documents a third state — *"falls back to `delivery` when
+        # `failure_delivery` is empty"* — and the old `or "inbox"` made that branch UNREACHABLE for
+        # every row loaded from disk: `to_dict` wrote `""` faithfully and this line read it straight
+        # back as `"inbox"`. Measured by PATCHing `failure_delivery: ""` and re-reading the store:
+        # it came back `"inbox"`. So "route failures wherever results go" was a documented,
+        # implemented
+        # semantic that no persisted trigger could hold, and the UI control for it could not stick.
+        #
+        # Absent, `None`, or a non-string still defaults — those mean "nothing was said", where `""`
+        # means "follow `delivery`", and collapsing the two is the distinction that was lost.
+        failure_delivery=(
+            data["failure_delivery"] if isinstance(data.get("failure_delivery"), str) else "inbox"
+        ),
+        failure_policy=(
+            dict(data["failure_policy"]) if isinstance(data.get("failure_policy"), dict) else {}
+        ),
+        yield_to_user=strict_bool(data.get("yield_to_user"), field="yield_to_user"),
+        resource_slots=[str(s) for s in (data.get("resource_slots") or [])],
+        skip_if_active=(
+            dict(data["skip_if_active"]) if isinstance(data.get("skip_if_active"), dict) else {}
+        ),
+        catch_up=data.get("catch_up") is True,
+        expires_at=str(data.get("expires_at", "") or ""),
+        next_fire_at=str(data.get("next_fire_at", "") or ""),
+        last_run_id=str(data.get("last_run_id", "") or ""),
+        run_count=_int(data.get("run_count"), 0),
+        last_success_at=str(data.get("last_success_at", "") or ""),
+        last_failure_at=str(data.get("last_failure_at", "") or ""),
+        last_waiting_at=str(data.get("last_waiting_at", "") or ""),
+        last_fired_at=str(data.get("last_fired_at", "") or ""),
+        park_retry_after=_float(data.get("park_retry_after"), 0.0),
+        last_alert_hash=str(data.get("last_alert_hash", "") or ""),
+        last_alert_at=_float(data.get("last_alert_at"), 0.0),
+        health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
+        last_error_summary=str(data.get("last_error_summary", "") or ""),
+        state=state,
+        restore_hold="" if switched_on else _restore_hold(data.get("restore_hold")),
+    )
+    return trigger, issues
+
+
+def _restore_hold(value: Any) -> str:
+    """A stored ``restore_hold``: one of :class:`RestoreHold`, ``""`` for none, and any other word
+    — one a later version wrote — as :attr:`RestoreHold.UNKNOWN`. Still a hold, and the cautious
+    one: the row waits for a Resume, and the page does not claim to know where it came from."""
+    if not isinstance(value, str) or not value:
+        return ""
+    known = {hold.value for hold in RestoreHold}
+    return value if value in known else RestoreHold.UNKNOWN.value
+
+
+def _int(value: Any, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+# ── fire / run records ──
+
+
+@dataclass
+class FireRecord:
+    """One fire attempt. The row that makes "silent drops are banned" real.
+
+    Written for EVERY fire, including the ones that did nothing — that is the
+    point. A suppressed fire
+    with no row is indistinguishable from a scheduler that never woke up, and the second is a bug
+    while the first is the configuration working.
+
+    `scheduled_for` sits alongside `started_at` so `ran_late` is a measurable fact rather than an
+    impression: a run that started 40 minutes after its slot is a different story from one that
+    started on time and took 40 minutes.
+
+    `incomplete` marks a count that was cut short ("at least N"), so a reader is never misled by a
+    number that stopped early. `acted_on`/`dismissed` are pre-allocated for the learning loop's
+    outcome feedback — reserved now because adding them later would mean a migration over history.
+    """
+
+    id: str
+    trigger_id: str
+    outcome: str
+    #: The automation's DISPLAY NAME, resolved where the row is projected.
+    #:
+    #: 🔴 Without this the feed carried identity but no legibility. `trigger_id` is an opaque
+    #: `schedule:clock:nightly-digest`, and every kind's source already knows the name — a schedule
+    #: run arrives at the projection with the handler's `job_name` join already on it, and a hook
+    #: and an event trigger each carry `.name`. The projection dropped all three, so the
+    #: dashboard's Recent-activity widget rendered the literal word "Schedule" on every row: five
+    #: different automations, five identical labels, measured on a live gateway. Resolving the name
+    #: once HERE is what stops a second consumer re-deriving the join and disagreeing with this one.
+    trigger_name: str = ""
+    #: The one-line reason. MANDATORY for anything other than a clean run: an
+    #: outcome without a reason
+    #: tells the user their automation did not happen and nothing else.
+    reason: str = ""
+    weight: str = RunWeight.LEDGER.value
+    scheduled_for: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    duration_secs: float = 0.0
+    run_id: str = ""
+    mutated: bool = False
+    counters: dict[str, Any] = field(default_factory=dict)
+    incomplete: bool = False
+    #: Reserved. Present from the start so the flywheel does not need a
+    #: migration over existing history to start reading feedback.
+    acted_on: bool = False
+    dismissed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "trigger_id": self.trigger_id,
+            "trigger_name": self.trigger_name,
+            "outcome": self.outcome,
+            "reason": self.reason,
+            "weight": self.weight,
+            "scheduled_for": self.scheduled_for,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "duration_secs": self.duration_secs,
+            "run_id": self.run_id,
+            "mutated": self.mutated,
+            "counters": dict(self.counters),
+            "incomplete": self.incomplete,
+            "acted_on": self.acted_on,
+            "dismissed": self.dismissed,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> FireRecord:
+        """Tolerant read. An unknown outcome becomes `failed`.
+
+        `failed` rather than `ran`: a row this build cannot classify must not
+        be counted as a success,
+        because a success is what the health rollup and the "what did my machine do" view treat as
+        nothing to look at.
+        """
+        d = d or {}
+        outcome = str(d.get("outcome", "") or "")
+        if outcome not in FIRE_OUTCOMES:
+            outcome = Outcome.FAILED.value
+        weight = str(d.get("weight", RunWeight.LEDGER.value) or RunWeight.LEDGER.value)
+        return cls(
+            id=str(d.get("id", "") or ""),
+            trigger_id=str(d.get("trigger_id", "") or ""),
+            trigger_name=str(d.get("trigger_name", "") or ""),
+            outcome=outcome,
+            reason=str(d.get("reason", "") or ""),
+            weight=weight if weight in {w.value for w in RunWeight} else RunWeight.LEDGER.value,
+            scheduled_for=str(d.get("scheduled_for", "") or ""),
+            started_at=str(d.get("started_at", "") or ""),
+            finished_at=str(d.get("finished_at", "") or ""),
+            duration_secs=_float(d.get("duration_secs"), 0.0),
+            run_id=str(d.get("run_id", "") or ""),
+            mutated=d.get("mutated") is True,
+            counters=dict(d["counters"]) if isinstance(d.get("counters"), dict) else {},
+            incomplete=d.get("incomplete") is True,
+            acted_on=d.get("acted_on") is True,
+            dismissed=d.get("dismissed") is True,
+        )
+
+    @property
+    def productive(self) -> bool:
+        """Whether this row belongs in the default runs-inbox view.
+
+        Derived from `mutated`, not from the outcome alone: a run can end `ran` and still
+        have touched
+        nothing, and the materiality predicate is explicit that the classification criterion is
+        "did it mutate durable state". A view built on the outcome would show a page of runs that
+        changed nothing.
+        """
+        return self.mutated and self.outcome in {Outcome.RAN.value, Outcome.RAN_LATE.value}
+
+    @property
+    def counts_toward_autopause(self) -> bool:
+        """Whether this row moves the trigger toward autopause.
+
+        Only a TRUE failure. Five skipped fires because quiet hours held is the
+        configuration working;
+        autopausing for that would punish the user for saying "not at night".
+        """
+        return self.outcome in TRUE_FAILURE_OUTCOMES
+
+
+def _float(value: Any, default: float) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def classify_weight(*, node_count: int, has_llm: bool, resumable: bool) -> str:
+    """Which record weight a fire earns.
+
+    FULL for anything with ≥2 nodes, any LLM stage, or anything resumable — those need a
+    directory and a journal to be diagnosable. Everything else is a ledger row, which is what keeps
+    a minutely trigger from producing 1440 run directories a day.
+    """
+    if node_count >= 2 or has_llm or resumable:
+        return RunWeight.FULL.value
+    return RunWeight.LEDGER.value
+
+
+def require_reason(outcome: str) -> bool:
+    """Whether this outcome must carry a human-readable reason.
+
+    Everything except a clean run. `refused` is the plainest mandatory-reason case, and the
+    same logic applies to every suppression: the user is being told their automation did not happen,
+    and "skipped_gate" alone does not say which gate.
+    """
+    return outcome not in {Outcome.RAN.value, Outcome.RAN_LATE.value}
+
+
+def fire_issues(record: FireRecord) -> list[Issue]:
+    """What is wrong with a fire record. Used by the service's own self-check, not by a form.
+
+    Exists because the "no silent drops" rule is only real if something checks it: a suppression
+    written without a reason satisfies the type and defeats the purpose.
+    """
+    issues: list[Issue] = []
+    if record.outcome not in FIRE_OUTCOMES:
+        issues.append(
+            Issue(path="outcome", message=f"unknown outcome {record.outcome!r}", severity="error")
+        )
+    if require_reason(record.outcome) and not record.reason.strip():
+        issues.append(
+            Issue(
+                path="reason",
+                message=f"{record.outcome} must say why in one line; a suppression with no reason "
+                "reads as the automation being broken",
+                severity="error",
+            )
+        )
+    if record.outcome == Outcome.RAN_LATE.value and not record.scheduled_for:
+        issues.append(
+            Issue(
+                path="scheduled_for",
+                message="ran_late is only meaningful next to the slot it missed",
+                severity="error",
+            )
+        )
+    return issues
+
+
+# ── the migration map (what the migration needs to be lossless) ──
+
+#: Where every legacy field lands in the unified shape. Written HERE, beside the entity, rather than
+#: left to the migration. `ScheduleJob` has 33 fields, `EventTrigger` 11, and 31
+#: of
+#: them have no same-named home on `Trigger`. A migration written against the dataclass alone would
+#: silently drop `skip_dates` (the trigger keeps firing on a holiday),
+#: `strict_schedule` (a missed slot
+#: catches up when the author said not to), and `content_re` (an event trigger fires on
+#: everything).
+#:
+#: The value is the destination path. `None` means DELIBERATELY DROPPED, and the comment says why —
+#: an unexplained omission is indistinguishable from an oversight when someone reads this in six
+#: months.
+LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
+    "ScheduleJob": {
+        "id": "id",
+        "name": "name",
+        "enabled": "enabled",
+        "created_by": "created_by",
+        "created_ts": None,  # superseded by the fire-record history; the row keeps no birth time
+        # The schedule itself becomes the clock spec's tagged union.
+        "schedule": "spec (clock: kind/expr/at)",
+        "timezone": "spec.timezone",
+        "skip_dates": "spec.skip_dates",
+        "strict_schedule": "spec.strict",
+        "delete_after_run": "spec.delete_after_run",
+        # What it runs.
+        "action": "workflow.inline",
+        "agent_sequence": "workflow.ref (a sequence becomes a def, not a list on the trigger)",
+        "env": "capabilities.env",
+        "timeout_secs": "gates.cooldown_secs is NOT this — timeout is per-run, so it rides the run",
+        "dry_run": "spec (manual dry-run is a fire MODE, not trigger state)",
+        # Delivery.
+        "channel": "delivery",
+        "thread_ts": "delivery (channel target carries the thread)",
+        "silent": "delivery == none",
+        "session_key": "session",
+        "persistent_session": "session (pinned:<key>)",
+        "context_enabled": "spec.context_enabled is NOT a gate — it shapes the run's prompt",
+        # Rollups.
+        "last_run_ts": "last_success_at / last_failure_at",
+        "last_status": "health_status",
+        "last_error": "last_error_summary",
+        "last_outcome": "the fire record's typed outcome",
+        "last_result": None,  # the run's output lives in the run/ledger, never on the trigger row
+        "consecutive_failures": "failure_policy (autopause counter is derived from fire records)",
+        "last_failure_hash": "failure_policy.dedupe_hash",
+        "last_failure_at": "last_failure_at",
+        "last_posted_hash": "gates.idempotency",
+        "last_posted_at": None,  # duplicate-suppression state belongs with the delivery layer
+        "consecutive_dupes": None,  # ditto — a delivery concern, not a trigger field
+        "acked_items": None,  # inbox acknowledgement state; the inbox owns it
+    },
+    # A legacy `event_triggers.json` row, as `boot_migrate.absorb_event_triggers` writes it. The
+    # matcher keys land flat in `spec`, beside the pattern and its source — the shape
+    # `event_triggers.matches` reads — and only the pattern's OWN matcher is carried: the legacy
+    # row stored all five, four of them inert for its pattern.
+    "EventTrigger": {
+        "id": "id (namespaced: event:<id>)",
+        "enabled": "enabled",
+        "pattern": "spec.pattern",
+        "source": "spec.source",  # The event's origin class (memory/inbox/app)
+        "key_glob": "spec.key_glob",
+        "content_re": "spec.content_re",
+        "sender_glob": "spec.sender_glob",  # Inbox sender matcher
+        "address_glob": "spec.address_glob",  # Inbox address matcher
+        # The app-source matcher — a glob on the namespaced `app:<app>:<event>` name.
+        "event_glob": "spec.event_glob",
+        # The lifecycle state, which `Trigger` already carries as a first-class field. Maps
+        # by NAME rather than into `spec`, because it is the same vocabulary (`TriggerState`) — an
+        # app-source park must survive the migration as a park, not as prose in a spec dict.
+        "state": "state",
+        "park_reason": "last_error_summary",
+        "park_retry_after": "park_retry_after",
+        "action_provider": "workflow.inline.provider",
+        "action_config": "workflow.inline.config",
+        "max_fires": "gates.max_fires",
+        "debounce_secs": "gates.debounce_secs",
+        "fire_count": "run_count",
+        # The spacing meter — `last_success_at` describes an OUTCOME, and the legacy stamp
+        # recorded that the trigger fired.
+        "last_fired_at": "last_fired_at",
+    },
+}
+
+
+def unmapped_legacy_fields(legacy: str, field_names: list[str]) -> list[str]:
+    """Legacy fields with no entry in the map at all — the ones a migration would drop silently.
+
+    Distinguishes "mapped to None on purpose" from "nobody thought about it". A test runs this
+    against the real dataclasses so a field added to `ScheduleJob` after this map was written cannot
+    slip through the migration unnoticed.
+    """
+    known = LEGACY_FIELD_MAP.get(legacy, {})
+    return [name for name in field_names if name not in known]

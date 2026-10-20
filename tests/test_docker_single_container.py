@@ -1,0 +1,1357 @@
+"""The single-container `docker run` one-liner must exist in README.md and be testable.
+
+The clause is "ONE command copied verbatim from README.md reaches a USABLE
+dashboard". Two halves of that are checkable without a Docker daemon, and they are exactly
+the two halves that were measured missing:
+
+* **the command exists, and there is only one.** ``grep -c 'docker run' README.md`` was
+  **0** when the change was written, so the "copied verbatim from README.md" half had nothing
+  to copy. This suite is what keeps that from silently regressing in the fast gate, on
+  every platform, with no daemon — the rail in
+  ``.github/workflows/docker-single-container.yml`` needs a Linux runner and an image build.
+* **the SPA is bundled into the image.** ``Dockerfile.backend`` must build ``web/dist`` and
+  place it where ``setup.py``'s ``BuildWithWeb._find_web_dist`` looks, BEFORE the
+  ``pip install`` that grafts it. Without that the image answers ``/api/healthz`` 200 and
+  serves no dashboard — the failure this test exists to catch.
+
+What is deliberately NOT here: the live drive (boot the container, fetch ``/``, fetch the
+first bundle). That needs a daemon and belongs to the workflow. Asserting the argv-rewriting
+and the Dockerfile's structure is what makes a green run of that workflow mean something —
+a rail that retargeted the *volume* spec as if it were the image ref would have tested
+whatever ``:latest`` resolves to while reporting on the commit under review.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import itertools
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import yaml
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
+from docker_single_container_shared import _REPO, get_handler
+from table_rows import row
+
+from personalclaw.dashboard.handlers.core import _UNBUNDLED_PAGE
+from tools import docker_single_container_smoke as smoke
+
+_README = _REPO / "README.md"
+_DOCKERFILE = _REPO / "deploy" / "docker" / "Dockerfile.backend"
+
+
+#: A stand-in for the session token the gateway banner prints. Three dot-separated segments
+#: so it exercises the same shape a JWT has, but a fixed literal that is not and never was a
+#: credential — a fixture copied from a real run would put the very value these tests exist
+#: to keep out of a public log INTO the repository.
+_SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
+
+
+# ---------------------------------------------------------------------------
+# The README command
+# ---------------------------------------------------------------------------
+
+
+def test_readme_carries_exactly_one_docker_run() -> None:
+    command = smoke.readme_docker_run(_README)
+    assert command.startswith("docker run ")
+
+
+def test_readme_command_runs_the_published_gateway_image() -> None:
+    """A placeholder tag or a locally-built name would not be copy-pasteable."""
+    command = smoke.readme_docker_run(_README)
+    argv, image = smoke.retarget(command, None, "n", "v")
+    assert image.startswith("ghcr.io/personalclaw/personalclaw-gateway:"), image
+    tag = image.split(":", 1)[1]
+    assert re.fullmatch(r"latest|\d+\.\d+\.\d+", tag), (
+        f"tag {tag!r} is a placeholder a reader must edit; the clause says the command is "
+        "copied verbatim"
+    )
+    assert argv[:2] == ["docker", "run"]
+
+
+def test_readme_command_persists_state_and_publishes_the_port() -> None:
+    """The clause names both: a `-v …:/data` volume and a published :10000."""
+    command = smoke.readme_docker_run(_README)
+    argv, _image = smoke.retarget(command, None, "n", "v")
+    assert smoke.published_port(argv) == 10000
+    assert any(
+        arg.endswith(":/data") for arg in argv
+    ), "without a volume at /data the container loses every bit of state on `docker rm`"
+
+
+def test_readme_command_makes_the_published_port_reachable() -> None:
+    """`PERSONALCLAW_BIND_HOST` is load-bearing, not decoration.
+
+    ``origin.resolve_bind_host`` defaults to ``127.0.0.1``, which inside a container is the
+    container's own loopback — ``-p`` forwards to it and finds nothing. compose sets this for
+    the same reason (``deploy/compose/compose.yaml``: "so port-forwarding works"). A command
+    missing it starts a container that never answers, which reads as a broken image.
+    """
+    command = smoke.readme_docker_run(_README)
+    assert "PERSONALCLAW_BIND_HOST=0.0.0.0" in command
+
+
+def test_readme_command_does_not_disable_auth() -> None:
+    """The one-liner must not buy a reachable dashboard by turning the token gate off.
+
+    ``PERSONALCLAW_AUTH_MODE=none`` pins the bind to loopback *unless*
+    ``PERSONALCLAW_BIND_HOST`` overrides it — and that pair (no auth on ``0.0.0.0``) is
+    exactly what the loopback invariant exists to prevent. ``BYPASS_LOCAL_NETWORKS=1`` is the
+    same trade: compose declines to set it by default and documents why. So does this.
+    """
+    command = smoke.readme_docker_run(_README)
+    assert "PERSONALCLAW_AUTH_MODE" not in command
+    assert "PERSONALCLAW_BYPASS_LOCAL_NETWORKS" not in command
+
+
+# ---------------------------------------------------------------------------
+# Argv rewriting — what makes the live rail's green mean something
+# ---------------------------------------------------------------------------
+
+
+def test_retarget_rewrites_image_name_and_volume_only() -> None:
+    command = (
+        "docker run -d --name personalclaw -p 127.0.0.1:10000:10000 "
+        "-e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data "
+        "ghcr.io/personalclaw/personalclaw-gateway:latest"
+    )
+    argv, image = smoke.retarget(command, "local:ci", "smoke-name", "smoke_vol")
+    assert image == "local:ci"
+    assert argv == [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "smoke-name",
+        "-p",
+        "127.0.0.1:10000:10000",
+        "-e",
+        "PERSONALCLAW_BIND_HOST=0.0.0.0",
+        "-v",
+        "smoke_vol:/data",
+        "local:ci",
+    ]
+
+
+def test_retarget_does_not_mistake_a_volume_spec_for_the_image() -> None:
+    """The trap a pattern-matching scan falls into.
+
+    ``personalclaw_home:/data`` satisfies "contains a slash and a colon and is not a flag",
+    so a regex-based scan picks it up as the image ref. The rail then runs the README's own
+    ``:latest`` while reporting that it tested the image built from the commit — a green that
+    describes the wrong artifact.
+    """
+    command = (
+        "docker run -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:0.1.3"
+    )
+    argv, image = smoke.retarget(command, "local:ci", "n", "smoke_vol")
+    assert image == "local:ci"
+    assert argv[-1] == "local:ci"
+    assert "smoke_vol:/data" in argv
+
+
+def test_retarget_leaves_bind_mounts_alone() -> None:
+    """Only a NAMED volume is renamed; a host path is the reader's own directory."""
+    command = "docker run -v /srv/pc:/data ghcr.io/personalclaw/personalclaw-gateway:latest"
+    argv, _image = smoke.retarget(command, None, "n", "smoke_vol")
+    assert "/srv/pc:/data" in argv
+
+
+def test_retarget_reads_an_unknown_value_flags_value_as_the_image() -> None:
+    """Pins the known limit of the positional scan, so a future reader hits it on purpose.
+
+    An unrecognised value-taking flag has its VALUE read as the image ref. That is why
+    ``_VALUE_FLAGS`` is enumerated rather than inferred: the fix for a new flag is to add it
+    there, and this test is the note that says so.
+    """
+    command = "docker run --totally-new-flag some-value ghcr.io/personalclaw/x:latest"
+    _argv, image = smoke.retarget(command, None, "n", "v")
+    assert image == "some-value", (
+        "documents today's behaviour: an unknown flag's value is taken positionally. If this "
+        "ever matters for the real command, add the flag to _VALUE_FLAGS."
+    )
+
+
+def test_readme_extraction_is_unmeasurable_when_the_command_is_gone(tmp_path: Path) -> None:
+    """Zero commands is the change's starting state, and it must read as unmeasurable, not pass."""
+    readme = tmp_path / "README.md"
+    readme.write_text("# No docker here\n\n```bash\npip install personalclaw\n```\n")
+    with pytest.raises(smoke.Unmeasurable):
+        smoke.readme_docker_run(readme)
+
+
+def test_readme_extraction_refuses_to_guess_between_two_commands(tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "```bash\ndocker run a:1\n```\n\n```bash\ndocker run b:2\n```\n",
+    )
+    with pytest.raises(smoke.Unmeasurable):
+        smoke.readme_docker_run(readme)
+
+
+def test_readme_extraction_joins_a_backslash_continued_command(tmp_path: Path) -> None:
+    """A reader pastes a multi-line command as one; the parser must see it that way too."""
+    readme = tmp_path / "README.md"
+    readme.write_text("```bash\ndocker run -d \\\n  --name pc \\\n  img:1\n```\n")
+    assert smoke.readme_docker_run(readme) == "docker run -d --name pc img:1"
+
+
+# ---------------------------------------------------------------------------
+# The image must actually bundle the SPA
+# ---------------------------------------------------------------------------
+
+
+def test_dockerfile_builds_the_spa() -> None:
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    assert re.search(
+        r"^FROM --platform=\$BUILDPLATFORM \S*node:\S+@sha256:[0-9a-f]{64} AS web$",
+        text,
+        re.MULTILINE,
+    ), (
+        "Dockerfile.backend needs a Node stage that builds the SPA, on the build platform and "
+        "on a base pinned by digest; without it setup.py's BuildWithWeb finds no web/dist and "
+        "the image serves no dashboard"
+    )
+    assert "npm run build --workspace=web" in text
+
+
+# ---------------------------------------------------------------------------
+# Which platform each stage builds on
+# ---------------------------------------------------------------------------
+#
+# The SPA is static files, the same on every architecture, so its stage builds once, on the
+# machine running the build (`--platform=$BUILDPLATFORM`). Built for arm64 under emulation, the
+# gateway image's SPA stage stalled in vite's chunk rendering for over 2 h 40 min, until the
+# release's image job hit its time limit. Every other stage's output runs in the image (a venv,
+# `node`, the runtime itself), so it is built for the target platform: a native arm64 image needs
+# arm64 binaries. For the same reason only the built files leave the SPA stage: the rest of it
+# (its `node`, the `node_modules` holding esbuild's binary) is built for the build machine.
+
+_WEB_DOCKERFILE = _REPO / "deploy" / "docker" / "Dockerfile.web"
+_BUILD_PLATFORM = "--platform=$BUILDPLATFORM"
+#: Each image's stage that builds the SPA, by its stage name.
+_SPA_STAGE = {"Dockerfile.backend": "web", "Dockerfile.web": "builder"}
+#: The one path another stage may take from the SPA stage: the built files.
+_SPA_OUTPUT = "/app/web/dist"
+
+
+def _instructions(text: str) -> list[list[str]]:
+    """Each instruction's words, with comment lines dropped and continued lines joined."""
+    kept = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return [line.split() for line in re.sub(r"\\\n\s*", " ", kept).splitlines() if line.strip()]
+
+
+def _froms(text: str) -> list[tuple[str, list[str], str]]:
+    """Each FROM as (stage name, its flags, its base). The builder folds stage names to lower
+    case, in a FROM and in a reference to one, so the name is read folded."""
+    found = []
+    for words in _instructions(text):
+        if words[0].upper() != "FROM":
+            continue
+        flags = [w for w in words[1:] if w.startswith("--")]
+        plain = [w for w in words[1:] if not w.startswith("--")]
+        name = plain[2].lower() if len(plain) > 2 and plain[1].upper() == "AS" else ""
+        found.append((name, flags, plain[0] if plain else ""))
+    return found
+
+
+def _taken(words: list[str]) -> list[tuple[str, str]]:
+    """Each (stage, path) an instruction takes from another stage: a ``COPY --from``'s sources,
+    and a ``RUN --mount``'s ``from=`` with its ``source`` (the stage's root when it names none)."""
+    flags = list(itertools.takewhile(lambda w: w.startswith("--"), words[1:]))
+    keyword = words[0].upper()
+    taken = []
+    for flag in flags:
+        if keyword == "COPY" and flag.startswith("--from="):
+            sources = words[1 + len(flags) : -1]
+            taken += [(flag.removeprefix("--from="), source) for source in sources]
+        elif keyword == "RUN" and flag.startswith("--mount="):
+            pairs = (option.partition("=") for option in flag.removeprefix("--mount=").split(","))
+            options = {key: value for key, _eq, value in pairs}
+            if "from" in options:
+                taken.append((options["from"], options.get("source", options.get("src", "/"))))
+    return taken
+
+
+def platform_problems(name: str, text: str) -> list[str]:
+    """What breaks the rule: the SPA stage, and only it, builds on the build platform, and
+    nothing but its built files leaves it."""
+    spa = _SPA_STAGE[name]
+    froms = _froms(text)
+    stages = [stage for stage, _flags, _base in froms]
+    problems = []
+    if stages.count(spa) != 1:
+        problems.append(f"{name}: no single stage named {spa!r} builds the SPA")
+    for stage, flags, base in froms:
+        if stage == spa:
+            if flags != [_BUILD_PLATFORM]:
+                problems.append(
+                    f"{name}: the SPA stage {spa!r} has {flags}, not [{_BUILD_PLATFORM}]"
+                )
+        elif flags:
+            problems.append(
+                f"{name}: stage {stage or base!r} has {flags}; it builds for the target"
+            )
+        if base.lower() == spa:
+            problems.append(f"{name}: stage {stage!r} is built FROM the SPA stage {spa!r}")
+    for words in _instructions(text):
+        for source, path in _taken(words):
+            ref = source.lower()
+            if ref.isdigit() and int(ref) < len(stages):
+                ref = stages[int(ref)]
+            if ref == spa and path != _SPA_OUTPUT:
+                problems.append(
+                    f"{name}: {words[0].upper()} takes {path!r} from the SPA stage {spa!r}; "
+                    f"only {_SPA_OUTPUT} leaves it"
+                )
+    return problems
+
+
+@pytest.mark.parametrize("dockerfile", [_DOCKERFILE, _WEB_DOCKERFILE], ids=lambda p: p.name)
+def test_only_the_spa_stage_builds_on_the_build_platform(dockerfile: Path) -> None:
+    text = dockerfile.read_text(encoding="utf-8")
+    assert len(_froms(text)) >= 2, f"{dockerfile.name}: read fewer than two FROMs; retarget"
+    assert platform_problems(dockerfile.name, text) == []
+
+
+def _planted(name: str, edits: tuple[tuple[str, str], ...]) -> str:
+    """*name*'s text with each edit made once: the first match of its pattern replaced by its
+    text, taken as written."""
+    text = (_DOCKERFILE if name == "Dockerfile.backend" else _WEB_DOCKERFILE).read_text(
+        encoding="utf-8"
+    )
+    for pattern, new in edits:
+        text, found = re.subn(pattern, lambda _m, new=new: new, text, count=1, flags=re.M)
+        assert found, f"the plant found no {pattern!r} in {name}: retarget it"
+    return text
+
+
+def _on(stage: str) -> str:
+    """The start of *stage*'s FROM line, up to its first flag or its base."""
+    return rf"^FROM (?=\S.* AS {stage}$)"
+
+
+def _flag_of(stage: str) -> str:
+    """The SPA *stage*'s FROM line up to its base: ``FROM --platform=$BUILDPLATFORM ``."""
+    return rf"^FROM {re.escape(_BUILD_PLATFORM)} (?=\S+ AS {stage}$)"
+
+
+#: Each plant: what it is, the image, its edits, and the text one of the check's problems must
+#: carry, so a plant refused for another reason than its own does not pass.
+_PLATFORM_PLANTS: tuple[tuple[str, str, tuple[tuple[str, str], ...], str], ...] = (
+    *(
+        (
+            f"backend {stage} on the build platform",
+            "Dockerfile.backend",
+            ((_on(stage), f"FROM {_BUILD_PLATFORM} "),),
+            f"stage {stage!r} has [{_BUILD_PLATFORM!r}]; it builds for the target",
+        )
+        for stage in ("base", "deps", "builder", "node-runtime", "runtime")
+    ),
+    (
+        "web runtime on the build platform",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM {_BUILD_PLATFORM} "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "backend runtime on a fixed platform",
+        "Dockerfile.backend",
+        ((_on("runtime"), "FROM --platform=linux/amd64 "),),
+        "stage 'runtime' has ['--platform=linux/amd64']; it builds for the target",
+    ),
+    (
+        "web runtime on a fixed platform",
+        "Dockerfile.web",
+        ((_on("runtime"), "FROM --platform=linux/arm64 "),),
+        "stage 'runtime' has ['--platform=linux/arm64']; it builds for the target",
+    ),
+    (
+        "web runtime with the flag on a continued line",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM \\\n    {_BUILD_PLATFORM} \\\n    "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "web runtime with the flag after a comment line in its continuation",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM \\\n    # the build machine's\n    {_BUILD_PLATFORM} "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "backend spa without the flag",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "),),
+        "the SPA stage 'web' has [], not",
+    ),
+    (
+        "web spa without the flag",
+        "Dockerfile.web",
+        ((_flag_of("builder"), "FROM "),),
+        "the SPA stage 'builder' has [], not",
+    ),
+    (
+        "backend spa on a fixed platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM --platform=linux/amd64 "),),
+        "the SPA stage 'web' has ['--platform=linux/amd64'], not",
+    ),
+    (
+        "web spa with a second flag",
+        "Dockerfile.web",
+        ((_on("builder"), "FROM --platform=linux/amd64 "),),
+        f"the SPA stage 'builder' has ['--platform=linux/amd64', {_BUILD_PLATFORM!r}], not",
+    ),
+    (
+        "a stage built on the spa",
+        "Dockerfile.backend",
+        ((r"^FROM deps AS builder$", "FROM web AS builder"),),
+        "stage 'builder' is built FROM the SPA stage 'web'",
+    ),
+    (
+        "a stage built on the spa, named in capitals",
+        "Dockerfile.backend",
+        ((r"^FROM deps AS builder$", "FROM WEB AS builder"),),
+        "stage 'builder' is built FROM the SPA stage 'web'",
+    ),
+    (
+        "no spa stage: renamed, and off the build platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "), (r" AS web$", " AS spa")),
+        "no single stage named 'web' builds the SPA",
+    ),
+    (
+        "backend spa named in capitals, off the build platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "), (r" AS web$", " AS WEB")),
+        "the SPA stage 'web' has [], not",
+    ),
+    (
+        "two spa stages",
+        "Dockerfile.backend",
+        ((r"^(?=FROM deps AS builder$)", f"FROM {_BUILD_PLATFORM} scratch AS web\n"),),
+        "no single stage named 'web' builds the SPA",
+    ),
+    (
+        "backend runtime copies node from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^COPY --from=node-runtime /usr/local/bin/node ",
+                "COPY --from=web /usr/local/bin/node ",
+            ),
+        ),
+        "COPY takes '/usr/local/bin/node' from the SPA stage 'web'",
+    ),
+    (
+        "backend runtime copies esbuild from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=builder /opt/venv /opt/venv$)",
+                "COPY --from=web /app/node_modules/@esbuild /opt/esbuild\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules/@esbuild' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=web /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa, named in capitals",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=WEB /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa by its index",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=2 /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "web runtime copies the whole of /app",
+        "Dockerfile.web",
+        ((r"^COPY --from=builder /app/web/dist ", "COPY --from=builder /app "),),
+        "COPY takes '/app' from the SPA stage 'builder'",
+    ),
+    (
+        "web runtime copies node beside the built files",
+        "Dockerfile.web",
+        (
+            (
+                r"^COPY --from=builder /app/web/dist ",
+                "COPY --from=builder /app/web/dist /usr/local/bin/node ",
+            ),
+        ),
+        "COPY takes '/usr/local/bin/node' from the SPA stage 'builder'",
+    ),
+    (
+        "backend builder mounts /app from the spa",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,source=/app,target=/s "),),
+        "RUN takes '/app' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder mounts /app from the spa, by src=",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,src=/app,target=/s "),),
+        "RUN takes '/app' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder mounts the spa stage's root",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,target=/s "),),
+        "RUN takes '/' from the SPA stage 'web'",
+    ),
+)
+
+
+def test_the_platform_check_refuses_each_plant(subtests: object) -> None:
+    assert len(_PLATFORM_PLANTS) == 29, "a plant was dropped from the table"
+    for label, name, edits, expect in _PLATFORM_PLANTS:
+        with row(subtests, plant=label):
+            problems = platform_problems(name, _planted(name, edits))
+            assert any(
+                expect in problem for problem in problems
+            ), f"{label}: no problem says {expect!r}; the check said {problems}"
+
+
+def test_the_two_spa_stages_start_from_the_same_line() -> None:
+    """One SPA recipe, two images: the FROM and the pin comment above it are the same in both,
+    but for the stage's name."""
+
+    def head(path: Path, stage: str) -> str:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        at = next(
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("FROM ") and line.endswith(f" AS {stage}")
+        )
+        start = at
+        while start > 0 and lines[start - 1].startswith(("#   linux/", "# node:")):
+            start -= 1
+        return "\n".join(lines[start : at + 1]).removesuffix(f" AS {stage}")
+
+    backend = head(_DOCKERFILE, "web")
+    web = head(_WEB_DOCKERFILE, "builder")
+    assert backend.count("\n") >= 3, f"read too little above the backend's SPA FROM: {backend!r}"
+    assert backend == web
+
+
+def test_dockerfile_copies_the_spa_in_before_the_install_that_grafts_it() -> None:
+    """Order is the whole contract: ``BuildWithWeb`` reads ``web/dist`` DURING ``pip install``."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    copy_at = text.find("COPY --from=web /app/web/dist ./web/dist")
+    assert copy_at != -1, "the built SPA must land at ./web/dist, where setup.py looks first"
+    install_at = text.find("pip install --no-cache-dir --no-deps --no-build-isolation .")
+    assert install_at != -1
+    assert copy_at < install_at, (
+        "the SPA is copied AFTER the install that would have grafted it, so the installed "
+        "package carries no static/dist — the image would serve healthz 200 and no dashboard"
+    )
+
+
+def test_spa_stage_matches_the_web_images_recipe() -> None:
+    """One SPA build recipe, two images — a drift here means two different dashboards.
+
+    The files from outside ``web/`` that the build imports are not listed here:
+    ``test_web_image_stage_parity.py`` holds each stage to exactly the set the build reads.
+    """
+    web_dockerfile = (_REPO / "deploy" / "docker" / "Dockerfile.web").read_text(encoding="utf-8")
+    backend = _DOCKERFILE.read_text(encoding="utf-8")
+    for line in (
+        "COPY package.json package-lock.json ./",
+        "COPY web/package.json web/",
+        "COPY scripts/install_git_hooks.sh scripts/",
+        "RUN npm ci --workspace=web --prefer-offline",
+        "RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web",
+    ):
+        assert line in web_dockerfile, f"{line!r} moved in Dockerfile.web — retarget this test"
+        assert line in backend, f"Dockerfile.backend's web stage is missing {line!r}"
+
+
+def test_spa_stage_installs_with_the_hook_script_in_place() -> None:
+    """Membership alone passed while the stage was unbuildable — this COPY is ORDERED.
+
+    It answers a hard `npm` failure rather than a nicety (#3362 measured it against
+    Dockerfile.web): the root ``postinstall`` runs during ``npm ci`` and exits 2 without
+    ``scripts/``, so a COPY placed after the command it feeds is exactly as broken as a missing
+    one. The files the build imports from outside ``web/`` are ordered before the build by
+    ``test_web_image_stage_parity.py``.
+    """
+    backend = _DOCKERFILE.read_text(encoding="utf-8")
+    copy_at = backend.find("COPY scripts/install_git_hooks.sh scripts/")
+    install_at = backend.find("RUN npm ci --workspace=web")
+    assert copy_at != -1, "web stage is missing the COPY of scripts/install_git_hooks.sh"
+    assert install_at != -1, "`RUN npm ci --workspace=web` moved — retarget this test"
+    assert copy_at < install_at, (
+        "the hook script is copied after `npm ci`, so its postinstall finds no script and the SPA "
+        "stage fails before vite — the image would carry no dashboard"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The workflow
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# The log dump must not print the session token into a public CI log
+# ---------------------------------------------------------------------------
+#
+# The container's own stdout carries a live session token: `gateway.py` mints one at startup
+# and `dashboard/origin.py`'s `format_dashboard_urls` prints the authenticated dashboard URL
+# (`   http://localhost:10000?token=…`). `_dump_container_logs` then echoes 40 lines of that
+# stdout into a GitHub Actions log — on a PUBLIC repo, on every push to `main` touching
+# `README.md` / `web/**` / the Dockerfile, and on a job whose greenness means nobody reads it.
+#
+# These rails drive the print path with `_docker` faked, so they need no Docker daemon and no
+# real credential. They deliberately assert on what reaches stdout rather than grepping the
+# source for a call: the bug being fixed was NOT a missing pattern (`_TOKEN_RE` has been in
+# this file all along, to extract the token) — it was a print site that did not use one, and
+# only driving the print site can tell those two apart.
+
+
+def _fake_docker_logs(
+    monkeypatch: pytest.MonkeyPatch, *, stdout: str = "", stderr: str = ""
+) -> None:
+    """Make `_docker("logs", …)` return a canned tail, so no daemon is needed."""
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        assert args[0] == "logs", f"unexpected docker call {args!r}"
+        return subprocess.CompletedProcess(
+            args=list(args), returncode=0, stdout=stdout, stderr=stderr
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+
+def test_log_dump_redacts_the_startup_banners_session_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The banner line is the measured leak: its token must not reach the public log."""
+    banner = (
+        "PersonalClaw gateway starting…\n"
+        "Dashboard:\n"
+        f"   http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+    )
+    _fake_docker_logs(monkeypatch, stdout=banner)
+
+    smoke._dump_container_logs("pc-smoke")
+    out = capsys.readouterr().out
+
+    assert _SYNTHETIC_TOKEN not in out, (
+        "the container's session token reached stdout, which in CI is a world-readable log "
+        "on a public repo"
+    )
+    assert "?token=<redacted>" in out, (
+        "the token span must be replaced by a marker, not deleted — the dump exists so a "
+        "reader can see what the container said, including THAT a token was printed"
+    )
+    # The rest of the tail, and the fold that makes it readable, must survive intact.
+    assert "PersonalClaw gateway starting…" in out
+    assert "http://localhost:10000" in out
+    assert "::group::" in out and "::endgroup::" in out
+
+
+def test_log_dump_leaves_a_tail_with_no_token_byte_identical(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Negative control: a redactor that mangles ordinary log lines is a different bug."""
+    tail = (
+        "PersonalClaw gateway starting…\n"
+        "12:00:00 WARNING personalclaw.gateway: Background session starting\n"
+        "GET /api/healthz 200\n"
+    )
+    _fake_docker_logs(monkeypatch, stdout=tail, stderr="tini: reaped 1 child\n")
+
+    smoke._dump_container_logs("pc-smoke")
+    out = capsys.readouterr().out
+
+    assert out == (
+        "::group::container logs (last 40 lines, session tokens redacted)\n"
+        f"{tail}tini: reaped 1 child\n"
+        "\n"
+        "::endgroup::\n"
+    ), "text carrying no token must pass through unchanged, byte for byte"
+    assert "<redacted>" not in out
+
+
+def test_redaction_covers_both_query_separators_and_every_occurrence() -> None:
+    """`?token=` and `&token=` are the two shapes `_TOKEN_RE` claims; one pass must do both.
+
+    Two occurrences, not one: `re.sub` scrubs every match, and a banner plus an echoed
+    request line can easily put the same token on the tail twice.
+    """
+    text = (
+        f"   http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+        f"   http://localhost:10000/?foo=1&token={_SYNTHETIC_TOKEN}&bar=2\n"
+    )
+    scrubbed = smoke.redact_secrets(text)
+
+    assert _SYNTHETIC_TOKEN not in scrubbed
+    assert scrubbed == (
+        "   http://localhost:10000?token=<redacted>\n"
+        "   http://localhost:10000/?foo=1&token=<redacted>&bar=2\n"
+    ), "the separator and the neighbouring query params must survive; only the value goes"
+
+
+def test_mint_token_failure_scrubs_the_stderr_it_echoes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other site that echoes captured container output into the same public log.
+
+    `_mint_token` only reaches its failure message when `_TOKEN_RE` found nothing in
+    **stdout** — so stdout is provably clean there — but it echoes **stderr** too, and stderr
+    is never searched. Same log, same exposure, so the same scrub.
+    """
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=list(args),
+            returncode=1,
+            stdout="no url here\n",
+            stderr=f"traceback printed the url http://localhost:10000?token={_SYNTHETIC_TOKEN}\n",
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._mint_token("pc-smoke")
+    assert excinfo.value.code == 1
+
+    captured = capsys.readouterr()
+    assert _SYNTHETIC_TOKEN not in captured.err + captured.out
+    assert "token=<redacted>" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# The RELEASE workflow — the PR rail's assertion had no release-time equivalent
+# ---------------------------------------------------------------------------
+#
+# 🔴 THE MEASURED GAP. `release.yml`'s gateway smoke runs `personalclaw --version` with
+# `--entrypoint ''`, so the gateway never starts: it proves the binary exists, not that the
+# product works. Measured 2026-09-23 in containers against the PUBLISHED 0.1.3 image:
+# `/api/healthz` → 200 `{"status": "ok"}` while `GET /` → **503** with the
+# "Build the dashboard" placeholder and ZERO asset references — and the same version installed
+# via `uv tool install personalclaw` served the real shell with a 6.9 MB bundle. So the wheel
+# could not ship broken (`scripts/verify_wheel.py` is a release gate) and the image could.
+#
+# These rails hold the closing of that asymmetry in place. They assert the WIRING (a gate that
+# does not block is not a gate) and, below, the two discriminators that make its green mean
+# something — both drivable with no Docker daemon.
+
+
+# ---------------------------------------------------------------------------
+# The two discriminators, driven with no daemon
+# ---------------------------------------------------------------------------
+#
+# A status is not the assertion. The SPA-less image answers `/` with a real HTTP response and
+# `/api/healthz` with 200 `ok`, and the SPA's index.html fallback answers ANY unknown path 200.
+# So both discriminators are pinned here against the page the product actually serves —
+# imported, not re-typed, so a reworded placeholder cannot leave these green.
+
+
+def _fake_http(
+    monkeypatch: pytest.MonkeyPatch,
+    routes: dict[str, tuple[int, str, str]],
+    calls: list[tuple[str, str]] | None = None,
+) -> None:
+    """Route `_get` by URL suffix match, so no container and no daemon are needed.
+
+    *calls*, when given, records each request as ``(url, bearer token)``.
+    """
+
+    def _fake(url: str, *, token: str = "") -> tuple[int, str, str]:
+        if calls is not None:
+            calls.append((url, token))
+        for suffix, response in routes.items():
+            if suffix in url:
+                return response
+        return 404, "application/octet-stream", "not found"
+
+    monkeypatch.setattr(smoke, "_get", _fake)
+
+
+def test_the_shell_assertion_rejects_the_page_an_spa_less_image_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The measured 503 placeholder, at its real status AND at 200.
+
+    Both, because the status is not what makes it wrong: a 503 is a valid HTTP response and a
+    placeholder served 200 is the same non-dashboard. The assertion has to reject the BODY.
+    """
+    for status in (503, 200):
+        _fake_http(monkeypatch, {"/?token=": (status, "text/html", _UNBUNDLED_PAGE)})
+        with pytest.raises(SystemExit) as excinfo:
+            smoke._assert_shell("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+        assert excinfo.value.code == 1, f"status {status} must FAIL, not be unmeasurable"
+
+
+def test_the_placeholder_page_carries_neither_discriminator() -> None:
+    """Why the rail above can distinguish them at all — and it is not a given.
+
+    `_UNBUNDLED_PAGE` tells a reader to run `cd web && npm install`, which is impossible inside
+    the image; if it ever grew a root div or a script tag, `_assert_shell` would wave it
+    through at 200. This is the vacuity floor for the test above, in the same file.
+    """
+    assert smoke._SHELL_MARKER not in _UNBUNDLED_PAGE
+    assert not smoke._SCRIPT_RE.findall(_UNBUNDLED_PAGE)
+
+
+def test_the_shell_assertion_accepts_a_real_shell_and_returns_its_first_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Positive control: a negated assertion that cannot pass is indistinguishable from a bug."""
+    shell = (
+        f"<!doctype html><html><body>{smoke._SHELL_MARKER}></div>"
+        '<script type="module" src="/assets/index-abc123.js"></script></body></html>'
+    )
+    _fake_http(monkeypatch, {"/?token=": (200, "text/html", shell)})
+    assert smoke._assert_shell("http://127.0.0.1:1", _SYNTHETIC_TOKEN) == "/assets/index-abc123.js"
+
+
+def test_the_asset_assertion_rejects_the_shell_served_in_place_of_a_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """200 is not enough, and this is exactly why: the fallback answers with HTML."""
+    _fake_http(monkeypatch, {"/assets/": (200, "text/html; charset=utf-8", "<!doctype html>")})
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+    assert excinfo.value.code == 1
+
+
+def test_the_asset_assertion_is_unmeasurable_when_a_fabricated_asset_is_also_javascript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A catch-all that serves everything as JS makes the check above pass for any input.
+
+    That is not a green and not a product failure — it is an unmeasurable run (exit 2), and
+    the distinction is the difference between "the image is fine" and "this rail is vacuous".
+    """
+    _fake_http(monkeypatch, {"/assets/": (200, "text/javascript", "console.log(1)")})
+    with pytest.raises(smoke.Unmeasurable):
+        smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+
+
+def test_the_asset_assertion_accepts_a_real_bundle_with_the_control_firing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The passing shape, end to end: a JS bundle plus a fabricated path that 404s."""
+    _fake_http(
+        monkeypatch,
+        {
+            "/assets/index-abc123.js": (200, "text/javascript", "export const a=1"),
+            "/assets/single-container-control-": (404, "application/octet-stream", "not found"),
+        },
+    )
+    smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+
+
+# ---------------------------------------------------------------------------
+# The one-liner survives a crash, and the image keeps work on the volume
+# ---------------------------------------------------------------------------
+#
+# Measured on the image as uid 10001: after an out-of-memory kill the dashboard
+# stayed down until someone ran `docker start`, because the README command set no restart
+# policy; and only `/data` is a volume while the workspace root defaulted to a folder in the
+# container's home directory outside it, so the default chat workspace and every project
+# folder made at the picker's starting point were gone after `docker rm` + `docker run`.
+
+
+def _runtime_stage(text: str) -> str:
+    """The Dockerfile's `runtime` stage — the one `--target runtime` builds and ships."""
+    start = text.index("AS runtime")
+    return text[start:]
+
+
+def test_readme_command_comes_back_by_itself_after_a_crash() -> None:
+    """`unless-stopped`: an OOM kill or a Docker restart must not leave the dashboard dead."""
+    argv, _image = smoke.retarget(smoke.readme_docker_run(_README), None, "n", "v")
+    assert "--restart" in argv, f"the README command sets no restart policy: {argv}"
+    assert argv[argv.index("--restart") + 1] == "unless-stopped"
+
+
+def test_the_image_defaults_the_workspace_onto_its_one_volume() -> None:
+    """The workspace root must be under the image's VOLUME, so the one-liner needs no extra flag.
+
+    Parsed from the runtime stage rather than grepped from the file: a `PERSONALCLAW_WORKSPACE`
+    set in the builder stage, or in a comment, would not reach the shipped image.
+    """
+    runtime = _runtime_stage(_DOCKERFILE.read_text(encoding="utf-8"))
+    volumes = re.findall(r'^VOLUME \["([^"]+)"\]', runtime, re.MULTILINE)
+    assert volumes == ["/data"], volumes
+    env = dict(re.findall(r"\b(PERSONALCLAW_[A-Z_]+)=(\S+)", runtime))
+    assert env.get("PERSONALCLAW_HOME") == "/data"
+    workspace = env.get("PERSONALCLAW_WORKSPACE", "")
+    assert workspace.startswith("/data/"), (
+        f"PERSONALCLAW_WORKSPACE={workspace!r} in the runtime stage — the workspace must live on "
+        "the /data volume or it is lost on `docker rm` + `docker run`"
+    )
+
+
+def test_the_image_workspace_is_the_one_compose_sets_and_the_inventory_claims() -> None:
+    """One path, three places that must agree: the image, compose, and the home inventory.
+
+    Compose keeps its own copy on purpose — the documented rollback runs today's compose.yaml
+    against an older image tag that does not carry the default.
+    """
+    from personalclaw.durability.inventory import claim_for
+
+    runtime = _runtime_stage(_DOCKERFILE.read_text(encoding="utf-8"))
+    image = dict(re.findall(r"\b(PERSONALCLAW_[A-Z_]+)=(\S+)", runtime))["PERSONALCLAW_WORKSPACE"]
+    compose = yaml.safe_load((_REPO / "deploy/compose/compose.yaml").read_text(encoding="utf-8"))
+    env = compose["services"]["personalclaw-gateway"]["environment"]
+    assert env["PERSONALCLAW_WORKSPACE"] == image
+    # A workspace the inventory did not claim would read as an unclaimed path in the Doctor and
+    # would be left out of snapshots.
+    assert claim_for(image.removeprefix(env["PERSONALCLAW_HOME"]).strip("/")) is not None
+
+
+# ---------------------------------------------------------------------------
+# Steps 5 and 6: the image can offer its default chat model
+# ---------------------------------------------------------------------------
+
+
+def _fake_probe(monkeypatch: pytest.MonkeyPatch, report: dict, calls: list | None = None) -> None:
+    """`docker exec … python -I -c <probe>` answering with *report*, no daemon needed."""
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        if calls is not None:
+            calls.append(args)
+        return subprocess.CompletedProcess(
+            args=list(args), returncode=0, stdout=json.dumps(report) + "\n", stderr=""
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+
+_RECORD_PATH = (
+    "/opt/venv/lib/python3.13/site-packages/personalclaw/apps/native/bundled-chat/"
+    "bundled-model-signoff.txt"
+)
+
+
+def test_the_record_step_refuses_the_image_that_shipped_without_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """🔑 The measured image: the installed app looked for its record and found nothing."""
+    _fake_probe(
+        monkeypatch,
+        {
+            "record": {"path": _RECORD_PATH, "is_symlink": False, "is_file": False},
+            "declaration": None,
+            "declaration_error": "",
+            "licence": None,
+        },
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_installed_record("pc-smoke")
+    assert excinfo.value.code == 1
+
+
+def test_the_record_step_runs_the_shared_probe_inside_the_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Positive control, and the wiring: the probe's SOURCE goes to the container's own python.
+
+    `-I` keeps the container's cwd and `PYTHON*` variables out of the import path, so the answer
+    is the image's site-packages; the source is the file `verify_wheel.py` also runs, so the two
+    gates cannot drift into two readings of one question.
+    """
+    calls: list = []
+    _fake_probe(
+        monkeypatch,
+        {
+            "record": {"path": _RECORD_PATH, "is_symlink": False, "is_file": True},
+            "declaration": {"model_id": "unsloth/x", "licence": "Apache-2.0", "size_bytes": 1},
+            "declaration_error": "",
+            "licence": {"permitted": True, "reason": "ok"},
+        },
+        calls,
+    )
+    smoke._assert_installed_record("pc-smoke")
+    assert "signed off under Apache-2.0" in capsys.readouterr().out
+    (args,) = calls
+    assert args[:5] == ("exec", "pc-smoke", "python", "-I", "-c")
+    assert args[5] == (_REPO / "scripts" / "installed_bundled_model_probe.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_offer_step_refuses_a_fresh_volume_with_no_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-200, offer null: what the validator measured on three fresh boots."""
+    body = json.dumps({"needs_model": True, "chat_download_offer": None})
+    _fake_http(monkeypatch, {"/api/onboarding": (200, "application/json", body)})
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    assert excinfo.value.code == 1
+
+
+def test_the_offer_step_accepts_an_offer(monkeypatch: pytest.MonkeyPatch) -> None:
+    offer = {"provider": "bundled-chat", "model": "SmolLM2", "bytes": 144_811_072}
+    body = json.dumps({"needs_model": True, "chat_download_offer": offer})
+    calls: list[tuple[str, str]] = []
+    _fake_http(monkeypatch, {"/api/onboarding": (200, "application/json", body)}, calls)
+    smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    # The API call carries the token in the header; only the browser entry link is a URL.
+    assert calls == [("http://127.0.0.1:1/api/onboarding", _SYNTHETIC_TOKEN)]
+
+
+# ---------------------------------------------------------------------------
+# Step 9: seven API endpoints answer, signed in, with the JSON their handlers answer
+# ---------------------------------------------------------------------------
+
+
+#: What each endpoint's handler answers on a fresh volume, trimmed to the keys step 9 reads and a
+#: neighbour or two.
+_GOOD_BODIES: dict[str, object] = {
+    "/api/system": {"hostname": "smoke", "version": "0.0.0", "cpu_count": 2},
+    "/api/auth-status": {"mode": "local_token", "bind_host": "0.0.0.0", "valid": True},
+    "/api/providers": {"providers": [{"name": "personalclaw-filesystem", "enabled": True}]},
+    "/api/models/active": {"use_cases": {"chat": []}, "revisions": {"chat": "r0"}},
+    "/api/security/credentials": {"backend": "file", "pending": 0, "verified": True},
+    "/api/sessions": {"sessions": [], "total": 0, "has_more": False},
+    "/api/agents": {"agents": [], "default_agent": "default"},
+}
+
+
+def _json_answers(**overrides: tuple[int, str, str]) -> dict[str, tuple[int, str, str]]:
+    """Every endpoint the step reads answering its good body, except those in *overrides*."""
+    routes = {
+        path: (200, "application/json; charset=utf-8", json.dumps(_GOOD_BODIES[path]))
+        for path in smoke._API_ENDPOINTS
+    }
+    routes.update(overrides)
+    return routes
+
+
+#: Stands for the endpoint's own good body in a row below, so that row breaks one check only.
+_ITS_BODY = "<the endpoint's good body>"
+
+
+#: What a broken endpoint answers, each with the text its failure must quote. A route that is gone
+#: answers 404 signed in, and a refusal signed in is a failure: the check before this step counted
+#: the tokenless 401 or 403 as an answer, and so passed two routes that no longer existed. Each
+#: content-type row serves the endpoint's good body, so only the content-type check can refuse it;
+#: each parse row serves a JSON content type, so only the parse can.
+_BROKEN_ANSWERS: dict[str, tuple[tuple[int, str, str], str]] = {
+    "an error": ((500, "application/json", '{"error": "boom"}'), "boom"),
+    "a route that is gone": (
+        (404, "application/json", '{"error": {"code": "not_found"}}'),
+        "not_found",
+    ),
+    "a refusal signed in, 401": (
+        (401, "application/json", '{"error": {"code": "unauthorized"}}'),
+        "unauthorized",
+    ),
+    "a refusal signed in, 403": (
+        (403, "application/json", '{"error": {"code": "forbidden"}}'),
+        "forbidden",
+    ),
+    "a page": ((200, "text/html; charset=utf-8", "<!doctype html>"), "<!doctype html>"),
+    "its JSON under a page's content type": (
+        (200, "text/html; charset=utf-8", _ITS_BODY),
+        "content-type 'text/html; charset=utf-8'",
+    ),
+    "its JSON under text/plain": ((200, "text/plain", _ITS_BODY), "content-type 'text/plain'"),
+    "its JSON under no content type": ((200, "", _ITS_BODY), "content-type ''"),
+    "a page under a JSON content type": (
+        (200, "application/json", "<!doctype html>"),
+        "is not JSON",
+    ),
+    "an empty body": ((200, "application/json", ""), "is not JSON"),
+    "an error quoting a sign-in link": (
+        (500, "text/plain", f"see http://localhost:10000?token={_SYNTHETIC_TOKEN}"),
+        "?token=<redacted>",
+    ),
+    "null": ((200, "application/json", "null"), "not the shape its handler answers"),
+    "an empty array": ((200, "application/json", "[]"), "not the shape its handler answers"),
+    "an empty object": ((200, "application/json", "{}"), "not the shape its handler answers"),
+    "the not_found envelope at 200": (
+        (200, "application/json", '{"error": {"code": "not_found"}}'),
+        "not the shape its handler answers",
+    ),
+}
+
+
+def test_the_api_step_refuses_any_endpoint_that_does_not_answer_its_json(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert len(smoke._API_ENDPOINTS) == 7, "an endpoint was dropped from step 9"
+    assert len(_BROKEN_ANSWERS) == 15, "a broken answer was dropped from the table"
+    rows = [(path, kind) for path in smoke._API_ENDPOINTS for kind in _BROKEN_ANSWERS]
+    assert len(rows) == 105, "a row was dropped"
+    for path, kind in rows:
+        with row(subtests, endpoint=path, answer=kind):
+            (status, ctype, body), quoted = _BROKEN_ANSWERS[kind]
+            if body == _ITS_BODY:
+                body = json.dumps(_GOOD_BODIES[path])
+            _fake_http(monkeypatch, _json_answers(**{path: (status, ctype, body)}))
+            capsys.readouterr()
+            with pytest.raises(SystemExit) as excinfo:
+                smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+            assert excinfo.value.code == 1, f"{path} answering {kind} passed"
+            failure = capsys.readouterr().err
+            assert path in failure and quoted in failure, failure
+            # The excerpt goes to a public log: a token in the body reaches it redacted.
+            assert _SYNTHETIC_TOKEN not in failure, failure
+
+
+#: A value no failure may print: the shape check names keys and kinds only.
+_A_VALUE = "a-value-never-printed"
+
+
+#: Each endpoint answering 200 JSON with the one thing step 9 reads about it broken, and the text
+#: its failure must quote: the key or the kind, never a value.
+_WRONG_SHAPES: dict[str, tuple[object, str]] = {
+    "/api/system": ({"hostname": _A_VALUE, "cpu_count": 2}, "no `version`"),
+    "/api/auth-status": ({"mode": _A_VALUE, "valid": False}, "`valid` is a boolean, want true"),
+    "/api/providers": (
+        {"providers": [], "error": _A_VALUE},
+        "`providers` is an empty array, want an array that lists something",
+    ),
+    "/api/models/active": ({"use_cases": [_A_VALUE]}, "`use_cases` is an array, want an object"),
+    "/api/security/credentials": (
+        {"backend": _A_VALUE, "pending_keys": [_A_VALUE]},
+        "no `verified`",
+    ),
+    "/api/sessions": ({"sessions": {"key": _A_VALUE}}, "`sessions` is an object, want an array"),
+    "/api/agents": ({"agents": _A_VALUE}, "`agents` is a string, want an array"),
+}
+
+
+def test_the_api_step_refuses_each_endpoint_answering_another_shape_and_prints_no_value(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Any JSON responder answers 200 with JSON, so each endpoint's shape is checked: its kind and
+    the keys step 9 reads. `/api/auth-status` answers `valid: true` only to a request the sign-in
+    let through. The failure names the key, so a credential-store answer prints none of its own."""
+    assert set(_WRONG_SHAPES) == set(smoke._API_ENDPOINTS), "an endpoint has no wrong-shape row"
+    for path, (body, quoted) in _WRONG_SHAPES.items():
+        with row(subtests, endpoint=path):
+            answer = (200, "application/json", json.dumps(body))
+            _fake_http(monkeypatch, _json_answers(**{path: answer}))
+            capsys.readouterr()
+            with pytest.raises(SystemExit) as excinfo:
+                smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+            assert excinfo.value.code == 1, f"{path} answering {body!r} passed"
+            failure = capsys.readouterr().err
+            assert path in failure and quoted in failure, failure
+            assert _A_VALUE not in failure, failure
+
+
+def test_each_shape_is_what_its_handler_answers_on_a_fresh_home(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction. The shapes are read off the handlers by hand, and a shape a handler
+    does not answer fails every release with nothing on the PR to say so. So the handler the
+    gateway's router serves at each path answers here, on this test's own fresh home, and its
+    answer must be the shape.
+
+    Three stand-ins keep it inside this process. The metrics probes (`ps`, `netstat`) answer the
+    static half they start from, which carries the version. The provider registry is a fresh one
+    with nothing installed, which the platform's own tools are listed beside. The conversation log
+    is a real one with no conversations in it.
+    """
+    from personalclaw.dashboard import handlers_system
+    from personalclaw.history import ConversationLog
+    from personalclaw.providers import routes as provider_routes
+    from personalclaw.providers.registry import ProviderRegistry
+
+    monkeypatch.setattr(
+        handlers_system,
+        "_collect_system_metrics",
+        lambda: dict(handlers_system._get_static_system_info()),
+    )
+    monkeypatch.setattr(handlers_system, "_metrics_cache", {})
+    monkeypatch.setattr(provider_routes, "get_provider_registry", ProviderRegistry)
+    app = web.Application()
+    app["state"] = SimpleNamespace(conversation_log=ConversationLog(base_dir=tmp_path / "chats"))
+
+    assert len(smoke._API_ENDPOINTS) == 7, "an endpoint was dropped from step 9"
+    for path, wants in smoke._API_ENDPOINTS.items():
+        with row(subtests, endpoint=path):
+            handler = get_handler(path)
+            assert handler is not None, f"the gateway serves no GET {path}"
+            response = asyncio.run(handler(make_mocked_request("GET", path, app=app)))
+            assert response.status == 200, f"{path} answered {response.status}"
+            failure = smoke.shape_failure(json.loads(response.body), wants)
+            assert failure == "", f"{path} answers JSON that is {failure}"
+
+
+def test_the_api_step_reads_every_endpoint_signed_in(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert set(_GOOD_BODIES) == set(smoke._API_ENDPOINTS)
+    calls: list[tuple[str, str]] = []
+    _fake_http(monkeypatch, _json_answers(), calls)
+    smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    assert calls == [
+        (f"http://127.0.0.1:1{path}", _SYNTHETIC_TOKEN) for path in smoke._API_ENDPOINTS
+    ]
+    out = capsys.readouterr().out
+    assert all(f"OK: {path} → 200 JSON" in out for path in smoke._API_ENDPOINTS), out
+
+
+def test_the_teardown_stops_the_container_before_removing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The README command now carries `--restart unless-stopped`, and the smoke runs it verbatim.
+
+    An explicit stop is what that policy honours. Measured on Finch: with only `rm -f`, the
+    container outlived a run that printed PASS, still serving the README's port with its volume
+    attached, so the next run could not measure at all. Driven through `main()` with the daemon
+    faked, asserting on the calls the teardown actually makes.
+    """
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "```bash\ndocker run -d --name personalclaw --restart unless-stopped "
+        "-p 127.0.0.1:19999:10000 -v personalclaw_home:/data img:1\n```\n"
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args=list(args), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(smoke, "_docker", fake_docker)
+    monkeypatch.setattr(smoke, "_require_free_port", lambda port: None)
+    monkeypatch.setattr(
+        smoke.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="", stderr=""),
+    )
+    for step in (
+        "_await_healthz",
+        "_assert_asset",
+        "_assert_download_offer",
+        "_assert_api_endpoints",
+    ):
+        monkeypatch.setattr(smoke, step, lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "_mint_token", lambda name: _SYNTHETIC_TOKEN)
+    monkeypatch.setattr(smoke, "_assert_shell", lambda base, token: "/assets/x.js")
+    monkeypatch.setattr(smoke, "_assert_installed_record", lambda name: None)
+    monkeypatch.setattr(smoke, "_assert_login_shell_finds_personalclaw", lambda name: None)
+    monkeypatch.setattr(smoke, "_assert_login_shell_finds_the_agent_clis", lambda *a: None)
+    monkeypatch.setattr(sys, "argv", ["smoke", "--readme", str(readme), "--image", "local:ci"])
+
+    assert smoke.main() == 0
+    teardown = [c[:2] if c[0] == "volume" else c[:1] for c in calls if c[0] != "version"]
+    assert teardown == [("logs",), ("stop",), ("rm",), ("volume", "rm")], calls
+
+
+# ---------------------------------------------------------------------------
+# Step 7: a login shell in the image finds the image's `personalclaw`
+# ---------------------------------------------------------------------------
+
+
+def _fake_login_shell(
+    monkeypatch: pytest.MonkeyPatch, *, returncode: int, stdout: str
+) -> list[tuple[str, ...]]:
+    calls: list[tuple[str, ...]] = []
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(list(args), returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+    return calls
+
+
+def test_the_login_shell_step_resolves_the_name_through_a_login_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_login_shell(monkeypatch, returncode=0, stdout="/opt/venv/bin/personalclaw\n")
+    smoke._assert_login_shell_finds_personalclaw("c")
+    # A LOGIN shell, and the NAME resolved on its PATH: an absolute path would pass through
+    # the very PATH reset this step exists to catch.
+    assert calls == [("exec", "c", "bash", "-lc", "command -v personalclaw")]
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout",
+    [
+        (1, ""),  # the defect: /etc/profile dropped /opt/venv/bin, nothing resolves
+        (0, "/usr/local/bin/personalclaw\n"),  # something else answers to the name
+    ],
+)
+def test_the_login_shell_step_fails_unless_it_finds_the_images_own(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
+) -> None:
+    _fake_login_shell(monkeypatch, returncode=returncode, stdout=stdout)
+    with pytest.raises(SystemExit) as exc:
+        smoke._assert_login_shell_finds_personalclaw("c")
+    assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 8: a login shell in the image finds each agent CLI the image bundles
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_commands_are_what_the_locks_own_tools_declare() -> None:
+    lock = {
+        "packages": {
+            "": {"dependencies": {"@scope/adapter": "1.0.0", "cli": "2.0.0"}},
+            "node_modules/@scope/adapter": {"version": "1.0.0", "bin": {"adapter": "x.js"}},
+            "node_modules/cli": {"version": "2.0.0", "bin": {"cli": "a.js", "cli-two": "b.js"}},
+            "node_modules/dep": {"version": "3.0.0", "bin": {"dep": "c.js"}},
+        }
+    }
+    assert smoke.agent_commands(json.dumps(lock)) == ["adapter", "cli", "cli-two"]
+
+
+def test_the_agent_cli_step_resolves_each_command_through_a_login_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_login_shell(
+        monkeypatch, returncode=0, stdout="/usr/local/bin/adapter\n/usr/local/bin/cli\n"
+    )
+    smoke._assert_login_shell_finds_the_agent_clis("c", ["adapter", "cli"])
+    assert calls == [("exec", "c", "bash", "-lc", "command -v adapter cli")]
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout",
+    [
+        (1, "/usr/local/bin/adapter\n"),  # a link that does not resolve: the gateway would npx
+        (0, "/usr/local/bin/adapter\n/tmp/cli\n"),  # something else answers to the name
+        (0, ""),
+    ],
+)
+def test_the_agent_cli_step_fails_unless_each_resolves_to_the_images_link(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
+) -> None:
+    _fake_login_shell(monkeypatch, returncode=returncode, stdout=stdout)
+    with pytest.raises(SystemExit) as exc:
+        smoke._assert_login_shell_finds_the_agent_clis("c", ["adapter", "cli"])
+    assert exc.value.code == 1

@@ -1,0 +1,12 @@
+{
+  "id": "p-2d6f5c83",
+  "name": "Reading Pipeline",
+  "is_builtin": false,
+  "status": "active",
+  "workspace_dir": "",
+  "name_locked": false,
+  "agent_instructions_template": "Summaries stay under 200 words and cite the section they came from. If a claim has no citation, say so instead of paraphrasing around it.",
+  "brief": "Turn the week's saved long-reads into one cited digest I actually reread. Anything that cannot be cited back to a source does not go in the digest.",
+  "created_at": "2026-07-29T18:44:31Z",
+  "updated_at": "2026-08-13T07:51:12Z"
+}

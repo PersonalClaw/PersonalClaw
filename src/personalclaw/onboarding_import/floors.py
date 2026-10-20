@@ -1,0 +1,156 @@
+"""Security floors every scanned byte passes — the platform's, not new ones.
+
+Reading another tool's config is reading a directory full of things the user never
+meant to hand over: an OAuth token cache, a `.env`, an API key in an MCP server's
+`env` block. One secret policy applies, the same on the onboarding step and on the Tools
+page's Import, and it never returns a value — only a count, so a caller *cannot*
+accidentally log one:
+
+1. :func:`refuses` — a credential-bearing PATH is never opened. ``is_sensitive_path``
+   (the same predicate that blocks the agent's file reads) plus a filename denylist,
+   because a fixture/foreign root outside ``$HOME`` doesn't match the home-relative
+   rules.
+2. :func:`safe_text` — free text keeps its body but loses every credential and
+   exfiltration URL the platform's ONE detector finds (``security.redact_credentials`` /
+   ``redact_exfiltration_urls``). A credential in text is dropped and counted.
+3. An MCP server's ``env`` and ``headers`` values are not judged by name here: the MCP
+   writer keeps every one in the credential store (``secret_refs.write_mcp_document``) and
+   the file holds a reference. Another tool's own settings are never copied, so no value in
+   them needs judging.
+
+This module never writes: the foreign root is strictly read-only.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from pathlib import Path
+
+from personalclaw.security import (
+    SensitivePaths,
+    is_sensitive_path,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
+
+#: Filenames that are credential stores by convention. Checked in addition to
+#: ``is_sensitive_path`` because that predicate anchors on the real ``$HOME`` and a
+#: foreign/fixture root can live anywhere. ``auth.json`` is Codex's login (and Composer's
+#: registry tokens): nothing in its name says "secret", so it is named here.
+_SECRET_FILE_RE = re.compile(
+    r"(^\.env($|\.)|credential|\.pem$|\.key$|id_[rd]sa|(^|[._-])secrets?($|[._-])"
+    r"|(^|[._-])tokens?($|[._-])|\.netrc$|\.htpasswd$|^auth\.json$)",
+    re.IGNORECASE,
+)
+
+#: The protected locations of the walk under way (:func:`one_walk`), or ``None`` outside one.
+_WALK: ContextVar[SensitivePaths | None] = ContextVar("onboarding_import_walk", default=None)
+
+
+class FileUnreadable(Exception):
+    """A reader's answer for a file that IS there and could not be read.
+
+    Never ``{}`` or ``""``: those are what a file that is not there reads as, and a reader that
+    gave both answers the same way showed a broken config as "nothing to import". ``why`` says it
+    in words (:func:`why_unreadable`), never with the file's text.
+    """
+
+    def __init__(self, path: Path, why: str) -> None:
+        super().__init__(f"{path}: {why}")
+        self.path = Path(path)
+        self.why = why
+
+
+#: Where ``tomllib`` says it stopped: ``… (at line 3, column 10)``.
+_STOPPED_AT_RE = re.compile(r"at line (\d+), column (\d+)")
+
+
+def why_unreadable(exc: BaseException, *, kind: str) -> str:
+    """Why a file could not be read, as a clause: the system's reason for a file that would not
+    open, else what kind of document it is not, with where the parser stopped when it says.
+
+    Only the system's reason, the line and the column are taken from the exception. Nothing else
+    in its message is used, because a decoder's message can quote bytes of the file, and the file
+    is another tool's config, which is where its tokens are.
+    """
+    if isinstance(exc, OSError):
+        reason = f" ({exc.strerror})" if exc.strerror else ""
+        return f"it could not be opened{reason}"
+    if isinstance(exc, UnicodeDecodeError):
+        return "it is not UTF-8 text"
+    if isinstance(exc, RecursionError):
+        return "it is nested too deeply to read"
+    line, column = getattr(exc, "lineno", None), getattr(exc, "colno", None)
+    if line is None and (stopped := _STOPPED_AT_RE.search(str(exc))):
+        line, column = int(stopped.group(1)), int(stopped.group(2))
+    where = f" (line {line}, column {column})" if line is not None and column is not None else ""
+    return f"it is not valid {kind}{where}"
+
+
+@contextmanager
+def one_walk() -> Iterator[None]:
+    """Resolve the platform's protected locations once for every path :func:`refuses` is asked
+    about inside this block: a scan of another tool, which asks about each file it lists.
+
+    A months-long history is thousands of files, and resolving the same protected locations for
+    each of them was most of what listing them cost. Inside a walk they are resolved when it
+    starts; every path asked about is still resolved on its own
+    (:class:`~personalclaw.security.SensitivePaths`). Outside one, each call resolves them afresh.
+    """
+    token = _WALK.set(SensitivePaths())
+    try:
+        yield
+    finally:
+        _WALK.reset(token)
+
+
+def refuses(path: Path | str) -> bool:
+    """True when this path must not be opened at all (floor 1)."""
+    p = Path(path)
+    if _SECRET_FILE_RE.search(p.name):
+        return True
+    walk = _WALK.get()
+    return walk(str(p)) if walk is not None else is_sensitive_path(str(p))
+
+
+def safe_text(text: str) -> tuple[str, int]:
+    """Redact credentials + exfiltration URLs from free text (floor 2).
+
+    Returns ``(redacted_text, redaction_count)``. The matched values are discarded
+    here on purpose: the count is the only thing a caller can propagate.
+    """
+    cleaned, creds = redact_credentials(text)
+    cleaned, urls = redact_exfiltration_urls(cleaned)
+    return cleaned, len(creds) + len(urls)
+
+
+def screened_failure(exc: BaseException, *, limit: int = 200) -> str:
+    """An exception's own words, screened once and clamped to a line.
+
+    Screened HERE, at the one boundary where an exception becomes a user-visible string: a
+    writer's ``OSError`` names a path, and a path from a foreign root can itself look like a
+    credential. Screening at entry (rather than composing a sentence first and screening that) is
+    what keeps the redactor from eating a field name it was never shown.
+    """
+    cleaned, _ = safe_text(str(exc) or exc.__class__.__name__)
+    return cleaned[:limit]
+
+
+def read_text_safely(path: Path) -> tuple[str, int, int]:
+    """Read a text file through floors 1 and 2.
+
+    Returns ``(text, redactions, secrets_skipped)``. A refused path yields
+    ``("", 0, 1)`` — counted as withheld and never opened. A file that is there and will not open
+    raises :class:`FileUnreadable`, because an empty answer would read as an empty file.
+    """
+    if refuses(path):
+        return "", 0, 1
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="text")) from exc
+    cleaned, redactions = safe_text(raw)
+    return cleaned, redactions, 0

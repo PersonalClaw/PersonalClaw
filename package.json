@@ -1,0 +1,32 @@
+{
+  "name": "personalclaw",
+  "private": true,
+  "packageManager": "npm@11.19.0",
+  "workspaces": ["web", "desktop", "mobile"],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "typecheck:web": "npm run typecheck --workspace=web",
+    "test:web": "npm run test --workspace=web",
+    "audit:consistency": "npm run audit:consistency --workspace=web",
+    "generate:schemes": "npm run generate:schemes --workspace=web",
+    "test:desktop": "npm run test --workspace=desktop",
+    "test:mobile": "npm run test --workspace=mobile",
+    "validate:apps": "node scripts/app_ui_validate.mjs",
+    "hooks:install": "sh scripts/install_git_hooks.sh",
+    "postinstall": "sh scripts/install_git_hooks.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  },
+  "overrides": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "dompurify": "3.4.17",
+    "katex": "^0.19.0",
+    "lodash-es": "4.18.1",
+    "uuid": "14.0.1"
+  }
+}

@@ -1,0 +1,134 @@
+"""Nothing on the event loop waits on a model for memory or embedding work.
+
+A memory read or write can wait on a model: a recall embeds the question, a fact, a lesson or an
+episode is embedded when it is written, and a lesson may be judged against the ones it might
+contradict. So can the embedding a route or a turn does for itself: a send's routing suggestion
+embeds the message, putting a turn's message together embeds it for its memory and its skill
+match (a chat's, a webhook's, a heartbeat's, a subagent's), and starting a re-index embeds a probe
+with the model. Inside an ``async def`` that wait stops the event loop, so every request the
+gateway is serving waits with it: a health check sent during one recall took exactly as long as
+the recall did (19.5 s). The knowledge search routes already hand their work to a worker thread;
+these rails hold everything else to the same rule.
+
+Derived from the source, not from a list of routes: every ``async def`` in the package is read,
+and a call to one of the model-bound operations below must sit inside the arguments of
+``asyncio.to_thread`` / ``run_in_executor``, or inside a function handed to one of them.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import math
+import re
+import time
+import types
+from unittest.mock import MagicMock, patch
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from personalclaw.memory_service import MemoryService
+from personalclaw.vector_memory import VectorMemoryStore
+
+# ── one route, driven: teaching a lesson while the model is slow ─────────────────────────────
+
+
+def _bag(text: str) -> list[float]:
+    vec = [0.0] * 32
+    for word in re.findall(r"\w+", text.lower()):
+        bits = int(hashlib.sha256(word.encode()).hexdigest(), 16)
+        for i in range(32):
+            vec[i] += 1.0 if (bits >> i) & 1 else -1.0
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
+@pytest.fixture
+def slow_store(tmp_path, monkeypatch):
+    latency = {"secs": 0.0}
+
+    def _embed(text: str) -> list[float]:
+        time.sleep(latency["secs"])
+        return _bag(text)
+
+    monkeypatch.setattr(VectorMemoryStore, "_embedder", lambda self: (_embed, "test:bag"))
+    monkeypatch.setattr(VectorMemoryStore, "_embedding_ref", lambda self: "test:bag")
+    store = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    store.init()
+    store._graph_enabled = False
+    yield store, latency
+    store.close()
+
+
+def _app(store: VectorMemoryStore) -> web.Application:
+    from chat_test_helpers import signed_in
+
+    from personalclaw.dashboard.handlers.memory import api_memory_semantic_write
+    from personalclaw.dashboard.handlers.schedule import api_lessons_create
+    from personalclaw.dashboard.handlers_system import api_healthz
+
+    app = web.Application(middlewares=[signed_in])
+    app["state"] = MagicMock(
+        _sessions={},
+        context_builder=types.SimpleNamespace(memory=types.SimpleNamespace(vector_store=store)),
+    )
+    app.router.add_get("/api/healthz", api_healthz)
+    app.router.add_post("/api/lessons", api_lessons_create)
+    app.router.add_put("/api/memory/semantic", api_memory_semantic_write)
+    return app
+
+
+async def _health_while(client: TestClient, method: str, path: str, body: dict) -> tuple:
+    write = asyncio.ensure_future(
+        client.request(method, path, json=body, headers={"X-Session-Key": "dashboard:ui"})
+    )
+    # Timed from here: on a blocked loop the pause itself waits for the write.
+    start = time.monotonic()
+    await asyncio.sleep(0.1)
+    health = await client.get("/api/healthz")
+    took = time.monotonic() - start - 0.1
+    still_writing = not write.done()
+    resp = await write
+    return health.status, took, still_writing, resp.status
+
+
+@pytest.mark.asyncio
+async def test_the_gateway_answers_while_a_lesson_is_embedded(slow_store):
+    """🔴 Red before: ``POST /api/lessons`` embedded the lesson on the event loop."""
+    store, latency = slow_store
+    latency["secs"] = 0.8
+    with patch("personalclaw.dashboard.handlers.schedule._sel", return_value=MagicMock()):
+        async with TestClient(TestServer(_app(store))) as client:
+            health, took, still_writing, status = await _health_while(
+                client, "POST", "/api/lessons", {"rule": "The dishwasher goes left of the sink."}
+            )
+
+    assert health == 200
+    assert took < 0.5, f"/api/healthz took {took:.2f}s while a lesson was embedded"
+    assert still_writing, "premise: the lesson was still being embedded"
+    assert status == 200
+    assert [r["key"] for r in store.get_lessons()], "and the lesson was saved"
+
+
+@pytest.mark.asyncio
+async def test_the_gateway_answers_while_a_fact_is_embedded(slow_store):
+    """A fact is embedded when it is written, so its route hands the write off as well."""
+    store, latency = slow_store
+    latency["secs"] = 0.8
+    svc = MemoryService.over_vector_store(store)
+    with (
+        patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc),
+        patch("personalclaw.dashboard.handlers.memory._sel", return_value=MagicMock()),
+    ):
+        async with TestClient(TestServer(_app(store))) as client:
+            health, took, still_writing, status = await _health_while(
+                client, "PUT", "/api/memory/semantic", {"key": "pref.editor", "value": "vim"}
+            )
+
+    assert health == 200
+    assert took < 0.5, f"/api/healthz took {took:.2f}s while a fact was embedded"
+    assert still_writing, "premise: the fact was still being embedded"
+    assert status == 200
+    assert store.get_semantic("pref.editor") is not None

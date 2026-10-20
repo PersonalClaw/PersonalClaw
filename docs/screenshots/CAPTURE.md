@@ -1,0 +1,85 @@
+# Capturing the visual showcase
+
+Screenshots in [`SHOWCASE.md`](../../SHOWCASE.md) are generated reproducibly — real UI,
+illustrative seeded data, both themes — not hand-curated. This keeps the showcase honest
+and easy to refresh each release.
+
+## Layout
+
+```
+docs/screenshots/
+├── light/NN-<route>.png    # light theme
+├── dark/NN-<route>.png     # dark theme
+├── capture.mjs             # the Playwright capture script
+└── CAPTURE.md              # this file
+```
+
+`NN` numbering is stable so `SHOWCASE.md` / `README.md` references don't drift when new
+pages are added — append new routes, don't renumber existing ones.
+
+## Prerequisites
+
+1. **A running gateway with a model provider configured.** Most screens gate on a chat
+   binding (onboarding needs a model before the main app renders). Configure one provider
+   app + key + binding, or seed a demo instance (below).
+2. **Seeded scenario data** (recommended) so screens show believable content rather than
+   empty states. `personalclaw gateway --seed demo-home --seed-replace` populates an
+   isolated `$PERSONALCLAW_HOME` with two projects, ten tasks across every status,
+   markdown memory, five knowledge docs and one completed loop, and skips onboarding —
+   so the Knowledge and loop-cockpit shots need no hand-driving. Semantic/episodic
+   memory *records* are still absent (that store is SQLite-only with no text tier), so
+   drive the memory-records views by hand if a shot needs them.
+3. **A model bound into that seeded home**, if the capture includes chat, an approval or
+   an artifact. The fixture binds no provider — it is a byte-identical copy on every
+   machine, so it cannot carry one — and those three surfaces exist only as the product
+   of a turn: sessions is `0`, `/api/approvals` is `[]` (an approval is written by the
+   tool-permission gate on a real turn), `/api/artifacts` is `[]` (artifacts are
+   agent-produced, with no hand-authoring affordance in the UI). Add
+   `--seed-local-model` to the seed command and a local Ollama is bound in the same
+   step; with no Ollama present it writes nothing and says so, so the command is safe to
+   keep in the runbook either way. Details in
+   [`docs/reference/cli.md`](../reference/cli.md#binding-a-model-into-a-seeded-home).
+   Do NOT stage a screen the product cannot produce — capture the empty state or drop
+   the beat instead.
+4. **Playwright**: `npm i -D playwright && npx playwright install chromium`.
+
+## Run
+
+```bash
+# 1. a gateway on a scratch home, seeded, with a local model bound (see Prerequisites)
+PERSONALCLAW_HOME=/tmp/pc-showcase personalclaw gateway --seed demo-home --seed-replace \
+  --seed-local-model --port auto --no-open
+
+# 2. in another shell, capture it
+node docs/screenshots/capture.mjs --home /tmp/pc-showcase
+```
+
+There is no URL or token to copy: the script finds the gateway from the record that gateway
+keeps in its home, and signs its browser in through the home's local secret, the way
+`personalclaw token` does. It refuses to start with no home named, or with the default home,
+which is the install's own data.
+
+The script visits every route in `ROUTES` (edit the array as pages are added), toggles the
+theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and writes
+`light/` + `dark/` PNGs at a 1440×900 @2x viewport.
+
+## Conventions
+
+- **Both themes, always.** The design system styles light and dark with equal care; the
+  showcase reflects that.
+- **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME` (the script
+  refuses the default home). Seed illustrative data only.
+- **Refresh per release** so the showcase never drifts from the shipped UI.
+
+## The redesign baseline
+
+[`baseline.mjs`](baseline.mjs) is a sibling of `capture.mjs` for the redesign's measured "before",
+[`docs/design/baseline.md`](../design/baseline.md). It walks every route in
+[`web/e2e/routes.ts`](../../web/e2e/routes.ts), the shell routes and three detail routes, in both
+themes at 1280 and 390 px wide, and records each region's box, the work surface's share of the
+window, what is visible and how long the route takes to become actionable. The report's "How it was
+measured" section has the recipe. To check one screen against the report without writing anything:
+
+```bash
+node docs/screenshots/baseline.mjs --home /tmp/pc-baseline --only dashboard
+```

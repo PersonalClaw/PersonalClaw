@@ -1,0 +1,325 @@
+{
+  "_comment": [
+    "BEHAVIOURAL parity pin for token-lint's comment-state tracker (#3337).",
+    "",
+    "token_lint_rules.json makes the four PATTERNS one artifact, and",
+    "tokenLintRuleParity.test.ts asserts the TS copies are byte-identical to it. But",
+    "deciding which text on a line is CODE is consumer LOGIC, not a pattern — it lives",
+    "twice, once per language:",
+    "  - web/src/design/tokenLintRule.ts  `stripComments`",
+    "  - personalclaw/apps/quality.py     `strip_comments`",
+    "A regex can be shared as data; a lexer cannot. So the BEHAVIOUR is shared as data",
+    "instead: every case below is run by BOTH sides' tests, and a case that reds in one",
+    "language and passes in the other is a parity break — the same two-dialect defect",
+    "the rules file exists to prevent, one layer up.",
+    "",
+    "Each case is a whole synthetic FILE (`lines`), because the defect is cross-line by",
+    "nature. `expected` is one entry per line: the violation kinds the rail must report",
+    "for that line, in the order hex-then-px. `end_state` is 'code' or 'block' at EOF and",
+    "is the load-bearing control: a tracker that leaves block state stuck open reads as",
+    "'the rest of the file is clean' and silently stops catching real raw hexes, which",
+    "is the ONE way this change could weaken the rail rather than fix it. That is not a",
+    "hypothetical: tracking template literals as a third state leaked exactly this way on",
+    "three corpus files carrying a backtick inside a regex literal, which is why a backtick",
+    "is a LINE-LOCAL quote and only when the line closes it (#3347) — never a state that",
+    "can survive a newline. Both halves of that asymmetry are pinned below.",
+    "",
+    "Both directions are represented on purpose. Cases named `red_*` MUST still be",
+    "caught (the rail's value); cases named `clean_*` MUST now pass (the bug fixed).",
+    "Do not delete a `red_*` case to make a tracker change green — that is the",
+    "weakening this file exists to block.",
+    "",
+    "A third prefix, `end_state_*`, pins a file the tracker CANNOT read to the end.",
+    "Reporting no line violations is correct for those — the text really is commented",
+    "out — so the load-bearing assertion is the 'block' state, which `token_lint_bundle`",
+    "turns into a refusal by name (EOF_UNREADABLE) rather than a silent clean verdict.",
+    "Two of them are a genuinely broken file; the third is the one shape `strip_comments`",
+    "still documents as deliberately unhandled — a `/*` in JSX text whose preceding",
+    "character is a SPACE — where failing STRICT is the decision and not an accident.",
+    "An `end_state_*` id names the CONDITION it holds under, because that verdict is",
+    "conditional and reads as a guarantee otherwise: the very same file plus an ordinary",
+    "block comment lower down ends in 'code', and nothing refuses it.",
+    "",
+    "A fourth prefix, `gap_*`, records what the tracker ACTUALLY DOES where that is a",
+    "known HOLE — never a desired contract, and never a negative control. Measured, not",
+    "predicted, and written here so the next reader finds the hole in the corpus rather",
+    "than in a badged bundle. Two consequences follow, and both are asserted rather than",
+    "trusted: a `gap_*` case is EXCLUDED from the clean/red control counts (a hole must",
+    "not pad the vacuity floor it is invisible to), and it is the ONE prefix here that",
+    "SHOULD be rewritten to the fixed answer when the limitation is closed — which is",
+    "exactly what separates a gap from the `red_*` contract that must never be deleted",
+    "to go green.",
+    "",
+    "`end_state` is a NARROW control, and #3347 is the proof: it reports the state the",
+    "scan ENDED in, which is not the claim 'the tracker read every line correctly'. A",
+    "block that opens wrongly and then CLOSES — a stray `/*` swallowed by the next",
+    "unrelated `*/` — ends in 'code', is refused by nothing, and silently drops every",
+    "violation in the blanked span. That is why decision 4's look-behind is a fix in the",
+    "tracker rather than one more refusal downstream, and why two `red_*` cases here",
+    "carry a CLOSED bogus block: nothing else in this file can distinguish the guard",
+    "from its absence."
+  ],
+  "cases": [
+    {
+      "name": "clean_interior_line_of_a_multiline_jsx_comment",
+      "why": "The reported defect. SkillInspector.tsx:65's shape: the issue reference sits on an interior line that carries no comment marker of its own.",
+      "lines": [
+        "  return (",
+        "    {/* Which surface this is: the inspector for a",
+        "        persistently-wrong auto skill (#1783). The inspector,",
+        "        not the list row — the row only summarises. */}",
+        "    <div className=\"bg-surface-high\" />",
+        "  )"
+      ],
+      "expected": [[], [], [], [], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_interior_line_of_a_ts_block_comment",
+      "why": "Same shape in a .ts file with a bare /* … */ rather than JSX braces.",
+      "lines": [
+        "/* Routing note, see #3324 and #532 for the",
+        "   prior attempts; #1783 is the live one. */",
+        "export const ROUTE = 'skills'"
+      ],
+      "expected": [[], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_jsdoc_continuation_lines",
+      "why": "A `*`-prefixed continuation line is inside a block, not merely `*`-shaped. The old rule matched the SHAPE; this must hold on state.",
+      "lines": [
+        "/**",
+        " * Measured on #1783: 58 of 61 switches resolve.",
+        " */",
+        "export function f() { return 1 }"
+      ],
+      "expected": [[], [], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "red_raw_hex_on_a_line_of_real_code",
+      "why": "Positive control, the base case. If this ever goes clean the rail is worthless.",
+      "lines": ["const c = '#1a2b3c'", "const d = '#fff'"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_raw_hex_on_code_that_FOLLOWS_a_closed_block_comment",
+      "why": "The specific way a tracker breaks: block state left stuck open after `*/` makes every later line read clean. This case is the one that catches it.",
+      "lines": [
+        "/* rationale, citing #1783",
+        "   across two lines */",
+        "const c = '#1a2b3c'",
+        "const px = <div style={{ fontSize: 13px }} />"
+      ],
+      "expected": [[], [], ["hex"], ["px"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_trailing_code_after_a_block_comment_closed_on_the_SAME_line",
+      "why": "Edge case, decided deliberately: the comment is stripped and the CODE after it is still linted. Anything else would make `/* … */ const c = '#abc'` a free bypass.",
+      "lines": ["/* see #1783 */ const c = '#abc'"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_trailing_block_comment_after_real_code",
+      "why": "The mirror: code first, comment second. The code half must still red and the comment half must not add a second hit.",
+      "lines": ["const c = '#abc' /* was #1783's colour */"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_containing_a_block_terminator",
+      "why": "`app/swPolicy.ts` and `ui/SystemWidget.tsx` shapes: a `//` comment quoting `/*` or `*/`. `//` must win, or the tracker opens a block that never closes.",
+      "lines": [
+        "// the bare comment `/* keep the draft */` cited #1783",
+        "// and `*/` alone must not close anything",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_string_literal_containing_a_block_opener",
+      "why": "`ui/widget/editMode.ts` ships exactly this. A string-unaware tracker treats it as a comment opener and swallows the rest of the file.",
+      "lines": [
+        "export const BEGIN = '/*EDITMODE-BEGIN*/'",
+        "export const DOC = 'across all 34 #/settings/* subpages'",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_inside_a_string_is_still_a_violation",
+      "why": "Strings are not comments. Stripping comments must not start excusing string content — that is where every raw colour actually lives.",
+      "lines": ["const s = \"color: #ff0000\"", "const t = `border: 1px solid #00ff00`"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_inside_a_multiline_template_literal",
+      "why": "A backtick is only a LINE-LOCAL quote, so it never survives the newline and template CONTENT stays linted across lines: a css-in-template hex is a real violation and the strict direction is to keep catching it.",
+      "lines": [
+        "const css = `",
+        "  color: #f0f0f0;",
+        "  border-radius: 4px;",
+        "`",
+        "const c = '#abc'"
+      ],
+      "expected": [[], ["hex"], [], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_inside_an_embedded_js_template",
+      "why": "`ui/widget/widgetSrcdoc.ts` and `pages/tools/ToolOutput.tsx` ship multi-line templates of embedded JS whose lines start with `//` and cite issue numbers. A line whose first non-space chars are `//` is prose in any non-block state.",
+      "lines": [
+        "export const SCRIPT = `(function(){",
+        "  // the widget never learns why. Measured twice (#2263), months apart",
+        "  el.style.color = '#abc'",
+        "})();`"
+      ],
+      "expected": [[], [], ["hex"], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_backtick_inside_a_regex_literal_does_not_desync",
+      "why": "MEASURED: three corpus files carry one — `pages/chat/parseAssistant.ts` (`[\\s(`'\"]`), `pages/tools/ToolOutput.tsx` and `ui/content/renderers.tsx` (both /^```/m). Tracking template state desynchronised on exactly these and leaked block state to EOF. Telling a regex literal from a division needs real parser context, so a backtick is a line-local quote and only when the line closes it — an unpaired one stays an ordinary character.",
+      "lines": [
+        "const FENCE_RE = /(^|\\n)#{1,6}\\s|```|\\*\\*[^*]+\\*\\*/",
+        "const FILE_RE = /(?:^|[\\s(`'\"])((?:~|\\/)[\\w./-]+)/g",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_url_in_jsx_text",
+      "why": "#3347's first unmodelled shape, pinned on the `://` line itself: a URL in JSX TEXT is not inside a quote, so `//` read as a line comment and truncated the line — a hex sharing that SAME line went unreported with end_state still 'code', invisible to every EOF control. `://` is a scheme separator: only the IMMEDIATELY preceding character counts, so `case 'x': // note` is still prose.",
+      "lines": [
+        "    <p>full docs at https://personalclaw.dev/apps — color #1a2b3c</p>",
+        "    <a href=\"/x\">{/* see #1783 */}</a>"
+      ],
+      "expected": [["hex"], []],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_protocol_relative_url_in_a_template_literal",
+      "why": "#3347's second unmodelled shape, the same class one quote-kind over: a template literal is string content, but a backtick was an ordinary character, so `//` inside one truncated the line and hid the hex on it. No colon precedes a protocol-relative `//cdn`, so rule 3 cannot reach this one — the quote set has to.",
+      "lines": [
+        "const css = `background: url(//cdn.example/bg.png); color: #ff0000`",
+        "const c = '#abc'"
+      ],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_after_an_unpaired_backtick_in_a_regex_literal",
+      "why": "The NEGATIVE control for the case above, and the reason a backtick is a quote only when the line closes it. These three shapes ship today (`renderers.tsx`, `agentFeed.ts`, `scheduleMeta.ts`): one unpaired backtick inside a regex literal, then a real trailing `//` comment citing an issue number. Treating that backtick as a quote would leave the comment linted and re-create #3337, since every decimal digit is a hex digit.",
+      "lines": [
+        "const FENCE = /^```/m,  // fenced code, measured on #1783",
+        "const INLINE = text.replace(/`([^`]+)`/g, '$1') // inline code → #532",
+        "const PUNCT = text.replace(/[*_~`>#|-]/g, ' ') // stray markdown (#3324)",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_escaped_quote_does_not_close_the_string",
+      "why": "A tracker that closes on an escaped quote desynchronises and starts stripping real code as comment.",
+      "lines": ["const s = 'it\\'s /* not */ a comment'", "const c = '#abc'"],
+      "expected": [[], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_nested_jsx_comment_braces_close_at_the_FIRST_terminator",
+      "why": "JS block comments do not nest, so `{/* {/* */} */}` closes at the first `*/` and the tail is code. Stated rather than assumed: the corpus has no nested shape, and pinning it keeps the two languages from inventing different answers.",
+      "lines": ["{/* outer {/* inner */} const c = '#abc' */}"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_in_a_span_a_stray_block_opener_blanked_and_an_UNRELATED_terminator_closed",
+      "why": "#3347's live shape, and the one no EOF control can see BECAUSE it closes. `3/*off` opened a block in JSX TEXT, the next ordinary `/* … */` closed it, so end_state came back to 'code', nothing was refused, and the hex two lines inside the blanked span was silently dropped. Positive control for the guard itself: delete the stray and line 3 is caught either way, so this case is the ONLY thing distinguishing the look-behind from its absence. A `/*` whose preceding character is ASCII-alphanumeric or `[` is division or a glob, not an opener.",
+      "lines": [
+        "const a = 1",
+        "<p>3/*off the usual scale</p>",
+        "const c = '#abc'",
+        "const d = 2",
+        "/* an ordinary comment, citing #1783 */",
+        "const e = '#def'"
+      ],
+      "expected": [[], [], ["hex"], [], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_block_opener_inside_a_regex_character_class",
+      "why": "The same defect one syntax over, and the reason the look-behind admits `[` as well as alphanumerics: in `/[/*]/` the `/*` is two members of a character class. Unquoted, so the string rule cannot help it. It desyncs the tracker exactly like the case above — a later unrelated `*/` closes the bogus block, end_state reads 'code', and the hex on line 2 is lost. NOT the same as clean_backtick_inside_a_regex_literal_does_not_desync, which is backtick desync and not a block opener at all.",
+      "lines": [
+        "const re = /[/*]/",
+        "const a = '#abc'",
+        "/* ordinary */",
+        "const b = '#def'"
+      ],
+      "expected": [[], ["hex"], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "end_state_block_when_a_comment_never_closes",
+      "why": "The control's own control. An unterminated `/*` genuinely comments out the rest of the file, so reporting clean lines is CORRECT here — what must not be silent is the state, and `end_state` is how a caller sees it.",
+      "lines": ["/* opened and never closed", "const c = '#abc'"],
+      "expected": [[], []],
+      "end_state": "block"
+    },
+    {
+      "name": "end_state_block_survives_a_line_comment_it_contains",
+      "why": "Inside a block, `//` has no meaning. A tracker that honours it there would resume linting mid-comment and re-create the bug one line lower.",
+      "lines": ["/* opened", "// still inside the block, citing #1783", "and still inside"],
+      "expected": [[], [], []],
+      "end_state": "block"
+    },
+    {
+      "name": "red_hex_below_a_regex_character_class_that_no_longer_opens_a_block",
+      "why": "REVERSED from `end_state_block_when_a_regex_character_class_opens_one` (#3378) by the look-behind, and reversed in the STRICTLY STRONGER direction — this is not a weakened assertion. That case declared the right verdict for the tracker as it stood: `/[/*]/` opened a block, nothing closed it, and 'block' at least made `token_lint_bundle` refuse the bundle by name instead of awarding it a badge. But the premise it refused on was never true — the file is valid TypeScript with nothing commented out — so the refusal named the wrong defect and the raw hex on line 2 went unreported. Decision 4 admits `[` as a preceding character, so the class member is no longer an opener, the scan reaches EOF in 'code', and the hex is reported as the line violation it actually is. Loud-but-wrong became loud-and-right; the only thing lost is a false refusal. Still not covered by `clean_backtick_inside_a_regex_literal_does_not_desync`, which is a backtick desync and not a block opener.",
+      "lines": ["const GLOB = /[/*]/", "const c = '#1a2b3c'"],
+      "expected": [[], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "end_state_block_when_jsx_text_contains_a_wildcard_and_NOTHING_closes_it",
+      "why": "The shape that is STILL deliberately unhandled (#3347), and the measurement that bounds decision 4's claim: the look-behind admits only an ASCII-alphanumeric or `[` before the `/*`, and here the preceding character is a SPACE, so the block still opens and the file fails STRICT. So 'a `/*` in JSX text' is not fixed as a category — `<p>3/*off</p>` is (see red_hex_in_a_span_…), `<p>use /* as a wildcard</p>` is not. Pinned separately from the character-class case for exactly the reason #3378 gave: the two are independently breakable, and the divergence now runs the other way — one is handled and one is not, which is the boundary a future widening must move deliberately rather than by accident. The id carries its CONDITION because the STRICT verdict has one: it holds only while nothing lower down closes the span. Read `gap_jsx_space_preceded_wildcard_closed_by_a_LATER_comment_drops_the_hex` for what the same file does when an ordinary comment closes it, and do not take this case as a general guarantee — that reading is the mistake the rename exists to prevent.",
+      "lines": [
+        "export function Doc() {",
+        "  return <p>Paths use /* as a wildcard in a route glob</p>",
+        "}",
+        "const c = '#1a2b3c'"
+      ],
+      "expected": [[], [], [], []],
+      "end_state": "block"
+    },
+    {
+      "name": "gap_jsx_space_preceded_wildcard_closed_by_a_LATER_comment_drops_the_hex",
+      "why": "RECORDED HOLE, not a contract — the only case here whose declared answer is one nobody wants. The case above plus an ordinary block comment lower down, which is the difference between the two halves of decision 4's residue. MEASURED at main de717158b through the real bundle gate, not inferred from the scanner: `token_lint_bundle` returns the never-closed file as {'web/src/Doc.tsx': [EOF_UNREADABLE]} and returns THIS file as {} — a clean verdict, so the bundle keeps `designSystem: \"v2\"` while the raw hex on line 4 is dropped inside the blanked span. That is why the case above had to name its condition: 'still fails STRICT' was a conditional stated as a guarantee, and the condition is the half nothing refuses. Same mechanism as red_hex_in_a_span_… and red_hex_after_a_block_opener_inside_a_regex_character_class, which decision 4's look-behind closed for an alnum- or `[`-preceded `/*`; a SPACE-preceded one also precedes every legitimate `… /* comment */`, so one character cannot separate them and closing this needs real parser context. Recorded rather than chased so the hole lives in the corpus instead of in a badged bundle. When a parser lands, REWRITE this case to the fixed answer (line 4 caught as `hex`) — it is a gap, not a contract.",
+      "lines": [
+        "export function Doc() {",
+        "  return <p>Paths use /* as a wildcard in a route glob</p>",
+        "}",
+        "const c = '#1a2b3c'",
+        "/* an ordinary block comment lower down the file */",
+        "export const NAME = 'doc'"
+      ],
+      "expected": [[], [], [], [], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "gap_a_legal_block_comment_after_an_identifier_is_linted_as_code",
+      "why": "RECORDED COST of decision 4, measured rather than glossed, and the half of its boundary the corpus did not yet carry. `width/*measured on #1783*/` is a LEGAL block comment, and the one-character look-behind that saves `/[/*]/` cannot tell an identifier followed by a real comment from an identifier followed by class content — so this comment is no longer stripped and the issue number inside it reads as a raw hex: #3337's original defect, surviving in one narrow shape. MEASURED at main 5e97b893d through `token_lint_file`, not inferred from the scanner: end_state stays 'code' and BOTH lines report `hex`. Distinct from red_hex_in_a_span_a_stray_block_opener_blanked_and_an_UNRELATED_terminator_closed, whose `3/*off` is JSX TEXT rather than a comment a correct author wrote — the other cases pin what the look-behind BUYS, this one pins what it SPENDS. Kept as a case because the alternative is a reader rediscovering it from a red build. The trade is deliberate and DIRECTIONAL: this failure is LOUD and an author fixes it by adding one space, while the failure it buys out — a stray opener swallowing a raw hex under a green `designSystem: \"v2\"` badge — is silent. Measured over the 1559 host `web/src` sources: 0 stripped-code diffs, so no host line carries this shape today; that is a fact about the HOST tree and says nothing about a third-party bundle, which is this gate's actual subject and why the cost is written down here rather than left to the corpus's silence. A `gap_*` case, so it is excluded from the vacuity floor's intended counts and SHOULD be rewritten to the fixed answer if a real parser ever lands.",
+      "lines": ["const w = width/*measured on #1783*/", "const c = '#abc'"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    }
+  ]
+}

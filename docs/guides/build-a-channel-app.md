@@ -1,0 +1,743 @@
+# Build a channel app
+
+A **channel** is a place a person talks to their assistant that is not the dashboard: a
+chat app, a DM, a mailbox. A channel app owns both directions — it receives messages from
+the vendor and it renders the assistant's replies back into the vendor's idea of a
+message. Everything vendor-specific lives in the app; core only knows the two seams.
+
+This guide is extracted from the first-party **telegram-channel** app in the
+[PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps) repository — the
+reference channel, because it is written against the raw vendor HTTP API with no SDK, so
+every obligation below is visible in one small tree. Read it along
+[the inbox & channels architecture](../architecture/inbox-channels.md) and
+[the provider boundary](../architecture/provider-boundary.md).
+
+Two rules frame everything else:
+
+- **Core never names your vendor.** No string, enum member, `if provider == …`, or
+  accommodation. If your channel seems to need a core change, that change is a new
+  *generic* seam or it does not happen.
+- **Your app owns every seam your vendor touches** — not just the channel. See
+  [Vendor completeness](#vendor-completeness) before you decide you are done.
+
+---
+
+## The two contracts
+
+| Contract | Kind | Import |
+|---|---|---|
+| `ChannelTransportProvider` | ABC — your class subclasses it | `from personalclaw.sdk.channel import ChannelTransportProvider` |
+| `ChannelDelivery` | `Protocol` — structural, you do not subclass it | `from personalclaw.sdk.channel import ChannelDelivery` |
+
+The transport is the *connection*: identity, lifecycle, health, inbound. Delivery is the
+*rendering*: how a reply, a stream, an approval prompt, or a file becomes a message in your
+vendor's UI. A channel that only ever pushes notifications can ship a transport alone; a
+channel that carries conversations ships both.
+
+Everything a channel app is allowed to import from core comes through
+`personalclaw.sdk.channel`. That facade is the boundary the apps-repo import lint enforces
+— reaching into `personalclaw.<internal>` will fail the lint, and would freeze a core
+internal besides.
+
+---
+
+## Obligation tables
+
+Three levels, and they mean exactly this:
+
+- **MUST** — the platform calls it unconditionally. Omit it and your app is not
+  installable, or it lies to a surface the owner reads.
+- **SHOULD** — the platform degrades *visibly* without it but still works. If your channel
+  genuinely cannot do it, say so in `capabilities()` and document the gap in your README.
+  Do not silently omit a method core will call.
+- **MAY** — genuinely optional. A channel is not defective for lacking it.
+
+The **Kit** column says whether the conformance kit *asserts* the obligation. The kit is
+the authority where the two could disagree: it carries the machine-readable inventory
+(`MUST_TRANSPORT_METHODS`, `SHOULD_DELIVERY_METHODS`, `MAY_DELIVERY_METHODS` in
+`src/personalclaw/testing/channel_conformance.py`) and this table is written from it.
+
+### `ChannelTransportProvider`
+
+| Member | What core does with it | Obligation | Kit |
+|---|---|---|---|
+| `name` (property) | the opaque provider key: trust store, SEL, inbox source, settings all key off it. Pick it once; changing it orphans state | **MUST** | yes — clause 1 |
+| `display_name` (property) | the label on the Channels page | **MUST** | yes — clause 1 |
+| `connect()` | the Channels page's **Connect** button; returns success as a `bool` | **MUST** | yes — clause 2 |
+| `disconnect()` | the Channels page's **Disconnect** button | **MUST** | yes — clause 2 |
+| `send(OutboundMessage)` | the one outbound primitive every surface can rely on; returns `bool`, and never raises for a well-formed message | **MUST** | yes — clause 2 |
+| `capabilities()` | machine-readable feature gate — core routes and feature-gates off it, so it must be *honest*, not aspirational | **MUST** | yes — clause 3 |
+| `health()` | the Channels page pill, AND core's only answer to "is this channel configured" (whether core runs your receiver at all, the gateway's dashboard-only line, `setup`'s remote-URL prompt, `doctor`'s remote-bind warning). `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill. Return `offline` only when you have nothing to connect with (no token, no account): `error` (half-up) and `ready` both read as configured. While core is starting your receiver the page shows core's own `starting`, and a start that raised shows core's `error` sentence — yours again once the start has succeeded | **MUST** | yes — clause 5 |
+| `test()` | the "Test" button — an active probe. `{ok: bool, detail: str}`, and it MUST agree with `health()`: a green Test on an offline channel is a lie | **MUST** | yes — clause 5 |
+| `info()` | static listing; MUST project `name`, `display_name`, `connected`, `capabilities()` without relabelling any of them | **MUST** | yes — clause 1 |
+| `connected` (property) | the default `health()`/`test()`/`info()` all derive from it | **SHOULD** — override it, or override `health()` so it stops mattering | **no** — in no kit tuple |
+| `start_inbound(services)` | called by core *after* its services are up, with a `GatewayServices` handle — at boot, and whenever your channel is enabled, installed, updated or its settings are saved — at most once per instance, and only while `health()` is not `offline`. It runs as its own task: raising, or not returning within a minute, becomes your channel's status. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
+| `stop_inbound()` | stop EVERYTHING `start_inbound` started. Called when your instance is replaced (the replacement starts only after this returns), disabled or uninstalled, when `health()` turns `offline`, and at shutdown. Core drops the delivery handle registered under your channel's name itself | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
+| `receive()` | the optional pull-based inbound seam: an `AsyncIterator[ChannelMessage]`. The base implementation raises | **MAY** — no shipped channel uses it; they all drive their own loop from `start_inbound` | partly (clause 4 accepts a named handler instead) |
+| `validate_target(target)` | whether a schedule may send its results to `target`, a chat or channel id in your spelling (`channel:<name>:<target>`), and whether an id sent without naming its channel is one of yours: core sends it on the one channel set up that says yes, and refuses it when none or more than one does (`channel_delivery.channel_of_id`). Return `""` if you can deliver there, else ONE sentence the owner reads as is, saying what a valid id looks like. Core knows no platform's id shape, so this is the only check an id gets. The base accepts any non-empty id with no whitespace or control characters, which claims every other channel's ids too | **SHOULD** — override it when your ids have a shape | **no** — in no kit tuple |
+
+`connected`, `start_inbound`, `stop_inbound`, `receive` and `validate_target` appear in **none** of
+the kit's three tuples. Their levels above are derived from the ABC's own contract (what core calls,
+and what the default does if you skip it) — treat them as doctrine, not as something the
+kit will catch for you.
+
+### `ChannelDelivery`
+
+All eighteen `Protocol` methods. Every delivery obligation is conditional on shipping a
+delivery object at all; once you do, the kit asserts the MUST and SHOULD rows.
+
+| Method | Purpose | Obligation | Kit |
+|---|---|---|---|
+| `deliver_text` | a plain reply reaching the user — the floor of a conversational channel | **MUST** | yes — clause "delivery" |
+| `deliver_rich` | formatted output (your vendor's markdown / blocks / embeds / HTML) | **SHOULD** | yes — clause "delivery" |
+| `upload_attachment` | files out | **SHOULD** | yes — clause "delivery" |
+| `request_approval` | the tool-approval prompt and its answer path (buttons, inline keyboard, reply token) | **SHOULD** | yes — clause "delivery" |
+| `build_thread_link` | a deep link back to the conversation, for the dashboard and for notifications | **SHOULD** | yes — clause "delivery" |
+| `start_stream` | opens a live-updating message; returns the message ts/id, or `""` for "no animation" | **SHOULD when `capabilities().edits` is `True`**; **MUST return `""`** when `edits` is `False` | yes — clause 8 |
+| `append_stream_task` | pushes a progress update into the open stream, throttled | **SHOULD when `edits` is `True`** — at most one edit per your declared floor | yes — clause 8 |
+| `stop_stream` | closes the stream and **force-flushes** the exact final text past the throttle | **SHOULD when `edits` is `True`** — a throttled-away final update is a stream frozen mid-run | yes — clause 8 |
+| `deliver_cron_result` | a scheduled run's output | **MAY** | no — never asserted |
+| `deliver_notification` | an owner notification routed to this channel | **MAY** | no — never asserted |
+| `deliver_chat_mirror` | the agent's answer in a chat linked to your channel, which is every answer to a message your channel delivered. A message the owner types in the dashboard reaches the channel through `deliver_text`, marked 💬; one your channel delivered is not sent back | **MUST if `capabilities().inbound` is `True`**: it is how your channel hears the answer | no — never asserted |
+| `deliver_subagent_reply` | a subagent's reply | **MAY** | no — never asserted |
+| `resolve_user_profile` | richer profile lookup | **MAY** | no — never asserted |
+| `list_reply_channels` | the pickable reply targets a settings UI offers | **MAY** | no — never asserted |
+| `open_dm` | resolve a user id to a DM conversation id | **SHOULD if your vendor has DMs** (owner-directed delivery needs it) | **no** — in no kit tuple |
+| `resolve_user_name` | user id → display name, for transcripts and attention items | **SHOULD** | **no** — in no kit tuple |
+| `is_tracked_channel` | whether this conversation is opted in — delegate to core's `is_tracked_channel(provider, id)`, never a second store | **SHOULD** | **no** — in no kit tuple |
+| `channel_info` | vendor metadata about a conversation | **MAY** | **no** — in no kit tuple |
+
+`open_dm`, `resolve_user_name`, `is_tracked_channel` and `channel_info` are in none of the
+three tuples either — same caveat as above: doctrine, not an assertion.
+
+**Core masks what it hands you.** Every text core passes these methods has already been masked
+with the display mask, keys and exfiltration URLs replaced by `[REDACTED: …]`: a reply, a
+notification's title, every string of a rich payload, an automation's name, an approval's title,
+purpose and input, a stream's progress. It holds your handle behind the mask
+(`channel_delivery.MaskedDelivery`), so this is true whichever path the text came by, and your
+delivery methods need not mask it again. What your app sends on its own paths, text it builds or
+relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
+
+### An approval prompt shows what will run
+
+Render `request_approval`'s prompt from `personalclaw.sdk.channel.approval_brief_for(event)`: the
+tool, its arguments (`input`), the purpose the runner gave, the `summary` line (what the call can
+touch, and its risk) and, when the brief has one, the `reach` line under it: a shell command that
+reaches a host off the owner's allowed hosts, or one its command does not name, or that deletes
+the owner's home folder, the filesystem root or the folder the conversation runs in, is asked
+about whatever a grant says, and `reach` says so. That is what the dashboard's approval card shows (its
+chips, and the line under them), and a prompt showing less asks the owner to approve a call they
+cannot see. Tag it with `source`, where the call came
+from in the words the dashboard names it by (`loop “Fix the README”`, `workflow “deep-research” ·
+step “sweep”`), and show that as text too: a chat's or a loop's name is in it. Every string in
+the brief is already masked with core's mask, so print it as it is and add no masking of your
+own. When the prompt is too long for one message, split it the way you split a reply and put the
+buttons on the last part. The same
+read composes a brief for an approval your own turn raised, so a channel that runs its own turns
+renders both from one place.
+
+### An approval prompt offers the brief's answers
+
+The brief's `answers` list is what the prompt offers, in order: one button each (or, on a channel
+with no buttons, one reply word each, `word`), labelled `label`, and nothing else. Core composes it
+per call, as the dashboard's approval card does: `Allow once` and `Deny` always, and `Allow for
+this chat` (`key` `trust`, the card's "This chat") when the prompt is asked in the chat that is
+asking, the call may not destroy anything and it has no `reach`. An answer with a `promise` is a
+standing one; the
+prompt says its promise beside it, so the owner reads what it does before pressing it. A press
+resolves the pending record's future with the pressed answer's `key`, and `request_approval`
+returns whether that answer's `ends` is `approved`. Core then decides it the way the card would:
+`trust` trusts that one chat, which its header shows and where the owner turns it off. Never add an
+answer of your own to a prompt core asks, and never drop one.
+
+A channel whose prompt offers these answers relies on a core that sends them, so it declares the
+core feature in its `app.json`: `"requiresCoreFeatures": ["approval-answers"]`
+(`personalclaw.sdk.features.APPROVAL_ANSWERS`). A PersonalClaw without it refuses to install or
+update the app, and says so. One built before core features existed cannot read that line and
+hands the prompt a brief with no answers. Never answer that by returning `None` and leaving the
+owner a bare link: log one warning, and post the prompt with nothing to press, saying that this
+PersonalClaw sends no answers the channel can offer, to answer it in PersonalClaw and to update
+PersonalClaw to answer here. It ends as every prompt does (below).
+
+### An approval ends as PersonalClaw's do
+
+A prompt core asks through `request_approval` keeps no timer of its own: core resolves it with how
+the approval ended, wherever it ended. A prompt your channel raises for a turn it runs itself waits
+`personalclaw.sdk.channel.approval_window_secs()`, read when you ask: the window every other
+approval waits (Settings → Agent defaults). It ends the same four ways. Approved and rejected are
+the owner's press. Nobody answering in that window is `expired`, and the turn stopping first is
+`cancelled`; neither is a Deny, in the prompt, in the conversation or in the audit log. Once it has
+ended, the prompt says how and loses its buttons, and a press that arrives later is told how it
+ended and changes nothing.
+
+### A trust on your own prompt is the chat's
+
+A channel that runs a conversation itself keeps no trust of its own: a trust the owner gives on its
+prompt is the Trust of PersonalClaw's chat for that conversation, the chat the dashboard lists it as
+under your channel. That is where its Permission mode shows it, where the owner switches it off,
+and what the security log records, as for every other chat. A trust kept in your app is one the
+owner can neither see nor revoke.
+
+- **Link the conversation to its thread.** Before you run a turn, link the session key to the
+  thread it runs in (the session manager's `set_channel_link(key, thread, channel_id)`), which is
+  what lists the chat under your channel. Only a conversation so linked can hold a Trust from your
+  prompt: a chat of the owner's that no channel runs is never yours to trust.
+- **Offer the chat's answers.** Read the brief for your own turn's call with
+  `approval_brief_for(event, chat=<the session key the turn runs under>)` when the prompt is in that
+  conversation. It then offers what the chat's approval card offers for the call: `Allow for this
+  chat` (`key` `trust`) where the card would (never for a call that may destroy something, that
+  reaches a host off the allowed hosts or that deletes a protected folder, and only under a ceiling
+  that lets a chat's Trust stand), and
+  only while a chat the owner sees can hold it. Offer it nowhere you would not want the owner to
+  trust the whole conversation, and add no trust answer of your own.
+- **Hand core the answer pressed.** Before you approve the call, pass the pressed answer's `key` to
+  `personalclaw.sdk.channel.answer_in_chat(session_key, key, channel=<your provider key>,
+  request_id=...)`. `trust` makes it the chat's Trust and writes the audit row; an answer for the
+  call alone changes nothing beyond it. When it returns `False` the press decides nothing: keep
+  the approval waiting.
+- **Refuse what the deny-list refuses, before anything else.** At each call, first ask
+  `personalclaw.sdk.channel.screen_tool_call(hooks, event.title, event.tool_input)` (your context
+  builder's `hooks`, or `None` for PersonalClaw's own). It is the hook chain's verdict, read on the
+  command the call would run as well as on its title, the screen PersonalClaw's own chat asks. A
+  verdict whose `action` is `TOOL_DENY` refuses the call: reject it, say in the conversation that
+  it was not run, and write its row (`refused`, with the control and rule `verdict.audit()` names,
+  when one of the shell's own controls refused it). Never put it on your prompt.
+- **Ask at every call, and approve on nothing else.** Before you prompt, ask
+  `personalclaw.sdk.channel.chat_grant(session_key, event)`. It names who approves the call
+  without asking, by the decision the chat's own runner makes: an operator's pattern in the hook
+  settings (`hook_pattern`), what the call's tool declares (`declared_read`, `work_asks`), the
+  chat's Trust reads, Trust or YOLO (`trust_reads`, `trust`, `yolo`), each grant held to the
+  allowed hosts, to the protected folders (a delete of the owner's home folder, the filesystem root
+  or the folder the conversation's runtime works in always asks) and to the operator ceiling. `""`
+  means the call must be asked. Approve no call on an answer of your own, such as a hook pattern you
+  match yourself, the spawn setting, or an approval mode your turn carries: none of those is held to
+  the ceiling, the allowed hosts or the protected folders. Read it per
+  call and remember nothing: a pattern the owner removes, or the chat switched to Normal, makes
+  your next call ask.
+- **Write your turns through `save_conversation_turn`, and name the conversation with the log's
+  `set_title`.** The chat the dashboard opens for your conversation is given each turn you write
+  there and each name you give it, so it shows the conversation as it is and its own saves keep
+  your turns and its name.
+- **Name who sent each turn and your channel.** Pass the thread, the sender's id as your channel
+  knows them and your channel's provider key:
+  `save_conversation_turn(log, key, text, reply, source_thread=thread, source_user=sender,
+  source_channel=PROVIDER)`. Memory takes a turn as the owner's own words only when its sender is
+  the owner your channel keeps (`owner_id_for(PROVIDER)`), so what someone else in the
+  conversation writes is never learned as the owner's; a turn saved without your channel is read
+  as nobody's. A channel that saves its turns this way declares
+  `"requiresCoreFeatures": ["turns-name-their-channel"]`
+  (`personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
+  `source_channel`, and refuses to install or update the app.
+- **Say whose message each turn answers, for as long as it runs.** Wrap the turn, from before you
+  stream it to after its tools are done, in
+  `with turn_asked_by(session_key, arrived_on(thread, sender, PROVIDER)):`, with the source you save
+  the turn with. While it runs, what the turn's tools would change of the owner's memory (a lesson
+  to remember or forget, a triage rule, a skill draft) waits for her own word unless the sender is
+  the owner your channel keeps: nothing is written, she is asked, and the agent is told so. Put
+  each call the turn's agent asks about to `screen_tool_call` inside it as well: a change its own
+  file or shell tools would make to one of her memory documents is refused there, whatever would
+  approve it. A channel that runs its turns itself declares
+  `"requiresCoreFeatures": ["turns-name-who-asked"]`
+  (`personalclaw.sdk.features.TURNS_NAME_WHO_ASKED`): a PersonalClaw without it has no
+  `turn_asked_by`, and refuses to install or update the app.
+
+A channel that uses these declares the core features in its `app.json`:
+`"requiresCoreFeatures": ["chat-trust", "tool-call-screen"]` (`personalclaw.sdk.features.CHAT_TRUST`,
+`TOOL_CALL_SCREEN`). A PersonalClaw without them has none of these functions, and refuses to
+install or update the app.
+
+### The owner's answer to the Morning triage digest
+
+When the owner's notification rule sends the Morning triage digest to their DM on your channel, the
+DM says how to answer it there: `3 yes`, `3 no`, `always yes 3`, `yes all`. A DM that crosses the
+guarded door (`services.deliver_channel_inbound`) needs nothing from you: the door takes the
+owner's answer to the digest that DM received, answers it as the digest's card does, says in the DM
+what it did, and hands you back a verdict that is not allowed (`reason` `answered_digest`), so you
+run nothing and publish nothing for it. A channel that runs a DM's conversation itself offers each
+direct message to `await services.answer_channel_reply(<your provider key>, msg, is_dm=True)` before
+its own turn, and runs no turn when it returns `True`. Who may answer (the owner your channel keeps,
+`owner_id_for`), which DM (the one the digest reached) and what counts as an answer (the digest's
+grammar, and nothing else) are core's to decide: offer every direct message, and let a `False` mean
+the message is yours as before. Declare `"requiresCoreFeatures": ["digest-replies"]`
+(`personalclaw.sdk.features.DIGEST_REPLIES`); a PersonalClaw without it has no such method.
+
+### A compaction the agent did on its own is said
+
+The agent can compact the conversation on its own in the middle of a turn: an
+`EVENT_COMPACTION_STATUS` whose `text` is `personalclaw.sdk.channel.COMPACTION_AUTOMATIC`, with
+`title` saying how much it freed. A channel that runs its own turns says so, in the words it gives
+the result of a `/compact`, since it is the same pass, and keeps the answer that streamed before
+it. Silently dropping it leaves the conversation missing its middle with nothing said.
+
+### A turn you stop reading is closed
+
+A channel that runs its own turns reads each turn's stream (`client.stream(...)`, and a
+`/compact`'s `stream_command`) inside `personalclaw.sdk.model.closing_stream`, and stops reading
+wherever it means to: at the terminal event, after a call whose approval was not given, on an error
+or a stop.
+
+```python
+async with closing_stream(client.stream(message)) as events:
+    async for event in events:
+        ...
+```
+
+Leaving the block by any way out closes the stream at once. An agent CLI's session sends one prompt
+at a time, and its turn holds the session until the turn's stream is closed: closed part way, the
+turn tells the agent to stop and gives the session back, so the thread's next message goes out as
+soon as the agent has answered. A stream left open goes back only when the interpreter collects it,
+which can be much later, and the next message waits for it, unsent. Declare
+`"requiresCoreFeatures": ["closing-streams"]` (`personalclaw.sdk.features.CLOSING_STREAMS`); a
+PersonalClaw without it has no `closing_stream`, and refuses to install or update the app.
+
+### Declare capabilities honestly
+
+`ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:
+`inbound`, `threads`, `attachments`, `reactions`, `edits`, `rich_text`,
+`typing_indicator`, `max_text_len` (`0` = unbounded). Defaults are conservative — text-out
+only, no inbound — which is the right starting point. Two clauses of the kit exist purely
+to catch dishonesty here: declaring `inbound=True` with no inbound path, and declaring
+`edits=False` while `start_stream` hands core a ts to animate.
+
+---
+
+## Transport lifecycle — who calls what, when
+
+```
+install / enable      →  your manifest's provider `implementation` factory builds the instance
+the instance is live  →  health(); unless `offline`: start_inbound(services), as its own task
+  (boot, install,        (the page reads `starting` until it returns; `error` + why if it
+   enable, update,        raises or takes over a minute)
+   settings saved)
+settings saved/update →  a NEW instance: old.stop_inbound() FIRST, then the new one starts —
+                         never two receivers at once
+disable / uninstall   →  stop_inbound()                (core drops your delivery handle)
+health() → offline    →  stop_inbound()                (e.g. its token was deleted)
+Channels page render  →  info(), capabilities(), health()
+"Test" button         →  test()                        (must agree with health())
+"Connect"/"Disconnect"→  connect() / disconnect()
+every inbound message →  your handler → guard_inbound(...) → session
+gateway shutdown      →  stop_inbound()
+```
+
+Core runs receivers by one rule, `channel_transports.reconcile_inbound`, applied at boot, on every
+change to the transport registry (enable, disable, install, uninstall, update, a settings save), and
+after a secret is written to or deleted from the Secrets vault: exactly one receiver per enabled
+channel whose `health()` is not `offline`, on the instance that is registered NOW, and none for any
+other. So a channel starts and stops receiving the moment it is enabled, changed or removed — no
+restart. After a vault write, a channel that then reports `error` (a receiver still on the token it
+started with says so) is rebuilt from its settings, which replaces its receiver. `start_inbound()`
+is called at most once per instance, and a failed start is retried only when the channel changes
+(its settings are saved, it is turned off and on). `stop_inbound()` has to actually stop what
+`start_inbound()` started: the replacement starts the moment it returns. An update runs the new
+version's code at once: the old version's receiver is stopped before its modules leave the
+process, and the replacement is built from the new files (see
+[app-platform](../architecture/app-platform.md#unload-and-load-appsapp_runtimepy)).
+
+Notes that bite:
+
+- `start_inbound` receives a `GatewayServices` handle — sessions, cron, channel history,
+  dashboard state, config, owner. Route inbound messages into chat sessions through it;
+  do not reach around it into core internals.
+- Own your loop. Every shipped channel drives its own receiver from `start_inbound` and
+  normalises the vendor payload into `ChannelMessage` in a private handler. Tell the kit
+  which handler that is with `inbound_via="_on_message"` — it accepts a named async method
+  as proof of the inbound path rather than demanding the `receive()` shape nobody uses.
+- Persist your cursor (poll offset, IMAP UID, gateway session) **before** dispatching the
+  message, not after. A crash mid-dispatch must not replay the message forever.
+- Set `ChannelMessage.message_id` to your platform's own id for the message, the one it keeps
+  when it delivers the message again, and `channel_id` to the chat it came in: an id names a
+  message only with its chat (a chat service numbers each chat's messages from one). The door
+  takes each message once by those two. A delivery of it made again (your platform resending
+  what it was not sure you received, your receiver reading again from an older cursor after a
+  crash), while its turn runs, after it finished or failed, or after a restart, is answered
+  `already_received` and changes nothing, so keep no dedup of your own. A message with no
+  `message_id` is refused (`no_message_id`), and the gateway log names your channel.
+- If your channel acts on a message itself before the door, or instead of it (a conversation it
+  runs itself, a pairing code it finds inside a message, mail only your automations get), claim
+  the message at the top of your inbound path, before anything acts on it:
+  `if not claim_message(PROVIDER, msg): return` (`personalclaw.sdk.channel`, and declare
+  `messages-run-once`). It is True the first time your platform delivers the message, and the
+  door takes a message you claimed, once.
+- Set `ChannelMessage.sender` to the id your channel knows the person by, and `thread_id` to
+  the conversation. The door records both on the turn it adds to the chat, as where the
+  message came from (`source_user`, `source_thread`), with your channel (`source_channel`),
+  and every save of the chat keeps them. Memory reads them: only a message whose sender is the
+  owner your channel keeps is the owner's own words, so use the same id for the owner here as
+  the one your owner pairing stores. A stand-in session in your tests takes `source=` on
+  `append` and `queue_append`, as the chat does.
+- `health()` is passive and cheap (credentials present? socket up?). `test()` is allowed to
+  make one round-trip. If they can disagree, you have two truths and the owner will find
+  the wrong one.
+
+---
+
+## Trust, pairing and linking
+
+A channel is an open door: anyone who can find your bot can type at it. Core owns that
+policy so it cannot drift per channel — your transport's job is to *call* it, on **every**
+inbound path, before any text reaches a session.
+
+```python
+from personalclaw.sdk.channel import guard_inbound
+
+verdict = guard_inbound(
+    state, self.name, sender_id,
+    sender_name=sender_name, channel_id=channel_id, is_dm=is_dm, text=raw_text,
+)
+if not verdict.allowed:
+    if verdict.canned_reply:
+        await self.delivery.deliver_text(channel_id, verdict.canned_reply)
+    return
+text_for_session = verdict.fenced_text or raw_text
+```
+
+What that one call gets you, and what you must not re-implement:
+
+- **Unknown DM sender.** Under the default `dm="pairing"` policy an unpaired sender is
+  **denied**, `verdict.canned_reply` is the shared `CANNED_PAIRING_REPLY` (every channel
+  says the same thing — do not write your own), and core raises exactly **one** actionable
+  owner attention item carrying Allow/Deny plus the `provider` + `sender_id` the buttons
+  need. It is deduped: a second message from the same stranger does not re-alert. The
+  canned reply is rate-limited to once per sender per 24h. The owner answers it from the
+  dashboard's notification (`POST /api/notifications/trust`), which lets in only the sender
+  the gate told them about, and asks their consent to an Allow; your channel adds nothing
+  for that. What the stranger writes after the one reply is still counted on Settings →
+  Sender trust (who wrote, how many times, the last when, never the text), so the limit
+  never hides someone who keeps writing. Revoking a sender starts their 24h over: their
+  next message gets the reply, and the owner the notice, as a stranger's does.
+- **A channel that speaks as its owner.** When what your channel sends goes out as the owner
+  themselves (their own mailbox) rather than as a bot they run, declare
+  `ChannelCapabilities(speaks_as_owner=True)` and hand every inbound message to the door
+  (`services.deliver_channel_inbound`), which reads it. The gate then hands you no
+  `canned_reply` for a stranger, and the door holds their direct message in the Inbox as
+  someone new: the owner replies to it there (through your `deliver_text`, on the message's
+  `thread_id`), pairs them, or ignores it. Nothing reaches the stranger until the owner replies
+  or pairs them, so no automatic answer tells whoever wrote that the address is read. The
+  owner's once-a-day notice is composed from what the Inbox took: a message it kept out (its
+  thread muted, its row dismissed) is named in no notice. Called directly, `guard_inbound`
+  cannot see the capability and treats the channel as a bot.
+- **Pairing.** The owner mints the 8-digit code on Settings → Sender trust (**Pair someone**)
+  or with `personalclaw pair <provider>` (see [the CLI reference](../reference/cli.md)) and
+  hands it over out of band; the sender sends it to your bot in a DM and the gate redeems it,
+  so your transport only delivers `verdict.canned_reply`. Single-use, TTL-bound. Or the owner
+  just hits **Allow** on the attention item. The same page sets your channel's DM policy
+  (`pairing`, `owner_only`, or `open` after a consent prompt) for every channel alike. A code
+  lets someone in only under `pairing`: `redeem_pairing_code` refuses it under the other two
+  without spending it, the page offers **Pair someone** only then, and setting another DM policy
+  ends a code still outstanding. A channel whose messages cannot be the code alone (a mail)
+  hands each code-shaped word it finds to `redeem_pairing_code(PROVIDER, sender, word)`, and says
+  over the code how it is sent there (`sender_pairing_hint()`, e.g. "Have them mail this code
+  from the address you want to let in, to …"); a channel that `speaks_as_owner` and says nothing
+  gets "Have them send you this code".
+- **Groups.** Declare `ChannelCapabilities(groups=True)` when your channel carries group
+  conversations (a group chat, a server's channel, a room) and hands their messages to the door
+  with `is_dm=False`. Settings → Sender trust then shows your channel's group rule and its
+  groups; a channel without them (a mailbox) leaves it off, and the page shows no group rule, no
+  "add the bot to a group", unless a group is already on record for it. Its words for strangers
+  follow `speaks_as_owner` the same way: a bot asks a stranger for a code, a channel that sends
+  as the owner sends them nothing. Default `group="tracked_only"`: an untracked group is
+  denied *silently* (`reason == "untracked_channel"` — no owner spam), a tracked one is allowed.
+  Core remembers the untracked group, and Settings → Sender trust lists it with a **Track**
+  button. Put the group's title in `ChannelMessage.metadata["channel_name"]` (or pass
+  `channel_name=` to `guard_inbound`) so the owner sees a name rather than your vendor's id.
+  Use core's `track()` / `untrack()` / `is_tracked_channel()`; a channel-local allowlist is a
+  second source of truth and will diverge. Pass the name the owner knows a sender or a group by
+  (`allow_sender(..., name)`, `track(..., name)`), or the page lists a bare id. A repeat call by the
+  same route is not a new grant: it keeps the date, writes no second audit row and takes the name
+  given, so a channel that keeps a list of its own can write it through on every start.
+- **Fencing.** Non-owner content comes back as `verdict.fenced_text`, already wrapped by
+  `fence_channel_content(text, provider, sender)`. **Use it.** Passing the raw text into a
+  session instead is a prompt-injection hole, and a hand-rolled fence loses the
+  neutralised chat-template-token defences. Never test a fence by substring — the
+  attributed form will not match; use `security.is_fenced`. The kit reads your module's
+  source for a `fenced_text` reference precisely to catch a refactor that reverts to
+  `cm.text`.
+- **Owner identity** comes from the credential store, ONE KEY PER CHANNEL: save your owner's
+  user id under `owner_id_credential(PROVIDER)` and read it with `owner_id_for(PROVIDER)`
+  (both from `personalclaw.sdk.channel`; `PROVIDER` is the key you pass to
+  `deliver_channel_inbound`). Core addresses the owner's notifications on your channel with
+  the same key. `CRED_OWNER_ID` is the one key every channel used to share — setting up a
+  second channel overwrote the first one's owner — and `owner_id_for` falls back to it only
+  while your channel has none of its own.
+- **Pairing the owner from the dashboard.** Declare `ChannelCapabilities(owner_pairing=True)`
+  when your DMs cross `deliver_channel_inbound` and you read your owner with `owner_id_for`
+  every time you need it (never keep the value from `start_inbound`). Your channel's Configure
+  page then offers **Pair as owner**: it shows an 8-digit code, the owner sends it to your bot
+  in a DM, and core redeems it at the door — storing the sender under
+  `owner_id_credential(PROVIDER)` and trusting them — and returns
+  `reason == "owner_paired"` with a canned reply your transport delivers like any other. Five
+  wrong codes cancel the code. Without the flag the page shows only who your channel reaches.
+  The page names the owner by the display name your inbound passes as `sender_name` (or as the
+  `name` of `redeem_owner_pairing_code`), with your platform's id for them under it; with no name
+  it shows the id, saying what it is.
+  A channel whose messages cannot be the code alone (a mail, under a quote and a signature)
+  hands each code-shaped word it finds to `redeem_owner_pairing_code(PROVIDER, sender, word)`,
+  which pairs by the same rules, and says over the code how it is sent there
+  (`owner_pairing_hint()`, e.g. "Mail this code to … from your own address").
+- **A DM that is one conversation.** Declare `dm_thread_is_channel=True` when every message in
+  a DM reaches core with the DM's channel id as its `thread_id` (Telegram's chat id, a Discord
+  DM channel). A chat the owner hands to your channel from its menu ("Continue on …") is then
+  linked to the DM itself, so the owner's next message there continues it; otherwise it is
+  linked to the thread the handoff opened. Either way it answers on your channel from then on,
+  whichever channel it came from. The thread it was on no longer continues it, and when that
+  thread is the owner's own DM (the one `open_dm` opens for the owner's id) it is told where the
+  chat went, through that thread's own channel; nothing is said in a group, a shared channel or
+  anyone else's conversation.
+- **Keep no thread-to-chat map of your own.** Core keeps which chat a thread continues in its
+  session store, the one place a link is kept, so a restart keeps it: the next message on the
+  thread continues its chat, brought back from disk when it is not open. A chat your channel
+  makes for a thread itself (an import of a thread's history) is made with
+  `get_or_create_session(app=PROVIDER)`, as the door makes one, and every chat your channel
+  links to a thread (that import, or a chat the owner resumes in one of your threads) is linked
+  with `link_channel(chat.key, thread, channel_id, provider=PROVIDER)`. The link names your
+  channel, and that is where the chat's answers, notices and approval prompts go: a link that
+  names no channel (one written straight to `SessionManager.set_channel_link` without
+  `channel_provider`) has nowhere to send them, and the door does not continue it. Linking moves
+  a chat that was on another thread or another channel (the owner's own DM it left is told where
+  it went), and `SessionManager.get_channel_provider(key)` says which channel a chat is on before
+  you decide it is already in one of your threads. A channel that links a chat itself declares
+  `"requiresCoreFeatures": ["links-name-their-channel"]`
+  (`personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
+  channel on a link, and refuses to install or update the app.
+- **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
+  a hook result, a file, `send-message`) tries every connected channel in name order until one
+  delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no
+  owner id, when `open_dm` returns `""` or raises, or when the send raises — so return `""`
+  from `open_dm` for an id that is not one of yours (email-channel does, for anything that is
+  not an address) rather than handing it to your API. When no connected channel gets it
+  through, it goes to the Inbox with a sentence naming why each one could not. A message the
+  owner asked for on one channel ("message me on Telegram": `notify`'s and `send-message`'s
+  `via`) is tried on that channel alone, and goes to the Inbox, saying why, when it cannot
+  deliver: no other channel stands in for it.
+
+Linking the channel to the dashboard: mint the link's token with
+`owner_sign_in_token(PROVIDER, user_id, ttl)` (and `LINK_WINDOW_SECS`) over `dashboard_origin()`,
+and give the owner a way back the other direction with `build_thread_link`. A token signs in as
+the owner whatever id it names, so `owner_sign_in_token` mints only for your channel's owner and
+refuses anyone else with `NOT_THE_OWNER_SENTENCE`: show them that, send them nothing. Treat any
+token you print as a credential — it is a bearer token with a long TTL — and send it only in the
+owner's DM.
+
+---
+
+## Using the conformance kit
+
+One executable contract, four channels. Your suite calls it with a **live provider
+instance** (the kit never constructs one, so it cannot disagree with your wiring):
+
+```python
+# your-channel/test_provider.py
+from personalclaw.sdk.channel import assert_channel_contract
+
+from your_runtime.delivery import YourDelivery
+from your_runtime.transport import YourTransport
+
+
+def test_channel_contract(fake_backend):
+    transport = YourTransport(token="test-token")
+    delivery = YourDelivery(fake_backend)
+    assert_channel_contract(
+        transport,
+        delivery=delivery,
+        fake_backend=fake_backend,          # must expose a recorded `edits` list
+        min_edit_interval=delivery.EDIT_MIN_INTERVAL,
+        clock=fake_backend.set_now,         # setter advancing the injected monotonic clock
+        inbound_via="_on_message",          # your async inbound handler
+        press=press,                        # how the owner answers your approval prompt
+    )
+```
+
+`press` is `async def press(pending, answer: str) -> str`: given the pending record your
+`request_approval` handed `on_prompted` and the `key` of one of the answers the prompt offers
+(`approved`, `trust`, `rejected`), it drives your OWN handler for the owner's press on that answer
+(a callback, an interaction, a reply) and returns what the presser was told. Drive the
+handler, not a fake's button: a fake that refuses a press on a message whose buttons are gone
+would hide the late press the clause is about. Wire the delivery with an owner, so it asks.
+
+Import it from `personalclaw.sdk.channel` — **not** from `personalclaw.testing.…` and not
+from core's `tests/` tree. The facade is the only path the apps-side import lint allows,
+and it is the path core's own suite exercises. (The kit lives in the installed package
+rather than core's `tests/`, which ships in no wheel; the module docstring records that
+decision.)
+
+Run it against an isolated `PERSONALCLAW_HOME` — the kit drives the **real** trust seam,
+so it needs to see default policies and must never write your actual store. It raises
+`ChannelContractError` (an `AssertionError` subclass) naming the violated clause, and it
+imports no pytest, so a plain script or your own harness can call it too. It is re-entrant:
+call it once per config if you have several.
+
+| Clause | Fails when |
+|---|---|
+| identity | blank `name`/`display_name`, or `info()` relabels either, or drops the capability dict |
+| capabilities | `to_dict()` is missing a declared field, adds an undeclared key, or ships a wrong type |
+| connect/send | `connect()`/`disconnect()` are not awaitable or return the wrong type; `send()` returns a non-bool or raises on a well-formed message |
+| receive/inbound | `inbound=True` with no inbound path, a named `inbound_via` that is missing or not async, or `inbound=False` while an inbound handler exists |
+| health/test | a state outside `{ready, offline, error}`, a missing `detail`, a non-bool `ok`, or `test()` claiming ok on a non-ready `health()` |
+| unknown-sender | an unpaired DM sender is allowed, gets the wrong canned reply (none at all for a channel that `speaks_as_owner`, which must have each of their messages held for the owner), or raises zero or two owner requests |
+| fencing | tracked-group content comes back unfenced, the fence replaces rather than wraps the text, or your module never reads `verdict.fenced_text` |
+| delivery | `deliver_text` missing, or any SHOULD method absent while you passed a `delivery` |
+| streaming | `edits=True` and the trio is incomplete, the throttle fires more than once per your floor, `stop_stream` does not force-flush, or `append_stream_task` refuses a status in `TASK_STATUSES` — or `edits=False` and `start_stream` returned a non-empty ts |
+| approvals | with `press=`: the prompt hands core no pending record with a future, an ending other than `approved` returns anything but `False`, a press after an ending changes it or is not told how THAT approval ended, the owner's press on an offered answer does not resolve it with that answer's key or returns other than whether it approves, or a cancelled wait swallows its cancellation |
+| vendor completeness | **never fails** — warns; see below |
+
+If you cannot supply `min_edit_interval` + `clock`, the streaming clause degrades to
+presence-only. The kit refuses to sleep, and refuses to invent a floor it cannot know.
+Without `press`, the approvals clause is not asserted: the kit cannot press your button.
+
+---
+
+## Packaging
+
+A channel app is an ordinary app bundle. Required manifest fields are the usual four —
+`name` (kebab-case), `version` (`MAJOR.MINOR.PATCH`), `displayName`, `description` — plus the
+provider registrations. The full manifest contract is
+[the app-platform architecture doc](../architecture/app-platform.md) and the
+app-creation guide in the apps repository; the channel-specific parts are:
+
+```jsonc
+{
+  "name": "your-channel",
+  "version": "0.1.0",
+  "displayName": "Your Channel",
+  "description": "Talk to your assistant from Your Channel.",
+  "provider": {
+    "type": "channel",
+    "implementation": "your_runtime.transport:create_provider",
+    "settingsSchema": { /* Draft-07 + x-meta: what the settings form renders */ }
+  },
+  "providers": [
+    { "type": "inbox", "implementation": "your_runtime.source:create_source" }
+  ],
+  "permissions": { /* the MINIMUM — the Store shows these as the install-consent surface */ },
+  "ui": [ /* your own pages, if the generic settings form does not fit */ ]
+}
+```
+
+- `provider` (singular) is the canonical registration; `providers[]` carries the rest.
+  Both shapes are read everywhere, including by the completeness advisory below.
+- **Secrets go in the credential store**, never in `app.json` or the settings schema.
+  Prompt for them from your `cli_setup` contribution and probe them from `cli_doctor`.
+  A step runs with your app's directory on `sys.path` (while it imports and while it runs),
+  so it may import your own package; one that cannot load or raises makes
+  `personalclaw setup` exit non-zero, naming your app, the exception and
+  `personalclaw setup --app <your-app>`, the command that runs your step again.
+  `SetupContext.delete_credential(name)` removes a secret an EARLIER release saved under a
+  plain name — it refuses a key one of your settings owns (clear the setting instead).
+- A thread-title generator: parse the model's reply with `parse_title` from
+  `personalclaw.sdk.channel`, the dashboard's own parser, rather than a copy of it.
+- Declare the **minimum** permissions. The Store renders them as the consent surface a
+  user reads before installing.
+- Ship `test_provider.py` (the kit call above), a `README.md` that documents any capability
+  you declared `False`, and a `LICENSE`.
+- No vendor SDK unless it buys something a thin HTTP client cannot. The reference channel
+  is deliberately raw `httpx`: fewer transitive dependencies, no version-pin fights, and
+  every retry/backoff rule visible in your own code.
+
+---
+
+## Vendor completeness
+
+A channel is rarely the only seam a vendor touches, and an app that registers only the
+channel leaves the rest of the platform blind to it. **One vendor app registers every seam
+that vendor touches.** The checklist:
+
+| Seam | Manifest | Why it is not optional |
+|---|---|---|
+| **Channel transport** | `provider` / `providers[]` `type: "channel"` | conversations in and out |
+| **Inbox message source** | `providers[]` `type: "inbox"` (a `MessageSourceProvider`) | messages that arrive while no session is live. Without it, anything sent to your channel outside a conversation is invisible to the owner's Inbox |
+| **Trigger source** | `providers[]` `type: "trigger_source"` (a `TriggerSourceProvider` from `personalclaw.sdk.trigger_source`) | vendor events driving automations. **The seam is live and adopted** — `personalclaw.sdk.trigger_source` exports the ABC, and every shipped first-party channel app declares one — so this row is neither a forward obligation nor an unadopted suggestion. `personalclaw app new --list-types` prints `trigger_source` next to `channel`. Your provider's `start(emit)` hands core typed events; core namespaces them `app:<name>:<event>`, fences them at origin, and `kind: event` triggers match on the existing `{source, pattern}` spec. Core never polls you. Still do **not** hand-roll event glue. There is a seam now, so there is no excuse for one |
+| **Contributed UI** | `ui` pages in your own bundle | anything the generic provider-settings form cannot express |
+
+**Rule 2 — your UI, not core's.** Anything that does not fit a pluggable seam becomes
+*that vendor app's own UI surface* (a `ui` page inside the app) — **never** a core
+accommodation. If a vendor feature seems to need a core change, the change is a new
+*generic* seam or it does not happen.
+
+**Rule 3 — core never names the vendor.** Not in code, not in an enum, not in a comment.
+If you find residue while touching a seam, scrub it in the same change.
+
+The reference for the completed pattern is the **slack-channel** app in the apps
+repository: one bundle, a channel transport plus an inbox `MessageSourceProvider` plus a
+`TriggerSourceProvider`, each built as an adapter over the transport's *existing* client or
+inbound stream (never a second connection). It ships no `ui` block — the generic
+provider-settings form renders its `settingsSchema`, which is the right default. If your
+vendor needs a surface that form cannot express, the worked examples of a bundle-owned
+`ui` block are the **growth** and **minutes** apps.
+
+### Sharing one inbound stream between two providers
+
+Your transport and your trigger source are built by two different manifest factories, so
+the two instances never see each other — and the wrong fix is a second connection to the
+vendor. All four shipped channel apps use the same shape: a small `inbound_tap` module in
+the app's own runtime package with `subscribe` / `unsubscribe` / `publish`. The transport
+publishes; the trigger source subscribes in `start(emit)` and unsubscribes in `stop()`.
+A module in your package is the only thing the two instances demonstrably share.
+
+**Publish only what your trust gate already admitted.** Put the `publish` call *after* the
+guarded door and gate it on `verdict.allowed`. Publishing earlier means anyone who can
+reach your bot can arm the owner's automations by sending it a message — strictly worse
+than the session the trust gate already refuses them.
+
+**Two more rules that are easy to get wrong.** Pick the event NAME from a frozen tuple of
+constants using a *structural* fact (is this a DM?), never from anything in the message: a
+source that reads its event name out of the payload lets a sender choose which of the
+owner's triggers to match, and choosing the trigger is choosing the action. And put every
+piece of prose in `SourceEvent.text` — that is the one field core fences at ingestion.
+`meta` is matched, not narrated, and it is *not* fenced, so a remote display name or a mail
+subject does not belong there.
+
+### The kit's completeness advisory
+
+The conformance kit checks this for you. From your live provider it locates the owning
+`app.json`, and for each companion seam the manifest does not declare in either shape it
+emits a separate `UserWarning` naming that seam:
+
+```
+vendor completeness: the app 'your-channel' registers a channel transport but no inbox
+provider — its manifest declares provider types ['channel']. …
+vendor completeness: the app 'your-channel' registers a channel transport but no
+trigger_source provider — … The seam is LIVE: …
+```
+
+**One advisory per missing seam**, not one merged sentence: they are different facts about
+different work, and adopting one must not silence the other.
+
+It is **advisory, never a failure**, deliberately: the doctrine postdates the shipped
+channel apps, and giving a control teeth before the population satisfies it is an outage,
+not a gate. It also stays silent when no `app.json` is discoverable — a bare unit test or
+a core fixture has no bundle, and an advisory that fires on fixtures teaches readers to
+ignore it. The thing with *teeth* is the apps repo's own
+`.github/scripts/check_trigger_source_adoption.py` sweep, which can see the whole
+population where a per-app kit call only ever sees one app.
+
+If your vendor genuinely has no such semantics, say so and that advisory stops. The two
+suppressors are independent on purpose — a shared one would silence a seam nobody had
+thought about:
+
+```python
+assert_channel_contract(
+    transport,
+    no_inbox_source_reason="the vendor exposes no message history to poll",
+    no_trigger_source_reason="the vendor pushes nothing an automation could act on",
+)
+```
+
+Put the real reason there. It is the exemption record, and the next reader of your suite is
+the only audience for it.
+
+---
+
+## Ship checklist
+
+- [ ] `capabilities()` is honest — every `True` is backed, every `False` documented in the README.
+- [ ] `guard_inbound` is called on **every** inbound path, and `verdict.fenced_text` is what reaches the session.
+- [ ] `health()` and `test()` cannot disagree.
+- [ ] The inbound cursor is persisted before dispatch.
+- [ ] Every inbound message carries your platform's own id for it (`message_id`) and its chat (`channel_id`); a path that acts on a message before the door claims it (`claim_message`).
+- [ ] `assert_channel_contract` passes with `delivery=`, `min_edit_interval=`, `clock=` and `inbound_via=` supplied — not just the bare transport.
+- [ ] No completeness advisory, or a real `no_inbox_source_reason` / `no_trigger_source_reason`.
+- [ ] Your trigger source publishes only what the trust gate admitted, picks its event name from a frozen tuple, and puts every piece of prose in `SourceEvent.text`.
+- [ ] Core imports go through `personalclaw.sdk.*` only; no core file names your vendor.
+- [ ] Secrets in the credential store; minimum permissions declared.
+- [ ] `README.md` + `LICENSE` + tests ship with the bundle.

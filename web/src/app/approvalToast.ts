@@ -1,0 +1,38 @@
+import { blastRadiusLine, type BlastRadius } from '../pages/chat/approvalMeta'
+import { approvalDestination } from './approvalDestination'
+
+/** The COMPACT form of the approval brief.
+ *
+ *  The out-of-context nudge (`useApprovalToasts`) is not a second approval renderer and must
+ *  never become one: it carries no Allow, no Deny, and no scope. What it owes the reader is
+ *  the same first question the card answers — what would this call touch — in the one line a
+ *  toast has room for, so a user can tell "another chat wants to read a file" from "another
+ *  chat wants to run a shell command" without opening it.
+ *
+ *  It draws its words from `approvalMeta`'s single facet vocabulary, so the chip on the card
+ *  and the phrase in the toast cannot drift apart. When nothing is established the clause is
+ *  omitted entirely rather than rendered as "nothing established" — see the honesty contract
+ *  in `approvalMeta`.
+ *
+ *  Deliberately NOT advocating and deliberately not alarming: the sentence states who is
+ *  asking, what for, what it can touch, and where to answer. It does not tell the reader what
+ *  to do, and it does not editorialise on the risk level (the card's risk chip does that in
+ *  context, where the arguments are also visible).
+ */
+export function approvalToastMessage(input: {
+  /** Where the call came from, from the start of a sentence: `Loop “Fix the README”`. */
+  who: string
+  tool: string
+  session: string
+  /** What the call can touch, off the same `approval` frame the card reads: the radius the
+   *  backend composed, so the toast and the card cannot describe one call differently. */
+  blastRadius?: BlastRadius
+}): string {
+  const line = blastRadiusLine(input.blastRadius)
+  const touches = line ? ` (${line})` : ''
+  // WHERE TO ANSWER comes from `approvalDestination`, not from the raw session key. The key is
+  // openable prose only for a chat; a workflow stage's `workflow:<run>:<node>` named a 404 and
+  // sent the one person who was notified nowhere (#258). Same call the nudge builds its LINK
+  // from, so the sentence cannot name one place while the link goes to another.
+  return `${input.who} needs approval to run ${input.tool}${touches} — open ${approvalDestination(input.session).label} to respond.`
+}

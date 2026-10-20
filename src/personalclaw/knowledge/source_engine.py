@@ -1,0 +1,932 @@
+"""SourceEngine — the one poll loop over WatchedSources.
+
+The generalized form of the loop ``triggers/web_poll.py`` prefigured for one kind: a
+SINGLE re-armed asyncio task (never one task per source) that wakes, polls every source
+whose interval has elapsed, and sleeps until the next is due (capped, like the trigger
+scheduler, so an external edit is picked up within one poll). It enrolls the poll-capable
+providers registered in ``knowledge_providers.registry`` — a provider is poll-capable when
+it subclasses :class:`~personalclaw.knowledge_providers.base.KnowledgeSourceProvider` (the
+``poll`` contract) — and drives ``provider.poll(source_id, cursor)`` per due source,
+plus whichever of the optional engine-supplied extras (``spec``, ``policy``) that provider's
+own signature declares (:meth:`SourceEngine._poll_kwargs`).
+
+Crash-safety is the whole design. Per new item the engine calls the source-aware
+:meth:`~personalclaw.knowledge.store.KnowledgeStore.create_typed_item`, which folds the
+``source_seen`` novelty-gate INSERT into the item's own transaction, then enqueues it on
+the ONE ingestion path, in its background lane (``ingest_queue.enqueue_background``, so a
+source's items never hold up what the person adds herself). Only after every item is
+committed does it advance the cursor
+(:meth:`~personalclaw.knowledge.store.KnowledgeStore.record_poll`).
+So a crash between item-persist and cursor-persist re-yields the same items on the next
+poll, and the UNIQUE ``(source_id, guid)`` gate drops them — at-least-once poll, exactly-
+once persist. :meth:`recover_pending` on startup re-enqueues any item whose ingestion did
+not finish (via the ingest queue's own recovery), so no written-but-unprocessed item is
+stranded by a restart.
+
+The engine NEVER fetches web content itself — it drives PROVIDERS, whose fetches route
+through ``net.fetch`` under the ``SOURCE`` egress profile. Re-implementing a fetch
+here would bypass host classification, private-IP denial and the redirect-hop re-check.
+
+A watched folder's files are the one thing it takes itself (:func:`takes_files`): the folder
+observer's sighting names a file inside the folder, and the engine takes the file through the
+door the Knowledge page's uploads come through (``knowledge.file_items.take_watched_file``), so
+it is typed by its kind, scanned, and read by the reader for its kind, never decoded into a note.
+
+Every other sighting carries its text, from outside the gateway (a feed's entry, a page's, what an
+app's source read), and the engine scans that text before anything is kept of it
+(``knowledge.text_items``): what the scan refuses, or could not check, is a failed item that keeps
+no text and says why, named in the gateway log too, since no one was there to be told. A sighting
+the source has had is not read again, nor one whose text did not change.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import logging
+from typing import Any, Awaitable, Callable
+
+from personalclaw.knowledge import project_scope, sharing, text_items
+
+logger = logging.getLogger(__name__)
+
+#: The door a watched source's text comes through, as the security event log names it.
+SOURCE_SURFACE = "watched_source"
+
+#: Ceiling on one loop iteration's sleep. Mirrors the trigger scheduler's POLL_CEILING: a
+#: source added or re-enabled out of band (an MCP tool in another process editing the
+#: store) must be picked up within one poll rather than waiting out a multi-hour interval.
+POLL_CEILING_SECS = 30.0
+
+#: The fastest a folder on this machine is polled. The network floor
+#: (``sources.network_floor_secs``) exists to spare someone else's server; a folder poll
+#: costs only a stat of its files here, so it keeps the interval chosen for it down to this.
+LOCAL_FLOOR_SECS = 60
+
+
+def polls_the_network(provider: Any) -> bool:
+    """Whether a poll by ``provider`` may reach another machine, for the rate floor.
+
+    Only core's own folder observer is known not to, and it is recognised by its exact
+    type. Every other provider, an app's included, fetches or can, and the engine cannot
+    see where its fetches go, so it stays under the network floor. A subclass stays under
+    it too: an app extending the folder observer can override its poll. This fails closed:
+    the one way out of the floor is being the class that never opens a socket.
+    """
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    return type(provider) is not DirSourceProvider
+
+
+def takes_files(provider: Any) -> bool:
+    """Whether ``provider``'s sightings name files the engine takes into the library itself, as
+    the Knowledge page takes an upload (``knowledge.file_items.take_watched_file``), rather than
+    carrying the content to keep.
+
+    Only core's own folder observer, recognised by its exact type, as :func:`polls_the_network`
+    recognises it: its sighting names a file inside a folder the owner shared, which it asks
+    again where it is (``DirSourceProvider.file_of``). Any other provider, an app's or a subclass,
+    hands the content it read, and the engine opens no file for it."""
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    return type(provider) is DirSourceProvider
+
+
+def effective_interval(source: dict, cfg: Any, provider: Any) -> float:
+    """How often ``source`` is really polled: its own interval (or the configured default
+    when unset), clamped up to the network floor for a source that fetches and to
+    :data:`LOCAL_FLOOR_SECS` for a folder on this machine. The sources page states this
+    number, so a row never says one interval while the engine keeps another."""
+    want = int(source.get("poll_interval_secs") or 0) or int(cfg.poll_interval_default_secs)
+    floor = int(cfg.network_floor_secs) if polls_the_network(provider) else LOCAL_FLOOR_SECS
+    return float(max(want, floor))
+
+
+def _first_sighting(item: Any) -> bool:
+    """Whether a poll's sighting is of an item new to its source (``created``), the one
+    kind the novelty gate makes safe to be offered twice."""
+    from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+    return (getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED) == CHANGE_CREATED
+
+
+def _default_providers() -> list[Any]:
+    """The process-wide knowledge provider registry (prod path). Injected in tests so a
+    fixture provider is enrolled + driven without touching the real registry."""
+    from personalclaw.knowledge_providers.registry import list_providers
+
+    return list_providers()
+
+
+class SourceEngine:
+    """One re-armed asyncio poll loop over the WatchedSource store.
+
+    ``store`` owns the tables + the atomic write/seen/cursor primitives; ``ingest_queue``
+    is the single ingestion path new items enqueue onto. ``providers_lister`` yields the
+    registered knowledge providers (defaults to the knowledge registry; injected in tests)
+    — enrollment AND per-source resolution both read this ONE seam, so a source is driven
+    by exactly the provider that was enrolled. ``now_fn`` is a seam so a test drives an
+    exact instant."""
+
+    def __init__(
+        self,
+        store: Any,
+        ingest_queue: Any,
+        *,
+        providers_lister: Callable[[], list[Any]] | None = None,
+        config_loader: Callable[[], Any] | None = None,
+        now_fn: Callable[[], float] | None = None,
+        event_spool: Any | None = None,
+        query_store: Any | None = None,
+    ) -> None:
+        self._store = store
+        self._queue = ingest_queue
+        self._providers_lister = providers_lister or _default_providers
+        self._config_loader = config_loader or self._load_config
+        # Built lazily (see `_spool`/`_queries`) rather than here: a test that sets
+        # PERSONALCLAW_HOME after constructing the engine must still get the isolated path,
+        # and resolving config_dir in __init__ would have frozen the real home.
+        self._event_spool = event_spool
+        self._saved_queries = query_store
+        import time
+
+        self._now_fn = now_fn or time.time
+        import asyncio
+
+        self._task: asyncio.Task | None = None
+
+    def _provider_for(self, name: str) -> Any:
+        for prov in self._providers_lister():
+            if getattr(prov, "name", None) == name:
+                return prov
+        return None
+
+    @staticmethod
+    def _load_config() -> Any:
+        from personalclaw.config.loader import AppConfig
+
+        return AppConfig.load().sources
+
+    # ── stream events ──────────────────────────────────────────────────────────────
+
+    @property
+    def _spool(self) -> Any:
+        """The interim JSONL spool the stream events land on.
+
+        Interim: the stream events stay on this spool rather than the automation event bus,
+        and the engine holds exactly one emit seam so the bus replaces one object, not N call
+        sites."""
+        if self._event_spool is None:
+            from personalclaw.knowledge.source_streams import SourceEventSpool
+
+            self._event_spool = SourceEventSpool()
+        return self._event_spool
+
+    @property
+    def _queries(self) -> Any:
+        """The saved-source-query store the ingest path evaluates against."""
+        if self._saved_queries is None:
+            from personalclaw.knowledge.source_queries import SavedQueryStore
+
+            self._saved_queries = SavedQueryStore()
+        return self._saved_queries
+
+    def _emit_ingested(self, source: dict, item: Any, item_id: str, change: str) -> None:
+        """``SourceItemIngested`` for one (re-)indexed item.
+
+        Emitted HERE — inside the persist path, after the item is durable and enqueued —
+        rather than from a batch at the end of the poll, because only this frame knows the
+        ``item_id`` the store minted, and an event announcing an item the store rejected (the
+        novelty gate returned None) would be a phantom no consumer could resolve.
+
+        The title rides FENCED (``fenced_snippet``): a digest reads these records and hands
+        them to a model, so the fence goes on at write time, not at every future read."""
+        from personalclaw.knowledge.source_streams import SOURCE_ITEM_INGESTED, fenced_snippet
+
+        sid = source["id"]
+        self._spool.emit(
+            SOURCE_ITEM_INGESTED,
+            {
+                "source_id": sid,
+                "item_id": item_id,
+                "guid": item.guid,
+                "title": fenced_snippet(getattr(item, "title", "") or "", sid),
+                "url": getattr(item, "url", "") or "",
+                "change": change,
+            },
+        )
+        # Saved queries are evaluated HERE, in the same act as the ingest event: the
+        # engine evaluates saved queries against each SourceItemIngested batch. They read the
+        # STRUCTURAL item — raw title/url/content — not the payload above, whose title is
+        # fenced: matching a fenced string would mean seeing through the fence markers.
+        # Deterministic and token-free by construction; `source_queries` imports no LLM path.
+        try:
+            from personalclaw.knowledge import source_queries
+
+            source_queries.evaluate(
+                item_id=item_id,
+                source_id=sid,
+                title=getattr(item, "title", "") or "",
+                url=getattr(item, "url", "") or "",
+                content=getattr(item, "content", "") or "",
+                spool=self._spool,
+                store=self._queries,
+            )
+        except Exception:  # noqa: BLE001 — a query fault must not lose the ingested item
+            logger.debug("saved source query evaluation failed for %s", item_id, exc_info=True)
+
+    def _emit_poll_completed(
+        self,
+        source_id: str,
+        *,
+        new_count: int,
+        escalations: list[str],
+        budget_spent: int = 0,
+    ) -> None:
+        """``SourcePollCompleted`` for one poll.
+
+        Emitted on EVERY exit of :meth:`poll_source`, not just the successful one — the same
+        reasoning that made ``next_poll_at`` unconditional. A poll event that appears only on
+        success makes a source that stopped producing indistinguishable from one that is
+        producing nothing, which is the single question a stream consumer asks.
+
+        ``budget_spent`` reads a provider-declared ``requests_used`` when the poll result
+        carries one. 🔴 MEASURED (2026-08-24): ``SourcePollResult`` has no such field today —
+        only ``SourcePreview`` does (``knowledge_providers/base.py:163``), while
+        ``web_source.poll`` builds a ``_Budget`` counter it never returns
+        (``web_source.py:1314``). So this reads 0 for every shipped provider until that field
+        is added; it is duck-typed rather than hardcoded 0 so adding it is a one-line change
+        on the provider side, and NOT invented here because fabricating a request count would
+        make the audit surface lie."""
+        from personalclaw.knowledge.source_streams import SOURCE_POLL_COMPLETED
+
+        self._spool.emit(
+            SOURCE_POLL_COMPLETED,
+            {
+                "source_id": source_id,
+                "new_count": int(new_count),
+                "escalations": list(escalations),
+                "budget_spent": int(budget_spent),
+            },
+        )
+
+    # ── enrollment ─────────────────────────────────────────────────────────────────
+
+    def _is_poll_capable(self, provider: Any) -> bool:
+        """A provider is enrolled iff it implements the poll contract. Duck-typed
+        on the base class so an app subclass and the core fixture both qualify without a
+        registration flag the provider could forget to set."""
+        from personalclaw.knowledge_providers.base import KnowledgeSourceProvider
+
+        return isinstance(provider, KnowledgeSourceProvider)
+
+    @staticmethod
+    def egress_policy() -> Any:
+        """The egress posture a source poll's fetches must use.
+
+        The ``SOURCE`` profile with the operator's ``security.egress`` config layered via
+        ``egress_policy_for`` (a self-hoster's LAN allow-list, deny-list, private-network
+        opt-in). Resolved HERE so the engine owns the policy and a provider never picks its
+        own — a provider re-implementing the fetch (and its guard) is the exact bypass the
+        boundary exists to prevent. Handed to a provider's :meth:`poll` when its signature
+        accepts a ``policy`` (the web/feed fetching providers do); a plain corpus
+        poll ignores it.
+
+        A ``staticmethod`` because the create flow's PREVIEW is a real fetch on the
+        same targets and must run under the same posture, and it happens in an HTTP handler
+        with no engine instance in reach. Two callers resolving the profile independently
+        would be two egress postures for one act."""
+        from personalclaw.net.policy import SOURCE, egress_policy_for
+
+        return egress_policy_for(SOURCE)
+
+    def enrolled_provider_names(self) -> set[str]:
+        """Names of registered providers the engine will drive — the poll-capable subset
+        of the registry (read through the SAME seam as resolution). A source whose provider
+        is not here is skipped (its provider is a plain corpus provider, or disabled)."""
+        return {
+            p.name
+            for p in self._providers_lister()
+            if self._is_poll_capable(p) and getattr(p, "name", None)
+        }
+
+    # ── scheduling ─────────────────────────────────────────────────────────────────
+
+    def _interval_for(self, source: dict, cfg: Any) -> float:
+        """A source's effective poll interval (:func:`effective_interval`). The network
+        floor is the rate discipline web_poll enforces — a too-frequent poll is
+        abusive to someone else's server — and a folder on this machine is nobody's server,
+        so a watched folder set to every 5 minutes is polled every 5 minutes."""
+        return effective_interval(source, cfg, self._provider_for(source["provider"]))
+
+    def _next_poll_at(self, source: dict, cfg: Any) -> str:
+        """When this source is due again, as an instant with its offset — a DISPLAY rollup only.
+
+        Scheduling reads ``last_poll_at`` (see :meth:`_due_delay`), so this never decides
+        anything; it exists so a reader of the row can say "retrying in 9 minutes" instead of
+        leaving a failing source looking abandoned. The offset is what makes that true for a
+        reader in another zone (:mod:`personalclaw.instants`)."""
+        from personalclaw.instants import utc_iso
+
+        return utc_iso(self._now_fn() + self._interval_for(source, cfg))
+
+    def _due_delay(self, source: dict, cfg: Any, now: float) -> float:
+        """Seconds until this source is next due (<=0 means due now). Never-polled sources
+        are due immediately; the interval is measured from the last poll's completion."""
+        last = source.get("last_poll_at")
+        if not last:
+            return 0.0
+        from datetime import datetime
+
+        try:
+            last_ts = datetime.fromisoformat(last).timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+        return (last_ts + self._interval_for(source, cfg)) - now
+
+    # ── one poll ───────────────────────────────────────────────────────────────────
+
+    def _poll_kwargs(self, provider: Any, sid: str, cfg: Any) -> dict[str, Any]:
+        """The engine-supplied extras THIS provider's ``poll`` declares.
+
+        ONE negotiation for the whole of
+        :data:`~personalclaw.knowledge_providers.base.ENGINE_POLL_KWARGS`, feeding the ONE
+        ``provider.poll(...)`` call site in :meth:`poll_source`. Previously the engine
+        branched on ``policy`` alone and called ``poll`` twice, in two shapes; adding the
+        spec the same way would have made four shapes for one contract. A provider opts in
+        by naming a keyword, so a provider that names neither is called exactly as before —
+        which is what keeps this additive rather than a break across the SDK boundary into
+        already-installed apps.
+
+        Driven BY the declared list rather than re-listing the names here, so the contract's
+        vocabulary has one home and a name added to it with no supplier below is a loud
+        ``KeyError`` instead of a keyword the ABC documents and no provider can ever be
+        handed. Suppliers are lazy: a provider that wants neither pays for neither, and
+        ``spec`` in particular costs a store read.
+
+        ``max_items`` is the cap :meth:`poll_source` applies to what the poll returns, from
+        the same ``cfg``, so a provider that asks for it is handed the number the engine
+        will actually keep.
+        """
+        import inspect
+
+        from personalclaw.knowledge_providers.base import ENGINE_POLL_KWARGS
+
+        params = inspect.signature(provider.poll).parameters
+        suppliers: dict[str, Callable[[], Any]] = {
+            "spec": lambda: self._source_spec(sid),
+            "policy": self.egress_policy,
+            "max_items": lambda: int(cfg.max_items_per_poll),
+        }
+        return {name: suppliers[name]() for name in ENGINE_POLL_KWARGS if name in params}
+
+    def _source_spec(self, sid: str) -> dict[str, Any]:
+        """This source's persisted spec, for a provider that cannot read it itself.
+
+        Re-read from the store HERE rather than taken from the ``source`` dict
+        :meth:`poll_source` was handed, and the difference is not cosmetic: :meth:`tick`
+        snapshots every due row once and then polls them in sequence, so a row edited while
+        a long tick is in flight would reach a late provider stale. A core provider never
+        sees that skew because it does its own ``get_source`` inside ``poll`` — delivering
+        the snapshot instead would have handed apps a second-class version of the same
+        value, which is the shape of bug where the thread is right and the SOURCE is wrong.
+
+        The read is also what makes the delivered dict PRIVATE, which matters because it
+        crosses into provider code: ``KnowledgeStore._serialize_source`` ``json.loads`` the
+        column on every read, so a provider that mutates what it was given (a ``pop`` while
+        parsing its own options) is mutating an object nothing else holds. No defensive copy
+        here — one would be unreachable code, and a copy standing in for that property would
+        hide the day the store started handing out a cached row (which
+        ``test_source_spec_delivery`` pins).
+        """
+        row = self._store.get_source(sid) or {}
+        spec = row.get("spec")
+        return spec if isinstance(spec, dict) else {}
+
+    async def poll_source(self, source: dict, cfg: Any) -> int:
+        """Poll one source once; return how many items were (re-)indexed this pass — new
+        items plus re-enqueued edits, excluding archives (:meth:`_persist`). Never raises —
+        a provider fault becomes a degraded health status, not a dead loop."""
+        from personalclaw.knowledge_providers.base import (
+            HEALTH_DEGRADED,
+            HEALTH_ERROR,
+            HEALTH_OK,
+        )
+
+        sid = source["id"]
+        # Recorded on EVERY exit below, not just the successful one. Scheduling does not depend
+        # on it (`_due_delay` measures from `last_poll_at`), so this is purely the rollup that
+        # tells a reader when the source will be tried again — and a failing source is exactly
+        # the one whose reader needs to know that a retry is coming. Withholding it on failure
+        # is the same shape already fixed for `last_escalations`: a rollup visible only on success
+        # makes the interesting case the invisible one.
+        next_at = self._next_poll_at(source, cfg)
+        provider = self._provider_for(source["provider"])
+        if provider is None or not self._is_poll_capable(provider):
+            self._store.record_poll(
+                sid,
+                cursor=self._store.get_source_cursor(sid),
+                new_count=0,
+                health_status=HEALTH_ERROR,
+                error_summary=f"provider {source['provider']!r} not enrolled (poll-capable)",
+                next_poll_at=next_at,
+            )
+            self._emit_poll_completed(sid, new_count=0, escalations=[])
+            return 0
+        cursor = self._store.get_source_cursor(sid)
+        try:
+            result = await provider.poll(sid, cursor, **self._poll_kwargs(provider, sid, cfg))
+        except Exception as exc:  # noqa: BLE001 — a provider that raises must not kill the loop
+            logger.warning("source %s poll raised", sid, exc_info=True)
+            self._store.record_poll(
+                sid,
+                cursor=cursor,
+                new_count=0,
+                health_status=HEALTH_ERROR,
+                error_summary=str(exc)[:200],
+                next_poll_at=next_at,
+            )
+            self._emit_poll_completed(sid, new_count=0, escalations=[])
+            return 0
+        escalations = list(getattr(result, "escalations", None) or [])
+        if result.error:
+            # A soft failure the provider chose to report: keep the cursor (retry from the
+            # same position), surface the reason, do not treat the source as dead. A provider
+            # that KNOWS why it failed declares its own health status (a page needing the
+            # render tier); flattening that into `degraded` would hide the one
+            # remediation the user could act on.
+            self._store.record_poll(
+                sid,
+                cursor=result.cursor or cursor,
+                new_count=0,
+                health_status=getattr(result, "health_status", "") or HEALTH_DEGRADED,
+                error_summary=result.error[:200],
+                escalations=escalations,
+                next_poll_at=next_at,
+            )
+            self._emit_poll_completed(
+                sid,
+                new_count=0,
+                escalations=escalations,
+                budget_spent=int(getattr(result, "requests_used", 0) or 0),
+            )
+            return 0
+        # The cap is on what this poll INDEXES, not on the first N sightings offered. A feed
+        # re-offers its whole document every poll, newest first, and a cap on positions kept
+        # re-reading the same N already-seen entries while every entry past them was never
+        # read at all. A seen sighting costs the novelty gate and nothing else, so it does not
+        # count.
+        max_items = int(cfg.max_items_per_poll)
+        new_count = 0
+        cut_short = False
+        for item in result.items:
+            if new_count >= max_items:
+                cut_short = True
+                break
+            try:
+                new_count += await self._persist(source, item, provider)
+            except Exception:  # noqa: BLE001 — one bad item must not abandon the rest
+                logger.warning("source %s item %r persist failed", sid, item.guid, exc_info=True)
+        # What the cap left out is not lost with the provider's new cursor. A poll cut short
+        # whose sightings are all first sightings keeps the cursor it was handed, so the next
+        # poll is offered the same list again: the gate refuses what this one took and the
+        # cap takes the next ones. That holds only for first sightings — re-offering an edit
+        # would apply it again every poll, and a list of more edits than the cap would never
+        # be got past — so a poll carrying any other change moves on as it always did. A
+        # provider whose cursor must move asks for the cap (``max_items``) and stops there.
+        next_cursor = result.cursor or cursor
+        if cut_short and all(_first_sighting(i) for i in result.items):
+            next_cursor = cursor
+        # Cursor advanced LAST, in its own txn: every item above is already durable, so a
+        # crash here re-yields them next poll and the UNIQUE gate drops them.
+        self._store.record_poll(
+            sid,
+            cursor=next_cursor,
+            new_count=new_count,
+            health_status=HEALTH_OK,
+            next_poll_at=next_at,
+            escalations=escalations,
+        )
+        # After the cursor, so a consumer that sees `SourcePollCompleted` knows the poll is
+        # fully durable — the event is the poll's commit marker, not a progress ping.
+        self._emit_poll_completed(
+            sid,
+            new_count=new_count,
+            escalations=escalations,
+            budget_spent=int(getattr(result, "requests_used", 0) or 0),
+        )
+        return new_count
+
+    # ── persisting one sighting (created / modified / deleted) ──────────────────────
+
+    async def _persist(self, source: dict, item: Any, provider: Any) -> int:
+        """Persist ONE sighting of ``provider``'s; return 1 if it was (re-)indexed, else 0.
+
+        The engine — not the provider — owns what a change KIND means, because the
+        dangerous direction lives here: a provider that could decide "deleted" means
+        "remove the row" would destroy the user's only remaining copy of a file it no
+        longer sees. The three outcomes are deliberately asymmetric:
+
+        * ``created`` → a NEW item through the novelty gate (dedup returns None).
+        * ``modified`` → the SAME item updated + re-enqueued (never a second row).
+        * ``deleted`` → the item ARCHIVED with ``source_deleted_at``, never deleted, and
+          never enqueued (a vanished file has nothing to re-index).
+
+        The kind is matched EXPLICITLY against the closed vocabulary; an unknown value is
+        refused rather than falling through to a create, so a future kind cannot be
+        silently mis-persisted as an ingestion.
+
+        A created or modified file of a watched folder is taken by :meth:`_take_file`, which
+        keeps the same two outcomes for the file's item. Any other sighting's text is scanned
+        before it is kept (:meth:`_create_new`, :meth:`_remake`).
+        """
+        from personalclaw.knowledge_providers.base import (
+            CHANGE_CREATED,
+            CHANGE_DELETED,
+            CHANGE_MODIFIED,
+        )
+
+        change = getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED
+        if change == CHANGE_DELETED:
+            return self._archive_deleted(source, item)
+        if change not in (CHANGE_CREATED, CHANGE_MODIFIED):
+            logger.warning(
+                "source %s item %r has unknown change kind %r; skipped",
+                source["id"],
+                item.guid,
+                change,
+            )
+            return 0
+        if takes_files(provider):
+            return await self._take_file(source, item, provider)
+        if change == CHANGE_MODIFIED:
+            return await self._reindex_modified(source, item)
+        return await self._create_new(source, item)
+
+    @staticmethod
+    def _declared_attributions(item: Any) -> list[str]:
+        """A provider's own ``also_seen_in`` claims, normalized. A provider that
+        already knows a story ran in two places (an aggregator echoing its upstream) says
+        so and the engine records it verbatim rather than re-deriving it."""
+        raw = getattr(item, "also_seen_in", None) or []
+        if isinstance(raw, str):  # a provider that meant one label, not a char sequence
+            raw = [raw]
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    def _merge_cross_source(self, source: dict, item: Any) -> bool:
+        """Fold this sighting into an item ANOTHER source already wrote, if it is the same
+        story; return True when it was merged (so no second row is written).
+
+        The identity rule is canonicalized-URL equality and nothing else
+        (:func:`~personalclaw.knowledge.source_identity.merge_key`, which returns no key
+        for a link-less item or a bare origin). Deliberately narrow: a duplicate item is
+        visible and one delete away, while a WRONG merge destroys one of two distinct
+        stories and stamps the survivor with an attribution that is false. So an ambiguous
+        identity yields two items, and this method simply declines.
+
+        A merge does two writes, and BOTH are required:
+
+        * the second source's seen-set gets the guid (so the merge happens once, not every
+          poll — this path bypasses ``create_typed_item``'s folded-in gate, so nothing else
+          would record the sighting), and
+        * the surviving item gains the second source's attribution, APPENDED. Dropping the
+          existing list here would make a merge look exactly like a lost sighting.
+        """
+        from personalclaw.knowledge.source_identity import merge_key
+
+        key = merge_key(getattr(item, "url", "") or "")
+        if not key:
+            return False
+        existing = self._store.find_item_by_merge_key(key, exclude_source_id=source["id"])
+        if existing is None:
+            return False
+        self._store.mark_source_seen(source["id"], item.guid)
+        self._store.record_also_seen_in(
+            existing["id"], source["id"], *self._declared_attributions(item)
+        )
+        logger.debug(
+            "source %s guid %r merged into existing item %s (%s)",
+            source["id"],
+            item.guid,
+            existing["id"],
+            key,
+        )
+        return True
+
+    async def _create_new(self, source: dict, item: Any) -> int:
+        """First sighting → a new item, unless another source already has this story, or this
+        source has had it.
+
+        Cross-source dedupe runs FIRST: a story the library already holds from a
+        different feed becomes an attribution on that item, not a second row. A sighting this
+        source has had is not read again (``KnowledgeStore.source_has_seen``, the novelty gate's
+        question asked before the read): a feed offers its whole document again whenever it
+        changed. The one it reads again is an item made of a sighting the scan could not check,
+        a check still owed (:meth:`_remake`). Then the sighting's text, from outside, is scanned
+        before anything is kept of it (``text_items.refusal``): what the scan refuses, or could
+        not check, becomes a failed item that keeps no text and says why, named by its link.
+        ``create_typed_item`` writes the seen-row + item atomically and returns None when this
+        source's guid was already seen — the per-source novelty gate. Only an item that holds
+        its text is enqueued, so a page that changes every render cannot storm the queue.
+        """
+        if self._merge_cross_source(source, item):
+            return 0
+        sid = source["id"]
+        existing = self._store.find_source_item(sid, item.guid)
+        if existing is not None:
+            if text_items.unchecked(existing):
+                return await self._remake(source, item, existing)
+            return 0
+        if self._store.source_has_seen(sid, item.guid):
+            return 0
+        scanned = await text_items.refusal(item.title, item.content, surface=SOURCE_SURFACE)
+        refused = scanned.nothing_made if scanned is not None else ""
+        # The shared-store attribution rides back IN. The `provider` column already
+        # says which federated store a row came from, but a shared store has many
+        # contributors, so without these keys a teammate's item could only ever be attributed
+        # to the STORE and would render as the owner's own. An ALLOWLIST of the four keys
+        # (`sharing.inbound_attribution`), never the provider's whole metadata blob: a poll
+        # result must not be able to smuggle arbitrary metadata onto a library row.
+        attribution = sharing.inbound_attribution(item.metadata)
+        # …and it stays FILED under the container it was written in. `session_brief.load_items`
+        # — the one path by which a knowledge item reaches a run's prompt — reads items by
+        # exactly this tag, so an inbound shared item with no tag would be attributed and
+        # labelled and still never reach the reader the label exists for. Through the SAME
+        # helper the persist path uses, so the writer and the brief cannot drift on the tag's
+        # shape. A `project_id` no local project answers to is a harmless dangling tag.
+        scope_tags = project_scope.scope_tags(attribution.get(project_scope.PROJECT_ID_KEY, ""))
+        item_type = source.get("item_type") or "bookmark"
+        # What the item was made of, so a sighting whose text did not change is not read again.
+        meta = {**attribution, "content_hash": text_items.digest(item.title, item.content)}
+        if refused:
+            refused_id = self._store.create_typed_item(
+                item_type=item_type,
+                title=item.url or item.guid,
+                url=item.url,
+                provider=source["provider"],
+                source_id=sid,
+                guid=item.guid,
+                tags=scope_tags or None,
+                extra=text_items.refused_fields(item_type, refused, meta),
+            )
+            if refused_id is None:
+                return 0
+            self._said_refused(source, item, refused)
+            return 1
+        item_id = self._store.create_typed_item(
+            item_type=item_type,
+            title=item.title or item.url or item.guid,
+            content=item.content,
+            url=item.url,
+            provider=source["provider"],
+            source_id=sid,
+            guid=item.guid,
+            tags=scope_tags or None,
+            extra={"processing_status": "queued", "file_metadata": meta},
+        )
+        if item_id is None:
+            return 0
+        declared = self._declared_attributions(item)
+        if declared:
+            self._store.record_also_seen_in(item_id, *declared)
+        self._enqueue(item_id)
+        from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+        self._emit_ingested(source, item, item_id, CHANGE_CREATED)
+        return 1
+
+    async def _reindex_modified(self, source: dict, item: Any) -> int:
+        """An edited item → the EXISTING row remade of its new text (:meth:`_remake`).
+
+        No second row: a mutable corpus (an app's source over a repository's files) re-emits
+        the same guid every time a file changes, so keying off the existing item is what makes
+        an edit a re-index instead of a duplicate. A guid with no item yet (the source's
+        first pass only SEEDED it, so it was never ingested) legitimately becomes a
+        create — the alternative would drop the edit entirely. A watched folder's change is
+        :meth:`_take_file`'s, which keys off the existing item the same way."""
+        existing = self._store.find_source_item(source["id"], item.guid)
+        if existing is None:
+            return await self._create_new(source, item)
+        return await self._remake(source, item, existing)
+
+    async def _remake(self, source: dict, item: Any, existing: dict) -> int:
+        """Remake *existing*, the item this source made of the sighting's guid, of the
+        sighting's text; return 1 if it was re-indexed or refused, else 0.
+
+        Text that did not change since the item was made of it (``file_metadata.content_hash``)
+        is not read again, unless the item is archived or the scan could not check it then.
+        Otherwise the text is scanned before it is kept: refused, the item keeps none of what it
+        held (its text, its pool, its passages, its insights, its vector) and says why; passed,
+        it holds the new text and is re-enqueued. Either way it is live again: a guid that came
+        BACK (a deleted file restored, a volume remounted) revives the original item and drops
+        the delete stamp, rather than leaving the user with an archived row plus no live one
+        for a file that is plainly there again."""
+        from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+        item_id = existing["id"]
+        meta = existing.get("file_metadata")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        content_hash = text_items.digest(item.title, item.content)
+        if (
+            meta.get("content_hash") == content_hash
+            and not existing.get("is_archived")
+            and not text_items.unchecked(existing)
+        ):
+            return 0
+        scanned = await text_items.refusal(item.title, item.content, surface=SOURCE_SURFACE)
+        refused = scanned.nothing_made if scanned is not None else ""
+        meta.pop("source_deleted_at", None)
+        meta["content_hash"] = content_hash
+        if refused:
+            item_type = existing.get("item_type") or existing.get("type") or "bookmark"
+            self._store.clear_extracted_contents(item_id)
+            self._store.clear_chunks(item_id)
+            self._store.update_item(
+                item_id,
+                title=item.url or item.guid,
+                content="",
+                insights={},
+                embedding=None,
+                is_archived=0,
+                **text_items.refused_fields(item_type, refused, meta),
+            )
+            self._said_refused(source, item, refused)
+            return 1
+        # What the last ingest, or a refusal, said of the item it was is not what this one is.
+        meta.pop("refused", None)
+        meta.pop("node_phases", None)
+        self._store.update_item(
+            item_id,
+            title=item.title or existing.get("title") or item.guid,
+            content=item.content,
+            is_archived=0,
+            file_metadata=meta,
+            processing_status="queued",
+            processing_error=None,
+        )
+        self._enqueue(item_id)
+        self._emit_ingested(
+            source, item, item_id, getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED
+        )
+        return 1
+
+    @staticmethod
+    def _said_refused(source: dict, item: Any, reason: str) -> None:
+        """Say in the gateway's log that a sighting's text was not kept, and why (*reason*, the
+        item's status line), naming the source and the sighting by its identity, never by its
+        text: no one was there to be told."""
+        logger.warning(
+            "watched source %s (%s): %s was not taken: %s",
+            source["id"],
+            source.get("name") or "",
+            item.guid,
+            reason,
+        )
+
+    async def _take_file(self, source: dict, item: Any, provider: Any) -> int:
+        """A watched folder's created or modified file → its item, taken as an upload is.
+
+        The file is asked for where the folder holds it now (``provider.file_of``, against the
+        spec as stored now) and taken through the upload door
+        (``knowledge.file_items.take_watched_file``): its kind, its size, a scan of a private
+        copy of its bytes, then the copy kept, or a code file's text read and scanned. A first
+        sighting of a path the source already has an item for is refused before anything is
+        read, as the novelty gate refuses it; a change remakes the item the folder made of the
+        file before, never a second one. What the checks refuse is a failed item that says why,
+        named in the gateway log too, since no one was there to be told. A file that changed while
+        it was copied is left: it is still being written, and its next change brings it in."""
+        from personalclaw.knowledge.file_items import take_watched_file
+
+        sid = source["id"]
+        path = provider.file_of(self._source_spec(sid), item.guid)
+        if path is None:
+            return 0
+        existing = self._store.find_source_item(sid, item.guid)
+        if existing is not None and _first_sighting(item):
+            return 0
+        try:
+            taken = await take_watched_file(
+                self._store, path, source=source, guid=item.guid, existing=existing
+            )
+        except Exception:  # noqa: BLE001 — one file it cannot take must not lose the others
+            logger.warning(
+                "watched folder %s: %s could not be taken", sid, item.guid, exc_info=True
+            )
+            return 0
+        if taken.refused:
+            logger.warning("watched folder %s: %s was not taken: %s", sid, item.guid, taken.refused)
+            return 1 if taken.item is not None else 0
+        if taken.changing:
+            logger.info(
+                "watched folder %s: %s is still being written; it is taken once it is done",
+                sid,
+                item.guid,
+            )
+        if taken.item is None or not taken.is_new:
+            return 0
+        self._enqueue(taken.item["id"])
+        # Saved queries read what the item holds now: a code file's text, which was scanned; a
+        # document's text is read when the item is ingested.
+        sighting = dataclasses.replace(item, content=taken.item.get("content") or "")
+        self._emit_ingested(source, sighting, taken.item["id"], item.change)
+        return 1
+
+    def _archive_deleted(self, source: dict, item: Any) -> int:
+        """The upstream copy is gone → ARCHIVE the item with ``source_deleted_at``.
+
+        Never a hard delete, and the engine has no code path that could become one: the
+        store exposes only :meth:`~personalclaw.knowledge.store.KnowledgeStore.archive_source_item`
+        for this, which is an UPDATE. Returns 0 — archiving is not a re-index, so a delete
+        never enqueues ingestion work for content that no longer exists."""
+        existing = self._store.find_source_item(source["id"], item.guid)
+        if existing is None:
+            return 0
+        self._store.archive_source_item(
+            existing["id"], deleted_at=item.metadata.get("source_deleted_at", "")
+        )
+        return 0
+
+    def _enqueue(self, item_id: str) -> None:
+        # The background lane: a watched source's items are read when nothing the person
+        # added herself is waiting, so a folder's first scan never holds her own upload.
+        try:
+            self._queue.enqueue_background(item_id)
+        except Exception:  # noqa: BLE001 — a queue hiccup must not lose the written item
+            logger.debug("source item enqueue failed for %s", item_id, exc_info=True)
+
+    async def tick(self) -> float:
+        """One loop iteration: poll every due source, return seconds to sleep until the
+        next is due (capped at :data:`POLL_CEILING_SECS`). Separate from the loop so a test
+        (and a future ``sources doctor``) can drive exactly one pass deterministically."""
+        cfg = self._config_loader()
+        if not getattr(cfg, "enabled", True):
+            return POLL_CEILING_SECS
+        now = self._now_fn()
+        sources = self._store.list_sources(enabled_only=True)
+        enrolled = self.enrolled_provider_names()
+        # Cap the enrolled working set so a runaway config cannot arm thousands of polls.
+        active = [s for s in sources if s["provider"] in enrolled][: int(cfg.max_sources)]
+        next_delay = POLL_CEILING_SECS
+        for source in active:
+            delay = self._due_delay(source, cfg, now)
+            if delay <= 0:
+                await self.poll_source(source, cfg)
+                # Re-derive this source's next delay from the interval just recorded.
+                delay = self._interval_for(source, cfg)
+            next_delay = min(next_delay, delay)
+        return max(0.0, min(next_delay, POLL_CEILING_SECS))
+
+    # ── crash recovery + lifecycle ──────────────────────────────────────────────────
+
+    def recover_pending(self) -> int:
+        """Resume cleanly after a restart. A source item written before a crash may
+        not have finished ingesting; the ingest queue's own recovery re-enqueues every item
+        left in ``queued``/``processing`` (source items included). The seen-set already
+        makes any re-poll idempotent, so this is the only recovery the engine owes: no
+        written-but-unprocessed item is stranded. Returns the count re-enqueued."""
+        try:
+            return int(self._queue.recover_pending())
+        except Exception:  # noqa: BLE001 — recovery is best-effort; the loop still runs
+            logger.debug("source engine recovery failed", exc_info=True)
+            return 0
+
+    async def run_forever(self, sleep_fn: Callable[[float], Awaitable[None]] | None = None) -> None:
+        """Drive the poll loop until shutdown. Cancellation propagates so the gateway can
+        stop it; any other tick fault is logged and the loop continues — a loop that died
+        on one bad poll would silently retire every watched source (the failure a scheduler
+        can least afford)."""
+        import asyncio
+
+        from personalclaw import shutdown_event
+
+        while not shutdown_event.is_set():
+            delay = POLL_CEILING_SECS
+            try:
+                delay = await self.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — the loop must outlive any single tick failure
+                logger.warning("source engine tick failed; continuing", exc_info=True)
+            if sleep_fn is not None:
+                await sleep_fn(delay)
+                continue
+            # Sleep on the shutdown event so a stop is immediate rather than waiting out the
+            # interval; a timeout is a normal wake to poll again.
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=max(0.5, delay))
+                return  # shutdown signalled
+            except asyncio.TimeoutError:
+                continue
+
+    def start(self) -> None:
+        """Launch the single loop task and run crash recovery once (idempotent)."""
+        import asyncio
+
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self.run_forever())
+            self.recover_pending()
+            logger.info("Source engine started")
+
+    def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None

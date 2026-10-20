@@ -1,0 +1,84 @@
+{
+  "id": "t-1a4c7e02",
+  "title": "Summarize the three saved long-reads into the weekly digest",
+  "status": "in_progress",
+  "description": "Two of the three are done. The third one argues against its own headline halfway through, so the summary has to carry both claims or it misleads.",
+  "provider": "native",
+  "project": "",
+  "task_list_id": "tl-3c9d20a7",
+  "dependencies": [],
+  "author": "",
+  "assignee": "",
+  "priority": "high",
+  "labels": [
+    "digest",
+    "writing"
+  ],
+  "due": "",
+  "order": 1.0,
+  "exit_criteria": [
+    {
+      "description": "Every summary cites the section it came from",
+      "status": "complete",
+      "comment": "",
+      "met": true
+    },
+    {
+      "description": "No summary exceeds 200 words",
+      "status": "complete",
+      "comment": "",
+      "met": true
+    },
+    {
+      "description": "The contradictory third piece states both claims",
+      "status": "incomplete",
+      "comment": "",
+      "met": false
+    }
+  ],
+  "action_plan": [
+    {
+      "sequence": 1,
+      "content": "Pull the three sources out of the reading queue",
+      "description": "Pull the three sources out of the reading queue",
+      "completed": true
+    },
+    {
+      "sequence": 2,
+      "content": "Draft one summary per source",
+      "description": "Draft one summary per source",
+      "completed": true
+    },
+    {
+      "sequence": 3,
+      "content": "Reconcile the third source's contradiction",
+      "description": "Reconcile the third source's contradiction",
+      "completed": false
+    },
+    {
+      "sequence": 4,
+      "content": "Stitch the three into one digest entry",
+      "description": "Stitch the three into one digest entry",
+      "completed": false
+    }
+  ],
+  "notes": [
+    {
+      "content": "Third source contradicts its own headline in section 4 \u2014 quote both, do not average them.",
+      "timestamp": "2026-08-14T09:41:06Z"
+    }
+  ],
+  "research_notes": [],
+  "execution_notes": [],
+  "agent_instructions_template": "",
+  "blocked_reason_kind": "",
+  "workflow_binding": null,
+  "blocked_kind": "",
+  "preview": "",
+  "done_criterion": "All three summaries under 200 words, each citing a section.",
+  "evidence": [],
+  "attempts": [],
+  "created_at": "2026-08-12T07:18:44Z",
+  "updated_at": "2026-08-14T09:41:06Z",
+  "url": ""
+}

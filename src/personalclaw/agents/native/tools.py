@@ -1,0 +1,404 @@
+"""Tool discovery + invocation for the native loop.
+
+Two responsibilities:
+
+1. **Discovery → model schema.** :func:`tool_definitions_to_openai_schema` converts
+   the provider-neutral :class:`~personalclaw.tool_providers.base.ToolDefinition`
+   list into the OpenAI ``tools`` array the :class:`ModelProvider.complete` contract
+   expects. (OpenAI-shaped is the canonical wire format; the Anthropic provider
+   re-maps it internally.)
+
+2. **In-process MCP tools.** :class:`InProcessMcpToolProvider` exposes an MCP
+   tool module's surface (``_list_tools`` / ``_call_tool`` — e.g.
+   ``personalclaw-core`` via ``mcp_core``, ``personalclaw-automation`` via
+   ``mcp_schedule``) directly in-process — *without* spawning the MCP server
+   subprocess an external ACP CLI would. This is the fast option
+   (no subprocess); a real in-process MCP stdio *client*
+   (``mcp_client.py``) can replace it later behind the same ``ToolProvider`` seam.
+
+``_call_tool`` is synchronous (it returns a JSON/text string); it is run in a
+thread executor so a slow tool never blocks the event loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+
+from personalclaw.agents.native.tool_names import model_safe_name
+from personalclaw.tool_providers.base import (
+    CONSEQUENCES_META_KEY,
+    ToolDefinition,
+    ToolFailure,
+    ToolProvider,
+    ToolResult,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def declared_consequences(
+    defs: list[ToolDefinition], index: dict[str, ToolProvider]
+) -> dict[str, tuple[str, ...]]:
+    """What each tool in *defs* declares a call may do past this machine
+    (``ToolDefinition.consequences``), by name, with *index* naming each tool's provider.
+
+    Every declaration is read once, here, strictly (``consequences_of``): one this reading cannot
+    follow is left out of the map, like a tool that declares nothing, so its calls ask whoever
+    ships it. A tool of a provider PersonalClaw ships (``registry.ships_with_core``) is
+    classified, so one that declares nothing at all declares neither. Not the MCP Tool Servers
+    app's nor ``app-routes``'s: those ship with PersonalClaw, but what they serve is a server's
+    and an app's, taken at its own word. A tool that declares nothing anywhere else is left out.
+    """
+    from personalclaw.tool_providers.app_routes import PROVIDER_NAME as APP_ROUTES
+    from personalclaw.tool_providers.base import consequences_of
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, ships_with_core
+
+    out: dict[str, tuple[str, ...]] = {}
+    for t in defs:
+        if t.consequences is not None:
+            read = consequences_of(t.consequences)
+            if read is not None:
+                out[t.name] = read
+            continue
+        prov = index.get(t.name)
+        name = str(getattr(prov, "name", "") or "")
+        if prov is not None and name not in (APP_ROUTES, EXTERNAL_MCP_PROVIDER):
+            if ships_with_core(prov):
+                out[t.name] = ()
+    return out
+
+
+def _as_declared(raw: Any) -> Any:
+    """A ``_meta`` declaration of consequences as a definition keeps it, unread: a list as the
+    tuple it names, anything else as it is (``None`` for none)."""
+    return tuple(raw) if isinstance(raw, list) else raw
+
+
+def tool_definitions_to_openai_schema(tools: list[ToolDefinition]) -> list[dict]:
+    """Convert ``ToolDefinition``s into the OpenAI ``tools`` array shape.
+
+    Each becomes ``{"type": "function", "function": {name, description,
+    parameters}}``, for definitions the tool seam has already made valid for every provider
+    (:func:`personalclaw.tool_providers.portable_schema.offered_tool_definitions`):
+
+    * ``name`` is the tool's model-safe form (:func:`.tool_names.model_safe_name`), the one name
+      every provider accepts; dispatch maps it back to the real tool.
+    * ``description`` is never empty: a tool whose source gave none carries one the seam wrote
+      from its name and inputs, because Converse refuses an empty one.
+    * ``parameters`` defaults to an empty-object schema when the tool declares none, because
+      some endpoints reject a missing schema: OpenRouter's and Mistral's request contracts both
+      declare ``parameters`` required. Omitting it is not the portable form, even though
+      Gemini's native API documents it.
+    """
+    schema: list[dict] = []
+    for t in tools:
+        params = t.parameters or {"type": "object", "properties": {}}
+        schema.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": model_safe_name(t.name),
+                    "description": t.description,
+                    "parameters": params,
+                },
+            }
+        )
+    return schema
+
+
+class InProcessMcpToolProvider(ToolProvider):
+    """Expose an in-process MCP tool module's surface directly.
+
+    Wraps a module's ``_list_tools`` / ``_call_tool`` (the same handlers the MCP
+    server would run as a subprocess) so a caller gets the full toolset with no
+    subprocess and no JSON-RPC hop. Parameterized by the module path + provider
+    name so both ``personalclaw-core`` and ``personalclaw-automation`` reuse it.
+    """
+
+    def __init__(
+        self,
+        *,
+        module: str = "personalclaw.mcp_core",
+        provider_name: str = "personalclaw-core",
+        display: str = "PersonalClaw Core",
+    ) -> None:
+        self._tools: list[ToolDefinition] | None = None
+        self._module = module
+        self._provider_name = provider_name
+        self._display = display
+
+    @property
+    def name(self) -> str:
+        return self._provider_name
+
+    @property
+    def display_name(self) -> str:
+        return self._display
+
+    def _import_module(self):
+        import importlib
+
+        return importlib.import_module(self._module)
+
+    async def list_tools(self) -> list[ToolDefinition]:
+        if self._tools is not None:
+            return self._tools
+        _list_tools = self._import_module()._list_tools
+
+        from personalclaw.tool_providers.base import (
+            BUILDS_META_KEY,
+            PROPOSES_META_KEY,
+            TELLS_OWNER_META_KEY,
+            WORK_ASKS_META_KEY,
+            RiskLevel,
+            risk_from_annotations,
+        )
+        from personalclaw.validation import offered_schema, tool_field_schema
+
+        raw = await asyncio.get_event_loop().run_in_executor(None, _list_tools)
+        defs: list[ToolDefinition] = []
+        for tool in raw or []:
+            params = (
+                tool.get("inputSchema")
+                or tool.get("input_schema")
+                or tool.get("parameters")
+                or {"type": "object", "properties": {}}
+            )
+            name = str(tool.get("name", ""))
+            # What the tool's validator enforces is what the model is offered (`offered_schema`).
+            params = offered_schema(params, tool_field_schema(name))
+            # Each tool dict DECLARES what a call does, in the MCP spec's own words
+            # (`annotations.readOnlyHint` / `destructiveHint`) — the same declaration an ACP CLI
+            # reads when the `mcp-core` server lists it. These modules are PersonalClaw's own, so
+            # the declaration is trusted; a dict that declares nothing is CAUTION.
+            risk = risk_from_annotations(tool.get("annotations"), trusted=True)
+            annotations = (
+                tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+            )
+            meta = tool.get("_meta") if isinstance(tool.get("_meta"), dict) else {}
+            defs.append(
+                ToolDefinition(
+                    name=name,
+                    # A missing description stays missing (never the text "None"): the tool
+                    # seam writes one from the name and inputs.
+                    description=(
+                        tool["description"] if isinstance(tool.get("description"), str) else ""
+                    ),
+                    provider=self.name,
+                    parameters=params,
+                    # A declared read asks nobody, as every read PersonalClaw defines in Python
+                    # does (`read_file`, `knowledge_search`, `task_list`). Asking about it asked
+                    # in a chat where those do not, and declined it wherever nobody can be asked
+                    # (`personalclaw run`, a dry run, an unattended agent): the postures that
+                    # exist to run reads. Nor does a call whose work asks the owner itself
+                    # (`WORK_ASKS_META_KEY`): asking about it too asked her twice. Everything
+                    # else asks. The runtime's deny-list, task-mode, tool-grant and hook gates
+                    # run before either.
+                    requires_approval=risk is not RiskLevel.SAFE
+                    and meta.get(WORK_ASKS_META_KEY) is not True,
+                    risk_level=risk,
+                    builds=meta.get(BUILDS_META_KEY) is True,
+                    proposes=meta.get(PROPOSES_META_KEY) is True,
+                    tells_owner=_owner_notice_args(meta.get(TELLS_OWNER_META_KEY)),
+                    annotations=dict(annotations),
+                    # As declared: `declared_consequences` reads it, strictly, with every other
+                    # tool's, so one it cannot follow asks even though the tool is core's own.
+                    consequences=_as_declared(meta.get(CONSEQUENCES_META_KEY)),
+                )
+            )
+        self._tools = defs
+        return defs
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        import contextvars
+
+        _call_tool = self._import_module()._call_tool
+
+        try:
+            # _call_tool is sync (validation + logging + dispatch → str). Run it
+            # off the event loop so a slow tool doesn't stall token streaming.
+            # run_in_executor does NOT copy contextvars into the worker thread, so
+            # propagate the current context explicitly — otherwise the session-key
+            # binding the runtime set (for spawn parent-trust inheritance) is lost.
+            ctx = contextvars.copy_context()
+            output = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: ctx.run(_call_tool, tool_name, arguments)
+            )
+            # A HANDLED failure says so structurally (#3487). ``success`` used to be an
+            # unconditional True, i.e. it tracked "did the handler raise" — and the handlers
+            # deliberately do not raise for expected failures, so a refused destructive
+            # delete reached the wire as 200 {ok: true} and the SEL as "completed". The TYPE
+            # is the signal; the text is never read here, because a prose predicate calls
+            # ``artifact_delete``'s "Artifact not found: X" a success.
+            if isinstance(output, ToolFailure):
+                return _failed(output)
+            return ToolResult(success=True, output=output or "")
+        except Exception as exc:  # noqa: BLE001 - surface any tool error to the model
+            logger.debug("in-process tool %s failed: %s", tool_name, exc, exc_info=True)
+            return ToolResult(success=False, error=str(exc))
+
+    async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """What the module declares its tools refuse before anyone is asked (its ``_preflight``,
+        usually ``mcp_shared.preflight_refusal`` over its own argument validation); None for a
+        module that declares nothing. Run off the event loop under this call's context, as a call
+        is, since a check may ask the gateway."""
+        import contextvars
+
+        declared = getattr(self._import_module(), "_preflight", None)
+        if declared is None:
+            return None
+        ctx = contextvars.copy_context()
+        refused = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: ctx.run(declared, tool_name, arguments)
+        )
+        if not isinstance(refused, ToolFailure):
+            return None
+        return _failed(refused)
+
+
+def _failed(failure: ToolFailure) -> ToolResult:
+    """A module's handled failure as a result: its reason, and its code when it has one
+    (``FAILURE_CODE_META_KEY``), so a door that answers with the reason alone can say it again in
+    full."""
+    from personalclaw.tool_providers.base import FAILURE_CODE_META_KEY
+
+    meta = {FAILURE_CODE_META_KEY: failure.code} if failure.code else {}
+    return ToolResult(success=False, error=failure.reason, metadata=meta)
+
+
+def _owner_notice_args(declared: Any) -> tuple[str, ...]:
+    """The arguments a tool dict declares a call may carry and still only tell the owner
+    (``TELLS_OWNER_META_KEY``); none for a dict that declares no list of names."""
+    if not isinstance(declared, (list, tuple)):
+        return ()
+    return tuple(str(a) for a in declared if isinstance(a, str) and a)
+
+
+def observed(result: ToolResult, meta_sink: dict) -> str:
+    """A provider's result as the model is handed it (:func:`format_tool_result`), with its typed
+    metadata filled into *meta_sink* for the tool card: what it carried, whether it was cut, and,
+    for a failure, the bit that says so, its hints and its WHAT/WHY/FIX envelope."""
+    # Capture the result's typed metadata (content_type / raw_ref / truncated)
+    # for the TOOL_RESULT event — the string return loses it otherwise. Filled into
+    # the CALLER's sink so the value belongs to this dispatch and cannot be read by a
+    # concurrent sibling's result card.
+    meta = dict(getattr(result, "metadata", {}) or {})
+    if getattr(result, "truncated", False):
+        meta["truncated"] = True
+        if getattr(result, "original_length", None) is not None:
+            meta["original_length"] = result.original_length
+    # Carry recovery_hints (concrete next-steps on failure) so the tool card
+    # can surface them — the contract has them, they were dropped at the WS boundary.
+    # Also carry the success flag so the card can color-code a failed call (a
+    # green "done" check on a failed tool is misleading). Only stamp on FAILURE —
+    # absence means success, so existing/ACP results render exactly as before.
+    if not getattr(result, "success", True):
+        meta["ok"] = False
+        hints = getattr(result, "recovery_hints", None)
+        if hints:
+            meta["recovery_hints"] = list(hints)
+        # Carry the WHAT/WHY/FIX envelope structurally so
+        # the tool card can render coded rows + did-you-mean suggestions (the
+        # string form already went to the model via format_tool_result).
+        agent_error = getattr(result, "agent_error", None)
+        if agent_error is not None:
+            meta["agent_error"] = agent_error.to_dict()
+    meta_sink.update(meta)
+    return format_tool_result(result)
+
+
+def format_tool_result(result: ToolResult) -> str:
+    """Render a ``ToolResult`` as the string fed back into the model's context.
+
+    Surfaces the structured result contract (the tool-* ports) so the model can
+    act on it: a truncation notice on success (so it can paginate/narrow), and
+    machine-actionable ``recovery_hints`` on failure (so it adapts instead of
+    guessing). Without this, hints a tool carefully populated would be silently
+    dropped at the model boundary.
+
+    This is where a tool's answer becomes model context, for every provider the native loop
+    calls: the platform tools, the in-process categories, an app's tools and a remote MCP
+    server's. So the string is masked here (``security.redact_for_model``) and a new tool is
+    masked without asking to be. The tool card shows the same string, which is what the model
+    was handed.
+    """
+    from personalclaw.security import redact_for_model
+
+    return redact_for_model(_rendered(result))
+
+
+def _rendered(result: ToolResult) -> str:
+    """The unmasked text :func:`format_tool_result` masks."""
+    if result.success:
+        out = result.output or ""
+        if result.truncated and result.original_length is not None:
+            out += (
+                f"\n[output truncated — showing part of {result.original_length} "
+                "chars; narrow the query or request the specific portion you need]"
+            )
+        return out
+    # A WHAT/WHY/FIX envelope IS the failure message — its
+    # render() supplies the labeled lines the model recovers from. Recovery hints
+    # (the pre-envelope carrier) still append for results that don't carry one.
+    parts: list[str] = []
+    if result.agent_error is not None:
+        parts.append(result.agent_error.render())
+    else:
+        parts.append(f"Error: {result.error}" if result.error else "Error: tool failed")
+    for hint in result.recovery_hints:
+        parts.append(f"Hint: {hint}")
+    return "\n".join(parts)
+
+
+#: What :func:`read_tool_arguments` returns when a non-empty argument string could not be read at
+#: all. Distinct from ``{}``, which is the honest answer for a call that genuinely took no
+#: arguments — collapsing the two is what made a truncated call indistinguishable from an empty one.
+ARGUMENTS_UNREADABLE = object()
+
+
+def read_tool_arguments(raw: Any) -> Any:
+    """A model's tool-call arguments, or :data:`ARGUMENTS_UNREADABLE`.
+
+    Providers emit ``tool_input`` as a raw JSON string (OpenAI streams argument fragments), so a
+    response cut at ``max_tokens`` mid-call yields a prefix of valid JSON. That used to become
+    ``{}``, and the tool then reported a MISSING ARGUMENT for a call the model had made correctly —
+    the failure was misattributed, with no retry, no counter and no event, so it was invisible in
+    the ledger and in any transcript review (issue 1773).
+
+    Two tolerances before giving up, both of them real provider behaviour rather than speculation:
+
+    * **markdown fences** — the non-agentic path already strips them (``llm_helpers._parse_llm``),
+      so the agent path was behind our own standard for the same input.
+    * **double-serialised arguments** — a JSON *string* whose content is itself the JSON object.
+      Parsing once yields a string, which the old code discarded as "not a dict".
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    if not isinstance(raw, str):
+        return ARGUMENTS_UNREADABLE
+    text = raw.strip()
+    if text.startswith("```"):
+        # ```json\n{...}\n``` → the body. Rsplit so a fence inside a string value is not a cut.
+        body = text.split("\n", 1)[1] if "\n" in text else ""
+        text = body.rsplit("```", 1)[0].strip() if "```" in body else body.strip()
+    if not text:
+        return ARGUMENTS_UNREADABLE
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return ARGUMENTS_UNREADABLE
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, str):
+        # Double-serialised: the value IS the JSON document.
+        try:
+            inner = json.loads(parsed)
+        except (json.JSONDecodeError, ValueError):
+            return ARGUMENTS_UNREADABLE
+        return inner if isinstance(inner, dict) else ARGUMENTS_UNREADABLE
+    return ARGUMENTS_UNREADABLE

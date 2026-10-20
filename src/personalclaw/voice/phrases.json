@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "The hands-free voice loop's shipped phrases, one table for both halves of the loop:",
+    "  - personalclaw/voice/duplex.py reads it at import for DEFAULT_CONFIRMATION_PHRASES and",
+    "    DEFAULT_EXIT_PHRASES, the defaults of voice.confirmation_phrases / voice.exit_phrases;",
+    "  - web/src/ui/composer/duplex.ts imports it at build time for DEFAULT_PHRASES, the lists",
+    "    the chat falls back to when it cannot read the config.",
+    "A confirmation phrase ending what was said sends the dictated turn; an exit phrase discards",
+    "it. How a phrase is matched lives in code, twice; web/src/ui/composer/duplexPhraseCases.json",
+    "pins that behaviour for both languages."
+  ],
+  "confirmation": ["do it", "go ahead", "send it", "execute"],
+  "exit": ["cancel", "never mind", "forget it"]
+}

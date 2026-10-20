@@ -1,0 +1,280 @@
+"""A store's one connection answers every thread that reads it at the same time.
+
+Memory Studio reloads after a save by asking for its entities, their graph, the slots and the
+proposals together. Each request reads ``memory.db`` on an executor thread, and the entities route
+reads two things at once by itself. They all go through the store's ONE connection, opened with
+``check_same_thread=False`` — which only turns the driver's ownership check off. The driver is not
+safe for two threads inside it on one connection. The reload answered 500 with
+``IndexError: tuple index out of range`` (a row whose columns were not there), a ``COUNT(*)``
+returned no row at all, ``InterfaceError: bad parameter or other API misuse`` came back, and —
+worse than any of them — a 200 listed 17 or 60 entities for a store that holds 40.
+
+The knowledge, lexicon and code-index stores keep one shared connection the same way. Each is now a
+``SharedConnection``: every call into the driver on it takes the connection's lock.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import threading
+import time
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from personalclaw.dashboard.handlers import memory as mem_handlers
+from personalclaw.memory_service import MemoryService
+from personalclaw.sqlite_compat import SharedConnection, connect_shared, sqlite3
+from personalclaw.vector_memory import VectorMemoryStore
+
+_ENTITIES = 40
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    s = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    s.init()
+    # Pinned rather than read from config: the graph must be on whatever the ambient home says.
+    s.graph_enabled = True
+    for i in range(_ENTITIES):
+        s.graph.upsert_entity(f"Person {i:02d}", "person", aliases=[f"P{i}"], source="user")
+    return s
+
+
+# ── the reload the Studio makes ────────────────────────────────────────────────────────────────
+
+
+async def _studio(monkeypatch, store) -> TestClient:
+    svc = MemoryService.over_vector_store(store)
+    monkeypatch.setattr(mem_handlers, "_get_service", lambda _state: svc)
+    app = web.Application()
+    app["state"] = object()
+    app.router.add_get("/api/memory/entities", mem_handlers.api_memory_entities)
+    app.router.add_get("/api/memory/graph/entities", mem_handlers.api_memory_entity_graph)
+    app.router.add_get("/api/memory/slots", mem_handlers.api_memory_slots)
+    app.router.add_get(
+        "/api/memory/entities/proposals", mem_handlers.api_memory_entity_proposals_list
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    return client
+
+
+_RELOAD = (
+    "/api/memory/entities",
+    "/api/memory/graph/entities",
+    "/api/memory/slots",
+    "/api/memory/entities/proposals",
+)
+
+
+@pytest.mark.asyncio
+async def test_a_studio_reload_answers_every_read(monkeypatch, store):
+    """The Studio's reload, many times over: every read answers, and answers with every entity."""
+    client = await _studio(monkeypatch, store)
+    failures: list[str] = []
+    rounds = 0
+    try:
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            rounds += 1
+            responses = await asyncio.gather(*(client.get(path) for path in _RELOAD))
+            for path, response in zip(_RELOAD, responses):
+                if response.status != 200:
+                    failures.append(f"{path} → {response.status}")
+                    continue
+                body = await response.json()
+                if path == "/api/memory/entities":
+                    if len(body["entities"]) != _ENTITIES:
+                        failures.append(f"{path} listed {len(body['entities'])} entities")
+                    if body["summary"].get("entities") != _ENTITIES:
+                        failures.append(f"{path} summary counted {body['summary']}")
+    finally:
+        await client.close()
+    assert rounds >= 20, f"the reload ran only {rounds} times — nothing was measured"
+    assert failures == [], f"{len(failures)} failed reads in {rounds} reloads: {failures[:5]}"
+
+
+def test_four_threads_on_one_store_read_whole_rows(store):
+    """The store directly: four kinds of read, two threads each, for a second."""
+    graph = store.graph
+    errors: collections.Counter[str] = collections.Counter()
+    wrong: list[str] = []
+    done: collections.Counter[str] = collections.Counter()
+    stop = threading.Event()
+
+    def entities() -> None:
+        n = len(graph.entities())
+        if n != _ENTITIES:
+            wrong.append(f"entities() listed {n}")
+
+    def summary() -> None:
+        counted = graph.summary()["entities"]
+        if counted != _ENTITIES:
+            wrong.append(f"summary() counted {counted}")
+
+    def topology() -> None:
+        nodes = len(graph.entity_graph()["nodes"])
+        if nodes != _ENTITIES:
+            wrong.append(f"entity_graph() drew {nodes} nodes")
+
+    def stats() -> None:
+        for entity in graph.entities()[:5]:
+            graph.stats(entity.id)
+
+    def run(fn) -> None:
+        while not stop.is_set():
+            try:
+                fn()
+                done[fn.__name__] += 1
+            except Exception as exc:  # noqa: BLE001 — every failure is the finding
+                errors[f"{fn.__name__}: {type(exc).__name__}: {exc}"] += 1
+
+    threads = [
+        threading.Thread(target=run, args=(fn,), daemon=True)
+        for fn in (entities, summary, topology, stats)
+        for _ in range(2)
+    ]
+    for t in threads:
+        t.start()
+    time.sleep(1.0)
+    stop.set()
+    for t in threads:
+        t.join(10)
+
+    assert all(
+        done[name] >= 20 for name in ("entities", "summary", "topology", "stats")
+    ), f"a reader barely ran, so nothing was measured: {dict(done)}"
+    assert not errors, f"reads failed: {errors.most_common(5)}"
+    assert not wrong, f"reads answered wrong: {wrong[:5]}"
+
+
+# ── what every shared store opens ──────────────────────────────────────────────────────────────
+
+
+def test_every_store_that_shares_one_connection_opens_a_shared_one(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.codegraph.index import CodeGraphIndex
+    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.lexicon.store import LexiconStore
+
+    memory = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    memory.init()
+    knowledge = KnowledgeStore(str(tmp_path / "knowledge.db"))
+    lexicon = LexiconStore(str(tmp_path / "lexicon.db"))
+    code = CodeGraphIndex(str(tmp_path), db_path=tmp_path / "code.db")
+    for name, conn in (
+        ("memory", memory.db),
+        ("knowledge", knowledge.db),
+        ("lexicon", lexicon.db),
+        ("code index", code.db),
+    ):
+        assert isinstance(conn, SharedConnection), f"the {name} store's connection is not shared"
+
+
+# ── the connection itself behaves like any other ───────────────────────────────────────────────
+
+
+def test_a_shared_connection_behaves_like_a_plain_one(tmp_path):
+    conn = connect_shared(str(tmp_path / "s.db"), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    assert isinstance(conn, sqlite3.Connection)
+    conn.executescript("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT);")
+    conn.isolation_level = ""
+    with conn:
+        conn.executemany("INSERT INTO t (name) VALUES (?)", [("a",), ("b",), ("c",)])
+    cur = conn.execute("INSERT INTO t (name) VALUES (?)", ("d",))
+    assert cur.lastrowid == 4
+    conn.commit()
+    assert conn.execute("SELECT name FROM t WHERE id = 1").fetchone()["name"] == "a"
+    assert [r["name"] for r in conn.execute("SELECT name FROM t ORDER BY id")] == [
+        "a",
+        "b",
+        "c",
+        "d",
+    ]
+    cur = conn.cursor()
+    cur.arraysize = 2
+    cur.execute("SELECT name FROM t ORDER BY id")
+    assert [r["name"] for r in cur.fetchmany()] == ["a", "b"]
+    assert [r["name"] for r in cur.fetchall()] == ["c", "d"]
+    conn.close()
+
+
+# ── a change made of several statements is one transaction ─────────────────────────────────────
+
+
+def _names_table(tmp_path) -> SharedConnection:
+    conn = connect_shared(str(tmp_path / "tx.db"), isolation_level=None)
+    conn.executescript("CREATE TABLE t (name TEXT);")
+    conn.isolation_level = ""
+    return conn
+
+
+def _stored(tmp_path) -> list[str]:
+    """What another connection reads: only what was committed."""
+    reader = sqlite3.connect(str(tmp_path / "tx.db"))
+    try:
+        return [r[0] for r in reader.execute("SELECT name FROM t ORDER BY rowid")]
+    finally:
+        reader.close()
+
+
+def test_a_transaction_stores_all_of_its_statements_or_none(tmp_path):
+    conn = _names_table(tmp_path)
+    with conn.transaction():
+        conn.execute("INSERT INTO t (name) VALUES ('a')")
+        conn.execute("INSERT INTO t (name) VALUES ('b')")
+    assert _stored(tmp_path) == ["a", "b"]
+
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('c')")
+            raise RuntimeError("the second half failed")
+    assert _stored(tmp_path) == ["a", "b"]
+    assert not conn.in_transaction
+    conn.close()
+
+
+def test_no_other_threads_statement_lands_inside_a_transaction(tmp_path):
+    """Between two of a transaction's statements, another thread's commit would store the half
+    already run, and nothing could take it back when the second half failed."""
+    conn = _names_table(tmp_path)
+    started = threading.Event()
+
+    def other_thread() -> None:
+        started.set()
+        conn.execute("INSERT INTO t (name) VALUES ('other')")
+        conn.commit()
+
+    worker = threading.Thread(target=other_thread)
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('half')")
+            worker.start()
+            started.wait(5)
+            time.sleep(0.2)
+            assert worker.is_alive(), "the other thread ran inside the transaction"
+            raise RuntimeError("the second half failed")
+    worker.join(5)
+    assert _stored(tmp_path) == ["other"]
+    conn.close()
+
+
+def test_a_transaction_inside_statements_already_open_is_stored_with_them(tmp_path):
+    conn = _names_table(tmp_path)
+    conn.execute("INSERT INTO t (name) VALUES ('open')")  # run, not yet committed
+    with conn.transaction():
+        conn.execute("INSERT INTO t (name) VALUES ('kept')")
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('undone')")
+            raise RuntimeError("failed")
+    assert conn.in_transaction, "the open statements are still the caller's to commit"
+    assert _stored(tmp_path) == []
+    conn.commit()
+    assert _stored(tmp_path) == ["open", "kept"]
+    conn.close()

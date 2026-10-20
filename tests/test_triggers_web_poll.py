@@ -1,0 +1,858 @@
+"""The web_watch poll runtime — what actually FIRES a `web_watch` trigger.
+
+🔴 THE DEFECT. `web_watch` was a fully declared kind with no runtime. It is in `KINDS`, `SPEC_KEYS`
+accepts `{url, poll_interval, extraction, novelty_key}`, `nl_kind.route()` routes any URL to it, the
+store persists it, `/api/triggers` lists it and the Automations page renders it. Nothing
+polled it. Measured before a line was written:
+
+    T.create(store, name="watch pypi", when="watch https://pypi.org/... for changes")
+      → ok: True   "Created automation 'watch pypi' (web_watch:watch-pypi), kind web_watch."
+
+    tick()                     → considered: none    (no `next_fire_at`; not a clock kind)
+    file_poll.file_triggers()  → ['file:t']          (only `file`)
+
+So a user could ask for exactly what the feature advertises, be told it worked, see it listed in the
+UI — and it would never fire. The same shape as the file-watch gap, one kind over.
+
+Every test injects its `fetcher`, so nothing here makes a network request. The novelty, budget and
+seeding logic is driven for real against a real store on `tmp_path`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import types
+
+import pytest
+import triggers_web_poll_shared
+
+from personalclaw.triggers import web_poll
+from personalclaw.triggers.models import Trigger
+from personalclaw.triggers.store import TriggerStore
+
+_isolate_knowledge = triggers_web_poll_shared._isolate_knowledge
+
+NOW = 1_800_000_000.0
+
+FEED_TWO = "<rss><item><guid>post-1</guid></item><item><guid>post-2</guid></item></rss>"
+FEED_THREE = FEED_TWO.replace("</rss>", "<item><guid>post-3</guid></item></rss>")
+
+
+@pytest.fixture
+def store(tmp_path):
+    return TriggerStore(base_dir=tmp_path)
+
+
+class _SpyKnowledge:
+    """Records `create_typed_item` calls so a test can assert the digest lands in KNOWLEDGE."""
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def create_typed_item(self, **kwargs):
+        self.items.append(kwargs)
+        return f"item-{len(self.items)}"
+
+
+def _shell_fetcher():
+    """A real 200 whose body is an empty JS shell — `extract_items` finds nothing, the escalation
+    signal (the page builds its content client-side)."""
+
+    def fetch(url):
+        return types.SimpleNamespace(
+            status=200,
+            body=b"<html><body><div id='app'></div></body></html>",
+            url=url,
+            headers={},
+            truncated=False,
+        )
+
+    return fetch
+
+
+def _renderer(html: str, *, ok: bool = True, unavailable: bool = False, error: str = ""):
+    """A sync fake standing in for `web.render.render_url` — returns a `RenderResult` directly, so
+    `_render_headless` never touches the event loop. `calls` counts invocations."""
+    from personalclaw.web.render import RenderResult
+
+    calls = {"n": 0}
+
+    def render(url, *, policy=None):
+        calls["n"] += 1
+        return RenderResult(ok=ok, url=url, html=html, unavailable=unavailable, error=error)
+
+    render.calls = calls  # type: ignore[attr-defined]
+    return render
+
+
+def _watch(store, *, tid="web_watch:w", url="https://example.com/feed", **spec):
+    store.upsert(
+        Trigger(
+            id=tid,
+            name=tid,
+            kind="web_watch",
+            enabled=True,
+            spec={"url": url, "poll_interval": 300, **spec},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    return store.get(tid).trigger
+
+
+def _fetcher(pages):
+    """A fetcher over a mutable `{"v": body}` so a test can change the page between polls."""
+
+    def fetch(url):
+        return types.SimpleNamespace(
+            status=200, body=pages["v"].encode(), url=url, headers={}, truncated=False
+        )
+
+    return fetch
+
+
+def _async_fetcher(pages):
+    """An ASYNC fetcher matching the real `personalclaw.net.fetch` (a coroutine).
+
+    The production default path fetches through the async `net.fetch`; this fake exercises that
+    exact shape so the coroutine-bridge (`_await_maybe`) is under test. Before the bridge, `_fetch`
+    returned the un-awaited coroutine and read `status`/`body` as 0/empty.
+    """
+
+    async def fetch(url):
+        return types.SimpleNamespace(
+            status=200, body=pages["v"].encode(), url=url, headers={}, truncated=False
+        )
+
+    return fetch
+
+
+def test_an_ASYNC_fetcher_is_awaited_not_left_a_coroutine(store, tmp_path):
+    """🔴 Regression for the missing-await bug: the real `net.fetch` is a coroutine, and `_fetch`
+    called it without awaiting — so the default path saw `status=0`/empty and every web_watch
+    silently no-oped. With the `_await_maybe` bridge, an async fetcher's items reach the seed."""
+    trigger = _watch(store)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_async_fetcher({"v": FEED_TWO})
+    )
+    # The seed pass never fires, but it must have SEEN the items — an un-awaited coroutine would
+    # have extracted nothing, and the check would have found the page EMPTY.
+    assert outcome.check == web_poll.WatchCheck.SEEDED
+    state = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert len(state.seen) >= 1, "async fetch body was not awaited — seed saw no items"
+
+
+def test_await_maybe_passes_through_a_sync_value_and_resolves_a_coroutine():
+    """The bridge is used by BOTH async seams; a sync fake must pass straight through."""
+
+    async def _coro():
+        return 42
+
+    assert web_poll._await_maybe(7) == 7  # sync value untouched
+    assert web_poll._await_maybe(_coro()) == 42  # coroutine resolved on a no-loop thread
+
+
+# ── the gap itself ──
+
+
+def test_a_web_watch_trigger_is_ENUMERATED(store):
+    """🔴 The defect, at its root: nothing enumerated this kind, so nothing could poll it."""
+    _watch(store)
+    assert [t.id for t in web_poll.web_watch_triggers(store)] == ["web_watch:w"]
+
+
+def test_a_DISABLED_watch_is_not_polled(store):
+    _watch(store, tid="web_watch:off")
+    row = store.get("web_watch:off").trigger
+    row.enabled = False
+    store.upsert(row)
+    assert web_poll.web_watch_triggers(store) == []
+
+
+def test_a_watch_with_NO_URL_is_not_polled(store):
+    """It cannot fetch anything, and scanning would be worse than skipping."""
+    _watch(store, tid="web_watch:blank", url="")
+    assert web_poll.web_watch_triggers(store) == []
+
+
+def test_other_kinds_are_not_polled_by_this_runtime(store):
+    """Disjointness is what makes this an additive cutover: a clock trigger polled here as well as
+    ticked by the clock loop would DOUBLE-FIRE, the hazard measured for the clock switch-over.
+    """
+    store.upsert(
+        Trigger(
+            id="clock:c",
+            name="c",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    _watch(store)
+    assert [t.id for t in web_poll.web_watch_triggers(store)] == ["web_watch:w"]
+
+
+# ── seeding: the first poll never fires ──
+
+
+def test_the_FIRST_poll_seeds_without_firing(store, tmp_path):
+    """🔴 Firing here would deliver the entire current front page as "new" — the behaviour that
+    makes someone delete the automation on day one. Mirrors `file_poll`'s seeding pass."""
+    trigger = _watch(store)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
+    )
+    assert outcome.payload is None
+    assert outcome.check == web_poll.WatchCheck.SEEDED
+    assert "recorded the 2 items on the page" in outcome.said
+
+
+def test_the_seed_SURVIVES_a_restart(store, tmp_path):
+    """Persisted, so a gateway restart does not re-seed and then re-deliver the whole page."""
+    trigger = _watch(store)
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO}))
+    assert web_poll.load_state(trigger.id, base_dir=tmp_path).seeded is True
+
+
+# ── novelty: the seen-set IS the storm guard ──
+
+
+def test_an_UNCHANGED_page_does_not_fire(store, tmp_path):
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
+    outcome = web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
+    assert outcome.payload is None
+    assert outcome.check == web_poll.WatchCheck.UNCHANGED
+    assert outcome.said.startswith("Nothing new: the 2 items on the page")
+
+
+def test_a_NEW_item_fires_and_names_it(store, tmp_path):
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
+    pages["v"] = FEED_THREE
+    outcome = web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
+    assert outcome.payload is not None
+    assert outcome.payload["new_count"] == 1
+    # FENCED with provenance: the item text came off a third-party page, so the payload
+    # carries the marker AND the origin rather than a bare string a later consumer must know to
+    # distrust. The item itself is still legible inside the fence.
+    (item,) = outcome.payload["new_items"]
+    assert "post-3" in item
+    assert "untrusted_content" in item
+    assert "source_type=web_watch" in item
+    assert "source_id=https://example.com/feed" in item
+
+
+def test_the_SAME_new_item_does_not_fire_TWICE(store, tmp_path):
+    """The seen-set's whole job. Without it, every poll after a change re-fires forever."""
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
+    pages["v"] = FEED_THREE
+    assert web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages)
+    ).payload
+    assert (
+        web_poll.poll_one(
+            trigger, now=NOW + 800, base_dir=tmp_path, fetcher=_fetcher(pages)
+        ).payload
+        is None
+    )
+
+
+def test_THE_STORM_GUARD_a_page_that_changes_every_fetch_never_fires(store, tmp_path):
+    """🔴 THE control. A timestamp, a rotating ad or a CSRF token changes the BODY on every fetch.
+    Keying novelty on a body hash would turn one watch into a notification every poll — which is
+    why the seen-set IS the storm guard."""
+    trigger = _watch(store, tid="web_watch:noisy")
+    counter = {"i": 0}
+
+    def noisy(url):
+        counter["i"] += 1
+        page = f'<html><span>now {counter["i"]}</span><a href="/only-post">p</a></html>'
+        return types.SimpleNamespace(
+            status=200, body=page.encode(), url=url, headers={}, truncated=False
+        )
+
+    fires = [
+        web_poll.poll_one(trigger, now=NOW + i * 400, base_dir=tmp_path, fetcher=noisy).payload
+        for i in range(6)
+    ]
+    assert [f for f in fires if f] == [], "a page changing every fetch must never fire"
+
+
+def test_extraction_prefers_FEED_IDS_over_every_link(store):
+    """An RSS feed keyed by every href in its own description HTML would treat a described link as
+    an item. The first matching strategy wins, so a feed is keyed by guid."""
+    body = (
+        '<rss><item><guid>real-1</guid><description><a href="/x">x</a></description></item></rss>'
+    )
+    assert web_poll.extract_items(body) == ["real-1"]
+
+
+def test_a_page_with_NO_items_is_not_everything_is_new(store, tmp_path):
+    """Nothing matched must mean "no items found", never "the whole page is one new item" — the
+    latter fires on any unparseable page, every poll."""
+    trigger = _watch(store)
+    pages = {"v": "<html><p>no links, no feed</p></html>"}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
+    outcome = web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
+    assert outcome.payload is None
+
+
+def test_an_INVALID_novelty_key_falls_back_rather_than_breaking_the_watch(store):
+    """A bad author-supplied regex must not take the automation offline."""
+    assert web_poll.extract_items(FEED_TWO, novelty_key="((((") == ["post-1", "post-2"]
+
+
+# ── the rate floor and the daily budget ──
+
+
+def test_the_poll_interval_is_CLAMPED_to_the_floor(store):
+    """🔴 This is the one kind that makes requests to SOMEONE ELSE'S server: a 5-second watch is
+    abusive to the target and indistinguishable from a scraper. Clamped rather than refused — a user
+    who typed 60 wants frequent checks, and refusing leaves the automation dead over a number they
+    can barely see. A floor was once declared but read by no code; this one is
+    enforced at the point of use."""
+    assert web_poll.poll_interval_for(_watch(store, poll_interval=5)) == (
+        web_poll.MIN_POLL_INTERVAL_SECS
+    )
+
+
+def test_a_LONGER_interval_is_honoured(store):
+    assert web_poll.poll_interval_for(_watch(store, poll_interval=3600)) == 3600
+
+
+def test_a_watch_polled_TOO_SOON_is_not_fetched(store, tmp_path):
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
+    outcome = web_poll.poll_one(trigger, now=NOW + 10, base_dir=tmp_path, fetcher=_fetcher(pages))
+    assert outcome.check == "", "a watch that was not due was not checked"
+    assert outcome.fetched is False, "a not-due watch must not spend a request"
+
+
+def test_the_DAILY_BUDGET_refuses_with_a_visible_reason(store, tmp_path):
+    """Zero silent drops. A watch that stopped polling with no explanation is
+    indistinguishable from a broken one."""
+    trigger = _watch(store)
+    state = web_poll.WatchState(
+        seeded=True, day=web_poll._day_of(NOW), requests_today=web_poll.MAX_REQUESTS_PER_DAY
+    )
+    web_poll.save_state(trigger.id, state, base_dir=tmp_path)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW + 10_000, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
+    )
+    assert outcome.payload is None
+    assert outcome.check == web_poll.WatchCheck.BUDGET
+    assert "until tomorrow" in outcome.said
+    assert outcome.fetched is False
+
+
+def test_the_budget_RESETS_the_next_day(store, tmp_path):
+    trigger = _watch(store)
+    state = web_poll.WatchState(
+        seeded=True, day="2020-01-01", requests_today=web_poll.MAX_REQUESTS_PER_DAY
+    )
+    web_poll.save_state(trigger.id, state, base_dir=tmp_path)
+    assert web_poll.budget_remaining(state, now=NOW) == web_poll.MAX_REQUESTS_PER_DAY
+
+
+def test_a_FAILED_fetch_still_SPENDS_its_request(store, tmp_path):
+    """🔴 Deliberate. A failing url that did not count toward the budget would retry forever at full
+    rate — the shape that gets a user's IP blocked."""
+    trigger = _watch(store)
+
+    def boom(url):
+        raise OSError("unreachable")
+
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=boom)
+    assert web_poll.load_state(trigger.id, base_dir=tmp_path).requests_today == 1
+
+
+# ── failure isolation ──
+
+
+def test_an_UNREACHABLE_page_is_a_reason_not_a_crash(store, tmp_path):
+    trigger = _watch(store)
+
+    def boom(url):
+        raise OSError("unreachable")
+
+    outcome = web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=boom)
+    assert outcome.payload is None
+    assert outcome.check == web_poll.WatchCheck.FAILED
+    assert "could not reach https://example.com/feed (OSError: unreachable)" in outcome.said
+
+
+def test_an_HTTP_ERROR_is_reported_not_treated_as_an_empty_page(store, tmp_path):
+    """A 404 body parsed as "no items" would silently mean the watch works; it does not."""
+    trigger = _watch(store)
+
+    def gone(url):
+        return types.SimpleNamespace(status=404, body=b"", url=url, headers={}, truncated=False)
+
+    outcome = web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=gone)
+    assert outcome.check == web_poll.WatchCheck.FAILED
+    assert "answered HTTP 404" in outcome.said and "check the address" in outcome.said
+
+
+def test_ONE_bad_watch_does_not_strand_the_others(store, tmp_path):
+    """A poll loop that died on one unreachable host would silently stop every OTHER watch."""
+    _watch(store, tid="web_watch:bad", url="https://bad/")
+    _watch(store, tid="web_watch:good")
+    pages = {"v": FEED_TWO}
+
+    def mixed(url):
+        if "bad" in url:
+            raise OSError("unreachable")
+        return _fetcher(pages)(url)
+
+    payloads, checks = web_poll.poll_all(store, now=NOW, base_dir=tmp_path, fetcher=mixed)
+    assert {t.id: o.check for t, o in checks} == {
+        "web_watch:bad": web_poll.WatchCheck.FAILED,
+        "web_watch:good": web_poll.WatchCheck.SEEDED,
+    }
+    assert payloads == [], "both are seeding/failing on this pass, neither fires"
+
+
+def test_poll_all_returns_every_CHECK_it_made(store, tmp_path):
+    """The caller reports from these (`report_checks`); a watch that was not due is not in them."""
+    _watch(store)
+    _payloads, checks = web_poll.poll_all(
+        store, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
+    )
+    assert [(t.id, o.check) for t, o in checks] == [("web_watch:w", "seeded")]
+    _payloads, again = web_poll.poll_all(
+        store, now=NOW + 10, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
+    )
+    assert again == [], "a watch that was not due was not checked"
+
+
+def test_a_CORRUPT_sidecar_reads_as_unseeded_rather_than_raising(tmp_path):
+    """A poll loop that died on one bad JSON file would stop every other watch on the machine."""
+    path = web_poll._state_path("web_watch:w", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json")
+    assert web_poll.load_state("web_watch:w", base_dir=tmp_path).seeded is False
+
+
+# ── the egress chokepoint + privacy ──
+
+
+def test_the_seen_set_stores_HASHES_not_urls(store, tmp_path):
+    """A seen-set of raw urls is a browsing history in a plaintext sidecar that snapshots
+    carry off the machine. The control needs identity, not the value."""
+    trigger = _watch(store)
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO}))
+    seen = web_poll.load_state(trigger.id, base_dir=tmp_path).seen
+    assert seen and all("post-" not in key for key in seen)
+
+
+def test_the_seen_set_is_BOUNDED(store, tmp_path):
+    """Unbounded, it grows forever on a busy feed."""
+    trigger = _watch(store)
+    many = "".join(f"<item><guid>p{i}</guid></item>" for i in range(web_poll.MAX_SEEN_KEYS + 50))
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": f"<rss>{many}</rss>"})
+    )
+    assert len(web_poll.load_state(trigger.id, base_dir=tmp_path).seen) == web_poll.MAX_SEEN_KEYS
+
+
+def test_the_payload_item_list_is_CAPPED(store, tmp_path):
+    """A payload carrying 400 urls is a prompt nobody can afford."""
+    trigger = _watch(store)
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO}))
+    many = "".join(f"<item><guid>n{i}</guid></item>" for i in range(200))
+    outcome = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher({"v": f"<rss>{many}</rss>"})
+    )
+    assert outcome.payload is not None
+    assert len(outcome.payload["new_items"]) == 20
+    assert outcome.payload["new_count"] == 200, "the COUNT is honest even when the list is capped"
+
+
+# ── the boot wiring ──
+
+_LOOP = "GatewayOrchestrator._web_watch_poll_loop"
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """The home the gateway's loop reads: its trigger store, each watch's state, incident mode."""
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_boot_starts_the_poll_loop_and_holds_it_for_the_stop(home):
+    """🔴 The wiring, not the helper. A runtime nothing calls is the inert-control defect this whole
+    file exists to close — the very state `web_watch` was in before it. A boot with automations on
+    starts the loop once, and it is still running a moment later, held where the stop cancels it."""
+    from unittest.mock import AsyncMock, patch
+
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=False, no_open=True)
+    before = asyncio.all_tasks()
+    with patch.object(ScheduleRunStore, "rotate_all", AsyncMock()):
+        await orch._init_cron()
+    started = asyncio.all_tasks() - before
+    try:
+        await asyncio.sleep(0.05)  # a loop that leaves at once has left by now
+        loop = orch._web_watch_task
+        assert loop is not None, "the boot holds no poll loop where the stop cancels it"
+        assert loop.get_coro().__qualname__ == _LOOP, loop
+        assert not loop.done(), "the poll loop stopped at boot"
+        loops = [task for task in started if task.get_coro().__qualname__ == _LOOP]
+        assert loops == [loop], f"the boot started {len(loops)} poll loops"
+    finally:
+        for task in started:
+            task.cancel()
+        await asyncio.wait(started, timeout=5.0)
+
+
+def test_the_loop_checks_no_page_while_incident_mode_is_on(home, monkeypatch):
+    """An unattended fire is an unattended fire regardless of what triggered it. While incident
+    mode is on, a pass neither fetches the page nor fires, though the page has a new item; the loop
+    keeps going, and the first pass after the switch is turned off fires that item."""
+    import itertools
+
+    import personalclaw.gateway as gw
+    from personalclaw.guardrails import incident
+
+    _watch(TriggerStore(base_dir=home))
+    pages = {"v": FEED_TWO}
+    page = _fetcher(pages)
+    fetched: list[str] = []
+    fired: list[dict] = []
+
+    def fetch(url):
+        fetched.append(url)
+        return page(url)
+
+    real_poll_all = web_poll.poll_all
+    monkeypatch.setattr(
+        web_poll, "poll_all", lambda store, *, now: real_poll_all(store, now=now, fetcher=fetch)
+    )
+
+    def turn_on() -> None:
+        incident.activate("a test of the web watch loop")
+        pages["v"] = FEED_THREE
+
+    # Run before each pass: pass 1 seeds the watch, incident mode is on for passes 2 and 3 (the
+    # page gains an item as it goes on), and pass 4 runs with it off again.
+    before_pass = [lambda: None, turn_on, lambda: None, incident.resume]
+    so_far: list[tuple[int, int]] = []
+
+    async def sleep(_secs: float) -> None:
+        so_far.append((len(fetched), len(fired)))
+        if len(so_far) > len(before_pass):
+            raise asyncio.CancelledError
+        before_pass[len(so_far) - 1]()
+
+    async def fire(payload: dict) -> None:
+        fired.append(payload)
+
+    clock = itertools.count(NOW, 400)
+    monkeypatch.setattr(
+        gw,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=sleep, to_thread=asyncio.to_thread, CancelledError=asyncio.CancelledError
+        ),
+    )
+    monkeypatch.setattr(gw, "time", types.SimpleNamespace(time=lambda: next(clock)))
+    orch = object.__new__(gw.GatewayOrchestrator)
+    orch.dashboard_state = None
+    orch._fire_file_trigger = fire
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orch._web_watch_poll_loop())
+
+    # (pages fetched, fires) before each pass and after the last.
+    assert so_far == [(0, 0), (1, 0), (1, 0), (1, 0), (2, 1)]
+    (payload,) = fired
+    assert payload["trigger_id"] == "web_watch:w"
+    assert payload["new_count"] == 1
+    assert "post-3" in payload["new_items"][0]
+
+
+def test_the_stop_cancels_the_poll_loop(home, monkeypatch):
+    """A task nobody cancels keeps polling a third party after the user stopped the gateway. The
+    stop cancels the running loop, and no pass runs after it."""
+    from test_gateway import _make_orchestrator, _mock_dashboard_state, _mock_sessions
+
+    passes: list[float] = []
+
+    def poll_all(store, *, now):
+        passes.append(now)
+        return [], []
+
+    monkeypatch.setattr(web_poll, "POLL_INTERVAL_SECS", 0.02)
+    monkeypatch.setattr(web_poll, "poll_all", poll_all)
+    orch = _make_orchestrator()
+    orch.sessions = _mock_sessions()
+    orch.dashboard_state = _mock_dashboard_state()
+
+    async def stop() -> tuple[bool, int]:
+        loop = orch._web_watch_task = asyncio.create_task(orch._web_watch_poll_loop())
+        for _ in range(500):
+            if passes:
+                break
+            await asyncio.sleep(0.01)
+        assert passes, "the loop made no pass before the stop"
+        await orch._shutdown()
+        stopped = len(passes)
+        await asyncio.sleep(0.2)  # ten poll intervals
+        return loop.cancelled(), len(passes) - stopped
+
+    cancelled, after = asyncio.run(stop())
+    assert cancelled, "the poll loop outlived the stop"
+    assert after == 0, f"{after} passes ran after the stop"
+
+
+# ── the headless escalation tier ──
+
+# A shell page that, once JS runs, exposes a feed the plain fetch never saw.
+RENDERED_FEED = "<rss><item><guid>js-post-1</guid></item></rss>"
+
+
+def test_escalation_is_OFF_by_default_a_shell_page_does_not_escalate(store, tmp_path):
+    """Default OFF: a watch that never set `escalate_headless` polls byte-for-byte as before — a
+    shell page seeds, the renderer is never touched."""
+    trigger = _watch(store)  # no escalate_headless key
+    render = _renderer(RENDERED_FEED)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 0, "escalation must not run when the watch didn't opt in"
+    assert outcome.escalation == ""
+    # an empty shell has nothing to track, and the renderer stayed idle
+    assert outcome.check == web_poll.WatchCheck.EMPTY
+
+
+def test_escalation_ON_a_shell_page_renders_and_extracts(store, tmp_path):
+    """Opted in + a real 200 whose plain fetch is empty → escalate, re-extract from the post-JS
+    HTML, and mark the escalation so it reaches the ledger/payload."""
+    trigger = _watch(store, tid="web_watch:js", escalate_headless=True)
+    render = _renderer(RENDERED_FEED)
+    # first poll seeds (the rendered item is recorded without firing)
+    seed = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1
+    assert "escalated to headless; extracted 1 item(s)" in seed.escalation
+    # the rendered item WAS seen via the headless tier, and the check says how
+    assert seed.check == web_poll.WatchCheck.SEEDED
+    assert "recorded the 1 item on the page" in seed.said
+    assert "[escalated to headless; extracted 1 item(s)]" in seed.said
+    # a NEW rendered item now fires, carrying the escalation marker in the payload
+    render2 = _renderer(RENDERED_FEED.replace("js-post-1", "js-post-2"))
+    fire = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render2
+    )
+    assert fire.payload is not None
+    assert fire.payload["new_count"] == 1
+    assert "extracted 1 item(s)" in fire.payload["escalation"]
+    assert "js-post-2" in fire.payload["new_items"][0]
+
+
+def test_escalation_budget_EXHAUSTED_stops_with_a_visible_reason(store, tmp_path):
+    """A render is the expensive tier. When its own daily budget is spent, escalation stops and says
+    so (a ledger-visible reason) rather than launching a browser it has no budget for."""
+    trigger = _watch(store, tid="web_watch:cap", escalate_headless=True, max_headless_requests=1)
+    render = _renderer(RENDERED_FEED)
+    # poll 1: seeds, spends the single headless render
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1
+    # poll 2: budget spent → refused, visibly, and the renderer is NOT called again
+    outcome = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1, "a spent budget must not launch another render"
+    assert "headless escalation budget spent" in outcome.escalation
+    assert "headless escalation budget spent" in outcome.said
+
+
+def test_a_FAILED_render_still_SPENDS_its_budget(store, tmp_path):
+    """Charged win-or-lose: a failed render that did not count would retry every interval forever —
+    the runaway the plain budget also guards."""
+    trigger = _watch(
+        store, tid="web_watch:failrender", escalate_headless=True, max_headless_requests=5
+    )
+    web_poll.poll_one(  # seed
+        trigger,
+        now=NOW,
+        base_dir=tmp_path,
+        fetcher=_shell_fetcher(),
+        renderer=_renderer("", ok=False, error="boom"),
+    )
+    st = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert st.headless_today == 1, "a failed render is accounted like a successful one"
+    outcome = web_poll.poll_one(
+        trigger,
+        now=NOW + 400,
+        base_dir=tmp_path,
+        fetcher=_shell_fetcher(),
+        renderer=_renderer("", ok=False, error="boom again"),
+    )
+    assert "headless render failed" in outcome.escalation
+
+
+def test_PLAYWRIGHT_UNAVAILABLE_does_not_escalate_or_crash(store, tmp_path):
+    """`render_url`→`unavailable=True` (Playwright absent). No escalation, no crash, no budget spent
+    (it can never succeed until installed) — serve the plain result, reason recorded."""
+    trigger = _watch(store, tid="web_watch:noplaywright", escalate_headless=True)
+    render = _renderer("", ok=False, unavailable=True)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert outcome.payload is None  # plain shell seeds, no crash
+    assert "headless tier unavailable" in outcome.escalation
+    assert "install personalclaw[js-render]" in outcome.escalation
+    st = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert st.headless_today == 0, "an unavailable tier is never charged — it can't succeed yet"
+
+
+# ── digest routing → the KNOWLEDGE store, never memory ──
+
+
+def test_a_new_item_ROUTES_to_the_knowledge_store(store, tmp_path):
+    """The digest lands in the knowledge store as a searchable user item — the injected spy proves a
+    genuinely-new item is written, with web_watch provenance."""
+    trigger = _watch(store)
+    spy = _SpyKnowledge()
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )  # seed — nothing fires, nothing written
+    assert spy.items == []
+    pages["v"] = FEED_THREE
+    fire = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    assert fire.payload is not None
+    assert len(spy.items) == 1, "only the ONE genuinely-new item is written"
+    written = spy.items[0]
+    assert written["item_type"] == "bookmark"
+    assert written["provider"] == "web_watch"
+    assert "post-3" in written["title"]
+
+
+def test_only_GENUINELY_NEW_items_are_written_not_the_whole_page(store, tmp_path):
+    """The seen-set gates 'new', so a re-poll of an unchanged page writes nothing more."""
+    trigger = _watch(store)
+    spy = _SpyKnowledge()
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(  # seed
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(  # fires: 1 new
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    web_poll.poll_one(  # unchanged: writes nothing
+        trigger, now=NOW + 800, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    assert len(spy.items) == 1
+
+
+def test_the_digest_does_NOT_touch_the_memory_subsystem(store, tmp_path):
+    """🔴 The routing contract: web_watch output is KNOWLEDGE (searchable user items), not memory.
+    A real KnowledgeStore gains the item; a MemoryStore over the same tmp home stays empty."""
+    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.memory import MemoryStore
+
+    kstore = KnowledgeStore(str(tmp_path / "k.db"))
+    memory = MemoryStore(workspace=tmp_path / "ws")
+    memory.init()
+
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=kstore
+    )
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=kstore
+    )
+
+    # KNOWLEDGE gained the item …
+    assert kstore.search_items_fts_count("post-3") >= 1
+    # … and MEMORY was never touched: no history/preferences/projects writes beyond init defaults.
+    assert "post-3" not in memory.read_preferences()
+    assert "post-3" not in memory.read_projects()
+    hist = list((tmp_path / "ws" / "memory" / "history").glob("*.md"))
+    assert hist == [], "web_watch must not write memory history"
+
+
+# ── the default knowledge store a test is given (`_isolate_knowledge`) ──
+
+
+def test_the_default_knowledge_store_is_built_when_something_first_asks_for_it(
+    tmp_path, monkeypatch
+):
+    """🔴 `_isolate_knowledge` builds this test's stand-in for the default knowledge store the first
+    time something asks for it, not in every test's setup: few tests here fire without a store of
+    their own, and building one costs about 20 ms. It is built once, in this test's own folder."""
+    from personalclaw import knowledge
+    from personalclaw.knowledge import store as knowledge_store
+
+    built: list[str] = []
+
+    class _Counted(knowledge_store.KnowledgeStore):
+        def __init__(self, db_path: str) -> None:
+            built.append(db_path)
+            super().__init__(db_path)
+
+    monkeypatch.setattr(knowledge_store, "KnowledgeStore", _Counted)
+
+    first = knowledge.get_knowledge_store()
+    assert len(built) == 1, "the default knowledge store was built before anything asked for it"
+    assert knowledge.get_knowledge_store() is first
+    assert len(built) == 1, "the default knowledge store was built again"
+    assert built[0].startswith(f"{tmp_path}/"), built[0]
+
+
+def test_a_fire_without_a_store_of_its_own_writes_none_another_test_left(
+    store, tmp_path, monkeypatch
+):
+    """The planted leak: a process-wide knowledge store an earlier test left (or the real home's).
+    A fire that brings no store of its own writes this test's stand-in, and the planted store gains
+    nothing. Red without `_isolate_knowledge`."""
+    from personalclaw import knowledge
+
+    left_behind = _SpyKnowledge()
+    monkeypatch.setattr(knowledge, "_store", left_behind)
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))  # seed
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
+
+    assert left_behind.items == [], "the fire wrote a store another test left behind"
+    assert knowledge.get_knowledge_store().search_items_fts_count("post-3") >= 1
+
+
+def test_the_new_spec_keys_are_ACCEPTED_by_validation():
+    """`escalate_headless` / `max_headless_requests` must be in `SPEC_KEYS['web_watch']`, or an
+    opted-in watch validates with an 'unknown key' warning."""
+    from personalclaw.triggers.models import validate_spec
+
+    issues = validate_spec(
+        "web_watch",
+        {"url": "https://x.example", "escalate_headless": True, "max_headless_requests": 3},
+    )
+    assert issues == [], f"new headless keys must be recognised; got {issues}"

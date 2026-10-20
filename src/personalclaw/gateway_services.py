@@ -1,0 +1,104 @@
+"""The service surface the gateway exposes to inbound channel transports.
+
+A channel transport (Slack, and future Telegram/Discord) receives inbound
+messages from its external system and must drive the platform's shared runtime:
+route a message to a chat session, read cron jobs, append channel history,
+consolidate conversation memory, surface notifications on the dashboard, etc.
+
+Rather than hand a channel the whole :class:`~personalclaw.gateway.GatewayOrchestrator`
+(and let it reach into private internals — the coupling that kept Slack welded to
+core), the orchestrator exposes exactly this contract. The core orchestrator
+satisfies it structurally; a transport depends only on this Protocol.
+
+This is the *core → channel* seam. It carries NO channel-specific state (no Slack
+client, tokens, tracking-channels, socket connection) — those live on the channel
+transport itself.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from personalclaw.channel_history import ChannelHistory
+    from personalclaw.channel_transports.base import ChannelMessage
+    from personalclaw.channel_trust import TrustVerdict
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.context import ContextBuilder
+    from personalclaw.dashboard.state import DashboardState
+    from personalclaw.history import ConversationLog, HistoryConsolidator
+    from personalclaw.session import SessionManager
+    from personalclaw.subagent import SubagentManager
+
+
+@runtime_checkable
+class GatewayServices(Protocol):
+    """Shared runtime services a channel transport drives for inbound handling.
+
+    All attributes are live once the gateway has started its services; a
+    transport's ``start_inbound`` runs after ``_init_services``/dashboard init, so
+    they are populated by the time inbound routing begins.
+    """
+
+    # Core session + conversation runtime.
+    sessions: "SessionManager | None"
+    ctx_builder: "ContextBuilder | None"
+    conv_log: "ConversationLog | None"
+    consolidator: "HistoryConsolidator | None"
+    subagent_mgr: "SubagentManager | None"
+    channel_history: "ChannelHistory | None"
+    dashboard_state: "DashboardState | None"
+
+    @property
+    def config(self) -> "AppConfig":
+        """The live gateway config (read-only from a transport's perspective)."""
+        ...
+
+    @property
+    def owner_id(self) -> str:
+        """The owner id stored under the one SHARED key (``CRED_OWNER_ID``), or ``""``.
+
+        The key every channel used to write, so it holds whichever platform's id was saved
+        last. A channel reads its OWN owner with ``owner_id_for(<provider>)``
+        (``personalclaw.sdk.channel``), which falls back to this value until the channel has
+        stored its own under ``owner_id_credential(<provider>)``.
+        """
+        ...
+
+    async def deliver_channel_inbound(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> "TrustVerdict":
+        """**The** way a transport delivers an inbound message. Trust is not optional here.
+
+        A transport hands the platform a normalized
+        :class:`~personalclaw.channel_transports.base.ChannelMessage` and the platform
+        applies :func:`~personalclaw.channel_trust.guard_inbound` *before* the content can
+        reach a session — see :mod:`personalclaw.channel_inbound` for why this lives on the
+        services handle rather than on the transport ABC.
+
+        The gate used to be reachable only by convention: every transport was expected to
+        call it at the top of its own inbound path, and a transport that omitted the call
+        reached an agent with no check. Routing through this method is what turns that
+        convention into a property; the returned verdict reports what happened so the
+        transport can render the channel-specific outbound half (``canned_reply``) itself.
+
+        A message runs once: the platform takes it by the channel's own id for it in its chat
+        (``message_id`` with ``channel_id``), and a delivery of it made again comes back not
+        allowed, ``reason="already_received"``, with nothing done; one with no ``message_id``
+        comes back refused, ``reason="no_message_id"``.
+        """
+        ...
+
+    async def answer_channel_reply(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> bool:
+        """Offer core a message the transport runs a turn for itself, before it does.
+
+        For a channel that runs its conversations itself (as Slack does with a DM's threads)
+        rather than handing every message to :meth:`deliver_channel_inbound`, which answers this
+        on its own. True when the message was the channel owner's answer to the Morning triage
+        digest that DM received (``3 yes``): core answered it as the digest's card does and said
+        in the DM what it did, so the transport runs no turn for it. False for anything else,
+        which stays the transport's to handle as before.
+        """
+        ...

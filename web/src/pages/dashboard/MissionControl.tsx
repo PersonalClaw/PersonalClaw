@@ -1,0 +1,769 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
+import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type SkillProposal, type WorkflowRunSummary } from '../../lib/api'
+import { invalidateKeys, useQuery } from '../../lib/data'
+import { rowSubject } from '../../lib/rowSubject'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { Button } from '../../ui/Button'
+import { PageTitle } from '../../ui/PageTitle'
+import { TextLink } from '../../ui/TextLink'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { LANES, toLanes, type ActivityInput, type Lane, type LaneCard } from '../../lib/attentionLanes'
+import { BUSY_REASON } from '../../ui/unavailable'
+import { PendingApprovalCard } from '../../app/PendingApprovalCard'
+
+// ── Mission Control — the locked four-lane attention view ──────────────────────────────────
+//
+// The whole point of this surface is that it is a CONTROL surface, not a list: the two verbs
+// that resolve an item are ON the card, so "what needs me" and "deal with it" are one glance
+// and one click instead of a glance plus a navigation. Two consequences follow, and they are
+// the reason most of the code below exists:
+//
+//  1. A resolved card must LOOK resolved the moment the POST returns. A button that fires and
+//     leaves the card looking pending trains the user to click again — and a second approve on
+//     an already-resolved id is a real action with a real effect, not a no-op.
+//  2. A FAILED action must say so, in the gateway's own words, on the card. Rendering nothing
+//     on failure is indistinguishable from success here, because the only other feedback a
+//     user has is the card disappearing on the next read — which is exactly what does NOT
+//     happen when the call failed.
+//
+// Lane derivation is NOT done here. `lib/attentionLanes` owns `laneFor`/`toLanes` as pure
+// functions over the unified attention store, so the classification is testable without a DOM
+// and one rule cannot drift between this view and any other consumer of the same lanes.
+
+/** ── THE ONE RECONCILIATION POINT with `dashboard/views_store.py` ──────────────────────────
+ *
+ *  The locked preset registers four `core:` tile refs, one per lane. This map is the only place
+ *  those strings appear on the frontend, so reconciling the view registry with this surface is a
+ *  single-line edit rather than a hunt.
+ *
+ *  Keyed by `Lane` and asserted (in `missionControl.test.tsx`) to cover `LANES` exactly, in
+ *  order — a ref map that silently omits a lane would register a view with a hole in it.
+ *
+ *  These strings are the SERVER's, copied from `_MISSION_CONTROL_CORE_REFS`. They were
+ *  `core:attention-*` here while the registry said `core:lane-*` — two halves built on separate
+ *  branches against a contract written in prose, and nothing failed: a tile ref is a string on
+ *  both sides, so neither lint, nor mypy, nor either suite could see the mismatch. Hence the
+ *  cross-language rail in `tests/test_dashboard_mission_control_preset.py`, which reads this map out of
+ *  this file and asserts set equality with the registry — the only check that can fail here. */
+export const LANE_REFS: Record<Lane, string> = {
+  'needs-approval': 'core:lane-needs-approval',
+  'your-turn': 'core:lane-your-turn',
+  working: 'core:lane-working',
+  idle: 'core:lane-idle',
+}
+
+/** The preset's own id, for the same reason: one string, one place. */
+export const MISSION_CONTROL_VIEW_ID = 'mission-control'
+
+/** Which lane a preset tile ref belongs to, or null for a ref this view does not own. The
+ *  inverse of `LANE_REFS`, for a host that mounts the preset tile-by-tile. */
+export function laneForRef(ref: string): Lane | null {
+  return LANES.find((l) => LANE_REFS[l] === ref) ?? null
+}
+
+// The lane headings and — just as load-bearing — the sentence an EMPTY lane says. A lane that
+// vanishes when it empties reads as "nothing needs me", which is a different and much worse
+// claim than "nothing needs approval": the user cannot tell an empty queue from a queue that
+// failed to render. So all four lanes always paint, and an empty one is explicit about it.
+const LANE_LABEL: Record<Lane, string> = {
+  'needs-approval': 'Needs approval',
+  'your-turn': 'Your turn',
+  working: 'Working',
+  idle: 'Idle',
+}
+const LANE_EMPTY: Record<Lane, string> = {
+  'needs-approval': 'Nothing is waiting on your approval.',
+  'your-turn': 'Nothing is waiting on an answer from you.',
+  working: 'Nothing is running right now.',
+  idle: 'Nothing is idle.',
+}
+
+// One `dashboard:`-namespaced key, one fetch, all THREE inputs. `toLanes` takes them together, so
+// reading them under separate keys would let the view paint a lane split computed from three
+// different instants.
+const ATTENTION_KEY = 'dashboard:mission-control'
+
+interface Attention {
+  items: InboxItem[]
+  approvals: PendingApproval[]
+  activity: ActivityInput[]
+  /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
+   *  lane's evidence for a loop no chat session carries. */
+  loops: Loop[]
+  /** Every RUNNING workflow run — the Working lane's evidence for a run that is neither a chat
+   *  session nor a loop. */
+  runs: WorkflowRunSummary[]
+  /** The skill proposals waiting on a yes or no — Home's To triage reads the same list, so a
+   *  proposal is named and decided the same way on both. */
+  proposals: SkillProposal[]
+}
+
+/** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
+ *
+ *  "Working" is NOT derivable from the attention store. `InboxItemStatus`' lifecycle is
+ *  pending → seen → handled | dismissed: two open states, two closed, and no in-flight one. The
+ *  single candidate, `sent`, is an enum member nobody writes. Keying the lane off it would have
+ *  shipped a permanently empty lane wearing a confident label — which is strictly worse than no
+ *  lane, because an empty "Working" asserts that nothing is running.
+ *
+ *  So running work is observed where it actually exists: the live chat sessions, each with its
+ *  `run_state` — the chat's last phase frame, which names a turn while one runs and says whether a
+ *  stop is asked of it. `laneFor` never returns `'working'`, so this argument is the ONLY path to
+ *  that lane.
+ *
+ *  The list's origin fields travel too: they say which loop a worker session belongs to, which is
+ *  how Working shows a loop once rather than once more per worker (`toLanes`), and the preview
+ *  fields are what a chat with no title yet is named by (`sessionTitle`). */
+function activityOf(s: ChatSessionSummary): ActivityInput {
+  return {
+    key: s.key,
+    title: s.title,
+    run_state: s.run_state,
+    origin: s.origin,
+    source_id: s.source_id,
+    source_label: s.source_label,
+    prompt_preview: s.prompt_preview,
+    last_message: s.last_message,
+    created: s.created,
+    last_activity_ts: s.last_activity_ts,
+    last_ts: s.last_ts,
+  }
+}
+
+/** Deliberately NOT `.catch(() => [])` on any leg. A swallowed read failure paints four empty
+ *  lanes, and four empty lanes is this surface's "all clear" — the single most misleading thing it
+ *  could show. The error reaches `useQuery` and the view says it could not load.
+ *
+ *  The three lists are handed to `toLanes` UNMERGED, and that is a correctness requirement rather
+ *  than a stylistic one: the pending-approval registry raises an `agent_request` inbox row for
+ *  every pending approval, carrying `refs.approval = <registry id>` — and `PendingApproval.id` IS
+ *  that id. So a pending approval is already on the wire TWICE.
+ *  De-duplicating it is `toLanes`' job (it drops the mirror when the approval is in the same
+ *  snapshot and KEEPS it when it is not, because losing a row is worse than a stale one).
+ *  Concatenating the lists here would double-count every mirrored approval and make each lane's
+ *  count a lie. */
+async function readAttention(): Promise<Attention> {
+  const [items, approvals, sessions, loops, running, proposals] = await Promise.all([
+    api.inboxOpen(),
+    api.approvals(),
+    api.chatSessions(),
+    api.uLoops(),
+    // 200 is the route's own ceiling (`api_runs_list`), far past what one install runs at once.
+    api.workflowRuns({ status: 'running', limit: 200 }),
+    api.skillProposals(),
+  ])
+  return {
+    items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs,
+    proposals: proposals.proposals,
+  }
+}
+
+/** What answering a parked run needs, read off the inbox row's free-form `refs`.
+ *
+ *  🔑 THE WIRE DOES CARRY THE OPTIONS. `workflows/needs_input.card_refs()` puts the whole
+ *  `NeedsInputItem` under `refs.needs_input`, including `choices[]` and `resume_token`, so a
+ *  question's options are real data and not something this view has to invent. `InboxItem.refs`
+ *  is typed `Record<string, any>` on purpose (the inbox is a general attention store shared with
+ *  channel messages), which is why the narrowing happens here rather than in `lib/api`.
+ *
+ *  `choices` MAY be empty for a genuine question — a freeform gate. That is reported as what it
+ *  is (see `QuestionActions`) rather than papered over with a text box this surface cannot
+ *  honestly submit.
+ *
+ *  An APPROVAL is neither: it is a yes or a no (`block_kind: 'approval'` — an approval gate, or a
+ *  step that stopped for you, like a sign-in), and the run takes only a boolean for it. So it is
+ *  answered with Approve and Deny whatever prose choices its card carries. It rendered as "no
+ *  preset options — open the run", with no buttons at all, on exactly the card a person most
+ *  needs to answer from here.
+ *
+ *  A PARKED run is not a question at all (`block_kind: 'event'` — an `event` gate, like a monitor
+ *  waiting between checks): it carries on when what it waits for happens, so its card offers only
+ *  to wake it now. */
+export interface CardQuestion {
+  runId: string
+  /** A trigger's action that stopped for you (`triggers.parks`): answered at the trigger, which
+   *  has no run. Empty for a run's question. */
+  triggerId: string
+  nodeId: string
+  resumeToken: string
+  prompt: string
+  choices: string[]
+  approval: boolean
+  /** Parked until something wakes it (an `event` gate): the card wakes it, and decides nothing. */
+  event: boolean
+}
+
+export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | undefined): CardQuestion | null {
+  const refs = item?.refs
+  if (!refs || typeof refs !== 'object') return null
+  const payload = refs.needs_input
+  if (!payload || typeof payload !== 'object') return null
+  const runId = String(payload.run_id || refs.workflow || '')
+  const triggerId = typeof refs.trigger_park === 'string' ? refs.trigger_park : ''
+  // Nothing to resume ⇒ nothing this card could unblock.
+  if (!runId && !triggerId) return null
+  const choices = (Array.isArray(payload.choices) ? payload.choices : [])
+    .filter((c: unknown): c is string => typeof c === 'string' && c.length > 0)
+  return {
+    runId,
+    triggerId,
+    nodeId: String(payload.node_id || refs.workflow_node || ''),
+    resumeToken: String(payload.resume_token || refs.resume_token || ''),
+    prompt: String(payload.blocker ?? item?.message ?? ''),
+    choices,
+    // A trigger's park asks Approve or Deny by construction (`parks._raise_row`).
+    approval: payload.block_kind === 'approval' || !!triggerId,
+    event: payload.block_kind === 'event' && !triggerId,
+  }
+}
+
+/** What an answer did, in words, for the card's live region. */
+function answeredText(q: CardQuestion, value: string | boolean): string {
+  if (q.event) return 'Woken — the run is moving again.'
+  if (!q.approval) return `Answered “${String(value)}” — the run is moving again.`
+  if (q.triggerId) {
+    return value === true ? 'Approved — it is running again.' : 'Declined — it asks again the next time it stops.'
+  }
+  return value === true ? 'Approved — the run is moving again.' : 'Declined — the run ends here.'
+}
+
+// ── Per-card outcome ────────────────────────────────────────────────────────────────────────
+// Card state is keyed by the card's `key` (unique across the three sources, where an `id` is not)
+// and lives HERE rather than inside the card, because the card is remounted by every revalidation:
+// local state in the leaf would forget that the last approve failed the moment the next read came
+// back with the item still pending.
+type Outcome =
+  | { state: 'busy' }
+  | { state: 'done'; text: string }
+  | { state: 'ended'; text: string }
+  | { state: 'failed'; text: string }
+
+/** The gateway's own sentence, plus what the user can do about it. The server text comes first
+ *  and verbatim: it is the only part that says WHICH knob to turn, and a paraphrase ("Something
+ *  went wrong") is why a user re-clicks a destructive action. */
+function failureText(verb: string, err: unknown): string {
+  const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
+  return `Could not ${verb}: ${detail}. Nothing was recorded — it still needs you, so try again.`
+}
+
+/** When an approve/reject is refused because there is nothing left to decide, the sentence for it
+ *  — or null for a real failure. "It still needs you, so try again" is false for both of these:
+ *  the work that asked has ended (409, the gateway names which), or the approval was already
+ *  answered or ended somewhere else (404). Retrying either would change nothing. */
+function endedText(err: unknown): string | null {
+  if (hasApiCode(err, 'approval_owner_ended') && err instanceof Error) return err.message
+  if (err instanceof ApiError && err.status === 404) {
+    return 'It is no longer waiting: it was answered or ended somewhere else.'
+  }
+  return null
+}
+
+/** The frames that change what this view shows. Push, not a poll: the registry broadcasts
+ *  `approval`/`approval_resolved`, the Inbox `inbox*`, a session's run state `sessions`/
+ *  `work_phase`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
+ *  run starts, changes status or ends, and `loops` when a loop does — so a card appears,
+ *  resolves or moves lane while the page is open, without a timer re-reading five endpoints on an
+ *  idle tab. The two Working-lane lists had no frame here, so a run that finished or failed kept
+ *  its "running" card until a reload. */
+function refreshesAttention(m: WsMessage): boolean {
+  const type = m.type
+  if (type === 'refresh') return refreshKinds(m).some((k) => k === 'workflow_runs' || k === 'loops')
+  return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
+    || type === 'sessions' || type === 'work_phase'
+}
+
+export function MissionControl() {
+  const { data, error, loading, refresh } = useQuery<Attention>(ATTENTION_KEY, readAttention)
+  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
+
+  // `sessions`/`work_phase` fire on every turn-lifecycle step while something streams, and a running
+  // turn's phase again every fifteen seconds, so a burst collapses into one re-read shortly after it
+  // settles; the same debounce Home applies to them.
+  const debounce = useRef<number | undefined>(undefined)
+  const onMessage = useCallback((m: WsMessage) => {
+    if (!refreshesAttention(m)) return
+    if (debounce.current) clearTimeout(debounce.current)
+    debounce.current = window.setTimeout(refresh, 300)
+  }, [refresh])
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
+  useChatSocket(onMessage, refresh)
+
+  const items = data?.items ?? []
+  const approvals = data?.approvals ?? []
+  const activity = data?.activity ?? []
+  const loops = data?.loops ?? []
+  const runs = data?.runs ?? []
+  const proposals = data?.proposals ?? []
+  // The sibling owns the split. This view never classifies an item itself — see the header note.
+  const lanes = useMemo(
+    () => toLanes(items, approvals, activity, loops, runs, proposals),
+    [items, approvals, activity, loops, runs, proposals],
+  )
+
+  const mark = useCallback((key: string, o: Outcome) => {
+    setOutcomes((prev) => ({ ...prev, [key]: o }))
+  }, [])
+
+  // The approval is answered through `POST /api/approvals/{id}/{action}` — the ONE decision path
+  // (`DashboardState.resolve_approval` → `decide_session_approval` for a chat's), so an Approve
+  // here writes the same transcript record and audit row as the chat's own card.
+  const resolve = useCallback(
+    (cardKey: string, approvalId: string, action: 'approve' | 'reject') => {
+      mark(cardKey, { state: 'busy' })
+      return api
+        .resolveApproval(approvalId, action)
+        // `true` once it landed, `false` when it did not: the card stays decided only on `true`
+        // (`ApprovalChoice.onClick`), so a failed answer leaves it answerable.
+        .then(() => {
+          mark(cardKey, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Denied.' })
+          refresh()
+          return true
+        })
+        .catch((err) => {
+          const ended = endedText(err)
+          if (ended) {
+            mark(cardKey, { state: 'ended', text: ended })
+            refresh()
+            return false
+          }
+          mark(cardKey, { state: 'failed', text: failureText(`${action} this`, err) })
+          return false
+        })
+    },
+    [mark, refresh],
+  )
+
+  // A skill proposal is decided through the calls Home's To triage and the Skills page make, so
+  // an Accept here writes the skill the same way; both read the proposal list, so it moves there too.
+  const decideProposal = useCallback(
+    (cardKey: string, proposalId: string, action: 'accept' | 'reject') => {
+      mark(cardKey, { state: 'busy' })
+      const sent = action === 'accept' ? api.acceptSkillProposal(proposalId) : api.rejectSkillProposal(proposalId)
+      sent
+        .then(() => {
+          mark(cardKey, { state: 'done', text: action === 'accept' ? 'Accepted — the skill is saved.' : 'Rejected.' })
+          invalidateKeys('skill-proposals', true)
+          refresh()
+        })
+        .catch((err) => {
+          const ended = endedText(err)
+          if (ended) {
+            mark(cardKey, { state: 'ended', text: ended })
+            refresh()
+            return
+          }
+          mark(cardKey, { state: 'failed', text: failureText(`${action} this proposal`, err) })
+        })
+    },
+    [mark, refresh],
+  )
+
+  // A run's question resumes the run; a trigger's is answered at the trigger, which runs its
+  // action again on Approve (`POST /api/triggers/{id}/answer`).
+  const answer = useCallback(
+    (cardKey: string, q: CardQuestion, value: string | boolean) => {
+      mark(cardKey, { state: 'busy' })
+      const sent = q.triggerId
+        ? api.answerTriggerPark(q.triggerId, { resume_token: q.resumeToken, answer: value === true })
+        : api.resumeWorkflowRun(q.runId, { answer: value, resume_token: q.resumeToken || undefined })
+      sent
+        .then((res) => {
+          // A refusal the Run button honours (incident mode, the kill switch) answers 200 with
+          // `refused`, and leaves the question open: it is a failure to say, not an answer given.
+          const refused = res && typeof res === 'object' && 'refused' in res ? res.refused : ''
+          if (refused) {
+            mark(cardKey, { state: 'failed', text: failureText('send that answer', new Error(refused)) })
+            return
+          }
+          mark(cardKey, { state: 'done', text: answeredText(q, value) })
+          refresh()
+        })
+        .catch((err) => mark(cardKey, { state: 'failed', text: failureText('send that answer', err) }))
+    },
+    [mark, refresh],
+  )
+
+  return (
+    // The page chrome every destination uses: `TopBar keepCornerPadding` is what keeps the title
+    // clear of the floating shell corner (the collapse-sidebar button sat on top of it, so the
+    // heading read "Mi▢sion Control"), and the body is the centered content column.
+    <WorkbenchLayout topBar={<TopBar keepCornerPadding left={<PageTitle>Mission Control</PageTitle>} />}>
+      <section
+        role="region"
+        aria-label="Mission Control"
+        className="mx-auto flex min-w-0 flex-col gap-l px-l py-l"
+        style={{ maxWidth: 'var(--content-width)' }}
+      >
+        <p data-type="body-s" className="text-on-surface-low">
+          Everything wanting your attention, in the order it wants it. Approve, reject, and answer
+          from here — you do not have to open the run.
+        </p>
+
+        {/* A read failure is stated, never rendered as four empty lanes. `role="alert"` because it
+            arrives after first paint and a user who has already looked away must be told. */}
+        {error ? (
+          <div
+            role="alert"
+            className="flex min-w-0 items-start gap-s rounded-lg border border-error/40 bg-error/10 p-s text-on-surface"
+          >
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+            <div className="flex min-w-0 flex-col gap-xs">
+              <p data-type="body-s">
+                {failureText('load what needs your attention', error)}
+              </p>
+              <Button size="xs" variant="ghost-accent" onClick={refresh}>
+                Try again
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {LANES.map((lane) => (
+          <AttentionLaneSection
+            key={lane}
+            lane={lane}
+            cards={lanes[lane] ?? []}
+            loading={loading}
+            outcomes={outcomes}
+            onResolve={resolve}
+            onAnswer={answer}
+            onProposal={decideProposal}
+          />
+        ))}
+      </section>
+    </WorkbenchLayout>
+  )
+}
+
+type OnProposal = (cardKey: string, proposalId: string, action: 'accept' | 'reject') => void
+
+function AttentionLaneSection({
+  lane,
+  cards,
+  loading,
+  outcomes,
+  onResolve,
+  onAnswer,
+  onProposal,
+}: {
+  lane: Lane
+  cards: LaneCard[]
+  loading: boolean
+  outcomes: Record<string, Outcome>
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
+  onProposal: OnProposal
+}) {
+  const headingId = `mission-control-lane-${lane}`
+  return (
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-s">
+      <div className="flex items-center gap-s">
+        {/* h2 under the page's h1, matching this directory's section idiom (`PinnedTiles`'
+            "Pinned" and DashboardPage's `Section`), so the live tree is `H1 › H2 …` — skip-free.
+            `pages/discover/discoverHeadingLevel.test.ts` holds a CLOSED inventory of the files
+            allowed an h3 (all panel-level); these are sections, not panels. */}
+        <h2 id={headingId} data-type="label-l" className="text-on-surface-var">
+          {LANE_LABEL[lane]}
+        </h2>
+        {/* The count is in the heading row's TEXT, not a coloured pip: "how many" is the first
+            thing a user wants from a lane and the last thing a colour can say. */}
+        <span data-type="label-s" className="text-on-surface-low">
+          {cards.length}
+        </span>
+        <span className="h-px flex-1 bg-outline-variant/40" />
+      </div>
+      {cards.length === 0 ? (
+        <p data-type="body-s" className="text-on-surface-low">
+          {loading ? 'Loading…' : LANE_EMPTY[lane]}
+        </p>
+      ) : (
+        <ul className="flex min-w-0 flex-col gap-s">
+          {cards.map((c) => (
+            <li key={c.key} className="min-w-0">
+              <AttentionCard
+                card={c}
+                outcome={outcomes[c.key]}
+                onResolve={onResolve}
+                onAnswer={onAnswer}
+                onProposal={onProposal}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function AttentionCard({
+  card,
+  outcome,
+  onResolve,
+  onAnswer,
+  onProposal,
+}: {
+  card: LaneCard
+  outcome: Outcome | undefined
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
+  onProposal: OnProposal
+}) {
+  // Each verb's input comes off the card's own source object, reachable only once the union is
+  // narrowed — so a card missing it is a compile error rather than a card with no buttons.
+  const approval = card.origin === 'approval' ? card.approval : null
+  const proposal = card.origin === 'proposal' ? card.proposal : null
+  const item = card.origin === 'inbox' ? card.item : null
+  const question = questionOf(item)
+  // Answered, or nothing left to answer: either way the verbs go.
+  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
+  const busy = outcome?.state === 'busy'
+
+  if (approval) {
+    // The one approval card, as the chat, the run page and the Inbox show it: the tool and its
+    // risk, what it can touch, the whole command or path a click away, and where it came from,
+    // which opens. It read "Loop · write_file" with Approve and Reject, and nothing of the call.
+    return (
+      <div className="flex min-w-0 flex-col gap-xs">
+        {settled ? (
+          <p data-type="label-m" className="min-w-0 truncate text-on-surface-var">{card.title}</p>
+        ) : (
+          <PendingApprovalCard approval={approval} busy={busy} opensSource
+            onDecide={(action) => onResolve(card.key, approval.id, action)} />
+        )}
+        <CardOutcome outcome={outcome} />
+      </div>
+    )
+  }
+
+  // ONE subject string feeds every control's accessible name on this card, capped by the shared
+  // `rowSubject` rule. "Accept" alone is ambiguous the moment two cards are on screen — and this
+  // view guarantees four lanes of them — so each name carries what it acts on.
+  // `raisedBy` rather than the row's channel: an Inbox row's channel is its notification pair's
+  // source, which read "loop" on a workflow's, a trigger's and the control bridge's cards alike.
+  const subject = rowSubject([card.title, card.raisedBy, card.subtitle])
+
+  return (
+    <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
+      {/* What asked, first: a workflow's step, a trigger, a loop, a chat. */}
+      {card.raisedBy ? (
+        <p data-type="label-s" className="min-w-0 truncate text-on-surface-low">
+          {card.raisedBy}
+        </p>
+      ) : null}
+      <p data-type="label-m" className="min-w-0 truncate text-on-surface-var">
+        {card.title || subject || card.id}
+      </p>
+      {card.subtitle ? (
+        <p data-type="body-s" className="min-w-0 text-on-surface-low">
+          {card.subtitle}
+        </p>
+      ) : null}
+      {question?.prompt && question.prompt !== card.title ? (
+        <p data-type="body-s" className="min-w-0 text-on-surface">
+          {question.prompt}
+        </p>
+      ) : null}
+      {/* Working work opens where it runs. The derivation already put each card's page on
+          `refs.link` (a loop's cockpit, a run's page); nothing rendered it, so a Working card was
+          a name with no way to reach the work it named. */}
+      {(card.origin === 'run' || card.origin === 'loop') && typeof card.refs?.link === 'string' ? (
+        <TextLink href={card.refs.link} ink="emphasis" size="sm"
+          aria-label={`${card.origin === 'run' ? 'Open the run' : 'Open the loop'}: ${subject}`}>
+          {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
+        </TextLink>
+      ) : null}
+      {/* An agent's question is answered in the chat that asked it, where its card is. */}
+      {item && typeof item.refs?.question === 'string' && typeof item.refs?.session === 'string' ? (
+        <TextLink href={`#/chat/${encodeURIComponent(item.refs.session)}`} ink="emphasis" size="sm"
+          aria-label={`Answer it in the chat: ${subject}`}>
+          Answer it in the chat
+        </TextLink>
+      ) : null}
+      {/* What the proposal would write is on the Skills page's proposals, where Home's row opens. */}
+      {proposal ? (
+        <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>
+          Review it in Skills
+        </TextLink>
+      ) : null}
+
+      <CardOutcome outcome={outcome} />
+
+      {/* Settled ⇒ the verbs are GONE, not disabled. A disabled approve on a resolved card is
+          still an invitation to try, and the second attempt on an already-resolved id is a real
+          action. A FAILED card keeps its verbs: retrying is the whole point of being told. */}
+      {settled ? null : (
+        <div className="flex min-w-0 flex-wrap items-center gap-xs">
+          {proposal ? (
+            <>
+              {/* `loading` on both, as a question's Approve and Deny: while the decision is on its
+                  way the pair says so to assistive tech, and neither can be sent twice. */}
+              <Button
+                size="xs"
+                variant="primary"
+                loading={busy}
+                ariaLabel={`Accept ${subject}`}
+                onClick={() => onProposal(card.key, proposal.id, 'accept')}
+              >
+                <Check size={13} aria-hidden="true" /> Accept
+              </Button>
+              <Button
+                size="xs"
+                variant="secondary"
+                loading={busy}
+                ariaLabel={`Reject ${subject}`}
+                onClick={() => onProposal(card.key, proposal.id, 'reject')}
+              >
+                <X size={13} aria-hidden="true" /> Reject
+              </Button>
+            </>
+          ) : null}
+
+          {question ? (
+            <QuestionActions
+              cardKey={card.key}
+              question={question}
+              subject={subject}
+              busy={busy}
+              onAnswer={onAnswer}
+            />
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** How a card's answer went, in words, in a live region. */
+function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
+  return (
+    <>
+      {/* The outcome, in words, in a live region. A resolved card that only changed colour is a
+          card a screen-reader user cannot tell from a pending one — and the colour is also the
+          only thing stopping a sighted user from clicking approve twice. */}
+      {outcome?.state === 'done' ? (
+        <p
+          role="status"
+          data-type="body-s"
+          className="flex min-w-0 items-center gap-xs text-on-surface-var"
+        >
+          <CheckCircle2 size={14} className="shrink-0 text-success" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+      {outcome?.state === 'ended' ? (
+        <p
+          role="status"
+          data-type="body-s"
+          className="flex min-w-0 items-start gap-xs text-on-surface-var"
+        >
+          <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+      {outcome?.state === 'failed' ? (
+        <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/** A parked run's options, as buttons — one click per option, which is the whole reason this
+ *  card exists instead of a link to the run.
+ *
+ *  A question with NO choices is stated plainly. The wire carries `choices[]` and often fills it,
+ *  but a freeform gate legitimately has none, and a text box here would be a control this surface
+ *  cannot honestly submit: `resumeWorkflowRun`'s `answer` would carry prose the run's gate never
+ *  offered. So the card says where to answer it instead of pretending it can.
+ *
+ *  A parked run is neither a question nor an approval, so it gets one button: wake it now. */
+function QuestionActions({
+  cardKey,
+  question,
+  subject,
+  busy,
+  onAnswer,
+}: {
+  cardKey: string
+  question: CardQuestion
+  subject: string
+  busy: boolean
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
+}) {
+  if (question.event) {
+    // A parked run decides nothing, so there is nothing to deny: it wakes, as on the run page.
+    return (
+      <Button
+        size="xs"
+        variant="primary"
+        loading={busy}
+        ariaLabel={`Wake ${subject} now`}
+        onClick={() => onAnswer(cardKey, question, true)}
+      >
+        <Play size={13} aria-hidden="true" /> Wake it now
+      </Button>
+    )
+  }
+  if (question.approval) {
+    // A yes or a no, sent as the boolean the run (or the trigger) takes. Deny is quiet, as on the
+    // run page: declining is a normal answer, not a destructive act.
+    return (
+      <>
+        {/* `loading`, not a bare `disabled`: while the answer is on its way the pair says so to
+            assistive tech (`aria-busy`), and neither can be sent twice. */}
+        <Button
+          size="xs"
+          variant="primary"
+          loading={busy}
+          ariaLabel={`Approve ${subject}`}
+          onClick={() => onAnswer(cardKey, question, true)}
+        >
+          <Check size={13} aria-hidden="true" /> Approve
+        </Button>
+        <Button
+          size="xs"
+          variant="secondary"
+          loading={busy}
+          ariaLabel={`Deny ${subject}`}
+          onClick={() => onAnswer(cardKey, question, false)}
+        >
+          <X size={13} aria-hidden="true" /> Deny
+        </Button>
+      </>
+    )
+  }
+  if (question.choices.length === 0) {
+    // The one card type that REQUIRES leaving this surface used to name the destination and
+    // provide no way to get there — the card already knows the run id. The link carries the
+    // card's subject so a screen-reader list of links says WHICH run each one opens.
+    return (
+      <p data-type="body-s" className="text-on-surface-low">
+        This question has no preset options —{' '}
+        <TextLink href={`#/workflows/runs/${question.runId}`} ink="emphasis" aria-label={`Open the run: ${subject}`}>
+          open the run
+        </TextLink>{' '}
+        to answer it in your own words.
+      </p>
+    )
+  }
+  return (
+    <>
+      {question.choices.map((choice) => (
+        <Button
+          key={choice}
+          size="xs"
+          variant="tonal"
+          disabled={busy} disabledReason={BUSY_REASON}
+          ariaLabel={`Answer ${subject} — ${choice}`}
+          onClick={() => onAnswer(cardKey, question, choice)}
+        >
+          {choice}
+        </Button>
+      ))}
+    </>
+  )
+}

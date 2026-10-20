@@ -1,0 +1,131 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Prompts" [level=#]
+  - radiogroup "Prompts view":
+    - radio "User"
+    - radio "<theme>"
+    - radio "Bundled" [checked]
+    - radio "Snippets"
+  - button "New prompt"
+  - searchbox "Search"
+  - button "Filter & sort": Sort & filter
+  - status
+  - paragraph: Shipped with PersonalClaw and its apps, and run by them for their own work — agent <theme> prompts, titles, classifiers, judges. Editing one changes how that task behaves. They stay out of your chat prompt picker.
+  - button "eval-judge"
+  - text: "eval-judge bundled # vars LLM judge: score an assistant response #-# on a scenario's memory/context criteria (JSON out). <theme> bundled"
+  - button "<theme>-background"
+  - text: <theme>-background bundled # vars The bundled PersonalClaw <theme> prompt for the background context. <theme> bundled
+  - button "<theme>-chat"
+  - text: <theme>-chat bundled # vars The bundled PersonalClaw <theme> prompt for the chat context. <theme> bundled
+  - button "task-channel-title"
+  - text: "task-channel-title bundled # vars Channel thread auto-title: name the topic in #-# words, or reply SKIP if too vague. <theme> bundled"
+  - button "task-code-classify"
+  - text: "task-code-classify bundled # vars Code (SDLC) intake classifier: read a software task + capability catalog, return entry_stage/project_kind/rigor/execution/stage_plan with per-stage tasks (JSON out). <theme> bundled"
+  - button "task-code-design-brief"
+  - text: "task-code-design-brief bundled # vars Code (SDLC) planning pass #: design the ordered step list for the target after investigating real context. <theme> bundled"
+  - button "task-code-step-brief"
+  - text: "task-code-step-brief bundled # vars Code (SDLC) planning pass #: the brief for ONE step's artifact, carrying prior approved artifacts + re-draft comments + workspace. <theme> bundled"
+  - button "task-contradiction-judge"
+  - text: task-contradiction-judge bundled # vars Judge whether two saved lessons directly contradict (following both is impossible). <theme> bundled
+  - button "task-cycle-judge"
+  - text: "task-cycle-judge bundled # vars Open-ended cycle judge: a third-party assessor scores one loop cycle's done-ness/marginal-value/quality/regression (JSON out). <theme> bundled"
+  - button "task-cycle-judge-skeptic"
+  - text: "task-cycle-judge-skeptic bundled # vars Adversarial cycle judge: a second, skeptical assessor that tries to REFUTE a claimed completion/regression before the supervisor trusts it (JSON out, same shape as cycle_judge). <theme> bundled"
+  - button "task-design-design-brief"
+  - text: "task-design-design-brief bundled # vars Design-loop planning pass #: design the ordered design-phase step list, working through every reference input (URL/image/video/HTML/React/DESIGN.md). <theme> bundled"
+  - button "task-design-phases"
+  - text: "task-design-phases bundled # var Design-loop phase planner: tailor the canonical design-<theme> phases (foundations/palette/typography/components/export) to a task (JSON out). <theme> bundled"
+  - button "task-design-step-brief"
+  - text: "task-design-step-brief bundled # vars Design-loop planning pass #: the brief for ONE design-planning step's artifact, carrying prior approved artifacts + re-draft comments + workspace. <theme> bundled"
+  - button "task-digest"
+  - text: "task-digest bundled # vars Recurring multi-source digest: gather the named sources over a window, correlate/dedup, narrate, and deliver to a channel/inbox/knowledge target. Fire it on a schedule via a run-prompt trigger. <theme> bundled"
+  - button "task-folder-icon"
+  - text: task-folder-icon bundled # var Pick a single emoji that represents a project folder name. <theme> bundled
+  - button "task-followups"
+  - text: task-followups bundled # var Suggest #-# short follow-up messages the user might send next, from the last chat exchange. <theme> bundled
+  - button "task-goal-classify"
+  - text: "task-goal-classify bundled # vars Goal-loop intake classifier: read a goal + installed-capability catalog, return goal_type/rigor/execution/roster/sub_goals/deliverables/execution_plan (JSON out). <theme> bundled"
+  - button "task-goal-step-brief"
+  - text: "task-goal-step-brief bundled # vars Goal-loop planning: the brief for ONE stepwise-walkthrough step (intent/sub_goals/quorum/execution_plan), carrying prior approved artifacts + re-draft comments. <theme> bundled"
+  - button "task-grill-assess"
+  - text: "task-grill-assess bundled # var Grill (assess): decide whether a goal is clear enough to decompose or needs clarifying questions (JSON object out). <theme> bundled"
+  - button "task-grill-flat"
+  - text: "task-grill-flat bundled # vars Grill (flat shape): decompose a goal into distinct, first-principles sub-goals (JSON array out). <theme> bundled"
+  - button "task-grill-tree"
+  - text: "task-grill-tree bundled # vars Grill (tree shape): produce phases of clarifying questions that scope the work (JSON object out). <theme> bundled"
+  - button "task-history-compression"
+  - text: task-history-compression bundled # vars Compress a long chat transcript into a dense summary, preserving facts/decisions/code/errors. <theme> bundled
+  - button "task-inbox-classify"
+  - text: task-inbox-classify bundled # var Sort a batch of new inbox messages, each into needs_reply/fyi/noise + a confidence (JSON out). <theme> bundled
+  - button "task-inbox-digest"
+  - text: task-inbox-digest bundled # vars Summarize recent channel messages into a short catch-up digest. <theme> bundled
+  - button "task-inbox-draft"
+  - text: task-inbox-draft bundled # vars Draft a reply to an inbox message in the user's voice (or SKIP if none needed). <theme> bundled
+  - button "task-knowledge-extraction"
+  - text: task-knowledge-extraction bundled # var Extract entities + relations + category + summary from a knowledge text chunk (JSON out). <theme> bundled
+  - button "task-knowledge-insights"
+  - text: task-knowledge-insights bundled # var Extract structured insights (title/summary/key_points/topics/action_items) from content (JSON out). <theme> bundled
+  - button "task-knowledge-intent-match"
+  - text: task-knowledge-intent-match bundled # vars Decide if a knowledge item is relevant to a user's NL intent and, if so, extract a takeaway + typed fields (JSON out). <theme> bundled
+  - button "task-knowledge-skill-synthesis"
+  - text: task-knowledge-skill-synthesis bundled # vars Turn an intent's goal + gathered outcomes into a reusable SKILL.md (DESCRIPTION/TRIGGERS/PROCEDURE delimited sections). <theme> bundled
+  - button "task-memory-consolidation"
+  - text: "task-memory-consolidation bundled # vars Memory consolidation agent: extract history/semantic/episodic/lessons/persona/skills from a session. Envelope; the per-key instructions are composed at runtime. <theme> bundled"
+  - button "task-nav-links"
+  - text: "task-nav-links bundled # var Label a batch of numbered URLs with short human-readable titles ('<index>: <title>' per line). <theme> bundled"
+  - button "task-nl-to-cron"
+  - text: task-nl-to-cron bundled # vars Read a natural-language scheduling request as a #-field cron expression, or as the one time it names. <theme> bundled
+  - button "task-orchestrator-skill"
+  - text: "task-orchestrator-skill bundled # var The always-loaded orchestrator SKILL.md: agent-delegation guidance + the installed specialist roster. <theme> bundled"
+  - button "task-parallel-worker-nudge"
+  - text: "task-parallel-worker-nudge bundled # vars Per-cycle trigger for a parallel loop task-worker: work only its task in its own checkout, mark it done, write a finding. <theme> bundled"
+  - button "task-prompt-optimizer"
+  - text: task-prompt-optimizer bundled <theme> prompt for the prompt optimizer — rewrites vague prompts into specific, scoped instructions. <theme> bundled
+  - button "task-research-step-brief"
+  - text: "task-research-step-brief bundled # var Research-loop planning: the research-specific artifact contract appended to the (goal-derived) step brief for the subtopics/output step kinds (empty for intent/execution_plan). <theme> bundled"
+  - button "task-sdlc-stage-gate"
+  - text: "task-sdlc-stage-gate bundled # vars Strict SDLC stage gate: a pass, fail or can't-tell verdict, with its reason, for each of a stage's exit criteria, on what the supervisor observed of the stage's work. <theme> bundled"
+  - button "task-side-chat"
+  - text: task-side-chat bundled <theme> envelope for a side-chat turn — read-only Q&A against a frozen conversation snapshot. <theme> bundled
+  - button "task-subgoal-judge"
+  - text: "task-subgoal-judge bundled # vars Verifiable-goal sub-goal gate: after the automated check passes, confirm EVERY sub-goal is met from cycle evidence (PASS/FAIL out). <theme> bundled"
+  - button "task-suggestions"
+  - text: task-suggestions bundled # var Generate contextual dashboard prompt suggestions from the user's recent context. <theme> bundled
+  - button "task-title"
+  - text: task-title bundled # var Generate a short conversation title from the recent transcript. <theme> bundled
+  - button "task-triage-classify"
+  - text: "task-triage-classify bundled # vars The triage digest's cheap relevance gate: give each collected item a drop/surface/propose disposition against the user's own per-source filter rules. <theme> bundled"
+  - button "task-triage-propose"
+  - text: "task-triage-propose bundled # vars The triage digest's ONE strict-JSON proposal call: bind at most N tiered action proposals to the exact ordinals of the collect manifest. <theme> bundled"

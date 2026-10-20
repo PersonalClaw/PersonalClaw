@@ -1,0 +1,290 @@
+# PersonalClaw — Architecture Overview
+
+PersonalClaw is a self-hosted personal AI gateway: one long-running process that
+hosts chat sessions, autonomous loops, a knowledge base, memory, tasks,
+scheduling, an inbox, and an app platform — all behind a local web dashboard.
+This document is the map; each subsystem has its own reference doc (linked
+throughout).
+
+```mermaid
+flowchart TB
+    subgraph proc["The gateway process (gateway.py)"]
+        DASH["Dashboard server\n(aiohttp: REST · WS · SPA)"]
+        BG["Background services\ncron · heartbeat · inbox · subagents"]
+        CT["Channel transports\n(vendor-blind seam)"]
+    end
+    DASH --> SESS["Sessions\n(chat · loop · webhook · subagent)"]
+    SESS --> CE["Context engine\n(ingest · assemble · compact · after_turn)"]
+    CE --> CAP["Capability seams (pluggable)"]
+    CAP --> LLM["LLM providers"]
+    CAP --> MEMK["Memory · Knowledge"]
+    CAP --> TOOLS["Tools · Search · Speech"]
+    CAP --> ACT["Actions · Inbox · Artifacts"]
+    PROV["providers/loader.py\n(loads enabled apps)"] --> CAP
+    SDK["sdk/ (stable app surface)"] -. "apps import ONLY this" .-> PROV
+    SEC["Security: auth · sandbox · egress guard · SEL · scanner"] --- proc
+```
+
+
+
+Paths below are relative to the core package `PersonalClaw/src/personalclaw/`
+unless noted.
+
+## The core tenet: provider-agnostic core
+
+**The core package contains only capability-enabling logic and pluggable
+contracts. Anything that integrates a *specific* provider (Slack, OpenAI, a
+particular local model, …) lives in an app bundle, never in core.**
+
+Core owns protocols, registries, and resolvers; apps own endpoints, auth,
+catalogs, binary resolution, and wire formats. The full boundary-judgment table
+— including the deliberately-kept exceptions (wire-protocol clients, secret
+detection patterns, credential key names) — is in
+[provider-boundary.md](provider-boundary.md).
+
+App bundles come in three tiers:
+
+| Tier | Location | Examples |
+|---|---|---|
+| Native | `src/personalclaw/apps/native/` (shipped in-package, seeded and locked on) | `native-agents`, `personalclaw-memory`, `bash-action` |
+| First-party | `apps/` at the workspace root ([PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps)) | `slack-channel`, `anthropic-models`, `faster-whisper` |
+| Third-party | user-installed into `~/.personalclaw/apps/` | `third-party-apps/hello-search`, `demo-dashboard` (fixtures) |
+
+## Process model: the gateway
+
+`gateway.py` defines `GatewayOrchestrator` and the `run_gateway` entry point —
+one process that boots everything:
+
+- **Background services** — cron scheduling (`schedule.py`), heartbeat
+  (`heartbeat.py`: pending-task dispatch, and driving the health-scored
+  remediation engine that owns store maintenance — FTS reconciliation, the
+  history/SEL prunes, skill aging — see `resilience/remediation.py`), autonudge
+  (`autonudge.py`: reactive same-session self-prompting), inbox polling
+  (`inbox_service.py`), background subagents (`subagent.py`; the note a person
+  reads when one ends is named by its run and says what happened or why it failed,
+  and the same failure is told once an hour, `subagent_notes.py`; one waiting to
+  start, for a slot or for the owner's Allow, is recorded so a restart takes it back
+  or ends it saying why, `subagent_waiting.py`), and MCP server wiring.
+- **The dashboard server** — `dashboard/server.py`, an aiohttp app serving the
+  REST API, WebSocket event fan-out, and the built SPA (see below).
+- **Channel transports** — the gateway names no channel vendor. It binds a
+  `GatewayServices` protocol object (`gateway_services.py`) that exposes the shared
+  runtime — sessions, context builder, conversation log, consolidator, cron service,
+  subagent manager, channel history, dashboard state, config, and owner id — and
+  `channel_transports.reconcile_inbound` then runs one receiver
+  (`start_inbound(services)`) per configured, registered channel, re-applied on every
+  enable, disable, install, uninstall, update and settings save, so a channel starts
+  and stops receiving without a restart.
+  Outbound delivery flows through the registered `ChannelDelivery` protocol
+  (`channel_delivery.py`) — see [inbox-channels.md](inbox-channels.md).
+- **Service management** — `service/` installs the gateway as a systemd unit
+  (Linux) or launchd agent (macOS, label `io.personalclaw.gateway`); the CLI
+  lifecycle lives in `cli_server.py` (`personalclaw gateway`, with a
+  `--headless` mode: the same gateway, its apps, channels and API, without the dashboard's
+  pages).
+
+**Restart discipline** (matters when developing): backend `.py` changes need a
+gateway restart. The frontend is served live from `web/dist` — a rebuild is
+enough. Installed app copies at `~/.personalclaw/apps/<name>/` are what the
+gateway actually loads; edits to the repo `apps/` tree reach a running gateway
+only via `POST /api/apps/{name}/update`.
+
+## The dashboard server
+
+`dashboard/server.py` assembles the aiohttp application:
+
+- **Route handlers** live under `dashboard/handlers/` (one module per feature
+  area: `sessions.py`, `knowledge.py`, `memory.py`, `apps.py`, `schedule.py`,
+  `terminal.py`, `updates.py`, …) plus the chat pipeline modules directly under
+  `dashboard/` (`chat_runner.py`, `chat_handlers.py`, `chat_persistence.py`, …).
+  The route table that registers them, in the order they match, is
+  `dashboard/routes.py`.
+- **Auth middleware** — token auth (`dashboard/token_auth.py`), CSRF, and
+  app-permission middlewares; ordering is explicit in `server.py`. Modes and
+  the `AUTH_MODE=none` loopback invariant are covered in
+  [security.md](security.md).
+- **Start and stop hooks** — `dashboard/lifecycle_hooks.py` appends what the
+  gateway starts with it and stops with it (the control bridge, the ACP pool,
+  app backends, the embedding watch, …), in the order they run, before
+  `runner.setup()` freezes the lists.
+- **Live state** — `dashboard/state.py` (`DashboardState`) is the shared
+  in-memory hub: WebSocket event broadcast, notifications
+  (`DashboardState.notify()` is the single notification choke point), and the
+  session/channel link maps.
+- **Static frontend** — the SPA is a Vite + React app at `PersonalClaw/web/`,
+  built to `web/dist` and served through a `static/dist` symlink. It uses a
+  hash router with a URL-navigation doctrine (state lives in the URL;
+  enforced by a frontend test), shared shell primitives
+  (TopBar/ListScaffold/SidePanel/HeaderActions) that own the chrome, and design
+  tokens in `web/src/design/tokens.css`.
+
+## Session model
+
+A **session** is one conversation thread — dashboard chat, a channel thread, a
+loop worker, a webhook run, or a subagent all get one:
+
+- `session.py` — `SessionManager`; each session has a FIFO message queue so a
+  channel thread serializes its turns.
+- `session_map.py` — the persistent session↔thread map
+  (`~/.personalclaw/session_map.json`); entries carry generic `thread_ts` /
+  `channel_id` keys, so a dashboard chat can be linked to a channel thread and
+  back.
+- `session_restrictions.py` — memory modes: **temporary** (blank slate — memory
+  reads AND writes suppressed, and the chat forgotten when its session ends:
+  `dashboard/chat_forget.py`) and **incognito** (writes suppressed, reads
+  allowed). The registry is core because any surface (dashboard or channel) can
+  request either mode.
+- `history.py` — one JSONL file per session under `~/.personalclaw/sessions/`,
+  never shortened by anything; readers take a window. Background compression
+  keeps a derived summary beside it for the model (`{key}.summary.json`).
+
+Details, including the chat turn pipeline and variant branching, are in
+[chat-sessions.md](chat-sessions.md).
+
+## Capability seams
+
+Every capability is behind a pluggable seam. The extension system that loads
+them is `providers/` (`providers/loader.py` loads each enabled app, pins its
+directory on `sys.path`, and registers its contributions through a typed
+`ToolTypeHandler`). The stable app-facing import surface is `sdk/` (26 modules
+— apps import core **only** via `personalclaw.sdk.*`, enforced by
+`tests/rails/test_apps_import_boundary.py`).
+
+| Capability | Core seam | Contributed by |
+|---|---|---|
+| LLM providers | `llm/registry.py` (`registry.build`), `llm/catalog.py` | model apps (`apps/anthropic-models`, `apps/openai-models`, `apps/ollama-models`, …) |
+| Model bindings | `~/.personalclaw/active_models.json` per use case (chat, background, embedding, ingestion, stt, tts, …) | Settings → Models |
+| Channels | `channel_transports/` (inbound) + `channel_delivery.py` (outbound) | `apps/slack-channel` (reference implementation) |
+| Agents | `agents/native/` runtime + `acp/` (Agent Client Protocol) | ACP agent apps (`apps/claude-code-agent`, `apps/codex-agent`, …) |
+| Tools | `tool_providers/` registry + `mcp_client.py` for external MCP servers | tool apps, app-shipped MCP servers |
+| Search | `search_providers/` (capability model incl. `keyless` floor) | 7 search apps |
+| Embeddings | `embedding_providers/` ABCs; `knowledge/embedder.py` `UnifiedEmbedder` | `apps/sentence-transformers` or any bound provider |
+| Speech | `stt/` + `tts/` + `diarization/` registries | `apps/faster-whisper`, `apps/piper-tts`, … |
+| Local models | `local_models/` (`LocalModel`/`LocalModelProvider` management contract) | the 5 local-model apps |
+| Inbox sources | `inbox_providers/` + `provider_registry.py` | native push + filesystem sources |
+| Actions (triggers) | `action_providers/` registry | native action bundles |
+| Artifacts | `artifacts/` provider registry | native filesystem provider |
+
+### A local model takes one call at a time, yours first
+
+A model on this machine (`llm.registry.model_server_here`: a server here, unless it passes that
+model on, as an Ollama does a model it answers from Ollama's cloud) answers one request at a time,
+so every call to one takes its turn in that model's queue first (`guardrails/local_queue.py`): one
+call at a time per local model, whichever entry or address sends to it, in two lanes. A guarded
+call takes it in `ModelCallGuard`; a chat's, a room member's or a code turn's reply, which resolves
+unguarded, takes it in the native loop (`agents/native/local_turn.py`). A call somebody is
+waiting for, a chat's reply, a chat tool's step or a page waiting on its answer, says so (the
+native loop for a reply, `one_shot_completion(attended=Attended(step, session))` for a step) and is
+given the model before any background call, that chat's own title and consolidation included;
+background work (knowledge processing, skill reviews, digests, chat chores) waits while one is
+waiting, so it never holds the model for more than the call it is already making. The wait for a
+turn counts against the call's own limits: the guard's clock, else the provider's Request Timeout.
+A waited-for call whose chain has another model gives a busy local model the wait set under
+Settings → Models → Background (`background.busy_model_wait_secs`, 15 s unless changed, read as
+each call asks for its turn), then that model answers in its place and the substitution says what
+the first waited behind ("it waited 15 s behind background work on this machine", or "it was busy
+with background work on this machine" when the wait is set to none), not that it was slow. A call
+on the Background chain is stopped at the Background time limit (`background.call_timeout_secs`,
+300 s unless changed), and a Background agent's turn writes at most
+`background.max_output_tokens` in one answer; both are read at the call too
+([configuration](../reference/configuration.md#background-work-background)).
+
+While somebody waits, the wait is published: `GET /api/models/waits` lists what is waiting, on
+which model, what the model is busy with, and which model is asked next and when;
+`POST /api/models/waits/{id}/move-on` asks the next model now. A `refresh` frame naming
+`model_waits` says the list changed. The chat shows its own turn's waits beside the transcript,
+and the shell shows a page's over the page. A model that answers with nothing has failed
+(`guardrails.failure.EmptyCompletion`), and so has one whose answer misses the shape its caller
+named inside the call (`one_shot_completion(output_type=…, validate=…)`, or `llm_helpers.expecting`
+around a call made through a completion function the caller was handed): the chain asks its next
+model either way, and only the last model is reminded of the shape and asked again.
+
+No page read waits for a model. A browser keeps six connections to the gateway for every tab
+together, and a GET that waited on a busy background model held one of them until the model
+answered; a chat's organize chip, re-reading after every turn, once held all six. So a GET answers
+at once with what is already known, and the model work a page asked for runs in the background, one
+ask at a time, and is announced over the socket when it lands: a chat's organize proposal as a
+`chat_organize` frame naming the chat (the chip reads it back through the GET, which decides what
+an app may see), the suggestions and an attachment's reading as `refresh` frames naming
+`suggestions` and `attachments`. A page re-reads on that frame, and aborts a read it no longer
+waits for (`web/src/lib/useLatestRead.ts`). `tests/rails/test_no_get_route_waits_on_a_model_rail.py`
+holds every GET route to this.
+
+## Subsystem index
+
+| Subsystem | Doc | Core modules |
+|---|---|---|
+| Provider boundary | [provider-boundary.md](provider-boundary.md) | `llm/`, `sdk/`, `media_catalogs.py` |
+| Chat & sessions | [chat-sessions.md](chat-sessions.md) | `session.py`, `dashboard/chat_*.py`, `history.py`, `context.py` |
+| Work phases | [work-phases.md](work-phases.md) | `work_phase.py`, `workref.py`, `dashboard/chat_phase.py`, `web/src/lib/workPhase.ts` |
+| Loops & projects | [loops.md](loops.md) | `loop/`, `planning/`, `grill.py`, `projects.py` |
+| Knowledge & memory | [knowledge-memory.md](knowledge-memory.md) | `knowledge/`, `vector_memory.py`, `memory_service.py` |
+| Tasks & triggers | [tasks-triggers.md](tasks-triggers.md) | `tasks/`, `triggers/`, `schedule.py`, `event_triggers.py` |
+| Workflows | [workflows.md](workflows.md) | `workflows/` (engine, frontier, journal, mutation, templates) |
+| Inbox & channels | [inbox-channels.md](inbox-channels.md) | `inbox.py`, `inbox_service.py`, `channel_delivery.py` |
+| App platform | [app-platform.md](app-platform.md) | `apps/app_manager.py`, `apps/backend_runtime.py`, `apps/permissions.py` |
+| Security | [security.md](security.md) | `security.py`, `net/`, `auth/`, `sel.py`, `supply_chain.py` |
+| Agent worlds | [agent-activity-feed.md](agent-activity-feed.md) | `web/src/lib/useAgentActivity.ts`, `web/src/pages/dashboard/world/` |
+
+## Configuration
+
+`config/loader.py` defines the `AppConfig` dataclass tree
+(`~/.personalclaw/config.json`). A config field works end-to-end only when it
+is wired through: (1) the dataclass + `_meta` metadata, (2) `load()`'s explicit
+mapping, (3) `to_dict()`, (4) an API write path (the `_EDITABLE_CONFIG` PATCH
+allowlist or a dedicated PUT), and optionally (5) a frontend control.
+`tests/test_config_roundtrip.py` enforces (1)–(3) generically.
+
+Every write of `config.json` goes through `config/transactions.py`, because the
+gateway, the CLI and the setup wizard all write it, often at the same time. A
+writer takes an OS lock beside the file (`config.json.lock`, released by the OS
+if the process dies), reads the document under it, changes it, stores any
+secret it carries in the credential store, and replaces the file before letting
+go. `AppConfig.save()` applies only what the object changed since it was
+loaded, so a stale object cannot put another process's setting back;
+`update_config` loads a fresh `AppConfig` under the lock for a change that has
+to check the current state first; `mutate_config` edits the raw document. A file
+that cannot be read is refused rather than written over, and a writer that
+cannot get the lock within a few seconds refuses rather than waits forever.
+Whole-home restores (snapshot restore, import into an empty home, time-travel
+rollback) replace the file through their own mechanisms and do not take the
+lock.
+
+Entity settings deliberately live *outside* config.json:
+`~/.personalclaw/entity_settings/{inbox,notifications}.json`, use-case settings
+under `~/.personalclaw/extensions/use_case_settings/`, model bindings in
+`active_models.json`, search bindings in `active_search_providers.json`, and
+each app's own `data/config.json`. Backend-only operator knobs are documented
+in `docs/reference/CONFIG-REFERENCE.md`.
+
+## Self-update
+
+`dashboard/handlers/updates.py` (`api_update_apply`) runs the public update
+pipeline. A source checkout's update starts in one function, `start_checkout_update`,
+which the staged auto-update runs too, and the update itself is
+`checkout_update.update_checkout`, which `personalclaw update` runs as well. The git
+kind rides **release tags** by the `updates` channel/pin: `git fetch --tags` →
+`git checkout <resolved tag>` → the install, into the running environment, with the
+tool that made it (`_installer`, read from the environment's `INSTALLER` record:
+`uv sync --locked --inexact` for an environment uv made, `pip install -e .` for one
+pip made) → frontend build → graceful re-exec. The git-only `nightly` channel is the
+one branch-tracking path and advances by fast-forward; neither path runs `git pull`
+or `reset --hard origin/main`. Steps `pulling → installing → building → restarting`
+are reported over `update_progress` WebSocket events. Everything that can refuse
+is decided before the checkout moves: nothing to advance, uncommitted tracked
+edits, the environment's installer missing, which refuses with a sentence
+naming what to run, and a commit git cannot read. An install that does not finish
+(it fails, runs out of time, or the gateway stops while it runs) puts the checkout
+back on the exact commit and branch it was on, never by force, and the update stops
+*before* the restart; when git cannot put it back, the failure names where the
+checkout is and the one command that does. Cancel (`POST /api/update/cancel`, and a
+Ctrl-C of `personalclaw update`) stops an update that has not finished installing the
+same way, and answers once the checkout is back with what that left, in the words a
+failure uses (step `cancelled` when nothing was changed, `error` when something is not
+as it was). Once the new release is installed, the frontend build and the restart are
+not stopped: Cancel answers 409 `update_not_cancellable` and the update finishes.
+Dismiss (`POST /api/update/dismiss`) clears what a finished update said and never stops
+one. Concurrent applies get a 409. A wheel install upgrades with the same rule, and its
+Cancel stops the installer and names any distribution it had already replaced. This
+covers the **core repo only** — apps update individually through the Store
+(`POST /api/apps/{name}/update`).

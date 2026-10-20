@@ -1,0 +1,5621 @@
+"""Gateway process orchestrator for PersonalClaw.
+
+Manages the lifecycle of all runtime services: session manager, cron
+scheduler, context builder, heartbeat, autonudge, inbox, MCP discovery,
+subagents, task runner, dashboard / API server, update checks, and signal
+handling. This is the core process boot — it runs with or without any external
+channel configured.
+
+Channel connectivity is optional and pluggable via the channel-transport seam: the
+gateway binds itself as the services handle at boot, and from then on
+``channel_transports.reconcile_inbound`` runs each configured channel's receiver
+(``start_inbound`` — Slack Socket-Mode lives entirely in the ``slack-channel`` app
+bundle) and stops it again, whenever a channel is enabled, changed or removed. The
+transport registers its outbound :class:`~personalclaw.channel_delivery.ChannelDelivery`
+on the orchestrator. Core imports NO vendor channel code. With no channel configured
+the gateway runs dashboard-only.
+"""
+
+import asyncio
+import contextlib
+import functools
+import json
+import logging
+import os
+import signal
+import sys
+import time
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NoReturn
+
+from aiohttp import web
+
+from personalclaw import (
+    approval_answer,
+    approval_grants,
+    gateway_base,
+    memory_writes,
+    notification_kinds,
+    run_bounds,
+    session_keys,
+    shutdown_event,
+    subagent_endings,
+    subagent_notes,
+    subagent_report,
+)
+from personalclaw.acp.errors import AcpError, AcpProcessDied
+from personalclaw.approval_brief import attach_approval_brief
+from personalclaw.approval_grants import ToolDecision
+from personalclaw.audit_subject import log_title
+from personalclaw.cancellation import cancel_and_wait
+from personalclaw.channel_history import ChannelHistory
+from personalclaw.config import AppConfig
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import CRED_OWNER_ID
+from personalclaw.constants import CHAT_TURN_IDLE_LIMIT, DATA_WARNING
+from personalclaw.context import ContextBuilder
+from personalclaw.dashboard import chat_persistence, start_dashboard, turn_deadline
+from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES
+from personalclaw.dashboard.handlers.autonudge import render_nudge_message
+from personalclaw.dashboard.origin import (
+    build_dashboard_url,
+    format_dashboard_urls,
+    is_local_bind,
+    parse_dashboard_url,
+    resolve_bind_host,
+    resolve_dashboard_host,
+)
+from personalclaw.dashboard.state import DashboardState
+from personalclaw.dashboard.token_auth import (
+    ISSUER_READY,
+    ISSUER_STARTUP,
+    MintedSession,
+    browser_session_ttl,
+    duration_words,
+    mint_session,
+    retire_startup_links,
+)
+from personalclaw.env import _is_wsl, browser_available, started_at_a_terminal
+from personalclaw.heartbeat import (
+    HeartbeatService,
+    is_keep_response,
+    set_task_runner,
+    strip_keep_sentinel,
+)
+from personalclaw.history import ConversationLog, HistoryConsolidator
+from personalclaw.hooks import live_hook_manager
+from personalclaw.llm.base import LLMEvent
+from personalclaw.llm.events import cut_off_note, is_length_stop, out_of_room_notice
+from personalclaw.llm_helpers import (
+    PromptBusyExhaustedError,
+    stream_and_collect,
+)
+from personalclaw.memory import MemoryStore
+from personalclaw.memory_reads import reach_of
+from personalclaw.schedule_history import ScheduleRunStore
+from personalclaw.security import (
+    mask_child_output,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
+from personalclaw.sel import sel
+from personalclaw.session import SessionManager
+from personalclaw.skills import SkillsLoader
+from personalclaw.subagent import (
+    INJECTION_TIMEOUT,
+    SubagentInfo,
+    SubagentLimits,
+    SubagentManager,
+    ToolApprovalCallback,
+    agent_work_id,
+    approval_subagent_id,
+    resolve_max_subagents,
+)
+from personalclaw.task_modes import resolve_effective_risk
+from personalclaw.triggers.models import Outcome
+from personalclaw.triggers.nudge import (
+    AutoNudgeService,
+    NudgeLoop,
+)
+from personalclaw.triggers.nudge import enabled as autonudge_enabled
+from personalclaw.turn_source import ASKED_FOR_BY
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+if TYPE_CHECKING:
+    from personalclaw.channel_delivery import ChannelDelivery
+    from personalclaw.channel_transports.base import ChannelMessage
+    from personalclaw.channel_trust import TrustVerdict
+    from personalclaw.guardrails.policy import SafetyProfile
+    from personalclaw.inbox_service import InboxService
+    from personalclaw.llm_helpers import ToolApprovalPolicy
+    from personalclaw.loop.watchdog import LoopWatchdog
+    from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+logger = logging.getLogger(__name__)
+
+# Full chat turn timeout — tool calls, multi-step reasoning, spawning.
+# More generous than INJECTION_TIMEOUT (120s) which only covers stream_and_collect.
+
+# Max retries for injecting subagent results into parent sessions.
+_MAX_INJECT_ATTEMPTS = 2
+
+
+def _delivery_owning(channel_id: str) -> Any:
+    """The connected channel that issued *channel_id* (`channel_delivery.channel_of_id`), or None
+    when no channel set up here, or more than one, could have: never whichever sorts first."""
+    from personalclaw.channel_delivery import channel_of_id, delivery_for
+
+    provider, problem = channel_of_id(channel_id)
+    if problem:
+        logger.info("channel id %s: %s", channel_id, problem)
+    return delivery_for(provider) if provider else None
+
+
+# How often the earned-autonomy promotion scan runs. Six hours, not the poll
+# interval it rides: one pass reads the SEL tail once per declared action type, and a rung
+# is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
+_AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
+
+# How often a staged auto-update waiter re-checks whether in-flight work has drained.
+# A staged apply HOLDS while a session/subagent is running and fires only once
+# the tree is idle; 30s is responsive without spinning — the wait is measured in the
+# lifetime of the work it defers to, not this cadence.
+_STAGED_APPLY_POLL_SECS = 30.0
+
+# The whole stop's time limit. A stop still running then is left where it stands: the process
+# exits, or its new image starts, anyway, and the log names what it was still stopping.
+_SHUTDOWN_SECS = 10.0
+
+# How long a stop waits for the chat turns it ends to say so, before it saves the chats. Out of
+# the stop's whole time limit (`_SHUTDOWN_SECS`): a turn cancelled at an await ends at once, and
+# one that does not is left to the rest of the stop.
+_END_TURNS_SECS = 3.0
+
+# How long a single autonudge-driven goal loop turn may show no work before it is stopped
+# (`turn_deadline`). Loop cycles run long (subagent fan-out, 15-20 min), so this is generous —
+# it only fires to free a genuinely-wedged turn (e.g. an ACP turn that hung and never emitted
+# turn-end). The same number as the watchdog's own cap on a turn (_MAX_TURN_SECS).
+_NUDGE_TURN_TIMEOUT = 1800.0
+
+# A loop cycle's deliverable is its finding file (`loop.files.finding_file`: a stage worker's
+# findings/cycle_NNN.json, a task worker's findings/task_<id>_NNN.json). Some ACP worker agents
+# (notably claude-code) end their turn after the "orient" phase — reading status/brief/findings
+# and DESCRIBING a plan — without invoking any write tool, because the agent self-paces a single
+# prompt to end_turn once it stops emitting. When a loop worker turn ends with no new finding and
+# (for a task worker) its task not done, re-prompt the SAME logical cycle with a forceful
+# continuation (up to _MAX_CYCLE_REPROMPTS, each one shown on the loop's page) so the agent
+# actually executes the work + writes. The re-prompt loop runs inside the turn task and
+# suppresses autonudge re-arm so the idle timer can't fire a competing next-cycle nudge mid-loop.
+# Native workers write in one turn so their finding is counted at once and this never fires. A
+# turn she ended with a Deny is never re-prompted: the loop waits for her instead
+# (`LoopWatchdog.hold_after_decline`).
+_MAX_CYCLE_REPROMPTS = 3
+
+# Conservative per-message chunk limit for channel delivery (fits Slack's
+# 3000-char Block Kit section.text bound, the tightest known transport).
+
+
+#: The only statuses a pre-dispatch REFUSAL may record (``_record_refused_fire``). Both are
+#: keys `triggers.history.SCHEDULE_STATUS_TO_OUTCOME` resolves, and the guard that reads this
+#: tuple is what stops a caller inventing a third: an unmapped status falls to that table's
+#: silent FAILED fallback, so a defended fire would appear in the user's history as a broken
+#: automation. `test_triggers_status_vocabulary` reads this same tuple to enumerate what this
+#: writer can produce — keeping it a module constant is what keeps that rail able to see it.
+_REFUSAL_STATUSES: tuple[str, ...] = (
+    "blocked_injection",
+    Outcome.SKIPPED_GATE.value,
+    # The day-budget pause. A bare string because there is deliberately no `Outcome.NEEDS_INPUT`:
+    # this status belongs to the EXECUTOR's vocabulary (`executor.STATUS_TO_OUTCOME`), which
+    # projects it to `Outcome.DEFERRED` — "parked awaiting a human".
+    # `SCHEDULE_STATUS_TO_OUTCOME` carries the same key with the same target so one word cannot
+    # mean two things across the merged runs feed, and
+    # `test_the_two_status_families_do_not_disagree` is what keeps the two tables honest.
+    "needs_input",
+)
+
+#: How long a fire that needs an app's action waits for the apps to start (`_action_provider`).
+#: They load with the dashboard, after the clock and the event router are running, in seconds
+#: that are usually few; past this the fire is refused, saying no app running here provides it.
+APPS_START_WAIT_SECS = 120.0
+
+
+def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
+    """The token the gateway hands out at startup: the dashboard link it prints (and opens),
+    or the ``--json-ready`` line's token for a test harness.
+
+    Both are how a browser signs in — the link is opened in one, and a harness opens its token
+    in one — so they last as long as every other browser sign-in: ``auth.session_ttl``
+    (``token_auth.browser_session_ttl``, 30 days by default). They used to hard-code the 30
+    days, so a shortened setting did not reach the two doors every install opens first.
+    """
+    return mint_session("local-startup", browser_session_ttl(auth_cfg), issuer=issuer)
+
+
+def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
+    """The one ``PERSONALCLAW_READY:{...}`` line ``--json-ready`` prints once the gateway binds.
+
+    Machine-readable, so what its token is and how long it lasts ride as fields: the token is an
+    owner session (``Authorization: Bearer <token>``, or open ``/?token=<token>`` in a browser),
+    and ``token_expires_in`` / ``token_expires_at`` are its real lifetime — the help text used to
+    promise "up to 20 hours" for a token the code minted for 30 days.
+    """
+    payload = {
+        "port": port,
+        "token": minted.token,
+        "token_expires_in": minted.lifetime_secs,
+        "token_expires_at": minted.expires_at,
+        "pid": os.getpid(),
+        "home": str(home),
+    }
+    return f"PERSONALCLAW_READY:{json.dumps(payload)}"
+
+
+#: The parents a finished subagent's result is not announced into as a channel thread's
+#: conversation is (``_inject_with_retry``): a scheduled job's run, which takes it through an
+#: injection of its own, a subagent, an app's agent work (``handlers/apps.api_app_agent_run``: its
+#: result is the app's to read, and handing it to her agent's turn ran it on her tools) and a
+#: workflow run's step (``ownership.OWNED_PREFIX``). A step's completion is consumed by the run's
+#: own controller, which polls ``SubagentManager.get``
+#: (``stage_settlement.reconcile_dispatched_stages``), so the work for it is not "deliver it
+#: somewhere else" but "do not deliver it twice": announced into,
+#: ``sessions.get_or_create("workflow:...")`` spun up a session that never existed and burned a
+#: model turn injecting the result into it, retried ``_MAX_INJECT_ATTEMPTS`` times. The prefix and
+#: not ``is_owned`` is the test for routing: a malformed owned key is still not a channel.
+_NOT_ANNOUNCED_INTO: tuple[session_keys.SessionKind, ...] = (
+    session_keys.TRIGGER,
+    session_keys.SUBAGENT,
+    session_keys.APP,
+    session_keys.WORKFLOW_STEP,
+)
+
+
+def announce_axis(thread_channel: str | None) -> str:
+    """The axis a finished subagent's announce turn rides in a parent that is no dashboard chat.
+
+    A parent linked to a channel thread is a person's conversation there, so the turn keeps the
+    chat binding that thread's own turns use (``""``), which the spend guard leaves alone as it
+    leaves every chat. Any other parent the announcement reaches (a webhook's turn, an app's run,
+    an Inbox sweep) is automation's, and the turn rides ``orchestration``, the metered axis its
+    subagent rode.
+    """
+    return "" if thread_channel else "orchestration"
+
+
+def announce_profile(parent_key: str, thread_channel: str | None) -> "SafetyProfile | None":
+    """The profile whose tool grants a finished subagent's announce turn is held to, or ``None``.
+
+    The announcement hands the parent session a subagent's result, text a model wrote from
+    whatever it read, and the parent's turn acts on it. A parent nobody watches (a scheduled
+    job's session, an Inbox sweep, a side session, a webhook's turn, an Unattended loop's)
+    resolves the headless profile, whose grants admit a call only when its tool declares it
+    reads, so the turn is held to them as a webhook's own turn is (``dashboard.handlers.hooks``).
+    It was held to nothing: its calls met only the approval policy, whose hooks approve a
+    hook-neutral write.
+
+    ``None`` for a parent a person is in: one linked to a channel thread (their conversation
+    there, whose chat binding :func:`announce_axis` keeps) and one no unattended key names. A
+    ceiling that cannot be read raises here, and the announce fails closed.
+    """
+    from personalclaw.guardrails.policy import is_unattended_session, profile_for_session
+
+    if thread_channel or not is_unattended_session(parent_key):
+        return None
+    return profile_for_session(parent_key)
+
+
+class AnnounceRefused(Exception):
+    """An announce turn its parent's runtime cannot be held to the grants for: said as it is.
+
+    Not retried: the runtime is what it is on the next attempt too.
+    """
+
+
+def _asked_for_call(request_id: str) -> dict[str, str]:
+    """Who asked for the work a background call *request_id* is made in, when the owner did not:
+    a subagent's, or its start's, keeps who asked for the turn that started it
+    (``memory_writes.hand_on``), read from its own work wherever its relay is called from; any
+    other origin's (a schedule, a heartbeat) is the work running now's."""
+    agent_id = approval_subagent_id(request_id)
+    if agent_id:
+        return memory_writes.asked_for_work(agent_work_id(agent_id))
+    return memory_writes.asker()
+
+
+def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
+    """Tool-approval policy for a subagent RESULT-INJECTION turn.
+
+    The injection turn runs IN the parent session (announcing a child's result). For an UNATTENDED
+    parent — a cron/channel/inbox/side/loop announce: no human is watching — the approval resolves
+    through the session's SafetyProfile via ``approval_policy_for_session`` (which reads
+    ``profile_for_session``): the one profile path, replacing the blanket AUTO_APPROVE default a
+    cron parent used to get. An INTERACTIVE parent (a dashboard chat) keeps AUTO_APPROVE — a human
+    is present and chose to auto-approve.
+
+    An announce that calls no tool is unaffected. Under HOOK_BASED the operator's patterns approve
+    what they name, and nothing else runs but what asks nobody anywhere (what its tool declares):
+    nobody can be asked on such a turn (``llm_helpers._resolve_permission``).
+
+    The interactive parent's AUTO_APPROVE is a grant like any other (`approval_grants`), which the
+    operator ceiling bounds: refused, the announce takes what the ceiling does allow a turn nobody
+    is asked in (``guardrails.policy.no_one_to_ask``) — the hooks' say under ``hook_based``,
+    nothing under ``ask``. It is the owner's, for work she asked for (rule 4): the report of a
+    subagent someone else asked for runs as asked for by them (``memory_writes.turn_asked_by``), so
+    its announce takes the hooks' say alone, as nobody can be asked there.
+    """
+    from personalclaw.guardrails.policy import (
+        approval_policy_for_session,
+        is_unattended_session,
+        no_one_to_ask,
+    )
+    from personalclaw.llm_helpers import ToolApprovalPolicy
+
+    if is_unattended_session(parent_key):
+        return approval_policy_for_session(parent_key)
+    if approval_grants.stands_for_work(approval_grants.INJECTION, caller=parent_key):
+        return ToolApprovalPolicy.AUTO_APPROVE
+    hooks_may = approval_grants.stands(
+        approval_grants.INJECTION,
+        caller=parent_key,
+        level=approval_grants.LEVEL_HOOK,
+        audit=False,
+    )
+    return no_one_to_ask(approval_grants.LEVEL_HOOK if hooks_may else "ask")
+
+
+def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Label every state write an unattended trigger dispatch causes ``background``.
+
+    `state_history` declares three writing surfaces and the time-travel panel's "what changed
+    while I slept" filter reads them — but `SURFACE_BACKGROUND` had ZERO producers. Measured: the
+    only `writing_surface` call in the whole tree was `state_history.py`'s own hourly maintenance
+    job, which sets `SURFACE_SCHEDULED`. So a commit caused by a clock / file / webhook / chained
+    fire was recorded on the DEFAULT `interactive` surface, and the filter could not tell an
+    automation's edit from something the user did at the keyboard — the one distinction the whole
+    surface field exists to make.
+
+    A decorator rather than a `with` inside the method, for SCOPE. The surface is read by the
+    post-write hook in the WRITER's context (`history_debounce.notify` calls
+    `sh.current_surface()`), so it has to be live for every write the dispatch causes: the
+    injection-screen refusal row, the denylist and rung refusal rows, the provider's own writes,
+    the outcome record, and the chained fires in the `finally`. A context wrapped around only
+    `provider.execute` would leave the rest unlabelled — the same bug in a smaller box.
+
+    Unconditionally `background` because unattendedness is NOT a second decision taken here: this
+    seam resolves its guardrail identity as `unattended_dispatch_key("trigger:<id>")`, which
+    `is_unattended_session` classifies as unattended BY CONSTRUCTION — a store-trigger fire has no
+    chat session by definition, which is exactly why the denylist and the rung ladder below already
+    judge it under the HEADLESS posture. Branching on that key here would add a second, parallel
+    notion of "unattended" whose else-arm is unreachable. The ATTENDED counterpart is a different
+    function — `dashboard.handlers.trigger_runs._dispatch_store_action`, the hand-driven "run now" —
+    which keeps the default `interactive` surface and is untouched by this.
+
+    The surface travels on a ContextVar, so it survives the `await`s inside the dispatch. It does
+    not cross a `run_in_executor` boundary; that is a property of the seam `state_history` chose,
+    shared with the `SURFACE_SCHEDULED` producer, and not something this wrap changes.
+    """
+
+    @functools.wraps(fn)
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        from personalclaw.durability.state_history import SURFACE_BACKGROUND, writing_surface
+
+        with writing_surface(SURFACE_BACKGROUND):
+            return await fn(*args, **kwargs)
+
+    return _wrapped
+
+
+def _live_subagent_limits() -> SubagentLimits:
+    """Settings → Agent defaults → Subagents as they read now (`SubagentManager(limits=...)`).
+
+    The concurrency cap's "auto" (``0``) sizes from host facts, which do not change while the
+    process runs, so that one resolution is remembered per setting pair rather than re-probing the
+    host at every capacity check.
+    """
+    agent = AppConfig.load().agent
+    return SubagentLimits(
+        max_concurrent=_auto_sized(int(agent.max_subagents), float(agent.spawn_min_memory_gb)),
+        turn_limit=int(agent.subagent_max_turns),
+        timeout=int(agent.subagent_timeout_secs),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _auto_sized(max_subagents: int, per_agent_gb: float) -> int:
+    return resolve_max_subagents(max_subagents, per_agent_gb=per_agent_gb)
+
+
+class GatewayOrchestrator:
+    """Manages the lifecycle of all gateway services.
+
+    Responsibilities are intentionally narrow — event routing and
+    interactive handling are delegated to :mod:`events` and
+    :mod:`interactions` respectively.
+    """
+
+    def __init__(
+        self,
+        cfg: AppConfig,
+        *,
+        no_dashboard: bool = False,
+        no_crons: bool = False,
+        no_open: bool = False,
+        port_override: str | None = None,
+        json_ready: bool = False,
+        approval_mode: str | None = None,
+    ) -> None:
+        # NOTE: test_heartbeat_prompt_deliver.py creates instances via __new__
+        # (bypassing __init__). Update that fixture if new attributes are added.
+        self._cfg = cfg
+        self._no_dashboard = no_dashboard
+        self._no_crons = no_crons
+        self._no_open = no_open
+        self._port_override = port_override
+        self._json_ready = json_ready
+        self._approval_mode = approval_mode
+        creds = cfg.load_credentials()
+        self._owner_id = creds.get(CRED_OWNER_ID, "")
+        # Multi-user access is disabled — only owner is authorized. The channel
+        # app owns its allowlist config and enforces owner-only in its own runtime;
+        # core holds no channel allowlist, and no channel's credentials either: whether a
+        # channel is configured is the channel's own answer (`configured_channels`).
+
+        # Outbound delivery lives in `channel_delivery`'s per-provider registry — not on this
+        # object and not on DashboardState, which each held their own slot for the same fact
+        # until #959, both overwritten by whichever transport started last. `_channel_delivery`
+        # below is now a read-only view answering the OWNER-REACHABLE question. Core never
+        # imports channel code; the registry holds handles the apps hand it.
+
+        # Services (initialized in start())
+        self.sessions: SessionManager | None = None
+        self.ctx_builder: ContextBuilder | None = None
+        self.conv_log: ConversationLog | None = None
+        self.consolidator: HistoryConsolidator | None = None
+        self._file_watch_task: "asyncio.Task[None] | None" = None  # file-watch poll loop
+        self._web_watch_task: "asyncio.Task[None] | None" = None  # web_watch poll loop
+        self._clock_task: "asyncio.Task[None] | None" = None  # unified clock loop
+        self._reaper_task: "asyncio.Task[None] | None" = None  # trigger reaper
+        self._task_due_task: "asyncio.Task[None] | None" = None  # task due-date notices
+        # Tells the open pages when the incident switch moves (`_start_incident_watch`).
+        self._incident_watch_task: "asyncio.Task[None] | None" = None
+        # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
+        self._event_router: Any = None
+        # A staged auto-update waiter that HOLDS until in-flight work drains,
+        # then applies. One at a time — a second available-update check reuses the
+        # live waiter rather than spawning a rival apply against the same tree.
+        self._staged_apply_task: "asyncio.Task[None] | None" = None
+        self._last_autonomy_scan: float = 0.0  # promotion-proposal scan throttle
+        self._running_script_ids: set[str] = set()  # zero-token jobs in flight
+        self.heartbeat_svc: HeartbeatService | None = None
+        self.loop_watchdog: "LoopWatchdog | None" = None
+        self.workflow_watchdog: "WorkflowWatchdog | None" = None
+        self.inbox_svc: "InboxService | None" = None
+        self.subagent_mgr: SubagentManager | None = None
+        #: The subagent completion delivery `_init_subagents` hands its manager, kept for the
+        #: endings no subagent of its own reports: a batch's tasks (`_announce_ended_work`).
+        self._announce_subagents: Callable[[list[SubagentInfo]], Awaitable[None]] | None = None
+        self._cron_injecting: dict[str, int] = {}  # parent_key → pending injection count
+        self.channel_history: ChannelHistory | None = None
+        self.dashboard_state: DashboardState | None = None
+        #: The boot's missed-run notice, held while the dashboard is not up (`_record_boot_review`).
+        self._held_boot_review: tuple[dict[str, Any], list[Any]] | None = None
+        #: The catch-ups the boot staggered, and the slot each stands in for, for the clock loop.
+        self._boot_catch_ups: dict[str, tuple[float, float]] = {}
+        self._background_tasks: "set[asyncio.Task]" = set()  # prevent GC of fire-and-forget tasks
+        self._dashboard_runner: web.AppRunner | None = None
+        self._handler_tasks: "set[asyncio.Task]" = set()  # type: ignore[type-arg]
+        self._session_tasks: "dict[str, asyncio.Task]" = {}  # type: ignore[type-arg]
+        self._pending_queue: dict[str, list] = {}
+        #: What the stop is stopping at this moment (`_stopping_step`), for the log of a stop that
+        #: runs out of time.
+        self._stopping: set[str] = set()
+        #: The agents whose trigger runs this stop closed as interrupted before cutting them off
+        #: (`_record_stopped_agents`): their own ending, "cancelled", is not reported again.
+        self._stopped_agents: set[str] = set()
+
+    # ------------------------------------------------------------------
+    # GatewayServices contract (see personalclaw.gateway_services) — the
+    # read-only surface a channel transport drives for inbound handling.
+    # ------------------------------------------------------------------
+    @property
+    def config(self) -> AppConfig:
+        """Live gateway config, exposed to channel transports read-only."""
+        return self._cfg
+
+    @property
+    def owner_id(self) -> str:
+        """The owner id under the one shared key (see ``GatewayServices.owner_id``)."""
+        return self._owner_id
+
+    @property
+    def _channel_delivery(self) -> "ChannelDelivery | None":
+        """A connected channel that can reach the owner, or None.
+
+        Every reader of this in the gateway addresses the OWNER — a cron result, a heartbeat
+        summary, an approval prompt, a subagent reply — through `open_dm(owner_id)`, with no
+        origin channel to honour. A reply to an incoming message is a different question and
+        resolves through :func:`channel_delivery.delivery_for`; sending one through here is
+        exactly the misroute #959 reported.
+        """
+        from personalclaw.channel_delivery import owner_reachable
+
+        return owner_reachable()
+
+    @_channel_delivery.setter
+    def _channel_delivery(self, delivery: "ChannelDelivery | None") -> None:
+        """Assigning is registering, exactly as on :class:`DashboardState`.
+
+        Kept as a setter rather than removed because assignment is how this handle has always
+        been installed on both objects — including by 23 gateway tests that hand the orchestrator
+        a fake before driving a delivery path. Those tests are asserting gateway behaviour, not
+        the registry's shape, so the seam absorbs the assignment instead of the assertion moving.
+        """
+        from personalclaw.channel_delivery import register
+
+        register(delivery)
+
+    def register_channel_delivery(
+        self, delivery: "ChannelDelivery | None", provider: str = ""
+    ) -> None:
+        """Register a channel's outbound delivery handle (called by the channel transport at
+        ``start_inbound``). ``None`` clears — every handle, or one provider's when named.
+
+        ``provider`` is the same string the transport already passes to
+        :meth:`deliver_channel_inbound` on the way in, at the same point in its lifecycle. It is
+        optional only so that a core upgrade cannot break an app that has not been updated yet:
+        omitted, the provider is derived from the handle's own module, which still gives three
+        connected apps three distinct keys instead of one shared slot.
+        """
+        from personalclaw.channel_delivery import register
+
+        register(delivery, provider)
+
+    async def deliver_channel_inbound(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> "TrustVerdict":
+        """The guarded inbound door — trust is applied before a session is reached.
+
+        Delegates to :func:`personalclaw.channel_inbound.deliver_inbound`, which owns the
+        chokepoint (and its per-message idempotency, so an un-migrated transport that still
+        calls ``guard_inbound`` itself cannot cause a double owner notification). The
+        orchestrator adds nothing to the decision — it only supplies itself as the services
+        handle, which is what makes the door reachable from a transport's ``start_inbound``
+        argument without changing :class:`ChannelTransportProvider`.
+
+        The turn it runs is told its message came from the channel, so the channel gets the
+        answer without its own message sent back to it.
+        """
+        from personalclaw.channel_inbound import deliver_inbound
+
+        return await deliver_inbound(
+            self,
+            provider,
+            msg,
+            is_dm=is_dm,
+            turn_runner=functools.partial(run_chat, arrived_from_channel=True),
+        )
+
+    async def answer_channel_reply(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> bool:
+        """The owner's answer to the Morning triage digest, from a channel that runs its own turns.
+
+        The door above answers one itself; a transport that runs a conversation itself offers the
+        message here first (`proactive.channel_reply.answer_on_channel`)."""
+        from personalclaw.proactive.channel_reply import answer_on_channel
+
+        return await answer_on_channel(self, provider, msg, is_dm=is_dm)
+
+    # ------------------------------------------------------------------
+    # Tool approval callback (shared by cron, heartbeat, subagent, task)
+    # ------------------------------------------------------------------
+
+    def _interactive_approval(
+        self,
+        source: str,
+        session_resolver: Callable[[str], str] | None = None,
+        trigger_resolver: Callable[[str], str] | None = None,
+    ) -> ToolApprovalCallback:
+        """Return an approval callback that races dashboard vs channel DM.
+
+        Uses the same rich Block Kit message as the main-agent approval flow
+        so users see full command text, security redactions, and Trust-session
+        controls for background agents too.
+
+        ``trigger_resolver`` names the trigger whose run asked, from the approval id, so the
+        approval is listed under it and a note it leaves unanswered can run it again.
+        """
+
+        async def _approve(event: LLMEvent, parent_session_key: str = "") -> ToolDecision:
+            # Resolve session: use explicit session, or try to find from active dashboard session
+            # Heuristic fallback: picks first running session (dict insertion order). Not guaranteed
+            # to be the correct session for subagents, but explicit session param
+            # is the primary path.  # noqa: E501
+            resolved_session = ""
+            if not resolved_session and self.dashboard_state and self.dashboard_state._sessions:
+                # Heuristic: pick first running session (insertion order)
+                for k in self.dashboard_state._sessions:
+                    if self.dashboard_state._sessions[k].running:
+                        resolved_session = k.removeprefix("dashboard:")
+                        break
+            request_id = str(event.request_id)
+            asked_in = session_resolver(request_id) if session_resolver else resolved_session
+            asked_by = trigger_resolver(request_id) if trigger_resolver else ""
+            # Who asked for the work this call is made in, when the owner did not: none of her own
+            # grants answers it (`approval_grants`, rule 4), and every surface it is asked on names
+            # them.
+            someone = _asked_for_call(request_id)
+            # The folder the call's command runs in: the asking agent's own.
+            folder = self._asking_folder(request_id, asked_in)
+
+            # A standing grant approves without asking — read NOW, not from the config the gateway
+            # started with (`approval_grants`, rule 1), and only if the operator ceiling lets it
+            # stand (rule 2). What approved it is what the caller's audit row says (rule 3), and
+            # the Inbox note a previous unanswered ask of the same call left is settled.
+            # Never for a command that reaches a host off the allowed hosts, nor one that deletes
+            # the owner's home folder, the filesystem root or that folder (`run_bounds`): it is
+            # put to a person whatever grant stands.
+            grant, grant_row = (
+                ("", None)
+                if run_bounds.put_to_a_person(event, session_key=asked_in, cwd=folder)
+                else self._relay_grant(
+                    source,
+                    event,
+                    session_resolver=session_resolver,
+                    resolved_session=resolved_session,
+                )
+            )
+            if grant and approval_grants.stands_for_work(
+                grant,
+                caller=f"source:{source}",
+                subject=redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0][:80],
+                asked_by=someone,
+            ):
+                if grant_row is not None:
+                    try:
+                        sel().log_api_access(**grant_row)
+                    except Exception:
+                        logger.warning("SEL audit failed for a %s approval", grant, exc_info=True)
+                if self.dashboard_state:
+                    self.dashboard_state.settle_granted(
+                        tool=event.title or "",
+                        tool_input=event.tool_input,
+                        session=asked_in,
+                        trigger=asked_by,
+                        by=grant,
+                    )
+                return ToolDecision(True, "auto_approved", grant)
+
+            # Prompt on the channel that asks the owner approvals: the channel the parent chat
+            # is on first, since the person asking is there, then their "Send approvals
+            # to" choice, else the first connected channel that knows them
+            # (`channel_delivery.approval_delivery`). The channel owns its approval UI +
+            # owner-response wait; core races it against the dashboard prompt via the
+            # on_prompted hook (which hands us the channel's pending future so a dashboard
+            # click resolves both).
+            from personalclaw.approval_confirms import call_confirms
+            from personalclaw.approval_source import source_label_in
+            from personalclaw.channel_delivery import approval_delivery
+
+            origin = ""
+            if self.dashboard_state is not None:
+                parent = parent_session_key or (
+                    session_resolver(request_id) if session_resolver else resolved_session
+                )
+                origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
+            # The second confirmation the call asks (`approval_confirms`), decided once, here, and
+            # kept on the registry's row, which every surface reads. A channel's prompt answers on
+            # one press, so a call that asks one is not put to it: the registry tells the owner on
+            # their channel where to answer it instead (`_approval_on_a_channel`).
+            confirms = call_confirms(
+                getattr(event, "risk_level", "") or "",
+                event.title,
+                event.tool_kind,
+                event.tool_input,
+                cwd=folder,
+                consequences=getattr(event, "consequences", None),
+                tells_owner=bool(getattr(event, "tells_owner", False)),
+                named_files=tuple(getattr(event, "named_files", ()) or ()),
+            )
+            asking = None if confirms else approval_delivery(origin)
+            if asking is not None:
+                provider, asker = asking
+                try:
+                    dashboard_future = None
+                    approved: "bool | None" = None
+                    # How core closed the channel's prompt, when it did (not a press there).
+                    told: dict[str, str] = {}
+
+                    def _on_prompted(pending: Any) -> None:
+                        nonlocal dashboard_future
+                        registry = self.dashboard_state
+                        if not registry:
+                            return
+                        dashboard_future = asyncio.ensure_future(
+                            registry.request_approval(
+                                request_id,
+                                source,
+                                event.title,
+                                tool_input=event.tool_input,
+                                tool_purpose=event.tool_purpose,
+                                session=asked_in,
+                                trigger=asked_by,
+                                cwd=folder,
+                                # This channel is already asking: the registry must not ask
+                                # a channel a second time.
+                                asked_on_channel=True,
+                                risk_level=event.risk_level,
+                                tool_kind=event.tool_kind,
+                                annotations=getattr(event, "annotations", None),
+                                asked_for=approval_grants.asked_for_line(someone),
+                                confirms=confirms,
+                            )
+                        )
+
+                        def _on_dashboard_done(fut: "asyncio.Future") -> None:  # type: ignore[type-arg]  # noqa: E501
+                            # The channel's prompt is told how the approval ended, as the
+                            # registry recorded it: an expiry or a cancelled ask is not a Deny.
+                            # A dashboard copy that was cancelled or broke ends it unanswered,
+                            # so the prompt, and the work waiting on it, are not left open.
+                            if pending.future.done():
+                                return
+                            if fut.cancelled() or fut.exception():
+                                told["outcome"] = "cancelled"
+                            else:
+                                told["outcome"] = registry.ended_as(request_id) or (
+                                    "approved" if fut.result() else "rejected"
+                                )
+                            pending.future.set_result(told["outcome"])
+
+                        dashboard_future.add_done_callback(_on_dashboard_done)
+
+                    # Stamp the structured brief (tool + blast-radius line) onto
+                    # the event as ADDITIVE meta before handing it to the channel, so a
+                    # phone prompt can say what the call can touch. Adds one
+                    # `tool_meta` key and changes no argument — a channel that ignores
+                    # it prompts exactly as before. The dashboard stays the rich
+                    # surface; this is data, not rendering.
+                    attach_approval_brief(event, asked_by=someone, cwd=folder)
+                    try:
+                        approved = await asker.request_approval(
+                            event,
+                            # Where it came from, in the words the registry's entry names it by
+                            # (`approval_source_label`): a workflow's step, a trigger, a loop, and
+                            # the app whose work it is.
+                            source=source_label_in(
+                                self.dashboard_state,
+                                source=source,
+                                session=asked_in,
+                                trigger=asked_by,
+                                approval_id=str(request_id),
+                            ),
+                            parent_session_key=parent_session_key,
+                            sessions=self.sessions,
+                            on_prompted=_on_prompted,
+                        )
+                    finally:
+                        # Only a real answer is delivered to the dashboard's copy. `None` is the
+                        # channel producing NO answer (it could not deliver, or this wait was
+                        # cancelled); recording that as a rejection wrote an `approval_decision`
+                        # row and a "denied" card for a decision nobody made. Cancelling the
+                        # dashboard waiter instead ends its approval as `cancelled`.
+                        if self.dashboard_state and approved is not None:
+                            # The channel's app checked the press is its paired owner's.
+                            self.dashboard_state.resolve_approval(
+                                request_id, approved, by=approval_answer.on_channel(provider)
+                            )
+                        if dashboard_future and not dashboard_future.done():
+                            dashboard_future.cancel()
+
+                    if approved is not None:
+                        return self._asked_decision(
+                            request_id, approved, closed_as=told.get("outcome", "")
+                        )
+                except Exception:
+                    logger.debug(
+                        "Channel approval failed, falling back to dashboard", exc_info=True
+                    )
+
+            # Fallback: dashboard only
+            if self.dashboard_state:
+                answered = await self.dashboard_state.request_approval(
+                    request_id,
+                    source,
+                    event.title,
+                    tool_input=event.tool_input,
+                    tool_purpose=event.tool_purpose,
+                    session=asked_in,
+                    trigger=asked_by,
+                    cwd=folder,
+                    risk_level=event.risk_level,
+                    tool_kind=event.tool_kind,
+                    annotations=getattr(event, "annotations", None),
+                    asked_for=approval_grants.asked_for_line(someone),
+                    confirms=confirms,
+                )
+                return self._asked_decision(request_id, answered)
+            # Nowhere to ask (no dashboard, no channel): nobody can say yes, so the call does not
+            # run. It was approved here, which let a gateway with nowhere to ask approve every
+            # background call no grant above covered; a run that may act on its own carries its
+            # own grant, and one that does not is refused rather than waved through.
+            return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
+
+        return _approve
+
+    def _asking_folder(self, request_id: str, asked_in: str) -> str:
+        """The folder the command of the call *request_id* runs in: the folder of the agent that
+        asks it (the one it was started in, or its runtime's), else that of the session it is
+        asked in (``run_bounds.session_folder``)."""
+        mgr = getattr(self, "subagent_mgr", None)
+        asker = mgr.get(approval_subagent_id(request_id)) if mgr else None
+        if asker is None:
+            return run_bounds.session_folder(asked_in)
+        given = getattr(asker, "cwd", "")
+        if isinstance(given, str) and given:
+            return given
+        return run_bounds.session_folder(session_keys.SUBAGENT.key(asker.id))
+
+    def _relay_grant(
+        self,
+        source: str,
+        event: LLMEvent,
+        *,
+        session_resolver: Callable[[str], str] | None,
+        resolved_session: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """The standing grant that approves this background call without asking, read NOW.
+
+        Returns the grant's name (`approval_grants`) and the audit row that records it, which the
+        caller writes only once the grant stands for the work the call is made in
+        (``approval_grants.stands_for_work``: none of the owner's own for work someone else asked
+        for, and the operator ceiling) — an "ok, approved" row for a grant then refused would
+        record an approval that never happened. ``("", None)`` when nothing stands and the call is
+        asked.
+
+        Every read here is of the setting as it is now: ``hooks.auto_approve_sources`` came from
+        the config the gateway started with, so a source the owner took off the list kept
+        approving until a restart.
+
+        None stands for a call of an app's agent (``SubagentInfo.app``): the owner's grants are for
+        her own agents, and no app's agent approves its calls (``subagent_tier``), so it is asked.
+        """
+        from personalclaw.trust_mode import is_yolo_active as is_yolo_mode
+
+        mgr = getattr(self, "subagent_mgr", None)
+        asker = mgr.get(approval_subagent_id(str(event.request_id))) if mgr else None
+        if isinstance(app := getattr(asker, "app", ""), str) and app:
+            return "", None
+
+        safe_title = redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0]
+        try:
+            sources = approval_grants.hooks_now().auto_approve_sources
+        except Exception:  # noqa: BLE001 - a hook value that does not parse grants nothing
+            logger.warning("could not read hooks.auto_approve_sources; asking", exc_info=True)
+            sources = []
+        if source in sources:
+            logger.info("Auto-approving tool %s from source %s", log_title(event.title), source)
+            return approval_grants.SOURCE, None
+
+        # CLI --approval flag override (composable test mode).
+        # 'yolo' auto-approves all; 'reads' auto-approves a call that only reads — its
+        # effective risk is SAFE, the same answer Trust reads acts on: a tool that DECLARES it
+        # only reads, or a read-only shell command. 'interactive' falls through to the
+        # standard flow.
+        if self._approval_mode == "yolo" or (
+            self._approval_mode == "reads"
+            and resolve_effective_risk(
+                event.risk_level, event.title or "", event.tool_kind, event.tool_input
+            )
+            == "safe"
+        ):
+            return approval_grants.CLI, {
+                "caller": f"cli:approval={self._approval_mode}",
+                "operation": f"{source}.cli_approval_auto_approve",
+                "outcome": "ok",
+                "resources": safe_title,
+            }
+
+        # Check both YOLO sources: channel handler (!yolo on) and dashboard UI.
+        # Both must honor their TTL — use is_yolo_active() (which expires on
+        # read), NOT the raw _yolo field, or an expired dashboard YOLO would
+        # keep auto-approving channel tool calls past its 6h ceiling.
+        if is_yolo_mode() or (self.dashboard_state and self.dashboard_state.is_yolo_active()):
+            return approval_grants.YOLO, None
+        if not self.dashboard_state:
+            return "", None
+
+        # Check if the parent session is trusted (not all sessions).
+        # Use session_resolver or resolved_session to find the parent;
+        # only fall back to all-sessions check when neither exists.
+        # When session_resolver exists but returns falsy, we do NOT
+        # fall back to the heuristic -- if the explicit resolver
+        # can't find the parent, guessing would widen trust scope.
+        def _sel_log(**kw: Any) -> None:
+            # `Any`, not `str`: `log_api_access` also accepts a `metadata: dict | None` keyword
+            # (#2948) and mypy checks a `**kwargs` forward against every parameter of the callee.
+            try:
+                sel().log_api_access(**kw)
+            except Exception:
+                logger.warning("SEL audit failed for trust check", exc_info=True)
+
+        parent_name: str | None
+        if session_resolver:
+            try:
+                parent_name = session_resolver(str(event.request_id))
+            except Exception:
+                logger.warning("session_resolver failed for %s", event.request_id, exc_info=True)
+                parent_name = None
+        elif resolved_session:
+            parent_name = resolved_session
+        else:
+            parent_name = None
+
+        from personalclaw.workflows import ownership as _ownership
+
+        if parent_name and parent_name.startswith(_ownership.OWNED_PREFIX):
+            # A workflow STAGE: its parent is the run-owned key `workflow:<run>:<node>`,
+            # which is never a dashboard session, so there is no chat Trust toggle to
+            # consult and a session lookup can only ever miss. An UNATTENDED run never
+            # reaches here — its stages spawn `approval_mode="auto"`
+            # (`engine.dispatch_stage`) — so this is an attended run asking, and the audit
+            # says that instead of `scoped_trust_session_not_found`, which read as a
+            # broken lookup on every stage of every run.
+            _sel_log(
+                caller=f"run:{parent_name}",
+                operation=f"{source}.run_stage_attended",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        elif parent_name:
+            parent = (self.dashboard_state._sessions or {}).get(parent_name)
+            if parent and parent._trust:
+                return approval_grants.PARENT_TRUST, {
+                    "caller": f"session:{parent_name}",
+                    "operation": f"{source}.scoped_trust_auto_approve",
+                    "outcome": "ok",
+                    "resources": safe_title,
+                }
+            _sel_log(
+                caller=f"session:{parent_name}",
+                operation=(
+                    f"{source}.scoped_trust_not_trusted"
+                    if parent
+                    else f"{source}.scoped_trust_session_not_found"
+                ),
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        elif not session_resolver and not resolved_session:
+            # No resolver available at all -- fall back to all-sessions
+            sessions = self.dashboard_state._sessions
+            if sessions and all(s._trust for s in sessions.values()):
+                return approval_grants.TRUST, {
+                    "caller": f"source:{source}",
+                    "operation": f"{source}.all_sessions_trust_auto_approve",
+                    "outcome": "ok",
+                    "resources": safe_title,
+                }
+            _sel_log(
+                caller=f"source:{source}",
+                operation=f"{source}.all_sessions_trust_not_trusted",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        else:
+            # Resolver existed but failed -- fall through to interactive approval
+            _sel_log(
+                caller=f"source:{source}",
+                operation=f"{source}.scoped_trust_fallthrough",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        return "", None
+
+    def _asked_decision(
+        self, request_id: str, approved: bool, *, closed_as: str = ""
+    ) -> ToolDecision:
+        """An ASKED approval's answer as a decision: how it ended, from the registry that held it.
+
+        The waiter's ``bool`` cannot tell a Deny from nobody answering in time, which is what the
+        subagent's audit row must say (`approval_grants.ToolDecision`). An approval the registry
+        never held is a person's answer on the channel, unless core closed the channel's prompt
+        itself (*closed_as*): its copy in the registry could not be listed, which is no answer.
+        """
+        ended = self.dashboard_state.ended_as(request_id) if self.dashboard_state else ""
+        ended = ended or closed_as
+        if ended in ("expired", "cancelled"):
+            return ToolDecision(False, ended, approval_grants.NOBODY)
+        if ended in ("approved", "rejected"):
+            return ToolDecision(ended == "approved", ended, approval_grants.YOU)
+        return ToolDecision(
+            bool(approved), "approved" if approved else "rejected", approval_grants.YOU
+        )
+
+    # Required packages that must be importable (import_name, pip_spec).
+    # pip_spec may include version constraints matching setup.cfg.
+    _REQUIRED_DEPS = [
+        ("snowballstemmer", "snowballstemmer>=1.0"),
+    ]
+
+    def _check_missing_deps(self) -> None:
+        """Auto-repair missing pip deps for venv installs.
+
+        After auto-update, old code may have pulled new source via git reset
+        but skipped ``pip install``. This catches the gap on next startup.
+        """
+        import importlib
+        import importlib.util
+
+        missing = [pip for mod, pip in self._REQUIRED_DEPS if importlib.util.find_spec(mod) is None]
+        if not missing:
+            return
+
+        from personalclaw import self_update
+
+        # A checkout this package runs from, never a tree the gateway was only started in.
+        proj = self_update.source_checkout()
+        if not proj:
+            return
+
+        logger.warning("Missing deps %s — installing directly", missing)
+        print(f"Installing missing dependencies: {', '.join(missing)}")
+        import subprocess as _sp
+
+        # Same installer resolution as the app installer and self-updater: a uv
+        # venv has no pip module, and startup dep-repair silently failing there
+        # left the gateway running without deps it had just decided it needed.
+        from personalclaw._installer import NoInstallerError, install_argv, installer_env
+
+        try:
+            argv = install_argv(["--quiet", *missing])
+        except NoInstallerError as exc:
+            print(f"❌ {exc}", file=sys.stderr)
+            logger.error("Dep repair impossible: %s", exc)
+            return
+
+        result = _sp.run(
+            argv,
+            cwd=proj,
+            capture_output=True,
+            timeout=300,
+            env=installer_env(),
+        )
+        if result.returncode == 0:
+            # Invalidate import caches so the new packages are found
+            importlib.invalidate_caches()
+            print("✅ Dependencies installed")
+        else:
+            print(
+                "❌ Dependency install failed — run manually: personalclaw update", file=sys.stderr
+            )
+            logger.error("Dep repair failed: %s", mask_child_output(result.stderr, limit=500))
+
+    # ------------------------------------------------------------------
+    # Service initialisation
+    # ------------------------------------------------------------------
+
+    def _init_services(self) -> None:
+        """Initialize memory, skills, hooks, context, history, sessions."""
+        # Auto-repair missing pip deps (handles chicken-and-egg after auto-update)
+        try:
+            self._check_missing_deps()
+        except Exception:
+            logger.warning("Dep check failed", exc_info=True)
+
+        # Auto-install agent config so MCP servers are always up to date
+        try:
+            from personalclaw.agent import rebuild_agent_config  # circular import
+
+            path = rebuild_agent_config()
+            logger.info("Agent config installed: %s", path)
+        except Exception:
+            logger.warning("Agent config install failed", exc_info=True)
+
+        # Move any pre-v2 workflow SOPs aside. Idempotent and
+        # non-destructive: the user's own writing is preserved under
+        # `workflows/_legacy_sops/`, out of the way of the v2 def store that lands in
+        # the same parent. A no-op on every home that has none.
+        try:
+            from personalclaw.workflows.legacy import archive_legacy_sops
+
+            archive_legacy_sops(config_dir() / "workflows")
+        except Exception:
+            logger.debug("Legacy SOP archival skipped", exc_info=True)
+
+        factory = self._cfg.create_provider_factory()
+
+        # Memory, skills, hooks, lessons
+        memory = MemoryStore()
+        memory.init()
+
+        # Vector memory (structured semantic store)
+        from personalclaw.vector_memory import VectorMemoryStore
+
+        # confidence_threshold is deliberately NOT pinned either: the store reads
+        # `memory.semantic_confidence_threshold` live, so Settings → Memory applies it on the
+        # next write and every store instance applies the same value.
+        self.vector_memory = VectorMemoryStore(
+            extra_prefixes=self._cfg.memory.semantic_keys or None,
+            dedup_threshold=self._cfg.memory.episodic_dedup_threshold,
+            episodic_max=self._cfg.memory.episodic_max_count,
+            episodic_limit=self._cfg.memory.episodic_max_results,
+        )
+        # graph_enabled is deliberately NOT pinned here — the store reads
+        # `memory.graph_enabled` live so the Settings toggle works without a restart. Nor is an
+        # embedding function: the store embeds with the model bound in Settings → Models at each
+        # use, so a rebind or a clear reaches it without a restart — and an app-provided model is
+        # built at first use, after the dashboard init has registered the app's provider type.
+        self.vector_memory.init()
+        memory.vector_store = self.vector_memory
+        # Whatever an Incognito or Temporary chat left in memory (an earlier version consolidated
+        # them like any other) goes before anything can recall it.
+        from personalclaw.learning import surfacing_events
+        from personalclaw.memory_writes import forget_what_restricted_sessions_left
+
+        forget_what_restricted_sessions_left(self.vector_memory, memory)
+        # And what it recorded of their turns in the learning log, each one's message with it.
+        surfacing_events.forget_what_restricted_sessions_left()
+        self.vector_memory.serve_recall()
+
+        skills = SkillsLoader()
+        # Read at every decision, not copied at startup: a pattern or grant the owner changes
+        # applies to the next call (`approval_grants`, rule 1).
+        hooks = live_hook_manager()
+        # bot_name deliberately NOT pinned here — ContextBuilder resolves it
+        # live from config per turn, so a Settings → Account rename takes
+        # effect on the next message without a gateway restart.
+        self.ctx_builder = ContextBuilder(
+            memory=memory,
+            skills=skills,
+            hooks=hooks,
+        )
+
+        # Conversation history
+        self.conv_log = ConversationLog()
+        self.conv_log.init()
+        self.ctx_builder.conversation_log = self.conv_log
+        # What an earlier version left in the memory partitions is settled before anything
+        # recalls (`memory_locality.settle_at_start`).
+        from personalclaw.memory_locality import settle_at_start
+
+        settle_at_start(self.vector_memory, self.conv_log)
+        # And what its consolidation kept of conversations only other people asked anything in.
+        memory_writes.take_back_what_others_turns_left(self.vector_memory, memory, self.conv_log)
+
+        # Session manager
+        self.sessions = SessionManager(
+            self._cfg, provider_factory=factory
+        )  # type: ignore[arg-type]
+
+        # History consolidator
+        self.consolidator = HistoryConsolidator(
+            log=self.conv_log,
+            memory=memory,
+            history_idle_secs=self._cfg.memory.history_idle_hours * 3600,
+            vector_store=self.vector_memory,
+            migrated=self._cfg.memory.migrated,
+            skills_loader=skills,
+            auto_skills_enabled=self._cfg.skills.auto_create_from_sessions,
+            auto_refine_enabled=self._cfg.skills.auto_refine_on_deviation,
+            auto_min_tool_calls=self._cfg.skills.auto_min_tool_calls,
+            auto_similarity_threshold=self._cfg.skills.auto_similarity_threshold,
+        )
+        # Extract skills from a session one last time when it idles out.
+        self.sessions.set_session_expire_callback(self.consolidator.consolidate_session)
+
+        # Channel history buffer
+        self.channel_history = ChannelHistory(
+            observe_max_entries=self._cfg.observe_max_messages,
+            observe_ttl_secs=int(self._cfg.observe_ttl_hours * 3600),
+            history_dir=config_dir() / "history",
+        )
+        self.ctx_builder.channel_history = self.channel_history
+        # Observe-mode channel registration is channel-specific config — the channel
+        # app registers its observe channels via services.channel_history.set_observe
+        # at start_inbound (core holds no per-channel activation config).
+
+        # FTS index
+        indexed = memory.rebuild_index()
+        logger.info("FTS index: %d file(s) indexed", indexed)
+
+    # 🔴 `_run_action_job` + `_maybe_autopause` retired with `ScheduleService`. Both took
+    # a `ScheduleJob` and were reachable only from the deleted `_cron_callback` dispatcher. The
+    # substrate GENERALIZED both: action dispatch is `_fire_store_trigger`, and the autopause
+    # counter is `triggers/autopause.py`, which fixed the defect this pair carried (one counter
+    # incremented at four call sites with no way to tell a policy block from a real failure).
+
+    def _day_budget_exceeded(self, *, context: str) -> bool:
+        """True when the day's TOKEN ceiling is already hit, so unattended work must not start.
+
+        The pre-dispatch gate for unattended work, called by `_fire_store_trigger` — every
+        clock, file, webhook and chained fire. On the transition into exceeded, emits ONE
+        notification so the user learns their automation is paused for the day without a
+        per-fire spam; the caller records the per-fire `needs_input` outcome that projects
+        to `Outcome.DEFERRED`, so the PAUSE is legible in the runs feed even though the
+        TOAST is de-duped. (This used to say it emitted a "needs-input notification"
+        while emitting a WARNING and having no caller at all — the docstring asserted the
+        clause the code did not satisfy.)
+
+        The DOLLAR ceiling pauses nothing here (``SpendMeter.check_day_before_work``): it limits
+        the calls that cost money, and the guard refuses each one where it is made, while a fire
+        whose work runs on a model that costs nothing, or calls no model, runs. Pausing every fire
+        on it stopped every automation on the free local models until midnight. Reaching it still
+        tells the owner once (:meth:`_notify_dollars_spent`).
+
+        Two different unknowns, two answers (#3458).
+
+        An unreadable CEILING pauses (returns True) and notifies: the ceiling is the thing
+        that makes leaving automation running safe, so discarding the operator's own
+        decision and dispatching anyway is the dangerous direction, and a pause that says
+        why is not the wedge the old fail-open was written to avoid.
+
+        Any other error still fails OPEN (returns False) — a spend-counter hiccup is a
+        bookkeeping fault, not a lost decision, and the meter + breaker remain the hard
+        controls.
+        """
+        try:
+            from personalclaw.guardrails.budgets import (
+                BudgetConfigUnreadable,
+                BudgetVerdict,
+                budget_from_config,
+                get_meter,
+            )
+        except Exception:
+            logger.debug("day-budget check import failed (fail-open)", exc_info=True)
+            return False
+        try:
+            budget = budget_from_config()
+        except BudgetConfigUnreadable as exc:
+            self._notify_budget_once(
+                "Automation paused — the spend ceiling is unreadable",
+                f"{context} was skipped — {exc}. Unattended runs resume once "
+                f"`guardrails.budgets` in config.json parses again.",
+            )
+            logger.warning("%s skipped: %s", context, exc)
+            return True
+        try:
+            if budget.is_unlimited:
+                return False
+            meter = get_meter()
+            self._notify_dollars_spent(meter.day_totals().dollars, budget.max_dollars)
+            verdict, reason = meter.check_day_before_work(budget)
+            if verdict is not BudgetVerdict.EXCEEDED:
+                # Re-arm the one-shot notification: once the day rolls over (or the
+                # user raises the budget) and we're back under the ceiling, the next
+                # exceeded window notifies again.
+                self._budget_notified = False
+                return False
+            self._notify_budget_once(
+                "Daily token budget reached",
+                f"{context} was skipped — {reason}. Unattended runs resume "
+                f"tomorrow, or raise the budget in Settings → Guardrails.",
+            )
+            logger.info("%s skipped: %s", context, reason)
+            return True
+        except Exception:
+            logger.debug("day-budget check failed (fail-open)", exc_info=True)
+            return False
+
+    def _notify_dollars_spent(self, spent: float, cap: float) -> None:
+        """Tell the owner once, for the day, that the dollar ceiling is reached: from now on the
+        calls that cost money are refused, and the rest keep running. Re-armed once spend is back
+        under it (a new day, or a raised ceiling). Never raises."""
+        if cap <= 0.0 or spent < cap:
+            self._dollars_notified = False
+            return
+        if getattr(self, "_dollars_notified", False):
+            return
+        self._dollars_notified = True
+        if self.dashboard_state is None:
+            return
+        try:
+            self.dashboard_state.notify(
+                notification_kinds.WARNING,
+                "Daily dollar budget reached",
+                f"Calls to models that cost money are refused until it resets tomorrow "
+                f"(${spent:.2f} of ${cap:.2f} spent); models that cost nothing keep running. "
+                "Raise it in Settings → Guardrails.",
+            )
+        except Exception:
+            logger.debug("dollar budget notify failed", exc_info=True)
+
+    def _notify_budget_once(self, title: str, body: str) -> None:
+        """One toast per pause window, never per fire.
+
+        Both pause reasons — a ceiling that is SPENT and a ceiling that could not be READ
+        (#3458) — go through here, so a user who has both cannot be told twice and the two
+        cannot drift into two de-dup schemes. Re-armed by the under-ceiling branch above,
+        which is what makes the next window notify again.
+        """
+        if getattr(self, "_budget_notified", False):
+            return
+        self._budget_notified = True
+        if self.dashboard_state is None:
+            return
+        try:
+            self.dashboard_state.notify(notification_kinds.WARNING, title, body)
+        except Exception:
+            logger.debug("budget notify failed", exc_info=True)
+
+    async def _clock_loop(self) -> None:
+        """Drive the unified clock: tick → dispatch → execute.
+
+        The sole engine that fires clock triggers now. `triggers/loop.run_forever` owns the cadence
+        and the resilience (one bad tick never kills the loop); this method only supplies the two
+        things the gateway knows: the store's home and the runner.
+
+        The runner is the SAME action-provider dispatch a file-watch fire uses, so a clock
+        fire and a
+        file fire execute the same action the same way — one dispatch path rather than two
+        that drift.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import loop as clock_loop
+        from personalclaw.triggers.routing import routed
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+
+        async def _runner(payload: dict[str, Any]) -> Any:
+            trigger_id = str(payload.get("trigger_id") or "")
+            # From every store the tick fired from: an app serves some rows (`routing`), and a
+            # lookup in the local file alone found none of them, so none of them ever ran.
+            row = routed(store).get(trigger_id)
+            if row is None:
+                logger.warning("trigger %s was removed before its run; nothing ran", trigger_id)
+                return {"status": "error"}
+            await self._fire_store_trigger(row.trigger, payload)
+            return {"status": "launched"}
+
+        await clock_loop.run_forever(
+            store,
+            runner=_runner,
+            sessions=self.sessions,
+            base_dir=store.base_dir,
+            # A row written by anyone else (a loop's auto-nudge, the chat's automation tools in
+            # their own process) reaches an open Triggers page within one tick, rather than never.
+            on_store_changed=lambda: self._push_trigger_refresh("crons"),
+            # Slots the process slept through: the tick kept their cards, and the owner hears of
+            # them in the same one notice a restart's review sends.
+            on_missed=self._surface_wake_review,
+            # `getattr`, as `_push_trigger_refresh` reads the dashboard: an orchestrator that has
+            # not run the boot sweep has no catch-ups to hand over.
+            catching_up=getattr(self, "_boot_catch_ups", None),
+        )
+
+    def _surface_wake_review(self, report: dict[str, Any]) -> None:
+        """Announce what a wake found missed (`TickResult.missed`), as a boot's review is."""
+        from personalclaw.triggers.review import cards_from_boot
+
+        self._surface_missed_review(report, cards_from_boot(report))
+        self._push_trigger_refresh("crons")
+
+    def _push_trigger_refresh(self, *kinds: str) -> None:
+        """Hint open dashboard views to refresh after a store-backed fire.
+
+        Both kinds by default, matching what the legacy `_record_run` pushed plus the list the fire
+        may have changed: `cron_history` for the run feed, `crons` for the trigger list's status
+        dots and next-fire times. A store change that is not a fire names `crons` alone.
+        Best-effort — a broadcast failure must never affect the fire's outcome, and a gateway
+        whose server is not up yet simply has nothing to notify.
+        """
+        # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
+        # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
+        # no `dashboard_state` attribute at all. An AttributeError from a `finally` would REPLACE
+        # the fire's own outcome — a refresh hint must never be able to do that.
+        state = getattr(self, "dashboard_state", None)
+        if state is None:
+            return
+        try:
+            state.push_refresh(*(kinds or ("crons", "cron_history")))
+        except Exception:  # noqa: BLE001 - a refresh hint is never worth failing a fire over
+            logger.debug("could not push a trigger refresh", exc_info=True)
+
+    async def _trigger_reaper_loop(self) -> None:
+        """Bound every store-backed run: sweep for blown deadlines and free the claim.
+
+        Replaces `ScheduleService.start_reaper`, whose sweep read a dict that only the retired
+        legacy timer ever wrote — inert since the unified-clock cutover, and silently so.
+        Like `_clock_loop`, this method supplies only the two things the gateway knows (the
+        store and its home) and leaves the cadence and resilience to the module.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import reaper
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        await reaper.run_forever(store=store, base_dir=store.base_dir)
+
+    async def _task_due_loop(self) -> None:
+        """Announce the tasks whose due date is coming, every `due_notices.SWEEP_SECS`.
+
+        Like `_clock_loop`, this supplies only what the gateway knows — the one notification choke
+        point — and leaves every rule (when, once, quiet hours, who) to `tasks/due_notices.py`. A
+        sweep that raises is logged and the next one runs: one bad task provider must not end the
+        reminders for good.
+        """
+        from personalclaw.tasks import due_notices
+
+        while True:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                # Started with the other timers, before the dashboard that owns `notify` — so wait
+                # for it rather than skip a whole interval: a notice that fell due while the
+                # gateway was down goes out as it comes back, not five minutes later.
+                await asyncio.sleep(due_notices.STARTUP_POLL_SECS)
+                continue
+            try:
+                await due_notices.run_once(state.notify, now=time.time())
+            except Exception:  # noqa: BLE001 - the loop outlives one failed sweep
+                logger.warning("task due-notice sweep failed", exc_info=True)
+            await asyncio.sleep(due_notices.SWEEP_SECS)
+
+    def _start_event_triggers(self, *, enabled: bool = True) -> None:
+        """Attach the event bus's router, so `kind: "event"` triggers fire in this process.
+
+        The router matches every bus event against the store's `event` rows, admits each match
+        through the clock fire's own gate walk, and dispatches it through `_fire_store_trigger` —
+        see `triggers/event_fire.py`. Until this is attached, a memory write, an inbox message or an
+        app event is spooled for the tick instead (the path every OTHER process takes), which is
+        what makes the gateway the one place an event trigger's action runs.
+
+        `enabled=False` is the `--no-crons` gateway: the router declines events rather than letting
+        them pile up in the spool to fire, late, on the next normal boot.
+        """
+        from personalclaw import event_triggers
+        from personalclaw.triggers.event_fire import EventRouter
+
+        self._stop_event_triggers()
+        router = EventRouter(
+            dispatch=self._fire_store_trigger,
+            loop=asyncio.get_running_loop(),
+            enabled=enabled,
+        )
+        self._event_router = router
+        event_triggers.attach(router)
+
+    def _stop_event_triggers(self) -> None:
+        """Detach the router and cancel the fires still running. Idempotent; never raises."""
+        from personalclaw import event_triggers
+
+        router = getattr(self, "_event_router", None)
+        if router is None:
+            return
+        event_triggers.detach(router)
+        self._event_router = None
+        for task in list(getattr(router, "_pending", ())):
+            task.cancel()
+
+    @_background_write_surface
+    async def _fire_store_trigger(
+        self,
+        trigger: Any,
+        payload: dict[str, Any],
+        *,
+        event: str = "trigger.fired",
+        context: str = "",
+        source: str = "",
+    ) -> str:
+        """Run one store-backed trigger's declared action through the action-provider registry.
+
+        THE dispatch for every store-backed fire — clock, file, web_watch, webhook, view, chained,
+        event, and a run an agent, an app or a program asked for — so each executes the same action
+        the same way; the dashboard reaches it for a webhook's request, a view's render and a run
+        someone other than you asked for (`DashboardState.fire_trigger`). A failed action is logged
+        rather than raised: the outcome belongs to the executor's typed classification, and a raise
+        here would strand the rest of the drain.
+
+        `event` labels the source to the provider (`file.changed`, `memory.create`, …) and `context`
+        is the free-form `$CONTEXT` line a template renders; only an event fire has one to give.
+        `source` is who asked for the fire (`triggers.run_source`), and every row it writes says
+        it; a fire nobody asked for by name is its kind's own (`run_source.fired`).
+
+        Returns the id of the history row the fire wrote, ``""`` when it wrote none.
+        """
+        from personalclaw.triggers import run_source
+
+        source = source or run_source.fired(trigger)
+        from personalclaw.action_providers import ActionContext
+        from personalclaw.action_providers.registry import _ensure_default_providers_registered
+        from personalclaw.filled_secrets import handed, masked, masked_answer
+        from personalclaw.triggers import cannot_run
+        from personalclaw.triggers import secrets as _trigger_secrets
+
+        workflow = trigger.workflow or {}
+        inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+        provider_name = str((inline or workflow).get("provider") or "")
+        config = (inline or workflow).get("config") or {}
+        # 🔴 NOTHING TO RUN IS A REFUSED RUN, not a log line. A trigger naming no action, or an
+        # action no app running here provides (its app switched off, removed or failed to start),
+        # used to return here with a warning: no row, no notice, and a Triggers page that showed a
+        # healthy automation which never ran. Refused like the gates below it, with a sentence
+        # naming what is missing, and its owner told once (`triggers.cannot_run`).
+        if not provider_name:
+            return await self._refuse_unrunnable(trigger, cannot_run.NO_ACTION, source=source)
+        _ensure_default_providers_registered()
+        provider = await self._action_provider(provider_name)
+        if provider is None:
+            return await self._refuse_unrunnable(
+                trigger, cannot_run.missing_action(provider_name), source=source
+            )
+
+        # 🔴 THE GRANT, at the dispatch every unattended fire shares (`triggers.grants`). A clock or
+        # event fire meets the frozen-capability fence in `service.admit_fire`; a file, web_watch or
+        # chained fire comes straight here, and nothing on this path read the capability block.
+        # Measured on `main`: an ungranted `bash` file trigger ran on the next change. Refused
+        # before anything else, and written to the Runs history like the denylist's refusal below,
+        # because a refusal only a log knows about is a silent drop.
+        from personalclaw.triggers import grants
+
+        missing = grants.missing(trigger)
+        if missing:
+            refusal = grants.refusal(trigger, missing)
+            logger.warning("trigger %s not run: %s", trigger.id, refusal)
+            run_id = await self._record_refused_fire(
+                trigger, status=Outcome.SKIPPED_GATE.value, error=refusal, source=source
+            )
+            self._push_trigger_refresh()
+            return run_id
+
+        # 🔴 THE INJECTION SCREEN AND THE FENCE, on everything from outside this fire hands its
+        # action: its payload's words, the `$CONTEXT` line an event's fire carries, and what the
+        # run is told started it. They leave the gateway through one door
+        # (`fire_facts.hand_on`, over `outside_text.admit`): read by the screen BEFORE any token is
+        # spent, then fenced as data with the trigger as their source, CLEAN text too, since a
+        # clean verdict means "no known pattern", not "trustworthy". This is the one place every
+        # fire passes on its way to a provider, a webhook's request and a view's render included.
+        # A blocked payload is NEVER auto-retried (`blocked_injection` is terminal by design),
+        # which is why the payload is read by an allowlist of the keys that carry words
+        # (`screen.prose_keys`) rather than ids and URLs that would produce false blocks. What
+        # the run is told started it is read from the event as it arrived, before the per-key
+        # fence would leave nothing to name a file by.
+        from personalclaw.triggers import fire_facts
+
+        fired = await fire_facts.hand_on(trigger, payload, context=context)
+        if fired.refused:
+            groups = ", ".join(fired.refused)
+            logger.warning(
+                "trigger %s: payload blocked by the injection screen (%s); not retried",
+                trigger.id,
+                groups,
+            )
+            # 🔴 A TYPED HISTORY ROW, not just a log line. A refusal only a log knows about is a
+            # silent drop: the user sees an automation that stopped, with the reason in a file they
+            # will not read. And `blocked_injection` NEVER auto-retries, so this row is the only
+            # record that will ever exist for this fire.
+            run_id = await self._record_blocked_fire(trigger, groups, source=source)
+            self._push_trigger_refresh()
+            return run_id
+        payload, context, facts = fired.payload, fired.context, fired.facts
+
+        # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch. Workflows
+        # have carried this form and three surfaces tell the author to use it, but a
+        # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
+        # `echo tok={{secret:MY_KEY}}` printed `tok={{secret:MY_KEY}}`. So the only way to make a
+        # trigger authenticate was to paste the credential into `triggers.json`, a file that is
+        # snapshotted, echoed into run records, and rendered in the UI.
+        #
+        # At DISPATCH, never at save: the stored config keeps the placeholder, so the secret is not
+        # on disk. An unresolved key REFUSES rather than substituting "" — an empty Authorization
+        # header produces a remote 401 nobody can trace back to a missing credential. A model
+        # turn's references stay names for its agent's tools to fill (`secrets.resolve_for`, for
+        # both dispatches), and what the action answers is masked of each value filled in.
+        # The refusal is a refused run naming the secret, never its value (`triggers.cannot_run`):
+        # it used to be a log line, so the automation read healthy and never ran.
+        written = config
+        try:
+            config, filled = _trigger_secrets.resolve_for(provider, config)
+        except _trigger_secrets.UnresolvedSecret as exc:
+            return await self._refuse_unrunnable(
+                trigger, cannot_run.missing_secret(exc), source=source
+            )
+
+        # The context the provider will receive, built HERE rather than at the `execute` call so
+        # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
+        # the call shape the other two seams already use. `status_url` is this trigger's own row,
+        # so an action whose effect is a notification can link back to what fired it.
+        from personalclaw.triggers.delivery import status_url as _trigger_status_url
+
+        ctx = ActionContext(
+            event=event,
+            context=context,
+            payload=payload,
+            status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+            trigger_id=str(getattr(trigger, "id", "") or ""),
+            fire_facts=facts.text,
+            fire_files=facts.files,
+            secret_references=_trigger_secrets.handed(provider, config),
+        )
+
+        # 🔴 THE DENYLIST, at the seam that lost it. The denylist was specified for
+        # the THREE dispatch seams every action-provider execution
+        # passes through, "so an app-contributed provider inherits the denylist without knowing it
+        # exists", and the third was `gateway.py:701` — `_run_action_job`, which retired with
+        # `ScheduleService`. The successor that method became inherited the kill switch and
+        # the rung ladder but NOT the denylist: measured, `enforce_action` appeared once in
+        # `hooks.py`, once in `event_triggers.py` and ZERO times here — while this is the dispatch
+        # path for every clock, file, webhook and chained trigger, the busiest unattended path in
+        # the product. Retiring a legacy path is never a pure deletion.
+        #
+        # Placed AFTER `_trigger_secrets.resolve` deliberately: the check must see the config the
+        # provider will actually receive, so a `{{secret:...}}` that expands into a denied command
+        # or a sensitive path is judged on its resolved value and not on a placeholder that dodges
+        # every pattern; its refusal quotes the config as written, the secret by its reference. And
+        # BEFORE the rung ladder, matching both other seams — a rung never relaxes a block, an
+        # incident, or a budget pause.
+        from personalclaw.guardrails.denylist import enforce_action
+        from personalclaw.guardrails.policy import unattended_dispatch_key
+        from personalclaw.guardrails.rungs import announce_withheld, record_execution
+        from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+        # 🔴 THE SESSION IDENTITY, now shared by BOTH gates on this seam (the shape the
+        # retired data-event engine used), so the denylist and the ladder judge one fire under one
+        # resolved posture rather than two. The rung call passed `session_key=""` — which
+        # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
+        # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
+        # store-trigger fire has no chat session by definition, so it gets the sessionless
+        # unattended identity: it resolves HEADLESS and is bounded by the operator ceiling,
+        # and the trigger id rides along so a clamp in the SEL names the automation. Threading it
+        # into `enforce_action` is also what lets the run's `SafetyProfile.denylist_extra` and its
+        # `path_allowlist` confinement layer here exactly as they do at the other two seams.
+        dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
+        decision = enforce_action(
+            provider_name, config, ctx, session_key=dispatch_key, written=written
+        )
+        if decision.blocked:
+            logger.warning(
+                "trigger %s: action blocked by the guardrails denylist (%s)",
+                trigger.id,
+                decision.matched or "",
+            )
+            # `skipped_gate`, the same status the rung hold below records: a denylist block is a
+            # pre-dispatch POLICY refusal, which is the class `_REFUSAL_STATUSES` admits.
+            # `Outcome.REFUSED` reads closer in prose but is not in that tuple, and an unmapped
+            # status falls to `SCHEDULE_STATUS_TO_OUTCOME`'s silent FAILED default — a defended
+            # fire would then appear in the user's history as a broken automation.
+            # `enforce_action` has already written the SEL row and, for `needs_human`, fired the
+            # notification; this row is what puts the refusal in the Runs history too, in the
+            # words a workflow step refused by the same rule records (`DenyDecision.refusal`).
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            run_id = await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=decision.refusal(),
+                source=source,
+            )
+            self._push_trigger_refresh()
+            return run_id
+
+        # 🔴 RUNG ROUTING, at the seam the retired one became. The third dispatch seam
+        # was `_run_action_job`; that method retired with
+        # `ScheduleService` and, per the note at its old site, "the substrate GENERALIZED
+        # both: action dispatch is `_fire_store_trigger`". So this IS the third seam, under a new
+        # name — and it is the one every clock / file / webhook / chained / data-event trigger
+        # passes through. Wiring only the other seams would honour a declared floor at some
+        # dispatch points and not this one, which is the same shape as not honouring it at all.
+        #
+        # The route comes from the provider NAME; the name→type mapping lives on the declaration
+        # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
+        # here with no branch of its own.
+        route = _route_action(provider_name, session_key=dispatch_key)
+        if not route.executes:
+            announce_withheld(
+                route,
+                title=f"{provider_name} is waiting for you",
+                body=(
+                    f"The {provider_name!r} action on trigger {trigger.id} did not run: "
+                    f"{route.reason}."
+                ),
+                refs={"trigger": str(getattr(trigger, "id", "") or ""), "provider": provider_name},
+                dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
+            )
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            run_id = await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=f"held for your approval: {route.reason}",
+                source=source,
+            )
+            self._push_trigger_refresh()
+            return run_id
+
+        # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one.
+        # `_day_budget_exceeded` was WRITTEN to be this gate — its own docstring says it is "used as
+        # a pre-dispatch gate for unattended LLM work (cron agent fires)" — and it had ZERO
+        # production callers. Measured at `171a613ae`: `day_budget_exceeded` appears once in `src/`,
+        # on its own `def` line, and only tests ever called it. Its caller was `_run_action_job`,
+        # which retired with `ScheduleService`; the successor seam inherited neither this
+        # gate nor the denylist nor the failure wrap — the third time that retirement was
+        # found to have dropped a control it never re-attached.
+        #
+        # What that cost: the ceiling `settings/GuardrailsPanel.tsx:55` promises will pause "a cron
+        # fire" was enforced only at the model-call layer (`model_call.py:302`), which a `bash` or
+        # `http` action never reaches at all — so a per-minute trigger over its day ceiling kept
+        # firing — and which, when it IS reached, raises into the fire's error path and reports a
+        # BROKEN automation rather than a deliberate pause.
+        #
+        # The TOKEN ceiling only: it counts every call, so work started past it could do nothing.
+        # The dollar ceiling limits the calls that cost money and the guard refuses each of those,
+        # so a fire whose work costs nothing still runs past it (`_day_budget_exceeded`).
+        #
+        # `needs_input`, not `skipped_gate`: the fire is a pause into needs-input,
+        # and `executor.STATUS_TO_OUTCOME` already maps that status to `Outcome.DEFERRED` — "parked
+        # awaiting a human", the one reading of DEFERRED that means a ceiling only a person can
+        # lift. `skipped_gate` is in `INERT_OUTCOMES` and folds OUT of the default runs inbox, which
+        # would hide the very pause the user is meant to act on.
+        #
+        # LAST of the pre-dispatch gates deliberately: when a denylist block or a rung hold also
+        # applies, the row must record the SECURITY verdict, not a budget pause. A rung cannot
+        # relax this — a withheld action returned above and spent nothing.
+        #
+        # Recording cannot wedge the fire: `_day_budget_exceeded` fail-opens on any error, and both
+        # calls below swallow their own failures, so a bookkeeping fault can never turn a pause into
+        # a stuck automation. The one-shot `_budget_notified` de-dupe stays INSIDE the gate where it
+        # belongs — it exists so a per-minute trigger does not raise one toast per fire — while the
+        # outcome row is written per fire, because a fire that was skipped produced an outcome and
+        # suppressing it would drop the row that makes the pause legible in the runs feed.
+        if self._day_budget_exceeded(context=f"trigger {getattr(trigger, 'id', '') or ''}"):
+            run_id = await self._record_refused_fire(
+                trigger,
+                status="needs_input",
+                error=(
+                    "paused — the daily token budget is spent. Unattended runs resume "
+                    "tomorrow, or raise the budget in Settings → Guardrails."
+                ),
+                source=source,
+            )
+            self._push_trigger_refresh()
+            return run_id
+
+        fire_started = time.time()
+        # The row the run's record writes, which the fire answers with.
+        run_id = ""
+        # Whether the action itself is under way, and whether a stop cancelled this fire at all:
+        # only an action a stop interrupted is a run cut off, and no chain starts while it stops.
+        running = cut_off = False
+        # Whether the action only STARTED its work (an agent task, a workflow run): the chain then
+        # waits for that work to end, where `_chain_after_work` fires it.
+        started_only = False
+        try:
+            # 🔴 The MODE DEFAULT the legacy dispatcher applied (300s for a command, 30s
+            # otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
+            # budget. This call passed nothing, so every store-backed bash fire took the
+            # 30s SIGNATURE default and a migrated `zt_timeout: 600` cron was cut to 30. The
+            # per-action override lives in the config and is honoured by the provider itself (both
+            # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
+            # Shared with the Run button (`firepath.action_timeout`), so a hand-run gets the same.
+            from personalclaw.triggers.firepath import action_timeout
+
+            timeout = action_timeout(provider_name)
+            # 🔴 THE RESULT WAS DISCARDED. `await provider.execute(...)` threw
+            # its return value away, so nothing on this path knew if a fire SUCCEEDED. Measured:
+            # six consecutive failing provider runs left `health_status: 'ok'` with an empty
+            # `last_failure_at` and `enabled: True` — the promised "autopause after 5" could not
+            # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
+            # production code and the counter it spends had no writer.
+            # 🔴 BIND the fire's run scope (`calendar.run_scope`), so its model spend is
+            # ATTRIBUTABLE and held to the automation's `max_cost_usd_per_run`. A ContextVar
+            # rather than a parameter: the guard is built by `provider_bridge` from provider
+            # config and has no run identity, and threading one in would touch all 33 call sites
+            # that reach the bridge. A run by hand binds the same scope
+            # (`trigger_runs._dispatch_store_action`).
+            from personalclaw.net.policy import egress_held_to
+            from personalclaw.triggers.calendar import run_scope
+
+            running = True
+            # What the action reaches is held to the egress tier of the identity both gates
+            # above judged it under. Nothing else names the fire's run to the guard: without
+            # this, a ceiling that gives no run on this machine any network let a fire's
+            # webhook or fetch go out. What it writes itself as it runs (an audit row, a log
+            # line) is masked of each value filled in (`filled_secrets.handed`).
+            with run_scope(trigger), egress_held_to(dispatch_key), handed(filled):
+                result = await provider.execute(config, ctx, timeout=timeout)
+            running, result = False, masked_answer(result, filled)
+            # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for
+            # an action that succeeded — a failed action has nothing to take back.
+            if bool(getattr(result, "success", False)):
+                record_execution(
+                    route,
+                    result,
+                    label=provider_name,
+                    refs={
+                        "trigger": str(getattr(trigger, "id", "") or ""),
+                        "provider": provider_name,
+                    },
+                )
+            # The tick's word on lateness rides the fire (`DueFire.late`); only the run's record
+            # knows whether it then ran, so that is where it becomes `ran_late`.
+            from personalclaw.triggers import run_record
+
+            run_id = await run_record.record_run(
+                trigger,
+                started_at=fire_started,
+                result=result,
+                late=str(payload.get("late") or ""),
+                source=source,
+                state=getattr(self, "dashboard_state", None),
+                on_attention=self._surface_attention_card,
+            )
+            fired_ok = bool(getattr(result, "success", True))
+            # An action that only STARTED its work (an agent task, a workflow run) or parked it
+            # says nothing yet: "<name> finished" went out the moment the agent started. The work
+            # reports on the trigger's route when it ends (`_report_to_its_trigger`), and a
+            # parked one asks in the Inbox. One that had nothing to do says nothing at all.
+            from personalclaw.triggers import delivery as _delivery
+            from personalclaw.triggers.chain import waits_for_its_work
+
+            started_only = fired_ok and waits_for_its_work(result)
+
+            if not (fired_ok and _delivery.says_nothing_now(result)):
+                from personalclaw.schedule_history import failure_for_result, summary_for_result
+
+                # What the action produced, in the words its history row has, or why it failed,
+                # as the raise path below sends its envelope. The note carried neither: a command
+                # that printed its result, or wrote why it failed, reached the bell and its chat
+                # channel as "<name> finished" or "<name> failed", nothing more.
+                _delivery.report_run(
+                    getattr(self, "dashboard_state", None),
+                    trigger,
+                    ok=fired_ok,
+                    summary=summary_for_result(result) if fired_ok else "",
+                    error="" if fired_ok else failure_for_result(result),
+                )
+        except asyncio.CancelledError:
+            # 🔴 A STOP OR A RESTART CUT THIS FIRE OFF. It cancels the loop the fire runs in, and a
+            # cancellation is not an `Exception`: the branch below never saw it, the executor gave
+            # the claim back, and the run was recorded nowhere — no row, no card. Recorded now,
+            # before the cancellation goes on its way — when it was the action that was stopped;
+            # one that landed after the action returned interrupted only the bookkeeping.
+            cut_off = True
+            if running:
+                self._record_stopped_fire(trigger, started_at=fire_started, source=source)
+            raise
+        except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            # A provider that RAISES (rather than returning a failed result) is wrapped in the
+            # shared WHAT/WHY/FIX envelope here — the same wrap the hook seam (`hooks.py`) applies —
+            # so an app-contributed provider surfaces a coded, actionable failure on this (busiest,
+            # unattended: clock/file/webhook/chained/event) dispatch path instead of a bare
+            # ``TypeName: msg``. Retiring `_run_action_job` dropped this wrap the way it dropped the
+            # denylist: the successor seam inherited neither. Built ONCE, masked of what was filled
+            # in (as its traceback in the log is), it feeds BOTH sinks: the run record and the note.
+            from traceback import format_exc
+
+            from personalclaw.action_providers import provider_failure
+
+            trace = masked(format_exc(), filled)
+            logger.warning("trigger %s: action failed\n%s", trigger.id, trace)
+            rendered = masked(provider_failure(provider_name, exc).render(), filled)
+            from personalclaw.triggers import run_record
+
+            run_id = await run_record.record_run(
+                trigger,
+                started_at=fire_started,
+                exc=exc,
+                error=rendered,
+                source=source,
+                state=getattr(self, "dashboard_state", None),
+                on_attention=self._surface_attention_card,
+            )
+            from personalclaw.triggers import delivery as _delivery
+
+            _delivery.report_run(
+                getattr(self, "dashboard_state", None), trigger, ok=False, error=rendered
+            )
+        finally:
+            # 🔴 THE LIVE REFRESH. `ScheduleService._record_run` pushed `cron_history` so
+            # the Executions/Logs views update without polling — and `_record_run` is reachable only
+            # from `run_job` (manual) and `_run_job_isolated` (the retired timer). So since the
+            # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
+            # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
+            self._push_trigger_refresh()
+            # 🔴 THE CHAIN. `run_completed` was a declared kind with NO firing path: measured,
+            # a `run_completed` trigger pointed at a real clock trigger was reached by nothing — not
+            # the tick, not either poller. So "when my nightly backup finishes, notify me" was
+            # creatable, listed in the UI, and permanently silent.
+            #
+            # Chained HERE because this is the single point every store-backed run completes, so a
+            # chain inherits the same dispatch — and therefore the same gates, including the kill
+            # switch and the capability fence. A chain with its own dispatch path would be a second
+            # place for those controls to be forgotten, which is exactly how the `web_watch` gap
+            # happened. After the refresh, so a slow chain never delays the view update.
+            #
+            # Not after a run a stop cut off: it did not complete, and a `run_completed` chain
+            # started while the gateway stops would be one more run cut off. Nor after an action
+            # that only started its work: what runs after it runs when that work ends.
+            if not cut_off and not started_only:
+                await self._fire_chained_triggers(source_trigger=trigger.id, payload=payload)
+            elif started_only:
+                from personalclaw.triggers.chain import hold_chain
+
+                hold_chain(trigger.id, payload)
+        return run_id
+
+    def _record_stopped_fire(self, trigger: Any, *, started_at: float, source: str) -> None:
+        """Record a fire a stop or a restart cut off. Never raises.
+
+        Recorded as the boot pass records a run whose owner died — the `interrupted` row, the
+        trigger's stamps and health and the review card (`reaper.record_stopped_run`) — with a
+        reason that names the restart, or the stop. The next start announces it, in its one notice
+        (`_record_boot_review`). Synchronous: it runs inside the cancellation, where an await could
+        be cancelled again before the row is written.
+        """
+        try:
+            from personalclaw import restart_request
+            from personalclaw.triggers import reaper
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            reaper.record_stopped_run(
+                str(getattr(trigger, "id", "") or ""),
+                started_at=started_at,
+                restarting=restart_request.pending() is not None,
+                source=source,
+                # Routed, as a run's record is (`run_record.record_run`): a trigger an app serves
+                # keeps its stamps where it lives.
+                store=routed(TriggerStore(base_dir=home)),
+                base_dir=home,
+            )
+        except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
+            logger.warning("could not record the fire a stop cut off: %s", trigger, exc_info=True)
+
+    def _record_stopped_agents(self) -> None:
+        """Close the runs of the triggers whose agents this stop is about to cut off. Never raises.
+
+        An agent a trigger's action started (`invoke-agent`, `run-prompt`) outlives the action,
+        which returned once it started it, so its run waits as `launched` on the agent's ending.
+        Cancelled by the stop, the agent ends "cancelled", and that ending read as the run failing:
+        "<name> failed · cancelled", in its history and on the bell. Each one is closed first, as
+        interrupted by the stop (`reaper.record_stopped_work`), and its agent is remembered so its
+        own ending is not reported again (`_subagent_done`). Synchronous, and run with nothing
+        awaited between it and the cancel, so no agent ends in between unrecorded.
+        """
+        manager = getattr(self, "subagent_mgr", None)
+        if manager is None:
+            return
+        try:
+            from personalclaw import restart_request
+            from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+            from personalclaw.subagent import agent_work_id
+            from personalclaw.triggers import reaper
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            store = routed(TriggerStore(base_dir=home))
+            restarting = restart_request.pending() is not None
+            for info in list(manager.running):
+                trigger_id = getattr(info, "trigger_id", "")
+                # A lifecycle hook's agent keeps no run rows (`triggers.settle`).
+                if not isinstance(trigger_id, str) or not trigger_id:
+                    continue
+                if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+                    continue
+                if reaper.record_stopped_work(
+                    trigger_id,
+                    work_id=agent_work_id(info.id),
+                    restarting=restarting,
+                    store=store,
+                    base_dir=home,
+                ):
+                    self._stopped_agents.add(info.id)
+        except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
+            logger.warning("could not record the runs a stop cut off", exc_info=True)
+
+    def _record_boot_review(
+        self,
+        report: dict[str, Any],
+        interrupted: list[dict[str, Any]],
+        *,
+        base_dir: Any = None,
+    ) -> None:
+        """Keep what the boot passes found for the user to decide, then say so once.
+
+        The missed slots (`report["review"]`) and the runs a restart interrupted become cards on
+        the Triggers page (`triggers/review.py`), where each is run now or dismissed. Neither is run
+        on its own: a missed slot is sometimes right to run late and sometimes exactly wrong, and an
+        interrupted run may already have done part of its work. Never raises, like the passes it
+        follows: the schedules are re-armed and the runs closed whether or not this lands.
+
+        The runs the stop before this start cut off are already on the review (the stop kept their
+        cards, `reaper.record_stopped_run`), and this notice is the first to count them
+        (`review.take_unannounced`): one notice per restart, sent once the gateway can deliver it.
+        """
+        cards: list[Any] = []
+        try:
+            from personalclaw.triggers import review as _review
+
+            cards = _review.cards_from_boot(report) + _review.cards_from_orphans(
+                interrupted, now=time.time()
+            )
+            _review.record(cards, base_dir=base_dir)
+            cards += _review.take_unannounced(base_dir=base_dir)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.warning("could not keep the boot's trigger review", exc_info=True)
+        if getattr(self, "dashboard_state", None) is None:
+            # The boot passes run before the dashboard exists (`start` runs `_init_cron` before
+            # `_init_dashboard`), so a notice sent now reaches nothing: `_surface_missed_review`
+            # returns without a state, and the "Missed scheduled runs" notice was never shown
+            # after a real restart. Held until the dashboard is up (`_surface_held_boot_review`).
+            self._held_boot_review = (report, cards)
+            return
+        self._surface_missed_review(report, cards)
+
+    def _surface_held_boot_review(self) -> None:
+        """Send what the boot passes found once the dashboard can deliver it.
+
+        The missed-run notice the passes held (`_record_boot_review`), the background agents a
+        previous run left behind (`_settle_left_behind_agents`), and the review item for the
+        triggers a legacy import brought over and switched off (`legacy_import.announce`). The
+        import runs in `_init_cron`, long before the inbox service exists, so its item is raised
+        here — from the rows still waiting in the store, which is also what makes it survive a
+        crash between the import and this line.
+        """
+        held = getattr(self, "_held_boot_review", None)
+        if held is not None:
+            self._held_boot_review = None
+            self._surface_missed_review(*held)
+        if getattr(self, "subagent_mgr", None) is not None:
+            # The agents the previous run was running when it stopped: settled now, and named in
+            # one notice, which is why this waits for the dashboard rather than running at spawn.
+            settle = asyncio.create_task(self._settle_left_behind_agents())
+            self._background_tasks.add(settle)
+            settle.add_done_callback(self._background_tasks.discard)
+        try:
+            from personalclaw.triggers import legacy_import
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            legacy_import.announce(
+                getattr(self, "dashboard_state", None),
+                store=TriggerStore(base_dir=home),
+                home=home,
+            )
+        except Exception:  # noqa: BLE001 - the rows wait on the Triggers page either way
+            logger.warning(
+                "could not announce the triggers a legacy import brought over", exc_info=True
+            )
+
+    async def _settle_left_behind_agents(self) -> None:
+        """Stop and tombstone the background agents a previous run left, take back the ones it left
+        waiting to start (`subagent_waiting.take_back`), then tell the owner what became of each."""
+        from personalclaw.subagent_orphans import announce_orphans, reconcile_orphans, tracked_by
+        from personalclaw.subagent_waiting import take_back
+
+        manager, state = self.subagent_mgr, self.dashboard_state
+        if manager is None:
+            return
+        settled = await reconcile_orphans(tracked_by(manager))
+        chats = functools.partial(chat_persistence.why_no_report_reaches, state) if state else None
+        announce_orphans(state, settled, take_back(manager, chats))
+
+    def _surface_missed_review(self, report: dict[str, Any], cards: list[Any]) -> None:
+        """Put the boot's review in front of the owner: ONE notice (`review.boot_notice`), read off
+        the *cards* it keeps on the Triggers page, as a decision the owner owes (`RUN_REVIEW`), so
+        quiet hours record it silently instead of dropping it. Goes through `state.notify` like
+        every other substrate notification (no second path). Never raises: the sweep already
+        re-armed the schedule, and failing to announce it must not undo that; a failure is a
+        WARNING, because the card is then the only trace.
+        """
+        try:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            from personalclaw.triggers.review import boot_notice
+
+            notice = boot_notice(report, cards)
+            if notice is not None:
+                state.notify(kind=notification_kinds.RUN_REVIEW, **notice)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.warning("could not surface the missed-fire review", exc_info=True)
+
+    def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
+        """Put an autopaused/quarantined trigger in front of the user.
+
+        🔴 `attention_card` returns None for a still-firing or parked trigger, which is why the
+        control flow here is "if card: send it" — the module deliberately makes it impossible to
+        write a card that says nothing.
+
+        Handed one decision per episode: the recorder calls this when a run's ending moves the
+        trigger INTO a state that needs attention (`run_record._take`), never for one that leaves
+        it there, so a trigger that goes autopaused → resumed → autopaused alerts twice and a paused
+        one nothing more. The card says why with what the run that failed last said, masked as every
+        note a trigger sends is (`delivery`'s redaction): an agent's error is the agent's text.
+
+        Goes through `state.notify` like every other substrate notification (no second path),
+        so a muted channel stays muted. Never raises — the pause already happened, and failing to
+        announce it must not undo it.
+        """
+        try:
+            from personalclaw.security import redact_or_withhold
+            from personalclaw.triggers import autopause
+
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            card = autopause.attention_card(
+                trigger_id=str(getattr(trigger, "id", "") or ""),
+                trigger_name=str(getattr(trigger, "name", "") or ""),
+                decision=decision,
+                last_error=str(getattr(trigger, "last_error_summary", "") or ""),
+            )
+            if card is None:
+                return
+            state.notify(
+                kind="warning",
+                title=redact_or_withhold(card.title),
+                body=redact_or_withhold(card.body),
+                meta={
+                    "event": "automation.needs_attention",
+                    "statusUrl": f"#/triggers?open={card.trigger_id}",
+                    "trigger_id": card.trigger_id,
+                    "state": card.state,
+                    "actions": list(card.actions),
+                },
+            )
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
+
+    def _announce_ended_work(self, infos: list[SubagentInfo]) -> None:
+        """`EngineServices.announce`: hand the conversation that started a subagent batch how
+        each of its tasks ended, as ONE delivery of the subagent completions it reads (the
+        announce `_init_subagents` hands its manager), in the turn or thread that started it.
+
+        Scheduled rather than awaited: it is asked from a run's terminal write, which must never
+        wait on a chat's turn.
+        """
+        deliver = self._announce_subagents
+        if deliver is None or not infos:
+            return
+        task = asyncio.ensure_future(deliver(list(infos)))
+        held = getattr(self.dashboard_state, "_background_tasks", None)
+        if isinstance(held, set):
+            held.add(task)
+            task.add_done_callback(held.discard)
+
+    def _report_to_its_trigger(
+        self, trigger_id: str, *, error: str = "", summary: str = "", run_id: str = ""
+    ) -> bool:
+        """Say how the work a trigger started went, on that trigger's route, once it has ended:
+        "<name> finished" and what it produced, or "<name> failed" and ``error``.
+
+        For an agent task (`_subagent_done`) and a workflow run (`EngineServices.
+        report_to_trigger`): the fire, or the Run now, that started either said nothing, since
+        nothing had happened yet (`delivery.says_nothing_now`). Returns whether the trigger has
+        spoken for it (`delivery.report_run`): its note went out, a repeat it collapses was told
+        when it first failed, or its route is ``none`` and says nothing. False when the trigger
+        cannot be read or its note could not go out, and then the agent's own note tells it.
+
+        A one-shot that retires after its run (`delete_after_run`) and only started this work
+        leaves the list here, once the work has done what it was for and the note has gone out:
+        the note is read off the row, so the row is the last thing to go.
+        """
+        if not trigger_id:
+            return False
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.store import TriggerStore
+
+            store = routed(TriggerStore(base_dir=config_dir()))
+            row = store.get(trigger_id)
+        except Exception:  # noqa: BLE001 - a lookup that fails reports nothing, never raises
+            logger.debug("could not read trigger %s for its report", trigger_id, exc_info=True)
+            return False
+        if row is None:
+            return False
+        from personalclaw.triggers import delivery as _delivery
+
+        told = _delivery.report_run(
+            getattr(self, "dashboard_state", None),
+            row.trigger,
+            ok=not error,
+            error=error,
+            summary=summary,
+            run_id=run_id,
+        )
+        if not error:
+            try:
+                from personalclaw.triggers.service import retire_after_run
+
+                retire_after_run(store, row.trigger, status="success")
+            except Exception:  # noqa: BLE001 - the report is out; a failed retire leaves the row
+                logger.debug("could not retire trigger %s after its run", trigger_id, exc_info=True)
+        return told
+
+    async def _record_blocked_fire(self, trigger: Any, groups: str, *, source: str) -> str:
+        """Write the `blocked_injection` ledger row for a screened payload.
+
+        ASYNC because `ScheduleRunStore.append` is. mypy caught the sync version as an
+        unused coroutine — i.e. the row would never have been written at all, which is a
+        neater demonstration of the point than anything I could contrive.
+
+        Best-effort by construction: a bookkeeping failure must not change the SECURITY decision.
+        The payload is refused before this runs, so the worst case is a refusal with no row —
+        exactly what shipped before this row existed, never a re-opened hole.
+
+        The screened TEXT is deliberately not stored, and the discipline generalises: a
+        blocked payload is hostile third-party content, and copying it into a store the UI renders
+        would move an injection attempt out of a refused fire and into a surface a human reads. The
+        matched GROUPS name the pattern class, which is what tells a real attack from a false
+        positive.
+        """
+        return await self._record_refused_fire(
+            trigger,
+            status="blocked_injection",
+            error=f"payload blocked by the injection screen ({groups}); never retried",
+            source=source,
+        )
+
+    async def _action_provider(self, name: str) -> Any:
+        """The action provider *name* resolves to, or None.
+
+        Waits first for this gateway's apps to start, while they have not: the clock and the event
+        router start before the dashboard loads the apps (`run`), so a fire in that window found an
+        app's action missing and was dropped. At most `APPS_START_WAIT_SECS`; an orchestrator that
+        is not running (`run` never set the event up) waits for nothing.
+        """
+        from personalclaw.action_providers import get_action_provider
+
+        provider = get_action_provider(name)
+        started = getattr(self, "_apps_started", None)
+        if provider is None and started is not None and not started.is_set():
+            try:
+                await asyncio.wait_for(started.wait(), timeout=APPS_START_WAIT_SECS)
+            except TimeoutError:
+                logger.warning(
+                    "the apps had not started %.0fs after a fire needing the %r action",
+                    APPS_START_WAIT_SECS,
+                    name,
+                )
+            provider = get_action_provider(name)
+        return provider
+
+    async def _refuse_unrunnable(self, trigger: Any, why: str, *, source: str) -> str:
+        """Refuse a fire with nothing it can run (`triggers.cannot_run`): its refused row, its last
+        run on the Triggers page and, the first time for *why*, one notice. The row's id. Never
+        raises."""
+        from personalclaw.triggers import cannot_run
+
+        run_id = await cannot_run.refuse(
+            trigger, why, source=source, state=getattr(self, "dashboard_state", None)
+        )
+        self._push_trigger_refresh()
+        return run_id
+
+    async def _record_refused_fire(
+        self, trigger: Any, *, status: str, error: str, source: str
+    ) -> str:
+        """Write ONE ledger row for a fire a gate refused before the provider was called, saying
+        what started the fire (*source*). Returns the row's id, ``""`` when none was written.
+
+        Shared by every pre-dispatch refusal on this path (the injection screen, the rung
+        ladder), because a refusal only a log knows about is a silent drop — and two copies
+        of this row would be two chances to write a `status` no projection maps, which reads
+        in the user's history as a genuine failure.
+
+        ``status`` must be one of :data:`_REFUSAL_STATUSES`. Refused rather than written,
+        because the projection table reads statuses with a `.get(status, FAILED)` — a status
+        nobody mapped is indistinguishable from one somebody decided about, and it lands in
+        the user's history as a genuine failure.
+        """
+        if status not in _REFUSAL_STATUSES:
+            logger.error(
+                "refusing to record fire status %r: not one of %s", status, _REFUSAL_STATUSES
+            )
+            return ""
+        try:
+            import time as _time
+
+            from personalclaw.config.loader import config_dir
+            from personalclaw.schedule_history import ScheduleRun
+
+            now = _time.time()
+            run_id = f"{status}-{int(now * 1000)}"
+            await ScheduleRunStore(config_dir()).append(
+                ScheduleRun(
+                    run_id=run_id,
+                    job_id=str(getattr(trigger, "id", "") or ""),
+                    job_name=str(getattr(trigger, "name", "") or ""),
+                    trigger=status,
+                    source=source,
+                    started_at=now,
+                    finished_at=now,
+                    status=status,
+                    error=error,
+                )
+            )
+            return run_id
+        except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
+            logger.debug("could not record the refused-fire row for %s", trigger, exc_info=True)
+            return ""
+
+    async def _fire_chained_triggers(
+        self,
+        *,
+        source_trigger: str = "",
+        payload: dict[str, Any] | None = None,
+        source_def: str = "",
+        source_run: str = "",
+    ) -> None:
+        """Fire every `run_completed` trigger waiting on the work that just ended: a
+        trigger's run (*source_trigger*), and when the work was a workflow run, that run
+        (*source_run*) and any run of its workflow (*source_def*).
+
+        Never raises: a chain is a convenience layered on a completed run, and letting it fail the
+        run it followed would make chaining strictly worse than not chaining.
+
+        The depth cap and cycle detection live in `chain.next_fires`, whose refusals are written to
+        each refused trigger's history (`chain.record_refusals`) — a chain that stopped silently is
+        indistinguishable from one that was never configured.
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers import chain
+            from personalclaw.triggers.store import TriggerStore
+
+            fires, refused = chain.next_fires(
+                TriggerStore(base_dir=config_dir()),
+                source_id=source_trigger,
+                source_payload=payload,
+                source_def=source_def,
+                source_run=source_run,
+            )
+            await chain.record_refusals(refused, base_dir=config_dir())
+            for chained, chained_payload in fires:
+                await self._fire_store_trigger(chained, chained_payload, event="trigger.chained")
+        except Exception:  # noqa: BLE001 - a chain must never fail the run it followed
+            logger.warning(
+                "chain dispatch failed after %s", source_trigger or source_run, exc_info=True
+            )
+
+    def _chain_after_work(self, **chained: Any) -> None:
+        """Fire what waits on work that has just ended, off the path that ended it
+        (`EngineServices.run_ended`, an agent task's end): the run's terminal write and the agent's
+        report never wait on a chained action. Never raises."""
+        try:
+            task = asyncio.get_running_loop().create_task(self._fire_chained_triggers(**chained))
+        except RuntimeError:  # no running loop: nothing can fire, and nothing should raise
+            logger.debug("no loop to chain after %s", chained, exc_info=True)
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _chain_after_workflow_run(self, run: Any, *, status: str, summary: str = "") -> None:
+        """`EngineServices.run_ended`: a workflow run ended, so what waits on it runs now — on the
+        run itself, on any run of its workflow, and on the trigger that started it."""
+        from personalclaw.triggers.chain import run_end_payload
+
+        origin = getattr(run, "origin", None)
+        self._chain_after_work(
+            source_trigger=str(getattr(origin, "trigger_id", "") or ""),
+            payload=run_end_payload(run, status=status, summary=summary),
+            source_def=str(getattr(run, "workflow_name", "") or ""),
+            source_run=str(getattr(run, "id", "") or ""),
+        )
+
+    async def _file_watch_poll_loop(self) -> None:
+        """Poll `file` triggers and fire the ones whose watched paths changed.
+
+        This is the runtime that makes a chat-created "when a file in ~/notes changes…" automation
+        actually fire. It is DISJOINT from `ScheduleService`: that fires clock crons and reads
+        no `file` trigger, and the tick clock (`service.due_ids`) never surfaces a `file` trigger
+        (it has no `next_fire_at`). So running this beside the cron loop cannot double-fire anything
+        — which is what lets it land as an additive cutover rather than the clock switch-over the
+        roadmap still defers.
+
+        Incident mode suspends it, matching `_cron_callback`: an unattended fire is an unattended
+        fire regardless of what triggered it. One bad watch never stops the loop for the others
+        (`poll_all` isolates each), and the loop never dies on an exception — a poll loop that threw
+        once and stopped would silently retire every file automation the user has.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import file_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(file_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                for payload in file_poll.poll_all(store):
+                    await self._fire_file_trigger(payload)
+                # The watched scratchpad. It rides THIS loop
+                # rather than adding a third poll task: it is the same "a local file changed" clock
+                # at the same cadence, and its own fingerprint check makes an unchanged file one
+                # `stat`. Deliberately NOT a store trigger — a scratchpad line never starts a run,
+                # so there is no action to dispatch and nothing for the capability fence to guard;
+                # it raises an inbox PROPOSAL and stops. Incident mode already suspended above,
+                # which is right: proposing work is still unattended background activity.
+                await asyncio.to_thread(self._scan_scratchpad)
+                # The earned-autonomy promotion scan. Rides this loop for the same
+                # reason the scratchpad does — it is a periodic "look at local state and
+                # raise a proposal" pass with nothing to dispatch — but on its OWN much
+                # slower clock, because each pass reads the SEL tail once per declared
+                # action type. Self-throttled rather than given a task of its own.
+                await asyncio.to_thread(self._scan_autonomy_promotions)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    def _scan_autonomy_promotions(self) -> None:
+        """Raise a proposal for every action type that has EARNED its next rung.
+
+        The ladder only ever climbs on a click, so an earned rung has to travel to the user
+        instead of waiting to be found in a Settings panel — that is the difference between
+        a promotion the user chose and a promotion nobody ever hears about. The proposals
+        are deduped per (type, rung), so re-running this costs nothing and re-raises nothing.
+
+        Never promotes and never raises: this scan cannot change a rung, and a failed scan
+        must not stop the file fires that share the loop.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        if now - self._last_autonomy_scan < _AUTONOMY_PROPOSAL_INTERVAL_SECS:
+            return
+        self._last_autonomy_scan = now
+        try:
+            from personalclaw.guardrails.ladder import propose_promotions
+            from personalclaw.workflows.handlers import promotion_attention_note
+
+            proposed = propose_promotions(note_for=promotion_attention_note)
+            if proposed:
+                logger.info(
+                    "autonomy: proposed a promotion for %d action type(s): %s",
+                    len(proposed),
+                    ", ".join(proposed),
+                )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy promotion scan failed", exc_info=True)
+        # Mechanical revocation, nodding leg. The other three triggers fire at
+        # their own conclusion events; a nodding gate is a STANDING condition with no
+        # event, so this sweep carries it — gateway-side, because guardrails must not
+        # import the workflows layer (the same inversion as `note_for` above). The
+        # journal walk is priced only when something is actually at stake: with no
+        # standing grant there is nothing to revoke, and revocation's natural
+        # idempotence (a revoked scope holds no grant) keeps a persistent nodding gate
+        # from re-firing every sweep.
+        try:
+            from personalclaw.guardrails.autonomy import registered_action_types, rung_state
+            from personalclaw.guardrails.ladder import revoke_granted_scopes
+            from personalclaw.workflows.handlers import nodding_revocation_cause
+
+            any_granted = any(
+                (state := rung_state(spec.key)) is not None and state.granted_at
+                for spec in registered_action_types()
+            )
+            if any_granted:
+                cause = nodding_revocation_cause()
+                if cause:
+                    revoked = revoke_granted_scopes(
+                        cause=cause,
+                        evidence_id="nodding_gate",
+                        source="nodding_loop",
+                    )
+                    if revoked:
+                        logger.warning(
+                            "autonomy: nodding gate revoked %d grant(s): %s",
+                            len(revoked),
+                            ", ".join(revoked),
+                        )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy nodding revocation sweep failed", exc_info=True)
+        # Lab/field divergence: a subject whose lab score rose while its live
+        # field trend fell files the demotion signal mechanically. A divergence is
+        # a STANDING condition like the nodding gate above, so it rides the same sweep;
+        # it lives in the evals layer (which may import both guardrails and workflows)
+        # and prices its own reads — no standing grant anywhere means it returns
+        # immediately, and both demotion paths gate on a standing grant, so a
+        # persistent divergence files once and then nothing.
+        try:
+            from personalclaw.evals.field_metrics import sweep_lab_field_divergence
+
+            demoted = sweep_lab_field_divergence()
+            if demoted:
+                logger.warning(
+                    "autonomy: lab_field_divergence filed demotions for %d subject(s): %s",
+                    len(demoted),
+                    ", ".join(demoted),
+                )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("lab_field_divergence sweep failed", exc_info=True)
+
+    def _scan_scratchpad(self) -> None:
+        """Scan the configured scratchpad and raise proposals for its new actionable lines.
+
+        Off unless `planning.scratchpad_path` is set — `scan_and_propose` returns immediately on an
+        empty path, so an unconfigured install reads no files at all. Runs in a worker thread
+        because a parse plus one injection screen per line is blocking work, and never raises: a
+        failed scan must not stop the file-watch fires that share this loop.
+        """
+        try:
+            from personalclaw.planning.scratchpad import scan_and_propose
+
+            raised = scan_and_propose(self.dashboard_state)
+            if raised:
+                logger.info("scratchpad intake raised %d proposal(s)", len(raised))
+        except Exception:  # noqa: BLE001 - intake is additive; it must never break the poll loop
+            logger.warning("scratchpad intake failed", exc_info=True)
+
+    async def _web_watch_poll_loop(self) -> None:
+        """Poll every `web_watch` trigger and fire the ones with NEW items.
+
+        🔴 Measured before this existed: `web_watch` was a fully declared kind — creatable in chat
+        (`nl_kind` routes any URL to it), persisted, listed by `/api/triggers` and rendered on the
+        Automations page — and **nothing polled it**. The clock tick skips it (it has no
+        `next_fire_at`) and the file poller only reads `file`. So a user could ask for exactly what
+        the product advertises, be told it worked, and never get a fire.
+
+        Deliberately mirrors `_file_watch_poll_loop` rather than inventing a second shape: same
+        incident-mode suspension (an unattended fire is an unattended fire), same per-trigger
+        isolation inside `poll_all`, and the same never-die contract — a loop that threw once and
+        stopped would silently retire every web watch the user has.
+
+        Every check is put on the record (`web_poll.report_checks`), never only logged: one line at
+        INFO, below the owner's level, was all a refused watch left while it read "Firing on its
+        own". The Triggers page re-reads after each pass, so a check shows without a reload.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import web_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(web_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                payloads, checks = await asyncio.to_thread(
+                    web_poll.poll_all, store, now=time.time()
+                )
+                if web_poll.report_checks(checks, state=getattr(self, "dashboard_state", None)):
+                    self._push_trigger_refresh("crons")
+                for payload in payloads:
+                    await self._fire_file_trigger(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("web_watch poll loop iteration failed", exc_info=True)
+
+    async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
+        """Run one file trigger's declared action, through the shared store dispatch.
+
+        Delegates to `_fire_store_trigger` rather than repeating the provider lookup: a clock
+        fire and a file fire must execute the same action the same way, and two near-identical
+        dispatches were exactly the dual path the clean break forbids.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        trigger_id = str(payload.get("trigger_id") or "")
+        row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+        if row is None:
+            return
+        # The event NAME identifies the source to the action; a clock fire and a file fire share the
+        # dispatch but not the label, so a provider can still tell what woke it.
+        await self._fire_store_trigger(row.trigger, payload, event="file.changed")
+
+    async def _init_cron(self) -> None:
+        """Initialize and start the cron service."""
+        # 🔴 The legacy cron DISPATCHER retired with `ScheduleService`. It was the
+        # `on_job` callback: ~450 lines that resolved a channel, built a session, ran the turn
+        # and posted the result — reachable ONLY from the timer the cutover stopped arming.
+        # Store-backed fires go through `_fire_store_trigger` (one dispatch for clock, file and
+        # event kinds), and the clock loop, reaper and run records are their own modules now.
+        if self._no_crons:
+            logger.info("Automations disabled (--no-crons)")
+            # Declined here rather than spooled: nothing drains the spool in this mode, and a
+            # spooled event would fire on the next normal boot, hours after the fact.
+            self._start_event_triggers(enabled=False)
+        else:
+            # Rotate run history at boot — the ONE load-bearing thing the retired legacy service's
+            # boot call still did. `ScheduleRunStore` owns rotation, so it is called directly.
+            try:
+                await ScheduleRunStore(config_dir()).rotate_all()
+            except Exception:
+                logger.debug("Run-history rotation at boot failed", exc_info=True)
+            # The file-watch poll loop: fires `file` triggers whose watched paths changed —
+            # the runtime that makes the chat-created file automations actually run. Lives in the
+            # else-branch so --no-crons disables it too (a file watch is unattended background work
+            # like a cron). Disjoint from ScheduleService, so no double-fire.
+            self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
+            # The web_watch poll loop. Same placement and the same reasoning as the file
+            # watch above: unattended background work, so `--no-crons` disables it too, and it is
+            # disjoint from every other firing path so it cannot double-fire. Measured before
+            # wiring: `web_watch` was creatable in chat, listed by the API and rendered in the UI,
+            # and NOTHING polled it — the clock tick skips it (no `next_fire_at`) and the file
+            # poller only reads `file`.
+            self._web_watch_task = asyncio.create_task(self._web_watch_poll_loop())
+            # Import the legacy automation files (`crons.json`, `event_triggers.json`) into the
+            # unified trigger store and arm the imported clocks. Measured:
+            # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json` was
+            # empty on a real machine.
+            # Each file is imported once per home and renamed `<name>.imported-<date>`, and nothing
+            # it brings over runs until the owner allows it (`triggers/legacy_import.py`); the
+            # review item for what it switched off is raised once the dashboard is up
+            # (`_surface_held_boot_review`).
+            try:
+                from personalclaw.triggers.boot_migrate import migrate_and_arm
+
+                # No explicit home: `migrate_and_arm` resolves it through its OWN `config_dir`, so
+                # there is exactly one place to redirect the boot migration (which is where a
+                # test points it at a home of its own). Passing `config_dir()` from
+                # here instead bypassed that single point and made three pre-existing gateway tests
+                # migrate the USER's real crons into `~/.personalclaw/triggers.json`.
+                migrate_and_arm()
+            except Exception:
+                logger.warning("trigger-store migration failed at boot", exc_info=True)
+            # The event bus's router (`triggers/event_fire.py`) — what makes a `kind: "event"`
+            # trigger fire. AFTER the migration, so a legacy `event_triggers.json` it absorbed is
+            # already rows in the store the router reads. Same else-branch as every other runtime
+            # here: an event trigger is unattended background work like a cron.
+            self._start_event_triggers()
+            # 🔴 THE TWO SYSTEM RECONCILERS, now AFTER the migration and against the STORE.
+            # Both used to write `crons.json` from BEFORE this point, which was doubly wrong: the
+            # clock engine reads the store only, and the migration that would have imported their
+            # writes had already run. An app's declared cron and the notification digest
+            # were both inert until the NEXT boot — so a freshly installed app's cron never ran on
+            # the session that installed it, and a digest schedule edited in Settings took two
+            # restarts. Ordered after the migration so a reconciler never fights an import over the
+            # same id.
+            from personalclaw.triggers.store import TriggerStore
+
+            _trigger_store = TriggerStore(base_dir=config_dir())
+            # App-declared crons (the untrusted-app sandbox): register what enabled+permitted apps
+            # declare (can_use_cron) and prune stale `app:*` rows. Idempotent; apps are loaded
+            # before this by the extension loader. Best-effort — never block the scheduler on it.
+            try:
+                from personalclaw.apps.app_crons import reconcile_app_crons
+
+                reconcile_app_crons(_trigger_store)
+            except Exception:
+                logger.warning("app-cron reconcile failed", exc_info=True)
+            # The notification digest. Reconciled, not just created, so a schedule
+            # edited in Settings converges without the user knowing a cron exists.
+            try:
+                from personalclaw.action_providers.digest_provider import reconcile_digest_cron
+
+                reconcile_digest_cron(_trigger_store)
+            except Exception:
+                logger.warning("digest-cron reconcile failed", exc_info=True)
+            # The Self-QA commit watcher. Reconciled, not just created,
+            # so toggling the companion or re-pointing `watched_repo` in Settings converges without
+            # a restart being part of the instructions. No-ops entirely when it is off.
+            try:
+                from personalclaw.selfqa.install import reconcile as reconcile_selfqa_watch
+
+                reconcile_selfqa_watch(_trigger_store)
+            except Exception:
+                logger.warning("selfqa-watch reconcile failed", exc_info=True)
+            # The monthly usage recap. Sits in the `--no-crons` else-branch with every
+            # other unattended writer: a recap is background work, and a harness run must not
+            # emit one. Creation only, not convergence — "monthly" is the feature, not a setting.
+            try:
+                from personalclaw.action_providers.usage_recap_provider import (
+                    reconcile_usage_recap_cron,
+                )
+
+                reconcile_usage_recap_cron(_trigger_store)
+            except Exception:
+                logger.warning("usage-recap-cron reconcile failed", exc_info=True)
+            # 🔴 The morning source digest. THIS LINE IS the MISSING
+            # HALF: `run_morning_digest` shipped fully tested with zero callers, so nothing ever
+            # ran it. Same else-branch as the recap above for the same reason — an unattended
+            # writer must not fire in a harness run. Creation only: "morning" is the feature, not a
+            # setting, so there is no schedule to converge and no config field behind it.
+            try:
+                from personalclaw.action_providers.source_digest_provider import (
+                    reconcile_source_digest_cron,
+                )
+
+                reconcile_source_digest_cron(_trigger_store)
+            except Exception:
+                logger.warning("source-digest-cron reconcile failed", exc_info=True)
+            # 🔴 The periodic identity report. THIS LINE IS THE
+            # SCHEDULE HALF: `deliver_identity_report` shipped fully tested with a POST route as
+            # its ONLY caller, so a "scheduled (default monthly, configurable) background
+            # job" was a function nothing drove. Same else-branch as the recap and the source
+            # digest for the same reason — it writes an artifact, raises an inbox row and spends a
+            # background model call unattended, and a harness run must do none of that. CONVERGED
+            # rather than created, like the digest and the remediation engine: the cadence is
+            # config (`learning.identity_report_cadence`), so changing it on the Learning page
+            # takes effect without the user knowing a trigger exists, and `off` disables the row.
+            try:
+                from personalclaw.action_providers.identity_report_provider import (
+                    reconcile_identity_report_trigger,
+                )
+
+                reconcile_identity_report_trigger(_trigger_store)
+            except Exception:
+                logger.warning("identity-report trigger reconcile failed", exc_info=True)
+            # 🔴 The health-scored remediation engine. THIS LINE
+            # IS THE RE-HOMING: the engine used to be driven by `HeartbeatService._maybe_remediate`,
+            # which carried its own private `_remediation_next_ts` scheduler; that job is deleted
+            # and this trigger is its only driver. Same else-branch as the recap and the source
+            # digest for the same reason — the engine prunes and re-indexes unattended, and a
+            # harness run must not do that. CONVERGED rather than created, like the digest: both
+            # cadences and the on/off switch are config, so an edit in Settings takes effect without
+            # the user knowing a trigger exists.
+            try:
+                from personalclaw.action_providers.remediation_provider import (
+                    reconcile_remediation_trigger,
+                )
+
+                reconcile_remediation_trigger(_trigger_store)
+            except Exception:
+                logger.warning("self-remediation trigger reconcile failed", exc_info=True)
+            # The HEARTBEAT.md task queue, re-homed off the heartbeat loop onto a system trigger so
+            # the Triggers page lists its cadence, its runs and its switch. Created once and never
+            # switched back on over the user's choice (see the reconciler). Its tasks run through
+            # this gateway's background turn, registered here, before the clock loop can fire it.
+            set_task_runner(self._run_heartbeat_task)
+            try:
+                from personalclaw.action_providers.heartbeat_tasks_provider import (
+                    reconcile_heartbeat_tasks_trigger,
+                )
+
+                reconcile_heartbeat_tasks_trigger(_trigger_store)
+            except Exception:
+                logger.warning("heartbeat tasks trigger reconcile failed", exc_info=True)
+            # 🔴 THE BOOT SWEEP. `service.boot` is what recovers
+            # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
+            # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
+            # arms rows with NO `next_fire_at` (`needs_arming`), so a trigger that WAS armed and
+            # went overdue while the lid was shut was left with its stale past fire — and the first
+            # tick found it due. Measured on ten minutely triggers overdue by an hour: **10 of 10
+            # due in the same instant at boot**, the restart stampede `boot_recovery`'s
+            # deterministic per-id stagger exists to prevent (108-179s apart, when called).
+            #
+            # AFTER the reconcilers so an app-declared or digest cron written moments ago is swept
+            # too, and BEFORE the clock loop starts so no tick sees an unrecovered row.
+            boot_report: dict[str, Any] = {}
+            try:
+                from personalclaw.triggers import service as _svc
+
+                boot_report = _svc.boot(_trigger_store)
+                logger.info(
+                    "trigger boot sweep: re-armed %d of %d, %d missed slots to review",
+                    len(boot_report.get("rearmed") or []),
+                    int(boot_report.get("total", 0) or 0),
+                    len((boot_report.get("review") or {}).get("rows") or []),
+                )
+            except Exception:
+                logger.warning("trigger boot sweep failed", exc_info=True)
+            # 🔴 THE BOOT ORPHAN PASS. A run this gateway's PREDECESSOR was executing
+            # left a live claim behind, and until now the only thing that could end it was
+            # `reaper.run_forever`'s 1800s deadline — so for half an hour after every crash or
+            # restart the run read as still in flight. `guardrails/self_destruct.py` names the cost:
+            # "the ScheduleRunStore row never reaches a terminal state and the fire reads afterwards
+            # as a HUNG run rather than as a self-inflicted stop. The user is left debugging a
+            # phantom." The claim now carries its `owner_pid`, so at boot the answer is an
+            # OBSERVATION rather than a wait: a claim whose owner is provably gone is released, its
+            # run row is closed, and its trigger reads DEGRADED with the reason.
+            #
+            # HERE, and the position is load-bearing twice: BEFORE the clock loop, so the first tick
+            # does not evaluate `existing_claim` against a dead owner's claim and suppress the fire
+            # it should grant (`overlap: skip`); and BEFORE the reaper, so the answer never depends
+            # on which background task happens to sweep first.
+            interrupted: list[dict[str, Any]] = []
+            try:
+                from personalclaw.triggers import reaper as _reaper
+
+                interrupted = await _reaper.terminalize_orphans(
+                    store=_trigger_store, base_dir=_trigger_store.base_dir
+                )
+                if interrupted:
+                    logger.info(
+                        "boot orphan pass: %d run(s) interrupted by a restart terminalized (%s)",
+                        len(interrupted),
+                        ", ".join(str(r.get("trigger_id") or "?") for r in interrupted),
+                    )
+            except Exception:
+                logger.warning("boot orphan pass failed", exc_info=True)
+            # What both passes found, KEPT for the user to decide (`triggers/review.py`): the sweep
+            # has re-armed every schedule and the orphan pass has closed every run, so this is the
+            # only record left of what did not happen. Then ONE notice about all of it.
+            self._record_boot_review(boot_report, interrupted, base_dir=_trigger_store.base_dir)
+            from personalclaw.triggers.review import catch_up_slots
+
+            self._boot_catch_ups = catch_up_slots(boot_report)
+            # The unified CLOCK LOOP — now the only thing that fires a clock trigger. The
+            # legacy timer is gone entirely, along with the class that owned it.
+            self._clock_task = asyncio.create_task(self._clock_loop())
+            # The trigger REAPER, replacing `ScheduleService.start_reaper`. That one swept a
+            # dict written only by the retired timer's `_run_job_isolated`, so it has been provably
+            # inert — driven with a genuinely hung task, eight sweeps reaped nothing.
+            # This one reads the cross-process claims, so it bounds every store-backed run and
+            # survives a restart. It needs no `sessions`: the subagent manager's own live reaper
+            # owns the spawned PROCESS, and this owns the CLAIM (see `triggers/reaper.py`).
+            self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
+            # Task due-date notices. Unattended background work that notifies, so it sits
+            # with the clock and the reaper and `--no-crons` disables it too.
+            self._task_due_task = asyncio.create_task(self._task_due_loop())
+
+    async def _run_heartbeat_task(self, task_text: str, deliver: str) -> str | None:
+        """One HEARTBEAT.md task as an unattended background turn, and its result delivered.
+
+        The `heartbeat-tasks` trigger runs the queue through this (`heartbeat.set_task_runner`),
+        so a task keeps the background prompt, the unattended approval policy, and delivery to its
+        `<!-- deliver:… -->` target. A task still unfinished (`HEARTBEAT_KEEP`) delivers nothing, so
+        a task retried every pass does not notify every pass.
+
+        Each task runs in a session of its own, as the owner's agent with its tools: that is what
+        the owner allowed (`heartbeat.consent`). The Background model binding still serves it. It
+        used to run on the chores' session, so a title turn and a heartbeat task shared one tool
+        surface, and making the chores toolless would have taken the tools from the task too.
+        """
+        assert self.sessions is not None
+        assert self.ctx_builder is not None
+        from personalclaw.action_providers.heartbeat_tasks_provider import task_session_key
+
+        session_key = task_session_key()
+        _acquired = False
+        try:
+            client, is_new, _resumed = await self.sessions.get_or_create(
+                session_key, model_axis="background"
+            )
+            _acquired = True
+            from personalclaw.context_headroom import resolve_window
+
+            # Named, not derived: this call passes no session key, and a keyless build
+            # derives the CHAT use case — so a heartbeat ran on the interactive-chat
+            # prompt while Settings → Prompts promised it the Background one.
+            #
+            # The task is read from HEARTBEAT.md, not typed into this turn, so it is masked as
+            # every other stored text a prompt is built from is (`redact_for_model`).
+            from personalclaw.security import redact_for_model
+
+            # On a worker thread: building the message embeds it with the embedding model, and
+            # on the event loop every request the gateway serves waited for that round trip.
+            full_message, _ = await asyncio.to_thread(
+                self.ctx_builder.build_message,
+                redact_for_model(task_text),
+                is_new,
+                prompt_use_case="background",
+                window=await resolve_window(serving=client),
+            )
+
+            # Heartbeat is a pure UNATTENDED background loop — no user present.
+            # The approval policy is DERIVED from the session's SafetyProfile, not
+            # hardcoded: a `cron:` key classifies as unattended, so `profile_for_session`
+            # resolves to HEADLESS and its approval ("hook_based") maps to
+            # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
+            # construction. The deny-list and
+            # her blocking hooks come first, an operator's pattern approves what it names,
+            # and what neither answers is approved by the task's own Allow, never by a call
+            # no hook named: nobody is asked, and nothing waits on an unanswerable prompt.
+            from personalclaw.guardrails.policy import approval_policy_for_session
+
+            async def _the_tasks_allow(event: LLMEvent) -> ToolDecision:
+                """The owner allowed this task to run with her agent's tools, with nobody
+                watching (`heartbeat.consent`): its calls are approved on that yes, held to
+                the operator ceiling."""
+                allowed = approval_grants.stands(
+                    approval_grants.HEARTBEAT_TASK,
+                    caller=session_key,
+                    subject=str(event.title or "")[:80],
+                )
+                if not allowed:
+                    return ToolDecision(False, "rejected", approval_grants.NOBODY)
+                return ToolDecision(True, "auto_approved", approval_grants.HEARTBEAT_TASK)
+
+            _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
+            ended: list[object] = []  # the turn's terminal event, which says how it stopped
+
+            def _hb_usage(event: object, _m: str = _hb_model) -> None:
+                from personalclaw.usage_ledger import record_from_event
+
+                ended.append(event)
+                record_from_event(
+                    event,
+                    source="background",
+                    session_key=session_key,
+                    provider="acp",
+                    model=_m if isinstance(_m, str) and _m != "auto" else "",
+                )
+
+            result_text = await stream_and_collect(
+                client,
+                full_message,
+                approval_policy=approval_policy_for_session(session_key),
+                hooks=self.ctx_builder.hooks,
+                on_tool_approval=_the_tasks_allow,
+                on_complete=_hb_usage,
+            )
+
+            # A model out of output room says so (`llm.events`): before it answered, in place of
+            # the answer, and part way, under the start of one it wrote.
+            last = ended[-1] if ended else None
+            capped = is_length_stop(getattr(last, "stop_reason", ""))
+            room = int(getattr(last, "output_cap", 0) or 0)
+            if not result_text:
+                result_text = out_of_room_notice(room) if capped else "_No response._"
+            elif capped:
+                result_text = f"{result_text}\n\n{cut_off_note(room)}"
+        except Exception:
+            logger.exception("Heartbeat task failed: %s", task_text[:80])
+            raise
+        finally:
+            if _acquired:
+                self.sessions.release(session_key)
+            # The task's session ends with it, unless a subagent it started is still running or
+            # reporting back: that one answers into this session, and the cron path resets it
+            # after the last one.
+            children = self.subagent_mgr is not None and any(
+                a.parent_session_key == session_key for a in self.subagent_mgr.running
+            )
+            if not children and not self._cron_injecting.get(session_key):
+                await self.sessions.reset(session_key)
+
+        result_safe, _ = redact_exfiltration_urls(result_text)
+        result_safe, _ = redact_credentials(result_safe)
+        display_text = strip_keep_sentinel(result_safe)
+        # Only notify when task is complete — suppress delivery for
+        # incomplete tasks (HEARTBEAT_KEEP) to avoid spamming every cycle.
+        if is_keep_response(result_safe):
+            logger.info("Heartbeat task incomplete, suppressing delivery: %s", task_text[:80])
+        else:
+            task_safe, _ = redact_exfiltration_urls(task_text[:100])
+            task_safe, _ = redact_credentials(task_safe)
+            await self._deliver_result(
+                "Heartbeat",
+                task_safe,
+                display_text,
+                deliver,
+            )
+        return result_safe
+
+    async def _init_heartbeat(self) -> None:
+        """Initialize and start the heartbeat service.
+
+        No `MemoryStore` is resolved here any more: the only thing that ever wanted one was
+        `HeartbeatService._legacy_maintenance`, and with the remediation engine re-homed onto
+        its own trigger the engine's memory jobs open their own store.
+        """
+
+        async def _deliver_due_commitments() -> None:
+            """Deliver any due proactive check-ins, then dismiss them.
+
+            Off unless the user opted in. The commitment ``text`` is the LLM-
+            authored natural check-in captured at consolidation (guardrails
+            already gated capture), so delivery is a plain send — no second LLM
+            call. Each delivered commitment is dismissed so the heartbeat never
+            re-fires the same window. Scoped + audited."""
+            from datetime import datetime, timezone
+
+            from personalclaw.config.loader import AppConfig
+
+            if not AppConfig.load().memory.proactive_commitments:
+                return
+            if self.consolidator is None:
+                return
+            svc = self.consolidator._svc
+            if not svc.has_vector:
+                return
+            now_iso = datetime.now(timezone.utc).isoformat()
+            try:
+                due = svc.due_commitments_all(now_iso=now_iso)
+            except Exception:
+                logger.debug("due-commitment scan failed", exc_info=True)
+                return
+            for c in due:
+                channel = c.get("channel") or "dashboard"
+                text, _ = redact_exfiltration_urls(c.get("text", ""))
+                text, _ = redact_credentials(text)
+                if not text:
+                    svc.dismiss_commitment(c["key"])
+                    continue
+                try:
+                    await self._deliver_result(
+                        "Proactive check-in",
+                        "",
+                        text,
+                        channel,
+                    )
+                    sel().log_api_access(
+                        caller="heartbeat",
+                        operation="commitment_deliver",
+                        outcome="approved",
+                        source="gateway",
+                        resources=f"agent={c.get('agent', '')},channel={channel}",
+                    )
+                except Exception:
+                    logger.warning("Commitment delivery failed for %s", c["key"], exc_info=True)
+                finally:
+                    # Dismiss either way — a delivered-or-failed commitment is done
+                    # for this window (it never re-fires; the next window re-infers).
+                    svc.dismiss_commitment(c["key"])
+
+        async def _auto_archive_sessions() -> None:
+            """Move conversations idle past the configured threshold to Archived.
+
+            Reversible by construction: an archived session keeps its transcript and
+            its search index entry, so a wrong archive costs one click to restore.
+            Off entirely when ``session.auto_archive_days`` is 0.
+            """
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.dashboard.chat_persistence import save_session_to_history
+            from personalclaw.dashboard.session_lifecycle import run_auto_archive
+
+            days = int(AppConfig.load().session.auto_archive_days)
+            if days <= 0:
+                return
+            keys = run_auto_archive(state, days=days)
+            for key in keys:
+                session = state._sessions.get(key)
+                if session is not None:
+                    save_session_to_history(state, session, force=True)
+            if keys:
+                state.push_sessions_update()
+
+        self.heartbeat_svc = HeartbeatService(
+            consolidator=self.consolidator,
+            on_due_commitments=_deliver_due_commitments,
+            on_auto_archive=_auto_archive_sessions,
+        )
+        await self.heartbeat_svc.start()
+        # The cross-session search index keeps itself caught up with the transcripts, on its
+        # own thread and at a pace that leaves the gateway its time (`SessionIndexer`).
+        from personalclaw import session_search
+
+        session_search.INDEXER.start()
+
+    def _register_graph_maintenance_passes(self) -> None:
+        """Give the standing maintenance jobs their cadence.
+
+        Registered HERE rather than at import of `maintenance.py`, because that module is
+        imported by the knowledge write path — `store.py` marks the watermark on every
+        index-affecting write — and pulling the memory service, the consolidation planner and
+        an action-provider module into every write would be a real cost for no benefit.
+        """
+        try:
+            from personalclaw.knowledge import maintenance_passes
+
+            names = maintenance_passes.register_all()
+            logger.info("graph maintenance passes registered: %s", ", ".join(names) or "none")
+        except Exception:  # noqa: BLE001 — no cadence is a degradation, not a startup failure
+            logger.warning("graph maintenance passes not registered", exc_info=True)
+
+    def _install_graph_maintenance_probe(self) -> None:
+        """Tell the graph-maintenance host how to measure in-flight ingest work.
+
+        The host defers its pass while an import is still running, so a bulk import costs ONE
+        edge pass instead of one per item. It cannot ask for that depth itself: the queue is a
+        lazy accessor on `DashboardState` that STARTS a worker when none exists, and
+        `knowledge/` importing the dashboard would invert the direction the app-platform
+        boundary sets. So the depth is INJECTED here.
+
+        🔴 Reads the private `_knowledge_ingest_queue` rather than calling the public
+        `knowledge_ingest_queue()` accessor ON PURPOSE: the public one constructs and STARTS a
+        queue as a side effect, so asking "how busy is the queue?" would spin one up on a
+        gateway that never ingested anything. Probing must not create the thing it probes.
+
+        Without this the host still runs — it treats an unknown depth as drained and logs one
+        warning saying so — but the coalescing rule would be inert, which is why the wiring
+        has its own test rather than being assumed from the fact that this line exists.
+        """
+        try:
+            from personalclaw.knowledge import maintenance
+
+            def _depth() -> int:
+                state = self.dashboard_state
+                queue = getattr(state, "_knowledge_ingest_queue", None) if state else None
+                try:
+                    return int(queue.qsize()) if queue is not None else 0
+                except Exception:  # noqa: BLE001 — a depth read must never break a tick
+                    return 0
+
+            maintenance.set_in_flight_probe(_depth)
+        except Exception:  # noqa: BLE001 — a missing probe degrades, it does not fail startup
+            logger.warning("graph-maintenance in-flight probe not installed", exc_info=True)
+
+    async def _init_autonudge(self) -> None:
+        """Initialize and start the auto-nudge service (feature-flagged)."""
+        if not autonudge_enabled():
+            logger.info("AutoNudge disabled via feature flag")
+            return
+
+        async def _fire(loop: NudgeLoop) -> bool:
+            """Inject nudge message into the bound chat session.
+
+            Returns True if the nudge was actually dispatched, False if skipped
+            (session missing, dashboard not ready, or turn still active). The
+            service uses this to avoid counting skipped cycles toward
+            max_cycles.
+            """
+            # Guard (not assert): stripped under -O; also _init_autonudge() can
+            # run before _init_dashboard(). Mirrors _observer's guard below.
+            if self.dashboard_state is None:
+                logger.warning(
+                    "AutoNudge: dashboard not ready — skipping fire for loop %s", loop.id
+                )
+                return False
+            dstate = self.dashboard_state
+            session = dstate._sessions.get(loop.session_name)
+            if session is None:
+                logger.warning(
+                    "AutoNudge: session %s missing — removing loop %s", loop.session_name, loop.id
+                )
+                await self.autonudge_svc.remove(loop.id)  # type: ignore[union-attr]
+                return False
+            msg = render_nudge_message(loop.message, loop.stop_sentinel_path)
+            tagged = f"[auto-nudge cycle {loop.cycle_count + 1}]\n{msg}"
+            from personalclaw.dashboard.chat import (  # circular import: gateway -> dashboard.chat -> gateway (chat dispatch references GatewayOrchestrator)  # noqa: E501
+                run_chat,
+            )
+
+            if session.running or getattr(session, "_suppress_autonudge_rearm", False):
+                # Turn still active — drop this nudge. The next idle poll will
+                # try again once the turn ends. Queueing would stack
+                # identical 3KB+ nudges and blow up the context window.
+                # Returning False keeps cycle_count accurate (only delivered
+                # nudges count toward max_cycles).
+                #
+                # The suppression flag matters HERE now: the timer world armed no
+                # timer mid-cycle, so nothing could fire in a re-prompt GAP (running briefly
+                # False between re-prompts). The poll world stays due the whole cycle, so the
+                # flag the re-prompt loop already sets is the fence that keeps a competing
+                # next-cycle nudge out of the gap.
+                logger.info(
+                    "AutoNudge skip: session %s is running (loop %s cycle %d)",
+                    session.key,
+                    loop.id,
+                    loop.cycle_count,
+                )
+                return False
+            # Show nudge as a distinct "nudge" role message in the session history.
+            session.append("nudge", tagged, "msg msg-nudge")
+
+            # Every unified Loop kind (goal/code/general/design) is a cycle-driven
+            # worker (app="loop", keyed loop-<id>) whose deliverable is a per-cycle
+            # finding file — they share the deliverable-forcing re-prompt + turn path.
+            _app = getattr(session, "_app", "")
+            _is_loop = _app == "loop"
+
+            def _finding_count(_key: str) -> int:
+                try:
+                    from personalclaw.loop.manager import worker_finding_count
+
+                    return worker_finding_count(_key)
+                except Exception:
+                    logger.debug("finding count failed for %s", _key, exc_info=True)
+                    return 0
+
+            async def _run_one(_sess, _msg, turn_timeout: float) -> None:
+                # The bound is on the turn's silence: each step it shows starts the clock again,
+                # and while one of its calls runs or waits on the owner's answer (an Attended
+                # loop's worker asks about each) the clock stops. Quiet for all of it, the turn
+                # is stopped and ends saying so (`turn_deadline`).
+                await turn_deadline.run_within(
+                    dstate, _sess, run_chat(dstate, _sess, _msg), turn_timeout
+                )
+
+            def _cycle_still_armed(_sess: Any) -> bool:
+                """Is the loop that fired this cycle still armed to run it?
+
+                Three facts, all required: incident mode is off (the switch holds every loop),
+                the session is still the one the dashboard has registered under its key (a
+                delete pops it), and the nudge loop that fired the cycle still exists and is
+                active (a pause deactivates it, a stop removes it).
+                """
+                from personalclaw.guardrails.incident import incident_active
+
+                key = str(getattr(_sess, "key", "") or "")
+                if incident_active() or not key or dstate._sessions.get(key) is not _sess:
+                    return False
+                nudge_svc = self.autonudge_svc
+                armed = nudge_svc.get_by_session(key) if nudge_svc is not None else None
+                return armed is not None and bool(getattr(armed, "active", False))
+
+            async def _run_turn_bounded(_sess=session, _msg=tagged) -> None:
+                # Bound each turn so a wedged worker turn can't hold the session
+                # `running` forever. Loop cycles run long (subagent fan-out,
+                # 15-20 min), so a generous bound (matches the watchdog cap).
+                turn_timeout = _NUDGE_TURN_TIMEOUT if _is_loop else CHAT_TURN_IDLE_LIMIT
+                if not _is_loop:
+                    await _run_one(_sess, _msg, turn_timeout)
+                    return
+                # Goal loop: drive the cycle to an actual deliverable. Some ACP
+                # workers (claude-code) end their turn after only reading, and
+                # then NO-OP further prompts on the same session — so a plain
+                # re-prompt yields an empty turn. Before each retry we start a
+                # FRESH ACP session (start_fresh_turn_session) so the agent
+                # re-engages, then re-prompt. Bounded by _MAX_CYCLE_REPROMPTS.
+                # Suppress autonudge re-arm for the whole loop so the idle timer
+                # doesn't fire a competing next-cycle nudge mid-loop; re-arm once
+                # at the end. Native workers write in one turn → loop exits
+                # immediately, fresh-session never invoked.
+                from personalclaw.loop import manager as _loop_manager
+
+                before = _finding_count(_sess.key)
+                _sess._suppress_autonudge_rearm = True
+                try:
+                    await _run_one(_sess, _msg, turn_timeout)
+                    for attempt in range(_MAX_CYCLE_REPROMPTS):
+                        if getattr(_sess, "_last_turn_errored", False):
+                            break
+                        # Run without tools, it wrote nothing and could not if asked again.
+                        if _loop_manager.ran_without_tools(dstate, _sess):
+                            break
+                        # Asked again only for a finding still owed (never a finished task's,
+                        # never after her Deny): a check that fails asks nothing.
+                        try:
+                            due, _title = await _loop_manager.reprompt_due(_sess, before)
+                        except Exception:
+                            logger.warning(
+                                "re-prompt check failed for %s", _sess.key, exc_info=True
+                            )
+                            due, _title = False, ""
+                        if not due:
+                            break
+                        if not _cycle_still_armed(_sess):
+                            # The loop was paused, stopped or deleted while this cycle ran. The
+                            # re-prompts are the SAME cycle, so they end with it — this is what
+                            # used to write a finding minutes after "Paused", and re-save a
+                            # deleted loop's transcript as an orphan chat.
+                            logger.info(
+                                "AutoNudge: %s is no longer armed — abandoning the cycle's "
+                                "re-prompts",
+                                _sess.key,
+                            )
+                            break
+                        _loop_manager.announce_reprompt(
+                            dstate, _sess.key, attempt + 1, _MAX_CYCLE_REPROMPTS, _title
+                        )
+                        # Re-engage: a no-op'd ACP session won't service a repeat
+                        # prompt, so begin a fresh agent session on the live
+                        # process. The live provider lives in the SessionManager
+                        # (NOT on the dashboard _ChatSession), keyed by the
+                        # history key (dashboard:<session.key>).
+                        fresh_started = False
+                        try:
+                            from personalclaw.dashboard.chat_utils import _history_key_for
+
+                            hkey = _history_key_for(_sess.key)
+                            prov = dstate.sessions.get_provider(hkey)
+                            fresh = getattr(prov, "start_fresh_turn_session", None)
+                            if fresh is not None:
+                                await fresh()
+                                fresh_started = True
+                                # The fresh ACP session has NO context; make the
+                                # next turn re-inject the worker system prompt.
+                                dstate.sessions.mark_new(hkey)
+                            else:
+                                logger.debug(
+                                    "no start_fresh_turn_session on provider for %s", _sess.key
+                                )
+                        except Exception:
+                            logger.debug(
+                                "fresh turn session failed for %s", _sess.key, exc_info=True
+                            )
+                        # A fresh ACP session has NO conversation context (the
+                        # agent greets "ready when you are"), so a bare "you forgot
+                        # to write" continuation is meaningless — re-send the FULL
+                        # self-contained cycle prompt (loop id, dir, protocol)
+                        # plus an explicit write reminder.
+                        _reprompt = _loop_manager.cycle_reprompt(_sess.key)
+                        retry_msg = (_msg + "\n\n" + _reprompt) if fresh_started else _reprompt
+                        _sess.append("nudge", retry_msg, "msg msg-nudge")
+                        # The re-prompt is this cycle's turn too, so the session reads as
+                        # running through it. `run_chat` clears `task` as each turn ends, and a
+                        # session reading idle is one a Pause, a Stop or incident mode does not
+                        # stop (`manager.halt_turn`): the re-prompt then ran on to its end.
+                        _sess.task = asyncio.current_task()
+                        await _run_one(_sess, retry_msg, turn_timeout)
+                    # A cycle she ended with a Deny says so, and its loop waits for her.
+                    if _loop_manager.declined_in_turn(_sess) and self.loop_watchdog is not None:
+                        await self.loop_watchdog.hold_after_decline(_sess, before)
+                    # A cycle run without tools wrote nothing: its loop waits for a model that can.
+                    elif (
+                        _loop_manager.ran_without_tools(dstate, _sess)
+                        and self.loop_watchdog is not None
+                    ):
+                        await self.loop_watchdog.hold_without_tools(_sess)
+                finally:
+                    _sess._suppress_autonudge_rearm = False
+                    # Re-arm the idle timer ONCE now the logical cycle is done. A turn that ended
+                    # with incident mode on was stopped by the hold, so it is not the worker's
+                    # error (three in a row would switch the loop's cycles off for good).
+                    try:
+                        from personalclaw.guardrails.incident import incident_active
+                        from personalclaw.triggers.nudge import get_instance as _an_get
+
+                        _an = _an_get()
+                        if _an is not None:
+                            _an.notify_turn_complete(
+                                _sess.key,
+                                errored=getattr(_sess, "_last_turn_errored", False)
+                                and not incident_active(),
+                                refused=getattr(_sess, "_last_turn_refusal", None) is not None,
+                            )
+                    except Exception:
+                        logger.debug("re-arm after cycle failed for %s", _sess.key, exc_info=True)
+
+            task = asyncio.create_task(_run_turn_bounded())
+            # Mirror dashboard /api/chat/send path so session.running == True and sidebar
+            # shows the "turn active" three-dots indicator immediately.
+            session.task = task
+            self.dashboard_state._background_tasks.add(task)
+            task.add_done_callback(self.dashboard_state._background_tasks.discard)
+            # For loop worker sessions, report the turn outcome to the supervisor
+            # so a broken worker fails the loop fast instead of burning cycles
+            # silently. A turn that ends with an `error` message (how run_chat
+            # records a crash) counts as a failed cycle.
+            # The unified watchdog supervises every kind (sessions are app="loop",
+            # keyed loop-<id>); it counts the STAGE worker's turns. A parallel task
+            # worker (loop-<id>-<taskid>) is not reported: its own nudge loop switches
+            # off after its turns keep failing, and the scheduler asks its owner
+            # (`nudge.why_it_ended`).
+            if getattr(session, "_app", "") == "loop" and self.loop_watchdog is not None:
+                from personalclaw.loop.manager import worker_ids
+
+                def _report_turn(_t: "asyncio.Task", _key: str = session.key) -> None:
+                    sess = (
+                        self.dashboard_state._sessions.get(_key) if self.dashboard_state else None
+                    )
+                    errored = bool(sess and getattr(sess, "_last_turn_errored", False))
+                    refusal = getattr(sess, "_last_turn_refusal", None) if sess else None
+                    cid, task_id = worker_ids(_key)
+                    if not cid or self.loop_watchdog is None:
+                        return
+                    # A spend ceiling's refusal is no fault of the worker's: the loop waits for
+                    # its owner, rather than counting toward failing it.
+                    if refusal is not None:
+                        self.loop_watchdog.hold_for_spend_cap(_key, refusal)
+                        return
+                    if not task_id:
+                        self.loop_watchdog.record_turn_outcome(cid, ok=not errored)
+
+                task.add_done_callback(_report_turn)
+            self._session_tasks[session.key] = task
+            self.dashboard_state.push_sessions_update()
+            return True
+
+        def _observer(event: str, loop: NudgeLoop | None) -> None:
+            if self.dashboard_state and loop is not None:
+                self.dashboard_state.broadcast_ws(
+                    "autonudge_state",
+                    {
+                        "event": event,
+                        "session": loop.session_name,
+                        "loop": {
+                            "id": loop.id,
+                            "session_name": loop.session_name,
+                            "message": loop.message,
+                            "idle_secs": loop.idle_secs,
+                            "max_cycles": loop.max_cycles,
+                            "cycle_count": loop.cycle_count,
+                            "active": loop.active,
+                            "last_fire_ts": loop.last_fire_ts,
+                        },
+                    },
+                )
+
+        self.autonudge_svc = AutoNudgeService(base_dir=config_dir(), on_fire=_fire)
+        self.autonudge_svc.subscribe(_observer)
+        await self.autonudge_svc.start()
+
+        # Goal-loop supervisor — drives loop lifecycle on top of autonudge. Needs
+        # both the dashboard state (worker sessions) and the autonudge service, so
+        # it's started here once both exist. With no state yet, the watchdog is
+        # skipped.
+        if self.dashboard_state is not None:
+            # The unified Loop supervisor — ONE watchdog for every kind
+            # (general/goal/code/design) on top of autonudge. Replaces the legacy
+            # goal-loop + code watchdogs at the cutover. Loops left
+            # RUNNING/PLANNING by a crash/restart are re-armed by the watchdog's OWN first
+            # poll, before it reads a single loop — there is deliberately no boot hook here
+            # ("one adoption/reaping path": both work-unit nouns sweep from the
+            # supervisor that owns them, through `concurrency.boot_sweep`). A hook here could
+            # not be retried when it raised, and awaiting it delayed everything below,
+            # including HTTP readiness, by however long N stranded planner passes took.
+            from personalclaw.loop.watchdog import LoopWatchdog
+
+            self.loop_watchdog = LoopWatchdog(self.dashboard_state, self.autonudge_svc)
+            self.loop_watchdog.start()
+
+        # The workflow engine's supervisor. It adopts runs the
+        # store still thinks are live — after a restart NO run has a controller, so
+        # without this they sit in RUNNING forever, which a user reads as "still
+        # working" while nothing is.
+        if self._cfg.workflows.enabled:
+            from personalclaw.workflows.bundled_defs import register_bundled_provider
+            from personalclaw.workflows.controller import EngineServices
+            from personalclaw.workflows.native_defs import register_native_provider
+            from personalclaw.workflows.tick import Limits
+            from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+            # The native filesystem def provider — where a user's OWN workflows live.
+            # `defs.py` is only a registry seam, so without this nothing writable is
+            # registered and saving a definition fails with "no writable provider" unless
+            # an app happens to contribute one.
+            register_native_provider()
+            # The shipped template library. Read-only, served straight from the
+            # package — no boot-time copy into the user's home, so an upgrade ships new
+            # templates with no "did the user edit it?" reconciliation.
+            register_bundled_provider()
+            # A record a run kept a stored secret's value in, from before a run was handed the
+            # reference, holds the reference now: done before the supervisor drives any run.
+            from personalclaw.workflows.input_secrets import redact_home
+
+            redact_home()
+
+            wf_cfg = self._cfg.workflows
+            # The run-end learner writes through a MemoryService over
+            # the same vector store the rest of the process uses. Handed in here so a terminal
+            # run mines its own ledger for failed steps and files lesson proposals — inert until
+            # this service reports `has_vector`, so an embedder-less box (or a partially-inited
+            # orchestrator, e.g. a test that drives only this path) learns nothing rather than
+            # crashing. `over_vector_store(None)` is itself an inert service, so the `getattr`
+            # default is a real no-op, not a workaround.
+            from personalclaw.memory_service import MemoryService
+            from personalclaw.workflows.verify import run_verify_block
+
+            self.workflow_watchdog = WorkflowWatchdog(
+                self.dashboard_state,
+                EngineServices(
+                    subagents=self.subagent_mgr,
+                    # The deterministic verifier every `verify_command` gate runs through.
+                    # Previously UNSET here, which made every verification gate
+                    # in production fail INTERNAL with "no verifier wired" — the engine's
+                    # gate contract was complete and its last mile was missing, so two
+                    # shipped templates ended on a gate that could not run. Screened +
+                    # rlimited + tristate by `loop.gates.run_verify_command`.
+                    verify=run_verify_block,
+                    model_tiers=wf_cfg.model_tiers(),
+                    lane_limits=Limits(lanes=wf_cfg.lane_caps()),
+                    node_timeout_total=wf_cfg.default_node_timeout_total_secs,
+                    node_timeout_stall=wf_cfg.default_node_timeout_stall_secs,
+                    memory=MemoryService.over_vector_store(getattr(self, "vector_memory", None)),
+                    # A run a trigger started says how it went on the trigger's route when it
+                    # ends; the fire that started it only said it launched.
+                    report_to_trigger=self._report_to_its_trigger,
+                    # And the automation its failure paused says so, as a fire's does.
+                    on_attention=self._surface_attention_card,
+                    # What waits on a run (`run_completed`) runs when the run ends.
+                    run_ended=self._chain_after_workflow_run,
+                    # The chat that started a subagent batch hears how its tasks ended.
+                    announce=self._announce_ended_work,
+                ),
+            )
+            self.workflow_watchdog.start()
+            # Publish the supervisor so BOTH consumers can reach it: the REST handlers
+            # read `state.workflows`, and the `run-workflow` action provider
+            # reads `ActionServices.workflows`. Without this the routes create runs nobody
+            # drives, and the trigger provider returns "no supervisor available" — both
+            # already handle a None, but both are inert until this line runs.
+            if self.dashboard_state is not None:
+                self.dashboard_state.workflows = self.workflow_watchdog
+            try:
+                from personalclaw.action_providers.services import get_action_services
+
+                svc = get_action_services()
+                if svc is not None:
+                    svc.workflows = self.workflow_watchdog
+            except Exception:
+                logger.debug("could not attach the workflow supervisor to action services")
+            # A batch the previous run left waiting for its owner's answer is asked again, now
+            # that its tasks have a supervisor to start on (`batch_start.resume`).
+            if self.dashboard_state is not None:
+                from personalclaw.workflows.batch_start import resume
+
+                try:
+                    resume(self.dashboard_state, self.workflow_watchdog)
+                except Exception:  # noqa: BLE001 - a batch's ask is never worth the gateway
+                    logger.warning("could not ask again the batches left waiting", exc_info=True)
+
+    async def _init_inbox(self) -> None:
+        """Construct the Inbox service (state + store + on-demand AI triage).
+
+        Source-independent: draft/classify/digest run over STORED items (populated by
+        the native push source + every polled source) through the bound chat model, so
+        they work with no external source connected. What the service polls is
+        ``inbox_providers.polled_sources``, read on every tick: each installed inbox app's
+        source, and the built-in drop folder while ``inbox.enabled`` is on. Attached to the
+        dashboard state in ``_init_dashboard`` (which runs after this)."""
+        from personalclaw.identity import operator_name
+        from personalclaw.inbox import InboxState, InboxStore
+        from personalclaw.inbox_providers import polled_sources
+        from personalclaw.inbox_service import InboxService
+
+        sec = self._cfg.inbox
+        state = InboxState()
+        state.load()
+        store = InboxStore()
+        store.load()
+
+        if self.inbox_svc is not None:
+            self.inbox_svc.stop()
+        self.inbox_svc = InboxService(
+            state=state,
+            store=store,
+            sources=polled_sources,
+            # The OPERATOR's name (drafts are written on behalf of the human —
+            # "reply as {{user_name}}"), NOT agent.bot_name (the assistant's name).
+            user_name=operator_name() or "the user",
+            style_rules="\n".join(sec.style_rules or []),
+        )
+        # Background loop: polls every source polled_sources names. Cheap when idle.
+        # Retention/dismissed/feedback maintenance is the remediation engine's
+        # `inbox.maintenance` job now, not a second cadence in this loop.
+        self.inbox_svc.start()
+
+    async def _restart_inbox(self) -> str:
+        """Rebuild the inbox service from current config (e.g. after a settings
+        change) and re-attach it to the dashboard state. Returns "ok" or an error
+        string, matching the /api/inbox/restart handler contract."""
+        try:
+            self._cfg = AppConfig.load()
+            await self._init_inbox()
+            if self.dashboard_state is not None:
+                self.dashboard_state._inbox_svc = self.inbox_svc
+            return "ok"
+        except Exception as exc:
+            logger.exception("Inbox restart failed")
+            return str(exc) or "restart failed"
+
+    def _notif_meta(self, parent_key: str | None) -> dict[str, str] | None:
+        """Build notification meta with session or channel_link for jump-to-source.
+
+        The deep-link format is a provider concern: core asks the registered
+        :class:`ChannelDelivery` for ``build_thread_link(channel, ts)`` and never
+        constructs vendor URLs itself. No delivery handle (or no link) → no meta.
+        """
+        if not parent_key:
+            return None
+        if session_keys.DASHBOARD.names(parent_key):
+            return {"session": parent_key.removeprefix(session_keys.DASHBOARD.prefix)}
+        # A channel thread's key is `<channel>:<ts>`, which names no kind of key the gateway
+        # mints (`session_keys.kind_of`). Every kind is excluded, `workflow:<run>:<node>` and
+        # `cron:` among them: the `chan, ts = key.split(":", 1)` below would read its prefix as a
+        # CHANNEL id and ask the delivery provider to build a thread link for a channel named
+        # "workflow" with ts "<run>:<node>", a vendor call on parsed garbage.
+        if ":" in parent_key and session_keys.kind_of(parent_key) is None:
+            chan, ts = parent_key.split(":", 1)
+            # The link is the channel's that issued the id, or none: another channel's link to it
+            # opens nothing, or the wrong conversation.
+            delivery = _delivery_owning(chan)
+            if delivery is not None:
+                try:
+                    link = delivery.build_thread_link(chan, ts)
+                except Exception:
+                    logger.debug("build_thread_link failed for %s", parent_key, exc_info=True)
+                    link = ""
+                if link:
+                    return {"channel_link": link}
+        return None
+
+    async def _deliver_result(
+        self,
+        title: str,
+        task_summary: str,
+        result_text: str,
+        deliver: str,
+    ) -> None:
+        """Route a background result to the right surface.
+
+        ``deliver`` values:
+        - ``prompt:dashboard:<session>`` → send as user prompt to dashboard session (agent turn)
+        - ``dashboard:<session>`` → inject into existing dashboard chat session
+        - ``dashboard``        → create new dashboard chat session
+        - ``channel:<chan>:<ts>`` → reply to a channel thread (via ChannelDelivery)
+        - ``channel``          → new channel DM only (no dashboard notification)
+        - ``silent``           → log only
+        - ``""`` (empty)       → channel DM (if available) + dashboard notification
+        """
+        result_text, _ = redact_exfiltration_urls(result_text)
+        result_text, _ = redact_credentials(result_text)
+        task_summary, _ = redact_exfiltration_urls(task_summary)
+        task_summary, _ = redact_credentials(task_summary)
+        title, _ = redact_exfiltration_urls(title)
+        title, _ = redact_credentials(title)
+        body = f"{task_summary}\n\n{result_text}"
+
+        # ── silent: log only ──
+        if deliver == "silent":
+            logger.info("%s (silent): %s", title, task_summary)
+            return
+
+        # ── prompt:dashboard:<session> → send as user prompt to session (triggers agent turn) ──
+        if deliver.startswith("prompt:dashboard:"):
+            session_name = deliver.removeprefix("prompt:dashboard:")
+            if not session_name:
+                logger.debug("Heartbeat prompt:dashboard: missing session name, skipping")
+                return
+            if self.dashboard_state:
+                session = self.dashboard_state.resolve_session(session_name)
+                if session:
+                    # Truncate the variable-size *content* separately so the title/prefix
+                    # can never be sliced at a multi-byte boundary. errors='ignore'
+                    # (not 'replace') keeps the final byte size <= limit — U+FFFD
+                    # would be 3 bytes and push past the cap.
+                    prefix = f"{title}\n\n"
+                    prefix_bytes = len(prefix.encode("utf-8"))
+                    content_budget = max(0, MAX_PROMPT_BYTES - prefix_bytes)
+                    content_bytes = result_text.encode("utf-8")
+                    if len(content_bytes) > content_budget:
+                        truncated = content_bytes[:content_budget].decode("utf-8", errors="ignore")
+                        logger.warning(
+                            "Heartbeat prompt truncated to %d bytes for session %s",
+                            MAX_PROMPT_BYTES,
+                            session_name,
+                        )
+                        prompt = prefix + truncated
+                    else:
+                        prompt = prefix + result_text
+                    # Lazy import avoids circular dependency (chat → gateway)
+                    from personalclaw.dashboard.chat import run_chat
+
+                    sel().log_api_access(
+                        caller="heartbeat",
+                        operation="heartbeat_prompt_deliver",
+                        outcome="approved",
+                        source="gateway",
+                        resources=f"requested={session_name},resolved={session.key}",
+                    )
+                    # A heartbeat's result, delivered into the chat for its agent to act on: no
+                    # one typed it, so it teaches nothing as a person's words.
+                    ran = session.enqueue_or_run_prompt(
+                        prompt, run_chat, self.dashboard_state, own_words=""
+                    )
+                    if ran:
+                        # Only push UI updates when the prompt actually started —
+                        # queued prompts produce no visible change until dequeued.
+                        self.dashboard_state.push_sessions_update()
+                        self.dashboard_state.notify(
+                            notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
+                        )
+                    else:
+                        logger.info(
+                            "Heartbeat prompt queued for busy session %s (queue depth=%d)",
+                            session.key,
+                            session.queue_depth,
+                        )
+                else:
+                    sel().log_api_access(
+                        caller="heartbeat",
+                        operation="heartbeat_prompt_deliver",
+                        outcome="not_found",
+                        source="gateway",
+                        resources=f"requested={session_name}",
+                    )
+                    logger.warning("Heartbeat prompt target session %s not found", session_name)
+            else:
+                logger.debug("prompt:dashboard:%s ignored — no dashboard_state", session_name)
+            return
+
+        # ── dashboard:<session> → inject into specific session ──
+        if deliver.startswith("dashboard:"):
+            session_name = deliver.removeprefix("dashboard:")
+            if self.dashboard_state:
+                session = self.dashboard_state.resolve_session(session_name)
+                if session:
+                    sel().log_api_access(
+                        caller="heartbeat",
+                        operation="heartbeat_inject_deliver",
+                        outcome="approved",
+                        source="gateway",
+                        resources=f"requested={session_name},resolved={session.key}",
+                    )
+                    session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
+                    self.dashboard_state.push_sessions_update()
+                    self.dashboard_state.notify(
+                        notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
+                    )
+                else:
+                    sel().log_api_access(
+                        caller="heartbeat",
+                        operation="heartbeat_inject_deliver",
+                        outcome="not_found",
+                        source="gateway",
+                        resources=f"requested={session_name}",
+                    )
+                    logger.warning("Heartbeat deliver target session %s not found", session_name)
+            else:
+                logger.debug("dashboard:%s ignored — no dashboard_state", session_name)
+            return
+
+        # ── dashboard (no session) → new session ──
+        if deliver == "dashboard":
+            if self.dashboard_state:
+                session = self.dashboard_state.get_or_create_session()
+                session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
+                self.dashboard_state.push_sessions_update()
+                self.dashboard_state.notify(
+                    notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
+                )
+            return
+
+        # ── channel (no thread) → new channel DM only ──
+        if deliver == "channel":
+            await self._notify_owner_dm(title, result_text)
+            return
+
+        # ── channel:<channel>:<thread_ts> → reply to thread ──
+        if deliver.startswith("channel:"):
+            parts = deliver.split(":", 2)
+            # On the channel that issued the id, or else the owner's DM: another channel handed
+            # the id posts to the wrong place, or to no one.
+            delivery = _delivery_owning(parts[1]) if len(parts) == 3 else None
+            try:
+                if delivery is not None:
+                    chan, ts = parts[1], parts[2]
+                    await delivery.deliver_notification(chan, title, result_text, ts)
+                else:
+                    await self._notify_owner_dm(title, result_text)
+            except Exception:
+                logger.exception("Heartbeat channel delivery failed")
+            if self.dashboard_state:
+                self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
+            return
+
+        # ── default: channel DM + dashboard notification ──
+        await self._notify_owner_dm(title, result_text)
+        if self.dashboard_state:
+            self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
+
+    async def _notify_owner_dm(self, title: str, text: str) -> None:
+        """Deliver a notification to the owner's DM, on the first channel that reaches them.
+
+        Through :func:`channel_delivery.deliver_to_owner`: a channel that cannot reach the owner
+        hands over to the next, and when none can the notification goes to the Inbox saying why.
+        """
+        from personalclaw.channel_delivery import deliver_to_owner
+
+        try:
+            await deliver_to_owner(
+                lambda delivery, dm: delivery.deliver_notification(dm, title, text),
+                title=title,
+                text=text,
+                state=self.dashboard_state,
+            )
+        except Exception:
+            logger.exception("Heartbeat channel delivery failed")
+
+    def _init_mcp_discovery(self) -> None:
+        """Log configured MCP servers at startup.
+
+        The actual config merge is handled by rebuild_agent_config() which
+        runs earlier in __init__. This just logs what's configured for
+        debugging visibility.
+        """
+        try:
+            from personalclaw.mcp_discovery import list_servers  # circular import
+
+            servers = list_servers()
+            if servers:
+                srv_names = [s.name for s in servers]
+                logger.info("Configured MCP servers: %s", ", ".join(srv_names))
+            else:
+                logger.info("No MCP servers configured")
+        except Exception:
+            logger.debug("MCP server listing failed", exc_info=True)
+
+    def _init_subagents(self) -> None:
+        """Initialize the subagent manager."""
+        # Imported for `_subagent_event`'s note: whether a session is a workflow step's is answered
+        # once, in the module that owns the run-owned namespace, so it cannot drift from
+        # `dispatch_stage`'s key.
+        from personalclaw.workflows import ownership
+
+        async def _broadcast_subagent_status(info: SubagentInfo, event: str) -> None:
+            """Broadcast subagent status change via WS for per-session tracking."""
+            if not self.dashboard_state:
+                return
+            try:
+                session = info.parent_session_key.removeprefix("dashboard:")
+                agents = (
+                    self.subagent_mgr.running_agents_for(info.parent_session_key)
+                    if self.subagent_mgr
+                    else []
+                )
+                running = len(agents)
+                payload = {
+                    "running": running,
+                    "id": info.id,
+                    "event": event,
+                    "session": session,
+                    "agents": agents,
+                }
+                logger.info(
+                    "📡 subagent_status WS: event=%s session=%s running=%d agents=%d",
+                    event,
+                    session,
+                    running,
+                    len(agents),
+                )
+                self.dashboard_state.broadcast_ws("subagent_status", payload)
+            except Exception:
+                logger.info("Failed to broadcast subagent %s status", info.id, exc_info=True)
+
+        # What this gateway's notes said about failed agent work, so a failure is told once.
+        failure_notes = subagent_notes.FailureNotes()
+
+        async def _subagent_done(batch: "list[SubagentInfo]") -> None:
+            # A batch of completions that all share ONE parent session,
+            # delivered in a SINGLE parent turn. The manager coalesces per parent, so
+            # every member here has the same parent_key. ``info`` is the
+            # representative used for routing/logging; per-child failures notify each
+            # member. This replaces the old one-turn-per-completion path that
+            # serialized behind the parent's Semaphore(1) and lost bursts.
+            #
+            # Not the agents a stop cut off: the stop closed their trigger runs as interrupted
+            # before it cancelled them (`_record_stopped_agents`), and their own ending,
+            # "cancelled", would read as each run failing, delivered into a gateway that stops.
+            stopped: set[str] = getattr(self, "_stopped_agents", set())
+            batch = [m for m in batch if m.id not in stopped]
+            if not batch:
+                return
+            info = batch[0]
+
+            def _notify_all_failed(reason: str) -> None:
+                if not self.subagent_mgr:
+                    return
+                for _member in handed:  # the reports a turn was to be handed
+                    self.subagent_mgr.notify_injection_failed(_member, reason=reason)
+
+            async def _inject_with_retry(
+                client,
+                msg: str,
+                parent_key: str,
+                label: str,
+                *,
+                thread_channel: str | None = None,
+            ) -> str | None:
+                """The announce turn, held to the parent's tool grants when nobody watches the
+                parent (:func:`announce_profile`), and given back what it held after.
+
+                Raises :class:`AnnounceRefused` when the parent's runtime cannot be held: an agent
+                CLI runs its tools where the host never sees them, so the result is not handed to
+                a turn the grants cannot bound.
+                """
+                from personalclaw.guardrails.policy import tool_grants_held
+
+                profile = announce_profile(parent_key, thread_channel)
+                if profile is None:
+                    return await _stream_with_retry(client, msg, parent_key, label)
+                with tool_grants_held(client, profile) as held:
+                    if not held:
+                        raise AnnounceRefused(
+                            "the session it reports to runs on an agent CLI, which runs tools the "
+                            "host never sees, so the result was not handed to it: a turn nobody "
+                            f"watches is held to the {profile.name} profile's tool grants"
+                        )
+                    return await _stream_with_retry(client, msg, parent_key, label)
+
+            async def _stream_with_retry(
+                client,
+                msg: str,
+                parent_key: str,
+                label: str,
+            ) -> str | None:
+                """Retry stream_and_collect up to 3 times on AcpError.
+
+                Cancels any orphaned prompt between attempts so the next
+                retry doesn't hit 'Prompt already in progress'.
+                """
+
+                def _inject_usage(event: object, _src: str = label, _key: str = parent_key) -> None:
+                    from personalclaw.usage_ledger import record_from_event
+
+                    _m = getattr(getattr(client, "client", None), "_model", "") or ""
+                    record_from_event(
+                        event,
+                        source=_src,  # "channel" | "background" | "cron" — whose turn it is
+                        session_key=_key,
+                        provider="acp",
+                        model=_m if isinstance(_m, str) and _m != "auto" else "",
+                    )
+
+                # Cron-approval rewire: the result-injection turn's
+                # tool approval resolves through the SafetyProfile for an unattended parent, and
+                # stays AUTO_APPROVE for an interactive one. See ``injection_approval_policy``.
+                _inject_policy = injection_approval_policy(parent_key)
+                _inject_hooks = self.ctx_builder.hooks if self.ctx_builder else None
+                # The turn runs in the parent's session, as its agent: that agent's blocking hooks
+                # are the ones its calls meet.
+                _inject_agent = self.sessions.get_agent(parent_key) if self.sessions else ""
+                for attempt in range(3):
+                    try:
+                        return await stream_and_collect(
+                            client,
+                            msg,
+                            on_complete=_inject_usage,
+                            approval_policy=_inject_policy,
+                            hooks=_inject_hooks,
+                            agent=_inject_agent,
+                        )
+                    except PromptBusyExhaustedError:
+                        # Provider is dead after exhausting prompt-busy retries.
+                        # Reset session + notify, same as TimeoutError path.
+                        logger.error(
+                            "Subagent %s: provider dead after prompt-busy retries (%s)",
+                            info.id,
+                            label,
+                        )
+                        try:
+                            assert self.sessions is not None
+                            await self.sessions.reset(parent_key)
+                        except Exception:
+                            logger.debug(
+                                "Failed to reset %s after busy exhaustion",
+                                parent_key,
+                                exc_info=True,
+                            )
+                        _notify_all_failed("provider dead after prompt-busy retries")
+                        return None
+                    except AcpProcessDied:
+                        logger.warning(
+                            "Subagent %s: ACP process died during %s injection",
+                            info.id,
+                            label,
+                        )
+                        try:
+                            assert self.sessions is not None
+                            await self.sessions.reset(parent_key)
+                        except Exception:
+                            logger.debug(
+                                "Failed to reset %s after process death",
+                                parent_key,
+                                exc_info=True,
+                            )
+                        _notify_all_failed("ACP process died")
+                        return None
+                    except AcpError:
+                        if attempt == 2:
+                            raise
+                        logger.warning(
+                            "Subagent %s %s injection attempt %d failed, retrying",
+                            info.id,
+                            label,
+                            attempt + 1,
+                        )
+                        try:
+                            assert self.sessions is not None
+                            await self.sessions.cancel_current(parent_key)
+                        except Exception:
+                            logger.debug(
+                                "Failed to cancel parent prompt for %s",
+                                info.id,
+                                exc_info=True,
+                            )
+                        await asyncio.sleep(2**attempt)
+                return None  # unreachable, but satisfies type checker
+
+            parent_key = info.parent_session_key
+            for _member in batch:
+                await _broadcast_subagent_status(_member, "done")
+            # Who asked for the work the report hands back, when the owner did not: a subagent
+            # keeps who asked for the turn that started it (`memory_writes.hand_on`), so the turn
+            # its report starts runs as asked for by them, after that turn has ended too.
+            asked = next(
+                (
+                    who
+                    for who in (memory_writes.asked_for_work(agent_work_id(m.id)) for m in batch)
+                    if who
+                ),
+                {},
+            )
+
+            # The run of the trigger that started each member says how it went, on its history
+            # row: the fire recorded only that it launched (`triggers.settle`).
+            started_by_a_trigger: "list[SubagentInfo]" = []
+            for m in batch:
+                started_by = getattr(m, "trigger_id", "")
+                if isinstance(started_by, str) and started_by:
+                    started_by_a_trigger.append(m)
+            if started_by_a_trigger:
+                from personalclaw.triggers.settle import settle_agent_run
+
+                # Its ending is its trigger's run ending: a failure counts toward pausing the
+                # automation, and the card for one it paused goes out on this loop, since the
+                # settle runs off it.
+                loop = asyncio.get_running_loop()
+
+                def _stopped_itself(trigger: Any, decision: Any) -> None:
+                    loop.call_soon_threadsafe(self._surface_attention_card, trigger, decision)
+
+                settled = [
+                    await asyncio.to_thread(settle_agent_run, m, on_attention=_stopped_itself)
+                    for m in started_by_a_trigger
+                ]
+                if any(settled):
+                    self._push_trigger_refresh()
+                # What runs after the trigger that started it runs now that its work has ended,
+                # not when the agent started. Not after an agent its owner declined: it never ran.
+                from personalclaw.triggers.chain import held_chain
+
+                for m in started_by_a_trigger:
+                    if getattr(m, "declined", False) is not True:
+                        self._chain_after_work(
+                            source_trigger=m.trigger_id, payload=held_chain(m.trigger_id)
+                        )
+
+            # A trigger's own agent says how it went on the trigger's route now that it has ended,
+            # wherever its reply goes: the fire, or the Run now, that started it said nothing
+            # (`delivery.says_nothing_now`). The route speaks for it, a silent one included, so the
+            # plain subagent note is about the members no trigger spoke for, and only those.
+            def _reported(member: "SubagentInfo") -> bool:
+                # Its owner declined its start: it never ran, by their own decision, and they know.
+                # No note says so, least of all one calling it a failure.
+                if getattr(member, "declined", False) is True:
+                    return True
+                trigger_id = getattr(member, "trigger_id", "")
+                if not isinstance(trigger_id, str) or getattr(member, "silent", False):
+                    return False
+                # A trigger's agent someone stopped: whoever stopped it knows, as a trigger's
+                # workflow run they cancelled tells nobody (`run_finish.report_to_its_trigger`).
+                if trigger_id and getattr(member, "cancelled", False) is True:
+                    return True
+                from personalclaw.triggers.settle import what_it_said, why_it_failed
+
+                return self._report_to_its_trigger(
+                    trigger_id, error=why_it_failed(member), summary=what_it_said(member)
+                )
+
+            # Told: every member was spoken for by its trigger, or, the same failure, the rest were
+            # told by a note within the hour.
+            unreported = [m for m in batch if not _reported(m)]
+            told = not unreported or failure_notes.already_told(parent_key, unreported)
+            # Why the parent was not handed the result, when its announce was refused
+            # (`AnnounceRefused`): news a trigger's own note does not carry.
+            _refusal = ""
+
+            def _detail(member: "SubagentInfo", chat: str = "") -> str:
+                """What *member* said, or why it failed: as the model of the chat *chat* is handed
+                it, its report through the door it takes there (`subagent_report.for_its_chat`),
+                or, with no chat, as the person's note says it."""
+                from personalclaw.triggers.settle import why_it_failed, with_why_it_was_held_back
+
+                # A run held back (`SubagentInfo.held_back`) says why first, as on its trigger: a
+                # lifecycle trigger's agent keeps no run row, so this is all that says how it went.
+                if member.declined is True:
+                    m_detail = member.error
+                elif member.error:
+                    m_detail = f"Error: {why_it_failed(member)}"
+                else:
+                    report = member.result or "_No response._"
+                    m_detail = with_why_it_was_held_back(
+                        member,
+                        (
+                            subagent_report.for_its_chat(member.id, report, chat)
+                            if chat
+                            else subagent_report.for_a_person(member.id, report)
+                        ),
+                    )
+                m_detail, _ = redact_exfiltration_urls(m_detail)
+                m_detail, _ = redact_credentials(m_detail)
+                return m_detail
+
+            # What each member said, as the person's note below says it.
+            details = {m.id: _detail(m) for m in batch}
+
+            def _one_block(member: "SubagentInfo", said: str) -> str:
+                m_status = subagent_notes.ended(member)
+                m_task, _ = redact_exfiltration_urls(member.task)
+                m_task, _ = redact_credentials(m_task)
+                m_task = m_task[:100]
+                return (
+                    f"Agent `{member.id}`"
+                    f"{f' ({member.agent})' if member.agent else ''}"
+                    f" {m_status}\n"
+                    f"Task: {m_task}\n\n"
+                    f"{said}"
+                )
+
+            def _announce(chat: str, members: "list[SubagentInfo]") -> str:
+                """ONE completion event covering every member, as the chat *chat* is handed it:
+                a burst of 8 completions is one turn listing all 8, rather than 8 turns serialized
+                behind the parent's Semaphore(1). Built only for a chat it is handed to, since
+                each report is kept there as it is handed on."""
+                blocks = [_one_block(m, _detail(m, chat)) for m in members]
+                if len(members) == 1:
+                    return "[Subagent completion event]\n" + blocks[0]
+                n_failed = sum(1 for m in members if subagent_notes.ended(m) == "failed")
+                return (
+                    f"[Subagent completion batch — {len(members)} agents, "
+                    f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
+                )
+
+            # Only the report of work that ran, and that neither she nor the end of its starter
+            # stopped, starts a turn where the work was asked for (`subagent_endings`). One that
+            # never ran (her Deny of its start, a start nobody allowed, a batch that never
+            # started) or that she stopped is told to its chat's agent instead: handed to a turn,
+            # its ending set the agent to work again by itself, with nobody asking.
+            handed = [m for m in batch if subagent_endings.starts_a_turn(m)]
+            told_instead = [m for m in batch if subagent_endings.told_instead(m)]
+
+            def _told(member: "SubagentInfo") -> str:
+                """How *member* ended, as its chat's agent is told it in place of a report."""
+                m_task, _ = redact_exfiltration_urls(member.task)
+                m_task, _ = redact_credentials(m_task)
+                reason, _ = redact_exfiltration_urls(member.error)
+                reason, _ = redact_credentials(reason)
+                return "[Subagent completion event]\n" + subagent_endings.note(
+                    member, task=m_task[:100], reason=reason
+                )
+
+            # The note a PERSON reads is not that event: it is named by the run and says what
+            # happened (`subagent_notes`). An automation's run links back to the automation. It is
+            # about the members no trigger spoke for; when every one was, it goes out only to say
+            # the announce was refused, beside them all.
+            noted = unreported or batch
+            title, body = subagent_notes.note_for(noted, details)
+            notice_meta = self._notif_meta(parent_key)
+            if len(noted) == 1 and noted[0].trigger_id:
+                from personalclaw.triggers.delivery import status_url as _trigger_status_url
+
+                notice_meta = {
+                    **(notice_meta or {}),
+                    "statusUrl": _trigger_status_url(trigger_id=noted[0].trigger_id),
+                }
+            title, _ = redact_exfiltration_urls(title)
+            title, _ = redact_credentials(title)
+
+            # ── Route completion back to the originating session ──
+            # Dashboard → dashboard only (no channel delivery)
+            # Channel → channel thread + dashboard notification
+            # Cron/no parent → dashboard notification only
+
+            if session_keys.DASHBOARD.names(parent_key) and self.dashboard_state:
+                # Dashboard session — route subagent result through run_chat
+                # for full streaming, tool call visibility, and proper lifecycle.
+                _session_name = parent_key.removeprefix(session_keys.DASHBOARD.prefix)
+                _injection_session = self.dashboard_state.get_session(_session_name)
+
+                # Redact LLM-generated output before any external surface
+                body, _ = redact_exfiltration_urls(body)
+                body, _ = redact_credentials(body)
+
+                # Told now, while the turn that asked may still run: the next turn that runs in
+                # the chat takes it ahead of its message, or a `wait` under way there takes it at
+                # its next check-in. Its report never waits for that turn to end, as one would.
+                if told_instead and _injection_session:
+                    subagent_endings.owe(_injection_session, [_told(m) for m in told_instead])
+
+                if handed and _injection_session and _injection_session.running:
+                    # Session is busy — wait for current turn to finish,
+                    # then inject. No visible queue card.
+                    _current = _injection_session.task
+                    if _current is not None:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(_current),
+                                timeout=INJECTION_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            pass  # Timed out waiting — session still busy, will be queued below
+                        except asyncio.CancelledError:
+                            raise  # Don't swallow cancellation of this coroutine
+                        except Exception:
+                            pass  # Task failed — session is now idle
+
+                # What the Stop of the turn that started a member ended, or found already ended,
+                # hands its report to nobody (`SubagentInfo.starter_ended`): a turn started with it
+                # tells the agent its work was cut off, and the agent takes the work up again, so
+                # the chat she stopped went on. Read after the wait above, since the Stop can come
+                # while the report waits for that very turn to end. The Stop's own record says
+                # what it reached.
+                stopped_with_its_turn = [
+                    m for m in handed if subagent_endings.ended_with_its_starter(m)
+                ]
+                if stopped_with_its_turn:
+                    logger.info(
+                        "Subagent(s) %s: the turn that started them was stopped, so %s takes no "
+                        "turn for their report",
+                        ", ".join(m.id for m in stopped_with_its_turn),
+                        _session_name,
+                    )
+                    handed = [m for m in handed if m not in stopped_with_its_turn]
+                if not handed:
+                    # No turn is started: the person's note still says how what was told ended.
+                    if told_instead and not told:
+                        self.dashboard_state.notify(
+                            notification_kinds.SUBAGENT, title, body, meta=notice_meta
+                        )
+                    return
+                info = handed[0]
+
+                if _injection_session:
+                    # Not for a chat that is gone: its reports would be kept for a deleted chat.
+                    announce, _ = redact_exfiltration_urls(_announce(parent_key, handed))
+                    announce, _ = redact_credentials(announce)
+
+                    # Re-check: another injection may have claimed the session
+                    # during the await above.
+                    if _injection_session.running:
+                        logger.info(
+                            "Subagent %s: session %s claimed by another injection, queuing",
+                            info.id,
+                            _session_name,
+                        )
+                        # run_chat's finally drains the queue on any exit path, and runs the
+                        # report bounded by its silence (`turn_deadline`): nobody typed it.
+                        _injection_session.queue_append(announce, asked_for_by=asked)
+                        # One more message waits behind the chat's turn, which its run state says.
+                        self.dashboard_state.say_run_state(_injection_session)
+                        self.dashboard_state.push_sessions_update()
+                        logger.info("Subagent %s → queued in %s", info.id, _session_name)
+                        if not told:
+                            self.dashboard_state.notify(
+                                notification_kinds.SUBAGENT,
+                                title,
+                                body,
+                                meta=notice_meta,
+                            )
+                        return
+
+                    # Session is idle — start run_chat, on the report's own row, as a queued
+                    # report's: the turn it starts, and who asked for its work, is the row's.
+                    _injection_session.append(
+                        "subagent",
+                        announce,
+                        "msg msg-u",
+                        meta={ASKED_FOR_BY: dict(asked)} if asked else None,
+                    )
+                    _task = asyncio.create_task(
+                        turn_deadline.run_within(
+                            self.dashboard_state,
+                            _injection_session,
+                            run_chat(
+                                self.dashboard_state,
+                                _injection_session,
+                                announce,
+                                asked_for_by=asked,
+                            ),
+                            CHAT_TURN_IDLE_LIMIT,
+                        )
+                    )
+                    _injection_session.task = _task
+                    self.dashboard_state._background_tasks.add(_task)
+                    _task.add_done_callback(self.dashboard_state._background_tasks.discard)
+
+                    def _on_inject_done(t: "asyncio.Task") -> None:  # type: ignore[type-arg]
+                        if _injection_session.task is t:
+                            _injection_session.task = None
+                        if not t.cancelled() and t.exception():
+                            logger.error("Subagent injection run_chat failed: %s", t.exception())
+                            _reason = str(t.exception())
+                            _reason, _ = redact_exfiltration_urls(_reason)
+                            _reason, _ = redact_credentials(_reason)
+                            _notify_all_failed(_reason)
+
+                    _task.add_done_callback(_on_inject_done)
+                    self.dashboard_state.push_sessions_update()
+                    logger.info("Subagent %s → run_chat in %s", info.id, _session_name)
+                else:
+                    logger.info(
+                        "Subagent %s: parent session %s gone, notification only",
+                        info.id,
+                        _session_name,
+                    )
+
+                # Dashboard notification for the notification panel
+                if not told:
+                    self.dashboard_state.notify(
+                        notification_kinds.SUBAGENT,
+                        title,
+                        body,
+                        meta=notice_meta,
+                    )
+                return
+
+            # A parent nothing is handed to (`subagent_endings`) is told by the note below alone.
+            if (
+                handed
+                and parent_key
+                and not any(kind.names(parent_key) for kind in _NOT_ANNOUNCED_INTO)
+            ):
+                # Channel session — inject silently into ACP session (no visible channel message).
+                # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.
+                assert self.sessions is not None
+                info = handed[0]
+                # Whose turn the announcement is (`announce_axis`): a channel thread's is a
+                # person's conversation, booked as channel spend; any other parent's is
+                # automation's, metered, and booked as background spend.
+                _thread_channel = self.sessions.get_channel(parent_key)
+                _announce_source = "channel" if _thread_channel else "background"
+                announce = _announce(parent_key, handed)
+                _injected = False
+                _channel_failure_reasons: list[str] = []
+                _sleep_before_retry = False
+                for _attempt in range(1, _MAX_INJECT_ATTEMPTS + 1):
+                    if _sleep_before_retry:
+                        await asyncio.sleep(2)
+                        _sleep_before_retry = False
+                    _acquired = False
+                    try:
+                        logger.debug(
+                            "Subagent %s: channel injection attempt %d/%d into %s",
+                            info.id,
+                            _attempt,
+                            _MAX_INJECT_ATTEMPTS,
+                            parent_key,
+                        )
+                        client, is_new, _resumed = await self.sessions.get_or_create(
+                            parent_key, model_axis=announce_axis(_thread_channel)
+                        )
+                        _acquired = True
+                        if self.ctx_builder:
+                            from personalclaw.context_headroom import resolve_window
+
+                            msg, _ = await asyncio.to_thread(
+                                self.ctx_builder.build_message,
+                                announce,
+                                is_new,
+                                parent_key,
+                                window=await resolve_window(serving=client),
+                                # The thread's own turn: a Temporary thread's reads no memory.
+                                blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
+                            )
+                        else:
+                            msg = announce
+                        # The report's turn, as asked for by whoever asked for its work when the
+                        # owner did not: the requests its tools make name the thread, and the gate
+                        # its calls are put to runs here (`memory_writes.turn_asked_by`).
+                        asked_here = (
+                            memory_writes.turn_asked_by(parent_key, asked)
+                            if asked
+                            else contextlib.nullcontext()
+                        )
+                        with asked_here:
+                            response = await asyncio.wait_for(
+                                _inject_with_retry(
+                                    client,
+                                    msg,
+                                    parent_key,
+                                    _announce_source,
+                                    thread_channel=_thread_channel,
+                                ),
+                                timeout=INJECTION_TIMEOUT,
+                            )
+                        _injected = True  # LLM processed result; channel posting is best-effort
+
+                        # Post only the LLM's synthesized response to the channel
+                        try:
+                            # The session's own thread when it has one; otherwise the owner's
+                            # DM, on the first channel that reaches the owner (the Inbox when
+                            # none does).
+                            thread_channel = _thread_channel
+                            elapsed = (
+                                info.elapsed
+                                if info.elapsed > 0
+                                else (time.monotonic() - info.started)
+                            )
+                            # The thread's own channel, the one that issued its id.
+                            thread_delivery = (
+                                _delivery_owning(thread_channel) if thread_channel else None
+                            )
+                            if response and thread_channel and thread_delivery is not None:
+                                await thread_delivery.deliver_subagent_reply(
+                                    thread_channel, response, parent_key, elapsed
+                                )
+                            elif response:
+                                from personalclaw.channel_delivery import deliver_to_owner
+
+                                await deliver_to_owner(
+                                    lambda delivery, dm: delivery.deliver_subagent_reply(
+                                        dm, response, parent_key, elapsed
+                                    ),
+                                    # A named run's reply is titled by the run, as its notice is.
+                                    title=(info.title if len(batch) == 1 else "")
+                                    or "Subagent reply",
+                                    text=response,
+                                    state=self.dashboard_state,
+                                )
+                        except Exception:
+                            logger.exception(
+                                "Subagent %s: channel posting failed (injection succeeded)",
+                                info.id,
+                            )
+                        logger.info("Subagent %s → channel session %s", info.id, parent_key)
+                        break
+                    except asyncio.TimeoutError:
+                        _channel_failure_reasons.append(
+                            f"attempt {_attempt} timed out after {int(INJECTION_TIMEOUT)}s"
+                        )
+                        logger.warning(
+                            "Subagent %s: channel injection attempt %d/%d timed out after %.0fs",
+                            info.id,
+                            _attempt,
+                            _MAX_INJECT_ATTEMPTS,
+                            INJECTION_TIMEOUT,
+                        )
+                        if _acquired:
+                            try:
+                                await self.sessions.reset(parent_key)
+                            except Exception:
+                                logger.debug(
+                                    "Failed to reset %s after channel injection timeout",
+                                    parent_key,
+                                    exc_info=True,
+                                )
+                        if _attempt < _MAX_INJECT_ATTEMPTS:
+                            _sleep_before_retry = True
+                    except AnnounceRefused as refused:
+                        _channel_failure_reasons.append(str(refused))
+                        _refusal = str(refused)
+                        logger.warning("Subagent %s: %s", info.id, refused)
+                        break
+                    except Exception as exc:
+                        _channel_failure_reasons.append(f"attempt {_attempt} failed: {exc}")
+                        logger.exception("Subagent %s channel injection failed", info.id)
+                        # A provider transient is at least as retriable as the timeout above, and
+                        # abandoning here loses a subagent's COMPLETED work: the agent ran, produced
+                        # its result, and nothing delivers it. Retriability comes from the engine's
+                        # taxonomy (`RETRYABLE_CLASSES` = TRANSIENT | NETWORK) rather than a second
+                        # classifier local to this loop, so there is one vocabulary for "may retry".
+                        from personalclaw.workflows.failure_taxonomy import classify_exception
+
+                        if _attempt < _MAX_INJECT_ATTEMPTS and classify_exception(exc).retryable:
+                            _sleep_before_retry = True
+                            continue
+                        break
+                    finally:
+                        if _acquired:
+                            try:
+                                await self.sessions.cancel_current(parent_key)
+                            except Exception:
+                                logger.debug(
+                                    "Failed to cancel parent prompt for %s",
+                                    info.id,
+                                    exc_info=True,
+                                )
+                            try:
+                                self.sessions.release(parent_key)
+                            except Exception:
+                                logger.exception("Failed to release session %s", parent_key)
+
+                if not _injected:
+                    _last_failure_reason = "; ".join(_channel_failure_reasons)
+                    _last_failure_reason, _ = redact_exfiltration_urls(_last_failure_reason)
+                    _last_failure_reason, _ = redact_credentials(_last_failure_reason)
+                    logger.error(
+                        # The count is the attempts MADE, not `_MAX_INJECT_ATTEMPTS`: an early
+                        # abandon on a non-retriable error is a legitimate outcome, and printing
+                        # the ceiling claimed "all 2 attempts failed" while listing only attempt 1.
+                        "Subagent %s: all %d channel injection attempts failed: %s",
+                        info.id,
+                        len(_channel_failure_reasons),
+                        _last_failure_reason,
+                    )
+                    _notify_all_failed(_last_failure_reason)
+                # Dashboard notification. A refused announce says so beside the result it carries,
+                # even when every member's trigger already said how the work went: the owner reads
+                # there that the session did not act on it, and why.
+                if self.dashboard_state and (not told or _refusal):
+                    self.dashboard_state.notify(
+                        notification_kinds.SUBAGENT,
+                        title,
+                        f"{body}\n\nNot acted on: {_refusal}." if _refusal else body,
+                        meta=notice_meta,
+                    )
+                return
+
+            # Cron parent — inject result back into the cron session.
+            # Track pending injections to avoid resetting the session while
+            # other subagents are queued behind the per-session semaphore.
+            if session_keys.TRIGGER.names(parent_key):
+                self._cron_injecting[parent_key] = self._cron_injecting.get(parent_key, 0) + 1
+                assert self.sessions is not None
+                acquired = False
+                cron_response: str | None = None
+                try:
+                    # The scheduled job's session reading its subagent's result: a supervising
+                    # turn nobody typed, so it rides the orchestration axis its subagent rode —
+                    # the axis is what meters it under the daily cap. With nothing to hand on
+                    # (`subagent_endings`) no turn is started, but the session is still taken once
+                    # the job's own turn lets go of it, so the reset below cannot end that turn.
+                    if handed or self.sessions.has_session(parent_key):
+                        client, is_new, _resumed = await self.sessions.get_or_create(
+                            parent_key, model_axis="orchestration"
+                        )
+                        acquired = True
+                    if handed:
+                        announce = _announce(parent_key, handed)
+                        if self.ctx_builder:
+                            from personalclaw.context_headroom import resolve_window
+
+                            msg, _ = await asyncio.to_thread(
+                                self.ctx_builder.build_message,
+                                announce,
+                                is_new,
+                                parent_key,
+                                window=await resolve_window(serving=client),
+                                # The job's own turn reads memory only where its work may.
+                                blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
+                            )
+                        else:
+                            msg = announce
+                        cron_response = await asyncio.wait_for(
+                            _inject_with_retry(client, msg, parent_key, "cron"),
+                            timeout=INJECTION_TIMEOUT,
+                        )
+                except AnnounceRefused as refused:
+                    logger.warning("Subagent %s: %s", info.id, refused)
+                    _notify_all_failed(str(refused))
+                    _refusal = str(refused)
+                    body = f"{body}\n\nNot acted on: {refused}."
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Subagent %s: cron injection timed out after %.0fs",
+                        info.id,
+                        INJECTION_TIMEOUT,
+                    )
+                    try:
+                        await self.sessions.reset(parent_key)
+                    except Exception:
+                        logger.debug(
+                            "Failed to reset %s after cron injection timeout",
+                            parent_key,
+                            exc_info=True,
+                        )
+                    _notify_all_failed(f"injection timed out after {int(INJECTION_TIMEOUT)}s")
+                except Exception:
+                    logger.exception("Subagent %s cron injection failed", info.id)
+                finally:
+                    if acquired:
+                        try:
+                            await self.sessions.cancel_current(parent_key)
+                        except Exception:
+                            logger.debug(
+                                "Failed to cancel parent prompt for cron %s", info.id, exc_info=True
+                            )
+                        try:
+                            self.sessions.release(parent_key)
+                        except Exception:
+                            logger.exception("Failed to release session %s", parent_key)
+                    self._cron_injecting[parent_key] = self._cron_injecting.get(parent_key, 1) - 1
+                    if self._cron_injecting[parent_key] <= 0:
+                        self._cron_injecting.pop(parent_key, None)
+                if cron_response:
+                    cron_response, _ = redact_exfiltration_urls(cron_response)
+                    cron_response, _ = redact_credentials(cron_response)
+                    body = f"{body}\n\n{cron_response}"
+                    logger.info("Subagent %s → cron session %s", info.id, parent_key)
+                # Reset only when no subagents running AND no injections pending
+                _batch_ids = {m.id for m in batch}
+                still_running = self.subagent_mgr and any(
+                    a.parent_session_key == parent_key and a.id not in _batch_ids
+                    for a in self.subagent_mgr.running
+                )
+                still_injecting = self._cron_injecting.get(parent_key, 0) > 0
+                if not still_running and not still_injecting:
+                    try:
+                        await self.sessions.reset(parent_key)
+                        logger.info(
+                            "Cron session %s: last subagent done, session reset", parent_key
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Cron session %s: reset failed after last subagent", parent_key
+                        )
+
+            # Dashboard notification — suppressed when every member it is about is silent, or every
+            # one was spoken for by its trigger and the announce was not refused.
+            if self.dashboard_state and not all(m.silent for m in noted) and (not told or _refusal):
+                self.dashboard_state.notify(
+                    notification_kinds.SUBAGENT,
+                    title,
+                    body,
+                    meta=notice_meta,
+                )
+            if not session_keys.TRIGGER.names(parent_key):
+                logger.info("Subagent %s → notification only (parent=%s)", info.id, parent_key)
+
+        assert self.sessions is not None
+        assert self.ctx_builder is not None
+
+        def _is_yolo() -> bool:
+            # Subagents inherit the EXPIRING override, not a stale flag: route
+            # through is_yolo_active() so a TTL-expired dashboard YOLO no longer
+            # auto-approves spawned subagents' tool calls.
+            from personalclaw.trust_mode import is_yolo_active as is_yolo_mode
+
+            state = self.dashboard_state
+            if state is not None and state.is_yolo_active():
+                return True
+            return is_yolo_mode()
+
+        def _spawn_session_resolver(request_id: str) -> str:
+            """The parent session of the subagent a spawn or tool-call approval id names.
+
+            Both shapes carry the subagent (``subagent.approval_subagent_id``), so a stage's tool
+            call is listed under its run like the stage's spawn is — which is what lets the run's
+            page show it and the decision path tell when that run has ended. A batch's one ask
+            starts no subagent yet: it is the chat's whose batch it is (`batch_start.asked_in`).
+            """
+            from personalclaw.workflows.batch_start import asked_in
+
+            agent_id = approval_subagent_id(request_id)
+            info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
+            session = (
+                info.parent_session_key.removeprefix("dashboard:")
+                if info and info.parent_session_key
+                else asked_in(request_id)
+            )
+            logger.info(
+                "_spawn_session_resolver: rid=%s agent_id=%s info=%s session=%s",
+                request_id,
+                agent_id,
+                info is not None,
+                session,
+            )
+            return session
+
+        def _spawn_trigger_resolver(request_id: str) -> str:
+            """The trigger whose fire started the subagent an approval id names, or ""."""
+            agent_id = approval_subagent_id(request_id)
+            info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
+            return str(getattr(info, "trigger_id", "") or "") if info else ""
+
+        _approve_subagent = self._interactive_approval(
+            "subagent",
+            session_resolver=_spawn_session_resolver,
+            trigger_resolver=_spawn_trigger_resolver,
+        )
+
+        async def _subagent_event(etype: str, info: SubagentInfo, extra: dict) -> None:
+            if not self.dashboard_state:
+                return
+            session_name = info.parent_session_key.removeprefix("dashboard:")
+            base = {"id": info.id, "session": session_name}
+            if etype == "subagent_tool_granted":
+                # A grant approved one of the agent's calls without asking (its chat's Trust, the
+                # spawn's own approval mode, a hook pattern…): the note a previous unanswered ask
+                # of the same call left is settled, as an answer would (`settle_granted`).
+                self.dashboard_state.settle_granted(
+                    tool=str(extra.get("tool") or ""),
+                    tool_input=extra.get("tool_input"),
+                    session=_spawn_session_resolver(f"subagent:{info.id}:call"),
+                    trigger=str(getattr(info, "trigger_id", "") or ""),
+                    by=str(extra.get("decided_by") or ""),
+                )
+                return
+            if etype == "subagent_auto_denied":
+                # A call the subagent's runtime declined because nobody could approve it.
+                # Recorded against the PARENT, which is where a person can see it and act: the
+                # chat that spawned the helper, or the workflow step it ran for.
+                from personalclaw import auto_denials
+
+                parent = self.dashboard_state.get_session(session_name) if session_name else None
+                title = getattr(parent, "title", "") if parent is not None else ""
+                # Started by a trigger's action: the note names that trigger, which is what the
+                # owner knows the work by (`auto_denials.note_unattended` words it).
+                trigger = str(getattr(info, "trigger_id", "") or "")
+                auto_denials.note_unattended(
+                    self.dashboard_state,
+                    session_key=session_name or session_keys.SUBAGENT.key(info.id),
+                    tool=str(extra.get("tool") or ""),
+                    who=(
+                        ""
+                        if trigger
+                        else (
+                            f"A subagent of “{title}”"
+                            if title and title != session_name
+                            else (
+                                "A workflow step"
+                                if ownership.is_owned(session_name)
+                                else "A subagent"
+                            )
+                        )
+                    ),
+                    trigger=trigger,
+                )
+                return
+            if etype == "subagent_injection_failed":
+                # Show error in UI + queue for LLM context on next turn.
+                session = self.dashboard_state.get_session(session_name)
+                if session:
+                    task_preview, _ = redact_exfiltration_urls((info.task or "")[:100])
+                    task_preview, _ = redact_credentials(task_preview)
+                    error_text, _ = redact_exfiltration_urls(extra.get("error", "timed out"))
+                    error_text, _ = redact_credentials(error_text)
+                    session.append(
+                        "assistant",
+                        f"[Subagent completion event]\n"
+                        f"Agent `{info.id}` failed\n"
+                        f"Task: {task_preview}\n\n"
+                        f"Error: {error_text}\n"
+                        f"Result delivery timed out — the subagent finished but "
+                        f"its result could not be injected into this session.",
+                        "msg msg-a",
+                    )
+                    # Owed to the chat's agent with its next turn (`subagent_endings`).
+                    failure_msg = extra.get("failure_msg", "")
+                    if failure_msg:
+                        failure_msg, _ = redact_exfiltration_urls(failure_msg)
+                        failure_msg, _ = redact_credentials(failure_msg)
+                        subagent_endings.owe(session, [failure_msg])
+                    self.dashboard_state.push_sessions_update()
+                    logger.warning(
+                        "Injected timeout error for subagent %s into session %s",
+                        info.id,
+                        session_name,
+                    )
+                self.dashboard_state.broadcast_ws(etype, {**base, **extra})
+                return
+            # A task of a chat's batch is that chat's work too: its events are shown in the chat
+            # that started the batch, beside the subagents it started itself, named by its step and
+            # marked with the batch's run (`batch_start.task_of_chat`).
+            from personalclaw.workflows.batch_start import task_of_chat
+
+            chat, run_id, step = task_of_chat(info.parent_session_key)
+            if chat:
+                base = {**base, "session": chat, "run": run_id}
+                if etype == "subagent_spawn":
+                    extra = {**extra, "title": step}
+            if etype in ("subagent_spawn", "subagent_done"):
+                # While the chat's turn runs it is handing off to every helper still at work for
+                # it, its own and its batches' tasks alike, this one's ending not counted (its
+                # phase, `DashboardState.say_helpers`).
+                for_chat = chat or session_name
+                ended = info.id if etype == "subagent_done" else ""
+                at_work = [
+                    a
+                    for a in (self.subagent_mgr.running if self.subagent_mgr else [])
+                    if a.id != ended
+                ]
+                works_for = {
+                    key: task_of_chat(key)[0] or key.removeprefix("dashboard:")
+                    for key in {a.parent_session_key for a in at_work}
+                }
+                self.dashboard_state.say_helpers(
+                    for_chat, sum(1 for a in at_work if works_for[a.parent_session_key] == for_chat)
+                )
+            if etype == "subagent_chunk":
+                # Heavy data — only to subscribed clients
+                self.dashboard_state.broadcast_ws_subagent_subscribers(etype, {**base, **extra})
+            else:
+                # Lightweight status events — broadcast to all
+                self.dashboard_state.broadcast_ws(etype, {**base, **extra})
+
+        self.subagent_mgr = SubagentManager(
+            sessions=self.sessions,
+            ctx_builder=self.ctx_builder,
+            on_done=_subagent_done,
+            max_concurrent=resolve_max_subagents(
+                self._cfg.agent.max_subagents,
+                per_agent_gb=self._cfg.agent.spawn_min_memory_gb,
+            ),
+            default_turn_limit=self._cfg.agent.subagent_max_turns,
+            default_timeout=self._cfg.agent.subagent_timeout_secs,
+            on_tool_approval=_approve_subagent,
+            # A start asks as its own permission request (`subagent_ask.spawn_ask`), through the
+            # same approval path as the agent's tool calls.
+            on_spawn_approval=_approve_subagent,
+            is_yolo=_is_yolo,
+            on_event=_subagent_event,
+            # Settings → Agent defaults → Subagents, read at each decision: the values above are
+            # only what an unreadable config falls back to (`approval_grants`, rule 1).
+            limits=_live_subagent_limits,
+        )
+        self._announce_subagents = _subagent_done
+        self.subagent_mgr.start_reaper()
+
+    def _publish_runtime_base(self) -> None:
+        """Publish the socket we ACTUALLY bound, for every child to resolve from.
+
+        This process is the only one that knows the answer, so it is the only one allowed
+        to state it: ``gateway_base.publish()`` records the bound port in this process's
+        environment (inherited by every child we spawn) and in a per-home runtime record
+        (readable by a child whose environment was rebuilt from an allowlist).
+
+        Before the owner existed, each child worked the base out for itself from
+        ``dashboard.url`` or from the import-time ``DASHBOARD_PORT``, and BOTH fall back to
+        the fixed 10000. Neither ``--port`` nor ``--port auto`` writes that config, so a
+        gateway on another port addressed its children at 10000 — which on a multi-instance
+        host is a DIFFERENT instance, not a dead socket (#2539). Two earlier symptoms of the
+        same root: ``subagent_run`` answering ``<urlopen error [Errno 61] Connection
+        refused>`` on a kiro ACP session while the in-process tools beside it worked,
+        and a ``run-script`` action's ``ctx.notify()`` persisting into a
+        second instance's notification store.
+
+        No ``if self._dashboard_port:`` guard: an unset/zero port here means we bound but
+        cannot say to what, and ``publish()`` raises. Failing at startup is the honest
+        answer — the guard's silence just deferred the same failure to the first tool call,
+        by which time the request had already gone somewhere.
+        """
+        gateway_base.publish(self._dashboard_port)
+
+    async def _init_dashboard(self) -> None:
+        """Start the gateway's server: the dashboard, or with ``--headless`` the same server
+        without the dashboard's pages (``start_dashboard``'s ``web_app``). Its apps, API and
+        services are the same either way, so a headless gateway serves its channels as the full
+        one does."""
+        assert self.sessions is not None
+
+        configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)
+        # --port override (literal int or "auto" for ephemeral)
+        if self._port_override == "auto":
+            dashboard_port = 0
+        elif self._port_override is not None:
+            dashboard_port = int(self._port_override)
+        self._dashboard_port = dashboard_port
+        self._configured_host = configured_host
+        # resolve_bind_host() honors the PERSONALCLAW_BIND_HOST escape hatch
+        # and otherwise sticks to loopback. ``local_only`` is derived from the
+        # resolved bind.
+        self._local_only = is_local_bind(resolve_bind_host())
+        self._dashboard_runner, self.dashboard_state = await start_dashboard(
+            sessions=self.sessions,
+            port=dashboard_port,
+            subagents=self.subagent_mgr,
+            context_builder=self.ctx_builder,
+            conversation_log=self.conv_log,
+            consolidator=self.consolidator,
+            local_only=self._local_only,
+            configured_host=configured_host,
+            dashboard_url=self._cfg.dashboard.url,
+            owner_id=self._owner_id,
+            web_app=not self._no_dashboard,
+        )
+        # When --port auto was requested, read the OS-assigned ephemeral port
+        # back from the runner so subsequent URL building and the READY line
+        # use the real bound port.
+        if dashboard_port == 0 and self._dashboard_runner is not None:
+            addresses = self._dashboard_runner.addresses
+            if addresses:
+                self._dashboard_port = addresses[0][1]
+        self._publish_runtime_base()
+        if self.dashboard_state:
+            self.dashboard_state.no_crons = self._no_crons  # dashboard mode
+            # A webhook's fire and a view's refresh start in the dashboard's handlers, and are
+            # fires all the same: they run through the dispatch every fire runs through.
+            self.dashboard_state.fire_trigger = self._fire_store_trigger
+            # The scheduler's refresh callback is gone. It fired only from
+            # `_record_run`, reachable only from the retired timer and the manual-run path —
+            # and that path's HANDLER already pushes both kinds in its own `finally`. Scheduled
+            # fires now push through `_push_trigger_refresh` on the store-backed fire path,
+            # which is the one that actually runs.
+            # Attach the inbox service (built in _init_inbox, which runs before the
+            # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
+            self.dashboard_state._inbox_svc = self.inbox_svc
+            self.dashboard_state._inbox_restart = self._restart_inbox
+            # No second opinion survives a restart either: deliver the checks it cut off, and
+            # take the decisions an earlier verify filtered back out of Filtered.
+            self.dashboard_state.settle_verification_rows()
+            # No approval survives a restart, so an Inbox row still asking for one from the
+            # previous run is asking for nothing — close those before anyone opens them.
+            self.dashboard_state.close_orphaned_approval_rows()
+            # …nor a question an agent was waiting on her answer to.
+            self.dashboard_state.owner_questions.close_orphaned_rows()
+            self._start_incident_watch()
+
+    def _start_incident_watch(self) -> None:
+        """Tell every open page when the incident switch moves — the CLI's flips included, which
+        this process learns of only by looking. The banner and the loop views re-read on the
+        hint instead of polling a switch that rarely changes and must never be followed late."""
+        from personalclaw.guardrails import incident
+
+        state = self.dashboard_state
+        if state is None:
+            return
+        self._incident_watch_task = asyncio.create_task(
+            incident.watch(lambda _st: state.push_refresh("incident", "loops"))
+        )
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+
+    async def _shutdown(self) -> None:
+        """Graceful cleanup of all services."""
+        # Withdraw the runtime base record FIRST: from here on this instance is not serving,
+        # and a record left behind is a record a later child could resolve. (The pid check in
+        # ``live_port()`` already covers a crash; this covers the graceful case exactly.)
+        gateway_base.unpublish()
+        # Reap app backends and workers FIRST, synchronously — before the
+        # ACP/session teardown below. ACP cleanup can take many seconds when a
+        # delegate CLI is wedged (force-kill retries), and it used to run in the
+        # same gather as the dashboard runner's on_cleanup hooks; an impatient
+        # operator SIGKILLing the gateway during that window would orphan the
+        # app processes. Stopping them up front makes the common path leak-free
+        # regardless of how slow (or interrupted) the rest of shutdown is. The
+        # on_cleanup hook remains as a backstop (idempotent — each supervisor's
+        # table is emptied by its stop_all, so the second pass is a no-op).
+        try:
+            from personalclaw.apps.app_runtime import stop_processes
+
+            stop_processes()
+        except Exception:
+            logger.debug("early app process reap failed", exc_info=True)
+
+        # An update half-way through stops its install and puts the checkout back before the
+        # process ends, so the next start runs the release the environment has.
+        from personalclaw import checkout_update
+
+        await self._stopping_step("the update in progress", checkout_update.stop())
+
+        # End the chat turns still running, THEN save every chat: each turn ends by saying the
+        # gateway restarted (or shut down) before it finished, and only a save after that keeps
+        # it in the transcript the next start reads.
+        if self.dashboard_state:
+            from personalclaw.dashboard.chat import save_all_sessions_to_history
+
+            await self._stopping_step(
+                "the running chat turns",
+                self.dashboard_state.end_running_turns(timeout=_END_TURNS_SECS),
+            )
+            save_all_sessions_to_history(self.dashboard_state)
+            self.dashboard_state.file_indexes.stop_all()
+
+        # Cancel in-flight handler tasks. Every wait below on a task it cancelled is bounded: a
+        # task cancelled while it starts a process may never leave (`cancel_and_wait`), and the
+        # stop has to finish anyway.
+        await self._stopping_step(
+            "the channel messages in flight",
+            cancel_and_wait(list(self._handler_tasks), what="in-flight channel messages"),
+        )
+
+        # Stop services
+        if self.loop_watchdog:
+            await self._stopping_step("the loop watchdog", self.loop_watchdog.stop())
+        if self.workflow_watchdog:
+            await self._stopping_step("the workflow watchdog", self.workflow_watchdog.stop())
+        # Detached first, so an event reported during shutdown is spooled for the next boot rather
+        # than handed to a loop that is about to stop.
+        self._stop_event_triggers()
+        await self._stopping_step(
+            "the background services",
+            cancel_and_wait(
+                [
+                    self._file_watch_task,
+                    self._web_watch_task,
+                    self._clock_task,
+                    self._reaper_task,
+                    self._task_due_task,
+                    self._staged_apply_task,
+                    self._incident_watch_task,
+                ],
+                what="gateway background services",
+            ),
+        )
+        if self.heartbeat_svc:
+            self.heartbeat_svc.stop()
+        from personalclaw import session_search
+
+        await self._stopping_step(
+            "the chat search indexer", asyncio.to_thread(session_search.INDEXER.stop, wait=True)
+        )
+        if self.inbox_svc:
+            self.inbox_svc.stop()
+        # Kill all ACP processes and close connections, side by side.
+        last: dict[str, Any] = {}
+        if self.subagent_mgr:
+            last["the background agents"] = self.subagent_mgr.cancel_all()
+        if self.sessions:
+            last["the agent sessions"] = self.sessions.close_all()
+        if self._dashboard_runner:
+            # Close WS connections first so handlers exit promptly
+            if self.dashboard_state:
+                await self._stopping_step(
+                    "the dashboard's live connections", self.dashboard_state.close_all_ws()
+                )
+            last["the dashboard server"] = self._dashboard_runner.cleanup()
+        # Stop every channel receiver, and start none after this.
+        from personalclaw.channel_transports import unbind_inbound
+
+        last["the channel connections"] = unbind_inbound()
+
+        # The runs whose agents the cancel just below cuts off, closed as interrupted first.
+        self._record_stopped_agents()
+        await asyncio.gather(*(self._stopping_step(what, aw) for what, aw in last.items()))
+
+    async def _stopping_step(self, what: str, aw: Awaitable[Any]) -> None:
+        """Await one step of the stop, named for the log of a stop that runs out of time in it.
+
+        A step that fails is said, and passed: it must not cost the stop the steps after it (the
+        dashboard server's cleanup is where time travel writes its pending commits).
+        """
+        self._stopping.add(what)
+        try:
+            await aw
+        except Exception as exc:
+            logger.warning("Stopping %s failed: %s", what, exc, exc_info=True)
+        finally:
+            self._stopping.discard(what)
+
+    # ------------------------------------------------------------------
+    # Auto-update
+    # ------------------------------------------------------------------
+
+    async def _check_for_updates(self) -> None:
+        """The update check at gateway start, said as it happened — then the ``updates.auto`` mode.
+
+        It is an automatic check, so it runs only while ``updates.check_enabled`` is on
+        (:func:`~personalclaw.self_update.may_check_for_updates`). With it off the start says
+        so, and nothing reaches out. The check is the one every other path runs
+        (``dashboard.handlers.updates.update_status``), and the line after it is what that
+        check found: an update, the release this install is on, or that nothing answered.
+
+        ``off`` (the default) is NOTIFY-ONLY: an available update raises the
+        ``update_available`` refresh and is never applied unattended. ``staged``
+        applies at the next safe point — it HOLDS while any session/subagent is in
+        flight (:meth:`DashboardState.active_work_snapshot`) and fires only once that drains,
+        landing solely on the resolved channel/pin release tag, never on ``main``
+        (the apply is :meth:`_auto_apply_update`). That is a source checkout's alone
+        (:func:`~personalclaw.self_update.applies_updates_unattended`); on every other kind
+        ``staged`` notifies exactly as ``off`` does.
+        """
+        try:
+            from personalclaw import self_update
+            from personalclaw.dashboard.handlers import updates as _updates
+
+            if not self_update.may_check_for_updates(asked=False):
+                print("Automatic update checks are off")
+                return
+            print("Checking for updates…")
+            status = await _updates.update_status(asked=False, at_start=True)
+            print(_updates.update_result_line(status))
+            if status.get("available"):
+                logger.info("Updates available from remote")
+                from personalclaw.config import AppConfig
+
+                cfg = AppConfig.load()
+                # `staged` applies only where something can: a source checkout. Anywhere else the
+                # apply below returns without a checkout to move, so `staged` there is `off` — and
+                # it must not also swallow the notice `off` gives.
+                if cfg.updates.auto == "staged" and self_update.applies_updates_unattended(
+                    self_update.detect_install_kind()
+                ):
+                    logger.info("Auto-update mode 'staged' — applying at the next safe point")
+                    await self._staged_auto_apply()
+                elif self.dashboard_state:
+                    self.dashboard_state.push_refresh("update_available")
+        except Exception:
+            logger.debug("Update check failed", exc_info=True)
+
+    def _work_in_flight(self) -> bool:
+        """Whether a restart-interrupting unit is running: any not-done background
+        subagent or any live chat session. Answered in ONE place by reusing
+        :meth:`DashboardState.active_work_snapshot`, so the staged-apply gate and the
+        manual-restart confirm gate agree. Before the gateway's server is up (no dashboard
+        state) there is no such work to interrupt, so it reads idle."""
+        if self.dashboard_state is None:
+            return False
+        snap = self.dashboard_state.active_work_snapshot()
+        return snap["running_agents"] > 0 or snap["sessions"] > 0
+
+    async def _staged_auto_apply(self) -> None:
+        """Apply a staged update at the next safe point.
+
+        If in-flight work is present, DEFER: a single background waiter re-checks
+        and applies once it drains — this never blocks the caller (startup, the
+        boot-path check) while work is running. Otherwise apply immediately. Either
+        way the apply is :meth:`_auto_apply_update`, which resolves the channel/pin
+        release tag and never touches ``main``.
+        """
+        if self._work_in_flight():
+            if self._staged_apply_task is not None and not self._staged_apply_task.done():
+                # A waiter is already holding — don't spawn a rival apply.
+                return
+            self._staged_apply_task = asyncio.create_task(self._await_idle_then_apply())
+            return
+        await self._auto_apply_update()
+
+    async def _await_idle_then_apply(self) -> None:
+        """Background waiter: hold while work is in flight, then apply once idle.
+
+        Polls :meth:`_work_in_flight` on ``_STAGED_APPLY_POLL_SECS``. Cancels
+        cleanly on shutdown and never applies after a shutdown request.
+        """
+        try:
+            while not shutdown_event.is_set() and self._work_in_flight():
+                await asyncio.sleep(_STAGED_APPLY_POLL_SECS)
+            if not shutdown_event.is_set():
+                await self._auto_apply_update()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Staged auto-update failed", exc_info=True)
+
+    async def _auto_apply_update(self) -> None:
+        """Install the staged update: the one update of the source checkout, unattended.
+
+        It is :func:`~personalclaw.dashboard.handlers.updates.start_checkout_update`, the function
+        the owner's Update runs, so the two cannot drift apart. Unattended it asks the gate every
+        automatic check asks first, does nothing when there is nothing to advance, and says why it
+        did not run on the update progress instead of to a request. Its rules for the tree are the
+        owner's Update's: it lands only on the channel's or the pin's release, never on ``main``;
+        it never advances over uncommitted tracked edits (untracked files never block it); it
+        installs with the tool that made the environment, which must be there before anything
+        moves; and an install that fails puts the checkout back on the commit it was on. Returns
+        once the update has run, the restart it ends with asked for.
+        """
+        from personalclaw.dashboard.handlers.updates import start_checkout_update
+
+        try:
+            update = await start_checkout_update(self.dashboard_state, asked=False)
+            if update.task is not None:
+                # Waited for, not awaited: a Cancel that ends the update must not end what
+                # started it, the gateway's own start among them.
+                await asyncio.wait({update.task})
+        except Exception:
+            logger.warning("Auto-update failed", exc_info=True)
+
+    async def _start_channel_inbound(self) -> None:
+        """Hand the channel receivers this gateway, and start every configured channel's.
+
+        The gateway satisfies :class:`~personalclaw.gateway_services.GatewayServices`,
+        so it binds itself as the services handle. From here on the receivers follow the
+        registry — a channel enabled, installed, updated or re-saved later starts, one
+        disabled or removed stops — through ``channel_transports.reconcile_inbound``, which
+        this runs for the first time. Failures are isolated per channel: one that cannot
+        start reports why in its own health and never takes down the gateway."""
+        from personalclaw.channel_transports import bind_inbound, configured_channels
+
+        await bind_inbound(self)
+        # Each channel app says whether it has what it needs (its own health), so this line is
+        # true for a channel configured on the Apps page too — core used to infer it from two
+        # Slack credential names, and printed "no channel credentials" beside a working Slack.
+        if not await configured_channels():
+            logger.info("Starting in dashboard-only mode (no channel app is configured)")
+
+    # ------------------------------------------------------------------
+    # Main run loop
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        """Start all services and block until shutdown signal."""
+        # ── GOVERNANCE BOOT, first and fail-closed ──
+        # The operator's ceiling is established BEFORE any service exists, because every
+        # service below can dispatch an unattended action and each one resolves its posture
+        # through `profile_for_session`. A corrupt/unknown ceiling therefore aborts the
+        # process with WHAT/WHY/FIX rather than starting wide open with a logged warning:
+        # "governance could not be established" is not a degraded mode, it is a stop.
+        from personalclaw.guardrails.ceiling import ensure_governance_boot
+
+        ensure_governance_boot()
+
+        # Work handed to a worker thread carries the memory-write scope of the session it is for,
+        # as it does on the loop: a store a handler reaches from a thread refuses what it would.
+        from personalclaw.memory_writes import carry_scope_into_worker_threads
+
+        carry_scope_into_worker_threads(asyncio.get_running_loop())
+
+        # ── KEYSTONE AUDIT for desktop computer use ──
+        # Resolves the out-of-band enable file ONCE, here, so the posture the whole process
+        # runs under is fixed before anything can dispatch and is recorded to the SEL. It
+        # does NOT abort: unlike governance, "off" is a normal (and the default) state, so a
+        # missing or malformed keystone is a refusal at the tool, not a dead gateway.
+        from personalclaw.computer_use.enable_state import ensure_computer_use_boot
+
+        ensure_computer_use_boot()
+
+        # Raise the gateway's own FD limit — each ACP agent session uses ~6 FDs
+        # (3 pipes) plus MCP server subprocesses, and the default macOS soft limit
+        # (256) is too low. The ``resource`` module is POSIX-only; on a platform
+        # without it (native Windows) this degrades to a no-op through the guarded
+        # helper instead of ``ImportError``-ing gateway boot here.
+        from personalclaw.resource_limits import raise_fd_limit
+
+        raise_fd_limit()
+
+        # Clean up orphaned ACP agent processes from previous runs
+        from personalclaw.session import cleanup_orphaned_sessions
+
+        cleanup_orphaned_sessions()
+        # And what a run of this home had started that no run holds now: a turn's or a command's
+        # left by the gateway's last life (a restart, a crash), an ended loop's (`run_processes`).
+        from personalclaw import run_processes
+
+        await asyncio.to_thread(run_processes.end_what_no_run_holds)
+
+        # ── Initialise all services ──
+        # Set once the apps have started, with the dashboard below: the clock and the event router
+        # start first (`_init_cron`), and a fire before then waits for its action's app rather than
+        # finding the action missing (`_action_provider`).
+        self._apps_started = asyncio.Event()
+        self._init_services()
+
+        await self._init_cron()
+        await self._init_heartbeat()
+        self._install_graph_maintenance_probe()
+        self._register_graph_maintenance_passes()
+        try:
+            await self._init_inbox()
+            logger.info("Inbox service initialized successfully")
+        except Exception:
+            logger.exception("Inbox init failed")
+        self._init_mcp_discovery()
+        self._init_subagents()
+        try:
+            await self._init_dashboard()
+        finally:
+            self._apps_started.set()
+        # What the boot passes found while the dashboard did not exist yet: one notice, now that
+        # it can be delivered.
+        self._surface_held_boot_review()
+
+        # Emit machine-readable READY line for test harnesses (--json-ready).
+        # Printed BEFORE bg_session and other startup chatter so the harness
+        # can read it deterministically with a single readline() in the
+        # PERSONALCLAW_READY: prefix matcher.
+        if self._json_ready:
+            ready = mint_startup_token(ISSUER_READY, self._cfg.auth)
+            print(
+                ready_line(port=self._dashboard_port, home=config_dir(), minted=ready), flush=True
+            )
+
+        # AutoNudge must run after dashboard init — _fire callback dereferences
+        # self.dashboard_state, which a headless gateway has as well.
+        await self._init_autonudge()
+
+        # Start the receiver of every configured channel (Slack Socket-Mode lives in the
+        # slack-channel app now), and keep them following the registry from here on. Each
+        # transport connects + degrades gracefully internally; a channel failure never
+        # crashes the gateway. The Web UI has no receiver (the dashboard drives its own
+        # inbound). This is the core→channel seam — core imports no vendor code.
+        await self._start_channel_inbound()
+
+        # Check for updates before printing URLs. The check says its own lines, once the setting
+        # has said whether it may run at all.
+        await self._check_for_updates()
+
+        # ── Signal handlers ──
+        loop = asyncio.get_running_loop()
+
+        # ── Structured crash capture ──
+        # An unhandled exception escaping a background task (a chat turn, a loop
+        # worker) reaches the loop's exception handler. Capture it as ONE structured,
+        # redacted artifact under ~/.personalclaw/crashes/ (best-effort, never masks
+        # the original) so a mid-stream death leaves a recoverable record, then chain
+        # to the default handler so logging is unchanged.
+        _default_exc_handler = loop.get_exception_handler()
+
+        def _crash_exc_handler(lp: "asyncio.AbstractEventLoop", context: dict) -> None:
+            try:
+                exc = context.get("exception")
+                if isinstance(exc, BaseException) and not isinstance(
+                    exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
+                ):
+                    from personalclaw.resilience.crashes import record_crash
+
+                    key = ""
+                    task = context.get("task")
+                    if task is not None:
+                        key = str(getattr(task, "get_name", lambda: "")() or "")
+                    kind = "loop_worker" if "loop" in key.lower() else "turn"
+                    _ds = self.dashboard_state
+                    _start = float(getattr(_ds, "start_time", 0.0)) if _ds is not None else 0.0
+                    record_crash(
+                        kind,  # type: ignore[arg-type]
+                        exc,
+                        session_key=key,
+                        uptime_secs=time.time() - _start,
+                        now=time.time(),
+                    )
+            except Exception:
+                logger.debug("crash exception-handler hook failed", exc_info=True)
+            # Chain to the previously-installed handler (or the loop default).
+            if _default_exc_handler is not None:
+                _default_exc_handler(lp, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_crash_exc_handler)
+
+        _shutting_down = False
+
+        def _on_signal(*_args: object) -> None:
+            nonlocal _shutting_down
+            if _shutting_down:
+                print("\nForce exit!")
+                cleanup_orphaned_sessions()
+                # Reap app backends and workers even on the force-exit path —
+                # os._exit() skips the graceful _shutdown()/on_cleanup hooks, so
+                # without this a double-signal would orphan every app process
+                # (reparented to init), the exact leak that piled up dozens.
+                try:
+                    from personalclaw.apps.app_runtime import stop_processes
+
+                    stop_processes()
+                except Exception:
+                    pass
+                _exit_now(0)
+            _shutting_down = True
+            # A stop — even one that arrives while a restart is shutting down — stops.
+            from personalclaw.restart_request import request_stop
+
+            request_stop()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _on_signal)
+
+        # Wait for MCP probe to finish before warming sessions —
+        # ACP agent reads MCP config at spawn time, so sessions must
+        # start AFTER the probe has synced all servers to mcp.json.
+        from personalclaw.dashboard.handlers import _bg_mcp_probe
+
+        print("Probing MCP servers…")
+        try:
+            from personalclaw.config.loader import AppConfig as _Cfg
+
+            _probe_t = _Cfg.load().dashboard.mcp_probe_timeout_secs + 15
+        except Exception:
+            _probe_t = 30  # fallback: original default (15 + 15)
+        try:
+            await asyncio.wait_for(_bg_mcp_probe(), timeout=_probe_t)
+        except asyncio.TimeoutError:
+            print("MCP probe timed out — continuing without full probe")
+
+        # ── Start the session pool and print URLs ──
+        # Report every connected external channel transport (the in-app webui
+        # one is always present and not news) — no hardcoded transport name.
+        from personalclaw.channel_transports import WEBUI_TRANSPORT
+        from personalclaw.channel_transports import get_transport as _get_transport
+        from personalclaw.channel_transports import list_transports as _list_transports
+
+        _connected_channels = [
+            _tp.display_name
+            for _tp in (_get_transport(_n) for _n in _list_transports())
+            if _tp and _tp.name != WEBUI_TRANSPORT and _tp.connected
+        ]
+
+        async def _start_session_pool() -> None:
+            try:
+                assert self.sessions is not None
+                await self.sessions.start_pool()
+                logger.info("Session pool starting")
+            except Exception:
+                logger.warning("Session pool start failed", exc_info=True)
+
+            if not self._no_dashboard:
+                self._announce_dashboard()
+            for _ch_name in _connected_channels:
+                print(f"PersonalClaw gateway connected to {_ch_name}")
+
+        asyncio.create_task(_start_session_pool())
+        print("PersonalClaw gateway starting…")
+        print(f"\n{DATA_WARNING}\n")
+
+        # Channel inbound (Slack Socket-Mode) was started by _start_channel_inbound()
+        # above — the transport owns its own retry/degrade-gracefully loop.
+
+        # Block until shutdown
+        await shutdown_event.wait()
+        print("Shutting down…")
+        await self._finish()
+
+    def _announce_dashboard(self) -> None:
+        """Print where the dashboard is, and make this start's sign-in link for whoever gets it.
+
+        The link is a live owner session, so it goes only where a person receives it as it is
+        made: printed when a person reads this gateway's stdout at a terminal, and opened in the
+        default browser when a person started this gateway at a terminal and this start opens one
+        (``--no-open`` and ``dashboard.auto_open_browser`` decide; ``env.browser_available()`` is
+        the predicate ``personalclaw setup`` shares). A service's start opens nothing, whatever
+        its command line says (``env.started_at_a_terminal``). Anywhere else stdout is a log file
+        or the journal, kept on disk and read later, so the banner there gives the address with
+        no credential in it and says how to get a link; with neither a terminal nor a browser, no
+        link is made. The startup links of earlier starts that no browser opened end first.
+        """
+        retire_startup_links()
+        host = resolve_dashboard_host(self._local_only, self._configured_host)
+        base_url = f"http://{host}:{self._dashboard_port}"
+        shown = _shown_at_a_terminal()
+        opens = not self._no_open and self._cfg.dashboard.auto_open_browser
+        opens = opens and started_at_a_terminal()
+        headless = opens and not browser_available()
+        opens = opens and not headless
+        startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth) if shown or opens else None
+        link = (
+            build_dashboard_url(base_url, startup.token, local_only=self._local_only)
+            if startup is not None
+            else ""
+        )
+        for line in format_dashboard_urls(
+            link if shown else base_url,
+            port=self._dashboard_port,
+            local_only=self._local_only,
+            has_custom_host=bool(self._configured_host),
+            sign_in="" if shown else _how_to_get_a_sign_in_link(),
+        ):
+            print(line)
+        if startup is not None and shown:
+            print(
+                f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
+                f"; a browser that opens it stays signed in for "
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                "sign-in.)"
+            )
+        elif startup is not None:
+            print(
+                "   (Opening it in the default browser, which stays signed in for "
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                "sign-in.)"
+            )
+        if headless:
+            print("Headless remote session — skipping browser auto-open")
+        elif opens:
+            _open_dashboard(link)
+
+    async def _finish(self) -> None:
+        """Stop every service, then exit — or, when a restart was asked for, start a fresh image.
+
+        The ONE stop path. A restart (the dashboard's Restart, an applied update) is this same
+        shutdown with a different last step (:mod:`personalclaw.restart_request`), so everything a
+        stop saves and stops — time travel's pending commits, the durability loop, the search
+        indexer, every ``on_cleanup`` hook — is saved and stopped before the new image starts.
+        """
+        from personalclaw import restart_request
+        from personalclaw.session import cleanup_orphaned_sessions
+
+        stop = asyncio.ensure_future(self._shutdown())
+        await asyncio.wait({stop}, timeout=_SHUTDOWN_SECS)
+        then = "restarting" if restart_request.pending() is not None else "exiting"
+        if not stop.done():
+            still = " and ".join(sorted(self._stopping))
+            logger.warning(
+                "The stop did not finish in %.0f s%s; %s anyway",
+                _SHUTDOWN_SECS,
+                f" (still stopping {still})" if still else "",
+                then,
+            )
+            # Cancelled, and given a moment to unwind; a step that does not is left behind.
+            stop.cancel()
+            await asyncio.wait({stop}, timeout=1.0)
+        elif stop.cancelled() or stop.exception() is not None:
+            error = None if stop.cancelled() else stop.exception()
+            logger.error(
+                "The stop failed (%s); %s anyway", error or "cancelled", then, exc_info=error
+            )
+
+        # Kill any ACP agent processes that survived graceful shutdown, and what the turns and
+        # commands this gateway ran left running (`run_processes`): none of them outlives it.
+        cleanup_orphaned_sessions()
+        from personalclaw import run_processes
+
+        run_processes.end_what_no_run_holds()
+        restart = restart_request.pending()
+        if restart is not None:
+            print("Restarting…")
+            restart_request.start(restart)
+        print("Goodbye!")
+        _exit_now(0)
+
+
+def _exit_now(code: int) -> NoReturn:
+    """End the process at once, after writing out what it printed.
+
+    ``os._exit`` skips the interpreter's shutdown, and the flush of ``sys.stdout`` and
+    ``sys.stderr`` goes with it. Those are block-buffered whenever they are a pipe or a file — a
+    service's log, the harness reading ``--json-ready`` — so the last lines a stop printed
+    ("Shutting down…", "Goodbye!", "Force exit!") never reached the log.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):  # a closed or broken stream must not stop the exit
+            pass
+    os._exit(code)
+
+
+def _shown_at_a_terminal() -> bool:
+    """Whether a person reads this gateway's stdout at a terminal, as it is printed.
+
+    A foreground start in a shell is. A start by launchd (a log file), systemd (the journal), a
+    detached ``personalclaw restart`` (``gateway-restart.log``), a container runtime or a pipe
+    is not: what it prints is kept, and read later by whoever can read that file.
+    """
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):  # no stdout, or a closed one
+        return False
+
+
+def _how_to_get_a_sign_in_link() -> str:
+    """The banner's sentence for a start that shows no link: the command that prints one."""
+    from personalclaw import container_host
+
+    if container_host.in_container():
+        where = f"`{container_host.token_command()}` on the host"
+    else:
+        where = "`personalclaw token` on the computer running PersonalClaw"
+    return f"To sign in, run {where} and open the link it prints."
+
+
+def _open_dashboard(url: str) -> None:
+    """Open the dashboard in a browser, best-effort.
+
+    *url* is a sign-in link, so it goes to the browser and is not printed here: the banner
+    printed the address already, with the link itself only for a person at a terminal
+    (:meth:`GatewayOrchestrator._announce_dashboard`).
+
+    Under WSL, ``webbrowser.open`` has no Linux browser to launch, so we go
+    straight to ``wslview`` (from wslu), which hands the URL to the Windows
+    default browser — WSL2 forwards localhost, so the dashboard resolves. On
+    normal Linux/macOS the standard ``webbrowser.open`` path is used unchanged;
+    ``wslview`` is only attempted as a fallback when that open reports failure
+    (returns False) or raises. A missing ``wslview`` is swallowed — it must
+    never crash the gateway boot.
+    """
+    import webbrowser
+
+    if _is_wsl():
+        _wslview_open(url)
+        return
+
+    try:
+        opened = webbrowser.open(url)
+    except Exception:
+        opened = False
+    if not opened:
+        _wslview_open(url)
+
+
+def _wslview_open(url: str) -> bool:
+    """Try to open *url* via ``wslview`` (wslu). Best-effort; never raises.
+
+    Returns True if ``wslview`` was launched, False if it is absent or failed.
+    """
+    import subprocess
+
+    try:
+        subprocess.run(["wslview", url], check=False)
+        return True
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return False
+
+
+async def run_gateway(
+    cfg: AppConfig,
+    *,
+    no_dashboard: bool = False,
+    no_crons: bool = False,
+    no_open: bool = False,
+    port_override: str | None = None,
+    json_ready: bool = False,
+    approval_mode: str | None = None,
+) -> None:
+    """Start the gateway process (blocks until shutdown).
+
+    Boots all core services (chat, cron, subagents, task runner, dashboard).
+    If channel credentials are present the enabled channel app also connects its
+    channel; otherwise it runs in **dashboard-only** mode.
+    """
+    orchestrator = GatewayOrchestrator(
+        cfg,
+        no_dashboard=no_dashboard,
+        no_crons=no_crons,
+        no_open=no_open,
+        port_override=port_override,
+        json_ready=json_ready,
+        approval_mode=approval_mode,
+    )
+    try:
+        await orchestrator.run()
+    except BaseException:
+        # `run` leaves only by ending the process (`os._exit`, after `_shutdown` stopped every app
+        # process, or the exec of a restart) or by raising. It raises when start-up fails, and
+        # when it is stopped before its signal handlers are installed (they come after the update
+        # check), since a Ctrl-C then cancels it. Startup has already started every enabled app's
+        # backend and worker by then, and each would outlive the gateway, re-parented to init,
+        # until the next boot reaped it.
+        from personalclaw.apps.app_runtime import stop_processes
+
+        stop_processes()
+        raise

@@ -1,0 +1,165 @@
+/** WHERE AN APPROVAL IS ANSWERED — derived from its `session` key, once, for every surface.
+ *
+ *  A pending tool approval broadcasts the key of the session that owns it, and the
+ *  out-of-context nudge used to spend that key verbatim: *"open <session> to respond"*. That
+ *  sentence is true for a chat and a dead end for everything else. A workflow STAGE's approval
+ *  carries a SYNTHETIC key — `workflow:<run_id>:<node_id>` — which is not a chat at all:
+ *  `/api/chat/sessions/<key>` answers 404 and no `#/chat/<key>` route renders it (#258). The
+ *  only notification the user got pointed at nothing, so a blocked run read as a hung one.
+ *
+ *  The fix is not nicer wording. It is that the destination must be DERIVED from the key's
+ *  shape, and that the derivation live in ONE place, because the promise has two halves that
+ *  have to agree:
+ *
+ *    the nudge  NAMES a place and links to it   (`useApprovalToasts` → `approvalDestination`)
+ *    that place CARRIES the Approve/Reject pair (`WorkflowRunDetail` → `workflowApprovalOf`)
+ *
+ *  Two parsers would let a toast link somewhere that does not claim the approval, which is the
+ *  same false assurance in a new location. So the grammar of the key is stated here and both
+ *  halves read it.
+ */
+
+/** The synthetic session key a workflow stage's approval carries.
+ *
+ *  `[^:]+` for the run id and a greedy tail for the node: a run id is a hex slug and cannot
+ *  contain a colon, while an instance path can (and the node is the part a deep link needs
+ *  whole). Anchored at both ends so a chat session that merely starts with the word is not
+ *  mistaken for one.
+ */
+const WORKFLOW_SESSION = /^workflow:([^:]+):(.+)$/
+
+export interface WorkflowApprovalSession {
+  runId: string
+  /** The node the approval belongs to — an instance path or a bare node id, as broadcast. */
+  nodeId: string
+}
+
+/** Decode a workflow stage's approval session, or `null` for anything else (a chat, a
+ *  subagent of a chat, an empty key). */
+export function workflowApprovalSession(session: string): WorkflowApprovalSession | null {
+  const m = WORKFLOW_SESSION.exec(session)
+  return m ? { runId: m[1], nodeId: m[2] } : null
+}
+
+/** Is this approval one that *runId*'s run view owns? Used by the run view to claim only its
+ *  own approvals out of the global `/api/approvals` list — the same parse the nudge links
+ *  with, so the surface the sentence names is the surface that answers. */
+export function workflowApprovalOf(session: string, runId: string): boolean {
+  const parsed = workflowApprovalSession(session)
+  return parsed !== null && parsed.runId === runId
+}
+
+/** The session key a loop's worker holds: `loop-<id>` for its stage worker, `loop-<id>-<task>`
+ *  for a per-task worker (`loop/manager.session_key`, `task_session_key`). A loop id is eight hex
+ *  characters, so the planner's `loop-plan-<id>` and a chat named "loop-…" are not mistaken for
+ *  one. */
+const LOOP_SESSION = /^loop-([a-f0-9]{8})(?:-(.+))?$/
+/** The session key a loop's planner holds (`loop/plan_walkthrough.planner_session_key`). An
+ *  Attended loop's planner asks for its tool calls as its workers do (`loop/posture`). */
+const LOOP_PLANNER_SESSION = /^loop-plan-([a-f0-9]{8})$/
+
+export interface LoopApprovalSession {
+  loopId: string
+  /** The task a per-task worker works on; "" for the loop's stage worker and its planner. */
+  taskId: string
+  /** Whether the loop's planner asked (its planning walkthrough), not one of its workers. */
+  planner: boolean
+}
+
+/** Decode the approval session of a loop's worker or planner, or `null` for anything else. */
+export function loopApprovalSession(session: string): LoopApprovalSession | null {
+  const plan = LOOP_PLANNER_SESSION.exec(session)
+  if (plan) return { loopId: plan[1], taskId: '', planner: true }
+  const m = LOOP_SESSION.exec(session)
+  return m ? { loopId: m[1], taskId: m[2] ?? '', planner: false } : null
+}
+
+/** Is this approval one of *loopId*'s workers or its planner asked? The loop's page claims its own
+ *  approvals out of `/api/approvals` with the same parse the nudge links with. */
+export function loopApprovalOf(session: string, loopId: string): boolean {
+  const parsed = loopApprovalSession(session)
+  return parsed !== null && parsed.loopId === loopId
+}
+
+/** The session key a room member's call asks under: `room:<room>:<member>`
+ *  (`rooms/turn.session_key`). A room id is a lowercase slug and a member name an agent binding's
+ *  plain name, so neither holds a colon, and a chat whose key merely starts with the word is not
+ *  mistaken for one. */
+const ROOM_SESSION = /^room:([a-z0-9][a-z0-9-]{0,63}):([A-Za-z0-9_-]+)$/
+
+export interface RoomApprovalSession {
+  roomId: string
+  /** The member whose call it is, by its binding name (`talk-editor`). */
+  member: string
+}
+
+/** Decode a room member's approval session, or `null` for anything else. */
+export function roomApprovalSession(session: string): RoomApprovalSession | null {
+  const m = ROOM_SESSION.exec(session)
+  return m ? { roomId: m[1], member: m[2] } : null
+}
+
+/** Is this approval one *roomId*'s members asked? The room's own view claims its members' asks out
+ *  of `/api/approvals` with the same parse the nudge links with (`RoomApprovals`). */
+export function roomApprovalOf(session: string, roomId: string): boolean {
+  const parsed = roomApprovalSession(session)
+  return parsed !== null && parsed.roomId === roomId
+}
+
+export interface ApprovalDestination {
+  /** The in-app hash route that ANSWERS this approval. */
+  href: string
+  /** How a sentence names it ("open <label> to respond") — prose, not a key. */
+  label: string
+  /** The link's own text, which must say where it goes rather than "click here". */
+  linkLabel: string
+}
+
+/** The surface that answers *session*'s approval.
+ *
+ *  `#/workflows/runs/<run>?node=<node>` is not invented here: it is the run view's own deep
+ *  link, already parsed by `WorkflowsSection` and already pinned end-to-end by
+ *  `workflowCardNodeDeepLink.test.tsx`. Reusing it is the point — a second route spelling for
+ *  one surface is the drift this module exists to prevent.
+ */
+export function approvalDestination(session: string): ApprovalDestination {
+  const wf = workflowApprovalSession(session)
+  if (wf) {
+    return {
+      href: `#/workflows/runs/${wf.runId}?node=${encodeURIComponent(wf.nodeId)}`,
+      // Prose, deliberately: `workflow:11b9a34c:synthesize` told the reader to open a string,
+      // and the string was not openable. This says which step of which run, which is what they
+      // are looking at when the run is blocked.
+      label: `the ${wf.nodeId} step of workflow run ${wf.runId}`,
+      linkLabel: 'Open the workflow run',
+    }
+  }
+  // A loop's worker or planner asks on the loop's own page (`LoopApprovals`): its key is no chat
+  // anyone opened, and `#/loops/<id>` lands on whichever cockpit or planning walkthrough the loop
+  // is at (`LoopsSection`).
+  const loop = loopApprovalSession(session)
+  if (loop) {
+    return {
+      href: `#/loops/${loop.loopId}`,
+      label: `loop ${loop.loopId}`,
+      linkLabel: 'Open the loop',
+    }
+  }
+  // A room member asks in its room (`RoomApprovals`): its key is no chat anyone opened. The room is
+  // named by the sentence's own "from" (`source_label`, the room's title), so the place is "the room".
+  const room = roomApprovalSession(session)
+  if (room) {
+    return {
+      href: `#/chat/room/${encodeURIComponent(room.roomId)}`,
+      label: 'the room',
+      linkLabel: 'Open the room',
+    }
+  }
+  // A chat session (including a subagent escalating to its parent). Encoded the way every
+  // other chat deep link in the app is — `dashboard:<key>` sessions carry a colon.
+  return {
+    href: `#/chat/${encodeURIComponent(session)}`,
+    label: session,
+    linkLabel: 'Open the chat',
+  }
+}

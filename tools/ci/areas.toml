@@ -1,0 +1,73 @@
+# The area map's explicit overrides (tools/ci/plan.py).
+#
+# The area map is generated from tools/ci/catalogue.toml: a changed path a job's declared inputs
+# reach, or a path one of its steps runs, schedules that job, and a path no input but the whole
+# tree names plans the whole tier. This file holds only what the inputs cannot say: each
+# [[override]] names its pathspecs, the catalogue jobs it adds (or whole_tier) and why.
+#
+# An override only adds. It never makes a path known, so a path no input names still plans the
+# whole tier, and an override can never take a job out of a plan. The loader refuses an override
+# with no reason, an unknown key, a pathspec the catalogue would refuse, no paths, no job and no
+# whole_tier, or a job the catalogue lacks; tests/rails/test_ci_plan_tree.py plants a path for
+# each and finds its reason in the plan.
+#
+# Paths that need no override:
+# - README.md: no CI job builds or inspects the sdist (package builds and inspects the wheel
+#   alone, and pyproject.toml declares no readme). The jobs whose tests read README.md name it
+#   (python-suite) or declare the whole tree, and the image smoke's own workflow runs on it
+#   through its paths: list.
+# - The harness keeps its own replay rule until it calls this planner: a change to
+#   web/src/pages/chat/, web/src/pages/loops/ or src/personalclaw/dashboard/sse.py forces the
+#   harness replay, which guards the stream-coalescer, run-fold and journal-to-widget-stream bug
+#   classes. No CI job runs replay, so no override names it.
+
+# The workflows that define the jobs and gate them.
+[[override]]
+paths = [".github/workflows/"]
+whole_tier = true
+reason = "the workflows define the jobs and when each runs: editing one must re-validate them, or a broken job definition would be waved through by the very gate it broke"
+
+# The local actions the workflows' jobs call.
+[[override]]
+paths = [".github/actions/"]
+whole_tier = true
+reason = "a local action's steps run inside each job that calls it, so it defines those jobs as the workflows do: editing one must re-validate them, or a broken setup step would be waved through by the very gate it broke"
+
+# The catalogue, these overrides and the planner decide what runs.
+[[override]]
+paths = ["tools/ci/"]
+whole_tier = true
+reason = "the catalogue, its overrides and the planner decide which jobs run, so a change to any of them runs every job"
+
+# The locks and the manifests they lock: every job installs from one of them.
+[[override]]
+paths = ["pyproject.toml", "uv.lock", "package.json", "package-lock.json"]
+whole_tier = true
+reason = "every job installs its toolchain from these locks and manifests, so a change to one can move any job's result"
+
+# The public installer.
+[[override]]
+paths = ["deploy/website/install.sh", "deploy/website/install.sh.sha256"]
+jobs = ["static"]
+reason = "static proves the installer: sh -n, dash -n and shellcheck run on it, and tests/test_website_installer.py holds its digest"
+
+# The image smoke is a workflow of its own (docker-single-container.yml, gated by its own paths:
+# list) and no catalogue job yet, so the paths only it reads plan the whole merge tier until it
+# is one. The rest of its list is planned by the jobs that read them.
+[[override]]
+paths = [
+  "deploy/docker/",
+  ".dockerignore",
+  "setup.py",
+  "MANIFEST.in",
+  "tools/docker_single_container_smoke.py",
+  "scripts/installed_bundled_model_probe.py",
+]
+whole_tier = true
+reason = "what the single-container image smoke builds and judges; the smoke is no catalogue job yet, so these paths run the whole tier"
+
+# The SDK snapshot module the apps contract's script imports.
+[[override]]
+paths = ["scripts/sdk_signature_snapshot.py"]
+jobs = ["apps-contract"]
+reason = "scripts/apps_sdk_contract.py imports it to compare the published SDK signatures, so a change to it re-runs the apps contract"

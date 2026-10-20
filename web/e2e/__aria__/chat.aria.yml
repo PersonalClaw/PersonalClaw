@@ -1,0 +1,69 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Permission mode: Normal"': Normal
+  - button "New chat"
+  - button "Chat history"
+  - img "Nothing running"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - button "Optimize prompt (⌘↵)" [disabled]
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - 'button "Project: No project"': No project
+  - radiogroup "Memory mode":
+    - radio "Persistent" [checked]
+    - radio "Temporary"
+    - radio "Incognito"
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- menu "Task mode":
+  - menuitemradio "Agent" [checked]
+  - menuitemradio "Ask"
+  - menuitemradio "Plan"
+  - menuitemradio "Build"
+- menu "Permission mode":
+  - menuitemradio "Normal" [checked]
+  - menuitemradio "Trust reads"
+  - menuitemradio "Trust"
+  - menuitemradio "YOLO"

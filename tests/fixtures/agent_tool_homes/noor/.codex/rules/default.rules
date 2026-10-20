@@ -1,0 +1,20 @@
+# Commands that always ask, even in workspace-write.
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Pushing is always Noor's call.",
+)
+prefix_rule(
+    pattern = ["psql"],
+    decision = "prompt",
+    justification = "Only localhost databases, and only when asked.",
+)
+prefix_rule(
+    pattern = ["uv", "run", "alembic", "upgrade"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "forbidden",
+    justification = "Delete specific paths instead.",
+)

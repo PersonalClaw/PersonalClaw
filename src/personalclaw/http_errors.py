@@ -1,0 +1,1595 @@
+"""The ONE wire error emitter, and the append-only registry of wire codes.
+
+`AGENTS.md` §"Shared conventions" → **Error envelope (HTTP)** owns this shape:
+a failed API route answers ``{"error": {"code": "<stable_snake_code>", "message":
+"<human>"}}``, and ``code`` is *append-only and never reworded once shipped* — a
+stable surface an agent (or a saved SOP, or a browser client) branches on.
+
+**Why this module exists.** The declaration above shipped long before anything
+could check it: thirteen module-local ``_err``/``_error``/``_bad_request``
+helpers each re-derived the envelope, four of them emitted a *flat*
+``{"error": "<prose>"}`` carrying no code at all, and their signatures disagreed
+in argument ORDER (``_err(code, message, status)``, ``_err(message, code,
+status)`` and ``_err(code, status)`` all shipped), so a copy-paste between two
+handlers silently swapped the machine code and the human message. There was also
+no registry of wire codes and no rail, so "append-only" was unverifiable.
+:func:`json_error` is the single emitter that replaced all thirteen, and
+:data:`HTTP_ERROR_CODES` is the registry the rail
+(``tests/test_http_error_codes_append_only.py``) checks.
+
+**No positional ambiguity, by construction.** ``code`` is the ONLY positional
+parameter. ``message``, ``status`` and everything else are keyword-only, so the
+copy-paste hazard that motivated this module cannot recur: there is no second
+positional slot for a code and a message to swap between.
+
+**Two envelopes, deliberately distinct — do not merge them.** This module owns
+the *wire* envelope (``lowercase_snake`` codes; what a branching HTTP client
+reads). :mod:`personalclaw.errors` owns :class:`~personalclaw.errors.AgentError`
+(``ERR_UPPER_SNAKE`` codes; the carrier *into an LLM session*, on
+``ToolResult``/``ActionResult``). The two vocabularies never overlap by
+construction — the case of the code tells you which surface you are on — and the
+rails on both registries assert that disjointness. A third, transport-independent
+vocabulary (``WF_UPPER_SNAKE``, the workflows *service-result* codes) is
+translated into this one by ``workflows/handlers.py``'s ``_STATUS_MAP``; it is not
+a wire vocabulary and does not belong here.
+
+**Success envelopes are out of scope.** The same convention says success bodies
+imitate the neighboring handler and are *not* standardized retroactively.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from aiohttp import web
+
+# ── The append-only wire-code registry ─────────────────────────────────────
+#
+# code → one-line meaning. This is the peer of :data:`personalclaw.errors.ERROR_CODES`
+# for the HTTP surface, and it obeys the same rule: APPEND a row for a new failure
+# path; never delete or reword a released one (a saved SOP or a browser client may
+# branch on it). ``tests/test_http_error_codes_append_only.py`` enforces that, and
+# also asserts that every *literal* code passed to :func:`json_error` appears here —
+# so the registry cannot quietly fall behind the emitter.
+#
+# The meaning doubles as the default ``message`` when a call site has no
+# per-instance detail to add (the auth/device-pairing routes, which deliberately
+# answer with a fixed string per code so the response cannot be used to enumerate
+# users or devices).
+HTTP_ERROR_CODES: dict[str, str] = {
+    # ── generic request-shape failures ──
+    "bad_request": "The request was malformed or carried an unusable parameter.",
+    "invalid_request": "The request was well-formed JSON but failed validation.",
+    "invalid_json": "The request body is not valid JSON.",
+    "invalid_body": "The request body is valid JSON but not the expected object.",
+    # ── PersonalClaw's own code failed (dashboard/request_boundary.py) ──
+    # 500: a TypeError or AttributeError raised beneath the route, in PersonalClaw's own code or
+    # an app's, while it answered. It is not read as a malformed request: the request was read
+    # without fault. The gateway log keeps the traceback.
+    "internal_error": "PersonalClaw failed while answering this request. The gateway log says why.",
+    # ── the shared write-path field checks (personalclaw/request_validation.py) ──
+    # Two codes, not one, because the two failures need different fixes on the
+    # caller's side: `field_not_a_string` means "you sent the wrong TYPE" (the
+    # `{"name": {"a":"b"}}` family that used to be `str()`-coerced and stored as
+    # Python's repr), `field_required` means "you sent nothing usable" (absent, or
+    # blank once stripped). Both messages NAME the field — the generic `bad_request`
+    # the request boundary answers for an unguarded fault deliberately does not, and
+    # that missing field name is what made the coercion so hard to notice.
+    "field_not_a_string": "A request field must be a JSON string; the message names it.",
+    "field_required": "A required request field is missing or blank; the message names it.",
+    # A switch or a consent sent as anything but the JSON literal true or false: the text
+    # "false" is truthy, so a reader that guessed would have read it as yes.
+    "field_not_a_boolean": "A request field must be the JSON true or false; the message names it.",
+    "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
+    # ── dashboard file I/O (handlers/files.py) ──
+    # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard
+    # surfaces, or a blocked basename inside one. 400 rather than 403/404 deliberately — the answer
+    # must not confirm whether the path exists. `files.py`'s six other sites emit this same sentence
+    # FLAT today; this is the code they convert to, and the census ratchet is what moves them.
+    "invalid_path": "The path is not one the dashboard may touch.",
+    "file_content_search_timeout": (
+        "File content search exceeded its time limit; narrow the directory or filter and retry."
+    ),
+    # A memory recall that did not finish within its budget (`memory_service.RECALL_BUDGET_SECS`,
+    # inside the agent's own wait for the gateway). Its message names what the recall was still
+    # doing; nothing about the memories changed, so asking again is the remedy.
+    "memory_recall_timeout": (
+        "Memory search did not finish within its time limit, so nothing was recalled this time."
+    ),
+    # A request about one folder's memory (`?partition=`, `/api/memory/partitions/{id}`) whose id
+    # names none: removed since the page listed it, or never one (`partition_named`).
+    # The page says so rather than showing the shared memory in its place.
+    "memory_partition_not_found": "No folder's memory has that id: it was removed, or never was.",
+    # A folder's memory that is there and whose memory database cannot be opened, so nothing in
+    # it can be listed, changed or removed record by record this time.
+    "memory_partition_unavailable": "That folder's memory database cannot be opened right now.",
+    # A day of the daily history (`/api/memory/history/{day}`) named by anything but its date.
+    # Nothing is read or written: the name is never made into a path.
+    "history_day_invalid": "A day of the daily history is named by its date, as YYYY-MM-DD.",
+    # A lesson memory refused (its store's rules, or the scan of an untrusted source's text)
+    # before it changed anything, so the lesson it would have replaced is kept as it was. The
+    # message says why, and `reason` inside the error is the store's own reject code.
+    "lesson_refused": (
+        "Memory refused the lesson, so nothing in memory changed; the message says why."
+    ),
+    # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
+    # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
+    # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file
+    # route — all emitted the refusal FLAT, which is what pushed the census one over its ceiling.
+    # Not folded into `invalid_id`: that one says "a record id", and telling a client its filename
+    # is a bad id is the wrong noun for a file browser.
+    "invalid_name": "A file or directory name is not a single safe path segment "
+    "(separators, '..' or over-long).",
+    # The directory picker's refusal (`browse-dirs`, `create-dir`): a credential location or an
+    # OS/system root. 403, and — unlike `invalid_path` — it deliberately NAMES the location and
+    # why, in the message and as `path` + `reason` (`system_root` | `sensitive_path`) inside the
+    # error object: the picker's own default location can be the refused one, and a refusal that
+    # names neither left the user with an empty listing and nothing to act on.
+    "path_protected": "The folder is a protected system or credential location the directory "
+    "picker will not open or create in; the message names it and says why.",
+    "not_found": "The addressed resource does not exist.",
+    # The explorer's listing asked to list a FILE: the path is admitted and exists, it just is not
+    # a folder — a different answer from `not_found`, which the explorer used to say for both.
+    "not_a_directory": "The path is a file, not a folder.",
+    "forbidden": "The caller is not permitted to touch this resource.",
+    "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── the owner's security posture (config/edit_spec.py) ──
+    # An app-scoped caller wrote a field holding a `SecurityControl`, or answered an approval
+    # with a standing grant. 403 in either direction: the field is the owner's to change, and
+    # the message names it so the app's developer reads a policy rather than a bug.
+    "security_setting_owner_only": (
+        "The field is a security setting only the owner can change; an app cannot, in either "
+        "direction."
+    ),
+    # An app-scoped caller read or wrote a setting its manifest does not name in
+    # `permissions.config` — the list install consent showed the owner.
+    "config_field_not_declared": (
+        "The app did not declare this setting in permissions.config, so it cannot read or "
+        "change it."
+    ),
+    # ── session deletion (dashboard/handlers/sessions.py) ──
+    # A LIVE session carries no history file, so `delete_session` declines it. That is a
+    # real resource this route refuses, which is a DIFFERENT fact from a key that never
+    # existed — and until #2941 both shared one 200 `{"ok": false}`, indistinguishable
+    # from each other and from success. 409 rather than 404 for the same reason
+    # `collection_name_taken` is 409: the request is well-formed and would be valid at
+    # another moment (once the session is closed).
+    "session_live": "The session is live and has no history to delete; close it first.",
+    # A delete whose transcript could not be removed (a file the gateway may not unlink): the
+    # chat is still kept, so the route must not answer as if it were gone.
+    "session_not_deleted": "The chat's history could not be removed from disk, so the chat is "
+    "still kept; the gateway log says why.",
+    # ── model resolution (first-run legibility) ──
+    # A model-dependent route was driven before any model provider was bound. The wire
+    # peer of the agent-session `ERR_MODEL_UNRESOLVED` (errors.py): an HTTP route answers
+    # with THIS lowercase_snake code + a message carrying the "no model provider resolves
+    # for use case" phrasing the FE `isNoModelSetupError` matcher keys on, so a first-run
+    # surface says "connect a model" rather than reporting a fake success or a bare 500.
+    "model_unresolved": (
+        "No model provider resolves for the use case this route needs — no provider is "
+        "configured, or the bound one is absent. Connect a model in Settings → Models."
+    ),
+    # ── resilience doctor (dashboard/handlers/doctor.py) ──
+    "doctor_disabled": "The Doctor surface is turned off on this instance.",
+    "unknown_capability": "No capability with that name is registered with the Doctor.",
+    # `confirm_required` (not `confirmation_required`) is the string these routes
+    # shipped with — append-only means registering it as-is, not renaming it.
+    "confirm_required": 'The operation needs an explicit {"confirm": true} in the body.',
+    "unknown_fix": "No Doctor fix with that id exists.",
+    "text_required": "A query text is required.",
+    # ── durability (dashboard/handlers/durability.py) — crash outcomes; designed
+    # refusals travel as ok:false result VALUES, never through these codes ──
+    "import_failed": "A snapshot import failed. The gateway log carries the failure detail.",
+    "restore_failed": "A restore attempt failed. The gateway log carries the failure detail.",
+    # ── what only a stopped gateway may do: the dashboard's import and restore refuse a
+    # replace with it, and the message names the command that does it at a terminal ──
+    "gateway_running": (
+        "The operation rewrites state the running gateway holds open; run it at a terminal "
+        "with the gateway stopped."
+    ),
+    # ── API version negotiation (dashboard/api_version_gate.py) ──
+    # The `error` object additionally carries client_version, server_version,
+    # min_supported_version and upgrade ("client"|"server") — a refusal that named
+    # neither number nor a direction would be no more actionable than a 500.
+    "api_version_unsupported": (
+        "The client's declared API version is outside the window this gateway supports."
+    ),
+    # ── auth (handlers/auth.py) — fixed message per code, never request-derived ──
+    "auth_not_enabled": "Owner authentication is not enabled on this instance.",
+    "auth_invalid_credentials": "The submitted credential did not verify.",
+    "auth_origin_not_allowed": "The request origin is not allowed on this instance.",
+    "auth_locked_out": "Too many failed attempts from this address; try again later.",
+    "auth_totp_required": "A second factor is required to finish this login.",
+    "auth_enroll_code_invalid": "The enrollment code did not verify.",
+    "auth_bearer_invalid": "The bearer credential cannot authorize this request.",
+    "auth_credential_conflict": "The request presents two different owner credentials.",
+    "auth_password_required": "The request needs the owner's password, and it carried none.",
+    # ── a sign-in too old for what it asks (dashboard/owner_presence.py): minting a credential or
+    # making sign-in less strict needs a sign-in from the last ten minutes. The message says how
+    # to sign in again, and `detail` what the dashboard asks for ──
+    "fresh_sign_in_required": (
+        "This needs a recent sign-in; the message says how to sign in again."
+    ),
+    # ── a signed-out device's refusal (dashboard/token_auth.py) — the message is the sentence
+    # that device reads: why its sign-in ended, when, and how to sign back in ──
+    "session_signed_out": "This device was signed out; the message says why and how to sign in.",
+    "session_expired": "This device's sign-in ended; the message says when and how to sign in.",
+    "session_required": "No usable sign-in came with the request; the message says how to sign in.",
+    # ── the gateway's internal credential (dashboard/token_auth.py): what one of PersonalClaw's own
+    # processes (an agent's tool, a scheduled script, the CLI) is told when its call is refused.
+    # A tool shows it as its result, so it names the cause, never a sign-in no process can do ──
+    "internal_route_refused": (
+        "This route does not accept the gateway's internal credential: it opens only the "
+        "operations PersonalClaw's own processes perform."
+    ),
+    "internal_secret_invalid": (
+        "The internal credential on this request is not the one this gateway issued when it "
+        "started."
+    ),
+    "internal_call_names_no_work": (
+        "This call carries the gateway's internal credential and names no work it is for: no "
+        "chat, scheduled job or app in X-Session-Key. Nothing it asked for was done."
+    ),
+    # ── work done for an Incognito or Temporary chat (lasting_work.py, and the workflow routes'
+    # restricted_calls.py) — the message says why and where the change can be made instead ──
+    "restricted_session": (
+        "This change cannot be made for an Incognito or Temporary chat, or for one whose memory "
+        "setting cannot be read; the message says why and where it can be made."
+    ),
+    # ── work someone other than the owner asked for (lasting_work.py): an automation is the
+    # owner's own, and a loop takes the words of whoever asked for it alone ──
+    "asked_by_someone_else": (
+        "Someone other than the owner asked for this, and only the owner makes this change; the "
+        "message says who asked and where the owner can make it."
+    ),
+    # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
+    # 90 days, and the message is the sentence that says so ──
+    "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",
+    "token_ttl_too_long": (
+        "The requested lifetime is longer than the 90-day limit; the message says why."
+    ),
+    # ── device pairing (handlers/devices.py) — fixed message per code ──
+    "device_pair_code_invalid": "The pairing code did not verify.",
+    "device_pair_expired": "The pairing code has expired.",
+    "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
+    "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
+    "device_unknown": "No such paired device.",
+    # Settings → Devices → Integrations: the token was already revoked, or was replaced.
+    "integration_unknown": (
+        "That integration token is no longer listed: it was already revoked, or replaced."
+    ),
+    # ── browse user-browser connector (handlers/browse_connector.py) ──
+    # The connector is the operator's own browser on THIS machine, so all three are
+    # distinct because their remedies differ: `loopback_only` is "you reached a
+    # same-machine surface from elsewhere" (nothing the caller can retry into), `unpaired`
+    # is "pair this device first" (a step to take), and `endpoint_invalid` is "the CDP
+    # page-target you announced is missing or is not a loopback ws(s) URL" (a value to fix).
+    "browse_connector_loopback_only": "The browse connector is reachable over loopback only.",
+    "browse_connector_unpaired": "Only a paired device may attach as the browse connector.",
+    "browse_connector_endpoint_invalid": "The announced CDP page-target endpoint is missing "
+    "or is not a loopback ws(s) URL.",
+    # A run's own tab (the same module): `not_attached` is "attach this browser again" (the
+    # gateway restarted), `replaced` is "another browser is the connector now" (go quiet),
+    # `run_tab_unknown` is "no run asked this browser for that tab, or the report no longer
+    # applies" (nothing to retry), and `run_tab_report_invalid` is "a report names a cdp_url or
+    # one state" (a value to fix).
+    "browse_connector_not_attached": "This browser is not attached as the browse connector.",
+    "browse_connector_replaced": "Another browser is attached as the browse connector now.",
+    "browse_run_tab_unknown": "No run asked this browser for that tab, or the report no "
+    "longer applies to it.",
+    "browse_run_tab_report_invalid": "A run tab report names either a loopback cdp_url or one "
+    "state: unavailable, closed or taken_over.",
+    # ── per-task browse grant (handlers/browse_mirror.py) ──
+    # Two codes because the remedies differ: `action_invalid` is "you named something other
+    # than approve/reject" (a value to fix), `not_pending` is "no grant is waiting on that id"
+    # (nothing to retry — it was already answered, or it expired).
+    "browse_grant_action_invalid": "A browse grant may only be approved or rejected.",
+    "browse_grant_not_pending": "No browse grant is waiting on that id.",
+    # ── a channel's rules for strangers and groups (handlers/channel_trust.py) ──
+    "channel_trust_provider_unknown": "No chat channel by that name is set up.",
+    "channel_trust_channel_unknown": "That group is not tracked on this channel.",
+    # ── channel sender trust (handlers/channel_trust.py) ──
+    "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
+    # ── the owner's answer to someone new (handlers/messaging.api_notification_trust) ──
+    "sender_answer_invalid": "Give the notification's ts and allow or deny.",
+    "sender_ask_none": (
+        "That notification asks nothing about someone new, so it has nothing to allow or deny."
+    ),
+    "sender_ask_answered": "That notification has already been answered.",
+    # ── a channel's owner and its pairing (handlers/channel_owner.py) ──
+    "channel_unknown": "No chat channel by that name is connected.",
+    "channel_pairing_unsupported": "That channel cannot pair its owner from the dashboard.",
+    "channel_handoff_failed": "No channel could open a thread with you for this chat.",
+    # ── agent rooms (handlers/rooms.py, rooms/store.py) ──
+    "rooms_disabled": "Agent Rooms is disabled. Enable rooms.enabled to use it.",
+    "room_not_found": "No room with that id.",
+    "room_archived": "That room is archived and no longer accepts changes.",
+    "room_title_required": "A room needs a title.",
+    "room_id_exhausted": "Could not derive a free room id from that title.",
+    "room_state_unreadable": "The rooms index could not be read.",
+    "room_cursor_unreadable": "This room's record of what each member has read could not be read.",
+    "room_member_name_required": "A member needs an agent-binding name.",
+    "room_member_name_invalid": "That agent-binding name is not a plain name.",
+    "room_member_unknown_agent": "No agent binding by that name is configured.",
+    "room_member_exists": "That agent is already a member of this room.",
+    "room_member_not_found": "That agent is not a member of this room.",
+    "room_member_limit": "This room already holds the configured maximum number of members.",
+    "room_invalid_listen_policy": "A listen policy must be all, mention, or silent.",
+    "room_member_posture_invalid": "That member's safety posture could not be read.",
+    "room_member_posture_widens": "A member may only narrow the room's safety posture.",
+    "room_approver_not_human": "Only the human may approve a room member's tool call.",
+    "room_export_format_invalid": "A room export format must be md or json.",
+    "room_round_budget_invalid": "A room's round budget must be 0 (inherit) or 1-100.",
+    # ── push subscriptions (handlers/push.py) ──
+    "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
+    "push_not_subscribed": "That device has no push subscription.",
+    "push_relay_registration_invalid": "The relay registration lacks a device id or token.",
+    "push_relay_not_registered": "That device has no relay token registered.",
+    # ── chat rewind (dashboard/chat_file_rewind.py) ──
+    "invalid_turn": "The addressed turn does not exist or is not rewindable.",
+    "turn_running": "The turn is still executing; it cannot be rewound yet.",
+    # ── running a chat turn again (dashboard/chat_regenerate.py, dashboard/repeated_steps.py) ──
+    # 409: the turn a door would run again (Retry, Regenerate, Rewind to here, a resend she did not
+    # change) finished steps that may have changed something, so nothing was run. To the owner it
+    # is the question (`error.detail`: its `title`, what it `said`, the `steps`, and the `confirm`
+    # her yes sends back); an app, which cannot ask her, is told to run it again from the
+    # dashboard.
+    "retry_repeats_steps": (
+        "Running this turn again may repeat steps it finished that changed something, so nothing "
+        "was run."
+    ),
+    # ── what she pasted (dashboard/chat_handlers.py, dashboard/chat_regenerate.py) ──
+    # 400: a message that carries a pasted block (`own_words.PASTES`) still holds the block's
+    # `[Paste #N]` marker where the composer puts the pasted text, so the agent would read the
+    # marker and never what was pasted. `error.paste` is the block's number.
+    "paste_not_expanded": (
+        "The message holds a pasted block's marker where the pasted text belongs, so the agent "
+        "would never see what was pasted. Send it with the pasted text in place of the marker."
+    ),
+    # ── chat plan mode (dashboard/chat_plan.py) ──
+    "session_not_found": "No such chat session.",
+    "plan_session_missing": "The session has no plan in progress.",
+    "step_id_required": "A step id is required.",
+    "step_not_awaiting_review": "That plan step is not awaiting review.",
+    "markdown_required": "A non-empty markdown body is required.",
+    "comment_text_required": "A non-empty comment body is required.",
+    # ── an agent's question to its owner (dashboard/chat_questions.py) ──
+    "question_not_found": "This chat has no question with that id.",
+    "question_answered": "This question has already been answered.",
+    "question_ended": "The agent is no longer waiting for an answer to this question.",
+    "question_answer_invalid": "The answer does not fit the question it answers.",
+    # ── reasoning effort (dashboard/chat_handlers.py) ──
+    "invalid_reasoning_effort": "The reasoning effort is not a short lowercase token.",
+    "reasoning_effort_not_declared": (
+        "The bound runtime did not declare that reasoning effort, so it cannot be honored."
+    ),
+    # ── security audit (handlers/security_audit.py) ──
+    "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
+    # the SEL rotate (handlers/core.py `api_sel_rotate`)
+    "sel_archive_failed": "The audit log could not be moved into its archive, so it was kept "
+    "as it is and no new chain was started.",
+    "invalid_cursor": "The pagination cursor is malformed.",
+    "invalid_limit": "The limit parameter is out of range or not an integer.",
+    "invalid_time_filter": "A since/until filter is not a recognized timestamp.",
+    "unknown_filter": "The request names a filter this endpoint does not support.",
+    # ── credential store (handlers/security_credentials.py) ──
+    "credentials_owner_only": "The credential store is owner-only; an app-scoped token may "
+    "neither read where secrets live nor move them.",
+    "migration_refused": "The keychain is not the active credential backend, so moving "
+    "secrets out of .env would leave them nowhere. Nothing was changed.",
+    "rollback_refused": "There is no pre-migration .env snapshot to roll back to.",
+    # ── evals (handlers/evals.py) ──
+    "evals_disabled": "The evals surface is switched off in config.",
+    "learning_disabled": "Learning is switched off in config, so there is nothing learned to "
+    "report on.",
+    "judge_bench_absent": "No judge benchmark artifact has been produced yet.",
+    "judge_bench_unreadable": "The judge benchmark artifacts could not be read.",
+    "studies_unreadable": "The pre-registered study artifacts could not be read.",
+    "study_absent": "No study is registered under that id.",
+    "ablation_absent": "No harness-ablation report has been produced yet.",
+    "ablation_unreadable": "The ablation artifacts could not be read.",
+    "retrieval_absent": "No retrieval-ablation report has been produced yet.",
+    "retrieval_unreadable": "The retrieval benchmark artifacts could not be read.",
+    "learning_benchmark_absent": "No skill-impact benchmark report has been produced yet.",
+    "learning_benchmark_unreadable": "The skill-impact benchmark report could not be read.",
+    # 500 (handlers/learning.py — GET /api/learning/proposals): the queue's listing failed —
+    # answered in place of an empty queue, which would read as "nothing to review".
+    "learning_proposals_unreadable": "The learning proposal queue could not be read.",
+    "store_required": "The request must name one retrieval store (knowledge or memory).",
+    "card_unavailable": "That retrieval store could not be read for labelling.",
+    "store_mutated": "A read-only harness pass wrote to a store and was refused.",
+    "labels_required": "The request carries no qrels label mapping.",
+    "labels_rejected": "The submitted qrels labels were refused.",
+    "field_metrics_unreadable": "The lab/field metric sources could not be read.",
+    # ── packs (handlers/packs.py) ──
+    "pack_not_installed": "No such installed pack.",
+    "pack_not_bundled": "The pack is not bundled with this build.",
+    "pack_build_failed": "Building the pack artifact failed.",
+    "pack_update_refused": "The pack update was refused.",
+    "pack_has_no_roster": "The pack declares no agent roster.",
+    "pack_has_no_triggers": "The pack staged no triggers.",
+    # Uninstall refusals (packs/uninstall.py — `PackUninstallError`). 409: an agent or an
+    # automation the pack brought is still in use, and the message names each one and where to
+    # remove it. 500: some of the pack's parts could not be removed, and uninstalling it again
+    # finishes the job.
+    "pack_in_use": (
+        "Something the pack brought is still in use; the message names it and where to remove "
+        "it before uninstalling."
+    ),
+    "pack_uninstall_incomplete": (
+        "Some of the pack's parts could not be removed; uninstall the pack again to finish."
+    ),
+    "binding_key_required": "A binding key is required.",
+    "binding_rejected": "The submitted binding was rejected.",
+    "one_link_required": "A one-link target is required.",
+    "one_link_rejected": "The submitted one-link target was rejected.",
+    "project_not_found": "No such project.",
+    # `PUT /api/projects/settings` (the default project). 409 rather than 404: the project exists
+    # and the request is valid once it is restored — an archived project is off every picker, so
+    # it cannot be where new work starts.
+    "project_archived": "The project is archived; restore it before new work can start in it.",
+    "prompt_card_failed": "Rendering the prompt card failed.",
+    "prompt_card_rejected": "The submitted prompt card was rejected.",
+    "rejection_incomplete": "A rejection must carry a reason.",
+    # ── the triage digest (handlers/proactive.py) ──
+    # `triage_digest_unreadable` is a 500 whose `error` object travels BESIDE the digest view's own
+    # `state: "error"`, so a client that only reads the code and one that renders the card both get
+    # a usable answer. `triage_digest_expired` is a 409 and is load-bearing: an ordinal numbers ONE
+    # digest window, so a reply against a stale run must be REFUSED by code rather than executed
+    # best-effort against whatever is third today.
+    "triage_digest_unreadable": "The triage digest could not be read.",
+    "triage_digest_expired": "That digest is no longer the current one, so its item numbers no longer address the items it listed.",  # noqa: E501
+    "triage_schedule_write_failed": "The triage digest schedule could not be written.",
+    # ── the decision journal (handlers/decisions.py) ──
+    # A 500, and the code is the whole reason it is not a 200 with an empty list: ONE payload
+    # carries the rows AND the calibration strip aggregated from them, so a read that raised has
+    # no honest partial answer to give. An empty journal would say "you have never logged a
+    # decision" — the most confident possible way to say the opposite of what is known, on the
+    # one surface whose entire value is not overclaiming. The `message` carries the raiser's own
+    # type and text, so the sentence the user reads names the real fault.
+    "decision_journal_unreadable": (
+        "The decision journal could not be read, so neither your decisions nor the calibration "
+        "strip are shown. This is a failed read, NOT an empty journal — nothing you logged was "
+        "lost, and the read changes nothing, so retrying is safe. Fix: the message names the "
+        "underlying fault; `personalclaw doctor` checks the sqlite build the store needs."
+    ),
+    # ── research reports (handlers/research_reports.py) ──
+    "research_reports_unavailable": "Scheduled research reports are not available in this build.",
+    # ── voice profiles (handlers/voice_profiles.py) — VoiceProfileError.reason ──
+    "consent_required": "The cloned voice's consent record is not verified.",
+    "artifact_missing": "The addressed voice artifact does not exist.",
+    "artifact_not_readable": "The voice artifact exists but is not readable.",
+    "invalid_artifact": "The artifact path is not a recognized artifact reference.",
+    "invalid_profile_id": "The voice profile id is malformed.",
+    "path_escape": "The submitted path escapes the voice_profiles directory.",
+    "invalid_seed": "The seed must be an integer.",
+    "invalid_speed": "The speed must be a number.",
+    "invalid_kind": "The voice profile kind is not one of the supported kinds.",
+    "kind_immutable": "A voice profile's kind cannot be changed after creation.",
+    # A clone voice whose engine (the one it names, else the one bound in Models) cannot clone:
+    # refused when the voice is saved, not first when it speaks. The message names the engine.
+    "cloning_unsupported": (
+        "A clone voice needs a text-to-speech engine that can clone from a reference clip, "
+        "and the engine this voice would use cannot."
+    ),
+    "invalid_extension": "The audio file extension is not supported.",
+    "name_required": "A non-empty name is required.",
+    "consent_text_required": "Consent text is required for a cloned voice.",
+    "empty_history": "The profile has no generation history.",
+    "history_audio_missing": "That generation's audio file is gone.",
+    "no_active_voice": "There is no active TTS voice selection to migrate.",
+    # ── session organize (handlers/session_organize.py) ──
+    # (uses the generic bad_request/not_found rows above)
+    # ── inbound control bridge (inbound/bridge.py) ──
+    #
+    # The ADMISSION layers deliberately reuse the generic `not_found`/`forbidden` rows
+    # above rather than adding a `bridge_disabled`-style code. `inbound/gate.py` answers
+    # 404 precisely so a disabled surface does not confirm its own existence to a
+    # prober, and a code that named the surface would hand back exactly what the status
+    # withholds. The rows below are the ones a caller who ALREADY authenticated needs in
+    # order to tell its own mistakes apart.
+    "unauthorized": "The request carried no usable bearer credential.",
+    # ── capture proxy (inbound/capture_proxy.py) ──
+    # A 502 here is always about the UPSTREAM the caller's own agent named, never about
+    # PersonalClaw's own state, so the three are kept apart: `unavailable` is "nothing named
+    # an upstream", `denied` is "the operator's egress allow-list refused it" (a decision
+    # somebody can change), and `failed` is "the call was made and the far side broke".
+    "upstream_unavailable": "No upstream base URL could be resolved for this dialect.",
+    "upstream_denied": "The resolved upstream is not on the operator's egress allow-list.",
+    "upstream_failed": "The upstream call was attempted and did not complete.",
+    "upstream_redirected": (
+        "The allow-listed upstream answered a redirect. It is not followed, because the "
+        "egress guard evaluated the original host and never saw the redirect target."
+    ),
+    "service_unavailable": "The service is temporarily suspended; retry later.",
+    "unknown_action": "The named control-bridge action does not exist.",
+    "action_not_bound": "The calling client's bindings do not include this action.",
+    "action_failed": "The control-bridge action raised while running.",
+    "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # A 409 on the owner's answer to a control-bridge confirmation: the client that asked for it
+    # has been revoked or switched off since, so its request is not run.
+    "bridge_client_gone": (
+        "The control-bridge client that asked for this has been revoked or switched off."
+    ),
+    # ── OpenAI-compatible inbound dialect (inbound/openai_dialect.py) ──
+    #
+    # ADMISSION reuses the generic rows for the same reason the MCP surface below does: a
+    # code naming this surface, or naming which kill switch fired, hands a prober exactly
+    # what the 404 status is chosen to withhold. So 404/403/401/503 admission answers carry
+    # `not_found`/`forbidden`/`unauthorized`/`service_unavailable`, and `rate_limited` and
+    # `request_too_large` are reused for the caps.
+    #
+    # The rows below are the ones a caller PAST admission needs to tell its own mistakes
+    # apart. They ride inside the `/v1` wire envelope — that surface's shape wins on
+    # it — with `type`/`param` added via `json_error`'s `error_extra`, so
+    # the stable code survives in `code` exactly where a script branches on it.
+    #
+    # `unknown_agent` is the load-bearing one: `model` names an AGENT on this surface, and
+    # `resolve_agent_bindings` would answer an unknown name with the DEFAULT agent. This
+    # code is how a client learns it asked for something that does not exist instead of
+    # being quietly served by something else.
+    "unknown_agent": "The requested model does not name an agent on this instance.",
+    "agent_binding_violation": "This client is pinned to a different agent than it requested.",
+    "empty_messages": "The request carried no message with content.",
+    "turn_timeout": "The agent did not finish the turn within this surface's deadline.",
+    # A 409: the request arrived while its session was answering another one (a turn running, or
+    # its answer still being read out). A session answers one request at a time, so nothing of
+    # this one was run; the same request succeeds once the other has finished.
+    "session_busy": "The request's session was still answering another request.",
+    # Audio aliases. "No voice is bound" and "synthesis broke" are separate codes
+    # because the first is fixed in Settings and the second is a fault to report; a client
+    # that cannot tell them apart will retry a configuration problem forever.
+    "no_bound_voice": "No text-to-speech voice is selected on this instance.",
+    "synthesis_failed": "Speech synthesis was attempted and raised.",
+    "synthesis_empty": "Speech synthesis completed but produced no audio.",
+    "missing_input": "The synthesis request carried no input text.",
+    # `stt_unavailable` answers more than its meaning names, and the meaning stays as released
+    # (append-only): it is sent whenever speech-to-text can't run at all — no model chosen,
+    # speech-to-text turned off in Settings, or a bound provider that can't run (its sign-in
+    # failed, a setting it needs is empty) — with the message saying which
+    # (`transcribe.unavailable_sentence`). The microphone's own route, `/api/stt/transcribe`, sends
+    # it beside that sentence too, so a composer keys on the code and shows the words as they are.
+    "stt_unavailable": "No speech-to-text model is installed on this instance.",
+    "transcription_failed": "Transcription was attempted and raised.",
+    "missing_file": "The upload carried no file field.",
+    "invalid_content_type": "The request's Content-Type is not supported on this route.",
+    "invalid_upload": "The multipart upload could not be parsed.",
+    # ── the resumable upload protocol (dashboard/handlers/uploads.py) ──
+    # 404 `upload_not_found`: `DELETE /api/uploads/{id}` named no upload in progress.
+    # 400 `upload_interrupted`: the connection closed before the request's body had all arrived,
+    # which is what a cancel does to the request in flight. A part answers it, and so does the
+    # knowledge single-request upload (`POST /api/knowledge/ingest`).
+    # 409 `upload_completing`: `DELETE /api/uploads/{id}` named an upload whose complete is
+    # running: every part has landed, and the gateway completes it whatever the page does.
+    "upload_not_found": (
+        "No upload in progress has that id: it was never started, has finished, or was dropped."
+    ),
+    "upload_interrupted": (
+        "The connection closed before the upload's bytes had all arrived, so none of it was kept."
+    ),
+    "upload_completing": (
+        "This upload has all arrived and is being completed, so it can no longer be cancelled."
+    ),
+    # ── the content scan every stored upload gets (uploads/content_scan.py) ──
+    # Every route that stores an uploaded file answers these two, the same way: 422
+    # `upload_content_refused` when the scan refused the content, 503 `upload_content_unchecked`
+    # when it could not check it (the window could not be read, or the scan gave no answer).
+    "upload_content_refused": (
+        "The upload's content failed the safety scan, so nothing was made from it."
+    ),
+    "upload_content_unchecked": (
+        "The upload's content could not be checked, so nothing was made from it."
+    ),
+    # ── inbound MCP surface (inbound/mcp_http.py) ──
+    #
+    # Same reasoning as the bridge above, and the same conclusion: ADMISSION reuses the
+    # generic `not_found`/`service_unavailable`/`forbidden`/`unauthorized` rows, because a
+    # code naming this surface — or naming which of the three kill switches fired — hands a
+    # prober exactly what the 404 status is chosen to withhold. The rows below are the ones
+    # a caller who already got past admission needs in order to tell its own mistakes
+    # apart: each names a CAP the caller can respect or a method it can stop using, and
+    # none of them is a fact about the instance.
+    #
+    # `too_many_concurrent_requests` shares its 503 with `service_unavailable` and is a
+    # separate code on purpose: "you have too many in flight" is fixed by the client
+    # serialising its calls, "the instance is suspended" is fixed by waiting, and a client
+    # that cannot tell them apart will retry the wrong one forever.
+    "method_not_allowed": "The HTTP method is not supported on this route.",
+    "rate_limited": "The caller exceeded its request rate cap; see Retry-After.",
+    "too_many_concurrent_requests": (
+        "The caller already has the maximum number of requests in flight."
+    ),
+    "request_too_large": "The request body exceeds this surface's size cap.",
+    # ── inbound A2A gateway (inbound/a2a.py) ──
+    #
+    # Admission reuses the generic rows above for the reason the MCP block states. This
+    # ONE code exists because a 200 card with no skills is a legitimate, meaningful answer
+    # ("nobody published a template"), so a catalog that could not be READ must be able to
+    # say so instead of borrowing that answer. Without it, an empty card and a broken card
+    # are the same bytes — and a client would stop asking.
+    "a2a_catalog_unavailable": "The published-workflow catalog could not be read.",
+    # A SECOND code rather than reusing the one above, because the two need different
+    # operator actions and a peer branches on the code: `catalog_unavailable` is a read
+    # that failed and may succeed on retry, `origin_unresolved` is a missing declaration
+    # that will never resolve itself. The card is withheld rather than published with a
+    # guessed address (#2620) — advertising a guess to a third party is failing open.
+    "a2a_origin_unresolved": (
+        "This instance could not determine the address peers should use to reach it, so "
+        "no agent card was published."
+    ),
+    # ── desktop computer use (handlers/computer_use.py) ──
+    # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
+    # AgentError the dispatch composed has to reach the model unchanged, and the wire code is
+    # what an HTTP client branches on. Two codes, not one, because the two mean different
+    # things to an operator: `refused` is a decision somebody can change, `unavailable` is a
+    # driver that could not run and is nobody's misconfiguration.
+    "computer_use_refused": (
+        "A computer-use call was refused — the out-of-band keystone is off, the target "
+        "application is not on the operator's allowlist, the destination is a secure field, "
+        "the element index is stale, or the request named no valid tool."
+    ),
+    "computer_use_unavailable": (
+        "The computer-use call was permitted but no accessibility driver could run it on this "
+        "platform, or the ceilinged driver subprocess failed. Nothing was changed on the "
+        "desktop."
+    ),
+    # A third code rather than a reuse of `audit_owner_only`: that one names the
+    # security audit trail, and a stable wire code that says one thing must not start
+    # meaning two.
+    "computer_use_view_owner_only": (
+        "The desktop live view is readable by the owner only — an app-scoped token cannot "
+        "watch what the agent is doing on the operator's desktop."
+    ),
+    # ── binary artifact write + document model (artifacts/handlers.py) ──
+    #
+    # Every row here is a DIFFERENT thing for the caller to do, which is the whole test
+    # for a distinct code. A document editor that could only see "409" would have to
+    # guess between "reload the document", "you sent the wrong file type" and "this
+    # artifact has no binary body at all" — three remedies, one of which destroys the
+    # user's work if guessed wrong.
+    # ── React artifact deploy (artifacts/handlers.py) ────────────────────────────
+    #
+    # Two codes, not one, because the remedies are opposite: a build failure is the
+    # user's SOURCE to fix, a bad slug is the request to fix. The `message=` on both
+    # carries the raiser's own "WHAT — WHY. Fix: FIX" sentence verbatim.
+    "artifact_build_failed": (
+        "Bundling the artifact's React source failed, so nothing was published. Fix: read the "
+        "build message — it names the file and the reason."
+    ),
+    "artifact_slug_invalid": (
+        "The artifact slug is not a usable directory name, so no served path could be built for "
+        "it. Fix: rename the artifact to something slug-safe."
+    ),
+    "kind_not_binary": (
+        "The artifact's kind stores its body as text, so it has no binary body to replace. "
+        "Fix: PATCH the artifact instead."
+    ),
+    "kind_is_binary": (
+        "The artifact's kind stores its body as bytes, so text cannot be one of its versions. "
+        "Fix: PUT the new bytes to its raw route instead."
+    ),
+    # Saving an image or PDF file as an artifact (artifacts/file_copy.py): judged by its bytes.
+    "file_too_large": (
+        "The file is larger than an artifact can hold, so it was not read. Fix: save a smaller "
+        "file."
+    ),
+    "file_type_unsupported": (
+        "The file's bytes are not an image or PDF the artifact store keeps, or its name says "
+        "another type than its bytes are. Fix: save a PNG, JPEG, GIF, WebP or PDF file whose name "
+        "matches it."
+    ),
+    "if_match_required": (
+        "A whole-body write must declare the version it is replacing via `If-Match`. Fix: read "
+        "the artifact, then resend with `If-Match: <version>`."
+    ),
+    "if_match_malformed": (
+        "The `If-Match` header is not an artifact version number. Fix: send the integer "
+        "`version` the artifact reported."
+    ),
+    "version_conflict": (
+        "The artifact moved since it was read, so the write would have destroyed somebody "
+        "else's edit. Fix: reload and re-apply. The `error` object names the current version."
+    ),
+    # ── whole-document writes from a page's copy (personalclaw/stale_write.py) ──
+    # The same refusal as `version_conflict`, for the settings documents, lists and records that
+    # carry a content `revision` instead of an artifact version. Two codes because the remedies
+    # differ: `revision_required` is a client that never read what it is replacing (fix the
+    # client), `stale_write` is a copy that went stale (re-read, re-apply, save). Neither carries
+    # the current revision — only a read of the document hands one out.
+    "revision_required": (
+        "A write that replaces a whole document must name the revision it replaces in "
+        "`If-Match`. Fix: read the document, then resend with its `revision`."
+    ),
+    "stale_write": (
+        "The document changed since the copy this write was built from was read, so saving it "
+        "would have undone that change. Nothing was saved. Fix: read it again, re-apply the "
+        "edit, and save with the new revision."
+    ),
+    # 409, the masked-read twin of `stale_write` (security.MaskConflict): an editor seeded from a
+    # redacted read echoed a `[REDACTED: …]` marker that no longer lines up with the stored copy,
+    # so the value it stood for cannot be put back. Saving the marker would overwrite a secret.
+    "mask_conflict": (
+        "The stored copy no longer lines up with the redacted version that was edited, so a "
+        "hidden value cannot be put back. Nothing was saved. Fix: re-open it, or replace the "
+        "marker with the value to store."
+    ),
+    # Same family as `version_conflict` above: a write refused because it would have
+    # destroyed data the caller never saw. An intent's id is DERIVED from its goal, so two
+    # differently-worded goals can slugify onto one id — and the create path used to
+    # overwrite the first goal and answer 201. The message names the other intent's goal
+    # rather than the id, which no user ever sees.
+    "intent_id_taken": (
+        "Another intent already covers this goal. Fix: edit that intent, or reword this "
+        "goal so the two are distinguishable."
+    ),
+    # A referenced id the caller named that does not exist. Both are 400 and not 404: the
+    # addressed resources (the sessions) are real; it is a field INSIDE the body that names
+    # something unknown, so 404 would say the wrong thing about the wrong noun. Added because
+    # `POST /api/chat/sessions/bulk` used to persist a dangling id while the single-session
+    # paths beside it validated (#771).
+    "unknown_tag_id": "The request names a tag id that does not exist.",
+    "unknown_folder_id": "The request names a folder id that does not exist.",
+    # Same family as `intent_id_taken`: a name-uniqueness refusal on a surface whose sibling
+    # (tags) enforced it at the DB while this one had no guard at all (#755).
+    "collection_name_taken": (
+        "A shelf with that name already exists. Fix: open that shelf, or pick another name."
+    ),
+    "content_length_required": (
+        "The request declared no `Content-Length`, so its size cannot be checked before the "
+        "body is read. Fix: send a length-delimited body, not a chunked one."
+    ),
+    "mime_kind_mismatch": (
+        "The body's `Content-Type` belongs to a different artifact kind than the addressed "
+        "artifact. Fix: send the format this artifact already is, or create a new artifact."
+    ),
+    "unsupported_media_type": (
+        "The body's `Content-Type` is not a binary artifact format this build can store."
+    ),
+    "model_unavailable": (
+        "No document parser or writer ships for this artifact's kind, so it has no editable "
+        "model. Fix: read the bytes via the raw route instead."
+    ),
+    "model_parse_failed": (
+        "The stored bytes could not be parsed as a document of this artifact's kind."
+    ),
+    # DISTINCT from `model_parse_failed` on purpose (#2747): the document is intact, it is
+    # merely too large to open in the editor without spending minutes of CPU and gigabytes
+    # of RAM, and calling that "could not be parsed" would tell a user their file is
+    # corrupt. Carries the way OUT in its own sentence, because a cap with no escape is the
+    # outage: the raw route still serves the whole file.
+    "document_too_large": (
+        "The document's compressed XML exceeds this build's parse caps, so it was not "
+        "opened. Fix: read the original bytes through the artifact's raw route."
+    ),
+    "invalid_model": (
+        "The posted document model is not a valid model. The message names the offending path."
+    ),
+    "render_failed": "The document model was valid but the writer could not render it.",
+    # A CONSENT refusal, not a capability one: the model was fine and the writer exists, but
+    # in-place document editing is switched off and re-rendering is lossy. Distinct from
+    # `forbidden` so the UI can say WHICH switch to turn on instead of "not allowed".
+    "document_editing_off": (
+        "In-place document editing is off, so this document cannot be re-rendered. Fix: turn "
+        "on Settings › Documents › 'Edit documents in place'."
+    ),
+    # ── automation would-execute simulator (handlers/doctor.py) ──
+    # Two codes, not the generic `bad_request`/`not_found` pair, because the trust surface
+    # branches on them: a missing id is a client bug the UI can fix by disabling its own
+    # button, while an id that resolves to nothing means the automation was deleted under a
+    # stale list and the panel has to refetch. `unknown_trigger` also carries the id it looked
+    # up (`error_extra`), so a support log says WHICH automation vanished.
+    "trigger_id_required": "A trigger id is required to describe what an automation would do.",
+    "unknown_trigger": "No automation exists with that id.",
+    # ── onboarding import (handlers/onboarding_import.py) ──
+    # ONE code for both halves: a scan that could not read, and an import that stopped
+    # after a write raised. Both mean "the machinery failed", both carry the failure's own
+    # sentence, and both are safe to retry (the fingerprint ledger records each write as it
+    # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
+    "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
+    # 409 on `DELETE /api/onboarding/import/job`: nothing to stop.
+    "not_running": "No import is running, so there is nothing to stop.",
+    # ── direct tool invocation (handlers/tools.py) ──
+    # 403 and not 404: the tool exists and this caller may reach the route. The user
+    # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
+    # cron script whose next move is to reinstall something.
+    "tool_disabled": "The tool is disabled on the Tools page and will not be executed.",
+    # A RISK refusal, and deliberately its own code rather than `forbidden` or a reuse of
+    # `tool_disabled`: nothing is switched off and the caller may reach the route — the call
+    # resolved as destructive and arrived without naming that. The client's next move is to
+    # escalate its confirmation and retry, which is a different move from re-enabling a
+    # tool, so it needs a code of its own to branch on. Carries `risk` + `confirm_field` in
+    # `error_extra` so the escalation does not have to parse the sentence (#506).
+    "risk_confirmation_required": (
+        "The call resolves as destructive and did not acknowledge that. Fix: re-send with "
+        '"confirm_risk": "destructive".'
+    ),
+    # The agent's hard deny-list (`security.is_denied`), by tool NAME: a call no agent may make
+    # whatever it is approved for, refused here before any confirmation is asked. Its own code
+    # because no retry satisfies it: not `tool_disabled` (nothing can re-enable it) and not
+    # `risk_confirmation_required` (confirming does not unlock it).
+    "tool_denied_by_policy": (
+        "The tool's name is on the security policy's deny-list, so it is never run, and no "
+        "confirmation changes that."
+    ),
+    # 503, and NOT the `tool not found` 404 this used to fall through to (#3310). The nine
+    # filesystem/shell tools are confined to the workspace root, so with no usable root there
+    # is nowhere to run them — a configuration-absent answer about the HOST, like
+    # `tts_disabled`, not a statement that the tool does not exist. The distinction is the
+    # whole point: a cron script told "no such tool: bash" would go looking for something to
+    # reinstall, while this names the setting to fix.
+    "workspace_unresolved": (
+        "No usable workspace directory resolved, so the filesystem and shell tools have no "
+        "folder to run in. Fix: set a workspace root (PERSONALCLAW_WORKSPACE, or the "
+        "workspace directory in Settings)."
+    ),
+    # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
+    # a switched-off capability, not a malformed request. 503 rather than 403 to match the
+    # sibling refusal on the same route (`tts_unbound`), which is also a configuration-absent
+    # answer (#651). The switch named is the master one, not "Speak replies aloud".
+    "tts_disabled": (
+        "Text-to-speech is switched off. Fix: turn on “Enable text-to-speech” in "
+        "Settings → Speech & Transcription."
+    ),
+    # Speech synthesis refused because no text-to-speech model is bound, so there is nothing to
+    # speak with. Its own code because its fix is a different page from `tts_disabled`'s.
+    "tts_unbound": (
+        "No text-to-speech model is set up. Fix: choose one for Text-to-speech in "
+        "Settings → Models."
+    ),
+    # Speech synthesis refused before any audio was asked for, because the bound provider says it
+    # cannot speak with the bound model now (`TtsProvider.can_synthesize`): a voice that is not
+    # downloaded, a runtime or a key that is missing. Its own code because a model IS chosen, so
+    # `tts_unbound`'s fix would send the user to choose one they already chose.
+    "tts_not_ready": (
+        "The text-to-speech model is chosen but cannot speak yet. Fix: check it in "
+        "Settings → Models."
+    ),
+    # Speech refused by a spend cap: the request is work nobody watches (an app's, a scheduled
+    # script's), and the daily or run dollar cap for such work refused it. The message is the
+    # cap's own sentence, which says which cap and how to lift it.
+    "tts_spend_refused": (
+        "A spend cap for work nobody watches refused this speech, so nothing was spoken."
+    ),
+    # ── capture telemetry import (inbound/capture_proxy.py) ──
+    # ONE code, for the store failing under the import — NOT for a file that parsed badly.
+    # A malformed export is a 200 whose `reasons` name each skipped line
+    # (skipped-and-counted), so a caller that branches on this code branches on "the
+    # machinery broke", which is retryable, and never on "your file was rubbish", which
+    # is not. A refused `file` is `invalid_request`: the name, not the machinery.
+    "capture_import_failed": "Staging an exported agent log into the capture store failed.",
+    # ── secrets vault (handlers/secrets.py) ──
+    # Each sentence says what to DO, because the vault is a surface a user reaches by hand and a
+    # restatement of the identifier ("the secret name is invalid") leaves them guessing which
+    # character offended. `secret_absent` is a 404 on DELETE only: a GET never 404s, because an
+    # empty vault is a legitimate state with its own empty-state copy, not an error.
+    "secret_name_invalid": "A secret's name must look like an environment variable — letters, "
+    "digits and underscores, not starting with a digit.",
+    "secret_value_required": "Storing a secret needs a non-empty value; to remove one, "
+    "use DELETE instead.",
+    "secret_project_invalid": "The project id cannot be used to scope a secret — it must be a "
+    "plain id without '__' in it.",
+    "secret_absent": "No secret is stored under that name in the scope you asked for.",
+    "secret_host_readonly": "That row is inherited from the host environment, so the vault "
+    "cannot change or remove it — unset it where the gateway's environment is defined.",
+    # A name starting PCSECRET_ or PCPROJ_ is where the store keeps a setting's own key or a
+    # project's secret: storing or deleting one by name would reach a key another surface manages.
+    "secret_name_reserved": "Names starting with PCSECRET_ or PCPROJ_ are where PersonalClaw "
+    "keeps a setting's own key and a project's secrets — choose another name, and pick the "
+    "project to store a secret for one.",
+    # ── user-authored inbox note (handlers_inbox.api_inbox_note_create) ──
+    # Three codes rather than the generic `invalid_request`/`bad_request` pair, because the
+    # compose surface branches on all three and each has a DIFFERENT next move: an empty
+    # note means "type something" (the form re-focuses its textarea and shows nothing
+    # alarming), a too-long note means "shorten it" (and the site's message carries the
+    # actual count and limit, which a fixed sentence could not), and a failed save means
+    # "your text is still in the box, press save again" — the one case where the note has
+    # NOT been kept and the user must not be told it was.
+    "note_text_empty": "A note needs some text. Type what you want to remember, then save.",
+    "note_too_long": "That note is longer than the capture limit. Shorten it and save again.",
+    "note_not_saved": (
+        "The note could not be written to the inbox, so it was not kept. Your text is "
+        "still in the compose box — try saving again."
+    ),
+    # ── inbox field-type validation (handlers_inbox.api_inbox_update — issue 338 / #2845) ──
+    # A per-FIELD type refusal, distinct from `invalid_body` (a whole-body "this is not the
+    # expected object" answer). `PUT /api/inbox/{id}` validates each updatable field's type
+    # BEFORE mutating anything, so a non-string `draft` (or a non-boolean `favorited`, etc.)
+    # can no longer poison the store. The wire `message` is request-derived and names the
+    # field and the WIRE type it expected — never the caller's value, which may be arbitrarily
+    # large — e.g. "draft must be a string, got object".
+    "invalid_field_type": "A request field carries a value of the wrong type for that field.",
+    # ── what a drafted reply should say (handlers_inbox.api_inbox_draft) ──
+    # The owner's instruction for one draft is bounded
+    # (`inbox_service.DRAFT_INSTRUCTIONS_MAX_CHARS`) and refused before the model runs. The reply
+    # panel's field stops at the same limit, so a caller meets this code only by sending past it,
+    # and the site's message names the limit.
+    "instructions_too_long": (
+        "What the reply should say is longer than the drafting limit. Shorten it and "
+        "generate the draft again."
+    ),
+    # A file the owner's instruction names could not be read (`reply_grounding.ground`), so the
+    # model never ran: a draft written around it would guess, or promise it on her behalf. The
+    # site's message names each file and why; `error.detail.unread` lists them.
+    "draft_source_unread": (
+        "A file named in what the reply should say could not be read, so no draft was written."
+    ),
+    # ── a reply that still leaves a place for the owner's answer (handlers_inbox.api_inbox_send) ─
+    # A drafted reply marks each answer only the owner can give (`reply_answers.placeholder`:
+    # `[your answer: …]`). A reply that still holds one is not sent, since the sender would get the
+    # mark; the site's message names each place.
+    "reply_has_open_answer": (
+        "The reply still has a place left for your answer, so it was not sent."
+    ),
+    # ── an Inbox message's attachment (handlers_inbox.api_inbox_attachment) ──
+    # Two codes because the row's panel says two different things: the row or attachment named
+    # does not exist, or the attachment is listed and was never kept (too large, past the count,
+    # or refused by the disk), which the site's message says in the row's own words.
+    "inbox_attachment_not_found": "That Inbox message has no attachment by that id.",
+    "inbox_attachment_not_kept": "That attachment is listed, but its file was not kept.",
+    # ── sorting a message again (handlers_inbox.api_inbox_sort) ──
+    # Only an open message the sorter reads (`inbox_sorting.wants_sorting`) can be sent again: a
+    # row that is not a message, an agent's own post, one that already has a verdict, or one she
+    # has handled or dismissed is not one.
+    "inbox_not_running": "The Inbox is not running, so nothing can be sorted.",
+    "inbox_item_not_sortable": (
+        "That item is not a message waiting to be sorted: it is not a message, it is an "
+        "agent's own post, it already has a verdict, or it is no longer open."
+    ),
+    # ── a verdict on an Inbox judgment (dashboard/handlers/feedback.py) ──
+    # The producer a verdict is rated against is the one the row names
+    # (`inbox.judgment_producers`), never one the caller claims. A row whose judgment no prompt
+    # made (unsorted, sorted by her, a draft she wrote) has nothing to rate.
+    "feedback_no_judgment": (
+        "Nothing a model produced is on that item to rate: its verdict or draft is not a "
+        "prompt's."
+    ),
+    # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
+    # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
+    # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system
+    # root is refused before any file is written, so a bad bind cannot plant agent files at
+    # the filesystem root or in $HOME.
+    "workspace_dir_unsafe": (
+        "The project's bound workspace directory is not a safe place to write generated agent "
+        "files (a relative path, the home directory itself, a credential directory, or an "
+        "OS/system root)."
+    ),
+    # ── provider instance connectivity test (providers/instance_routes.py) ──
+    # The "test connection" button on a provider instance. Codes split by remedy:
+    # `provider_unreachable` (502) — the endpoint/server could not be reached (connection
+    # refused, timeout, DNS, TLS, or it answered but did not report ready); the operator
+    # checks the URL and that the service is running. `provider_config_invalid` (400) — the
+    # instance's own config is unusable, fixed in its settings. `provider_test_failed` (502)
+    # — an unexpected error while testing; the raw exception is logged, never returned, so
+    # the user reads guidance rather than a truncated Python traceback.
+    "provider_unreachable": (
+        "A provider instance's endpoint or server could not be reached, so its connection "
+        "test did not pass."
+    ),
+    "provider_config_invalid": (
+        "A provider instance's configuration is incomplete or invalid, so it could not be tested."
+    ),
+    "provider_test_failed": (
+        "A provider instance's connection test failed unexpectedly; the underlying error is "
+        "in the server log."
+    ),
+    # A MODEL provider's instances are config.json `providers[]` entries (/api/model-providers)
+    # — the store chat resolves. The generic instance store refuses them rather than keep a
+    # second, unread copy of an instance's settings (400: the request named the wrong store).
+    "model_instances_elsewhere": (
+        "A model provider's instances are managed through /api/model-providers, not the "
+        "generic provider-instance store."
+    ),
+    # ── the agents a runtime offers (dashboard/handlers/providers.py — GET
+    # /api/agent-providers/{id}/agents) ──
+    # 502: the runtime's last Test did not list them — it failed, or its answer could not be read
+    # — answered in place of an empty list, which would read as "this runtime offers none". The
+    # message says why.
+    "agent_discovery_failed": (
+        "The agents this runtime offers are not known: its last Test did not list them. The "
+        "message says why."
+    ),
+    # ── an agent runner's version check (dashboard/handlers/providers.py) ──
+    # 409: nothing set that runner's CLI up here — no installed agent app, and no provider entry
+    # of the owner's own, registers its runtime — so PersonalClaw never runs it, not even for
+    # its version.
+    "runner_not_set_up": (
+        "Nothing sets this runner up here — no installed agent app or provider entry registers "
+        "its runtime — so PersonalClaw does not run its CLI."
+    ),
+    # 409: a runner definition of the owner's waits for their Allow on this machine
+    # (`agents.runner_grants`) — one another machine's sync brought, or changed since it was
+    # allowed — so PersonalClaw does not run its CLI, a Check included.
+    "runner_waiting": (
+        "This runner's definition waits for you to allow what it runs on this machine, so "
+        "PersonalClaw does not run its CLI."
+    ),
+    # ── per-run policy overrides (workflows/handlers.py) ──
+    # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
+    # `json_error` call site, but registered here all the same: these are wire codes a
+    # client branches on, and the registry is the append-only record of that surface.
+    # `run_not_prelaunch` is a 409 state refusal (the run launched, so the overlay is
+    # frozen — edit before launch); `unknown_policy_key` is a 400 whose detail carries
+    # `unknown_keys` + `overridable` so the retry is not blind.
+    "run_not_prelaunch": (
+        "The run has launched, so its policy overrides are frozen; edit them before launch."
+    ),
+    "unknown_policy_key": (
+        "A policy override key is not in the overridable set; the detail names the "
+        "offending keys and the keys a run may override."
+    ),
+    # 409 from the same translation: a batch starts only once its owner allows it (or a grant
+    # lets it start without asking), and the session that started it has nobody to ask (it acts on
+    # its own, or there is nowhere to ask). The message names what its tasks may do and why.
+    "nobody_to_ask": (
+        "A batch starts only once you allow it, and nobody can be asked for it from where it "
+        "was started."
+    ),
+    # 409 from the same translation: an agent's save that would let a workflow's steps do more is
+    # made only on the owner's own Allow, and the session that asked has nobody to ask
+    # (`workflows/definition_ask.py`). The message names the steps and why.
+    "save_nobody_to_ask": (
+        "A save that lets a workflow's steps do more is made only on your own Allow, and nobody "
+        "can be asked for it from where the save was asked."
+    ),
+    # 400 from `POST /api/spawn`: a spawn's approval mode is the owner's to set, never a
+    # request's, so a body that names one is refused rather than run looser or quietly ignored.
+    "approval_mode_not_accepted": (
+        "A subagent asks as your own approval settings say; a request cannot set its approval "
+        "mode."
+    ),
+    # ── onboarding local-model zero-key on-ramp (handlers/local_model.py) ──
+    # `local_model_endpoint_invalid` (400) — the bind target is not a loopback or
+    # private (RFC-1918) address; only the endpoint a local/LAN Ollama listens on is
+    # bindable here. `local_model_bind_failed` (400) — the endpoint was local but the
+    # bind could not complete (no Ollama answered, no chat model pulled, or the Ollama
+    # provider app is not installed); the detail carries the seed path's remediation.
+    "local_model_endpoint_invalid": (
+        "A local model can only be bound to a loopback or private (RFC-1918) endpoint."
+    ),
+    "local_model_bind_failed": (
+        "A reachable local model could not be bound; the detail explains what was missing."
+    ),
+    # `local_model_scan_failed` (500) — the opt-in LAN sweep did not finish, answered in place
+    # of an empty list, which would read as "no model server on your network".
+    "local_model_scan_failed": (
+        "The local network scan for a model server could not finish, so it found nothing to "
+        "report."
+    ),
+    # ── engine-owned fields on a workflow-managed task (tasks/handlers.py — #390) ──
+    # A 409 state refusal, not a 403: the caller is permitted to edit this task, and every
+    # field outside the engine-owned set still writes. What refuses is that the workflow run
+    # owns these particular fields, and the message names the alternative (`workflow_skip` /
+    # `workflow_rewind`) — a refusal that does not say what to do instead reads as breakage.
+    "engine_owned_field": (
+        "The field is driven by the workflow run that owns this task; change what the run "
+        "does and the task will follow."
+    ),
+    # ── app install preview (dashboard/handlers/apps.py — api_app_preview) ──
+    # Split by remedy. `app_source_unresolved`: the path does not exist or the clone failed,
+    # so the fix is the source string. `app_preview_failed`: the bundle was fetched but
+    # cannot be offered for install — its manifest is unreadable or invalid, it needs a newer
+    # core, or it is already installed (or, for an update, not installed); the message says
+    # which. A bundle that WAS read always answers 200, refusals included: "the scanner found
+    # dangerous content" is a completed review whose answer is no, and the dialog shows it.
+    "app_source_unresolved": "The app source could not be read — the path does not exist or "
+    "the clone failed.",
+    # `app_listing_refused`: a registry LISTING named where the app downloads from, and that is
+    # a place PersonalClaw does not fetch from for someone else's data (a folder on this machine,
+    # this computer, a private network, the cloud metadata service), directly or by redirect.
+    # The message is the same sentence the Store card shows for the listing.
+    "app_listing_refused": "A registry listing named a download address PersonalClaw will not "
+    "fetch from for it; the message says which and why.",
+    "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
+    "says why.",
+    # ── app agent work (dashboard/handlers/apps.py — api_app_agent_run) ──
+    # A 403: the task asked for more than its app's `agent` tier lets its agent work use (a wider
+    # tier, or a text task naming an agent), so nothing ran. The message names both tiers. The
+    # spawn route and the batch route answer it too, for an agent the app's work starts beyond the
+    # tier the app holds now (`apps.app_work`): the message says what the app may do.
+    "agent_tier_exceeded": "The task asks for more than its app's agent tier allows, so nothing "
+    "ran; the message names the tier it asked for and the app's.",
+    # A 400: the task's `tier` names no tier.
+    "agent_tier_unknown": 'The task\'s tier must be "text", "read" or "tools", or left out for '
+    "the app's own.",
+    # ── pending approvals (dashboard/approval_owner.py) ──
+    # A 409 state refusal: the approval was listed, but the work that asked for it (its turn,
+    # subagent, workflow run or loop) has ended, so it was cancelled rather than answered and
+    # nothing ran. The message names which owner ended and how.
+    "approval_owner_ended": (
+        "The work that asked for this approval has ended, so it was cancelled and nothing ran."
+    ),
+    # A 403: the caller may not answer this approval (`approval_answer.refusal`). Only the owner
+    # answers one, from a signed-in session or on their paired channel. An app, an agent's tool,
+    # a trigger, a run and a control-bridge client answer nothing, and neither does the party
+    # that asked. The approval stays pending and the attempt is audited.
+    "approval_owner_only": (
+        "Only the owner answers an approval, in PersonalClaw or on their paired chat channel."
+    ),
+    # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
+    # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call
+    # on this machine asks, so no switch may approve one without a person
+    # (`approval_grants.refusal_sentence`). A pending approval it was aimed at stays pending.
+    "approval_grant_refused": (
+        "The operator ceiling says every tool call asks, so this can't approve calls on its own."
+    ),
+    # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
+    # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved
+    # value has none saved, or a value holds a character no credential can (NUL). The message
+    # names the variable. `mcp_server_not_editable` (409) — the name belongs to a server
+    # PersonalClaw manages itself or an app provides, so its definition is not the form's to
+    # replace; the message says which.
+    "invalid_env": (
+        "The MCP server's environment cannot be saved as sent; the message names the variable."
+    ),
+    "mcp_server_not_editable": (
+        "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
+    ),
+    # ── trusting an MCP server's read-only labels (dashboard/handlers/mcp_trust.py —
+    #    POST /api/mcp/servers/{name}/read-only-trust) ──
+    # 409: no listing of the server as it is defined now is known, so no tool the owner reviewed
+    # can be sealed. The message says to reconnect it first.
+    "mcp_tools_not_listed": (
+        "PersonalClaw has not listed this MCP server's tools as it is defined now, so there is "
+        "nothing to trust yet; reconnect it first."
+    ),
+    # ── looking for MCP servers to import (dashboard/handlers/mcp.py — GET /api/mcp/importable) ──
+    # 500: the other tools' settings could not be looked through — answered in place of an empty
+    # list, which would read as "nothing to import". The message says why.
+    "mcp_importable_failed": (
+        "Looking through other tools' MCP settings for servers to import failed; the message "
+        "says why."
+    ),
+    # ── a secret reference to another owner's credential (config/secret_refs.py) ──
+    # 400: the settings name a `{{secret:…}}` stored under a different owner (another app, or
+    # core for an app's settings). A reference resolves only against its own owner's keys, and
+    # the message names the key and says how to store one under this owner instead.
+    "secret_owned_elsewhere": (
+        "The settings reference a credential that belongs to a different owner; store the key "
+        "under this owner instead."
+    ),
+    # ── saving an MCP server at a URL (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_transport` (400) — the transport is not `stdio`, `http` or `sse`, or the body carries
+    # the other transport's fields. `invalid_url` (400) — the URL is not an http(s) address with a
+    # host. `invalid_headers` (400) — the headers cannot be saved as sent: not a map of names to
+    # strings, a name that is not a header name or is sent twice, an empty value or one with a line
+    # break, or a header asked to keep a saved value it does not have. The message names the header.
+    "invalid_transport": (
+        "The MCP server's transport is not stdio, http or sse, or the request mixes the fields "
+        "of two transports."
+    ),
+    "invalid_url": "The MCP server's URL is not an http or https address with a host.",
+    "invalid_headers": (
+        "The MCP server's headers cannot be saved as sent; the message names the header."
+    ),
+    # ── signing in to an MCP server at a URL (mcp_oauth.py; dashboard/handlers/mcp.py —
+    #    POST /api/mcp/servers/{name}/sign-in, and the callback's own page) ──
+    # `invalid_sign_in` (400) — the request is not one: not a server's name, a client id or secret
+    # that is not a string, or a secret without an id. A body that is not a JSON object is
+    # `invalid_json` / `invalid_body`, from `request_validation.json_object_body`.
+    # `mcp_sign_in_unsupported` (409) — the server is started with a command; only one at a URL
+    # signs in. `mcp_sign_in_not_offered` (409) — the server answered without asking for sign-in,
+    # asks for a kind PersonalClaw does not do, or publishes no OAuth metadata.
+    # `mcp_sign_in_needs_client_id` (400) — its authorization server does not let PersonalClaw
+    # register itself; the error's `detail` carries `redirectUri` (to register an app with) and
+    # `issuer`.
+    # `mcp_sign_in_needs_local_address` (400) — the dashboard is neither on a loopback address nor
+    # on HTTPS, so no authorization server may send the browser back to it.
+    # `mcp_sign_in_failed` (502) — discovery, registration or the token exchange failed, or the
+    # egress guard refused an address; the message says which and why.
+    # `mcp_sign_in_expired` (400) and `mcp_sign_in_refused` (400) — the callback page's: a sign-in
+    # that expired, was already finished or was never started, and one the authorization server
+    # (or its answer's issuer) refused.
+    "invalid_sign_in": "The sign-in request is not valid as sent; the message says what is wrong.",
+    "mcp_sign_in_unsupported": (
+        "This MCP server is started with a command, so it has no sign-in; only a server at a URL "
+        "signs in."
+    ),
+    "mcp_sign_in_not_offered": (
+        "This MCP server does not ask for an OAuth sign-in PersonalClaw can do; the message says "
+        "what it asked for instead."
+    ),
+    "mcp_sign_in_needs_client_id": (
+        "The server's authorization server does not let PersonalClaw register itself; register an "
+        "app there with the redirect URL given, then enter its client ID."
+    ),
+    "mcp_sign_in_needs_local_address": (
+        "Signing in sends the browser back to PersonalClaw, which must be at a loopback address "
+        "or on HTTPS for that."
+    ),
+    "mcp_sign_in_failed": (
+        "PersonalClaw could not sign in to this MCP server; the message says which step failed "
+        "and why."
+    ),
+    "mcp_sign_in_expired": (
+        "This sign-in has expired or was already finished; start it again from the Tools page."
+    ),
+    "mcp_sign_in_refused": (
+        "The authorization server did not sign you in, or its answer did not come from the server "
+        "the sign-in started with."
+    ),
+    # ── starting a model download (dashboard/handlers/model_downloads.py —
+    #    POST /api/models/downloads) ──
+    # Refused before any byte moves; the message names what the download needs and what is free.
+    "insufficient_disk_space": (
+        "There is not enough free disk space for this download; the message says how much it "
+        "needs and how much is free."
+    ),
+    # ── answering a trigger's parked action (triggers/parks.py; dashboard/handlers/triggers.py —
+    #    POST /api/triggers/{id}/answer) ──
+    # 409: the token answers nothing now — already answered (a second click), or the trigger's
+    # question was withdrawn because a later run went through.
+    "trigger_park_gone": (
+        "This question was already answered, was open too long to answer, or the trigger no "
+        "longer waits on it; run it again to be asked afresh."
+    ),
+    # ── calling back an agent's callback (dashboard/handlers/hooks.py — POST /api/hooks/agent) ──
+    # 403: the callback the agent registered waits for its owner's Allow on the Triggers page.
+    "not_allowed": "This callback has not been allowed to run; its owner allows it.",
+    # 409: the injection screen refused the context the agent saved for this callback, so its
+    # turn did not start; the message names the pattern class, never the words.
+    "callback_context_refused": (
+        "The injection screen refused the context this callback saved, so its turn did not start."
+    ),
+    # ── binding a use case's models (dashboard/handlers/model_registry.py —
+    #    PUT /api/models/active/{use_case}) ──
+    # 400: an entry of the chain names no model ("" or "provider:"); the message names it.
+    "model_ref_names_no_model": (
+        'A model in the chain names no model; name each as "provider:model", or choose one in '
+        "Settings → Models."
+    ),
+    # 400: a model the chain adds is one its own provider lists for other jobs (an embedding
+    # model bound to Chat, a reranker to anything); the message names what it is listed for.
+    "model_cannot_serve_use_case": (
+        "A model in the chain is one its provider lists for other jobs than this one; choose one "
+        "of the models Settings → Models offers for it."
+    ),
+    # 400: a model the Loops chain adds can't use tools, and a loop's worker and planner do all
+    # their work with them; the message names the model.
+    "model_cannot_use_tools": (
+        "A model in the chain can't use tools, and this use's work is done with them; choose a "
+        "model that uses tools."
+    ),
+    # ── a model's Test (dashboard/handlers/model_registry.py — POST /api/models/test) ──
+    # 409: no Test can run for that use case or on that provider's models; the message says why,
+    # in the words the model's row shows instead of a Test.
+    "model_untestable": "This model has no Test for that use case.",
+    # 409: a Test of one of the same provider's models is still running.
+    "model_test_running": "A Test of one of this provider's models is already running.",
+    # ── opening a terminal in a sandbox tier (dashboard/handlers/terminal.py —
+    #    POST /api/terminal/sessions) ──
+    # 409: the tier the request names is not installed or is turned off. The terminal is not
+    # opened on this computer's own shell instead: that is the one place the request asked not
+    # to be.
+    "sandbox_tier_unavailable": (
+        "The sandbox this terminal was asked to open in is not installed or is turned off, so no "
+        "terminal was opened."
+    ),
+    # 429: as many terminals are open as this gateway runs at once (`dashboard.terminal.
+    # max_sessions`, 3 by default). The message names the limit and says to close one; the
+    # limit itself rides the error object as `limit`.
+    "terminal_session_limit": (
+        "As many terminals are open as this gateway runs at once; close one to open another."
+    ),
+    # ── exporting your agents into Claude Code's agents folder (dashboard/handlers/agent_export.py
+    #    — POST /api/agents/export) ──
+    # 400: `agents` is missing, or names what is not one of your own agents (a built-in or the
+    # default agent included). 400 `agent_export_refused`: an agent's name cannot be a file name
+    # there, or the destination is not a folder. 409 `agent_export_dest_changed`: the confirmation
+    # names another folder than the one the export would write now. 409
+    # `agent_export_would_overwrite`: files PersonalClaw did not write are where agents would go,
+    # each named. 409 `agent_export_blocked`: an agent's text holds what looks like a credential.
+    # 500 `agent_export_write_failed`: a write failed part-way; the message names what was written.
+    "agent_export_agents_invalid": (
+        "The export names no agents, or names what is not one of your own agents; nothing was "
+        "exported."
+    ),
+    "agent_export_refused": "The export cannot be written there; the message says why.",
+    "agent_export_dest_changed": (
+        "The export was confirmed for another folder than the one it would write now; nothing "
+        "was written."
+    ),
+    "agent_export_would_overwrite": (
+        "Files PersonalClaw did not write are where the exported agents would go, so nothing was "
+        "exported."
+    ),
+    "agent_export_blocked": (
+        "An agent's text holds what looks like a credential, so nothing was exported."
+    ),
+    "agent_export_write_failed": (
+        "A write failed part-way through the export; the message names what was written."
+    ),
+    # ── the routing review queue (dashboard/handlers/model_telemetry.py —
+    #    GET /api/models/routing-proposals) ──
+    # 500: the proposal store could not be read — answered in place of an empty queue, which
+    # would read as "nothing to review".
+    "routing_proposals_unreadable": "The routing proposal queue could not be read.",
+    # ── the routing table (dashboard/handlers/model_telemetry.py —
+    #    GET/PUT /api/models/routing-policy, POST …/routing-proposals/{id}/accept) ──
+    # 500 on the GET: answered in place of `{"enabled": false, "use_cases": []}`, which reads as
+    # "routing is off and nothing is recorded". 409 on a write: saving would replace a table that
+    # could not be read, so nothing was written.
+    "routing_policy_unreadable": (
+        "The routing table could not be read, so it is neither shown nor changed."
+    ),
+    # ── an Attended code loop's merge review (dashboard/handlers/loop_routes.py —
+    #    GET/POST /api/loops/{id}/merge) ──
+    # 409 `loop_merge_not_waiting`: the loop is not paused on finished work waiting to be merged.
+    # 409 `loop_merge_moved`: a task's branch is not at the commit the review showed (or names a
+    # task the review did not), so nothing was merged; the review is read again.
+    "loop_merge_not_waiting": "Nothing of this loop's is waiting for you to merge.",
+    "loop_merge_moved": (
+        "The work changed since you reviewed it, so nothing was merged. Review it again."
+    ),
+    # ── a loop on a model that can't use tools (dashboard/handlers/loop_routes.py —
+    #    POST /api/loops, PUT/PATCH /api/loops/{id}, POST …/plan/start|retry) ──
+    # 422: the model its worker (or planner) would run on can't use tools, and a loop does all its
+    # work with them, so it was not created, changed, planned or started; the message names the
+    # model and what to choose instead.
+    "loop_model_cannot_use_tools": (
+        "The model this loop would run on can't use tools, and a loop does all its work with "
+        "them; choose a model that uses tools."
+    ),
+    # ── the skill search (dashboard/handlers/skills.py — GET /api/skills/search) ──
+    # 404: the named catalogue is not one PersonalClaw has. 500: the one catalogue a scoped search
+    # asked could not answer; the message is the reason, relayed.
+    "skills_marketplace_not_found": "No skill catalogue of that name is set up here.",
+    "skills_search_failed": "The skill catalogue could not be searched.",
+    # ── a newer version of a skill that comes with PersonalClaw, offered over the owner's copy
+    #    (dashboard/handlers/skills.py — POST /api/skills/bundled/update and …/keep) ──
+    # 409: the version named is not the one PersonalClaw ships now (it was updated since the
+    # offer was read), so nothing was changed. 500: the version could not be installed, and the
+    # owner's copy is as it was.
+    "skill_bundled_version_changed": (
+        "The version of this skill that comes with PersonalClaw is not the one offered, so "
+        "nothing was changed. Read the skill again to see the version it offers now."
+    ),
+    "skill_bundled_update_failed": (
+        "The version of this skill that comes with PersonalClaw could not be installed; your "
+        "copy is as it was."
+    ),
+    # ── the prices model calls are counted at (dashboard/handlers/model_rates.py —
+    #    PUT/DELETE /api/models/rates) ──
+    # 409: `config.json`, where your prices are kept, could not be read, so saving would replace
+    # whatever it holds; nothing was written. 500: the file could not be written.
+    "model_rates_unreadable": (
+        "Your configuration could not be read, so no price you set is in effect and none was "
+        "changed."
+    ),
+    "model_rate_unsaved": "The price could not be saved.",
+    # ── the work an ended code loop kept (dashboard/handlers/loop_routes.py —
+    #    POST …/kept-work/{task_id}/merge and DELETE …/kept-work/{task_id} under /api/loops/{id}) ──
+    # 409 `loop_still_at_work`: the run has not ended, so its scheduler merges its own tasks.
+    # 409 `workspace_not_committed`: the workspace has changes not committed; nothing was merged.
+    # 409 `kept_work_conflicts`: the branch conflicts with the workspace; the merge was undone and
+    # the work is kept (`error.detail.conflicts` names the files). 500 `kept_work_unmerged`: git
+    # could not merge it for another reason; the work is kept.
+    "loop_still_at_work": (
+        "This loop is still at work, so it merges its own tasks; its kept work waits for its end."
+    ),
+    "workspace_not_committed": (
+        "Your workspace has changes that are not committed, so nothing was merged into it. "
+        "Commit or set them aside, then merge again."
+    ),
+    "kept_work_conflicts": (
+        "This work conflicts with your workspace, so the merge was undone and the work is kept."
+    ),
+    "kept_work_unmerged": (
+        "This work could not be merged (a git error, not a conflict); it is kept."
+    ),
+    # 409 `kept_work_no_identity`: git has no name and email set to commit as in the workspace, so
+    # nothing was merged (every commit a loop's work makes is made as git is configured there).
+    # 409 `kept_work_other_name`: the branch holds commits made under another name than the one git
+    # commits as there (`error.detail.commits` names them), so it was not merged; the work is kept.
+    # A merge whose branch is not at the commit reviewed answers `loop_merge_moved`, as a waiting
+    # merge's does.
+    "kept_work_no_identity": (
+        "Git has no name and email set to commit as in this workspace, so nothing was merged. "
+        "Set them there, then merge again."
+    ),
+    "kept_work_other_name": (
+        "This work has commits made under another name than yours, so it was not merged; it is "
+        "kept."
+    ),
+    # ── a finished task whose work conflicts with the workspace (dashboard/handlers/loop_routes.py
+    #    — GET/POST /api/loops/{id}/conflict) ──
+    # 409 `loop_conflict_not_waiting`: the loop is not paused on a task's work that conflicts, or
+    # not on that task's. 409 `loop_conflict_moved`: the task's branch is not at the commit the
+    # page showed, so nothing was changed; the work is read again.
+    "loop_conflict_not_waiting": (
+        "This loop is not waiting for you to resolve a conflict in that task's work."
+    ),
+    "loop_conflict_moved": (
+        "The work changed since you read it, so nothing was redone or dropped. Read it again."
+    ),
+    # ── whether a loop's agent CLI approves its own calls (dashboard/handlers/loop_routes.py —
+    #    PUT /api/loops/{id}/agent-cli-self-approval) ──
+    # 409 `loop_agent_cli_self_approval_unavailable`: the loop can't have it (it runs on
+    # PersonalClaw's own agent, it is Attended, or PersonalClaw hasn't measured what its CLI runs
+    # without asking); the message says which. 409 `loop_finished`: the loop has ended, so it runs
+    # no more turns to change. Nothing was changed either way.
+    "loop_agent_cli_self_approval_unavailable": (
+        "This loop's agent CLI can't be let approve its own calls, so nothing was changed."
+    ),
+    "loop_finished": "This loop has ended, so it runs no more turns to change.",
+    # ── updating PersonalClaw in place (dashboard/handlers/updates.py — POST /api/update) ──
+    # 409: the tool that made PersonalClaw's environment, uv or pip, is the one that installs an
+    # update into it, and it is not there. Refused before anything moved; the message names what
+    # to run instead.
+    "update_installer_missing": (
+        "The tool that installs PersonalClaw's updates into its environment is not there, so "
+        "nothing was changed."
+    ),
+    # ── stopping an update (POST /api/update/cancel, /api/update/dismiss) ──
+    # 409 `update_not_cancellable`: the update has installed the new release and is building or
+    # restarting, which nothing puts back, so it finishes; the message says which. Nothing was
+    # stopped. 409 `update_in_progress`: Dismiss closes what an update ended with, and one is still
+    # running; nothing was stopped or cleared.
+    "update_not_cancellable": "The update can no longer be cancelled, so it will finish.",
+    "update_in_progress": "An update is running, so there is nothing to dismiss yet.",
+    # ── firing an automation from outside, or for someone other than its owner (inbound/webhook.py
+    # — POST /api/triggers/{id}/fire; dashboard/handlers/trigger_runs.py — POST
+    # /api/triggers/{id}/run asked for by an agent, an app or a program) ──
+    # 429 or 409: the automation's own rules held this fire, as they hold its every fire (its
+    # hourly cap, its spacing, its quiet hours, its budget, a run still going, being switched off);
+    # 429 when it fired as often as its owner allows. Nothing ran; the message says which
+    # (`triggers.held`), and its history why.
+    "fire_held": "The automation's own rules held this fire, so it did not run.",
+    # ── one automation an app serves, or one someone else wrote (dashboard/handlers/triggers.py
+    # — run, Dry run, edit, switch and Delete of /api/triggers/{id}) ──
+    # 409 `automation_read_only`: someone other than the owner wrote it (a row in a shared store);
+    # it is shown for reference, never run here, and nothing changes it from here. The message
+    # names who wrote it; nothing was run or written. 409 `automation_kept_elsewhere`: an edit of a
+    # row an app serves, which keeps what the automation is itself, so it is changed in that app,
+    # which the message names (nothing was written, and it can still be run, switched and deleted
+    # here); or a delete that app was asked to make and did not, so the row is still there.
+    "automation_read_only": "Someone else wrote this automation; it is not run or changed here.",
+    "automation_kept_elsewhere": "An app keeps this automation; it is changed in that app.",
+    # ── a link in the home (durability/home_paths.py) ──
+    # 409: the home holds a symbolic link, or a file with another name, where the request was to
+    # write, read or take a lock (a store's lock, most often), and nothing goes through one. The
+    # message names the link by its path in the home; removing it lets the request through.
+    "link_in_the_way": (
+        "The home holds a link where this was to write, read or lock, and nothing goes through one."
+    ),
+    # ── a store file that could not be read (record_files.Unreadable, answered for every /api/*
+    #    route by dashboard/request_boundary.py) ──
+    # 409 on a write: the file is there and cannot be read, so nothing was written to it — a write
+    # would replace everything it holds. 500 on a read it cannot answer. The message names the
+    # file, why, where the copy of it is kept and what to do; it never quotes the file.
+    "store_unreadable": (
+        "A file this needs could not be read, so nothing was written to it; it is kept as it was."
+    ),
+}
+
+
+def json_error(
+    code: str,
+    *,
+    message: str | None = None,
+    status: int,
+    headers: Mapping[str, str] | None = None,
+    error_extra: Mapping[str, Any] | None = None,
+    **extra: Any,
+) -> web.Response:
+    """The one wire error envelope: ``{"error": {"code", "message"}}``.
+
+    :param code: The stable ``lowercase_snake`` code a client branches on. The ONLY
+        positional parameter, so it can never be confused with ``message``.
+    :param message: The human sentence. Omit it to use the :data:`HTTP_ERROR_CODES`
+        meaning — which is what the auth and device-pairing routes do, because a
+        fixed message per code is what keeps those responses from being usable to
+        enumerate users or devices.
+    :param status: The HTTP status. Keyword-only and required: an error envelope
+        served with an accidental 200 is worse than no envelope.
+    :param headers: Response headers (``Retry-After`` on a lockout, for instance).
+    :param error_extra: Extra keys merged INSIDE the ``error`` object — the
+        actionable half of a failure (a preflight's findings, a service code).
+    :param extra: Extra keys merged at the TOP level, beside ``error``.
+
+    An unregistered ``code`` still emits (falling back to the code as its own
+    message) rather than raising: a typo must not turn a 400 into a 500. The
+    append-only rail is what catches the typo, statically, before it ships.
+    """
+    err: dict[str, Any] = {
+        "code": code,
+        "message": message if message is not None else HTTP_ERROR_CODES.get(code, code),
+    }
+    if error_extra:
+        err.update(error_extra)
+    return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
+
+
+#: Marks a response as a question the owner is asked — their consent (:func:`consent_required`),
+#: or that they sign in again (`dashboard.owner_presence`) — so `dashboard.consent_ask` can answer
+#: it as a question to a client that asks one.
+CONSENT_QUESTION = "personalclaw.consent_question"
+
+
+def consent_required(
+    field: str,
+    consent: str,
+    *,
+    title: str,
+    change: str = "",
+    caution: str = "",
+    shown: dict[str, Any] | None = None,
+) -> web.Response:
+    """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
+    not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
+    approval mode, an automation's posture, a grant for what a trigger runs), because the SPA's
+    ``withSecurityConsent`` asks the owner by reading exactly this: ``{field, consent, title}`` in
+    ``error.detail``. *consent* is the sentence the dialog shows and *title* is its heading, and
+    both are product copy: the title names the question being asked, so a grant question never
+    reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
+    of a loosening alone.
+
+    A loosening also says what the write changes (*change*, ``"$33.50 → $10,033.50"``) and, for a
+    raise far past the value in effect, one more sentence (*caution*) — ``config/edit_spec.
+    LooseningAsk``. Both ride ``detail`` when there is one, and the message carries them too, so a
+    client that reads only the message is asked the same question.
+
+    A question about a workflow an automation runs also says what it showed of it (*shown*: the
+    version and digest its sentence names, and each workflow it runs as a step at theirs,
+    `triggers.grants.Question.shown`). The yes sends it back with ``confirm``, and is held to it.
+
+    A client that says it asks (`dashboard.consent_ask`) receives the same body as a ``200``:
+    the question, not a failure. Every other client keeps the ``400``."""
+    detail, said = _question(field, consent, title=title, change=change, caution=caution)
+    if shown is not None:
+        detail["shown"] = shown
+    response = json_error(
+        "confirmation_required",
+        message=f'send {{"confirm": true}} to confirm — {" ".join(said)}',
+        status=400,
+        error_extra={"detail": detail},
+    )
+    response[CONSENT_QUESTION] = True
+    return response
+
+
+def asked_again(
+    field: str,
+    why: str,
+    consent: str,
+    *,
+    title: str,
+    change: str = "",
+    caution: str = "",
+    shown: dict[str, Any] | None = None,
+) -> web.Response:
+    """The ``409 stale_write`` a yes answers when what its question showed has moved since the
+    owner was asked (*why*: what moved, and who saved each version since,
+    `triggers.grants.AskAgain`): nothing was changed — the refusal "Use vN" gives a version saved
+    after its owner looked — and the owner is asked again. ``error.detail`` carries the question as
+    it is now, as :func:`consent_required` carries one, its sentence opened with *why*, so the
+    page asks her again in the gateway's words (`web/src/lib/securityConsent.ts`) and her next yes
+    is held to what the new question shows. A client that says it asks receives it as a ``200``,
+    as it receives every question."""
+    detail, said = _question(field, f"{why} {consent}", title=title, change=change, caution=caution)
+    if shown is not None:
+        detail["shown"] = shown
+    response = json_error(
+        "stale_write",
+        message=f"Nothing was changed: {why} Look at it again before you allow it.",
+        status=409,
+        error_extra={"detail": detail},
+    )
+    response[CONSENT_QUESTION] = True
+    return response
+
+
+def _question(
+    field: str, consent: str, *, title: str, change: str, caution: str
+) -> tuple[dict[str, Any], list[str]]:
+    """A consent question's ``error.detail`` (``{field, consent, title}``, with the loosening's
+    ``change`` and ``caution`` when it has them), and its sentences, as a message carries them."""
+    detail: dict[str, Any] = {"field": field, "consent": consent, "title": title}
+    said = [consent]
+    if change:
+        detail["change"] = change
+        said.append(change.replace("\n", "; ") + ".")
+    if caution:
+        detail["caution"] = caution
+        said.append(caution)
+    return detail, said

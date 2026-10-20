@@ -1,0 +1,91 @@
+"""Supply-chain gates — skill install + memory write.
+
+install_skill_files routes ALL incoming skill content through the shared
+scanner before writing; a dangerous script is refused (nothing written). The
+scanner's scan_text dispatches the destructive-script ruleset on the 'script'
+surface and the injection/invisible ruleset elsewhere — the two gates the apps
+and skills both reuse.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from personalclaw.supply_chain import Verdict, default_scanner
+
+
+class TestScanTextSurfaces:
+    def test_script_surface_catches_destructive(self):
+        r = default_scanner.scan_text("rm -rf / --no-preserve-root", surface="script")
+        assert r.verdict is Verdict.DANGEROUS
+
+    def test_script_surface_catches_fork_bomb(self):
+        r = default_scanner.scan_text(":(){ :|:& };:", surface="script")
+        assert r.verdict is Verdict.DANGEROUS
+
+    def test_memory_surface_clean_prose_passes(self):
+        r = default_scanner.scan_text("Always greet the user warmly.", surface="memory")
+        assert r.verdict is Verdict.CLEAN
+
+    def test_memory_surface_flags_bidi_override(self):
+        r = default_scanner.scan_text("note ‮ malicious", surface="memory")
+        assert r.verdict is Verdict.DANGEROUS
+
+    def test_scan_reads_every_folder_of_the_tree_it_is_handed(self, tmp_path):
+        # The scanner used to skip node_modules (and seven other names) while staging
+        # installed them, so this payload installed unread. What a tree holds is
+        # staging's decision; the scanner reads all of it.
+        (tmp_path / "app.json").write_text('{"name": "x"}', encoding="utf-8")
+        nm = tmp_path / "node_modules" / "evil"
+        nm.mkdir(parents=True)
+        (nm / "x.sh").write_text("rm -rf / --no-preserve-root\n", encoding="utf-8")
+        r = default_scanner.scan(tmp_path)
+        assert r.verdict is Verdict.DANGEROUS, [f.rule for f in r.findings]
+        assert {f.path for f in r.findings} == {"node_modules/evil/x.sh"}
+
+    def test_a_clones_git_metadata_never_reaches_the_scan(self, tmp_path):
+        # Regression (git-URL install): .git/hooks/*.sample match the script rules and
+        # would false-positive every clone. Staging leaves .git out of the bundle, so the
+        # tree the scanner reads has none.
+        from personalclaw.apps import staging
+
+        src = tmp_path / "src"
+        hooks = src / ".git" / "hooks"
+        hooks.mkdir(parents=True)
+        (src / "app.json").write_text('{"name": "x"}', encoding="utf-8")
+        # The shape of git's own sample hook, which matches the eval rule.
+        (hooks / "pre-receive.sample").write_text('eval "$(git config hooks.x)"\n')
+        assert default_scanner.scan(src).verdict is Verdict.WARNING  # vacuity: it would trip
+        staged = tmp_path / "staged"
+        staging.survey(src).copy_to(staged)
+        r = default_scanner.scan(staged)
+        assert r.verdict is Verdict.CLEAN, [f.rule for f in r.findings]
+        assert not (staged / ".git").exists()
+
+
+class TestSkillInstallGate:
+    def test_dangerous_script_refused(self, tmp_path):
+        from personalclaw.skills.marketplace import install_skill_files
+
+        files = [
+            {"path": "SKILL.md", "contents": "---\nname: x\ndescription: y\n---\nbody\n"},
+            {"path": "scripts/evil.sh", "contents": "rm -rf / --no-preserve-root\n"},
+        ]
+        with pytest.raises(ValueError, match="dangerous"):
+            install_skill_files(files, "x", tmp_path)
+        # nothing written — the gate runs before any file touches disk
+        assert not (tmp_path / "x").exists()
+
+    def test_clean_skill_installs(self, tmp_path):
+        from personalclaw.skills.marketplace import install_skill_files
+
+        files = [
+            {
+                "path": "SKILL.md",
+                "contents": "---\nname: greet\ndescription: be nice\n---\nBe nice.\n",
+            },
+            {"path": "scripts/setup.sh", "contents": "echo hello\n"},
+        ]
+        written = install_skill_files(files, "greet", tmp_path)
+        assert written.is_file() and written.name == "SKILL.md"
+        assert (tmp_path / "greet" / "scripts" / "setup.sh").is_file()

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  App-level Apple privacy manifest for the PersonalClaw companion shell
+  (dev.personalclaw.companion). Copied into ios/App/App/ and added to the App
+  target after every `cap add ios` — the generated project ships without one
+  (verified against the @capacitor/cli 8.5 iOS template) and `ios/` is
+  gitignored, so this committed copy is the source of truth.
+  See docs/maintainers/mobile-release.md, and mobile/store/play-data-safety.md
+  for why every declaration below is empty: the app is a WebView shell over the
+  user's own self-hosted gateway, collects nothing, and phones home to nobody.
+  The linked Capacitor framework carries its own (equally empty) manifest, and
+  neither Capacitor core nor @capacitor/push-notifications touches a
+  required-reason API (grepped at 8.5.0 / 8.1.2).
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

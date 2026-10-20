@@ -1,0 +1,104 @@
+# The one writer of CI telemetry (#3948): tools/ci/telemetry.py, in its one versioned schema.
+#
+# After a CI or Breadth run completes, `collect` writes that attempt's history: a run line with
+# the facts only the Actions API knows, then one line per test case of the attempt's junit
+# reports. It counts a CI run of a push to main and a scheduled or dispatched Breadth run on
+# main, from this repository, and decides that from the run itself before listing any artifact,
+# so a pull request's artifacts are never read. The job's `if:` holds the same rule per workflow
+# and event, so such a run starts no runner at all.
+#
+# A scheduled run that never starts fires no workflow_run, so `slots` runs on its own schedule
+# and writes one line per slot each scheduled workflow was due: the run that answered it, or that
+# none did (`missed` once the next slot passed, `pending` until then). A missed night is a line of
+# its own, never a late one.
+#
+# workflow_run and schedule run main's own code. The artifacts read are data: bounded in size,
+# parsed in memory, never extracted or executed (tools/ci/telemetry.py). Standard-library Python
+# on the image's python3, with nothing installed.
+#
+# Kept 90 days: one main run's history measured 49 MB as JSON lines and 2.7 MB compressed, about
+# what its junit reports take today. The junit reports themselves stay at 7 days: the history
+# holds every figure the reports give, so 90 days of both would double the storage for nothing.
+name: CI telemetry
+
+on:
+  workflow_run:
+    workflows: ["CI", "Breadth"]
+    types: [completed]
+    # A pull request's run never starts this workflow at all. A fork's run from a branch it
+    # named main still does, so the job's `if:` checks the repository too.
+    branches: [main]
+  schedule:
+    - cron: "47 10 * * *"  # daily, after Breadth's 09:37 slot and clear of the other slots
+  workflow_dispatch:
+
+concurrency:
+  group: ci-telemetry-${{ github.event.workflow_run.id || github.run_id }}-${{ github.event.workflow_run.run_attempt || 1 }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read   # the completed run, its jobs and its junit artifacts; the scheduled runs
+
+jobs:
+  collect:
+    # telemetry.collect_condition(), word for word: telemetry.counts()'s rule, per workflow and
+    # event. tests/rails/test_ci_telemetry_schedules.py holds the two equal.
+    if: >-
+      ${{ github.event_name == 'workflow_run'
+      && github.event.workflow_run.head_branch == 'main'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && ((github.event.workflow_run.path == '.github/workflows/breadth.yml'
+           && (github.event.workflow_run.event == 'schedule'
+               || github.event.workflow_run.event == 'workflow_dispatch'))
+          || (github.event.workflow_run.path == '.github/workflows/ci.yml'
+              && (github.event.workflow_run.event == 'push'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The default branch's tools/ci, and the workflows `slots` reads crons from. No `ref:`:
+      # under workflow_run the default branch is what GitHub checks out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: write this attempt's history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 -m tools.ci telemetry collect --repo "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID" --attempt "$ATTEMPT" --out "$RUNNER_TEMP/history"
+      - name: Upload the history
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: telemetry-history-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/history/
+          if-no-files-found: error
+          retention-days: 90
+
+  slots:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: every scheduled slot due in the last eight days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m tools.ci telemetry slots --repo "$GITHUB_REPOSITORY" --days 8 --out "$RUNNER_TEMP/slots"
+      - name: Upload the slots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: telemetry-slots-${{ github.run_id }}
+          path: ${{ runner.temp }}/slots/
+          if-no-files-found: error
+          retention-days: 90

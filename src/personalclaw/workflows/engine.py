@@ -1,0 +1,2699 @@
+"""Node dispatchers — the only place in the engine that performs real work.
+
+One function per node kind, each with the same contract: take a resolved node and a
+binding context, do the work, return a `NodeResult`. Dispatchers do NOT write state and
+do NOT decide what runs next — the controller owns both. Keeping that split means a
+dispatcher can be tested by calling it, with no run, no lock, and no journal.
+
+Two asymmetries here are deliberate and easy to get backwards:
+
+**A null output is a value; an unresolvable reference is an error.** A node that
+legitimately produced nothing hands `None` downstream, and `filter`/`default` pipes exist
+to absorb it. But a binding naming something that does not exist raises `BindingError` —
+because the silent alternative is a prompt with an empty hole in it, which produces
+confident nonsense that looks like a real answer. That failure must be loud.
+
+**`stage` and `infer` are different kinds for a real reason.** A `stage` is a subagent
+with tools and a session — expensive, capable, and able to spawn. An `infer` is exactly
+one bounded model call with no tools and no session. Templates that just need a
+classification should not pay for a subagent, and the lane accounting depends on
+distinguishing them.
+
+Model resolution goes through the `model_tiers` slot map: a node declares an intent
+(`reasoning`/`standard`/`fast`), config maps intents to use cases, and the existing
+use-case bridge resolves the actual model. A template never names a model — that is what
+keeps a template portable across a user's provider setup.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from personalclaw import filled_secrets
+from personalclaw.guardrails.wire import capture_wire_prompt
+from personalclaw.safety_flags import strict_bool, yes_or_no
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+from personalclaw.workflows import (
+    engine_support,
+    incident_hold,
+    input_secrets,
+    leases,
+    longrun,
+    ownership,
+    publish_seam,
+)
+from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
+from personalclaw.workflows.compaction import complete_with_compaction
+from personalclaw.workflows.failure_taxonomy import (
+    binding_failure,
+    classify_action_result,
+    classify_exception,
+)
+from personalclaw.workflows.judge_contract import (
+    JudgeHints,
+    JudgeVerdict,
+    Verdict,
+    aggregate_samples,
+    judge_instruction,
+    parse_judge_json,
+    validate_verdict,
+)
+from personalclaw.workflows.liveness import wait_with_progress
+from personalclaw.workflows.models import (
+    REFUSED_TO_START,
+    Failure,
+    FailureClass,
+    GateKind,
+    InstanceState,
+    Node,
+    NodeKind,
+)
+from personalclaw.workflows.verify import (
+    check_required_artifacts,
+    requires_fresh_judge,
+    run_ladder,
+)
+
+logger = logging.getLogger(__name__)
+
+#: Max nested workflow/stage depth. Mirrors the `__hook_depth` pattern
+#: at hooks.py:831 / invoke_agent_provider.py:66. Today's "no recursion" contract is
+#: PROMPT-level only — this is the code check that did not previously exist.
+MAX_WF_DEPTH = 3
+WF_DEPTH_KEY = "__wf_depth"
+_COMMITS_EFFECTS_ATTR = "__personalclaw_commits_effects__"
+
+#: The keys of an action step's payload that say whose work the step is. Only the engine sets
+#: them: `dispatch_action` writes each from the run executing the step, over anything the step's
+#: own payload carried by that name, so neither a template nor a value bound into it stands in for
+#: the run's. Providers attribute and confine what they do by them: the run (`artifact_inspect`
+#: reads only its `artifacts/`), the step's node and instance (`knowledge-persist`'s source; a
+#: ledger row shows in the step's slice only under its instance path, as a `foreach` body shares
+#: one node id), the run's project (what a written item is filed under) and folder (what
+#: `selfqa-evidence` seals), and the attempt's key, so a receiver can dedupe a retry. A template
+#: that writes one is refused where it is validated (`validator.run_identity_in_payload`); any
+#: other key is the step's own input.
+RUN_IDENTITY_KEYS: tuple[str, ...] = (
+    "run_id",
+    "node_id",
+    "instance_path",
+    "project_id",
+    "workspace",
+    "idempotency_key",
+)
+
+
+def _commits_effects(dispatcher: Any) -> Any:
+    """Mark a dispatcher whose node may commit effects through tools.
+
+    The committed-effect boundary follows the dispatcher, not a second node-kind
+    allowlist. A future kind routed through one of these dispatchers therefore inherits
+    the fence automatically.
+    """
+    setattr(dispatcher, _COMMITS_EFFECTS_ATTR, True)
+    return dispatcher
+
+
+@dataclass
+class NodeResult:
+    """What a dispatcher produces. `state` is advisory — the controller applies it, so a
+    dispatcher cannot flip a node terminal on its own (terminal-write ownership,
+    and the engine-owned-completion rule)."""
+
+    state: InstanceState = InstanceState.DONE
+    output: Any = None
+    failure: Failure | None = None
+    degraded_reason: str = ""
+    #: The dispatcher's estimate; what its model calls used is measured at the guard (`step_usage`).
+    tokens: int = 0
+    #: Edges this node considered and did NOT take. A `branch` declines every case it
+    #: did not route to; the controller marks those targets SKIPPED so a downstream join
+    #: sees a terminal predecessor rather than waiting forever.
+    declined_edges: list[str] = field(default_factory=list)
+    #: Populated for wait/gate: when the controller should look at this node again.
+    wake_at: float = 0.0
+    #: The prompt as the PROVIDER received it, journaled for trajectory replay.
+    #:
+    #: 🔴 Post-scan, not post-binding (#3166). This used to be the text the dispatcher composed,
+    #: while the outbound secret/PII scan substitutes at the model-call seam far below — so a
+    #: replay read a prompt the model never saw and nothing said a substitution happened. It is
+    #: now whatever `guardrails.wire` captured from `ModelCallGuard._prescan`, falling back to the
+    #: composed prompt when no guard was in the path (which also means no substitution happened).
+    resolved_prompt: str = ""
+    #: True when the outbound scan SUBSTITUTED something on the way out, so a reader of the stored
+    #: prompt knows it is not verbatim. A bare post-scan body would be indistinguishable from a
+    #: prompt whose author wrote `[REDACTED_EMAIL]` themselves.
+    prompt_redacted: bool = False
+    #: The scan's finding CLASSES (`credential`/`email`/`phone`/`exfil_url`/`injection`) — never a
+    #: matched value, because this reaches a ledger row and the substitution exists precisely so
+    #: the value is not written down. Populated even in `warn` mode, where `prompt_redacted` is
+    #: False: "findings, sent anyway" is a different and important fact from "clean".
+    prompt_scan_categories: tuple[str, ...] = ()
+    #: Typed human-input ask, for gates that need an answer.
+    ask: dict[str, Any] | None = None
+    #: The `publish:` outcome: create / version / noop / error, with its reason. A DECLARED
+    #: field rather than an ad-hoc attribute — an attribute set on the instance would work at
+    #: runtime and never reach the journal, so the ledger would show a published artifact with no
+    #: record of the publish.
+    published: dict[str, Any] | None = None
+    #: The no-double-execution claim THIS ATTEMPT holds, and the holder identity it holds it with
+    #: (#3533). Set only by `dispatch_stage`, and only on the one result that leaves the claim
+    #: taken — the spawn is still live when that result is returned, so the attempt outlives the
+    #: dispatcher and something else has to release it. Both halves travel because a release names
+    #: both and `containers.release` refuses any holder but the recorded one.
+    claim_target: str = ""
+    claim_holder: str = ""
+
+    @property
+    def ok(self) -> bool:
+        from personalclaw.workflows.models import SUCCESS_STATES
+
+        return self.state in SUCCESS_STATES
+
+
+def _fail(cls: FailureClass, cause: str, remediation: str = "", **kw: Any) -> NodeResult:
+    return NodeResult(
+        state=InstanceState.FAILED,
+        failure=Failure(failure_class=cls, cause_plain=cause, remediation=remediation, **kw),
+    )
+
+
+def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -> NodeResult:
+    """A FAILED result that still carries an output.
+
+    `_fail` forwards its kwargs to `Failure`, which has no output field — but a failed subworkflow
+    must still hand back the child run id, or the user is told a nested run failed with no way to
+    find it.
+    """
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output=output,
+        failure=Failure(failure_class=cls, cause_plain=cause, remediation=remediation),
+    )
+
+
+def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
+    """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
+    SHORT-CIRCUIT the model call, or None to proceed to the judge.
+
+    🔴 Gated on the gate DECLARING `evidence`, and that guard is the whole reason this is additive.
+    A judge that binds no evidence (every judge shipped before this) has nothing for the mechanical
+    length check to measure — screening it unconditionally would reject it as "under 20 chars —
+    nothing to judge" and turn a working gate into a permanent REJECT. So: no `evidence` key → no
+    screen → identical behaviour to before. A gate opts INTO the saver by binding the deliverable it
+    judges into `evidence` (e.g. `evidence: "{{nodes.deliverable.output.report}}"`).
+
+    A rejection here is a USER failure carrying the pre-tier's own `failure_class` in the output, so
+    the escalation ladder can route on WHY it was rejected (empty vs stubbed vs a worker give-up)
+    rather than re-deriving it — the routing distinction the ladder was built for.
+    """
+    if "evidence" not in cfg:
+        return None
+    from personalclaw.workflows.judge_pretier import run_pretier
+
+    evidence = cfg.get("evidence")
+    text = evidence if isinstance(evidence, str) else ("" if evidence is None else str(evidence))
+
+    def _int(key: str, default: int = 0) -> int:
+        try:
+            return int(cfg.get(key, default) or default)
+        except (TypeError, ValueError):
+            return default
+
+    # The existence gate (artifacts/commits/changed-files > 0) only makes sense when the template
+    # supplies those counts; default it OFF so a text-only judge is not rejected for producing no
+    # commits. `min_chars` is the author's knob for how much output is substantial enough to judge.
+    result = run_pretier(
+        worker_output=text,
+        artifacts=_int("evidence_artifacts"),
+        commits=_int("evidence_commits"),
+        changed_files=_int("evidence_changed_files"),
+        min_chars=_int("min_chars", 20) or 20,
+        check_existence_gate=any(
+            k in cfg for k in ("evidence_artifacts", "evidence_commits", "evidence_changed_files")
+        ),
+    )
+    if not result.rejected:
+        return None
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output={
+            "verdict": Verdict.REJECT.value,
+            "pretier": True,
+            "failure_class": result.failure_class,
+            "reason": result.reason,
+            "checks_run": result.checks_run,
+        },
+        failure=Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"pre-tier rejected before the judge: {result.reason}",
+            remediation=(
+                "the free rule tier proved the work unfinished (empty, stubbed, a tool error, or a "
+                "worker give-up); fix the producing node — no model call was spent"
+            ),
+            recoverable=False,
+        ),
+    )
+
+
+def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceState, Failure | None]:
+    """One contract-validated verdict → the node's state and failure.
+
+    The map is exhaustive over the merged `Verdict`, so a new member must add its branch
+    rather than inheriting a pass — the same rule `_dual_guard` applies to `GuardOutcome`.
+
+    An INVALID verdict is decided before the verdict itself, because that is the teeth: a PASS
+    the contract refused (no cited proof, a rubric shortfall, a forbidden mode the judge named) is a
+    REJECT, not a pass with a note. `protocol_error` splits the two remediations — "the judge
+    could not answer in the required shape" sends a reader to the prompt, "the work fell short"
+    sends them to the deliverable, and reporting both as one loses the distinction that decides
+    which they read.
+    """
+    if decision.escalated:
+        return InstanceState.ESCALATED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=decision.escalation_reason or "judge escalated",
+            remediation="a human must decide: the judge named a contradiction it cannot resolve",
+        )
+    if not decision.valid:
+        return InstanceState.FAILED, Failure(
+            failure_class=(FailureClass.PROTOCOL if decision.protocol_error else FailureClass.USER),
+            cause_plain=f"judge PASS refused by the contract: {decision.invalid_reason}",
+            remediation=(
+                "the judge answered in the wrong shape — check the rubric it was given"
+                if decision.protocol_error
+                else "address the cited shortfall in the work and re-run the producing node"
+            ),
+        )
+    if decision.verdict is Verdict.PASS:
+        return InstanceState.DONE, None
+    if decision.verdict is Verdict.ESCALATE:
+        return InstanceState.ESCALATED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain="judge returned ESCALATE",
+            remediation="a human must decide; the judge would not rule either way",
+        )
+    if decision.verdict is Verdict.NEEDS_INPUT:
+        # WAITING, not FAILED: the judge is not rejecting the work, it is saying the run cannot
+        # be judged without something only a human has. The caller parks it with the typed ask.
+        return InstanceState.WAITING, None
+    if decision.verdict is Verdict.RETRY:
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain="judge returned RETRY",
+            remediation="the engine will retry",
+            recoverable=True,
+        )
+    if decision.verdict is Verdict.REPLAN:
+        # Recoverable like RETRY, named differently on purpose: the judge is not asking for the
+        # same attempt again, it is asking for the remaining steps to be re-derived from its
+        # critique. The retry hint the controller appends carries that critique.
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain="judge returned REPLAN: the remaining steps must be re-derived",
+            remediation="re-plan the rest of the work from the judge's critique",
+            recoverable=True,
+        )
+    if decision.verdict is Verdict.REJECT:
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"judge returned REJECT: {decision.reasoning[:200]}",
+            remediation="address the judge's rubric and re-run the producing node",
+        )
+    return InstanceState.FAILED, Failure(
+        failure_class=FailureClass.INTERNAL,
+        cause_plain=f"unhandled judge verdict {decision.verdict.value!r}",
+        remediation=f"map the new Verdict member in `_judge_gate_outcome` ({node.id})",
+    )
+
+
+# ── dispatchers ──────────────────────────────────────────────────────────────
+
+
+async def dispatch_transform(node: Node, ctx: BindingContext) -> NodeResult:
+    """Pure data reshaping — zero tokens. The `expr` binding IS the transform: there is
+    no expression language beyond the closed pipe set, which is what keeps a spec from
+    becoming an eval surface.
+
+    `skeleton: "<artifact-slug>"` is the same transform over a body stored OUTSIDE the spec.
+    A live dashboard's template is an artifact a model authored once;
+    interpolating it here — rather than pasting the whole HTML into `expr` — is what makes the
+    steady-state refresh a pure substitution the spec stays readable through. Zero tokens
+    either way: the render transform is the reason a refresh costs nothing.
+    """
+    cfg = node.config or {}
+    skeleton_slug = str(cfg.get("skeleton", "") or "").strip()
+    raw = cfg.get("expr")
+    if skeleton_slug:
+        from personalclaw.artifacts.registry import get_provider
+
+        provider = get_provider()
+        art = provider.get(skeleton_slug) if provider is not None else None
+        if art is None:
+            return _fail(
+                FailureClass.USER,
+                f"transform skeleton artifact {skeleton_slug!r} does not exist",
+                "create the skeleton artifact, or correct the slug on this node",
+            )
+        raw = art.content or ""
+    try:
+        value = resolve(raw, ctx)
+    except BindingError as exc:
+        failure = binding_failure(exc, "transform binding failed")
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    contract = (node.config or {}).get("output_contract")
+    if isinstance(contract, dict):
+        problem = check_output_contract(value, contract)
+        if problem:
+            return _fail(
+                FailureClass.USER,
+                f"output contract violated: {problem}",
+                "adjust the transform expression or relax the contract",
+            )
+    return NodeResult(state=InstanceState.DONE, output=value)
+
+
+async def dispatch_infer(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    tiers: dict[str, str] | None = None,
+    completion: Any = None,
+    compaction_saves: list[float] | None = None,
+) -> NodeResult:
+    """ONE bounded model call — no tools, no session, no spawn.
+
+    `completion` is injected so tests can drive this without a provider; production
+    passes `llm_helpers.one_shot_completion`.
+
+    The call goes through the compaction ladder: a long-horizon prompt is
+    compacted proactively at ~80% of the bound model's window, and a length rejection
+    triggers one aggressive re-compaction + retry before the node fails. `compaction_saves`
+    is this node's compaction history, which the anti-thrashing rule reads.
+    """
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    prompt = str(cfg.get("prompt", "") or "")
+    if not prompt.strip():
+        return _fail(
+            FailureClass.USER,
+            "infer node has an empty prompt after binding",
+            "check the prompt template and its bindings",
+        )
+
+    use_case = engine_support.resolve_use_case(node, tiers)
+    fn = completion
+    if fn is None:
+        from personalclaw.llm_helpers import one_shot_completion
+
+        fn = one_shot_completion
+
+    want_json = bool(cfg.get("schema")) or str(cfg.get("output", "")) == "json"
+    # The wire recorder is bound around the call, never inside it: the guard's `_prescan` runs deep
+    # under `complete_with_compaction` (and the controller runs each node in its own Task, whose
+    # context is a COPY), so the object has to exist out here for the publication to be readable.
+    # It also picks up the compaction ladder for free — a proactively shortened prompt is another
+    # way the journal used to disagree with the wire.
+    with capture_wire_prompt() as wire:
+        try:
+            text = await complete_with_compaction(
+                fn,
+                prompt,
+                use_case=use_case,
+                output_type=dict if want_json else None,
+                saves=compaction_saves,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # provider/transport/contract failures
+            return NodeResult(
+                state=InstanceState.FAILED,
+                failure=classify_exception(exc, use_case=use_case),
+                **engine_support.journalled_prompt(wire, prompt),
+            )
+
+    output: Any = text
+    if want_json:
+        from personalclaw.llm_helpers import parse_llm_json
+
+        # The object the call's own check accepted (it asked for `output_type=dict`), read the
+        # same way: a second reading here failed a node whose answer the call had taken.
+        parsed = parse_llm_json(text)
+        if parsed is None:
+            return NodeResult(
+                state=InstanceState.FAILED,
+                failure=Failure(
+                    failure_class=FailureClass.PROTOCOL,
+                    cause_plain="model output was not valid JSON",
+                    remediation="add an explicit schema to the prompt, or split into a "
+                    "produce-then-extract pair",
+                ),
+                **engine_support.journalled_prompt(wire, prompt),
+            )
+        output = parsed
+    return NodeResult(
+        state=InstanceState.DONE,
+        output=output,
+        # Tokens stay estimated from the COMPOSED prompt: the estimate is about what this node
+        # spent, and a redaction changes the text by a few characters, not the work.
+        tokens=_estimate_tokens(prompt, text),
+        **engine_support.journalled_prompt(wire, prompt),
+    )
+
+
+async def dispatch_visualize(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    completion: Any = None,
+) -> NodeResult:
+    """ONE bounded model call → a genui widget spec, agency-free.
+
+    The workflow-node face of the shared `visualize(data, hint)` primitive: it renders a
+    node's `data` binding into a generative-UI widget with no tools, no session, no
+    spawn — the reasoning-axis two-step (a prior node produces the data; this renders it).
+    `completion` is injected so a test can drive it without a provider; production lets
+    the primitive resolve `one_shot_completion` on the reasoning axis itself.
+
+    Output is the genui DSL + the ready-to-embed `<widget>` block, so a downstream node
+    (a tile render, a digest) can bind `{{nodes.<id>.output.widget}}` directly.
+    """
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    if "data" not in cfg:
+        return _fail(
+            FailureClass.USER,
+            "visualize node has no `data` binding",
+            "bind `data` to the value to render, e.g. data: {{nodes.compute.output}}",
+        )
+    hint = str(cfg.get("hint", "") or "")
+    title = str(cfg.get("title", "") or "Visualization")
+    from personalclaw.visualize import visualize as _visualize_primitive
+
+    try:
+        result = await _visualize_primitive(cfg["data"], hint, title=title, completion=completion)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # provider/transport failures, or generative UI switched off
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+    if not result.dsl.strip():
+        return _fail(
+            FailureClass.PROTOCOL,
+            "visualize produced no renderable components",
+            "the model returned nothing the registry could render; simplify the data or hint",
+        )
+    return NodeResult(
+        state=InstanceState.DONE,
+        output={"dsl": result.dsl, "widget": result.widget},
+    )
+
+
+def claim_key(run_id: str, instance_path: str) -> str:
+    """The lease target for one node INSTANCE.
+
+    Per-INSTANCE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped
+    claim would serialize the fan-out the lease exists to protect.
+
+    And per-instance rather than per-NODE-ID (#3524), because a node id is not a unit of work — a
+    `loop` body and a `foreach` body both execute the SAME node id many times, at different
+    instance paths. Keyed by node id, the first execution took the claim and held it for the whole
+    TTL, so every later one was refused as a duplicate of work that had already finished: measured
+    on `general-project`, iterations 2..6 of the body's `judge` stage each returned DEGRADED with
+    "another worker holds the claim … for another 674s". A fan-out was worse — twelve `foreach`
+    items sharing one node id meant eleven of them never ran. The claim is supposed to stop ONE
+    unit of work executing twice, and the instance path is what names that unit.
+
+    DIGESTED rather than spelled out, for two reasons that both come from `leases._lease_path`:
+    it truncates a target id to 64 characters (a deep nested path plus a run id exceeds that, and
+    a truncated id collides), and it rewrites `.`/`@`/`[`/`#` all to `_` — so `body@1.children[1]`
+    and `body#1.children[1]` sanitize to the same filename. Either would silently reintroduce the
+    exact false refusal this fixes. The node id is not in the key because the claim's own
+    `holder` carries it (`claim_holder` → `workflow:<run>:<node_id>#<uuid>`), so a human reading a
+    lease file still sees which node holds it.
+    """
+    if not run_id or not instance_path:
+        return ""
+    digest = hashlib.sha256(instance_path.encode("utf-8")).hexdigest()[:16]
+    return f"{run_id}:{digest}"
+
+
+def claim_holder(run_id: str, node_id: str) -> str:
+    """A fresh holder identity for ONE execution attempt of a branch.
+
+    Unique per attempt, and that uniqueness is the whole control — measured, not assumed.
+    `containers.claim` RENEWS a claim held by the same holder (so a worker that lost its in-memory
+    state is not locked out of its own work). A holder derived from stable data — `run_id:node_id`,
+    or even that plus the PID — therefore made every second attempt a renewal rather than a refusal,
+    and the guard passed both executions through while a lease file sat there looking like
+    protection. The PID version failed for the case that matters most: two concurrent co-tenant
+    sessions in ONE gateway share a PID, which is exactly the co-tenant threat this guards.
+
+    The cost of per-attempt identity is that a genuinely dead holder's branch waits out the TTL
+    instead of being re-claimed instantly. That is the correct direction to be wrong in: a stalled
+    branch is visible and self-healing, while a double execution is silent and can write twice.
+    """
+    return f"{ownership.owned_key(run_id, node_id or 'node')}#{uuid.uuid4().hex[:12]}"
+
+
+def release_execution_claim(claim_target: str, holder: str) -> None:
+    """Drop ONE attempt's claim on a branch: either it never started, or it has SETTLED.
+
+    Public because the second caller is the controller. A stage's claim is taken here and outlives
+    this function — the spawn is live when `dispatch_stage` returns — so the only code that can know
+    the attempt is over is the code that settles it
+    (`stage_settlement.reconcile_dispatched_stages`), which the one-writer rule puts in the
+    controller. `NodeResult.claim_target`/`claim_holder` carry the identity; see `dispatch_stage`.
+
+    Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
+    turn a recoverable no-spawn return into a crashed dispatch — or a settled node into an unsettled
+    one.
+    """
+    if not claim_target:
+        return
+    try:
+        leases.release_claim(claim_target, holder)
+    except Exception:
+        logger.debug("claim release failed for %s", claim_target, exc_info=True)
+
+
+def stage_capability(cfg: dict[str, Any]) -> str:
+    """The ONE capability decision for a stage leaf: ``"mutating"`` or ``"research"``.
+
+    An explicit ``capability`` wins. Absent one, ``tools_posture: full`` IS the declaration: a
+    stage that declares the full tool posture has asked for write access in the only words the
+    bundled templates use for it, and its template's ``metadata.capabilities`` — the install-consent
+    surface the Store shows — already claims ``write`` (railed by
+    ``test_workflows_loop_templates.test_a_writing_template_declares_write_capability``).
+
+    🔴 Measured before this existed: 12 stages across 6 bundled templates declare
+    ``tools_posture: full`` and NONE declares ``capability``, so once ``capability`` became the
+    one decision every one of them ran READ-ONLY — `general-project`'s ``work``, `code-project`'s
+    ``code``, `deep-research`'s ``synthesize``. The worker's writes were denied at the tool-grant
+    layer, the judge found no artifacts, and a General loop could never produce the file its task
+    asked for while its template told the user it could write.
+
+    Anything else — ``verify`` (the judge posture), no posture at all — stays research, the same
+    safe default ``Capability.RESEARCH`` encodes: a leaf wrongly restricted fails visibly, while one
+    wrongly unrestricted has ambient write access nobody asked for.
+    """
+    declared = str(cfg.get("capability", "") or "").strip().lower()
+    if declared in ("mutating", "research"):
+        return declared
+    posture = str(cfg.get("tools_posture", "") or "").strip().lower()
+    return "mutating" if posture == "full" else "research"
+
+
+def leaf_spawn_env(
+    node: Node, cfg: dict[str, Any], *, run_id: str, project_id: str, depth: int
+) -> dict[str, str]:
+    """The env one stage leaf runs with: lineage + capability posture, secret-filtered.
+
+    Built here because this is where a leaf is actually spawned — the compiled `postures` block is
+    an external contract until something applies it, and `batch_compile.CompileResult.unenforced`
+    names this seam as the missing half. `leaf_env` does the credential filtering (reusing
+    `workspace.looks_secret`, not a second copy of that policy).
+
+    The child's depth is the parent's PLUS ONE: a leaf that inherited the parent's depth unchanged
+    would let each level re-spend the same budget, and `depth_lint`'s static refusal of a nested
+    batch would never trip.
+
+    *project_id* is the run's project, from the run's record (the controller passes it), never a
+    field of the step's config: the leaf's tools read it (`mcp_shared.leaf_value`) to know whose
+    work this is — the agent's shell fills a `{{secret:NAME}}` from this project's secrets first.
+    Required, with no default, so a spawn cannot quietly run as no project's.
+    """
+    from personalclaw.env import gateway_env
+    from personalclaw.mcp_shared import LEAF_READ_ONLY_KEY, leaf_env
+    from personalclaw.workflows.batch_compile import lineage_env
+
+    lineage = lineage_env(
+        run_id=run_id,
+        project_id=project_id,
+        node_id=node.id or "",
+        depth=int(depth) + 1,
+    )
+    if stage_capability(cfg) != "mutating":
+        lineage[LEAF_READ_ONLY_KEY] = "1"
+    return leaf_env(gateway_env(), lineage)
+
+
+def stage_request_key(
+    *,
+    run_id: str,
+    instance_path: str,
+    parent_session_key: str,
+    prompt: str,
+    agent: str,
+    model: str,
+    max_turns: int,
+    cwd: str,
+    approval_mode: str,
+    capability: str,
+) -> str:
+    """What a stage's start asks its owner to allow, as one digest: the run and the instance it
+    belongs to, and everything the spawn is given that she was asked about — the prompt as it
+    resolved, the agent, the model, its turns, its folder, its approval mode and whether it may
+    write. An Allow is kept against it (`NodeInstance.approved_request`), so a resumed start whose
+    prompt or agent differs is a different request, and is asked. The environment it runs with is
+    left out: it is the gateway's process, not the step, and a restart changes it."""
+    parts = [
+        run_id,
+        instance_path,
+        parent_session_key,
+        prompt,
+        agent,
+        model,
+        int(max_turns),
+        cwd,
+        approval_mode,
+        capability,
+    ]
+    return hashlib.sha256(json.dumps(parts).encode("utf-8")).hexdigest()
+
+
+@_commits_effects
+async def dispatch_stage(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    subagents: Any = None,
+    depth: int = 0,
+    run_id: str = "",
+    #: The run's project ("" for none), from its record: the stage's agent works for it
+    #: (`leaf_spawn_env`).
+    project_id: str = "",
+    #: This instance's engine key (`root.body@2.children[1]`). The claim's target — see
+    #: `claim_key` on why a node id is not one.
+    instance_path: str = "",
+    cwd: str = "",
+    #: The run carries the user's explicit UNATTENDED grant (`supervisor_policy.unattended_grant`).
+    #: Threaded from the controller, which is the only layer holding the run's overlay.
+    unattended: bool = False,
+    #: The start the owner allowed for this instance's current attempt, as the controller kept it
+    #: (`NodeInstance.approved_request`, `approved_at`), or ("", 0.0).
+    approved_start: tuple[str, float] = ("", 0.0),
+) -> NodeResult:
+    """One subagent execution, with tools and a session.
+
+    Spawns are `silent=True` and run-scoped: completions belong in the run journal, not
+    injected into whatever chat session happened to start the run. Without `silent`, a
+    background workflow would interrupt an unrelated conversation with stage results.
+
+    **A start the owner already allowed is not asked again.** The spawn carries what it asks
+    (`stage_request_key`), and the controller keeps her Allow of it with the instance. When a
+    restart or a pause cut that attempt off and the resumed dispatch asks exactly the same thing,
+    her answer is handed back (`approved_at`), and the spawn starts on it within the time limit a
+    subagent is given, under the operator ceiling like every grant. A different request asks.
+
+    Depth is enforced in CODE here (`MAX_WF_DEPTH`), which is new: the existing contract
+    is a sentence in a system prompt, and a prompt is not an enforcement mechanism.
+
+    **An unattended run spawns its stages `approval_mode="auto"`** unless the node declares its
+    own mode. The spawn's parent is the RUN-OWNED key `workflow:<run>:<node>`, which is never a
+    dashboard session, so the approval callback's trust lookup could not match it and every stage
+    of an "Unattended" loop stopped on "This step needs your approval" — six clicks in the
+    2026-09-25 run before it escalated. The grant is the user's own creation-time choice carried in
+    the run's overlay, which is exactly the headless-caller case `SubagentManager.spawn` documents
+    for `approval_mode="auto"`. It widens nothing else: the capability class below still decides
+    whether the stage may write, the operator ceiling still bounds the auto-approval grant
+    (`subagent._run_inner`'s ceiling check), and the spawn and every auto-approved tool call are
+    SEL-audited as they are for any other auto-approved spawn.
+
+    **A run that is an app's work** (`apps.app_work`) is held as the app's: each stage starts only
+    within the agent tier the app holds now, carries the app's name, and approves none of its calls.
+    """
+    if depth >= MAX_WF_DEPTH:
+        return _fail(
+            FailureClass.PERMISSION,
+            f"workflow nesting depth cap ({MAX_WF_DEPTH}) reached — not spawning",
+            "flatten the workflow, or move the nested work into a separate run",
+            terminal_reason=REFUSED_TO_START,
+        )
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    prompt = str(cfg.get("prompt", "") or "")
+    if not prompt.strip():
+        return _fail(
+            FailureClass.USER,
+            "stage node has an empty prompt after binding",
+            "check the prompt template and its bindings",
+        )
+
+    # A run that inherited a temporary/incognito origin skips its learning nodes OUTRIGHT.
+    # Skipping at the engine is the primary control: letting the node
+    # run and trusting the persist provider's own gate would make correctness depend on every write
+    # path checking a flag, and a write path added later would leak by default. DEGRADED rather than
+    # FAILED — the node was deliberately not run, which is a success with a machine-readable
+    # reason.
+    skip, skip_why = _restriction_skip(cfg, run_id)
+    if skip:
+        return NodeResult(state=InstanceState.DEGRADED, output=None, degraded_reason=skip_why)
+
+    # A step of a run that is an app's work is the app's (`apps.app_work`): it starts within the
+    # tier the app holds now, carries the app's name, and so approves none of its calls.
+    from personalclaw.apps.app_work import step_refusal
+
+    capability = stage_capability(cfg)
+    work, beyond = step_refusal(run_id, capability)
+    if beyond:
+        return _fail(
+            FailureClass.PERMISSION,
+            beyond,
+            "switch the app on, or update it to a version whose agent tier covers this step",
+            terminal_reason=REFUSED_TO_START,
+        )
+
+    if subagents is None:
+        return _fail(
+            FailureClass.INTERNAL,
+            "subagent manager unavailable",
+            "the gateway did not initialize the subagent service",
+        )
+
+    # Incident mode holds a stage rather than failing it. The run's hold keeps it from being
+    # dispatched while the switch is on (`incident_hold`); this is the switch moving between that
+    # look and here.
+    if incident_hold.active():
+        return _held_by_incident(prompt)
+
+    # No double-execution. Taken BEFORE the spawn, because a lease acquired
+    # after the work started would record the claim without preventing the thing it exists to
+    # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
+    # is per-INSTANCE, not per-run and not per-node-id: see `claim_key`.
+    #
+    # FAIL CLOSED when a run-attached dispatch carries no instance path. `instance_path` is a
+    # defaulted keyword, so an omission is silent: `claim_key` returns "", the `if claim_target`
+    # below skips the lease entirely, and the control reads as present while protecting nothing —
+    # both dispatches of one unit of work spawn. AGENTS.md settles the direction: a default that
+    # PERFORMS something irreversible is not a permissive default, and a spawn is irreversible. So
+    # refuse rather than skip, because with no instance identity there is no way to tell a first
+    # execution from a second. INTERNAL, not USER: the only way to get here is a caller that did
+    # not thread the path.
+    #
+    # A dispatch with no `run_id` is the other case and stays unclaimed as before: it belongs to no
+    # run, so there is no run to scope a claim to and no co-tenant worker that could hold one.
+    if run_id and not instance_path:
+        return _fail(
+            FailureClass.INTERNAL,
+            "stage dispatched without an instance path, so its no-double-execution claim "
+            "cannot be keyed — not spawning",
+            "thread the node's instance path through `dispatch` into `dispatch_stage`",
+        )
+    claim_target = claim_key(run_id, instance_path)
+    holder = claim_holder(run_id, node.id or "")
+    if claim_target:
+        granted, reason = leases.acquire_claim(claim_target, holder)
+        if granted is None:
+            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
+            # being executed, which is the lease working. Failing would turn a successful
+            # duplicate-suppression into a red branch on a run that is proceeding correctly.
+            return NodeResult(
+                state=InstanceState.DEGRADED,
+                output=None,
+                degraded_reason=(
+                    f"another worker holds the claim on this node ({reason}) — not executing twice"
+                ),
+                resolved_prompt=prompt,
+            )
+
+    # The run OWNS this session: `workflow:<run_id>:<node_id>`. Passed as the parent key so the
+    # spawn's own audit + session plumbing attributes it to the run rather than to whatever chat
+    # happened to start it.
+    parent_session_key = ownership.owned_key(run_id, node.id or "node")
+    agent = str(cfg.get("agent", "") or "")
+    # Per-leaf model pin. Homogeneous by DEFAULT: an absent `model`
+    # sends `None`, which is what makes `spawn` resolve the `orchestration` chain and inherit the
+    # parent's binding. Only a declared pin overrides it, because the one measured heterogeneity
+    # win in the fan-out literature is by MODEL, and passing `""` here would look like a pin to
+    # nothing rather than like no pin.
+    model = str(cfg.get("model", "") or "") or None
+    max_turns = int(cfg.get("max_turns", 0) or 0)
+    # An app's step approves none of its own calls, whatever the run's overlay or the step says.
+    approval_mode = (
+        None
+        if work is not None
+        else (str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None))
+    )
+    # ONE capability decision (`stage_capability`, taken above): it drives BOTH the leaf-env
+    # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP tools)
+    # AND the subagent capability class (the `_run_inner` approval loop, the worker's NATIVE
+    # tools). A research node passed as research here has its native Write/Bash denied too — the
+    # gap the MCP-only seam left open.
+    request_key = stage_request_key(
+        run_id=run_id,
+        instance_path=instance_path,
+        parent_session_key=parent_session_key,
+        prompt=prompt,
+        agent=agent,
+        model=model or "",
+        max_turns=max_turns,
+        cwd=cwd,
+        approval_mode=approval_mode or "",
+        capability=capability,
+    )
+    approved_request, approved_at = approved_start
+    try:
+        info = subagents.spawn(
+            task=prompt,
+            parent_session_key=parent_session_key,
+            # Scope the run-level concurrency lane, breaker and budget to the RUN
+            # (`workflow:<run_id>`), so every node of one run shares one fan-out lane and
+            # a wide run cannot starve other runs.
+            parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
+            agent=agent,
+            model=model,
+            max_turns=max_turns,
+            cwd=cwd,
+            silent=True,
+            approval_mode=approval_mode,
+            capability_class=capability,
+            # The leaf's lineage + capability posture, secret-filtered. This is the
+            # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
+            # and the read-only flag would never be set, and the handler seam would be a gate on a
+            # value nobody writes — the exact inert-control shape this writer exists to close.
+            extra_env=leaf_spawn_env(node, cfg, run_id=run_id, project_id=project_id, depth=depth),
+            request_key=request_key,
+            # Her earlier Allow, only when it was for exactly this request.
+            approved_at=approved_at if approved_request == request_key else 0.0,
+            app=work.app if work is not None else "",
+        )
+    except BaseException:
+        # A spawn that RAISED produced no `NodeResult`, so the holder below never reaches the
+        # controller and NOTHING can release this claim for its whole 900s TTL. That is the same
+        # failure as #3533 wearing an exception: the node's own retry meets its own lease. Released
+        # here and re-raised unchanged, so the classification the controller already does
+        # (`_execute` → `classify_exception`) is untouched.
+        release_execution_claim(claim_target, holder)
+        raise
+    if info is None:
+        # At capacity. Not a failure: the node stays ready and the next tick retries — so the claim
+        # MUST be released. A claim held across a no-spawn return would make this node refuse its
+        # own retry for the whole TTL: the lease would block the work it exists to protect, which is
+        # the failure mode where a safety control becomes an outage.
+        release_execution_claim(claim_target, holder)
+        return NodeResult(
+            state=InstanceState.READY,
+            degraded_reason="subagent capacity reached; will retry",
+            resolved_prompt=prompt,
+        )
+    if getattr(info, "error", ""):
+        # A REJECTED spawn never executed, so the claim is released for the same reason as the
+        # capacity path: nothing is running, and holding the claim would only lock out the retry.
+        release_execution_claim(claim_target, holder)
+        if incident_hold.active():
+            # Refused for the switch (`SubagentManager.spawn`): a hold, not the stage's failure.
+            return _held_by_incident(prompt)
+        return NodeResult(
+            state=InstanceState.FAILED,
+            failure=Failure(
+                failure_class=FailureClass.PERMISSION,
+                cause_plain=f"spawn rejected: {info.error}",
+                remediation="check subagent approval settings and cwd allow-roots",
+            ),
+            resolved_prompt=prompt,
+        )
+    # The claim is deliberately RETAINED here: the spawn is live and the node stays RUNNING
+    # until its completion arrives, which is exactly the window a second worker must not
+    # execute in. It expires on its own TTL, so a killed gateway frees the branch without an
+    # admin step — the property `leases` was built for.
+    #
+    # 🔴 But the TTL was the ONLY way it was ever released, which is #3533: this attempt's claim
+    # outlived the attempt, so the retry of a settled-FAILED instance met its own lease and was
+    # refused as a duplicate for fifteen minutes. The identity travels out on the result — a pair,
+    # because a release names both the target and the holder and `containers.release` refuses any
+    # other holder — so `stage_settlement.reconcile_dispatched_stages` can release THIS attempt's
+    # claim at the settle. Carried rather than re-derived: `claim_holder` is a fresh uuid per
+    # attempt, so it is unrecoverable from anything the controller holds, and re-deriving the target
+    # would put a second copy of `claim_key` at the release site to drift from this one.
+    return NodeResult(
+        state=InstanceState.RUNNING,
+        output={"subagent_id": info.id},
+        resolved_prompt=prompt,
+        claim_target=claim_target,
+        claim_holder=holder,
+    )
+
+
+def _held_by_incident(prompt: str) -> NodeResult:
+    """A stage incident mode kept from starting: it did not run, and waits for the switch."""
+    return NodeResult(
+        state=InstanceState.READY,
+        degraded_reason=incident_hold.DISPATCH_HELD,
+        resolved_prompt=prompt,
+    )
+
+
+async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
+    """Evaluate the selector, then record every edge the branch did NOT take.
+
+    Declines are recorded, not inferred. The frontier turns a declined edge's
+    target into SKIPPED — terminal — which is what lets a downstream join proceed. Trying
+    to infer "not taken" from "routed elsewhere" would also starve any sibling whose
+    `needs` merely names this branch, since routing among cases says nothing about it.
+
+    A resolved value with no matching case and no default is a routing failure, reported as one:
+    falling through silently would make a spec that never ran its real work look like a clean
+    pass. It records `{"case": label}`; `node_bindings.record_branch_outputs` adds `produced`.
+    """
+    from personalclaw.workflows import tick
+
+    expr = str((node.config or {}).get("on", "") or "")
+    if not expr:
+        return _fail(
+            FailureClass.USER,
+            "branch node has no `on` binding",
+            "add `config.on` naming the value to route on",
+        )
+    try:
+        value = tick.read_named_value(expr, ctx)
+    except BindingError as exc:
+        failure = binding_failure(exc, tick.UNREAD_ROUTE)
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    if (selected := tick.case_for(node, value)) is None:
+        return _fail(FailureClass.USER, *tick.unmatched_case(node, value))
+    label, case_node = selected
+    declined: list[str] = []
+    if node.id:
+        taken = id(case_node)
+        for other in list(node.cases.values()) + (
+            [node.default_case] if node.default_case is not None else []
+        ):
+            if other is not None and id(other) != taken and other.id:
+                declined.append(tick.edge_key(node.id, other.id))
+    return NodeResult(
+        state=InstanceState.DONE,
+        output={"case": label},
+        declined_edges=sorted(set(declined)),
+    )
+
+
+#: Nesting ceiling. Three levels is deep enough for "a workflow that calls a workflow
+#: that calls a leaf", and shallow enough that a runaway recursion is caught in three frames
+#: rather than after the process has spawned hundreds of runs. A workflow that references itself
+#: is the realistic way to hit this, and it is always a bug.
+MAX_SUBWORKFLOW_DEPTH = 3
+
+
+async def dispatch_subworkflow(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    depth: int = 0,
+    run_id: str = "",
+    supervisor: Any = None,
+    timeout: int = 60,
+    on_progress: Any = None,
+) -> NodeResult:
+    """Run a named workflow as a CHILD run, and wait for it.
+
+    **A real child run, not an inlined subtree.** The child gets its own run id, its own journal,
+    its own state map and its own terminal-status writer. That costs a row and a directory, and it
+    buys the things that matter: the child can be rewound, resumed, forked and inspected on its
+    own; a crash mid-child leaves a child run to adopt rather than a half-written parent; and the
+    parent's journal stays readable instead of interleaving two graphs' events.
+
+    **Genealogy is threaded, so a nested tree is queryable.** `parent_run_id` names the immediate
+    parent and `root_run_id` names the top of the tree — both are needed: the parent answers "who
+    spawned this?", and the root answers "show me everything this user request did", which is the
+    query a widget and the ledger actually run.
+
+    **Depth is capped at 3 and checked BEFORE anything is created.** A workflow that references
+    itself would otherwise spawn runs until the process died, each one with a row and a directory
+    to clean up. Refused as a USER failure with the ref named, because the fix is in the spec.
+
+    **Waited on, not fired and forgotten.** A subworkflow node's whole purpose is to produce an
+    output the parent binds to; returning `launched` (the `run-workflow` provider's contract) would
+    make `{{nodes.child.output}}` resolve to nothing. The wait is bounded by the node's timeout,
+    and a timeout leaves the child RUNNING — it is a real run and killing it would discard work
+    the
+    parent merely stopped waiting for.
+    """
+    cfg = node.config or {}
+    ref = str(cfg.get("ref", "") or "").strip()
+    if not ref:
+        return _fail(
+            FailureClass.USER,
+            "subworkflow node has no `ref`",
+            "set `config.ref` to a workflow definition name (optionally `name@version`)",
+        )
+    # `name@version` — the version is parsed off and ignored for resolution, because a def
+    # provider serves one current version per name. Kept in the ref so a spec can RECORD which
+    # version it was written against.
+    name = ref.split("@", 1)[0]
+
+    if depth + 1 > MAX_SUBWORKFLOW_DEPTH:
+        return _fail(
+            FailureClass.USER,
+            f"subworkflow nesting would exceed depth {MAX_SUBWORKFLOW_DEPTH} at {ref!r}",
+            "flatten one level, or check whether the workflow references itself",
+        )
+    if supervisor is None:
+        return _fail(
+            FailureClass.INTERNAL,
+            "no workflow supervisor is available to run a subworkflow",
+            "this is an engine wiring problem — the controller must pass its supervisor",
+        )
+
+    from personalclaw.workflows import automation_version, store
+    from personalclaw.workflows.models import (
+        TERMINAL_RUN_STATUSES,
+        OriginKind,
+        RunOrigin,
+        RunStatus,
+        WorkflowRun,
+    )
+
+    found = await automation_version.find(name)
+    if found is None:
+        return _fail(
+            FailureClass.USER,
+            f"no workflow definition named {name!r}",
+            "check the name, or list the available definitions",
+        )
+    # A run an owner-allowed automation started starts the child's version allowed with it, and the
+    # child carries them on to its steps; any other run's starts it as it is (`child_spec`).
+    parent = store.get(run_id) if run_id else None
+    spec, carried, refused = automation_version.child_spec(parent, name, *found)
+    if refused:
+        return _fail(FailureClass.USER, refused, automation_version.ASK_THE_AUTOMATION)
+
+    # Inputs are RESOLVED against the parent's context before the child is created, so the child
+    # receives values rather than bindings it has no way to interpret — its own `{{nodes.…}}`
+    # namespace is a different graph's — but a secret reference, which the child fills itself.
+    project = parent.project_id if parent else ""
+    child_inputs, handed, failure = input_secrets.hand_to_child(cfg.get("inputs"), ctx, project)
+    if failure is not None:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    # A child that says it continues a run is held to what a started run is: an input bound from
+    # anything upstream names a run, and a folder is read from it.
+    from personalclaw.workflows.deliverable import continuation_refusal
+
+    if refused := continuation_refusal(name, spec, child_inputs):
+        return _fail(
+            FailureClass.USER,
+            f"cannot continue: {refused}",
+            "name an earlier run of this workflow in `continue_from`, or leave it blank",
+        )
+
+    from personalclaw.workflows import run_budget
+
+    caps, unreadable = run_budget.child_caps(spec, parent=parent)
+    if unreadable:
+        return _fail(
+            FailureClass.USER, f"cannot start {name!r}: {unreadable}", run_budget.UNREADABLE_FIX
+        )
+    child = store.create(
+        WorkflowRun(
+            id="",
+            workflow_name=name,
+            status=RunStatus.DRAFT,
+            inputs=child_inputs,
+            mode="background",
+            # Its definition's caps, inside what its parent has left: never more than that.
+            budget=caps,
+            parent_run_id=run_id or None,
+            # The ROOT, not the parent: "everything this user request did" is the query that
+            # matters, and at depth 3 the parent alone cannot answer it.
+            root_run_id=(parent.root_run_id if parent else "") or run_id or "",
+            project_id=project,
+            origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
+            # The version it executes, a version from the history included.
+            spec_version=int(spec.get("version", 1) or 1),
+            # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps.
+            extra={**(ownership.inherited_extra(parent) if parent else {}), **handed, **carried},
+        )
+    )
+    store.write_spec(child.id, spec)
+
+    try:
+        controller = await supervisor.launch(child, spec, depth=depth + 1)
+    except Exception as exc:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            f"could not start subworkflow {name!r}: {exc}",
+            "check the gateway log for the child run's launch failure",
+            {"child_run_id": child.id},
+        )
+
+    try:
+        # A nested run is the clearest case of "slow but working": the child is ticking the whole
+        # time, so the parent's stall clock must not read the wait as silence. One call before the
+        # wait is NOT enough — the wait itself spans the window — so the clock is fed on a
+        # heartbeat
+        # for as long as the child is alive.
+        status = await wait_with_progress(controller, float(timeout or 0), on_progress)
+    except Exception as exc:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            f"subworkflow {name!r} failed while running: {exc}",
+            "inspect the child run directly",
+            {"child_run_id": child.id},
+        )
+
+    # The child's own outputs, node-id keyed — what the parent's `{{nodes.child.output.x}}` reads.
+    child_outputs: dict[str, Any] = {}
+    try:
+        for path, inst in store.read_state(child.id).items():
+            if inst.output_ref:
+                value = store.read_output(child.id, path)
+                if value is not None:
+                    child_outputs[path.split(".")[-1].split("#")[0].split("@")[0]] = value
+    except Exception:
+        logger.debug("subworkflow %s: could not collect child outputs", child.id, exc_info=True)
+
+    payload: dict[str, Any] = {
+        "child_run_id": child.id,
+        "workflow": name,
+        "status": status.value if hasattr(status, "value") else str(status),
+        "outputs": child_outputs,
+    }
+
+    if status not in TERMINAL_RUN_STATUSES:
+        # needs_input or a wait timeout: the child is alive and a human (or its own deadline) will
+        # move it. DEGRADED rather than FAILED — the parent stopped waiting, the child did not
+        # fail.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=payload,
+            degraded_reason=f"subworkflow is still {payload['status']}",
+        )
+    if status == RunStatus.COMPLETE:
+        return NodeResult(state=InstanceState.DONE, output=payload)
+    return _failed_with(
+        FailureClass.USER,
+        f"subworkflow {name!r} ended {payload['status']}",
+        f"inspect child run {child.id} for the failing node",
+        payload,
+    )
+
+
+@_commits_effects
+async def dispatch_action(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    get_provider: Any = None,
+    timeout: int = 60,
+    run_id: str = "",
+    project_id: str = "",
+    instance_path: str = "",
+    cwd: str = "",
+    idempotency_key: str = "",
+    answer: Any = None,
+) -> NodeResult:
+    """Dispatch to an action provider — zero tokens.
+
+    The provider's `outcome` honesty contract is preserved: `"launched"` means background
+    work STARTED, not that it succeeded, so it maps to DEGRADED with a reason rather than
+    a clean DONE. Reporting it as success would make a fire-and-forget action look
+    verified.
+
+    `answer` is what a person answered when this step last parked on them, handed to the
+    provider as `ActionContext.answer` on the dispatch that answer started (the controller's
+    `_park_answers`, single-use). None on every other dispatch.
+    """
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    handed, handoff_failure = input_secrets.handed_on(ctx.secret_resolver, cfg)
+    if failure or handoff_failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure or handoff_failure)
+    name = str(cfg.get("provider", "") or "")
+    if not name:
+        return _fail(
+            FailureClass.USER,
+            "action node has no `provider`",
+            "set `config.provider` to a registered action provider",
+        )
+
+    getter = get_provider
+    if getter is None:
+        from personalclaw.action_providers.registry import get_action_provider
+
+        getter = get_action_provider
+    provider = getter(name)
+    if provider is None:
+        return _fail(
+            FailureClass.USER,
+            f"unknown action provider {name!r}",
+            "install the app that provides it, or pick a registered provider",
+        )
+    from personalclaw.apps.app_work import action_refusal
+
+    if refused := action_refusal(run_id, name):
+        return _fail(
+            FailureClass.PERMISSION,
+            refused,
+            "start the workflow yourself to run this step as yours",
+            terminal_reason=REFUSED_TO_START,
+        )
+
+    from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
+
+    picked = "with" if cfg.get("with") else "config"
+    action_config = dict(cfg.get(picked) or {})
+    # Whose work this is (`RUN_IDENTITY_KEYS`), from the run alone and set after the step's own
+    # payload, so a key it carried by one of those names, written or bound, never reaches the
+    # provider. The node id always; each other only when the run has one (no project, none named).
+    stamped = {
+        "run_id": run_id,
+        "node_id": node.id or "",
+        "instance_path": instance_path,
+        "project_id": project_id,
+        "workspace": cwd,
+        "idempotency_key": idempotency_key,
+    }
+    payload = {
+        k: v for k, v in dict(cfg.get("payload") or {}).items() if k not in RUN_IDENTITY_KEYS
+    }
+    payload.update((key, value) for key, value in stamped.items() if value or key == "node_id")
+    context = ActionContext(
+        event=WORKFLOW_STEP_EVENT,
+        context=str(cfg.get("context", "") or ""),
+        payload=payload,
+        answer=answer,
+        # The run's project, from its record: an agent this step starts works for it.
+        project_id=project_id,
+        # The references it kept, which the run it starts with its config fills (`input_secrets`).
+        secret_references=handed,
+    )
+    # 🔴 The action denylist, as a trigger's fire asks it: among its rules, a step that would stop
+    # or replace the gateway its run lives in is refused (`guardrails.self_destruct`). A run is
+    # unattended work whoever started it, and is judged so. Asked here, in the one dispatch every
+    # action step takes, not in the provider lookup the engine is handed (`EngineServices.
+    # get_provider`), which a caller can replace. The refusal reads as the fire's does.
+    from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    key = unattended_dispatch_key(f"workflow:{run_id}")
+    written = (node.config or {}).get(picked)  # quoted as written: a secret by its reference
+    denied = enforce_action(name, action_config, context, session_key=key, written=written)
+    if denied.blocked:
+        fix = "change what this step runs, then run the workflow again; until then it is refused"
+        return _fail(
+            FailureClass.PERMISSION, denied.refusal(), fix, terminal_reason=REFUSED_TO_START
+        )
+    from personalclaw.net.policy import egress_held_to
+
+    try:
+        # What the step reaches is held to the egress tier of the identity the denylist judged it
+        # under. Its loop runs in the context of whatever started the run (a chat's tool call, a
+        # fire, a restart), so the step was held to that caller's run, or to none.
+        with egress_held_to(key):
+            result = await provider.execute(action_config, context, timeout=timeout)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+    result = filled_secrets.masked_answer(result, ctx.filled)  # masked before any of it is read
+    output: Any = _action_output(result)
+    contract = (node.config or {}).get("output_contract")
+    if isinstance(contract, dict) and getattr(result, "success", False):
+        problem = check_output_contract(output, contract)
+        if problem:
+            return _fail(
+                FailureClass.PROTOCOL,
+                f"output contract violated: {problem}",
+                "fix the provider output or relax the node's output_contract",
+            )
+
+    if not getattr(result, "success", False):
+        # Classified at the cause, never assumed TRANSIENT: that offered Retry for a rejected
+        # key, a missing model and a missing config field alike. The cause is the command's own
+        # reason when its answer gives one.
+        failure = classify_action_result(result, output)
+        return NodeResult(state=InstanceState.FAILED, output=output, failure=failure)
+    if getattr(result, "outcome", "") == "launched":
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason="action started background work; completion not verified",
+        )
+    if getattr(result, "outcome", "") == "queued":
+        # `on_overlap: queue` persisted a run and started nothing. DEGRADED, not
+        # DONE: a DONE node would tell the frontier this action's work completed, when the
+        # work has not begun. Not NO_CHANGE either — a durable run record was written.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason="action queued a run behind one already in flight; it has not started",
+        )
+    if getattr(result, "outcome", "") == "needs_input":
+        # The action stopped on something only a person can lift —
+        # a sign-in page, its step ceiling, the model budget — and kept what it produced. WAITING
+        # with NO `wake_at`, carrying an ASK, which the controller handles the way it handles a
+        # gate's: it keeps the output on the step, mints the continuation and the Inbox row, and
+        # parks the run as `needs_input`. Approving runs the step again (`Ask.rerun`); denying
+        # ends it as declined.
+        #
+        # Not DONE (the goal was not reached, and downstream nodes would consume a partial as
+        # if it were complete), not FAILED (a failure buries the notes under a red error and
+        # invites the retry machinery to pay for the whole task again to hit the same
+        # ceiling), and not DEGRADED (that is a SUCCESS with a reason, and this needs a
+        # person). The output carries the partial result, so the notes survive the park.
+        question = _park_question(output, getattr(result, "stderr", ""))
+        from personalclaw.workflows.human_input import Ask
+
+        return NodeResult(
+            state=InstanceState.WAITING,
+            output=output,
+            degraded_reason=question,
+            ask=Ask(prompt=question, node_id=node.id, rerun=True).to_dict(),
+        )
+    if getattr(result, "outcome", "") == "degraded":
+        # The action did its work at its no-model floor (a digest without its synthesis): a
+        # success with the reason it says, so the step does not read as having delivered it all.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason=str(getattr(result, "summary", "") or "")
+            or "the action ran without something it needs",
+        )
+    if getattr(result, "outcome", "") == "skip":
+        return NodeResult(state=InstanceState.NO_CHANGE, output=output)
+    return NodeResult(state=InstanceState.DONE, output=output)
+
+
+def _park_question(output: Any, stderr: Any) -> str:
+    """What a parked action asks the person, in one sentence.
+
+    The blocker of the needs-input card the step composed, when it did: browse's sign-in handoff
+    (`browse.handoff.request_login`) puts one under the output's `needs_input` key, and its
+    blocker IS the question ("Sign in to example.com, then confirm — the browse run resumes with
+    that session."). Otherwise the sentence the provider wrote for its park, which says what
+    stopped it. The card wins because it is the question, where the provider's sentence is an
+    account of what happened.
+    """
+    card = output.get("needs_input") if isinstance(output, dict) else None
+    if isinstance(card, dict):
+        blocker = str(card.get("blocker") or "").strip()
+        if blocker:
+            return blocker
+    return str(stderr or "").strip() or "This step stopped and needs your input to continue."
+
+
+async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeResult:
+    """Park until a deadline. Returns WAITING with a `wake_at`.
+
+    Outgoing edges activate at WAIT-ENTRY, not on completion. This is the
+    subtle half of active-edge gating: a 3-way fan-out with one fast leg and two waiting
+    legs would otherwise fire its join after the fast leg alone.
+    """
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    until = cfg.get("until_ts")
+    duration = cfg.get("duration_secs")
+    seal = cfg.get("seal")
+
+    if isinstance(seal, dict):
+        # Buffer-seal: a VOLUME trigger instead of a clock. Ready
+        # now when the buffer is full, otherwise a short re-check wait — the stale-flush
+        # deadline is the ceiling, so a trickle still synthesizes eventually.
+        #
+        # A quiet week costs zero model calls this way; wall-clock cadence has it exactly
+        # backwards, paying for a synthesis of nothing every interval.
+        return _dispatch_seal(seal, ctx, now=now)
+
+    if isinstance(until, (int, float)) and until > 0:
+        deadline = float(until)
+    elif isinstance(duration, (int, float)) and duration > 0:
+        # An adaptive cadence: a cycle may propose its own next delay, clamped. Unclamped, a
+        # model asking for 2s spins the loop through its whole budget in an hour and one
+        # asking for a week silently stops being a watcher — both look like a working run.
+        deadline = now + float(_adaptive_duration(cfg, float(duration)))
+    else:
+        return _fail(
+            FailureClass.USER,
+            "wait node has no duration_secs, until_ts or seal",
+            "set one of them",
+        )
+    if deadline <= now:
+        return NodeResult(state=InstanceState.DONE, output={"waited": True})
+    # WAITING is not terminal, so a downstream join behind this leg keeps waiting rather
+    # than firing on a faster sibling — the wait-entry half.
+    return NodeResult(state=InstanceState.WAITING, wake_at=deadline)
+
+
+def _adaptive_duration(cfg: dict[str, Any], configured: float) -> int:
+    """The wait's duration after an optional model-proposed override, clamped.
+
+    `adaptive` names the binding that carries the proposal (usually
+    `{{last.output.next_cycle_delay_seconds}}`); `min_secs`/`max_secs` bound it. The
+    template's own `duration_secs` is the fallback, so a garbage proposal keeps the declared
+    cadence rather than falling to the floor — "the model returned nonsense" must not make the
+    loop faster.
+    """
+    proposed = cfg.get("adaptive")
+    if proposed is None:
+        return int(configured)
+    secs, reason = longrun.clamp_delay(
+        proposed,
+        default=int(configured),
+        minimum=_int_or(cfg.get("min_secs"), longrun.MIN_ADAPTIVE_DELAY_SECS),
+        maximum=_int_or(cfg.get("max_secs"), longrun.MAX_ADAPTIVE_DELAY_SECS),
+    )
+    if reason:
+        logger.info("adaptive wait delay adjusted: %s -> %ss", reason, secs)
+    return secs
+
+
+def _int_or(raw: Any, fallback: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return fallback
+    return int(raw)
+
+
+def _dispatch_seal(seal: dict[str, Any], ctx: BindingContext, *, now: float) -> NodeResult:
+    """Buffer-seal wait: ready when the buffer fills, else a bounded re-check.
+
+    The buffer contents come from a binding (`items`), so the seal is a pure function of what
+    the watcher's sibling has produced — no engine-side buffer to persist, and therefore
+    nothing to lose on a restart.
+    """
+    raw_items = seal.get("items")
+    items: list[Any] = []
+    if raw_items is not None:
+        try:
+            resolved = resolve(raw_items, ctx) if isinstance(raw_items, str) else raw_items
+        except Exception:
+            resolved = []
+        items = resolved if isinstance(resolved, list) else []
+
+    buffer = longrun.BufferState(
+        items=items,
+        seal_threshold=_int_or(seal.get("threshold"), 20),
+        seal_tokens=_int_or(seal.get("tokens"), 0),
+        flush_stale_after_secs=_int_or(seal.get("flush_stale_after_secs"), 3600),
+        last_flush_at=float(_int_or(seal.get("last_flush_at"), 0)),
+    )
+    sealed, reason = buffer.should_seal(now=now)
+    if sealed:
+        return NodeResult(
+            state=InstanceState.DONE,
+            output={"waited": False, "sealed": True, "reason": reason, "count": len(items)},
+        )
+    # Not yet. Re-check on a bounded cadence rather than parking until the stale deadline: the
+    # buffer fills from a SIBLING, so nothing about this node's own state would wake it.
+    check_every = _int_or(seal.get("check_every_secs"), 60)
+    return NodeResult(state=InstanceState.WAITING, wake_at=now + max(1, check_every))
+
+
+class GuardOutcome(str, Enum):
+    """What the regression half of a dual gate concluded. CLOSED and mapped exhaustively
+    by `_dual_guard` — an unmapped value falling through to "passed" is the shape that
+    makes a regression gate look enforced while it certifies breakage.
+    """
+
+    #: No guard command declared. The gate is metric-only, which is a legitimate choice.
+    SKIPPED = "skipped"
+    #: The guard command passes now. Nothing regressed.
+    CLEAN = "clean"
+    #: The guard fails now AND failed at baseline: it was already broken, so this change
+    #: is not what broke it. The gate PASSES (degraded) — blaming a pre-existing failure
+    #: on this change is how a correct change gets rejected and someone debugs the wrong
+    #: commit.
+    PRE_EXISTING = "pre_existing"
+    #: The guard passed at baseline and fails now. THIS change broke it. The gate fails.
+    REGRESSION = "regression"
+    #: The guard could not be run at all. Never a pass — an unrunnable check certifies
+    #: nothing, the same rule the metric half applies.
+    UNDETERMINED = "undetermined"
+
+
+async def _dual_guard(block: dict[str, Any], verify: Any) -> NodeResult:
+    """The REGRESSION half of a dual verify+guard gate.
+
+    The metric command has already passed when this runs: `command` says the deliverable is
+    done, and `guard` says nothing else got worse. Two commands rather than one because
+    they answer different questions, and a single command that mixes them cannot tell "my
+    feature works" from "I broke the suite".
+
+    **The classification is the point, and it is deterministic — no model involved.** A
+    guard failure is only a regression if the guard was PASSING before the change, which is
+    what `guard_baseline` carries (captured by a baseline node before the first mutating
+    step). Without that comparison the honest answers "you broke this" and "this was
+    already broken" are indistinguishable, and the guard exists because they must not be.
+    """
+    from personalclaw.workflows.conditions import truthy
+
+    guard_cmd = str(block.get("guard", "") or "").strip()
+    if not guard_cmd:
+        return NodeResult(
+            state=InstanceState.DONE,
+            output={"verified": True, "guard": GuardOutcome.SKIPPED.value},
+        )
+
+    guard_block = {
+        "command": guard_cmd,
+        "cwd": block.get("cwd", ""),
+        "label": "guard",
+    }
+    try:
+        outcome = await verify(guard_block)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+
+    baseline_passed = truthy(block.get("guard_baseline"))
+    if outcome is True:
+        verdict = GuardOutcome.CLEAN
+    elif outcome is None:
+        verdict = GuardOutcome.UNDETERMINED
+    elif baseline_passed:
+        verdict = GuardOutcome.REGRESSION
+    else:
+        verdict = GuardOutcome.PRE_EXISTING
+
+    output = {
+        "verified": True,
+        "guard": verdict.value,
+        "guard_command": guard_cmd,
+        "guard_passed_at_baseline": baseline_passed,
+    }
+
+    if verdict == GuardOutcome.CLEAN:
+        return NodeResult(state=InstanceState.DONE, output=output)
+    if verdict == GuardOutcome.PRE_EXISTING:
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason=(
+                "the guard command was already failing before this change (pre-existing, "
+                "not a regression)"
+            ),
+        )
+    if verdict == GuardOutcome.REGRESSION:
+        return _failed_with(
+            FailureClass.USER,
+            "regression: the guard command passed at baseline and fails now",
+            "fix what this change broke, or narrow the change until the guard passes again",
+            output,
+        )
+    if verdict == GuardOutcome.UNDETERMINED:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            "the guard command could not be run, so no regression verdict is possible",
+            "check the guard command exists and is executable in the run workspace",
+            output,
+        )
+    # Exhaustive over GuardOutcome — SKIPPED returned above. A new member must add its
+    # branch rather than inheriting a pass.
+    return _failed_with(
+        FailureClass.INTERNAL,
+        f"unhandled guard outcome {verdict.value!r}",
+        "map the new GuardOutcome member in `_dual_guard`",
+        output,
+    )
+
+
+async def dispatch_gate(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    now: float,
+    verify: Any = None,
+    completion: Any = None,
+    tiers: dict[str, str] | None = None,
+    #: The run's explicit UNATTENDED grant: who is watching decides how long a park waits for an
+    #: answer (`human_input.gate_timeout_secs`).
+    unattended: bool = False,
+    worker_model: str = "",
+    judge_model_resolver: Any = None,
+    compaction_saves: list[float] | None = None,
+    #: The run's parsed `runtime_hints.judge`. Threaded from the controller for the
+    #: same reason `worker_model` is: only the JUDGE branch reads it, and the contract's
+    #: defaults are the STRICT ones, so a None here means "this run declared no rubric" — an
+    #: empty rubric the ratchet cannot fail anything against — rather than a loosening.
+    judge_hints: JudgeHints | None = None,
+) -> NodeResult:
+    """A checkpoint the engine — never the worker — resolves.
+
+    An `expression` gate is decided here. `approval` parks in WAITING with a typed ask
+    payload. `verify_command`/`verify_script` run a deterministic validator through the
+    injected `verify` callable. A stage may REQUEST completion; only this flips it.
+    """
+    cfg, failure = engine_support.resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    raw = str(cfg.get("kind", "") or "")
+    try:
+        kind = GateKind(raw)
+    except ValueError:
+        return _fail(
+            FailureClass.USER,
+            f"unknown gate kind {raw!r}",
+            "use approval|verify_command|verify_script|event|expression",
+        )
+
+    if kind == GateKind.EXPRESSION:
+        from personalclaw.workflows.conditions import evaluate as evaluate_condition
+
+        # 🔴 The RAW expr, and PARSED rather than interpolated. This used to call
+        # `resolve(expr, ctx)` — which renders a template to a STRING — and then ask
+        # `_truthy` about the result: the shipped `{{inputs.fix}} == true` became the string
+        # `"false == true"`, and a non-empty string is truthy, so the gate could never
+        # reject. Two shipped templates carried a gate that always passed. `conditions`
+        # parses the comparison instead, and is the ONE dialect `until` loops and
+        # `success_when` also use.
+        expr = str((node.config or {}).get("expr", "") or "")
+        if not expr.strip():
+            return _fail(
+                FailureClass.USER,
+                "expression gate has no `expr`",
+                "add `config.expr` with the condition the gate tests",
+            )
+        try:
+            passed = evaluate_condition(expr, ctx)
+        except BindingError as exc:
+            return _fail(
+                FailureClass.USER,
+                f"gate expression failed to resolve: {exc}",
+                "check the referenced nodes exist",
+            )
+        # An expression gate asks nobody, so the one place its author's words are shown is its
+        # failure — the step's row and the run's ending. `message` says what it means that the
+        # condition is false; without one the condition itself is the cause. The condition stays
+        # on the output either way, for the Inspect drawer.
+        said = str(cfg.get("message", "") or "").strip()
+        return NodeResult(
+            state=InstanceState.DONE if passed else InstanceState.FAILED,
+            output={"passed": passed, "expr": expr},
+            failure=(
+                None
+                if passed
+                else Failure(
+                    failure_class=FailureClass.USER,
+                    cause_plain=said or f"gate condition is false: {expr}",
+                    remediation="inspect the upstream node output the gate tests",
+                )
+            ),
+        )
+
+    if kind in (GateKind.VERIFY_COMMAND, GateKind.VERIFY_SCRIPT):
+        block = cfg.get("verify")
+        if not isinstance(block, dict):
+            return _fail(
+                FailureClass.USER,
+                f"{raw} gate has no `verify` block",
+                "add `config.verify` with a command/script",
+            )
+        if verify is None:
+            return _fail(
+                FailureClass.INTERNAL,
+                "no verifier wired for this gate",
+                "the engine did not provide a verify callable",
+            )
+        try:
+            outcome = await verify(block)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+        # Tristate, matching loop/gates.py: None means "could not determine", which is
+        # NOT a pass — an unrunnable verifier must never certify work.
+        if outcome is None:
+            return _fail(
+                FailureClass.INTERNAL,
+                "verification could not be determined (verifier did not run)",
+                "check the command exists and is executable in the run workspace",
+            )
+        if outcome is not True:
+            return _fail(
+                FailureClass.USER,
+                "verification failed",
+                "fix the reported problems and re-run this node",
+            )
+        return await _dual_guard(block, verify)
+
+    if kind == GateKind.LADDER:
+        criteria = cfg.get("criteria")
+        if not isinstance(criteria, list) or not criteria:
+            return _fail(
+                FailureClass.USER,
+                "ladder gate has no `criteria`",
+                "declare an ordered list of criteria with rung + threshold",
+            )
+        if verify is None:
+            return _fail(
+                FailureClass.INTERNAL,
+                "no verifier wired for this gate",
+                "the engine did not provide a verify callable",
+            )
+        # Each criterion is evaluated by the injected verifier; the RULES (order, no-skip,
+        # no-averaging) live in run_ladder, which stays pure and unit-testable.
+        evaluated: dict[str, Any] = {}
+        for crit in criteria:
+            name = str((crit or {}).get("name", "") or "criterion")
+            try:
+                evaluated[name] = await verify(crit)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+        ladder = run_ladder(criteria, evaluated)
+        if ladder.passed:
+            return NodeResult(state=InstanceState.DONE, output=ladder.to_dict())
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=ladder.to_dict(),
+            failure=Failure(
+                failure_class=FailureClass.USER,
+                cause_plain=f"verification ladder rejected at the {ladder.stopped_at} rung",
+                remediation="fix the failing criterion; a hard failure is never averaged away",
+            ),
+        )
+
+    if kind == GateKind.JUDGE:
+        prompt = str(cfg.get("prompt", "") or "")
+        if not prompt.strip():
+            return _fail(
+                FailureClass.USER,
+                "judge gate has no `prompt`",
+                "add the rubric the judge should apply",
+            )
+
+        # 🔴 THE FREE RULE TIER, BEFORE the model call.
+        # A free rule tier runs BEFORE any LLM judge call: anything rule-solvable never reaches
+        # the probabilistic model, and because loop judges run every cycle this is the single
+        # biggest token saver there is. `judge_pretier.run_pretier` implements
+        # exactly that (mechanical length, failure-pattern regex, stub markers, structural checks)
+        # and shipped with **no caller** — measured: an empty artifact, a whitespace
+        # artifact and a `TODO: implement` stub all reached the judge and spent a reasoning-tier
+        # completion on output there was provably nothing to judge.
+        #
+        # Additive by construction: a judge gate that declares no `evidence` binding gets the same
+        # behaviour as before (the screen sees empty text, and empty text is only rejected when the
+        # author asked for it via `min_chars`/existence — see below). So this is a clean widening of
+        # the gate, not a second judging path. The evidence a judge screens is whatever the template
+        # binds into `evidence` (typically `{{nodes.deliverable.output.report}}`), because the gate
+        # cannot otherwise see the worker output it is judging — it only has this resolved config.
+        pre = _judge_pretier_screen(cfg)
+        if pre is not None:
+            return pre
+
+        fn = completion
+        if fn is None:
+            from personalclaw.llm_helpers import one_shot_completion
+
+            fn = one_shot_completion
+        # A judge reasons, so it resolves on the reasoning tier unless told otherwise —
+        # and the closed enum is demanded explicitly, because a judge that answers in
+        # prose forces the scheduler to route on parsed sentiment.
+        use_case = (
+            engine_support.resolve_use_case(node, tiers)
+            if node.config.get("model_tier")
+            else "reasoning"
+        )
+
+        # 🔴 CROSS-MODEL JUDGE ISOLATION. `isolation: cross_model` demands a judge on a
+        # DIFFERENT model FAMILY than the worker — a same-family "independent" judge shares the
+        # blind spots it exists to catch. This is the seam `judge_actors.plan_judge_session` /
+        # `validate_judge_model` were built for and had NO caller: before it, a template
+        # asking for cross-model independence silently got fresh-session isolation only, because the
+        # gate was never told the worker's model and `one_shot_completion` resolved by use-case,
+        # not by model. Now the engine resolves the concrete model this judge WOULD run on,
+        # validates its family against the worker's, and PINS it so the judge provably runs it.
+        #
+        # Fail CLOSED. An unsatisfiable isolation guarantee must never certify work — the same rule
+        # the `verify_command` tristate applies above (a verifier that could not run is not a pass).
+        # Silently downgrading to fresh is the exact defect this step fixes, so it is not an option.
+        judge_model = ""
+        if str(cfg.get("isolation", "") or "").strip().lower() == "cross_model":
+            from personalclaw.workflows.judge_actors import plan_judge_session, validate_judge_model
+
+            spec = plan_judge_session(isolation="cross_model", worker_model=worker_model)
+            # A blank worker family is ALSO unsatisfiable: `validate_judge_model` compares the
+            # candidate against `avoid_family`, and an empty avoid_family would accept any
+            # determinable candidate — certifying "different from the worker" without knowing the
+            # worker. Not knowing what to differ from is not proof of difference, so fail closed
+            # here rather than letting the empty-string comparison read as a pass.
+            if not spec.avoid_family:
+                return _fail(
+                    FailureClass.USER,
+                    "cross_model judge isolation unsatisfiable: the worker's model family could "
+                    "not be determined, so a different-family judge cannot be proven",
+                    "bind a model for the worker tier so its family is known, or use "
+                    "isolation: fresh",
+                )
+            resolve_candidate = judge_model_resolver or engine_support.resolve_axis_model
+            candidate = str(resolve_candidate(use_case) or "")
+            # `_family_of` reads the family out of a bare id OR a "Provider:model_id" ref, so the
+            # active-chain ref both the worker and the candidate carry validates directly.
+            ok, reason = validate_judge_model(spec, candidate)
+            if not ok:
+                return _fail(
+                    FailureClass.USER,
+                    f"cross_model judge isolation unsatisfiable: {reason}",
+                    "configure a different-family model for the judge tier, or use "
+                    "isolation: fresh",
+                )
+            judge_model = candidate
+
+        # 🔴 THE CONTRACT, ON THE LIVE PATH. This used to append `Respond with EXACTLY
+        # ONE word` — which, on `goal-pursuit-open-ended`'s `accept` gate, CONTRADICTED the
+        # template's own "Return JSON: {...}" instruction, and on the other 6 was the only output
+        # shape the judge was given. A bare word cannot carry proof, scores or a rubric result, so
+        # every rule `judge_contract` states was inexpressible here. Now the instruction and the
+        # validation are generated from ONE `JudgeHints`: `judge_instruction` names the exact
+        # rubric keys, the proof requirement and the forbidden modes that `validate_verdict` will
+        # then hold the answer to. See that module's posture section for why generating both from
+        # one object is what keeps enforcement off the 7 live templates' throat.
+        hints = judge_hints or JudgeHints()
+        # 🔴 The judge's evidence is BLINDED and role-filtered (closing
+        # `judge_actors.blind_provenance` / `assemble_judge_evidence`, which had no caller because
+        # the one-word gate produced no evidence to blind). Two typed parts, both in
+        # `JUDGE_EVIDENCE_ROLES`: the template's rubric prose is `spec`, and whatever the gate
+        # binds into `evidence` is `tool_output` — a MEASUREMENT, not the worker's prose about it.
+        # Blinding matters because the controller appends a retry hint to a node's prompt and a
+        # loop body renders `{{iter}}`: "attempt 3 of 5" tells a judge how much patience is left,
+        # which is exactly the pressure that produces a lenient pass.
+        from personalclaw.workflows.judge_actors import Actor, assemble_judge_evidence
+        from personalclaw.workflows.judge_actors import resolve_transition as rule_transition
+
+        blinded = assemble_judge_evidence(
+            [
+                {"role": "spec", "content": prompt},
+                {"role": "tool_output", "content": str(cfg.get("evidence", "") or "")},
+            ],
+            blind=True,
+        )
+        rubric_prose = str(blinded[0].get("content", "")) if blinded else prompt
+        measured = str(blinded[1].get("content", "")) if len(blinded) > 1 else ""
+        # Appended only when the prompt does not already carry it. 5 of the 7 bundled
+        # judge gates bind the SAME node output into both `prompt` and `evidence`, so appending
+        # unconditionally would double the largest chunk of a prompt on a gate that runs every loop
+        # iteration. Compared AFTER blinding, so the two sides are in the same form. A gate whose
+        # evidence is NOT already in its prompt now shows it to the judge for the first time.
+        if measured and measured not in rubric_prose:
+            rubric_prose = f"{rubric_prose}\n\nThe measured evidence:\n{measured}"
+        instruction = judge_instruction(rubric_prose, hints)
+        # 🔴 `judge_samples` was DECLARED by a shipped template and READ BY NOTHING.
+        # `goal-pursuit-open-ended`'s terminal `accept` gate carries `judge_samples: 3`, and its own
+        # prompt tells the model why: "three independent samples of you are being asked — a single
+        # judgement on a terminal accept was measured to be indistinguishable from noise." Measured
+        # against the live gate: **one** sample was taken, and a model returning PASS,REJECT,REJECT
+        # ACCEPTED the run on the first word. The majority verdict never happened.
+        #
+        # The NODE keeps the say over the count, not `hints.judge_samples`: the contract's default
+        # is 3, and inheriting it here would have tripled the model spend of all 7 live gates in a
+        # change about enforcement. Aggregation is now `judge_contract.aggregate_samples` itself —
+        # the merged `Verdict` removed the cross-vocabulary reason this branch had to restate it.
+        samples = engine_support._judge_sample_count(cfg)
+        # The contract's standing cross-check, when the gate declares a deterministic one. No
+        # bundled judge gate does today, so this costs nothing; without it,
+        # `validate_verdict`'s "a judge PASS that contradicts `exit 1`" escalation could never
+        # fire, which is a control that reads as present and is not.
+        fallback_result: bool | None = None
+        if isinstance(cfg.get("verify"), dict) and verify is not None:
+            try:
+                fallback_result = await verify(cfg["verify"])
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("judge fallback check failed to run", exc_info=True)
+        judged: list[JudgeVerdict] = []
+        texts: list[str] = []
+        # The pin rides along ONLY when cross_model resolved one — a non-cross gate calls exactly as
+        # before (byte-for-byte), so the completion seam the whole loop library already injects is
+        # untouched. A cross_model gate pins the validated different-family model.
+        pin = {"model": judge_model} if judge_model else {}
+        # ONE recorder across every sample (#3166): the samples send the SAME instruction, so what
+        # the provider received is one fact, not `samples` of them. `sends` counts the publications
+        # if a reader ever needs to know how many calls it covered. Scoped to the sampling loop
+        # only — the `wire` object stays readable after the `with` exits, which is what lets the
+        # eight returns below share it without indenting all of them.
+        with capture_wire_prompt() as wire:
+            for _ in range(samples):
+                try:
+                    # Through the compaction ladder, same as `infer`. A judge on a
+                    # long-horizon loop reads the accumulated evidence, so its instruction is one
+                    # of the two prompts that actually grows toward the window. The `model` pin is
+                    # forwarded, not bypassed: the ladder must measure against the model that will
+                    # RUN — a cross-family judge can have a different window than the worker axis,
+                    # and budgeting against the wrong one is how the check silently stops applying.
+                    text = await complete_with_compaction(
+                        fn,
+                        instruction,
+                        use_case=use_case,
+                        output_type=None,
+                        saves=compaction_saves,
+                        # Named, not `**pin`: the ladder types `model` as `str`, and the pin dict
+                        # is only ever that one key. Splatting it would erase the type here and
+                        # would hide a future key rename behind a runtime TypeError.
+                        model=str(pin.get("model", "")),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    return NodeResult(
+                        state=InstanceState.FAILED,
+                        failure=classify_exception(exc),
+                        **engine_support.journalled_prompt(wire, instruction),
+                    )
+                texts.append(str(text))
+                answer = parse_judge_json(text)
+                if answer is None:
+                    # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a
+                    # terminal accept decided from 2 of 3 samples is a quieter version of the
+                    # single-sample bug that sampling exists to fix.
+                    unparseable = True
+                    break
+                judged.append(
+                    validate_verdict(
+                        answer, hints, fallback_result=fallback_result, evidence_text=rubric_prose
+                    )
+                )
+            else:
+                unparseable = False
+        text = texts[-1] if texts else ""
+        # 🔴 Tokens are summed over EVERY sample, not just the last. Measured on my own first
+        # draft: a `judge_samples: 3` gate reported 22 tokens where it had really spent ~66 —
+        # so the loop breaker's `max_tokens` and the run's cost cap would under-count 3×
+        # exactly where sampling makes a gate most expensive. A meter that reads low on the
+        # expensive path is worse than no meter, because the cap silently stops binding.
+        sampled_tokens = sum(_estimate_tokens(instruction, body) for body in texts)
+        # `judge_evidence` is assembled for EVERY outcome including the protocol failure, so the
+        # controller's `judge_verdict` ledger event exists even when the judge could not answer.
+        # A gate that fails without leaving evidence is the one an operator cannot diagnose.
+        sample_values = [v.verdict.value for v in judged]
+        if unparseable:
+            # Not a verdict: the judge did not answer in the contract shape. NAMED as PROTOCOL and
+            # never a silent pass — guessing would make a control-flow decision out of noise, and
+            # a bare "PASS" is exactly the shape that used to be accepted with no proof at all.
+            return NodeResult(
+                state=InstanceState.FAILED,
+                output={
+                    "verdict": "",
+                    "judge_evidence": {
+                        "samples": sample_values,
+                        "texts": [t[:2000] for t in texts],
+                        "sample_count": samples,
+                        "aggregated": "",
+                        "protocol_error": True,
+                    },
+                    "judge_status": "kept",
+                },
+                failure=Failure(
+                    failure_class=FailureClass.PROTOCOL,
+                    cause_plain=(
+                        "judge did not return the contract JSON object: " f"{str(text)[:120]}"
+                    ),
+                    remediation="tighten the rubric, or use a ladder gate for a "
+                    "deterministic check",
+                ),
+                tokens=sampled_tokens,
+                **engine_support.journalled_prompt(wire, instruction),
+            )
+        decision = aggregate_samples(judged, hints)
+        state, failure = _judge_gate_outcome(decision, node)
+        # Carry the evidence chain out on the node output so the controller can emit a
+        # `judge_verdict` Run Ledger event at the settle.
+        # `judge_evidence` holds the per-sample verdicts + raw texts (the proof a reader replays);
+        # `judge_status` is "discard" when a sample was outvoted by the median aggregation.
+        judge_status = (
+            "kept" if not sample_values or decision.verdict.value in sample_values else "discard"
+        )
+        # 🔴 THE ACTOR RULING (closing `judge_actors.check_transition` /
+        # `resolve_transition`, which had no caller because nothing carried an actor to a node
+        # transition). The gate DOES: an independent judge is the JUDGE actor and is
+        # terminal-capable, but a gate that opted into `self_judge` is the producer grading itself
+        # — the WORKER actor, which may never reach `done`. `resolve_transition` redirects that to
+        # `review`, and review is realized as the engine's existing park-and-ask: a self-judged
+        # PASS is a REQUEST for adjudication, so it waits for a human instead of certifying
+        # itself. No bundled template opts in today, which is exactly why this cannot outage one.
+        actor = Actor.JUDGE if requires_fresh_judge(node.config) else Actor.WORKER
+        effective, note = rule_transition(actor, state.value)
+        output = {
+            "verdict": decision.verdict.value,
+            "judge_verdict": decision.to_dict(),
+            "judge_evidence": {
+                "samples": sample_values,
+                "texts": [t[:2000] for t in texts],
+                "sample_count": samples,
+                "aggregated": decision.verdict.value,
+                "scores": dict(decision.scores),
+                "overall": decision.overall,
+                "shortfalls": list(decision.shortfalls),
+                "invalid_reason": decision.invalid_reason,
+            },
+            "judge_status": judge_status,
+        }
+        if effective == "review" or state is InstanceState.WAITING:
+            # Both parks go through the SAME payload as an `approval` gate: the typed ask and the
+            # deadline. Returning WAITING without them would wedge the node — nothing to
+            # answer and no clock to wake it — which is a quieter failure than any verdict, and
+            # the reason a NEEDS_INPUT verdict cannot simply borrow the state.
+            from personalclaw.workflows.human_input import gate_timeout_secs
+
+            timeout = gate_timeout_secs(cfg, unattended=unattended)
+            parked = dict(output)
+            if effective == "review":
+                parked["actor_note"] = note
+            return NodeResult(
+                state=InstanceState.WAITING,
+                output=parked,
+                wake_at=now + float(timeout) if timeout > 0 else 0.0,
+                ask=_ask_payload(node, cfg),
+                tokens=sampled_tokens,
+                **engine_support.journalled_prompt(wire, instruction),
+            )
+        return NodeResult(
+            state=state,
+            output=output,
+            failure=failure,
+            tokens=sampled_tokens,
+            **engine_support.journalled_prompt(wire, instruction),
+        )
+
+    # approval / event: park for a human or an external signal, each with its own ask
+    # (`_ask_payload`). The deadline is the owner's approval window, like every other approval's; a
+    # run started unattended has nobody to answer, so its gate gives up fast and the run says so
+    # rather than wedging.
+    from personalclaw.workflows.human_input import gate_timeout_secs
+
+    timeout_secs = gate_timeout_secs(cfg, unattended=unattended)
+    wake = now + float(timeout_secs) if timeout_secs > 0 else 0.0
+    return NodeResult(
+        state=InstanceState.WAITING,
+        wake_at=wake,
+        ask=_ask_payload(node, cfg),
+    )
+
+
+def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
+    """The typed human-input ask. One renderer covers every gate, which is why
+    the shape is fixed by `human_input.Ask` rather than left to each template.
+
+    An `event` gate asks EVENT, from its own kind and never from `ask_kind`. It waits for
+    something to happen, and what wakes it answers it with whatever it carries: a monitor's
+    self-scheduled trigger carries the message it was armed with. Every gate used to ask for an
+    approval, which takes only a yes or a no, so `goal-pursuit-monitor`'s own wake was refused
+    (`WF_RESUME_INVALID_ANSWER`) and the monitor never ran a second check.
+    """
+    from personalclaw.workflows.human_input import Ask, AskKind
+
+    event = str(cfg.get("kind", "") or "") == GateKind.EVENT.value
+    return Ask.from_dict(
+        {
+            "kind": AskKind.EVENT.value if event else cfg.get("ask_kind", "approval"),
+            # 🪤 NO `or "Approval needed"` HERE. Manufacturing a prompt made this field always
+            # truthy, which killed the identifying fallback in all THREE surfaces that render it:
+            #
+            #   attention.ask_title      → "{workflow}: {node_id} needs your input"   (inbox row)
+            #   needs_input._blocker_text → the failure cause, else "`{node_id}` is waiting"
+            #   WorkflowAsk.tsx          → "This run needs your input."               (gate panel)
+            #
+            # Each of those was already written and unreachable, and the literal that replaced them
+            # identifies nothing: 7 of the 19 gates in the bundled templates author no prompt or
+            # message, so `code-project` alone raised three inbox rows all titled "Approval needed".
+            # An absent prompt is a supported state of the contract (`Ask.prompt` defaults to "").
+            "prompt": str(cfg.get("prompt", "") or cfg.get("message", "") or ""),
+            "fields": cfg.get("fields") or [],
+            "choices": cfg.get("choices") or [],
+            "node_id": node.id,
+            "unattended_suppress": strict_bool(
+                cfg.get("unattended_suppress"), field="unattended_suppress"
+            ),
+        }
+    ).to_dict()
+
+
+def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeResult:
+    """Refuse a node's completion until its declared `required_artifacts` exist.
+
+    Applied at the dispatch seam rather than inside each producing dispatcher, so a new
+    node kind inherits the gate instead of silently skipping it. A node that CLAIMS to have
+    written files but did not is the single most common way agent-declared completion lies.
+    """
+    patterns = (node.config or {}).get("required_artifacts")
+    if not isinstance(patterns, list) or not patterns:
+        return result
+    if result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
+        return result  # already failing; the artifact gate adds nothing
+    if workspace is None:
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=result.output,
+            failure=Failure(
+                failure_class=FailureClass.INTERNAL,
+                cause_plain="required_artifacts declared but the run has no workspace",
+                remediation="the engine did not provide a workspace path for this run",
+            ),
+        )
+    from pathlib import Path
+
+    check = check_required_artifacts([str(p) for p in patterns], Path(workspace))
+    if check.satisfied:
+        payload = result.output
+        # The digests ride along so the ledger can later tell whether the artifact that
+        # satisfied the gate is still the one on disk.
+        if isinstance(payload, dict):
+            payload = {**payload, "artifacts": check.digests}
+        result.output = payload
+        return result
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output=result.output,
+        failure=Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=("required artifacts missing: " + ", ".join(check.missing)),
+            remediation="the node reported success without producing its declared files; "
+            "check where it actually wrote them",
+        ),
+    )
+
+
+def apply_judge_contract(
+    node: Node,
+    result: NodeResult,
+    judge_hints: JudgeHints | None,
+    *,
+    fallback_result: bool | None = None,
+) -> NodeResult:
+    """Validate a judge STAGE's output against the contract.
+
+    Six bundled templates carry a `judge` stage whose prompt asks for this exact object —
+    `{reasoning, verdict, scores, evidence_refs, proof, cannot_judge}` — and before this seam
+    NOTHING validated it and NOTHING read it: `dispatch_stage`/`dispatch_infer` return DONE for
+    any parseable JSON whatever the verdict says. A contract-shaped verdict was produced every
+    loop iteration and discarded.
+
+    Applied at the ONE dispatch seam, like `apply_artifact_gate`, so a node kind cannot skip it.
+    Opt-in via `config.judge_contract: true`, because the seam sees every node and only a judge's
+    output is a verdict.
+
+    **It validates and BINDS; it does not fail the node.** Deliberate, and the difference between
+    a gate and an outage: those stage prompts tell the model in as many words that "reporting
+    real issues is the normal outcome", so a REJECT is expected traffic on 6 live templates and
+    failing on it would convert normal operation into a failed run. What changes is that the
+    bound output is now the ENGINE's record rather than the model's claim — `overall` recomputed
+    from the scores, a PASS that cited no proof carried as `valid: false`, and `contract_valid`
+    for the template's own `success_when` to read. The hard teeth belong to the judge GATE, where
+    the engine owns completion.
+
+    The model's own keys survive underneath the validated ones: a template may read something
+    the contract does not model (`marginal_value`), and a loop's `progress_field` may point at
+    any key in the body's output, so dropping them would break a reader this seam never saw.
+
+    *fallback_result* is the run's own deterministic check of the work, when it has one (a stage
+    judging a run that keeps its document passes it: `stage_settlement._settled_stage_output`); a
+    PASS it contradicts is escalated, the contract's standing cross-check.
+    """
+    if yes_or_no((node.config or {}).get("judge_contract")) is not True:
+        return result
+    if result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
+        return result  # already failing; a verdict on top of it adds nothing
+    hints = judge_hints or JudgeHints()
+    raw = result.output if isinstance(result.output, dict) else None
+    decision = validate_verdict(raw, hints, fallback_result=fallback_result)
+    payload: dict[str, Any] = dict(raw or {})
+    payload.update(decision.to_dict())
+    payload["contract_valid"] = decision.valid and not decision.protocol_error
+    result.output = payload
+    return result
+
+
+def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
+    """Whether a restricted run must skip this node, resolved from the RUN's inherited mode.
+
+    The mode lives on the run record, not on the node — a node cannot know whether the run it
+    belongs
+    to was launched from an incognito chat. Best-effort: if the run cannot be read, nothing is
+    skipped, because a lookup failure must not silently stop doing the work the user asked for. The
+    fail-closed direction in this feature is about the memory MODE (an unknown mode reads as
+    restricted), not about whether the run executes.
+    """
+    if not run_id:
+        return False, ""
+    try:
+        from personalclaw.workflows import store
+
+        # `store.get`, not `store.load` — and the mode lives in the run's `extra` dict, not a
+        # column.
+        # An earlier version called `store.load()` and read `run.memory_mode`; NEITHER
+        # exists, so the helper would have raised on every stage and the `except` would have
+        # swallowed
+        # it — an enforcement control that silently never fires, which is the exact class this
+        # program keeps finding. `extra` is already persisted and round-tripped, so the mode
+        # needs no
+        # schema change.
+        run = store.get(run_id)
+        raw = (getattr(run, "extra", None) or {}).get(ownership.RUN_MODE_KEY, "") if run else ""
+        mode = ownership.parse_mode(raw)
+    except Exception:
+        logger.debug("restriction lookup failed for run %s", run_id, exc_info=True)
+        return False, ""
+    return ownership.skips_node(cfg, mode)
+
+
+# ── output contract ──────────────────────────────────────────────────────────
+
+
+def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
+    """A ~0.3ms mechanical check before a node is marked complete.
+
+    Runs BEFORE any `{{nodes.x.output}}` binding resolves, so malformed output never
+    silently propagates through the graph. Returns "" when the value conforms, or a
+    human-readable problem.
+    """
+    from personalclaw.llm_helpers import parse_llm_json, parse_llm_json_value
+
+    if contract.get("must_be_json"):
+        if isinstance(value, str):
+            if parse_llm_json_value(value) is None:
+                return "expected JSON, got unparseable text"
+        elif not isinstance(value, (dict, list)):
+            return f"expected JSON object/array, got {type(value).__name__}"
+
+    required = contract.get("required_keys")
+    if isinstance(required, list) and required:
+        target = value
+        if isinstance(target, str):
+            target = parse_llm_json(target)
+        if not isinstance(target, dict):
+            return "required_keys declared but output is not an object"
+        missing = [k for k in required if str(k) not in target]
+        if missing:
+            return f"missing required keys: {', '.join(str(m) for m in missing)}"
+
+    text = value if isinstance(value, str) else None
+    if text is not None:
+        min_len = contract.get("min_length")
+        if isinstance(min_len, int) and len(text) < min_len:
+            return f"output shorter than min_length {min_len}"
+        max_len = contract.get("max_length")
+        if isinstance(max_len, int) and len(text) > max_len:
+            return f"output longer than max_length {max_len}"
+        forbidden = contract.get("forbidden_phrases")
+        if isinstance(forbidden, list):
+            low = text.lower()
+            hit = [p for p in forbidden if str(p).lower() in low]
+            if hit:
+                return f"output contains forbidden phrase: {hit[0]}"
+    return ""
+
+
+#: How many key names a shortfall notice names before it summarizes the rest. A notice reaches a
+#: ledger row, and an output with four hundred keys would otherwise write four hundred names into
+#: one; naming the first few and counting the remainder stays actionable at a bounded size.
+_SHORTFALL_NAMES = 8
+
+
+def _name_list(names: list[str]) -> str:
+    head = names[:_SHORTFALL_NAMES]
+    rest = len(names) - len(head)
+    return ", ".join(head) + (f" (+{rest} more)" if rest > 0 else "")
+
+
+#: What arrived instead of an object, in words a template author reads rather than Python's type
+#: names: "got text, not an object" says what happened, "got a str" makes them translate it.
+_ARRIVED_KIND = {
+    str: "text",
+    list: "a list",
+    int: "a number",
+    float: "a number",
+    bool: "true or false",
+    type(None): "nothing",
+}
+
+
+def schema_shortfall(schema: Any, value: Any) -> str:
+    """What `schema` declared that `value` did not carry — "" when it conformed (#3545).
+
+    KEYS ONLY, deliberately. The defect this names is a worker that ignored the declared shape:
+    the output arrives without the keys the prompt asked for, a downstream `{{last.output.x}}`
+    then resolves to its declared `default`, and nothing says the value is a fallback rather than
+    an answer. Comparing declared TYPES as well would widen this from an observation into a
+    judgement — `"number"` against an int-valued float, `"object"` against a list of one object —
+    and a notice that fires on conforming output is worse than no notice at all.
+
+    Returns a sentence naming BOTH facts, because only naming one sends an author hunting: what
+    the schema asked for, and what actually arrived.
+    """
+    if not isinstance(schema, dict) or not schema:
+        return ""
+    declared = sorted(str(k) for k in schema)
+    target = value
+    if isinstance(target, str):
+        from personalclaw.llm_helpers import parse_llm_json_value
+
+        # An `infer` node's own parse already ran; this catches a model that answered with a JSON
+        # STRING ("…prose…") — valid JSON, and no object could ever carry the declared keys.
+        parsed = parse_llm_json_value(target)
+        if parsed is not None:
+            target = parsed
+    if not isinstance(target, dict):
+        # A blank answer is not "text": a stage whose subagent returned nothing would otherwise
+        # read as one that answered in prose.
+        blank = isinstance(target, str) and not target.strip()
+        kind = "nothing" if blank else _ARRIVED_KIND.get(type(target), f"a {type(target).__name__}")
+        return (
+            f"the output ignored its declared schema: it asked for "
+            f"{_name_list(declared)} and got {kind}, not an object"
+        )
+    missing = [k for k in declared if k not in target]
+    if not missing:
+        return ""
+    arrived = sorted(str(k) for k in target)
+    # "1 of 2 declared keys is missing": the noun follows the declared count, the verb the missing.
+    noun = "key" if len(declared) == 1 else "keys"
+    verb = "is" if len(missing) == 1 else "are"
+    return (
+        f"the output ignored its declared schema: {len(missing)} of {len(declared)} declared "
+        f"{noun} {verb} missing ({_name_list(missing)}); got {_name_list(arrived) or 'no keys'}"
+    )
+
+
+def apply_declared_schema(node: Node, result: NodeResult, observed: Any) -> NodeResult:
+    """Fail a step whose answer ignored its declared `schema`, naming what was asked for and what
+    came (`schema_shortfall`).
+
+    A step that declares a schema has not done its step when its answer is not in it: the run read
+    such a worker as Done, its declared keys resolved to their defaults downstream, and nothing
+    said the values were fallbacks rather than answers. So it FAILS, as PROTOCOL — the class
+    `dispatch_infer` already gives a model whose JSON would not parse — and the retry policy reads
+    it like any other failure: not a retryable class, so it is not retried unless the step's own
+    retry rule says otherwise. Its output is kept on the failure for the inspector, never bound.
+
+    `observed` is what the node's own work returned (a dispatcher's output, or a spawned stage's
+    text), taken BEFORE the engine's seams add keys to it: `apply_judge_contract` writes every key
+    a judge schema declares whatever the model said, and the artifact gate adds `artifacts`. A key
+    the engine supplied is not the worker honouring its schema.
+
+    A JUDGE (`judge_contract`) is held to the contract instead of to every key: an answer that is
+    not an object at all fails here, but a verdict that left out a key the contract defaults (an
+    empty `cannot_judge`, no `proof` on a REJECT) is a verdict, and the contract already reads it.
+
+    The gate applies only where it can be true:
+
+    * **A non-empty dict `schema`.** Nothing is declared otherwise, so there is nothing to ignore.
+    * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why. A spawned stage is
+      still RUNNING at the dispatch seam, so it is gated at its settle instead
+      (`stage_settlement._settled_stage_output`), through this same helper.
+    * **Something observed.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a
+      claim already held) produce `output=None`; why they produced nothing is already in
+      `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
+    """
+    from personalclaw.workflows.models import SUCCESS_STATES
+
+    schema = (node.config or {}).get("schema")
+    if not isinstance(schema, dict) or not schema:
+        return result
+    if result.state not in SUCCESS_STATES or observed is None:
+        return result
+    shortfall = schema_shortfall(schema, observed)
+    if not shortfall:
+        return result
+    if (node.config or {}).get("judge_contract") and _is_object(observed):
+        return result
+    result.state = InstanceState.FAILED
+    result.failure = Failure(
+        failure_class=FailureClass.PROTOCOL,
+        cause_plain=shortfall,
+        remediation=(
+            "the step's answer must carry what its schema declares; check that its prompt asks "
+            "for exactly those keys, then run it again"
+        ),
+    )
+    return result
+
+
+def _is_object(observed: Any) -> bool:
+    """Whether a step's answer is an object, read as `schema_shortfall` reads it."""
+    if isinstance(observed, str):
+        from personalclaw.llm_helpers import parse_llm_json_value
+
+        parsed = parse_llm_json_value(observed)
+        if parsed is not None:
+            observed = parsed
+    return isinstance(observed, dict)
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _action_output(result: Any) -> Any:
+    """A provider's canonical output. Prefers parsed JSON stdout (the BYOI contract is
+    "stdout = one JSON object"), falling back to raw text."""
+    from personalclaw.llm_helpers import parse_llm_json_value
+
+    stdout = getattr(result, "stdout", "") or ""
+    parsed = parse_llm_json_value(stdout)
+    if parsed is not None:
+        return parsed
+    return {
+        "stdout": stdout[:8000],
+        "exit_code": int(getattr(result, "exit_code", 0) or 0),
+        "outcome": getattr(result, "outcome", "") or "",
+    }
+
+
+def _estimate_tokens(prompt: str, response: str) -> int:
+    """A nominal chars-per-token floor when the provider reported no usage.
+
+    Deliberately an ESTIMATE and named as one: budgets treat it as a floor so an
+    unreported call still costs something against the cap, rather than being free and
+    letting an unmetered provider run away.
+    """
+    return max(1, (len(prompt) + len(response)) // NOMINAL_CHARS_PER_TOKEN)
+
+
+# ── dispatch table ───────────────────────────────────────────────────────────
+
+
+async def dispatch(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    now: float = 0.0,
+    subagents: Any = None,
+    depth: int = 0,
+    run_id: str = "",
+    #: The run's owning project, threaded for the same reason `run_id` is: an action provider
+    #: attributes what it writes without the template having to restate an id it cannot know
+    #: Only the ACTION branch reads it.
+    project_id: str = "",
+    #: This node instance's engine key (`root.children[0]`, `root.body#2`). Threaded for the third
+    #: time for the same reason as `run_id`/`project_id`, and it is the one id a provider CANNOT
+    #: reconstruct: a ledger row stamped with a bare node id lands outside every per-node slice
+    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Read by the
+    #: ACTION branch for that, and by the STAGE branch as its no-double-execution claim target — a
+    #: node id names a SPEC position, not a unit of work, so it cannot be one (`claim_key`).
+    instance_path: str = "",
+    cwd: str = "",
+    tiers: dict[str, str] | None = None,
+    completion: Any = None,
+    get_provider: Any = None,
+    verify: Any = None,
+    timeout: int = 60,
+    #: The run supervisor, for `subworkflow` only — it is the one dispatcher that needs to
+    #: CREATE and drive another run. Injected rather than imported so a test can nest without a
+    #: gateway, and so the child is driven by the same supervisor that will adopt it on restart.
+    supervisor: Any = None,
+    #: `() -> None` — feeds the STALL clock. A dispatcher that does bounded work in
+    #: observable steps calls it; the controller resets `last_progress` on each call, which is what
+    #: makes `timeout_stall` mean "silent" rather than merely "slow". Without it the two timeout
+    #: knobs collapse into one and a steadily-working node is killed as wedged.
+    on_progress: Any = None,
+    #: The concrete model the run's workers resolve to — the family a `cross_model` judge gate must
+    #: AVOID. Threaded from the controller so the gate can demand a different family;
+    #: only the JUDGE branch of `dispatch_gate` reads it, so a run with no cross_model gate is
+    #: unaffected.
+    worker_model: str = "",
+    #: This node's compaction-save history, for the anti-thrashing rule. Owned by the
+    #: controller and keyed per node id, so it survives a retry and a loop body's iterations —
+    #: which is the repetition `should_compact` exists to stop. A None here (a direct dispatcher
+    #: call in a test) simply means no history: the ladder still compacts, it just cannot notice
+    #: that it has stopped helping.
+    compaction_saves: list[float] | None = None,
+    #: The run's parsed `runtime_hints.judge`. Only the JUDGE gate branch and the
+    #: judge-contract seam below read it.
+    judge_hints: JudgeHints | None = None,
+    #: The run's explicit UNATTENDED grant. The STAGE branch reads it (see `dispatch_stage`), and
+    #: the GATE branch, whose park waits the owner's approval window unless nobody is watching.
+    unattended: bool = False,
+    #: The effect's idempotency key (`effects.effect_key`). Only the ACTION branch reads it.
+    idempotency_key: str = "",
+    #: A person's answer to this step's last park, on the dispatch it started. ACTION only.
+    answer: Any = None,
+    #: The start the owner allowed for this instance's current attempt. STAGE only.
+    approved_start: tuple[str, float] = ("", 0.0),
+) -> NodeResult:
+    """Route one node to its dispatcher.
+
+    A container reaching here is an engine bug, not a spec problem — the frontier is
+    supposed to recurse into containers and only ever hand back leaves. It is reported as
+    INTERNAL so the distinction stays visible in the ledger.
+    """
+    clock = now or time.time()
+    result = await _dispatch_inner(
+        node,
+        ctx,
+        now=clock,
+        subagents=subagents,
+        depth=depth,
+        run_id=run_id,
+        project_id=project_id,
+        instance_path=instance_path,
+        cwd=cwd,
+        tiers=tiers,
+        completion=completion,
+        get_provider=get_provider,
+        verify=verify,
+        timeout=timeout,
+        supervisor=supervisor,
+        on_progress=on_progress,
+        worker_model=worker_model,
+        compaction_saves=compaction_saves,
+        judge_hints=judge_hints,
+        unattended=unattended,
+        idempotency_key=idempotency_key,
+        answer=answer,
+        approved_start=approved_start,
+    )
+    result = engine_support.masked(result, ctx)  # before anything below keeps or publishes it
+    # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
+    # declared-schema gate may compare. The judge contract writes every key a judge schema
+    # declares whatever the model said, so the final output cannot tell "the model answered in the
+    # declared shape" from "the engine filled it in".
+    observed = result.output
+    # One seam, so a new node kind cannot silently skip the artifact gate.
+    result = apply_artifact_gate(node, result, cwd or None)
+    # The SAME seam for the judge contract: a node declaring `judge_contract: true`
+    # has its output validated against the contract before anything can bind it.
+    result = apply_judge_contract(node, result, judge_hints)
+    # The SAME seam for the declared schema: after the gates, so it reads the final state (a gate
+    # can still fail the node), comparing `observed` rather than the output the gates rebuilt.
+    result = apply_declared_schema(node, result, observed)
+    # The SAME seam for `publish:`, for the same reason: a new node kind inherits the
+    # publish path instead of quietly dropping a declared output. Ordered after every gate
+    # deliberately — publishing the output of a node that failed one would store a deliverable
+    # the run does not stand behind.
+    return await publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+
+
+_LEAF_DISPATCHERS = {
+    NodeKind.TRANSFORM: dispatch_transform,
+    NodeKind.INFER: dispatch_infer,
+    NodeKind.VISUALIZE: dispatch_visualize,
+    NodeKind.STAGE: dispatch_stage,
+    NodeKind.BRANCH: dispatch_branch,
+    NodeKind.ACTION: dispatch_action,
+    NodeKind.WAIT: dispatch_wait,
+    NodeKind.GATE: dispatch_gate,
+    NodeKind.SUBWORKFLOW: dispatch_subworkflow,
+}
+
+
+def node_commits_effects(node: Node) -> bool:
+    """Whether the node's actual dispatcher may commit effects through tools."""
+    dispatcher = _LEAF_DISPATCHERS.get(node.kind)
+    return bool(dispatcher and getattr(dispatcher, _COMMITS_EFFECTS_ATTR, False))
+
+
+async def _dispatch_inner(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    now: float = 0.0,
+    subagents: Any = None,
+    depth: int = 0,
+    run_id: str = "",
+    project_id: str = "",
+    instance_path: str = "",
+    cwd: str = "",
+    tiers: dict[str, str] | None = None,
+    completion: Any = None,
+    get_provider: Any = None,
+    verify: Any = None,
+    timeout: int = 60,
+    supervisor: Any = None,
+    on_progress: Any = None,
+    worker_model: str = "",
+    compaction_saves: list[float] | None = None,
+    judge_hints: JudgeHints | None = None,
+    unattended: bool = False,
+    idempotency_key: str = "",
+    answer: Any = None,
+    approved_start: tuple[str, float] = ("", 0.0),
+) -> NodeResult:
+    kind = node.kind
+    dispatcher = _LEAF_DISPATCHERS.get(kind)
+    clock = now or time.time()
+    if dispatcher is dispatch_transform:
+        return await dispatcher(node, ctx)
+    if dispatcher is dispatch_infer:
+        return await dispatcher(
+            node, ctx, tiers=tiers, completion=completion, compaction_saves=compaction_saves
+        )
+    if dispatcher is dispatch_visualize:
+        return await dispatcher(node, ctx, completion=completion)
+    if dispatcher is dispatch_stage:
+        return await dispatcher(
+            node,
+            ctx,
+            subagents=subagents,
+            depth=depth,
+            run_id=run_id,
+            project_id=project_id,
+            instance_path=instance_path,
+            cwd=cwd,
+            unattended=unattended,
+            approved_start=approved_start,
+        )
+    if dispatcher is dispatch_branch:
+        return await dispatcher(node, ctx)
+    if dispatcher is dispatch_action:
+        return await dispatcher(
+            node,
+            ctx,
+            get_provider=get_provider,
+            timeout=timeout,
+            run_id=run_id,
+            project_id=project_id,
+            instance_path=instance_path,
+            cwd=cwd,
+            idempotency_key=idempotency_key,
+            answer=answer,
+        )
+    if dispatcher is dispatch_wait:
+        return await dispatcher(node, ctx, now=clock)
+    if dispatcher is dispatch_gate:
+        return await dispatcher(
+            node,
+            ctx,
+            now=clock,
+            verify=verify,
+            completion=completion,
+            tiers=tiers,
+            unattended=unattended,
+            worker_model=worker_model,
+            compaction_saves=compaction_saves,
+            judge_hints=judge_hints,
+        )
+    if dispatcher is dispatch_subworkflow:
+        return await dispatcher(
+            node,
+            ctx,
+            depth=depth,
+            run_id=run_id,
+            supervisor=supervisor,
+            timeout=timeout,
+            on_progress=on_progress,
+        )
+    return _fail(
+        FailureClass.INTERNAL,
+        f"{kind.value} is a container and has no dispatcher",
+        "this is an engine bug — the frontier should never return a container",
+    )

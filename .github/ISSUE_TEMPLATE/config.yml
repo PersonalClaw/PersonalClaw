@@ -1,0 +1,24 @@
+# Without this file GitHub offers "Open a blank issue" alongside the two templates, so the
+# cheapest path for a reporter is the one that collects nothing — no version, no repro, no
+# redaction reminder — and every such issue costs a round trip before triage can start.
+# Blank issues are therefore off, and the three things that are NOT bug reports are routed
+# to where they are actually read.
+#
+# Every `url` below is a real category on this repository (checked against the live
+# discussionCategories list, not guessed): Q&A → q-a, Ideas → ideas, Show and tell →
+# show-and-tell. A contact link pointing at a category that does not exist renders as a
+# dead chooser entry, which is worse than no link.
+blank_issues_enabled: false
+contact_links:
+  - name: Question, or something not working the way you expected
+    url: https://github.com/PersonalClaw/PersonalClaw/discussions/categories/q-a
+    about: Ask in Discussions → Q&A. If it turns out to be a bug, a maintainer will say so and you can file it then — you do not have to diagnose it first.
+  - name: Feature thinking, or a roadmap proposal
+    url: https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas
+    about: The roadmap is maintainer-owned and is not in this repository, so it cannot be changed by PR. Ideas is the written intake path — see CONTRIBUTING.md § The model.
+  - name: Something you built with PersonalClaw
+    url: https://github.com/PersonalClaw/PersonalClaw/discussions/categories/show-and-tell
+    about: Show and tell. Apps and providers belong in the PersonalClawApps repo instead.
+  - name: A security vulnerability
+    url: https://github.com/PersonalClaw/PersonalClaw/security/advisories/new
+    about: Report it privately, never as a public issue. See SECURITY.md for scope and the response windows you can expect.

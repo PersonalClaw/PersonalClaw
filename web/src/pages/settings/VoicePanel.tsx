@@ -1,0 +1,767 @@
+import { useEffect, useRef, useState } from 'react'
+import { notify } from '../../app/appSdk'
+import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
+import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
+import { modelIdOf, splitModelRef } from '../../lib/modelRef'
+import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
+import { rebaseRecord, sameDocument, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
+import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { ChipInput, Select, TextInput } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
+import { confirmDelete } from '../../ui/dialog'
+import { fvs } from '../../design/fontWeight'
+import { bindChord, chordFromEvent, formatChord, DEFAULT_PUSH_TO_TALK_CHORD } from '../../lib/pushToTalk'
+import { desktopBridge } from '../../lib/desktopBridge'
+import { ShortcutRecorder } from '../../ui/ShortcutRecorder'
+import { VoiceProfilesSection } from './VoiceProfilesSection'
+
+/** Speech & Transcription — provider/model-AGNOSTIC behavior for STT (transcription)
+ *  + TTS (spoken replies), plus the Vocabulary & corrections section (the user-visible
+ *  Lexicon) that biases EVERY transcription — mic input AND knowledge
+ *  audio/video ingestion. The MODEL for each use case is bound in Settings → Models
+ *  (the single source of truth for every use-case→model binding); single-select use
+ *  cases like stt/tts allow exactly one model there. This page owns only behavior:
+ *  enable the feature, streaming (STT), speaking speed + voice persona (TTS), and the
+ *  lexicon terms/learned corrections. It reads the bound model purely to show
+ *  readiness and to know whether the hosted-voice persona applies — it never changes
+ *  the binding. The legacy #/settings/vocabulary deep-link redirects here with
+ *  ?section=vocabulary, which scrolls to the merged section. */
+export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: Record<string, string> }) {
+  // Each use case's settings AS STORED, with the revision a save names — never ahead of the
+  // gateway; a section's unsaved edits live in the section.
+  const [sttSettings, setSttSettings] = useState<Revisioned<Record<string, unknown>> | null>(null)
+  const [ttsSettings, setTtsSettings] = useState<Revisioned<Record<string, unknown>> | null>(null)
+
+  // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
+  // cached snapshot. `active` is read-only (the bound model is owned by Models);
+  // the stt/tts settings are seeded into local state and mutated optimistically.
+  const { data, error: loadErr, refresh } = useQuery('settings:voice', async () => {
+    const [active, stt, tts] = await Promise.all([
+      // `modelsActive` KEEPS its fallback: it only shows readiness ("model bound" / "no model"), so losing
+      // it degrades a chip rather than inventing your settings.
+      api.modelsActive().catch(() => ({} as Record<string, string[]>)),
+      // 🔴 These two ARE the panel. `.catch(() => ({}))` made a failed read resolve as an empty settings
+      // object, so every control rendered at its fallback — indistinguishable from "this is what you
+      // saved" — and each one PUTs on change. Measured on `#/settings/voice` with the use-case GETs at
+      // 500: **2 switches and 1 input rendered, no error anywhere**. Same defect already fixed in three
+      // sibling panels; this is the fourth.
+      api.useCaseSettings('stt'),
+      api.useCaseSettings('tts'),
+    ])
+    return { active, stt, tts }
+  }, { persist: true })
+  const active = data?.active ?? {}
+
+  useEffect(() => {
+    if (data) { setSttSettings(data.stt); setTtsSettings(data.tts) }
+  }, [data])
+  const reread = () => { invalidateKeys('settings:voice'); refresh() }
+  // A save's result becomes the cached read too, so the next visit — and the hub tile, which reads
+  // the same key — paints the revision this page just stored, not the one it replaced.
+  const stored = (useCase: 'stt' | 'tts') => (doc: Revisioned<Record<string, unknown>>) => {
+    if (useCase === 'stt') setSttSettings(doc)
+    else setTtsSettings(doc)
+    if (data) writeQuery('settings:voice', { ...data, [useCase]: doc }, true)
+  }
+
+  // Error first: `data` is undefined for loading AND for failure, so a later test never runs.
+  if (!data && loadErr) return <LoadError what="speech settings" error={loadErr} onRetry={refresh} />
+  if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} what="speech settings" />
+
+  return (
+    <div>
+      <PanelHeader title="Speech & Transcription" hint="How voice input, spoken replies, and transcription behave. The vocabulary below biases ALL transcription — microphone input and knowledge audio/video ingestion alike. The model for each use case is bound in Models — these are the provider-agnostic settings on top of it." />
+      <UseCaseVoiceSection
+        title="Speech-to-text" hint="Transcribe microphone input into the composer." useCase="stt"
+        enableLabel="Enable speech-to-text" boundModel={(active['stt'] ?? [])[0] ?? ''}
+        doc={sttSettings} onStored={stored('stt')} reread={reread} go={go}
+        extras={() => <FfmpegRow />}
+      />
+      {/* No "Streaming transcription" toggle. It was offered here, hinted "Transcribe
+          incrementally as you speak (when supported)", and stored under `streaming` in
+          `use_case_settings/stt.json` — which takes any key with no schema, so it round-tripped
+          cleanly and looked saved. Nothing read it, and there is no streaming transport in the
+          product at all: `stt/handlers.py` registers zero routes (issue 649). A toggle that cannot
+          work is worse than an absent one, because the user changes it and concludes the
+          feature is on. `SttProvider.supports_streaming` is a separate thing and stays — it is
+          a provider CAPABILITY declaration, not a user preference, and nothing here read it
+          either. Wiring this means building the transport; that is a feature, not this fix. */}
+      <UseCaseVoiceSection
+        title="Text-to-speech" hint="Hear replies read out, from the Speak button on a reply or on their own." useCase="tts"
+        enableLabel="Enable text-to-speech" boundModel={(active['tts'] ?? [])[0] ?? ''}
+        doc={ttsSettings} onStored={stored('tts')} reread={reread} go={go}
+        extras={(s, save, show, boundModel) => {
+          const speed = typeof s.speed === 'number' ? s.speed : 1.0
+          const { provider } = splitModelRef(boundModel)
+          const isRemoteVoice = !!provider && !PIPER_PROVIDERS.includes(provider)
+          const speechVoice = typeof s.speech_voice === 'string' && s.speech_voice ? s.speech_voice : 'alloy'
+          // One stored number, two consumer semantics (#657): Piper feeds it to
+          // --length-scale (LOWER is faster), OpenAI-compatible remotes pass it to the
+          // API's speed multiplier (HIGHER is faster). The value stays raw — both
+          // backends consume it correctly — so only what the user is TOLD flips.
+          const higherIsFaster = isRemoteVoice
+          // Gemini's generateContent speech API has no speaking-rate parameter and its
+          // own preset voice names (its provider ignores `speed` and `speech_voice`
+          // entirely), so it gets NEITHER control: a slider that does nothing is the
+          // dead-toggle shape the STT note above forbids. Same provider-name keying as
+          // PIPER_PROVIDERS until providers declare capabilities (the flags).
+          const isGeminiVoice = GEMINI_TTS_PROVIDERS.includes(provider)
+          return (
+            <>
+              {/* `auto_speak`: the chat reads each finished reply out in the tab the message was
+                  sent from. The master switch above still gates it, so this only shows while
+                  text-to-speech is on. */}
+              <Row label="Speak replies aloud" hint="Read each reply out as soon as it finishes, in the tab you sent the message from.">
+                <Toggle on={Boolean(s.auto_speak)} onChange={(v) => save({ auto_speak: v })} label="Speak replies aloud" />
+              </Row>
+              {isGeminiVoice ? (
+                <p data-type="body-s" className="text-on-surface-low">
+                  Gemini speaks at its model's own pace with its own preset voices — its speech
+                  API exposes no speaking-rate control, and it does not use the hosted personas
+                  other remote voices share. The speed and persona controls apply to Piper and
+                  OpenAI-compatible voices.
+                </p>
+              ) : (
+                <Field label="Speaking speed" hint={`${speed.toFixed(2)}× — ${higherIsFaster ? 'higher' : 'lower'} is faster.`}>
+                <div className="flex items-center gap-3">
+                  <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Slow' : 'Fast'}</span>
+                  {/* Raw: `Slider` has no release hook (pointer-up, key-up) to save on and no `aria-valuetext`. */}
+                  <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
+                    // A raw input reads no name from the Field around it: it names itself.
+                    aria-label="Speaking speed" aria-valuetext={`${speed.toFixed(2)}×`}
+                    // Moves the shown value while dragging; saved on release.
+                    onChange={(e) => show({ speed: Number(e.target.value) })}
+                    onPointerUp={(e) => save({ speed: Number((e.target as HTMLInputElement).value) })}
+                    // Keyboard adjustments never fire pointerup — persist those too.
+                    onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) save({ speed: Number((e.target as HTMLInputElement).value) }) }}
+                    className="flex-1 accent-[var(--color-primary)]" />
+                  <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Fast' : 'Slow'}</span>
+                  <span data-type="caption" className="w-10 text-right font-mono text-on-surface tabular-nums">{speed.toFixed(2)}×</span>
+                </div>
+                </Field>
+              )}
+              {isRemoteVoice && !isGeminiVoice && (
+                <Field label="Voice persona" hint="The hosted voice used by remote TTS models.">
+                  <div className="max-w-sm">
+                    <Select value={speechVoice} onChange={(v) => save({ speech_voice: v })} size="md" surface="high"
+                      options={SPEECH_VOICES.map((v) => ({ value: v, label: v }))} />
+                  </div>
+                </Field>
+              )}
+            </>
+          )
+        }}
+      />
+      {/* Voices sits directly under Text-to-speech because it answers the next
+          question that section raises: the settings above are provider-agnostic
+          behavior for ONE flat voice, and this is where a voice becomes an entity
+          you can name, lock, and point at a specific channel or agent. */}
+      <VoiceProfilesSection />
+      <HandsFreeSection />
+      <VocabularySection scrollTo={query?.section === 'vocabulary'} />
+    </div>
+  )
+}
+
+/** Hands-free voice loop + the desktop push-to-talk chord
+ *  — the `voice.*` config fields.
+ *
+ *  They are comfort knobs, not safety guards: turning one off makes the loop
+ *  noisier (more echo, code read aloud), never less safe. Each control patches one
+ *  config path and flashes its own "Saved ✓". The phrase lists are what the composer's
+ *  hands-free toggle gates on, so an empty list would make the mode deaf — the backend
+ *  falls back to the shipped defaults rather than accepting one. */
+function HandsFreeSection() {
+  const { data, error, refresh } = useQuery('settings:voice-loop', async () => {
+    const cfg = await api.personalclawConfig()
+    return (cfg.voice ?? {}) as Record<string, unknown>
+  }, { persist: true })
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // Error first: `data` is undefined for loading AND for failure. A silent fallback
+  // here would render every switch at its default — indistinguishable from "this is
+  // what you saved", on controls that PATCH on change.
+  if (!data && error) return <LoadError what="hands-free voice settings" error={error} onRetry={refresh} />
+  if (!cfg) return <FormSkeleton sections={1} what="hands-free voice settings" />
+
+  const patch = (key: string, value: unknown, onSaved: () => void) => {
+    const prev = cfg
+    setCfg({ ...cfg, [key]: value })
+    api.patchConfig(`voice.${key}`, value).then(onSaved).catch(() => setCfg(prev))
+  }
+  const phrases = (key: string) => {
+    const v = cfg[key]
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  }
+  // The phrases added and removed, never this panel's copy of the list — which another tab may have
+  // changed since — and then the list as stored.
+  const editPhrases = (key: string, next: string[], onSaved: () => void) => {
+    api.saveListEdits(`voice.${key}`, phrases(key), next).then((stored) => {
+      setCfg((c) => ({ ...(c ?? {}), [key]: stored }))
+      onSaved()
+    }).catch((e) => notify(`Couldn't save the phrases: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
+  return (
+    <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
+      <RowGroup>
+        <ChordRow
+          value={typeof cfg.push_to_talk_chord === 'string' && cfg.push_to_talk_chord
+            ? cfg.push_to_talk_chord
+            : DEFAULT_PUSH_TO_TALK_CHORD}
+          onChange={(v, cb) => patch('push_to_talk_chord', v, cb)} />
+        <PhraseRow label="Confirmation phrases"
+          hint="Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent."
+          values={phrases('confirmation_phrases')} onChange={(v, cb) => editPhrases('confirmation_phrases', v, cb)} />
+        <PhraseRow label="Exit phrases" hint="Saying one of these throws the accumulated dictation away."
+          values={phrases('exit_phrases')} onChange={(v, cb) => editPhrases('exit_phrases', v, cb)} />
+        <ToggleRow label="Mute while speaking" hint="Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself."
+          cfg={cfg} field="duplex_mute_enabled" patch={patch} />
+        <ToggleRow label="Echo filter" hint="Also drop any transcription that repeats three consecutive words the assistant just spoke — the backstop for speaker bleed."
+          cfg={cfg} field="echo_filter_enabled" patch={patch} />
+        <ToggleRow label="Clean text before speaking" hint="Strip code blocks, shorten URLs to their domain and paths to their filename, and drop CLI flags. The transcript always keeps the full text."
+          cfg={cfg} field="clean_for_speech_enabled" patch={patch} />
+        <ToggleRow label="Voice-origin disclaimer" hint="Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them."
+          cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
+      </RowGroup>
+    </Section>
+  )
+}
+
+/** The desktop push-to-talk chord.
+ *
+ *  A RECORDER, not a text field: the stored value is an Electron accelerator string
+ *  (`CommandOrControl+Shift+Space`), which nobody should have to type or spell. Click,
+ *  press the combination, done — and what is displayed back is `⌘⇧Space`.
+ *
+ *  Two failure modes get their own sentences, because they need different actions:
+ *
+ *  - **Only modifiers pressed** — the recorder keeps listening rather than storing half a
+ *    chord. A bare key is likewise never recorded: the shell refuses to bind one (it
+ *    would be taken from every app on the machine), so offering it here would be
+ *    offering a shortcut that cannot be saved.
+ *  - **Already owned by another app** — the shell answers with the conflict, and the
+ *    previous chord is KEPT. Discovering a clash at the next launch, with the old
+ *    shortcut already thrown away, is the outcome this avoids.
+ *
+ *  In a browser tab there is no shell to bind anything, so the row saves the preference
+ *  and says plainly that the desktop app is what applies it. Hiding the control would
+ *  make the setting undiscoverable for anyone configuring before installing the app.
+ */
+function ChordRow({ value, onChange }: { value: string; onChange: (next: string, onSaved: () => void) => void }) {
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const shell = !!desktopBridge()
+
+  const record = async (chord: string) => {
+    if (chord === value) { setError(''); return }
+    if (shell) {
+      // Bind FIRST, save second: a chord that cannot be bound must not become the
+      // stored value, or the setting would claim a shortcut that does nothing.
+      const r = await bindChord(chord)
+      if (!r.ok) { setError(r.reason); return }
+    }
+    setError('')
+    onChange(chord, flash)
+  }
+
+  return (
+    <Field label="Push-to-talk shortcut"
+      hint={shell
+        ? 'Press it to start capturing your microphone, press it again to stop and transcribe into the composer at your cursor. It works while other apps have focus, so a capture indicator stays in the menu bar the whole time.'
+        : 'Used by the desktop app for global push-to-talk. A browser tab has no global shortcuts, so this is saved for when you run the desktop app.'}>
+      <div className="flex flex-wrap items-center gap-2">
+        <ShortcutRecorder label="Push-to-talk shortcut" value={value}
+          format={formatChord} parse={chordFromEvent} onRecord={record} />
+        {value !== DEFAULT_PUSH_TO_TALK_CHORD && (
+          <TextLink size="xs" onClick={async () => {
+            if (shell) {
+              const r = await bindChord(DEFAULT_PUSH_TO_TALK_CHORD)
+              if (!r.ok) { setError(r.reason); return }
+            }
+            setError('')
+            onChange(DEFAULT_PUSH_TO_TALK_CHORD, flash)
+          }}>Reset to default</TextLink>
+        )}
+        <SavedToast show={saved} />
+      </div>
+      {error && (
+        // The conflict/refusal sentence from the shell, verbatim: it names the chord and
+        // what to do, which a generic "couldn't save" would not.
+        <p role="alert" data-type="caption" className="mt-1.5" style={{ color: 'var(--color-error)' }}>{error}</p>
+      )}
+    </Field>
+  )
+}
+
+/** One editable phrase list. Chips, not a comma-separated string: a phrase can
+ *  contain a comma, and the chip form makes each phrase individually removable. */
+function PhraseRow({ label, hint, values, onChange }: {
+  label: string
+  hint: string
+  values: string[]
+  onChange: (next: string[], onSaved: () => void) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <ChipInput values={values} onChange={(v) => onChange(v, flash)} max={20} placeholder="Add a phrase…" ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
+  )
+}
+
+// Provider names that drive the bundled local Piper backend (no hosted persona).
+const PIPER_PROVIDERS = ['piper', 'piper-tts']
+// Provider names backed by Gemini's generateContent speech API, which has no
+// speaking-rate parameter and uses its own preset voice names — the provider
+// ignores `speed` and `speech_voice`, so the panel withholds both controls (#657).
+const GEMINI_TTS_PROVIDERS = ['google', 'google-models']
+// Keys that move a range input's value (persist on keyup for keyboard users).
+const RANGE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'])
+// Built-in personas exposed by remote OpenAI-compatible TTS models.
+const SPEECH_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+
+function UseCaseVoiceSection({
+  title, hint, useCase, enableLabel, boundModel, doc, onStored, reread, go, extras,
+}: {
+  title: string; hint: string; useCase: string; enableLabel: string
+  boundModel: string
+  /** The settings as stored, with the revision a save names. */
+  doc: Revisioned<Record<string, unknown>>
+  /** A save landed: the settings as the gateway now stores them. */
+  onStored: (doc: Revisioned<Record<string, unknown>>) => void
+  /** Re-read the stored settings — after the user drops a refused change. */
+  reread: () => void
+  go?: (id: string) => void
+  extras?: (
+    settings: Record<string, unknown>,
+    save: (patch: Record<string, unknown>) => void,
+    show: (patch: Record<string, unknown>) => void,
+    boundModel: string,
+  ) => React.ReactNode
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+
+  // 🔴 THE FILE IS SAVED WHOLE, over the revision it was read at. Each control used to send
+  // `{...settings, <its field>}` from this page's copy, and the same file is written by the Slack
+  // voice modal (through the SDK) and by the routing levers — so a page opened before either saved
+  // put its old values back over theirs. A stale copy is now refused, and the change re-applied
+  // field by field on top of what is stored (`ui/StaleWriteNotice`).
+  //
+  // `base` is what the gateway last reported, read or saved; `edits` is every change made on top
+  // of it that no save has confirmed yet. The controls show both, so a change appears at once.
+  const base = useRef(doc)
+  const edits = useRef<Record<string, unknown>>({})
+  const [settings, setShown] = useState(doc.value)
+  useEffect(() => {
+    base.current = doc
+    setShown({ ...doc.value, ...edits.current })
+  }, [doc])
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.useCaseSettings(useCase),
+    write: async (next, rev) => {
+      const r = await api.saveUseCaseSettings(useCase, next, rev)
+      base.current = { value: r.settings, revision: r.revision }
+    },
+    onSaved: (saved) => {
+      // What the save carried is confirmed; a change made while it was on the wire is not, and
+      // goes next — after a re-applied save too, which runs outside `drain`.
+      edits.current = Object.fromEntries(
+        Object.entries(edits.current).filter(([k, v]) => !sameDocument(saved[k], v)))
+      onStored(base.current)
+      flash()
+      void drain()
+    },
+    onDiscard: () => { edits.current = {}; reread() },
+  })
+
+  // One save on the wire at a time, each carrying every unconfirmed change over the settings the
+  // gateway last reported — so a second change made before the first lands is saved over it,
+  // never refused as stale against this page's own save.
+  const draining = useRef(false)
+  const drain = async () => {
+    if (draining.current) return
+    draining.current = true
+    try {
+      while (Object.keys(edits.current).length > 0) {
+        const from = base.current
+        const next = { ...from.value, ...edits.current }
+        // `false`: refused as stale. The notice below holds every change so far for the user to
+        // re-apply or drop; a change made meanwhile joins it, since each save carries them all.
+        if (!(await guard.save(from, next, rebaseRecord(from.value, next)))) return
+      }
+    } catch (e) {
+      // `keep optimistic` left the toggle showing a value the server had REFUSED — a claim that
+      // survived until the next reload, with no flash and no error to explain it. So a failed
+      // save ROLLS BACK to what is stored, and says why.
+      edits.current = {}
+      setShown(base.current.value)
+      notify(`Couldn't save this speech setting: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      draining.current = false
+    }
+  }
+  const show = (patch: Record<string, unknown>) => setShown((s) => ({ ...s, ...patch }))
+  const saveSettings = (patch: Record<string, unknown>) => {
+    edits.current = { ...edits.current, ...patch }
+    show(patch)
+    void drain()
+  }
+
+  const enabled = Boolean(settings.enabled)
+  const bound = !!boundModel
+  // boundModel is a "provider:id" ref — show the model id without the provider prefix.
+  const modelLabel = modelIdOf(boundModel)
+
+  return (
+    <Section title={title} hint={hint}>
+      <RowGroup>
+        <Row label={enableLabel} hint={bound ? undefined : 'No model bound for this use case — bind one in Models to use this.'}>
+          <div className="flex items-center gap-2">
+            <AvailChip available={bound} okLabel="model bound" missLabel="no model" />
+            <Toggle on={enabled} onChange={(v) => saveSettings({ enabled: v })} label={enableLabel} disabled={!bound}
+              disabledReason="No model is bound for this use case — bind one in Models first" />
+          </div>
+        </Row>
+
+        {/* The binding itself is owned by Models — show it read-only here. */}
+        <Row label="Model" hint={`Bound to the ${useCase.toUpperCase()} use case — change it in Models.`}>
+          {bound
+            ? <span data-type="caption" className="rounded-md bg-surface-high px-2 py-1 font-mono text-on-surface">{modelLabel}</span>
+            : <span data-type="body-s" className="text-on-surface-low italic">none</span>}
+        </Row>
+
+        {enabled && bound && extras?.(settings, saveSettings, show, boundModel)}
+      </RowGroup>
+      <StaleWriteNotice guard={guard} what={`Your ${title.toLowerCase()} settings`} />
+
+      <ManageLink kind={useCase.toUpperCase()} go={go} />
+      <SavedToast show={saved} />
+    </Section>
+  )
+}
+
+/** What ffmpeg is for, in the row's own words — said whether or not one is found. */
+const FFMPEG_USE = 'Cuts a long recording into parts, and takes the sound out of a video, before it is transcribed. A short recording is transcribed without it.'
+
+/** The ffmpeg transcription runs (`GET /api/stt/ffmpeg`): its path, or the gateway's sentence saying
+ *  where it looked and what to do, shown as it is. Read on its own, so a failed read says so in this
+ *  row and never blanks the speech settings around it. */
+function FfmpegRow() {
+  const { data, error, refresh } = useQuery('settings:voice-ffmpeg', async () => api.sttFfmpeg())
+  const hint = error
+    ? <InlineLoadError what="ffmpeg's location" error={error} onRetry={refresh} />
+    : data && !data.path
+      ? data.message
+      : <>{FFMPEG_USE}{data?.path && <> Runs <span className="font-mono">{data.path}</span>.</>}</>
+  return (
+    <Row label="ffmpeg" hint={hint}>
+      {data && !error && <AvailChip available={!!data.path} okLabel="found" missLabel="not found" />}
+    </Row>
+  )
+}
+
+function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
+  return (
+    <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: available ? 'var(--color-success)' : 'var(--color-on-surface-low)' }}>
+      {available ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {available ? okLabel : missLabel}
+    </span>
+  )
+}
+
+// `gap-y-3`, not `gap-y-1`: `TextLink` grows its hit box with `py-1 -my-1`, so it bleeds 4px past its
+// layout box on BOTH sides to keep a line's rhythm. When this row wraps — it does at 390px, where the two
+// links no longer fit side by side — a 4px `gap-y-1` minus that 8px of bleed left the two 26px targets
+// OVERLAPPING by 4px (measured: first bottom=530.5, second top=526.5), which is the SC 2.5.8 failure axe
+// reports as serious. They pass on SIZE alone (26px ≥ 24px) once they stop overlapping, so 12px of gap
+// (12 − 8 = 4px of real separation) is enough. Desktop is untouched: `gap-y` only applies between
+// wrapped lines, and at 1440px these sit on one.
+function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
+  if (!go) return null
+  // `ink="emphasis"` on both: this row is a bare `<div>` with no background, so the links inherit
+  // `--color-canvas`, where the base accent measures **4.37:1** at this `xs` size (12px) against a 4.5
+  // floor — light mode, unchanged at 390px. An app-wide census of every RENDERED accent link (55
+  // surfaces, populated home, backdrop read off each node) found 25 of them: 20 on `--color-surface`
+  // passing at 4.83, one already on the emphasis shade, and these four — the component mounts twice,
+  // for STT and TTS — as the only failures. The emphasis shade measures 6.0 in coral and passes in all
+  // 12 schemes. Dark was already fine at 6.85.
+  //
+  // 🪤 This comment lives ABOVE the `return`, not inside it: a `{/* … */}` as the first child of a
+  // `return (` is a SECOND child where one expression is allowed, and the parse error it throws is
+  // reported against an unrelated line — a recurring trap.
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-3">
+      <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
+        Bind the {kind} model in Models
+      </TextLink>
+      {/* 🔑 ITS OWN SIBLING WAS THE ANSWER. This row already ships a `TextLink` two lines up — same job
+          (navigate to another settings sub-view), same `xs` size, same trailing arrow — and it measured
+          181.13×26.00 while this hand-rolled twin measured 224.73×**18.00**. So the fix is not a colour
+          judgement, it is convergence onto what the row already renders: the primitive carries cycle
+          115's `py-1 -my-1` hit box, so adopting it fixes SC 2.5.8 and deletes the drift in one move. */}
+      <TextLink onClick={() => go('providers')} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
+        Add or download models in Providers
+      </TextLink>
+    </div>
+  )
+}
+
+// ── Vocabulary & corrections (merged from the former VocabularyPanel) ────────────
+
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  graph: { label: 'graph', cls: 'bg-surface-high text-on-surface-low' },
+  manual: { label: 'manual', cls: 'bg-primary-container text-on-primary-container' },
+  learned: { label: 'learned', cls: 'bg-ok/15' },
+}
+
+/** Vocabulary & corrections — the user-visible + editable Lexicon:
+ *  terms (graph / manual / learned, source-badged), add/prune/delete a manual term,
+ *  rebuild from the knowledge graph, and the learned-corrections list with a per-row
+ *  "always fix" toggle. Reads /api/lexicon/* — the same store that biases EVERY
+ *  transcription (mic STT + knowledge audio/video ingestion) + auto-corrects
+ *  mis-heard terms. `scrollTo` (from the legacy #/settings/vocabulary redirect)
+ *  scrolls the section into view once its data has painted. */
+function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
+  // 🔴 ONE KEY WITH TWO PER-SOURCE `.catch`ES MADE THIS SECTION LIE TWICE (#532). The reads were
+  // `api.lexiconTerms().catch(() => ({ terms: [], total: 0 }))` and its correction twin, so an
+  // unreachable `/api/lexicon/*` printed "0 in your lexicon", "No terms yet. Rebuild to seed from
+  // your knowledge graph" and "No learned corrections yet. Teach one above" — three claims about the
+  // user's own vocabulary, every one of them composed from a failed read, and the first two inviting
+  // a REBUILD of a lexicon that may be entirely intact.
+  //
+  // TWO KEYS, not `Promise.allSettled` on one: per-source degradation is the property worth keeping
+  // (a failed corrections read must not blank the terms list), and `useQuery` already gives exactly
+  // that per key — plus its `error` is runtime state, so unlike a rejection folded into `data` it is
+  // never written to sessionStorage by `persist` and cannot outlive the failure it describes.
+  //
+  // 🪤 BOTH FETCHERS ARE `async` DELIBERATELY. `fetchKey` calls the fetcher bare (`const p =
+  // fetcher()`, lib/data/store.ts), so a SYNCHRONOUS throw inside one escapes it, escapes
+  // `useQuery`'s `.catch`, and unmounts the subtree — the section comes back blank with no `error`
+  // ever set, which is a worse version of the very defect this change is about. `async` makes every
+  // failure a rejection, so it lands in `error` and renders as a sentence. Dropping it
+  // crashed `<VocabularySection>` out of `settingsWriteReported`'s two speech drives.
+  const termsQ = useQuery('settings:lexicon:terms', async () => api.lexiconTerms(), { persist: true })
+  const fixesQ = useQuery('settings:lexicon:corrections', async () => api.lexiconCorrections(), { persist: true })
+  const data = termsQ.data || fixesQ.data
+    ? {
+        terms: termsQ.data?.terms ?? [],
+        total: termsQ.data?.total ?? 0,
+        corrections: fixesQ.data?.corrections ?? [],
+      }
+    : null
+
+  const [adding, setAdding] = useState('')
+  const [heard, setHeard] = useState('')
+  const [meant, setMeant] = useState('')
+  const [busy, setBusy] = useState(false)
+  // Prefix-invalidate: a mutation on either list re-pulls both, which is what the single key did.
+  const reload = () => { invalidateKeys('settings:lexicon', true); termsQ.refresh(); fixesQ.refresh() }
+
+  // Legacy #/settings/vocabulary deep-link → scroll here once (after first paint
+  // with data, so the sections above have their final height).
+  const anchor = useRef<HTMLDivElement | null>(null)
+  const hasData = !!data
+  useEffect(() => {
+    if (scrollTo && hasData) anchor.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [scrollTo, hasData])
+
+  const addTerm = async () => {
+    const v = adding.trim()
+    if (!v || busy) return
+    setBusy(true)
+    try { await api.lexiconAddTerm(v); setAdding(''); reload() } finally { setBusy(false) }
+  }
+  const addFix = async () => {
+    const h = heard.trim(); const m = meant.trim()
+    if (!h || !m || busy) return
+    setBusy(true)
+    try { await api.lexiconAddCorrection(h, m); setHeard(''); setMeant(''); reload() } finally { setBusy(false) }
+  }
+  const rebuild = async () => {
+    if (busy) return
+    setBusy(true)
+    try { await api.lexiconRebuild(); reload() } finally { setBusy(false) }
+  }
+
+  return (
+    <div ref={anchor} id="vocabulary" style={{ scrollMarginTop: '1rem' }}>
+      <Section title="Vocabulary & corrections" hint="Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Built from the names in your knowledge graph, people first, and kept in step with it as your library grows; add your own, or turn off a wrong one.">
+        {/* Both reads failed — nothing about the lexicon is known, so the error replaces the whole
+            section rather than each list saying it separately. Before the skeleton, which a pair of
+            rejections also satisfies (`data` stays `null`). */}
+        {termsQ.error && fixesQ.error ? (
+          <LoadError what="lexicon" error={termsQ.error} onRetry={reload} />
+        ) : !data ? <ListSkeleton rows={5} what="lexicon" /> : (
+          <>
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex-1">
+                <TextInput value={adding} onChange={setAdding} size="md"
+                  ariaLabel="Add a vocabulary term" placeholder="Add a term (e.g. Kubernetes, K8s)…"
+                  onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }} />
+              </div>
+              <Button onClick={addTerm} shape="squircle" loading={busy}
+                disabled={!adding.trim()}
+                disabledReason={!adding.trim() ? 'Enter a term first' : undefined}>
+                <Plus size={15} /> Add
+              </Button>
+              <Button variant="ghost" onClick={rebuild} shape="squircle" loading={busy} title="Resync from the knowledge graph">
+                <RefreshCw size={15} /> Rebuild
+              </Button>
+            </div>
+            {/* The count is withheld on a failed terms read for the same reason the list below is:
+                "0 in your lexicon" is a measurement, and there is nothing to measure. */}
+            {!termsQ.error && <p data-type="caption" className="mb-s text-on-surface-low">{data.total} in your lexicon.</p>}
+            {termsQ.error ? (
+              /* Before the empty test, which a rejection also satisfies (`terms` falls back to `[]`). */
+              <InlineLoadError what="your vocabulary" error={termsQ.error} onRetry={reload} />
+            ) : data.terms.length === 0 ? (
+              <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
+                No terms yet. The people, projects and other names found in your knowledge library appear here by themselves; add one above to start now.
+              </div>
+            ) : (
+              // A lexicon holds hundreds of terms — cap the list and scroll INSIDE it
+              // so this section (below STT + TTS) never grows unboundedly. The section
+              // header + add-term input stay above, always visible.
+              <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-outline-variant/30 px-3">
+                <div className="flex flex-col divide-y divide-outline-variant/30">
+                  {data.terms.map((t) => <TermRow key={t.id} term={t} onChanged={reload} />)}
+                </div>
+              </div>
+            )}
+
+            {/* 🔴 `h3`, not `h4`. This sits inside `<Section title="Vocabulary & corrections">`, which
+                renders an `h2` under the panel's `h1`, so a level-4 heading skipped level 3. Measured in
+                the live DOM: `H1 > H2 > H2 > H2 > H2 > H4`. The size comes from the class, so this is
+                pixel-identical — the same rule `settingsUI`'s `Section` states for itself.
+                🪤 `ux-audit` did NOT report this one, and providers' skip on the same run: it evaluates
+                after the panel's skeleton clears but BEFORE this nested, separately-fetched block
+                renders, so the h4 is not in the DOM it measures. A static rail catches it instead. */}
+            <h3 data-type="label-s" className="mt-6 mb-1 text-on-surface" style={fvs(600)}>Learned corrections</h3>
+            <p data-type="caption" className="mb-2 text-on-surface-low">Teach the transcriber a fix — when it hears the first word, it writes the second. Toggle “always” to auto-apply next time.</p>
+            {/* 🔴 The shell primitives, not raw <input>/<button>: `primitiveAdoption` is a CEILING
+                (241 buttons / 140 inputs, measured through the scanner's own walk) and its baseline
+                file is explicit that the ceiling may only shrink — a new bespoke row would have to
+                raise it, which is the one resolution that file forbids. TextInput + Button take the
+                stock look here anyway: this is a labelled text field and a centred pill "Add", which
+                is exactly what the primitives are shaped for. */}
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex-1">
+                <TextInput value={heard} onChange={setHeard} size="md"
+                  ariaLabel="Mis-heard word" placeholder="Heard (e.g. cube control)…" />
+              </div>
+              <div className="flex-1">
+                <TextInput value={meant} onChange={setMeant} size="md"
+                  ariaLabel="Correct word" placeholder="Meant (e.g. kubectl)…"
+                  onKeyDown={(e) => { if (e.key === 'Enter') addFix() }} />
+              </div>
+              {/* 🔴 `loading={busy}`, NOT `disabled={busy}`. `Button` publishes `aria-busy` from
+                  `loading` alone, so folding the in-flight state into `disabled` would add one more
+                  busy-gated button that announces nothing — the exact population `busyIsNotAnnounced`
+                  ratchets DOWN. Bare `loading` (no `loadingLabel`) is right here: the note on that
+                  rail reserves the labelled form for multi-second verbs, and every verb it accepts
+                  is no longer than the label it overlays — "Add" is 3 characters, so "Adding…" would
+                  truncate inside an overlay sized by the original label rather than widen the pill. */}
+              <Button onClick={addFix} shape="squircle" loading={busy}
+                disabled={!heard.trim() || !meant.trim()}
+                disabledReason={!heard.trim() || !meant.trim() ? 'Enter both words first' : undefined}>
+                <Plus size={15} /> Add
+              </Button>
+            </div>
+            {fixesQ.error ? (
+              <InlineLoadError what="your learned corrections" error={fixesQ.error} onRetry={reload} />
+            ) : data.corrections.length === 0 ? (
+              <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
+                No learned corrections yet. Teach one above — it applies to mic dictation and knowledge audio alike.
+              </div>
+            ) : (
+              // Same unbounded-growth guard as the terms list, with its own (shorter) cap.
+              <div className="max-h-[30vh] overflow-y-auto rounded-lg border border-outline-variant/30 px-3">
+                <div className="flex flex-col divide-y divide-outline-variant/30">
+                  {data.corrections.map((c) => <CorrectionRow key={c.id} corr={c} onChanged={reload} />)}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Section>
+    </div>
+  )
+}
+
+function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void }) {
+  const badge = SOURCE_BADGE[term.source] ?? SOURCE_BADGE.graph
+  const [busy, setBusy] = useState(false)
+  const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); onChanged() } finally { setBusy(false) } }
+  // Both icon buttons are named after the term. They were "Disable (prune)" and "Delete" on every row
+  // — one name per row of a list that runs to hundreds — so nothing said which term they act on.
+  const toggleLabel = `${term.enabled ? 'Disable (prune)' : 'Enable'} ${term.canonical}`
+  // A graph term follows its entity in the knowledge graph, so deleting it would only bring it back
+  // at the next sync (the server refuses it). Turning it off is the control that sticks.
+  const fromGraph = term.source === 'graph'
+  return (
+    <div className={`flex items-center gap-2 py-2 ${term.enabled ? '' : 'opacity-50'}`}>
+      <span data-type="body-s" className="flex-1 truncate">
+        {term.canonical}
+        {term.aliases.length > 0 && <span data-type="caption" className="ml-1.5 text-on-surface-low">({term.aliases.join(', ')})</span>}
+      </span>
+      <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}
+        title={fromGraph ? 'From your knowledge graph, and kept in step with it. Turn it off to stop using it.' : undefined}>{badge.label}</span>
+      {/* `busy` is this row's own mutation in flight → `loading`, on both of its buttons. */}
+      <SquareIconButton icon={term.enabled ? X : Check} label={toggleLabel} loading={busy}
+        onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))} />
+      {!fromGraph && (
+        <SquareIconButton icon={Trash2} tone="danger" label={`Delete term ${term.canonical}`} loading={busy}
+          onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
+      )}
+    </div>
+  )
+}
+
+function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const toggle = async () => { setBusy(true); try { await api.lexiconSetCorrectionAuto(corr.id, !corr.auto_apply); onChanged() } finally { setBusy(false) } }
+  const pair = `${corr.heard} → ${corr.meant}`
+  // 🔴 A LEARNED CORRECTION COULD NOT BE REMOVED. The row had its Always/Suggest toggle and nothing
+  // else, and there was no route to call: one wrong fix set to Always rewrote that word in every
+  // dictation, and the only way out was Reset, which throws away every term and every correction.
+  // Asked first, like the other hand-taught things in Settings — someone typed this one in, and
+  // deleting it is not undoable. A failure is said, not swallowed: the row stays to retry from.
+  const forget = async () => {
+    if (!(await confirmDelete('correction', pair))) return
+    setBusy(true)
+    try { await api.lexiconDeleteCorrection(corr.id); onChanged() }
+    catch (e) { notify(`Couldn't delete the correction ${pair}: ${String((e as Error)?.message || e)}`, 'error') }
+    finally { setBusy(false) }
+  }
+  return (
+    <div data-type="body-s" className="flex items-center gap-2 py-2">
+      <span className="flex-1 truncate">
+        <span className="text-on-surface-low line-through">{corr.heard}</span>
+        <span className="mx-1.5 text-on-surface-low">→</span>
+        <span className="text-on-surface">{corr.meant}</span>
+        <span data-type="caption" className="ml-2 text-on-surface-low">×{corr.count}</span>
+      </span>
+      {/* Raw: an ok-tinted / outlined two-state chip, which no button primitive draws. */}
+      <button type="button" onClick={toggle} disabled={busy}
+        title={corr.auto_apply ? 'Auto-applied — click to make it a suggestion' : 'Always fix this automatically'}
+        data-type="caption" className={`inline-flex h-7 items-center gap-1 rounded px-2 transition-colors disabled:opacity-40 ${
+          corr.auto_apply ? 'bg-ok/15' : 'border border-outline-variant/50 text-on-surface-low hover:text-on-surface'}`}>
+        <Wand2 size={12} /> {corr.auto_apply ? 'Always' : 'Suggest'}
+      </button>
+      <SquareIconButton icon={Trash2} tone="danger" label={`Delete correction ${pair}`} loading={busy}
+        onClick={forget} />
+    </div>
+  )
+}

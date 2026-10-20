@@ -1,0 +1,85 @@
+"""The app-contributed message-source registry.
+
+Mirrors ``trigger_sources/registry.py`` and ``sync_transports/registry.py``: the
+``inbox`` provider-type handler (``providers/registry.py::InboxTypeHandler``)
+registers an installed app's source here on enable and removes it on disable.
+:func:`personalclaw.inbox_providers.source_catalog` reads it first, so an app-declared
+source is polled the way every other app provider type is consumed.
+
+**This registry holds INSTANCES, not classes** — the one shape difference from
+the ``personalclaw.message_source_providers`` entry-point group
+(``get_message_providers() -> dict[str, type]``, instantiated as ``cls()``). A
+manifest factory has ALREADY run by the time the handler sees its result, and it
+may close over the app's own config/credentials, so re-instantiating it is not
+possible. Keeping the two registries separate is deliberate: normalising an
+instance into a fake "class" via a lambda would make ``dict[str, type]`` a lie
+and push the shape confusion into every future reader of either path.
+
+Keyed by the provider's own ``source_name`` (not the app name), because that is
+what an inbox item records (``inbox.py``'s ``source`` field) and what a reply to that
+item is routed by (``inbox_providers.polled_source``). The app that registered each source is
+kept beside it (:func:`app_of`): an instruction a source hands over with a message is the
+owner's only when that app's settings hold it (``inbox_service.admitted_instruction``). This
+module deliberately imports nothing from ``providers/`` — the dependency runs one way,
+handler → registry.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.inbox_providers.base import MessageSourceProvider
+
+logger = logging.getLogger(__name__)
+
+_sources: dict[str, "MessageSourceProvider"] = {}
+#: Source name → the installed app that registered it.
+_apps: dict[str, str] = {}
+
+
+def register_source(provider: "MessageSourceProvider", *, app: str = "") -> str:
+    """Register an app-contributed source under its own ``source_name``; *app* is the installed
+    app it comes from.
+
+    Returns the name it was registered under so the caller can log/deregister by
+    the same key it actually used.
+    """
+    name = str(provider.source_name)
+    if not name:
+        raise ValueError("an app-contributed inbox source must expose a non-empty source_name")
+    _sources[name] = provider
+    if app:
+        _apps[name] = app
+    else:
+        _apps.pop(name, None)
+    return name
+
+
+def unregister_source(name: str) -> None:
+    """Remove a source. A disabled/uninstalled app must leave NO phantom source
+    still being polled — see ``InboxTypeHandler``."""
+    _sources.pop(name, None)
+    _apps.pop(name, None)
+
+
+def app_of(name: str) -> str:
+    """The installed app that registered the source *name*, or "" for one no app registered: a
+    source PersonalClaw ships, or one that is gone."""
+    return _apps.get(name, "")
+
+
+def get_source(name: str) -> "MessageSourceProvider | None":
+    """The app-contributed source registered under *name*, or None."""
+    return _sources.get(name)
+
+
+def list_source_names() -> list[str]:
+    """Every app-contributed source name, in order."""
+    return sorted(_sources)
+
+
+def list_sources() -> "list[MessageSourceProvider]":
+    """Every app-contributed source instance, in name order: what the inbox polls for apps."""
+    return [_sources[name] for name in sorted(_sources)]
