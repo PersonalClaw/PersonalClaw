@@ -67,6 +67,8 @@ command = [
   { argv = ["uv", "run", "python", "-m", "harness", "scan"] },
 ]
 
+# Its step gets BASE_SHA as {base}: each site baseline is compared with the base commit's copy
+# (tests/site_baseline.py), so a recorded pass is keyed by the base as well as the tree.
 [[job]]
 id = "rails"
 tiers = ["change", "merge"]
@@ -84,7 +86,7 @@ needs_node = true
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-rails-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-half-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-half-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"], env = { BASE_SHA = "{base}" } },
 ]
 
 # The checks that ran beside the rails before they were halved: the census's own verdict (which

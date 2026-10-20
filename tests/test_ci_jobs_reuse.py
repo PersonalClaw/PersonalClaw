@@ -490,6 +490,24 @@ def test_a_tree_job_that_reads_base_is_not_reused_for_another_base(repo, tmp_pat
     assert _decisions(receipt) == {"rails": "reused"}, "the same base commit, named another way"
 
 
+def test_a_tree_job_whose_step_env_reads_base_is_not_reused_for_another_base(repo, tmp_path):
+    """The rails entry names {base} in its step's env alone (``BASE_SHA = "{base}"``, which the
+    site baselines read), with none in its argv: the key holds the commit there too."""
+    first = _git(repo, "rev-parse", "HEAD")
+    second = _committed(repo, "b.txt", "b\n")
+    log = tmp_path / "calls.log"
+    step = Step((PY, "-c", _logs(log, "os.environ['BASE_SHA']")), env=Env({"BASE_SHA": "{base}"}))
+    assert not any("{base}" in word for word in step.argv), "the base must be in the env alone"
+    job = dataclasses.replace(_job("rails", Path(os.devnull)), command=(step,))
+    _, _, _, receipt = _tier(repo, tmp_path, job, options=jobs.Options(base="main~1"))
+    assert receipt["jobs"][0]["inputs"]["declared"]["base"] == first
+    _, _, _, receipt = _tier(repo, tmp_path, job, n=2, options=jobs.Options(base=second))
+    assert _calls(log) == ["main~1", second]
+    assert _decisions(receipt) == {"rails": "run"}
+    _, _, _, receipt = _tier(repo, tmp_path, job, n=3, options=jobs.Options(base="main"))
+    assert _decisions(receipt) == {"rails": "reused"}, "the same base commit, named another way"
+
+
 def test_a_base_that_names_no_commit_turns_reuse_off(repo, tmp_path):
     log = tmp_path / "calls.log"
     job = _program("rails", _logs(log, "sys.argv[1]"), "{base}")

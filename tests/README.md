@@ -194,16 +194,16 @@ Only a vacuity floor stays a number: a scan that found fewer than N files measur
 
 - **You fixed a site:** delete its line, or run `python tests/site_baseline.py --prune`. That
   runs the registered rails and deletes every stale and repeated line, and it never adds one.
-- **You add a site:** give its line a reason and `"added": "YYYY-MM-DD"`. With `BASE_SHA` set to
-  the pull request's base commit, each file is compared with the base's copy, so a branch cannot
-  grow its own list: a line the base does not have fails without `added`, and every added line is
-  printed for the job summary. A run with no base prints `compared with the working tree (no
-  base)`.
+- **You add a site:** give its line a reason and `"added": "YYYY-MM-DD"`. The rails job sets
+  `BASE_SHA` to the pull request's base commit (on a push to main, the commit it replaced), and
+  each file is compared with the base's copy, so a branch cannot grow its own list: a line the
+  base does not have fails without `added`, and every added line, with its reason, is written to
+  the job summary. A run with no base prints `compared with the working tree (no base)`.
 - **You add a baseline file:** register it in `tests/rails/baselines/index.sites.jsonl`, with its
   path as `site`, its `rail`, what it `replaces`, the `ceiling` it replaces, a reason and `added`.
   A file the base does not have passes only with a registry line new in the branch and no more
-  lines than that ceiling. A registered file renamed or deleted fails until its registry line goes
-  too, and a registry line never raises its ceiling.
+  lines than that ceiling, and the job summary lists each of its sites. A registered file renamed
+  or deleted fails until its registry line goes too, and a registry line never raises its ceiling.
 - **A site in code** is named `path::qualified.name::<its source>` (`code_site`), so an edit above
   it leaves its name alone; repeats of one name are `#2`, `#3` (`numbered`).
 

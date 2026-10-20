@@ -37,6 +37,8 @@ RAIL = "tests/rails/test_planted.py"
 #: The sites the base commit has, sorted. ``c`` and ``m`` are neighbours in the file.
 BASE_SITES = ("a", "c", "m", "x", "z")
 TODAY = "2026-10-19"
+#: The file GitHub names for a step's job summary.
+JOB_SUMMARY = "GITHUB_STEP_SUMMARY"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -94,6 +96,12 @@ def _commit(repo: Path, message: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture(autouse=True)
+def _no_job_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On GitHub every step has a job summary, and these planted lines are not this run's."""
+    monkeypatch.delenv(JOB_SUMMARY, raising=False)
 
 
 @pytest.fixture
@@ -260,6 +268,71 @@ def test_a_line_the_branch_adds_needs_added_and_a_reason(
     added = check(_found(repo), BASELINE, root=repo, prune=False)
     assert [line.site for line in added] == ["p"]
     assert f"added {TODAY}: p: p is planted" in capsys.readouterr().out
+
+
+def test_every_line_a_branch_adds_reaches_the_job_summary_with_its_reason(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The review reads the job summary, not a passing test's captured output: each line the
+    branch adds, to a baseline or to the registry, is written there with its date and reason.
+    A check that adds nothing, or has no base to compare with, writes nothing."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv(JOB_SUMMARY, str(summary))
+    base = _git(repo, "rev-parse", "main")
+    check(list(BASE_SITES), BASELINE, base, root=repo, prune=False)
+    _plant(repo, "p")
+    _lines(repo, *(_site(site, **({"added": TODAY} if site == "p" else {})) for site in "acmpxz"))
+    check(_found(repo), BASELINE, None, root=repo, prune=False)
+    assert not summary.exists(), "a check that added nothing wrote to the job summary"
+    check(_found(repo), BASELINE, base, root=repo, prune=False)
+    _write(repo / NEW, _site("q"))
+    _write(repo / REGISTRY, _registration(), _registration(NEW, ceiling=1, added=TODAY))
+    check_registry(_baselines(repo), base, root=repo, prune=False)
+    text = summary.read_text(encoding="utf-8")
+    assert f"{BASELINE}: 1 line this branch adds (compared with the base {base[:12]})" in text
+    assert f"added {TODAY}: p: p is planted" in text
+    assert f"{REGISTRY}: 1 line this branch adds" in text
+    assert f"added {TODAY}: {NEW}: the planted census" in text
+
+
+def test_a_new_baseline_file_reaches_the_job_summary_with_each_of_its_sites(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A file the base lacks adds every line it has: the summary names the file against the
+    ceiling its registry line gives, and lists each of its sites with its reason."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv(JOB_SUMMARY, str(summary))
+    base = _git(repo, "rev-parse", "main")
+    _write(repo / NEW, _site("q"), _site("r"))
+    _write(repo / REGISTRY, _registration(), _registration(NEW, ceiling=2, added=TODAY))
+    assert _the_new_baseline(repo, base) == []
+    text = summary.read_text(encoding="utf-8")
+    assert f"### {NEW}: a new baseline file this branch adds (compared with the base " in text
+    assert f"{NEW}: a new baseline of 2 sites (it replaces PLANTED_CEILING, ceiling 2)" in text
+    assert "q: q is planted\nr: r is planted\n" in text
+
+
+def test_a_line_in_the_job_summary_stays_one_line_whatever_its_reason_holds(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A reason is free text: a line break in it is written escaped, so it cannot end the
+    summary's fence and set text outside it."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv(JOB_SUMMARY, str(summary))
+    base = _git(repo, "rev-parse", "main")
+    _plant(repo, "p")
+    reason = "first\n~~~\nafter the fence\r"
+    _lines(
+        repo,
+        *(
+            {"site": site, "reason": reason, "added": TODAY} if site == "p" else _site(site)
+            for site in "acmpxz"
+        ),
+    )
+    check(_found(repo), BASELINE, base, root=repo, prune=False)
+    text = summary.read_text(encoding="utf-8")
+    assert [line for line in text.splitlines() if line.startswith("~~~")] == ["~~~text", "~~~"]
+    assert f"added {TODAY}: p: first\\n~~~\\nafter the fence\\r\n" in text
 
 
 def test_a_check_never_claims_a_comparison_it_did_not_make(
