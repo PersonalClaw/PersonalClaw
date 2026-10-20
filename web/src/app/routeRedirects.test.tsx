@@ -3,19 +3,25 @@
  *  `routeRedirects.ts` is the one list of the addresses the app has retired, each with where it
  *  opens now and the pull request that moved it. Held here:
  *
- *    · each row is well formed: an old address, an in-app new one, the pull request, and no two rows
- *      for one address;
- *    · a redirect never chains: no row lands on an address another row (or itself) retires;
+ *    · each row is well formed: an old address, an in-app new one that names its page, the pull
+ *      request, and no address two rows retire;
+ *    · a redirect never chains: no row lands on an address another row (or itself) retires. Both
+ *      are read from the rows' patterns, not from samples, so a fixed segment one row names and
+ *      another row carries is caught;
  *    · a redirect keeps the substate the new page reads: its segments in place, as written, and the
- *      query keys it keeps under their new names, and nothing else;
+ *      query keys it keeps under their new names, and nothing else. An old address is matched as
+ *      the router reads it: a fixed segment written percent-encoded, an empty segment, a second
+ *      `?` in the query, a repeated key, each is read the router's way, and a spelling the router
+ *      reads as another address is not retired;
  *    · every address of the shipped-route catalogue either opens as itself or is retired here to an
  *      address that does: the entry's `lands` is the row's target, the target is an entry with no
  *      landing of its own, and a query key the old entry carries is carried to it. Every row retires
  *      at least one entry, and every entry that lands elsewhere without a row here is a landing its
  *      page owns, listed below with why;
- *    · the hash router applies it: an old address in the bar, on Back or Forward, from a link the
- *      shell opens, or passed to `navigate`, becomes its new one before the router hands it to a
- *      page, in place of the old history entry.
+ *    · the hash router applies it: an old address in the bar, on Back or Forward (from another page
+ *      or within the old one), from a link the shell opens, or passed to `navigate` (pushed or in
+ *      place), becomes its new one before the router hands it to a page, in place of the old
+ *      history entry.
  *
  *  `everyShippedRouteResolves.test.tsx` opens every catalogue entry, the retired ones and their
  *  targets among them, in the real shell. Each check here is a function over a table and a
@@ -38,8 +44,32 @@ function normal(address: string): string {
 
 const keysOf = (address: string): string[] => [...new URLSearchParams(address.split('?')[1] ?? '').keys()]
 
+/** `pattern` with each `:name` filled: from `values`, or with a sample. */
+const fill = (pattern: string, values: Readonly<Record<string, string>> = {}): string =>
+  pattern.split('/').map((s) => (s.startsWith(':') ? values[s.slice(1)] ?? `sample-${s.slice(1)}` : s)).join('/')
+
 /** An address `row` retires, each `:name` filled with a sample. */
-const sampleOf = (row: RouteRedirect): string => row.from.replace(/:([a-z]+)/gi, (_m, name: string) => `sample-${name}`)
+const sampleOf = (row: RouteRedirect): string => fill(row.from)
+
+/** The values `pattern`'s `:name`s take in an address `other` matches too (a `:name` at a segment
+ *  `other` fixes takes that segment), or null when no address matches both. Exact where a sample is
+ *  not: `old/:id/x` and `old/y/:slug` share `#/old/y/x`, which neither row's sample spells. */
+function meeting(pattern: string, other: string): Record<string, string> | null {
+  const [mine, theirs] = [pattern.split('/'), other.split('/')]
+  if (mine.length !== theirs.length) return null
+  const values: Record<string, string> = {}
+  for (let i = 0; i < mine.length; i++) {
+    if (theirs[i].startsWith(':')) continue
+    if (!mine[i].startsWith(':')) {
+      if (mine[i] !== theirs[i]) return null
+      continue
+    }
+    const name = mine[i].slice(1)
+    if (name in values && values[name] !== theirs[i]) return null
+    values[name] = theirs[i]
+  }
+  return values
+}
 
 /** The row of `table` that retires `address`. */
 const rowFor = (address: string, table: readonly RouteRedirect[]): RouteRedirect | undefined =>
@@ -58,6 +88,7 @@ function malformed(table: readonly RouteRedirect[]): string[] {
     const names = row.from.split('/').filter((s) => s.startsWith(':'))
     if (!row.from.split('/').every((s) => SEGMENT.test(s))) out.push(`${at}: the old address is not a path of segments and :names`)
     if (!path.split('/').every((s) => SEGMENT.test(s))) out.push(`${at}: the new address is not an in-app path`)
+    if (path.startsWith(':')) out.push(`${at}: the new address's page is a :name, so the old address picks which page opens`)
     if (new Set(names).size !== names.length) out.push(`${at}: the old address names a segment twice`)
     for (const name of path.split('/').filter((s) => s.startsWith(':'))) {
       if (!names.includes(name)) out.push(`${at}: the new address fills ${name}, which the old one does not carry`)
@@ -67,21 +98,25 @@ function malformed(table: readonly RouteRedirect[]): string[] {
       if (fixedKeys.includes(name)) out.push(`${at}: it keeps ${key} as ${name}, which its new address already sets`)
     }
     if (!(row.pr === 'before v0.1.0' || (Number.isInteger(row.pr) && row.pr > 0))) out.push(`${at}: it names no pull request`)
-    const sample = sampleOf(row)
-    const others = table.filter((other) => other !== row && redirectFor(sample, [other]) !== null)
-    if (others.length) out.push(`${at}: #/${sample} is retired by another row too (${others.map((o) => o.from).join(', ')})`)
+    for (const other of table) {
+      const shared = other === row ? null : meeting(row.from, other.from)
+      if (shared) out.push(`${at}: #/${fill(row.from, shared)} is retired by another row too (${other.from})`)
+    }
   }
   return out
 }
 
-/** Each redirect that lands on an address the table retires again. */
+/** Each redirect that lands on an address the table retires again: for each row, and each row
+ *  (itself among them) that retires an address it lands on, one such old address. */
 function chains(table: readonly RouteRedirect[]): string[] {
-  return table.flatMap((row) => {
-    const sample = sampleOf(row)
-    const target = redirectFor(sample, table)
+  return table.flatMap((row) => table.flatMap((other) => {
+    const values = meeting(row.to.split('?')[0], other.from)
+    if (!values) return []
+    const sample = fill(row.from, values)
+    const target = redirectFor(sample, [row])
     const again = target === null ? null : redirectFor(target, table)
     return again === null ? [] : [`#/${sample} -> #/${target} -> #/${again}`]
-  })
+  }))
 }
 
 describe('the redirect table', () => {
@@ -117,6 +152,24 @@ describe('the redirect table', () => {
     expect(chains([{ from: 'a/:id', to: 'b/:id', pr: 1 }, { from: 'b/:id', to: 'c/:id', pr: 2 }]))
       .toEqual(['#/a/sample-id -> #/b/sample-id -> #/c/sample-id'])
     expect(chains([{ from: 'a/:id', to: 'a/:id/view', pr: 1 }, { from: 'a/:id/view', to: 'a/:id', pr: 2 }])).toHaveLength(2)
+    // A row that retires one fixed address another row lands on or retires: the carrying row's
+    // sample misses it, and the fixed row's sample is the address itself.
+    expect(chains([{ from: 'old/:id', to: 'new/:id', pr: 1 }, { from: 'new/legacy', to: 'newer', pr: 2 }]))
+      .toEqual(['#/old/legacy -> #/new/legacy -> #/newer'])
+    expect(malformed([{ from: 'old/:id', to: 'a/:id', pr: 1 }, { from: 'old/legacy', to: 'b', pr: 2 }])).toEqual([
+      'old/:id -> a/:id: #/old/legacy is retired by another row too (old/legacy)',
+      'old/legacy -> b: #/old/legacy is retired by another row too (old/:id)',
+    ])
+    // Ones no sample spells, from either row: each row carries a segment the other fixes.
+    expect(malformed([{ from: 'old/:id/x', to: 'a/:id', pr: 1 }, { from: 'old/y/:slug', to: 'b/:slug', pr: 2 }])).toEqual([
+      'old/:id/x -> a/:id: #/old/y/x is retired by another row too (old/y/:slug)',
+      'old/y/:slug -> b/:slug: #/old/y/x is retired by another row too (old/:id/x)',
+    ])
+    expect(chains([{ from: 'old/:id', to: 'new/:id/x', pr: 1 }, { from: 'new/y/:slug', to: 'newer/:slug', pr: 2 }]))
+      .toEqual(['#/old/y -> #/new/y/x -> #/newer/x'])
+    // A page the old address names: the row would open whatever page the address says.
+    expect(malformed([{ from: 'go/:page', to: ':page', pr: 1 }]))
+      .toEqual(['go/:page -> :page: the new address\'s page is a :name, so the old address picks which page opens'])
   })
 })
 
@@ -135,8 +188,20 @@ describe('a redirect keeps the substate the new page reads', () => {
   it('🔑 the keys it keeps arrive under the new page\'s names; a key it does not keep meant something only to the old page', () => {
     expect(normal(redirectFor('old/x?read=1&q=hello+world&dir=%2Ftmp', [moved]) ?? '')).toBe(normal('new/x?tab=items&read=1&search=hello+world'))
     expect(redirectFor('old/x?dir=%2Ftmp', [moved]), 'a kept key the old address lacks stays absent').toBe('new/x?tab=items')
+    expect(redirectFor('old/x?read=1&read=2', [moved]), 'a repeated key carries the value the router reads, its last')
+      .toBe('new/x?tab=items&read=2')
     // The old Files page's own state (its folder and its content search) is not an artifact's.
     expect(redirectFor('files/report-1?dir=%2Ftmp&q=todo&include=*.md')).toBe('artifacts/report-1')
+  })
+
+  it('🔑 written with a fixed segment percent-encoded, it is the same old address to the router, and retired the same', () => {
+    // The router decodes each segment before a page reads it, so `#/%66iles/report-1` is the Files
+    // page handed `report-1`: matched as written, it would reach the page that no longer redirects.
+    const encoded = (row: RouteRedirect): string => fill(row.from.split('/')
+      .map((s) => (s.startsWith(':') ? s : `%${s.charCodeAt(0).toString(16).toUpperCase()}${s.slice(1)}`)).join('/'))
+    for (const row of ROUTE_REDIRECTS) expect(redirectFor(encoded(row)), encoded(row)).toBe(redirectFor(sampleOf(row)))
+    expect(redirectFor('%66iles/report-1')).toBe('artifacts/report-1')
+    expect(redirectFor('%zz/x', [moved]), 'a segment that is not valid encoding is read as written').toBeNull()
   })
 
   it('an address with more or fewer segments, or another page\'s, is not retired', () => {
@@ -246,11 +311,50 @@ describe('every catalogue address opens as itself, or is retired to one that doe
 
 // ── The router ───────────────────────────────────────────────────────────────────────────────────
 
-/** Every address the router handed its page, in the order it rendered them. */
+/** Spellings of the retired addresses, as the bar holds them after `#/`, and where each opens. The
+ *  router drops empty segments, decodes each segment once, reads the query from the first `?` and
+ *  switches on the route as spelled, so a spelling it reads as the old address is retired and one it
+ *  reads as another address is not. */
+const SPELLINGS: readonly (readonly [address: string, opens: string | null])[] = [
+  ['files/report-1', 'artifacts/report-1'],
+  ['%66iles/report-1', 'artifacts/report-1'],
+  ['files/report-1/', 'artifacts/report-1'],
+  ['files//report-1', 'artifacts/report-1'],
+  ['/files/report-1', 'artifacts/report-1'],
+  ['files/report-1?dir=a?b', 'artifacts/report-1'],
+  ['settings/vocabulary', 'settings/voice?section=vocabulary'],
+  ['settings/%76ocabulary', 'settings/voice?section=vocabulary'],
+  ['settings/vocabulary/', 'settings/voice?section=vocabulary'],
+  ['settings//vocabulary', 'settings/voice?section=vocabulary'],
+  ['Files/report-1', null],
+  ['settings/Vocabulary', null],
+  ['%2566iles/report-1', null],
+  ['settings/%2576ocabulary', null],
+  // A second `#/` is a route of its own to the router, `#`, which opens no page.
+  ['#/files/report-1', null],
+  ['#/settings/vocabulary', null],
+  // An address the app never wrote: an artifact's slug holds no `/`, so its old link was always
+  // `files/<slug>`, and that is what is retired. A deeper path opens the Files page as any other.
+  ['files/report-1/extra', null],
+]
+
+/** Whether the router handed a page an address a row retires: the path it read, decoded, has a
+ *  row's old segments. */
+function handedRetired(read: string): boolean {
+  const segments = read.split('?')[0].split('/')
+  return ROUTE_REDIRECTS.some((row) => {
+    const parts = row.from.split('/')
+    return parts.length === segments.length && parts.every((p, i) => p.startsWith(':') || p === segments[i])
+  })
+}
+
+/** Every address the router handed its page, in the order it rendered them, and its `navigate`. */
 let seen: string[] = []
+let go: ReturnType<typeof useHashRoute>['navigate'] = () => {}
 
 function Probe() {
-  const { route, sub, query } = useHashRoute('dashboard')
+  const { route, sub, query, navigate } = useHashRoute('dashboard')
+  go = navigate
   const q = new URLSearchParams(query).toString()
   seen.push(`${[route, sub].filter(Boolean).join('/')}${q ? `?${q}` : ''}`)
   return null
@@ -309,6 +413,50 @@ describe('the router sends a retired address to its new one', () => {
     })
     expect(location.hash, 'Back returns to the page before, not to the old address').toBe('#/dashboard')
     expect(result.current.route).toBe('dashboard')
+  })
+
+  it('🔑 written with a segment percent-encoded, it is still the old address, and still rewritten before a page sees it', () => {
+    history.replaceState(null, '', '#/settings/%76ocabulary')
+    render(<Probe />)
+    expect(seen.filter((a) => a.startsWith('settings/vocabulary')), 'the page was handed the old address').toEqual([])
+    expect(location.hash).toBe('#/settings/voice?section=vocabulary')
+  })
+
+  it('🔑 passed to navigate in place, it is the new address that replaces the entry', () => {
+    render(<Probe />)
+    const entries = history.length
+    act(() => go('files/report-1', { replace: true }))
+    expect(seen.filter((a) => a.startsWith('files/')), 'the page was handed the old address').toEqual([])
+    expect(seen.at(-1)).toBe('artifacts/report-1')
+    expect(location.hash).toBe('#/artifacts/report-1')
+    expect(history.length).toBe(entries)
+  })
+
+  it('🔑 reached from the page whose address it was (a link in a Files preview, Back inside Files), it is rewritten before that page sees it', () => {
+    history.replaceState(null, '', '#/files')
+    render(<Probe />)
+    hashChangeTo('#/files/report-1')
+    expect(seen.filter((a) => a.startsWith('files/')), 'the page was handed the old address').toEqual([])
+    expect(seen.at(-1)).toBe('artifacts/report-1')
+    expect(location.hash).toBe('#/artifacts/report-1')
+  })
+
+  it('🔑 every spelling the router reads as a retired address is rewritten before a page sees it, and no other spelling is', () => {
+    for (const [address, opens] of SPELLINGS) {
+      expect(redirectFor(`#/${address}`), `#/${address}`).toBe(opens)
+      for (const via of ['the first read', 'a hashchange', 'navigate'] as const) {
+        const at = `#/${address} by ${via}`
+        history.replaceState(null, '', via === 'the first read' ? `#/${address}` : '#/dashboard')
+        seen = []
+        render(<Probe />)
+        if (via === 'a hashchange') hashChangeTo(`#/${address}`)
+        if (via === 'navigate') act(() => go(`#/${address}`, { replace: true }))
+        expect(seen.filter(handedRetired), `${at}: the page was handed a retired address`).toEqual([])
+        expect(location.hash, at).toBe(`#/${opens ?? address}`)
+        if (opens !== null) expect(seen.at(-1), at).toBe(opens)
+        cleanup()
+      }
+    }
   })
 
   it('an address no row retires is left as it was', () => {
