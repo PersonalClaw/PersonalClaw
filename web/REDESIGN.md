@@ -119,11 +119,13 @@ new chrome.
   one keystroke away in the palette, with its shortcut shown.
 - Status stays at the periphery (the status line, sidebar pips) until it needs a decision, then
   moves to the centre.
-- Focus mode (⌘\): one key hides the sidebar and the right pane, and nothing else: the shell
-  corners and the status line stay. Selecting something that needs a pane opens only that pane, one
-  at a time while the mode lasts. The same key, the palette or the sidebar's own control leaves it,
-  and the sidebar and the panes it closed come back. It lasts across reloads, as the collapsed
-  sidebar does. On a phone the sidebar is already a drawer, so focus mode only closes the pane.
+- Focus mode (⌘\): one key hides the sidebar, the right pane and the status line, and nothing
+  else: the shell corners stay. While the gateway isn't answering the status line shows anyway,
+  since that is the one thing the shell must never hide. Selecting something that needs a pane
+  opens only that pane, one at a time while the mode lasts. The same key, the palette or the
+  sidebar's own control leaves it, and the sidebar, the status line and the panes it closed come
+  back. It lasts across reloads, as the collapsed sidebar does. On a phone the sidebar is already a
+  drawer, so focus mode closes the pane and hides the status line.
   Nothing is hover-only: what a hover shows is also reachable by keyboard and by touch.
 - Every route and substate round-trips through the URL and browser history.
 
@@ -203,7 +205,7 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt.
 | ⌘1 to ⌘9 | the first nine threads |
 | ⌘N | a new thread |
 | ↑ in an empty composer | restores the last prompt |
-| ⌘\ | focus mode: hides the sidebar and the right pane |
+| ⌘\ | focus mode: hides the sidebar, the right pane and the status line |
 | ⌘⇧. | reading mode: folds a thread's composer |
 
 Focus mode's and reading mode's keys were chosen against the keys browsers and the desktop app

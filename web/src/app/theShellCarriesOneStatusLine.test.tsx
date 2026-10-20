@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 // ── The shell carries one status line, on every page, and the connection lives in it ───────────
 //
 // #3823: the gateway connection was a dot in the shell's top-right corner cluster, inside the main
 // area beside every page header. It moves to one status line at the bottom of the window, mounted
 // once by the shell and outside the routed page, so no page header and no Home band carries it.
-// Focus mode hides the sidebar and the side pane (`web/REDESIGN.md` §4) and nothing else: the line
-// stays, and a lost connection still escalates to its banner. On a phone the line stays too, with
-// the connection only (the line's own rule, `theStatusLineSaysWhenTheGatewayIsLost.test.tsx`).
+// On a phone the line stays too, with the connection only (the line's own rule,
+// `theStatusLineSaysWhenTheGatewayIsLost.test.tsx`).
+//
+// Focus mode hides the sidebar and the side pane (`web/REDESIGN.md` §4), and the line too, so the
+// work keeps its ~90% of the window (`src/design/theWorkShareCountsTheStatusLine.test.ts` counts
+// the line in that share). While the gateway isn't answering the line shows anyway, with its
+// banner, since that is the one thing the shell must never hide; once the gateway answers it goes
+// again. A load in focus mode shows no line while the first read is out, so it never flashes, and
+// leaving focus mode brings it back.
 //
 // jsdom notes (the shape `navDisclosure.test.tsx` established): no gateway socket, every read
 // resolves empty unless named below, and the Tools page is a stand-in, since what is under test is
@@ -26,7 +32,7 @@ vi.mock('./identity', async (orig) => {
   }
 })
 
-const gateway = vi.hoisted(() => ({ up: true }))
+const gateway = vi.hoisted(() => ({ up: true, held: false, answer: () => {} }))
 const ENVELOPES: Record<string, unknown> = {
   dashboardConfig: { user_name: 'Ada' },
   agents: { agents: [] },
@@ -37,7 +43,11 @@ vi.mock('../lib/api', async (orig) => {
   const real = await orig<typeof import('../lib/api')>()
   const stub = new Proxy({}, {
     get: (_t, prop: string) => () => {
-      if (prop === 'system') return gateway.up ? Promise.resolve({ hostname: 'studio.example.test', os: 'Darwin', arch: 'arm64' }) : Promise.reject(new TypeError('Failed to fetch'))
+      if (prop === 'system') {
+        const sys = { hostname: 'studio.example.test', os: 'Darwin', arch: 'arm64' }
+        if (gateway.held) return new Promise((resolve) => { gateway.answer = () => resolve(sys) })
+        return gateway.up ? Promise.resolve(sys) : Promise.reject(new TypeError('Failed to fetch'))
+      }
       return Promise.resolve(prop in ENVELOPES ? ENVELOPES[prop] : [])
     },
   })
@@ -81,6 +91,7 @@ beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
   gateway.up = true
+  gateway.held = false
   Element.prototype.scrollIntoView ??= () => {}
   if (typeof globalThis.IntersectionObserver === 'undefined') {
     vi.stubGlobal('IntersectionObserver', class {
@@ -121,23 +132,6 @@ describe('the status line in the shell', () => {
     expect(within(corner).queryByRole('button', { name: connection })).toBeNull()
   })
 
-  it('stays in focus mode, and a lost connection still escalates to its banner there', async () => {
-    location.hash = '#/tools'
-    gateway.up = false
-    renderApp()
-    await screen.findByRole('heading', { name: 'Probe page' })
-    await waitFor(() => expect(rail()).not.toBeNull())
-
-    fireEvent.keyDown(window, FOCUS_KEY)
-    await waitFor(() => expect(rail()).toBeNull())
-    const line = await theLine()
-    expect(within(line).getByText(/^Gateway disconnected · /)).toBeTruthy()
-
-    const words = await screen.findByText('The gateway isn’t answering.', {}, { timeout: 4_000 })
-    expect(words.closest('[role="alert"]'), 'the banner is an alert').toBeTruthy()
-    expect(screen.queryByText(/Incident mode is active/), 'the incident banner keeps its own meaning').toBeNull()
-  })
-
   it('stays on a phone, where the rail is a drawer', async () => {
     setViewport(true)
     location.hash = '#/tools'
@@ -145,5 +139,72 @@ describe('the status line in the shell', () => {
     await screen.findByRole('heading', { name: 'Probe page' })
     const line = await theLine()
     expect(within(line).getByRole('button', { name: 'System status — Gateway connected' })).toBeTruthy()
+  })
+})
+
+describe('the status line in focus mode', () => {
+  /** The shell, with the line read, put in focus mode by its key. */
+  async function inFocusMode() {
+    location.hash = '#/tools'
+    renderApp()
+    await screen.findByRole('heading', { name: 'Probe page' })
+    await waitFor(() => expect(rail()).not.toBeNull())
+    await theLine()
+    fireEvent.keyDown(window, FOCUS_KEY)
+    await waitFor(() => expect(rail()).toBeNull())
+  }
+
+  it('🔴 is hidden while the gateway answers, so the work keeps the window', async () => {
+    await inFocusMode()
+    expect(statusLines(), 'no status line in focus mode while the gateway answers').toHaveLength(0)
+    expect(screen.queryByRole('button', { name: connection })).toBeNull()
+  })
+
+  it('🔴 shows while the gateway isn’t answering, with its banner, and goes once the gateway answers', async () => {
+    gateway.up = false
+    await inFocusMode()
+    const line = await theLine()
+    expect(within(line).getByText(/^Gateway disconnected · /)).toBeTruthy()
+
+    const words = await screen.findByText('The gateway isn’t answering.', {}, { timeout: 4_000 })
+    expect(words.closest('[role="alert"]'), 'the banner is an alert').toBeTruthy()
+    expect(screen.queryByText(/Incident mode is active/), 'the incident banner keeps its own meaning').toBeNull()
+
+    gateway.up = true
+    fireEvent.click(screen.getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(statusLines(), 'the line goes once the gateway answers').toHaveLength(0))
+    expect(screen.queryByText('The gateway isn’t answering.')).toBeNull()
+  })
+
+  it('leaving focus mode brings the line back, with the connection in it', async () => {
+    await inFocusMode()
+    expect(statusLines()).toHaveLength(0)
+    fireEvent.keyDown(window, FOCUS_KEY)
+    await waitFor(() => expect(rail()).not.toBeNull())
+    const line = await theLine()
+    expect(within(line).getByRole('button', { name: 'System status — Gateway connected' })).toBeTruthy()
+  })
+
+  it('🔴 a load in focus mode shows no line while the first read is out, nor once it answers', async () => {
+    localStorage.setItem('focus-mode', '1')
+    gateway.held = true
+    location.hash = '#/tools'
+    renderApp()
+    await screen.findByRole('heading', { name: 'Probe page' })
+    expect(rail(), 'the load is in focus mode').toBeNull()
+    expect(statusLines(), 'connecting is not lost: no line flashes while the first read is out').toHaveLength(0)
+
+    await act(async () => { gateway.held = false; gateway.answer() })
+    expect(statusLines()).toHaveLength(0)
+  })
+
+  it('🔴 is hidden on a phone too', async () => {
+    setViewport(true)
+    location.hash = '#/tools'
+    renderApp()
+    await screen.findByRole('heading', { name: 'Probe page' })
+    await theLine()
+    fireEvent.keyDown(window, FOCUS_KEY)
+    await waitFor(() => expect(statusLines()).toHaveLength(0))
   })
 })

@@ -538,13 +538,14 @@ of its own is not sent, and the turn goes without it.
 **Where:** `⌘\` for focus mode and `⌘⇧.` for reading mode (`Ctrl+\` and `Ctrl+Shift+.` on
 Windows/Linux), or the command palette (`⌘K`), where both are listed with their keys.
 
-**Focus mode** hides the sidebar and closes the side pane, so the conversation takes the window.
-It works on every page, and it stays on until you leave it, across a reload too. Something that
-needs a pane still opens it: click a file in an answer and the file opens beside the chat, and
-only that pane opens, since in focus mode opening one pane closes another. Leave with the same
-key, the palette, or the sidebar's toggle at the top left, which reads **Leave focus mode**, and
-the sidebar and the panes you had open come back. On a phone the sidebar is already a drawer, so
-focus mode only closes the side pane.
+**Focus mode** hides the sidebar and the status line and closes the side pane, so the conversation
+takes the window. While the gateway isn't answering, the status line shows anyway. It works on
+every page, and it stays on until you leave it, across a reload too. Something that needs a pane
+still opens it: click a file in an answer and the file opens beside the chat, and only that pane
+opens, since in focus mode opening one pane closes another. Leave with the same key, the palette,
+or the sidebar's toggle at the top left, which reads **Leave focus mode**, and the sidebar, the
+status line and the panes you had open come back. On a phone the sidebar is already a drawer, so
+focus mode closes the side pane and hides the status line.
 
 **Reading mode** folds the composer while you read a long answer, and the transcript takes the
 column's whole height. The composer folds to one line at the bottom, **Write a reply**, or

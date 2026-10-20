@@ -915,8 +915,9 @@ function AppInner() {
             </ErrorBoundary>
           </main>
         </div>
-        {/* Ambient state at the bottom of the window, on every page and in focus mode. */}
-        <StatusLine />
+        {/* Ambient state at the bottom of the window, on every page. Focus mode hides it while the
+            gateway answers. */}
+        <StatusLine focusMode={focus} />
         <CommandPalette commands={commands} navigate={navigate} />
         {/* The replayable product tour — shell-level because its stops
             are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
