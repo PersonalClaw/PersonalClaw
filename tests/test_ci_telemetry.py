@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import zipfile
 from pathlib import Path
 
@@ -795,3 +796,109 @@ def test_the_schema_is_version_three_and_every_reader_accepts_versions_one_and_t
     assert telemetry.VERSION == 3
     assert telemetry.READS == frozenset({1, 2, 3})
     assert "cpus" in telemetry.RUN_FIELDS
+
+
+# ── whose upload is the record: the checks the shard planner and the weekly fetch share ───────
+
+REPO = "owner/project"
+
+
+def _collector(**changes: object) -> dict:
+    run = {
+        "id": 7,
+        "path": telemetry.COLLECTOR_PATH,
+        "event": "workflow_run",
+        "head_branch": "main",
+        "head_repository": {"full_name": REPO},
+    }
+    run.update(changes)
+    return run
+
+
+@pytest.mark.parametrize(
+    ("changes", "events", "expected"),
+    [
+        pytest.param({}, telemetry.HISTORY_EVENTS, True, id="the-collectors-history-run"),
+        pytest.param({"event": "schedule"}, telemetry.SLOTS_EVENTS, True, id="its-slots-run"),
+        pytest.param(
+            {"event": "workflow_dispatch"}, telemetry.SLOTS_EVENTS, True, id="a-dispatched-slots"
+        ),
+        pytest.param({"event": "schedule"}, telemetry.HISTORY_EVENTS, False, id="slots-as-history"),
+        pytest.param({"event": "pull_request"}, telemetry.HISTORY_EVENTS, False, id="a-pr-run"),
+        pytest.param({"path": telemetry.CI_PATH}, telemetry.HISTORY_EVENTS, False, id="ci-yml"),
+        pytest.param({"head_branch": "feature-x"}, telemetry.HISTORY_EVENTS, False, id="a-branch"),
+        pytest.param(
+            {"head_repository": {"full_name": "someone/fork"}},
+            telemetry.HISTORY_EVENTS,
+            False,
+            id="a-forks-run",
+        ),
+        pytest.param({"head_repository": None}, telemetry.HISTORY_EVENTS, False, id="no-repo"),
+    ],
+)
+def test_only_the_collectors_own_run_on_main_is_the_record(
+    changes: dict, events: frozenset, expected: bool
+) -> None:
+    """Any run can upload an artifact of any name, a fork's pull request included: only a
+    ``ci-telemetry.yml`` run of its own events, on main, in this repository, made the record."""
+    assert telemetry.collector_run(_collector(**changes), REPO, events) is expected
+
+
+@pytest.mark.parametrize(
+    ("made_by", "expired", "expected"),
+    [
+        pytest.param({}, False, None, id="unexpired-on-main-here"),
+        pytest.param({}, True, "has expired", id="expired"),
+        pytest.param(
+            {"head_branch": "feature-x"}, False, "uploaded on 'feature-x', not main", id="a-branch"
+        ),
+        pytest.param({"head_repository_id": 2}, False, "by a fork's run", id="a-forks-run"),
+        pytest.param({"id": "7"}, False, "names no run that uploaded it", id="no-run-id"),
+    ],
+)
+def test_an_artifact_names_the_run_that_made_it_on_main_of_this_repository(
+    made_by: dict, expired: bool, expected: str | None
+) -> None:
+    run = {"id": 7, "head_branch": "main", "repository_id": 1, "head_repository_id": 1}
+    run.update(made_by)
+    artifact = {"id": 70, "expired": expired, "workflow_run": run}
+    why = telemetry.upload_refusal(artifact)
+    assert why == expected if expected is None else expected in str(why)
+
+
+@pytest.mark.parametrize(
+    "artifact", [None, [], {"id": 70, "expired": False}], ids=["none", "a-list", "no-run"]
+)
+def test_what_is_not_an_artifact_naming_its_run_is_refused(artifact: object) -> None:
+    assert telemetry.upload_refusal(artifact)
+
+
+@pytest.mark.parametrize(
+    ("name", "why"),
+    [
+        pytest.param("history-1-1.jsonl", None, id="a-file"),
+        pytest.param("/history-1-1.jsonl", "an absolute path", id="absolute"),
+        pytest.param("\\history-1-1.jsonl", "an absolute path", id="absolute-backslash"),
+        pytest.param("C:history-1-1.jsonl", "an absolute path", id="a-drive-letter"),
+        pytest.param("..", "a parent path", id="dot-dot"),
+        pytest.param("a\\..\\history-1-1.jsonl", "a parent path", id="dot-dot-backslash"),
+        pytest.param("a/history-1-1.jsonl", "under a folder", id="a-folder"),
+        pytest.param("a/", "under a folder", id="is-a-folder"),
+    ],
+)
+def test_a_member_is_refused_by_its_name_alone(name: str, why: str | None) -> None:
+    got = telemetry.member_refusal(zipfile.ZipInfo(name))
+    assert got == why if why is None else why in str(got)
+
+
+def test_a_link_member_is_refused() -> None:
+    info = zipfile.ZipInfo("history-1-1.jsonl")
+    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+    assert "is a link" in str(telemetry.member_refusal(info))
+
+
+def test_the_planner_reads_the_shared_checks_and_limit() -> None:
+    from tools.ci import shards
+
+    assert shards.MAX_HISTORY_ARCHIVE_BYTES == telemetry.MAX_HISTORY_ARCHIVE_BYTES
+    assert telemetry.MAX_HISTORY_ARCHIVE_BYTES == 32 * 1024 * 1024

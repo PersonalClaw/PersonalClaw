@@ -145,6 +145,19 @@ COUNTED = {
 REPORT_PREFIX = "junit-"
 #: The artifact ``ci-telemetry.yml`` uploads each attempt's history as; the shard planner reads it.
 HISTORY_ARTIFACT = "telemetry-history-{run}-{attempt}"
+#: The artifact its ``slots`` job uploads, by the collector run that wrote it.
+SLOTS_ARTIFACT = "telemetry-slots-{run}"
+#: The events a collector run of each kind is triggered by: a history follows a completed run,
+#: the slots run on the collector's own schedule or on dispatch.
+HISTORY_EVENTS = frozenset({"workflow_run"})
+SLOTS_EVENTS = frozenset({"schedule", "workflow_dispatch"})
+#: A collector archive larger than this is never downloaded: one main run's history zips to
+#: about 3 MB.
+MAX_HISTORY_ARCHIVE_BYTES = 32 * 1024 * 1024
+#: The weekly report's window, one stored archive of collector archives, at most: this many
+#: members, and these bytes in all (90 days are about 860 archives of about 3 MB).
+MAX_WINDOW_MEMBERS = 2000
+MAX_WINDOW_BYTES = 6 * 1024 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
 #: Pages of 100 read for one listing at most: a Breadth attempt uploads about 63 artifacts.
@@ -203,6 +216,70 @@ def _listed(text: Callable[..., str], path: str, key: str, what: str) -> list[An
     if len(items) < total:
         raise CollectError(f"{what}: {len(items)} of {total} listed")
     return items
+
+
+# ── whose upload is the record ────────────────────────────────────────────────────────────────
+#
+# Any run can upload an artifact of any name, a fork's pull request included. A reader of the
+# record (the shard planner, the weekly report's fetch) takes an artifact only when the artifact
+# says a run on main of this repository's own code made it, and that run is the collector's.
+
+
+def own_run(run: object, repo: str, path: str, events: frozenset[str]) -> bool:
+    """Whether ``run``, a run as the Actions API describes it, is a run of the workflow at
+    ``path``, triggered by one of ``events``, on main, in ``repo``: main's own code."""
+    if not isinstance(run, Mapping):
+        return False
+    head = run.get("head_repository")
+    return (
+        run.get("path") == path
+        and run.get("event") in events
+        and run.get("head_branch") == "main"
+        and isinstance(head, Mapping)
+        and head.get("full_name") == repo
+    )
+
+
+def collector_run(run: object, repo: str, events: frozenset[str] = HISTORY_EVENTS) -> bool:
+    """Whether ``run`` is the collector's own: a ``ci-telemetry.yml`` run of one of ``events``,
+    on main, in ``repo``."""
+    return own_run(run, repo, COLLECTOR_PATH, events)
+
+
+def member_refusal(info: zipfile.ZipInfo) -> str | None:
+    """Why an archive's member is never read, or None. A reader opens members in memory and
+    never writes one to disk, so a path cannot escape; a member is still refused when its name is
+    absolute, holds a parent path or a folder, or it is a link or a folder itself, since the
+    collector writes none of those."""
+    name = info.filename
+    mode = (info.external_attr >> 16) & 0o170000
+    if name.startswith(("/", "\\")) or (len(name) > 1 and name[1] == ":"):
+        return f"{name!r} is an absolute path"
+    if ".." in name.replace("\\", "/").split("/"):
+        return f"{name!r} holds a parent path"
+    if "/" in name or "\\" in name or info.is_dir():
+        return f"{name!r} is under a folder, or is one"
+    if mode == 0o120000:
+        return f"{name!r} is a link"
+    return None
+
+
+def upload_refusal(artifact: object) -> str | None:
+    """Why an artifact is not one a run on main of this repository made, or None: it is
+    unexpired and, as it names the run that uploaded it, that run was on main, not a fork's. That
+    run is still to be checked with :func:`collector_run`, by its ``workflow_run.id``."""
+    if not isinstance(artifact, Mapping):
+        return "is not an artifact"
+    if artifact.get("expired"):
+        return "has expired"
+    made_by = artifact.get("workflow_run")
+    if not isinstance(made_by, Mapping) or not isinstance(made_by.get("id"), int):
+        return "names no run that uploaded it"
+    if made_by.get("head_branch") != "main":
+        return f"was uploaded on {made_by.get('head_branch')!r}, not main"
+    if made_by.get("head_repository_id") != made_by.get("repository_id"):
+        return "was uploaded by a fork's run"
+    return None
 
 
 # ── which runs count ──────────────────────────────────────────────────────────────────────────

@@ -81,6 +81,13 @@ permission = "issues: write"
 steps = ["settle the legs and write the record", "open, update or close the leg issues"]
 reason = "Keeps one issue per red nightly leg, titled `breadth: <leg> is red`, and nothing else; it writes issues only on main."
 
+[[audited_write]]
+workflow = "flake-report.yml"
+job = "report"
+permission = "issues: write"
+steps = ["report, and on main write the weekly issue"]
+reason = "Edits the one open issue titled `Weekly CI health` that the workflow's own account opened, or opens it once; it writes the issue only on main, and nothing else."
+
 # Exceptions. One waives exactly one violation of one rule (scope) in one file, and expires at
 # most 30 days after the day it is written or renewed. Renewing is a new expiry with a new
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one

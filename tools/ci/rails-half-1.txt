@@ -35,6 +35,7 @@ tests/rails/test_ci_cancelled_is_not_a_verdict.py
 tests/rails/test_ci_capabilities_tree.py
 tests/rails/test_ci_concurrency_dedupe.py
 tests/rails/test_ci_contract.py
+tests/rails/test_ci_flake_report_tree.py
 tests/rails/test_ci_plan_tree.py
 tests/rails/test_ci_pr_feedback_tree.py
 tests/rails/test_ci_security_runs_in_its_own_job_tree.py

@@ -62,18 +62,24 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import contextlib
 import datetime
 import json
 import math
 import os
+import re
 import statistics
+import subprocess
 import sys
+import tempfile
 import tomllib
+import zipfile
 from array import array
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from . import telemetry
 
@@ -101,6 +107,27 @@ BROWSE_LIVE_WINDOW = 5
 BROWSE_LIVE_THRESHOLD = 3
 #: An attempt with one of these conclusions observed nothing.
 UNMEASURED = frozenset({None, "cancelled", "skipped"})
+#: The names the collector gives its files, as they stand in a folder or inside an archive.
+HISTORY_NAME = re.compile(r"history-\d+-\d+\.jsonl")
+SLOTS_NAME = re.compile(r"slots-[A-Za-z0-9_.:-]+\.jsonl")
+#: The quarantined tests' reruns, as ``python -m tools.ci quarantine-rerun`` writes them.
+RERUN_SCHEMA = "personalclaw-quarantine-reruns"
+RERUN_COUNTS = ("passed", "failed", "skipped", "not_run")
+#: The weekly issue: the one open issue of this title the workflow's own account opened.
+ISSUE_TITLE = "Weekly CI health"
+#: The account the workflow token writes issues as. On a public repository anyone may open an
+#: issue of that title, so only this account's is the report's.
+BOT = "github-actions[bot]"
+#: GitHub refuses an issue body past 65,536 characters; the issue keeps under this.
+ISSUE_BODY_LIMIT = 65_000
+#: Pages of 100 open issues read at most when looking for the weekly one.
+ISSUE_PAGES = 10
+#: How long one ``gh`` call may take.
+GH_TIMEOUT_SECONDS = 120
+#: The fetch's status (``python -m tools.ci fetch``): how the window was built, its counts.
+FETCH_COUNTS = ("carried", "dropped", "fetched", "refused", "left", "reserve")
+#: The refusals the issue lists at most; the fetch's log holds every one.
+REFUSALS_SHOWN = 20
 
 
 class SchemaError(Exception):
@@ -187,8 +214,94 @@ class History:
 
 
 @dataclass(frozen=True, slots=True)
-class _File:
+class Source:
+    """One telemetry file: a file in the folder, a member of an archive in it, or a member of an
+    archive inside the window archive the fetch built. It is read in place, in memory, and never
+    unpacked to disk."""
+
     path: Path
+    members: tuple[str, ...] = ()
+
+    @property
+    def name(self) -> str:
+        return self.members[-1] if self.members else self.path.name
+
+    @contextlib.contextmanager
+    def open(self) -> Generator[IO[bytes], None, None]:
+        with contextlib.ExitStack() as stack:
+            handle: IO[bytes] = stack.enter_context(self.path.open("rb"))
+            for member in self.members:
+                zipped = stack.enter_context(zipfile.ZipFile(handle))
+                handle = stack.enter_context(zipped.open(member))
+            yield handle
+
+
+#: A collector archive as it stands inside the window archive.
+COLLECTOR_ARCHIVE = re.compile(r"telemetry-(?:history-\d+-\d+|slots-\d+)\.zip")
+
+
+def _readable(info: zipfile.ZipInfo, where: str) -> bool:
+    """Whether a member may be read; a refused one is named in the log."""
+    why = telemetry.member_refusal(info)
+    if why:
+        print(f"::warning title=archive member refused::{where}: {why}")
+    return why is None
+
+
+def _members(zipped: zipfile.ZipFile, where: str) -> list[zipfile.ZipInfo]:
+    """An archive's members, within the window's caps: one past either fails the report. A
+    member is opened by its name, and of two of one name zipfile opens the last, which may not be
+    the one checked, so a name held twice is not read at all."""
+    infos = zipped.infolist()
+    if len(infos) > telemetry.MAX_WINDOW_MEMBERS:
+        raise SchemaError(
+            f"{where} holds {len(infos)} members, past {telemetry.MAX_WINDOW_MEMBERS}"
+        )
+    total = sum(i.file_size for i in infos)
+    if total > telemetry.MAX_WINDOW_BYTES:
+        raise SchemaError(f"{where} holds {total} bytes, past {telemetry.MAX_WINDOW_BYTES}")
+    twice = {name for name, n in Counter(i.filename for i in infos).items() if n > 1}
+    for name in sorted(twice):
+        print(f"::warning title=archive member refused::{where}: {name!r} more than once")
+    return [i for i in infos if i.filename not in twice and _readable(i, where)]
+
+
+def sources(folder: Path, name: re.Pattern[str]) -> list[Source]:
+    """The files under ``folder`` named as the collector names one kind of its files; the
+    members so named at the top of every archive under it; and those inside every collector
+    archive the window archive holds. A member that is absolute, holds a parent path or a
+    folder, or is a link is refused, and so is a collector archive past its size; an archive past
+    the window's caps, or not an archive, fails the report."""
+    found = [Source(p) for p in folder.rglob("*.jsonl") if name.fullmatch(p.name)]
+    for archive in sorted(folder.rglob("*.zip")):
+        try:
+            with zipfile.ZipFile(archive) as zipped:
+                for info in _members(zipped, archive.name):
+                    if name.fullmatch(info.filename):
+                        found.append(Source(archive, (info.filename,)))
+                    elif COLLECTOR_ARCHIVE.fullmatch(info.filename):
+                        if info.file_size > telemetry.MAX_HISTORY_ARCHIVE_BYTES:
+                            limit = telemetry.MAX_HISTORY_ARCHIVE_BYTES
+                            print(
+                                f"::warning title=archive member refused::{archive.name}: "
+                                f"{info.filename} passes {limit} bytes"
+                            )
+                            continue
+                        where = f"{archive.name}/{info.filename}"
+                        with zipped.open(info) as handle, zipfile.ZipFile(handle) as inner:
+                            found += [
+                                Source(archive, (info.filename, i.filename))
+                                for i in _members(inner, where)
+                                if name.fullmatch(i.filename)
+                            ]
+        except (OSError, zipfile.BadZipFile, EOFError) as exc:
+            raise SchemaError(f"{archive.name} is not an archive the fetch built: {exc}") from None
+    return sorted(found, key=lambda s: (str(s.path), s.members))
+
+
+@dataclass(frozen=True, slots=True)
+class _File:
+    path: Source
     run_id: int
     attempt: int
     created: datetime.datetime
@@ -204,13 +317,14 @@ def _at(value: object) -> datetime.datetime:
     return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _records(path: Path) -> Generator[dict[str, Any], None, None]:
+def _records(path: Source) -> Generator[dict[str, Any], None, None]:
     """Each line of one telemetry file, parsed, one line at a time: a line past
-    ``MAX_LINE_BYTES``, a file past ``MAX_FILE_BYTES``, or a line that is not a JSON object is
-    refused. Blank lines are skipped."""
+    ``MAX_LINE_BYTES``, a file past ``MAX_FILE_BYTES`` (counted as it is unpacked, for an
+    archive's member), or a line that is not a JSON object is refused. Blank lines are
+    skipped."""
     budget = MAX_FILE_BYTES
     try:
-        with path.open("rb") as handle:
+        with path.open() as handle:
             while raw := handle.readline(MAX_LINE_BYTES + 1):
                 if len(raw) > MAX_LINE_BYTES:
                     raise SchemaError(f"{path.name}: a line passes {MAX_LINE_BYTES} bytes")
@@ -223,11 +337,11 @@ def _records(path: Path) -> Generator[dict[str, Any], None, None]:
                 if not isinstance(line, dict):
                     raise SchemaError(f"{path.name}: a line is not a JSON object")
                 yield line
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, zipfile.BadZipFile, EOFError) as exc:
         raise SchemaError(f"{path.name}: {exc}") from None
 
 
-def _head(path: Path, kind: str) -> dict[str, Any]:
+def _head(path: Source, kind: str) -> dict[str, Any]:
     """A file's first line, which must be its ``kind`` line in the one schema."""
     records = _records(path)
     try:
@@ -324,7 +438,7 @@ def read(folder: Path) -> History:
     read file by file: every file's first line, then the test lines of the runs in the window,
     one run at a time."""
     files = []
-    for path in sorted(folder.rglob("history-*.jsonl")):
+    for path in sources(folder, HISTORY_NAME):
         head = _head(path, "run")
         made = _at(head["created_at"])
         files.append(
@@ -394,8 +508,8 @@ def read(folder: Path) -> History:
 
 def read_slots(folder: Path) -> list[dict[str, Any]]:
     """The slot lines of the newest slots file, by the time it was written."""
-    newest: tuple[datetime.datetime, Path] | None = None
-    for path in sorted(folder.rglob("slots-*.jsonl")):
+    newest: tuple[datetime.datetime, Source] | None = None
+    for path in sources(folder, SLOTS_NAME):
         at = _at(_head(path, "slots").get("at"))
         if newest is None or at > newest[0]:
             newest = (at, path)
@@ -404,11 +518,36 @@ def read_slots(folder: Path) -> list[dict[str, Any]]:
     return [x for x in list(_records(newest[1]))[1:] if x.get("kind") == "slot"]
 
 
+def read_fetch_status(path: Path) -> dict[str, Any]:
+    """The fetch's status: whether the carried window was kept and why not, and how many
+    histories were carried, dropped on the recheck, fetched, refused and left for the next run."""
+    if path.stat().st_size > MAX_LINE_BYTES:
+        raise SchemaError(f"{path}: passes {MAX_LINE_BYTES} bytes")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict):
+        raise SchemaError(f"{path}: not a fetch status")
+    for key in FETCH_COUNTS:
+        value = doc.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise SchemaError(f"{path}: {key} is {value!r}, not a count")
+    refusals = doc.get("refusals")
+    if (
+        not isinstance(doc.get("carry"), str)
+        or not isinstance(doc.get("slots"), (str, type(None)))
+        or not isinstance(refusals, list)
+        or not all(isinstance(why, str) for why in refusals)
+    ):
+        raise SchemaError(f"{path}: not a fetch status")
+    return {key: doc[key] for key in (*FETCH_COUNTS, "carry", "slots", "refusals")}
+
+
 def figures(
     history: History,
     slots: Iterable[Mapping[str, Any]],
     quarantine: Iterable[Mapping[str, Any]],
     on: datetime.date | None = None,
+    reruns: Mapping[str, Mapping[str, int]] | None = None,
+    fetched: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for test, f in sorted(history.tests.items()):
@@ -430,12 +569,20 @@ def figures(
         )
     timed = [r for r in rows if r["p50_seconds"] is not None]
     slowest = sorted(timed, key=lambda r: (-r["p50_seconds"], r["test"]))[:SLOWEST]
+    record = {
+        "days": history.window["days"],
+        "of": WINDOW_DAYS,
+        "runs": history.window["runs"],
+        "left": fetched["left"] if fetched else 0,
+        "fetch": dict(fetched) if fetched else None,
+    }
     return {
         "window": history.window,
+        "record": record,
         "tests": rows,
         "slowest": slowest,
         "suite_size": history.suite_size,
-        "quarantine": quarantine_status(quarantine, on or today()),
+        "quarantine": quarantine_status(quarantine, on or today(), reruns),
         "browse_live": browse_live(history.browse_live),
         "schedules": schedules(slots),
     }
@@ -488,10 +635,12 @@ def read_quarantine(path: Path) -> list[dict[str, Any]]:
 
 
 def quarantine_status(
-    entries: Iterable[Mapping[str, Any]], on: datetime.date
+    entries: Iterable[Mapping[str, Any]],
+    on: datetime.date,
+    reruns: Mapping[str, Mapping[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Each entry's issue, assignee and expiry, soonest first; on its date an entry has
-    expired."""
+    """Each entry's issue, assignee and expiry, soonest first, and its reruns when they ran; on
+    its date an entry has expired."""
     rows = [
         {
             "nodeid": e["nodeid"],
@@ -501,10 +650,121 @@ def quarantine_status(
             "days_left": (e["expires"] - on).days,
             "expired": e["expires"] <= on,
             "reason": e["reason"],
+            "reruns": dict(reruns[e["nodeid"]]) if reruns and e["nodeid"] in reruns else None,
         }
         for e in entries
     ]
     return sorted(rows, key=lambda r: (r["expires"], r["nodeid"]))
+
+
+def read_reruns(path: Path) -> dict[str, dict[str, int]]:
+    """Each quarantined test's reruns, as ``python -m tools.ci quarantine-rerun`` wrote them:
+    how many of its rounds it passed, failed, skipped or did not run in, which add up to the
+    rounds. A file in another shape fails the report."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SchemaError(f"{path.name}: {exc}") from None
+    if not isinstance(doc, dict):
+        raise SchemaError(f"{path.name} is not a {RERUN_SCHEMA} file")
+    rounds, tests = doc.get("rounds"), doc.get("tests")
+    if (
+        doc.get("schema") != RERUN_SCHEMA
+        or not isinstance(rounds, int)
+        or isinstance(rounds, bool)
+        or rounds < 1
+        or not isinstance(tests, dict)
+    ):
+        raise SchemaError(f"{path.name} is not a {RERUN_SCHEMA} file")
+    for nodeid, counts in tests.items():
+        if (
+            not isinstance(counts, dict)
+            or set(counts) != set(RERUN_COUNTS)
+            or not all(
+                isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in counts.values()
+            )
+            or sum(counts.values()) != rounds
+        ):
+            raise SchemaError(f"{path.name}: {nodeid}'s reruns are not {rounds} rounds")
+    return tests
+
+
+def _reruns_cell(counts: Mapping[str, int] | None) -> str:
+    if counts is None:
+        return "no reruns"
+    rounds = sum(counts.values())
+    if counts["not_run"] == rounds:
+        return "not run"
+    cell = f"failed {counts['failed']} of {rounds}"
+    if counts["not_run"]:
+        cell += f", {counts['not_run']} not run"
+    return cell
+
+
+def _gh(*args: str) -> str:
+    done = subprocess.run(
+        ["gh", *args],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=True,
+        timeout=GH_TIMEOUT_SECONDS,
+    )
+    return done.stdout
+
+
+def _by_bot(user: object) -> bool:
+    return isinstance(user, Mapping) and user.get("login") == BOT and user.get("type") == "Bot"
+
+
+def publish(repo: str, body: str, *, run_url: str, gh: Callable[..., str] = _gh) -> int:
+    """Edit the one open weekly issue this workflow's account opened, or open it once; return its
+    number. Read from the issues listing, not from search, which lags behind a new issue, so a
+    second report run soon after the first finds the issue the first opened. Two such issues (a
+    race) edit the older and name the other."""
+    tail = f"\n\nFrom {run_url}.\n"
+    if len(body) + len(tail) > ISSUE_BODY_LIMIT:
+        cut = (
+            f"\n\n… cut here: GitHub keeps an issue under {ISSUE_BODY_LIMIT} characters. The "
+            f"whole report is the run's summary and its report.json: {run_url}\n"
+        )
+        body, tail = body[: ISSUE_BODY_LIMIT - len(cut)], cut
+    ours: list[int] = []
+    for page in range(1, ISSUE_PAGES + 1):
+        batch = json.loads(
+            gh(
+                "api",
+                f"repos/{repo}/issues?state=open&creator=github-actions%5Bbot%5D"
+                f"&per_page=100&page={page}",
+            )
+        )
+        if not isinstance(batch, list):
+            raise ValueError("the open issues are not a list")
+        ours += [
+            int(i["number"])
+            for i in batch
+            if i.get("title") == ISSUE_TITLE and _by_bot(i.get("user")) and "pull_request" not in i
+        ]
+        if len(batch) < 100:
+            break
+    else:
+        raise ValueError(f"more than {ISSUE_PAGES * 100} open issues: the weekly one may be unseen")
+    with tempfile.TemporaryDirectory() as scratch:
+        text = Path(scratch) / "body.md"
+        text.write_text(body + tail, encoding="utf-8")
+        if not ours:
+            url = gh(
+                "issue", "create", "-R", repo, "--title", ISSUE_TITLE, "--body-file", str(text)
+            )
+            return int(url.strip().rsplit("/", 1)[-1])
+        number, *others = sorted(ours)
+        if others:
+            print(
+                "::warning title=more than one weekly CI health issue::edited "
+                f"#{number}; close {', '.join(f'#{n}' for n in others)}"
+            )
+        gh("issue", "edit", str(number), "-R", repo, "--body-file", str(text))
+        return number
 
 
 def schedules(slots: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -530,6 +790,53 @@ def schedules(slots: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _histories(count: int) -> str:
+    return f"{count} {'history' if count == 1 else 'histories'}"
+
+
+def _record(record: Mapping[str, Any]) -> list[str]:
+    """What the window holds of the 90 days, and how the fetch built it."""
+    runs = f"{record['runs']} {'run' if record['runs'] == 1 else 'runs'}"
+    lines = [f"The window holds {record['days']} of the {record['of']} days, {runs}."]
+    fetch = record["fetch"]
+    if fetch is None:
+        return lines
+    kind, _, why = fetch["carry"].partition(": ")
+    if kind == "kept":
+        lines.append(
+            f"{_histories(fetch['carried'])} carried from the last weekly run, "
+            f"{fetch['fetched']} fetched from the record."
+        )
+    elif kind == "refused":
+        lines.append(
+            f"**The carried window was refused**: {why}. The window was refilled from the record "
+            f"within the budget: {_histories(fetch['fetched'])} fetched."
+        )
+    else:
+        lines.append(
+            f"No window was carried ({why or kind}): {_histories(fetch['fetched'])} fetched "
+            "from the record."
+        )
+    if fetch["dropped"]:
+        were = "history was" if fetch["dropped"] == 1 else "histories were"
+        lines.append(f"{fetch['dropped']} carried {were} dropped when checked again.")
+    if fetch["refused"]:
+        lines.append(f"{_histories(fetch['refused'])} fetched were refused.")
+    if fetch["left"]:
+        lines.append(
+            f"**{_histories(fetch['left'])} {'was' if fetch['left'] == 1 else 'were'} left for the "
+            f"next run**, to keep {fetch['reserve']} of the token's calls for the other workflows."
+        )
+    if not fetch["slots"]:
+        lines.append("No slots archive was fetched.")
+    shown = fetch["refusals"][:REFUSALS_SHOWN]
+    # Shown as code: a refusal can quote a name or a field an archive holds.
+    lines += [f"- `{why.replace('`', chr(39))}`" for why in shown]
+    if len(fetch["refusals"]) > len(shown):
+        lines.append(f"- and {len(fetch['refusals']) - len(shown)} more, in the fetch's log")
+    return lines
+
+
 def markdown(data: Mapping[str, Any]) -> str:
     window = data["window"]
     lines = ["## Weekly CI health", ""]
@@ -548,6 +855,7 @@ def markdown(data: Mapping[str, Any]) -> str:
         )
     if window["runs"]:
         lines += ["", f"Suite size: {data['suite_size']} tests in the newest run."]
+    lines += ["", "### The record", "", *_record(data["record"])]
     rated = [r for r in data["tests"] if r["flake_rate"]]
     unrated = [r for r in data["tests"] if r["flake_rate"] is None and r["runs"]]
     lines += ["", "### Flaky tests", ""]
@@ -578,14 +886,17 @@ def markdown(data: Mapping[str, Any]) -> str:
             )
     lines += ["", "### Quarantine", ""]
     if data["quarantine"]:
-        lines += ["| Test | Issue | Assignee | Expires |", "|---|---|---|---|"]
+        lines += ["| Test | Issue | Assignee | Expires | Reruns |", "|---|---|---|---|---|"]
         for q in data["quarantine"]:
             expires = (
                 f"**expired {q['expires']}**"
                 if q["expired"]
                 else f"{q['expires']}, {q['days_left']} days left"
             )
-            lines.append(f"| `{q['nodeid']}` | #{q['issue']} | @{q['assignee']} | {expires} |")
+            lines.append(
+                f"| `{q['nodeid']}` | #{q['issue']} | @{q['assignee']} | {expires} | "
+                f"{_reruns_cell(q['reruns'])} |"
+            )
     else:
         lines.append("The quarantine is empty.")
     browse = data["browse_live"]
@@ -632,14 +943,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--quarantine", type=Path, default=QUARANTINE, help="the quarantine list to show"
     )
+    parser.add_argument("--reruns", type=Path, default=None, help="the quarantine's reruns")
+    parser.add_argument("--issue-repo", default=None, help="write the weekly issue here")
+    parser.add_argument("--run-url", default="", help="the run the issue names")
+    parser.add_argument(
+        "--fetch-status", type=Path, default=None, help="how the fetch built the window"
+    )
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     if not args.history.is_dir():
         print(f"::error title=the report did not run::{args.history} is not a folder")
         return 2
     try:
         quarantine = read_quarantine(args.quarantine)
-        data = figures(read(args.history), read_slots(args.history), quarantine)
-    except (SchemaError, KeyError, TypeError, ValueError) as err:
+        reruns = read_reruns(args.reruns) if args.reruns else None
+        fetched = read_fetch_status(args.fetch_status) if args.fetch_status else None
+        data = figures(
+            read(args.history),
+            read_slots(args.history),
+            quarantine,
+            reruns=reruns,
+            fetched=fetched,
+        )
+    except (SchemaError, KeyError, TypeError, ValueError, OSError) as err:
         print(f"::error title=the report did not run::{err}")
         return 2
     text = markdown(data)
@@ -660,6 +985,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+    if args.issue_repo:
+        try:
+            number = publish(args.issue_repo, text, run_url=args.run_url)
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError) as err:
+            print(f"::error title=the weekly issue was not written::{err}")
+            return 2
+        print(f"the weekly issue: #{number}")
     return 0
 
 

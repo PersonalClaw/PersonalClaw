@@ -200,8 +200,8 @@ Binary = Callable[..., bytes]
 
 #: The collector's history artifact, by run and attempt (``tools/ci/telemetry.py`` names it).
 HISTORY_ARTIFACT = telemetry.HISTORY_ARTIFACT
-#: An archive larger than this is never downloaded: one main run's history zips to about 3 MB.
-MAX_HISTORY_ARCHIVE_BYTES = 32 * 1024 * 1024
+#: An archive larger than this is never downloaded (``telemetry.MAX_HISTORY_ARCHIVE_BYTES``).
+MAX_HISTORY_ARCHIVE_BYTES = telemetry.MAX_HISTORY_ARCHIVE_BYTES
 #: A history larger than this, unzipped, is not read on: one main run's is about 49 MB.
 MAX_HISTORY_BYTES = 256 * 1024 * 1024
 #: One history line longer than this is refused: a test line is a few hundred bytes, and a run
@@ -381,14 +381,7 @@ class TelemetryRecord:
         if not isinstance(uploader, int):
             return False
         run = json.loads(self.text("api", f"repos/{self.repo}/actions/runs/{uploader}"))
-        head = run.get("head_repository") or {}
-        return (
-            run.get("path") == telemetry.COLLECTOR_PATH
-            and run.get("event") == "workflow_run"
-            and run.get("head_branch") == "main"
-            and isinstance(head, Mapping)
-            and head.get("full_name") == self.repo
-        )
+        return telemetry.collector_run(run, self.repo)
 
     def _download(self, run: int) -> bytes | None:
         name = HISTORY_ARTIFACT.format(run=run, attempt=1)
@@ -397,12 +390,8 @@ class TelemetryRecord:
         )
         found = []
         for artifact in listed.get("artifacts") or []:
-            made_by = artifact.get("workflow_run") or {}
-            if (
-                artifact.get("expired")
-                or made_by.get("head_branch") != "main"
-                or made_by.get("head_repository_id") != made_by.get("repository_id")
-                or not self._is_collector(made_by.get("id"))
+            if telemetry.upload_refusal(artifact) or not self._is_collector(
+                artifact["workflow_run"]["id"]
             ):
                 continue
             found.append((int(artifact["id"]), int(artifact.get("size_in_bytes") or 0)))

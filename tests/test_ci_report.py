@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import io
 import json
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -421,6 +422,7 @@ def test_the_quarantine_shows_each_entrys_issue_assignee_and_expiry_and_flags_th
             "days_left": 0,
             "expired": True,
             "reason": "fails one run in five on a slow runner",
+            "reruns": None,
         },
         {
             "nodeid": "tests/test_b.py::test_later",
@@ -430,6 +432,7 @@ def test_the_quarantine_shows_each_entrys_issue_assignee_and_expiry_and_flags_th
             "days_left": 13,
             "expired": False,
             "reason": "fails one run in five on a slow runner",
+            "reruns": None,
         },
     ]
     section = text.split("### Quarantine")[1].split("###")[0]
@@ -876,3 +879,505 @@ def test_the_reports_are_read_within_the_trackers_size_limits() -> None:
         )
     with pytest.raises(telemetry.CollectError, match="bytes"):
         telemetry.report_cases(report.BROWSE_LIVE_REPORT, payload.getvalue())
+
+
+# ── the fetched archives, read in place ───────────────────────────────────────────────────────
+
+
+def _archive(folder: Path, name: str, members: dict[str, bytes]) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{name}.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipped:
+        for member, data in members.items():
+            zipped.writestr(member, data)
+    return path
+
+
+def test_histories_and_slots_are_read_inside_the_archives_the_fetch_kept(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The fetch keeps each collector archive as it was downloaded; the report reads the
+    histories and the slots inside them line by line, and never unpacks one to disk."""
+    plain = tmp_path / "plain"
+    for i in range(10):
+        _write(plain, 100 + i, 1, i, {"t::a": ("failed" if i == 3 else "passed", 1.0 + i)})
+    _slots(plain, "2026-10-19T13:00:00Z", ("breadth.yml", "2026-10-18T09:37:00Z", "missed", None))
+    zipped = tmp_path / "zipped"
+    for path in sorted(plain.iterdir()):
+        stem = path.name.removesuffix(".jsonl")
+        _archive(zipped, f"telemetry-{stem}", {path.name: path.read_bytes()})
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    _, expected, _ = _report(plain, monkeypatch, tmp_path / "a")
+    code, data, _ = _report(zipped, monkeypatch, tmp_path / "b")
+    assert code == 0 and data == expected
+    assert data["window"]["runs"] == 10 and data["schedules"][0]["missed"]
+    assert sorted(p.name for p in zipped.iterdir()) == sorted(
+        f"telemetry-{p.name.removesuffix('.jsonl')}.zip" for p in plain.iterdir()
+    ), "the report wrote into the folder"
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        {"../history-1-1.jsonl": b"x"},
+        {"nested/history-1-1.jsonl": b"x"},
+        {"history-1-1.jsonl.exe": b"x"},
+        {"README": b"x"},
+    ],
+    ids=["a-parent-path", "a-folder", "another-suffix", "another-file"],
+)
+def test_an_archive_member_not_named_as_the_collector_names_its_files_is_not_read(
+    tmp_path: Path, monkeypatch, members: dict
+) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    _archive(folder, "telemetry-history-2-1", members)
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and data["window"]["runs"] == 1
+
+
+@pytest.mark.parametrize(
+    "data", [b"not a zip", b"PK\x03\x04broken"], ids=["not-a-zip", "a-broken-zip"]
+)
+def test_an_archive_that_cannot_be_read_fails_the_report(
+    tmp_path: Path, monkeypatch, data: bytes
+) -> None:
+    folder = tmp_path / "h"
+    folder.mkdir()
+    (folder / "telemetry-history-1-1.zip").write_bytes(data)
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+
+
+def test_an_archived_history_past_its_bound_fails_the_report(tmp_path: Path, monkeypatch) -> None:
+    """A history is bounded as it is unpacked in memory, so a small archive that inflates past
+    ``MAX_FILE_BYTES`` fails the report instead of filling the runner."""
+    monkeypatch.setattr(report, "MAX_FILE_BYTES", 4096)
+    plain = tmp_path / "plain"
+    _write(plain, 1, 1, 0, {f"t::{i}": ("passed", 1.0) for i in range(100)})
+    folder = tmp_path / "h"
+    _archive(
+        folder,
+        "telemetry-history-1-1",
+        {"history-1-1.jsonl": (plain / "history-1-1.jsonl").read_bytes()},
+    )
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+
+
+# ── the quarantined tests' reruns ─────────────────────────────────────────────────────────────
+
+
+def _reruns(path: Path, entries: dict[str, dict[str, int]], rounds: int = 10) -> Path:
+    doc = {"schema": report.RERUN_SCHEMA, "rounds": rounds, "tests": entries}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_each_quarantined_tests_reruns_are_shown_beside_its_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(report, "today", lambda: TODAY)
+    listed = _quarantine(
+        tmp_path / "quarantine.toml",
+        _entry("tests/test_a.py::test_one", datetime.date(2026, 11, 1)),
+        _entry("tests/test_b.py::test_two", datetime.date(2026, 11, 2)),
+    )
+    reruns = _reruns(
+        tmp_path / "reruns.json",
+        {
+            "tests/test_a.py::test_one": {"passed": 7, "failed": 3, "skipped": 0, "not_run": 0},
+            "tests/test_b.py::test_two": {"passed": 0, "failed": 0, "skipped": 0, "not_run": 10},
+        },
+    )
+    (tmp_path / "h").mkdir()
+    code, data, text = _report(
+        tmp_path / "h", monkeypatch, tmp_path, "--quarantine", str(listed), "--reruns", str(reruns)
+    )
+    assert code == 0
+    by = {q["nodeid"]: q for q in data["quarantine"]}
+    assert by["tests/test_a.py::test_one"]["reruns"] == {
+        "passed": 7,
+        "failed": 3,
+        "skipped": 0,
+        "not_run": 0,
+    }
+    section = text.split("### Quarantine")[1].split("###")[0]
+    assert (
+        "| `tests/test_a.py::test_one` | #4000 | @someone | 2026-11-01, 13 days left "
+        "| failed 3 of 10 |" in section
+    )
+    assert (
+        "| `tests/test_b.py::test_two` | #4000 | @someone | 2026-11-02, 14 days left | not run |"
+        in section
+    )
+
+
+def test_without_the_reruns_the_quarantine_says_they_did_not_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(report, "today", lambda: TODAY)
+    listed = _quarantine(
+        tmp_path / "quarantine.toml", _entry("tests/test_a.py::t", datetime.date(2026, 11, 1))
+    )
+    (tmp_path / "h").mkdir()
+    _, data, text = _report(tmp_path / "h", monkeypatch, tmp_path, "--quarantine", str(listed))
+    assert data["quarantine"][0]["reruns"] is None
+    assert "| no reruns |" in text
+
+
+def _counts(**changes: int) -> dict[str, int]:
+    return {"passed": 10, "failed": 0, "skipped": 0, "not_run": 0, **changes}
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        pytest.param({"schema": "another", "rounds": 10, "tests": {}}, id="another-schema"),
+        pytest.param({"rounds": 10, "tests": {}}, id="no-schema"),
+        pytest.param(
+            {"schema": report.RERUN_SCHEMA, "rounds": "10", "tests": {}}, id="rounds-text"
+        ),
+        pytest.param({"schema": report.RERUN_SCHEMA, "rounds": 0, "tests": {}}, id="no-rounds"),
+        pytest.param(
+            {"schema": report.RERUN_SCHEMA, "rounds": 10, "tests": {"t": {"passed": 10}}},
+            id="a-count-missing",
+        ),
+        pytest.param(
+            # They add up to the rounds: only the count's sign is wrong.
+            {
+                "schema": report.RERUN_SCHEMA,
+                "rounds": 10,
+                "tests": {"t": _counts(passed=11, failed=-1)},
+            },
+            id="a-negative-count",
+        ),
+        pytest.param(
+            {"schema": report.RERUN_SCHEMA, "rounds": 10, "tests": {"t": _counts(failed=1)}},
+            id="counts-past-the-rounds",
+        ),
+        pytest.param(
+            {"schema": report.RERUN_SCHEMA, "rounds": 10, "tests": {"t": _counts(passed=9)}},
+            id="counts-short-of-the-rounds",
+        ),
+        pytest.param({"schema": report.RERUN_SCHEMA, "rounds": 10, "tests": []}, id="tests-list"),
+        pytest.param([], id="a-list"),
+        pytest.param("reruns", id="a-string"),
+    ],
+)
+def test_reruns_not_in_their_shape_fail_the_report(
+    tmp_path: Path, monkeypatch, capsys, doc: object
+) -> None:
+    path = tmp_path / "reruns.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    (tmp_path / "h").mkdir()
+    code, _, _ = _report(tmp_path / "h", monkeypatch, tmp_path, "--reruns", str(path))
+    assert code == 2
+    assert "::error title=the report did not run::reruns.json" in capsys.readouterr().out
+
+
+def test_reruns_that_add_up_to_their_rounds_are_read(tmp_path: Path) -> None:
+    counts = {"passed": 6, "failed": 2, "skipped": 1, "not_run": 1}
+    path = _reruns(tmp_path / "reruns.json", {"t": counts})
+    assert report.read_reruns(path) == {"t": counts}
+
+
+# ── the one weekly issue ──────────────────────────────────────────────────────────────────────
+
+
+class _Issues:
+    """``gh`` as the report calls it for the weekly issue, with the issues it holds."""
+
+    def __init__(self, issues: list[dict] | None = None) -> None:
+        self.issues = list(issues or [])
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str) -> str:
+        self.calls.append(args)
+        if args[:1] == ("api",):
+            path = args[-1]
+            assert "/issues?" in path and "state=open" in path, path
+            page = int(path.split("page=")[-1])
+            return json.dumps(self.issues[(page - 1) * 100 : page * 100])
+        if args[:2] == ("issue", "create"):
+            title = args[args.index("--title") + 1]
+            body = Path(args[args.index("--body-file") + 1]).read_text("utf-8")
+            number = 100 + len(self.issues)
+            self.issues.append(_issue(number, title, body=body))
+            return f"https://github.com/o/r/issues/{number}\n"
+        if args[:2] == ("issue", "edit"):
+            number = int(args[2])
+            body = Path(args[args.index("--body-file") + 1]).read_text("utf-8")
+            next(i for i in self.issues if i["number"] == number)["body"] = body
+            return ""
+        raise AssertionError(f"the report asked gh for {args}")
+
+
+def _issue(
+    number: int,
+    title: str,
+    *,
+    login: str = report.BOT,
+    body: str = "",
+    pr: bool = False,
+    kind: str | None = None,
+):
+    issue = {
+        "number": number,
+        "title": title,
+        "body": body,
+        "user": {"login": login, "type": kind or ("Bot" if login == report.BOT else "User")},
+    }
+    if pr:
+        issue["pull_request"] = {"url": "x"}
+    return issue
+
+
+def _publish(gh: _Issues, body: str = "## Weekly CI health\n") -> int:
+    return report.publish("o/r", body, run_url="https://example.invalid/run/1", gh=gh)
+
+
+def test_two_reports_edit_the_one_issue_and_never_create_a_second() -> None:
+    gh = _Issues()
+    first = _publish(gh, "first\n")
+    second = _publish(gh, "second\n")
+    assert first == second
+    assert [c[:2] for c in gh.calls if c[0] == "issue"] == [("issue", "create"), ("issue", "edit")]
+    [only] = [i for i in gh.issues if i["title"] == report.ISSUE_TITLE]
+    assert only["body"].startswith("second\n") and "https://example.invalid/run/1" in only["body"]
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        _issue(7, report.ISSUE_TITLE, login="someone"),
+        _issue(8, report.ISSUE_TITLE, pr=True),
+        _issue(9, "Weekly CI health (old)"),
+        _issue(10, report.ISSUE_TITLE, login="another-app[bot]", kind="Bot"),
+        _issue(11, report.ISSUE_TITLE, login=report.BOT, kind="User"),
+    ],
+    ids=["a-persons-issue", "a-pull-request", "another-title", "another-bots", "not-a-bot"],
+)
+def test_only_the_bots_open_issue_of_that_exact_title_is_edited(other: dict) -> None:
+    """On a public repository anyone may open an issue of that title; only the workflow's own
+    is the report's."""
+    gh = _Issues([other])
+    number = _publish(gh)
+    assert number != other["number"] and ("issue", "create") in [c[:2] for c in gh.calls]
+
+
+def test_two_bot_issues_of_that_title_edit_the_older_and_name_the_other(capsys) -> None:
+    gh = _Issues([_issue(12, report.ISSUE_TITLE), _issue(5, report.ISSUE_TITLE)])
+    assert _publish(gh) == 5
+    assert "::warning title=more than one weekly CI health issue::" in capsys.readouterr().out
+
+
+def test_past_the_open_issues_it_reads_the_report_writes_no_issue() -> None:
+    """Past 1,000 open issues the weekly one may be among those unread: a second would open."""
+    gh = _Issues([_issue(n, f"another {n}") for n in range(1, report.ISSUE_PAGES * 100 + 1)])
+    with pytest.raises(ValueError, match="more than 1000 open issues"):
+        _publish(gh)
+    assert [c for c in gh.calls if c[0] == "issue"] == []
+
+
+def test_a_body_past_githubs_limit_is_cut_and_says_where_the_rest_is() -> None:
+    gh = _Issues()
+    _publish(gh, "x" * (report.ISSUE_BODY_LIMIT * 2))
+    [only] = gh.issues
+    assert len(only["body"]) <= report.ISSUE_BODY_LIMIT
+    assert "cut here" in only["body"] and "https://example.invalid/run/1" in only["body"]
+
+
+# ── what the window holds ─────────────────────────────────────────────────────────────────────
+
+
+def _status(path: Path, **changes: object) -> Path:
+    status = {
+        "carry": "kept: the window weekly run 77 carried",
+        "carried": 9,
+        "dropped": 0,
+        "fetched": 3,
+        "refused": 0,
+        "left": 0,
+        "reserve": 200,
+        "slots": "telemetry-slots-25.zip",
+        "refusals": [],
+    }
+    status.update(changes)
+    path.write_text(json.dumps(status), encoding="utf-8")
+    return path
+
+
+def test_the_report_says_how_much_of_the_90_days_the_window_holds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    for day in range(13):
+        _write(folder, 2000 + day, 1, day, {"t::a": ("passed", 1.0)})
+    status = _status(tmp_path / "status.json")
+    code, data, text = _report(folder, monkeypatch, tmp_path, "--fetch-status", str(status))
+    assert code == 0
+    assert data["record"]["days"] == 12 and data["record"]["of"] == 90
+    section = text.split("### The record")[1].split("###")[0]
+    assert "The window holds 12 of the 90 days, 13 runs." in section
+    assert "9 histories carried from the last weekly run, 3 fetched" in section
+
+
+def test_a_refused_carry_and_a_spent_budget_are_said_plainly(tmp_path: Path, monkeypatch) -> None:
+    """A missed week, or a carried window this workflow did not upload, refills from the record
+    within the budget; the issue says so, and what is left for the next run."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    status = _status(
+        tmp_path / "status.json",
+        carry="refused: artifact 5000 was uploaded by run 9, which is not this workflow's own",
+        carried=0,
+        dropped=2,
+        fetched=40,
+        left=12,
+        refusals=["carried: telemetry-history-1-1.zip left the window"],
+    )
+    _, data, text = _report(folder, monkeypatch, tmp_path, "--fetch-status", str(status))
+    section = text.split("### The record")[1].split("###")[0]
+    assert "**The carried window was refused**: artifact 5000 was uploaded by run 9" in section
+    assert "2 carried histories were dropped when checked again" in section
+    assert (
+        "**12 histories were left for the next run**, to keep 200 of the token's calls for the "
+        "other workflows." in section
+    )
+    assert data["record"]["left"] == 12
+
+
+def test_each_refusal_is_one_code_span_whatever_it_quotes(tmp_path: Path, monkeypatch) -> None:
+    """A refusal can quote an archive's names; a backtick in one never ends its code span."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    why = "carried: 'a`b **c** ``d' is not a collector archive"
+    status = _status(tmp_path / "status.json", refusals=[why])
+    _, _, text = _report(folder, monkeypatch, tmp_path, "--fetch-status", str(status))
+    [line] = [x for x in text.split("### The record")[1].splitlines() if "collector archive" in x]
+    assert line.startswith("- `") and line.endswith("`") and line.count("`") == 2, line
+
+
+def test_without_the_fetchs_status_the_record_is_the_window_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    _, data, text = _report(folder, monkeypatch, tmp_path)
+    assert data["record"]["fetch"] is None
+    assert "The window holds 0 of the 90 days, 1 run." in text.split("### The record")[1]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [{"carry": 7}, {"left": -1}, {"refusals": "x"}, "not a table"],
+    ids=["carry-not-text", "a-negative-count", "refusals-not-a-list", "not-a-table"],
+)
+def test_a_fetch_status_not_in_its_shape_fails_the_report(
+    tmp_path: Path, monkeypatch, status: object
+) -> None:
+    path = tmp_path / "status.json"
+    if isinstance(status, dict):
+        _status(path, **status)
+    else:
+        path.write_text(json.dumps(status), encoding="utf-8")
+    (tmp_path / "h").mkdir()
+    code, _, _ = _report(tmp_path / "h", monkeypatch, tmp_path, "--fetch-status", str(path))
+    assert code == 2
+
+
+def _window(folder: Path, members: dict[str, bytes], *, links: tuple[str, ...] = ()) -> None:
+    import stat
+
+    folder.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(folder / "window.zip", "w", zipfile.ZIP_STORED) as zipped:
+        for name, data in members.items():
+            info = zipfile.ZipInfo(name)
+            if name in links:
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            zipped.writestr(info, data)
+
+
+def _collector_archive(name: str, data: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipped:
+        zipped.writestr(name, data)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("members", "links"),
+    [
+        ({"../telemetry-history-2-1.zip": "history-2-1.jsonl"}, ()),
+        ({"/telemetry-history-2-1.zip": "history-2-1.jsonl"}, ()),
+        ({"telemetry-history-2-1.zip": "../history-2-1.jsonl"}, ()),
+        ({"telemetry-history-2-1.zip": "history-2-1.jsonl"}, ("telemetry-history-2-1.zip",)),
+    ],
+    ids=["a-parent-path", "an-absolute-path", "a-parent-path-inside", "a-link"],
+)
+def test_a_traversal_or_link_member_of_the_window_is_refused(
+    tmp_path: Path, monkeypatch, capsys, members: dict, links: tuple
+) -> None:
+    plain = tmp_path / "plain"
+    _write(plain, 2, 1, 1, {"t::a": ("passed", 1.0)})
+    data = (plain / "history-2-1.jsonl").read_bytes()
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    _window(
+        folder,
+        {outer: _collector_archive(inner, data) for outer, inner in members.items()},
+        links=links,
+    )
+    code, data_out, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and data_out["window"]["runs"] == 1
+    assert "::warning title=archive member refused::" in capsys.readouterr().out
+
+
+def test_a_name_the_window_holds_twice_is_not_read(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A member is opened by its name, and of two of one name zipfile opens the last, which is
+    not the one checked: neither is read."""
+    plain = tmp_path / "plain"
+    _write(plain, 2, 1, 1, {"t::a": ("passed", 1.0)})
+    data = (plain / "history-2-1.jsonl").read_bytes()
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    archive = _collector_archive("history-2-1.jsonl", data)
+    with warnings.catch_warnings(), zipfile.ZipFile(folder / "window.zip", "w") as zipped:
+        warnings.simplefilter("ignore")  # zipfile warns of the name it is asked to write twice
+        zipped.writestr("telemetry-history-2-1.zip", archive)
+        zipped.writestr("telemetry-history-2-1.zip", archive)
+    code, out, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and out["window"]["runs"] == 1
+    assert "'telemetry-history-2-1.zip' more than once" in capsys.readouterr().out
+
+
+def test_an_oversized_archive_in_the_window_is_refused(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(telemetry, "MAX_HISTORY_ARCHIVE_BYTES", 64)
+    plain = tmp_path / "plain"
+    _write(plain, 2, 1, 1, {"t::a": ("passed", 1.0)})
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)})
+    archive = _collector_archive("history-2-1.jsonl", (plain / "history-2-1.jsonl").read_bytes())
+    _window(folder, {"telemetry-history-2-1.zip": archive})
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and data["window"]["runs"] == 1
+
+
+@pytest.mark.parametrize(
+    ("cap", "value"),
+    [("MAX_WINDOW_MEMBERS", 1), ("MAX_WINDOW_BYTES", 10)],
+    ids=["members", "bytes"],
+)
+def test_a_window_past_its_caps_fails_the_report(
+    tmp_path: Path, monkeypatch, cap: str, value: int
+) -> None:
+    monkeypatch.setattr(telemetry, cap, value)
+    plain = tmp_path / "plain"
+    _write(plain, 2, 1, 1, {"t::a": ("passed", 1.0)})
+    folder = tmp_path / "h"
+    archive = _collector_archive("history-2-1.jsonl", (plain / "history-2-1.jsonl").read_bytes())
+    _window(folder, {"telemetry-history-2-1.zip": archive, "fetched.json": b"{}"})
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
