@@ -20,6 +20,7 @@ seeding logic is driven for real against a real store on `tmp_path`.
 
 from __future__ import annotations
 
+import asyncio
 import types
 
 import pytest
@@ -476,38 +477,148 @@ def test_the_payload_item_list_is_CAPPED(store, tmp_path):
 
 # ── the boot wiring ──
 
+_LOOP = "GatewayOrchestrator._web_watch_poll_loop"
 
-def test_the_gateway_RUNS_the_poll_loop():
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """The home the gateway's loop reads: its trigger store, each watch's state, incident mode."""
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_boot_starts_the_poll_loop_and_holds_it_for_the_stop(home):
     """🔴 The wiring, not the helper. A runtime nothing calls is the inert-control defect this whole
-    file exists to close — the very state `web_watch` was in before it."""
-    import inspect
+    file exists to close — the very state `web_watch` was in before it. A boot with automations on
+    starts the loop once, and it is still running a moment later, held where the stop cancels it."""
+    from unittest.mock import AsyncMock, patch
 
+    from personalclaw.config.loader import AppConfig
     from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
 
-    boot = inspect.getsource(GatewayOrchestrator)
-    assert "_web_watch_poll_loop" in boot
-    assert "self._web_watch_task = asyncio.create_task" in boot
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=False, no_open=True)
+    before = asyncio.all_tasks()
+    with patch.object(ScheduleRunStore, "rotate_all", AsyncMock()):
+        await orch._init_cron()
+    started = asyncio.all_tasks() - before
+    try:
+        await asyncio.sleep(0.05)  # a loop that leaves at once has left by now
+        loop = orch._web_watch_task
+        assert loop is not None, "the boot holds no poll loop where the stop cancels it"
+        assert loop.get_coro().__qualname__ == _LOOP, loop
+        assert not loop.done(), "the poll loop stopped at boot"
+        loops = [task for task in started if task.get_coro().__qualname__ == _LOOP]
+        assert loops == [loop], f"the boot started {len(loops)} poll loops"
+    finally:
+        for task in started:
+            task.cancel()
+        await asyncio.wait(started, timeout=5.0)
 
 
-def test_the_loop_HONOURS_incident_mode():
-    """An unattended fire is an unattended fire regardless of what triggered it."""
-    import inspect
+def test_the_loop_checks_no_page_while_incident_mode_is_on(home, monkeypatch):
+    """An unattended fire is an unattended fire regardless of what triggered it. While incident
+    mode is on, a pass neither fetches the page nor fires, though the page has a new item; the loop
+    keeps going, and the first pass after the switch is turned off fires that item."""
+    import itertools
 
-    from personalclaw.gateway import GatewayOrchestrator
+    import personalclaw.gateway as gw
+    from personalclaw.guardrails import incident
 
-    src = inspect.getsource(GatewayOrchestrator._web_watch_poll_loop)
-    assert "incident_active" in src
+    _watch(TriggerStore(base_dir=home))
+    pages = {"v": FEED_TWO}
+    page = _fetcher(pages)
+    fetched: list[str] = []
+    fired: list[dict] = []
+
+    def fetch(url):
+        fetched.append(url)
+        return page(url)
+
+    real_poll_all = web_poll.poll_all
+    monkeypatch.setattr(
+        web_poll, "poll_all", lambda store, *, now: real_poll_all(store, now=now, fetcher=fetch)
+    )
+
+    def turn_on() -> None:
+        incident.activate("a test of the web watch loop")
+        pages["v"] = FEED_THREE
+
+    # Run before each pass: pass 1 seeds the watch, incident mode is on for passes 2 and 3 (the
+    # page gains an item as it goes on), and pass 4 runs with it off again.
+    before_pass = [lambda: None, turn_on, lambda: None, incident.resume]
+    so_far: list[tuple[int, int]] = []
+
+    async def sleep(_secs: float) -> None:
+        so_far.append((len(fetched), len(fired)))
+        if len(so_far) > len(before_pass):
+            raise asyncio.CancelledError
+        before_pass[len(so_far) - 1]()
+
+    async def fire(payload: dict) -> None:
+        fired.append(payload)
+
+    clock = itertools.count(NOW, 400)
+    monkeypatch.setattr(
+        gw,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=sleep, to_thread=asyncio.to_thread, CancelledError=asyncio.CancelledError
+        ),
+    )
+    monkeypatch.setattr(gw, "time", types.SimpleNamespace(time=lambda: next(clock)))
+    orch = object.__new__(gw.GatewayOrchestrator)
+    orch.dashboard_state = None
+    orch._fire_file_trigger = fire
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orch._web_watch_poll_loop())
+
+    # (pages fetched, fires) before each pass and after the last.
+    assert so_far == [(0, 0), (1, 0), (1, 0), (1, 0), (2, 1)]
+    (payload,) = fired
+    assert payload["trigger_id"] == "web_watch:w"
+    assert payload["new_count"] == 1
+    assert "post-3" in payload["new_items"][0]
 
 
-def test_the_loop_is_CANCELLED_on_shutdown():
-    """A task nobody cancels keeps polling a third party after the user stopped the gateway."""
-    import inspect
+def test_the_stop_cancels_the_poll_loop(home, monkeypatch):
+    """A task nobody cancels keeps polling a third party after the user stopped the gateway. The
+    stop cancels the running loop, and no pass runs after it."""
+    from test_gateway import _make_orchestrator, _mock_dashboard_state, _mock_sessions
 
-    from personalclaw.gateway import GatewayOrchestrator
+    passes: list[float] = []
 
-    src = inspect.getsource(GatewayOrchestrator)
-    shutdown = src[src.index("# Stop services") :]
-    assert "self._web_watch_task" in shutdown
+    def poll_all(store, *, now):
+        passes.append(now)
+        return [], []
+
+    monkeypatch.setattr(web_poll, "POLL_INTERVAL_SECS", 0.02)
+    monkeypatch.setattr(web_poll, "poll_all", poll_all)
+    orch = _make_orchestrator()
+    orch.sessions = _mock_sessions()
+    orch.dashboard_state = _mock_dashboard_state()
+
+    async def stop() -> tuple[bool, int]:
+        loop = orch._web_watch_task = asyncio.create_task(orch._web_watch_poll_loop())
+        for _ in range(500):
+            if passes:
+                break
+            await asyncio.sleep(0.01)
+        assert passes, "the loop made no pass before the stop"
+        await orch._shutdown()
+        stopped = len(passes)
+        await asyncio.sleep(0.2)  # ten poll intervals
+        return loop.cancelled(), len(passes) - stopped
+
+    cancelled, after = asyncio.run(stop())
+    assert cancelled, "the poll loop outlived the stop"
+    assert after == 0, f"{after} passes ran after the stop"
 
 
 # ── the headless escalation tier ──
