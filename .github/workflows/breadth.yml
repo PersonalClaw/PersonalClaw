@@ -895,7 +895,9 @@ jobs:
     # nothing would run them on macOS. It runs 3.13, test-macos's Python, and `security` runs
     # 3.12, so the corpus runs on each Python requires-python allows. Methodology:
     # docs/security/scanner-testing.md.
-    needs: [freshness]
+    # It waits for the macos suite, whose shards hold two macOS runners at a time, instead of
+    # taking another beside them; it runs whatever the suite concluded.
+    needs: [freshness, macos]
     if: ${{ !cancelled() }}
     runs-on: macos-26
     timeout-minutes: 25
