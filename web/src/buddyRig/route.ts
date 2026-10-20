@@ -8,10 +8,11 @@
  *  `?view=` picks what the stage shows: `both` side by side (the default, for watching), one
  *  candidate (`in-place` or `layered`, for measuring), `none` (the harness with no candidate, the
  *  baseline the measurement subtracts to find each candidate's own chunks) or `sheet` (the contact
- *  sheet: every pose at every size, still). `?size=` is the orb's size on the stage, and `?fps=30`
- *  or `60` caps the in-place candidate's frames, which only it can do: its frame loop is its own. */
+ *  sheet: every pose at every size, still). `?size=` is the orb's size on the stage, and `?fps=` the
+ *  most frames a second the candidates paint their dots at: the buddy's 30 unless it says `60`, or
+ *  `0` for every frame the display draws, as the spike's first runs did. */
 
-import { BUDDY_SIZES, type BuddySize } from './poses'
+import { BUDDY_FPS, BUDDY_SIZES, type BuddySize } from './poses'
 
 export const BUDDY_RIG_ROUTE = 'buddy-rig'
 
@@ -33,15 +34,15 @@ export function isBuddyRigHash(hash: string): boolean {
   return split(hash).path === BUDDY_RIG_ROUTE
 }
 
-/** The rates the in-place candidate can cap its frames at, for the measurement. */
-const RATES = [30, 60] as const
+/** The rates the measurement can ask for: the buddy's own, twice it, and 0 for no cap at all. */
+const RATES = [BUDDY_FPS, 60, 0] as const
 
-/** What the harness's stage shows for `hash`: an unknown view, size or rate is the default, and no
- *  rate means every frame the display draws. */
+/** What the harness's stage shows for `hash`: an unknown view, size or rate is the default, and a
+ *  rate of `null` means every frame the display draws. */
 export function rigViewOf(hash: string): { view: RigView; size: BuddySize; fps: number | null } {
   const { query } = split(hash)
   const view = VIEWS.find((v) => v === query.get('view')) ?? 'both'
   const size = BUDDY_SIZES.find((s) => String(s) === query.get('size')) ?? 48
-  const fps = RATES.find((r) => String(r) === query.get('fps')) ?? null
-  return { view, size, fps }
+  const rate = RATES.find((r) => String(r) === query.get('fps')) ?? BUDDY_FPS
+  return { view, size, fps: rate === 0 ? null : rate }
 }

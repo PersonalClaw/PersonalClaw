@@ -13,9 +13,10 @@
 // The gateway is the one the named home's record names (scripts/lib/named_home.mjs); no home, or
 // the default one, is refused before anything starts. Each run opens one scratch window
 // (rig-window.cjs) for one candidate and writes rig-runs/<os>-<candidate>-<n>.json, the orb at the
-// buddy's 48 px (--size 24 measures another size, and names its files <os>-<candidate>-24px-<n>;
-// --fps 30 caps the frames of the candidate that owns its frame loop, and adds 30fps- to the name;
-// --out DIR writes them elsewhere: a trial run's numbers are not the record's).
+// buddy's 48 px and its dots at the buddy's 30 frames a second. Another setting names itself in the
+// file: --size 24 adds 24px-, --fps 60 adds 60fps-, and --fps 0, every frame the display draws as
+// the spike's first runs did, adds uncapped-. --out DIR writes them elsewhere: a trial run's
+// numbers are not the record's, and the spike's first runs are in rig-runs/spike/.
 //
 // A CPU number is only as good as the machine is quiet, so a run starts only while the 5-minute
 // load average is under --max-load (30), re-checking each minute for up to --wait (60) minutes in
@@ -41,6 +42,18 @@ const CANDIDATES = ['in-place', 'layered']
 
 /** The bars of docs/design/buddy/rig.md, "What is measured". */
 export const BARS = { restCpu: 0.5, loopCpu: 5, stillFrames: 0, memoryMb: 60, bundleKb: 150, retintFrames: 1 }
+
+/** The most frames a second the buddy paints its dots at (web/src/buddyRig/poses.ts). */
+export const BUDDY_FPS = 30
+const RECORD_SIZE = 48
+
+/** The start of a run's file name: the record's own setting, 48 px at the buddy's rate, is bare,
+ *  and any other names itself. */
+export function runStem({ os: system, candidate, size, fps }) {
+  const sized = size === RECORD_SIZE ? '' : `${size}px-`
+  const rated = fps === BUDDY_FPS ? '' : fps ? `${fps}fps-` : 'uncapped-'
+  return `${system}-${candidate}-${sized}${rated}`
+}
 
 /** n, mean, median, 95th percentile and maximum of `values`. */
 export function stats(values) {
@@ -89,7 +102,9 @@ export function verdicts(run) {
     { measure: 'CPU at rest, visible', value: restCpu, unit: '% of one core', bar: `under ${BARS.restCpu}`, passes: restCpu !== null && restCpu < BARS.restCpu },
     { measure: 'CPU while animating', value: loopCpu, unit: '% of one core', bar: `under ${BARS.loopCpu}`, passes: loopCpu !== null && loopCpu < BARS.loopCpu },
     { measure: 'Frames while still', value: run.rest.callbacks, unit: 'frame callbacks in 60 s', bar: 'zero', passes: run.rest.callbacks === BARS.stillFrames },
-    { measure: 'Memory', value: { renderer: memoryMb, harnessAlone: harnessMb }, unit: 'MB, the renderer’s working set at its highest, and with the harness alone', bar: `under ${BARS.memoryMb}`, passes: memoryMb < BARS.memoryMb },
+    // The bar is the buddy window's own bundle's to meet (#3831, #3891): this window loads the whole
+    // web app, so its working set is recorded beside the bar and left pending until that bundle exists.
+    { measure: 'Memory', value: { renderer: memoryMb, harnessAlone: harnessMb }, unit: 'MB, the renderer’s working set at its highest, and with the harness alone', bar: `under ${BARS.memoryMb}, on the buddy window’s own bundle`, passes: null, pending: true },
     { measure: 'Bundle size', value: bundleKb, unit: 'KB gzip, the chunks only the candidate loads', bar: `under ${BARS.bundleKb}`, passes: bundleKb < BARS.bundleKb },
     { measure: 'Live retint', value: retint, unit: 'frames to follow: moving, still', bar: 'within one frame', passes: retint.every((f) => f !== null && f <= BARS.retintFrames) },
     { measure: 'The dials', value: { overshootScales, amplitudeScales }, unit: 'overshoot by bounciness, travel by expressiveness', bar: 'both scale', passes: overshootScales && amplitudeScales },
@@ -98,8 +113,8 @@ export function verdicts(run) {
   ]
 }
 
-/** The provisional choice by the issue's rule: the smallest by the candidate's own chunks among
- *  the candidates whose every run passes the at-rest and the animating CPU bars. */
+/** The choice by the issue's rule: the smallest by the candidate's own chunks among the candidates
+ *  whose every run passes the at-rest and the animating CPU bars and retints within a frame. */
 export function provisional(runs) {
   const byCandidate = new Map()
   for (const run of runs) byCandidate.set(run.candidate, [...(byCandidate.get(run.candidate) ?? []), run])
@@ -107,16 +122,17 @@ export function provisional(runs) {
   const rows = [...byCandidate].map(([candidate, list]) => {
     const v = list.map(verdicts)
     const cpu = v.every((m) => pick(m, 'CPU at rest, visible').passes && pick(m, 'CPU while animating').passes)
+    const retint = v.every((m) => pick(m, 'Live retint').passes)
     const kb = Math.max(...v.map((m) => pick(m, 'Bundle size').value))
-    return { candidate, runs: list.length, passesCpu: cpu, bundleKb: kb }
+    return { candidate, runs: list.length, passesCpu: cpu, passesRetint: retint, bundleKb: kb }
   })
-  const passing = rows.filter((r) => r.passesCpu).sort((a, b) => a.bundleKb - b.bundleKb)
+  const passing = rows.filter((r) => r.passesCpu && r.passesRetint).sort((a, b) => a.bundleKb - b.bundleKb)
   const tie = passing.length > 1 && passing[0].bundleKb === passing[1].bundleKb
   return { rows, choice: passing.length && !tie ? passing[0].candidate : null }
 }
 
 function parseArgs(argv) {
-  const out = { candidates: [], runs: 1, seconds: 60, reducedSeconds: 20, harnessSeconds: 10, holdSeconds: 20, stepMs: 800, settleMs: 5000, size: 48, maxLoad: 30, wait: 60, summary: false, out: RECORD, fps: null }
+  const out = { candidates: [], runs: 1, seconds: 60, reducedSeconds: 20, harnessSeconds: 10, holdSeconds: 20, stepMs: 800, settleMs: 5000, size: RECORD_SIZE, maxLoad: 30, wait: 60, summary: false, out: RECORD, fps: BUDDY_FPS }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
@@ -135,6 +151,7 @@ function parseArgs(argv) {
     else if (a === '--out') out.out = path.resolve(next())
     else { process.stderr.write(`unknown flag: ${a}\n`); process.exit(2) }
   }
+  if (![BUDDY_FPS, 60, 0].includes(out.fps)) { process.stderr.write(`no rate ${out.fps}: the harness paints at ${BUDDY_FPS} or 60 frames a second, or 0 for every frame\n`); process.exit(2) }
   if (!out.candidates.length) out.candidates = [...CANDIDATES]
   for (const c of out.candidates) if (!CANDIDATES.includes(c)) { process.stderr.write(`no candidate ${c}: ${CANDIDATES.join(', ')}\n`); process.exit(2) }
   return out
@@ -206,7 +223,7 @@ function fmt(v) {
   return Object.entries(v).map(([k, x]) => `${k} ${fmt(x)}`).join('; ')
 }
 
-const verdictWord = (m) => (m.passes === null ? 'info  ' : m.passes ? 'passes' : 'FAILS ')
+const verdictWord = (m) => (m.pending ? 'pending' : m.passes === null ? 'info   ' : m.passes ? 'passes ' : 'FAILS  ')
 
 function summary(dir) {
   const runs = readRuns(dir)
@@ -215,11 +232,11 @@ function summary(dir) {
     console.log(`\n${run.file}: ${run.env.osVersion}, ${run.env.cpu}, Electron ${run.versions.electron}, build ${run.env.commit}, 5-minute load ${fmt(load.mean)} (max ${fmt(load.max)})`)
     for (const m of verdicts(run)) console.log(`  ${verdictWord(m)}  ${m.measure}: ${fmt(m.value)} (${m.unit}; bar ${m.bar})`)
   }
-  const setting = (r) => `${r.size ?? 48} px${r.fps ? `, ${r.fps} fps` : ''}`
+  const setting = (r) => `${r.size ?? RECORD_SIZE} px, ${r.fps ? `${r.fps} fps` : 'every frame'}`
   for (const at of [...new Set(runs.map(setting))]) {
     const choice = provisional(runs.filter((r) => setting(r) === at))
-    console.log(`\nprovisional at ${at}: ${choice.choice ?? 'none'}`)
-    for (const r of choice.rows) console.log(`  ${r.candidate}: ${r.runs} runs, CPU bars ${r.passesCpu ? 'pass' : 'fail'}, ${fmt(r.bundleKb)} KB`)
+    console.log(`\nthe rule at ${at}: ${choice.choice ?? 'none'}`)
+    for (const r of choice.rows) console.log(`  ${r.candidate}: ${r.runs} runs, CPU bars ${r.passesCpu ? 'pass' : 'fail'}, retint ${r.passesRetint ? 'passes' : 'fails'}, ${fmt(r.bundleKb)} KB`)
   }
 }
 
@@ -244,7 +261,7 @@ async function main() {
       const raw = await runWindow({ url: gateway.url, token: gateway.token, candidate, seconds: args.seconds, reducedSeconds: args.reducedSeconds, harnessSeconds: args.harnessSeconds, holdSeconds: args.holdSeconds, stepMs: args.stepMs, settleMs: args.settleMs, size: args.size, fps: args.fps })
       const chunks = chunksOf({ baseline: raw.resources.baseline.map((p) => p.replace(/^\//, '')), loaded: raw.resources.loaded.map((p) => p.replace(/^\//, '')), entry: new Set([...entry].map((p) => p.replace(/^\//, ''))) })
       const run = { ...raw, size: args.size, env, gate: { maxLoad: args.maxLoad, ...gate, loadAtStart, loadAtEnd: os.loadavg() }, bundle: { candidate: sized(chunks.candidate), route: sized(chunks.route) } }
-      const stem = `${env.os}-${candidate}-${args.size === 48 ? '' : `${args.size}px-`}${args.fps ? `${args.fps}fps-` : ''}`
+      const stem = runStem({ os: env.os, candidate, size: args.size, fps: args.fps })
       const taken = readdirSync(args.out).filter((f) => f.startsWith(stem) && /^\d+\.json$/.test(f.slice(stem.length))).length
       const file = path.join(args.out, `${stem}${taken + 1}.json`)
       writeFileSync(file, `${JSON.stringify(run, null, 1)}\n`)

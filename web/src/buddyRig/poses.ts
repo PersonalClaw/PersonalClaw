@@ -110,9 +110,15 @@ export const RIG_LOOP: readonly RigStep[] = [
 export type BuddySize = 18 | 24 | 48 | 96
 export const BUDDY_SIZES: readonly BuddySize[] = [18, 24, 48, 96]
 
-/** Which of the agent orb's two tuned drawings a buddy size shares: the 20 px drawing's dot counts
- *  and radii below 32 px, the 64 px drawing's above. The spike's provisional answer, which the
- *  contact sheet puts in front of the owner (`docs/design/buddy/decisions/rig.md`). */
+/** Which of the agent orb's two tuned drawings a buddy size shares: 18 and 24 px draw from the
+ *  20 px drawing's dot counts and radii, 48 and 96 px from the 64 px drawing's, each at its own size
+ *  (`docs/design/buddy/decisions/rig.md`, "Sizes"). */
 export function tunedDrawingFor(size: BuddySize): AgentOrbSize {
   return size < 32 ? 20 : 64
 }
+
+/** The most frames a second the buddy paints its dots at. The agent orb in chat draws every frame
+ *  the display does; the buddy, on screen for as long as the app runs, paints at most this many,
+ *  which takes its loop from about 11% of a core to about the animating CPU bar's 5%
+ *  (`docs/design/buddy/decisions/rig.md`). */
+export const BUDDY_FPS = 30

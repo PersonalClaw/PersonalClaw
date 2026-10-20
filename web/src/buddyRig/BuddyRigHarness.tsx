@@ -144,7 +144,7 @@ export function BuddyRigHarness() {
                       exit={{ opacity: 0, scale: 0.96, transition: cardTransition(false) }}
                       className="flex w-full items-center gap-3 rounded-lg border border-outline-variant bg-surface-container p-3"
                     >
-                      <Suspense fallback={null}><Component phase={phase} size={48} dials={dialsKey} /></Suspense>
+                      <Suspense fallback={null}><Component phase={phase} size={48} dials={dialsKey} fps={initial.fps} /></Suspense>
                       <div className="flex flex-col">
                         <span data-type="label-m">{rigLook(phase).label}</span>
                         <span data-type="caption" className="text-on-surface-low">The focused status card</span>
