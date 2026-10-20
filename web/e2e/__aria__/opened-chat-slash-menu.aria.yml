@@ -40,9 +40,7 @@
   - heading "Good <time of day>, Keyur" [level=#]
   - textbox "Message input"
   - button "Add to message"
-  - button "Agent"
-  - 'button "Model: Auto"': Auto
-  - 'button "Reasoning effort: Default"': Default
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
   - 'button "Reply style: Agent default"': Agent default
   - button "Optimize prompt (⌘↵)"
   - button "Voice input"

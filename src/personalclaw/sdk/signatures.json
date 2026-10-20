@@ -7081,7 +7081,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "description"},
     {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "size"},
     {"annotation": "bool | None", "default": "None", "kind": "positional_or_keyword", "name": "downloaded"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "keyword_only", "name": "efforts"}
    ],
    "returns": "None"
   },
@@ -7561,7 +7562,8 @@
    {"annotation": "str | None", "kind": "positional_or_keyword", "name": "endpoint"},
    {"annotation": "str | None", "kind": "positional_or_keyword", "name": "api_key"},
    {"annotation": "str", "default": "'https://api.openai.com/v1'", "kind": "keyword_only", "name": "default_base"},
-   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"},
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "efforts_of"}
   ],
   "returns": "list[ModelInfo]"
  },
@@ -7600,7 +7602,8 @@
   "kind": "function",
   "params": [
    {"annotation": "BrandedProviderSpec", "kind": "positional_or_keyword", "name": "spec"},
-   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"},
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "efforts_of"}
   ],
   "returns": "tuple[Callable, Callable, Callable]"
  },
@@ -8234,7 +8237,8 @@
     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "api_key"},
     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "default_model"},
-    {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
+    {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"},
+    {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "efforts_of"}
    ],
    "returns": "None"
   },

@@ -6,10 +6,10 @@ import type { WorkPhase } from '../../lib/workPhase'
  *  composer enables only the shared core (send + optimize) and supplies its own
  *  chip-form for goal params. This is the single configurability seam. */
 export interface ComposerControls {
-  agent?: boolean
-  model?: boolean
+  agent?: boolean          // the agent half of the agent-and-model pill
+  model?: boolean          // its model half
   approval?: boolean
-  reasoning?: boolean      // only meaningful if the bound provider supports it
+  reasoning?: boolean      // its effort row, shown only for a model that declares levels
   attach?: boolean
   mic?: boolean
   optimize?: boolean
@@ -174,8 +174,9 @@ export interface ComposerProps {
    *  needs ≥20 chars to plan, so the button stays disabled (not a silent no-op)
    *  until the draft is long enough. */
   minChars?: number
-  /** Monotonic counters — incrementing opens the model / agent / reasoning pill
-   *  popover. Drives the "/model", "/agent" and "/effort" GUI-affordance slash commands. */
+  /** Monotonic counters — incrementing any of them opens the agent-and-model pill, and the
+   *  reasoning one opens its effort levels too. Drives the "/model", "/agent" and "/effort"
+   *  GUI-affordance slash commands. */
   openModelSignal?: number
   openAgentSignal?: number
   openReasoningSignal?: number

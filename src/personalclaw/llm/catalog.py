@@ -63,6 +63,9 @@ class ModelInfo:
     case of its own, and its absence means only that the provider did not say.
     ``extra`` carries provider-specific display fields the ollama UI shows
     (``owned_by``, ``parameter_size``, ``quantization``, ``family``, ``modified_at``).
+    ``efforts`` are the reasoning-effort levels the model takes (``low``, ``high``, …), as its
+    provider's record of it declares them. ``[]`` means the record declares none, and the composer
+    then offers the model no effort choice: an id is no declaration.
     """
 
     id: str
@@ -72,6 +75,7 @@ class ModelInfo:
     size: int | None = None  # bytes — for downloadable managers (ollama)
     downloaded: bool | None = None  # None = not a downloadable/managed model
     extra: dict[str, Any] = field(default_factory=dict)
+    efforts: list[str] = field(default_factory=list, kw_only=True)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the wire shape the model endpoints return.
@@ -94,6 +98,8 @@ class ModelInfo:
             d["size"] = self.size
         if self.downloaded is not None:
             d["downloaded"] = self.downloaded
+        if self.efforts:
+            d["efforts"] = list(self.efforts)
         for k, v in (self.extra or {}).items():
             d.setdefault(k, v)
         return d
@@ -668,12 +674,34 @@ def _record_capabilities(
         return []
 
 
+def _record_efforts(
+    record: dict[str, Any], efforts_of: Callable[[dict[str, Any]], list[str]] | None
+) -> list[str]:
+    """The reasoning-effort levels ``record`` declares, by the vendor's own reading of its records.
+
+    No reading, no levels: an id says nothing about whether a model takes an effort. A reading that
+    raises costs that one model its levels, never the list.
+    """
+    if efforts_of is None:
+        return []
+    try:
+        return [str(e) for e in efforts_of(record)]
+    except Exception:  # noqa: BLE001 — one record the vendor reading cannot read
+        logger.warning(
+            "Model discovery could not read the effort levels of %r; it offers none",
+            record.get("id"),
+            exc_info=True,
+        )
+        return []
+
+
 async def openai_compatible_discover_models(
     endpoint: str | None,
     api_key: str | None,
     *,
     default_base: str = "https://api.openai.com/v1",
     capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
+    efforts_of: Callable[[dict[str, Any]], list[str]] | None = None,
 ) -> list[ModelInfo]:
     """List models from an OpenAI-compatible ``GET {base}/models`` endpoint, STRICTLY.
 
@@ -687,7 +715,8 @@ async def openai_compatible_discover_models(
     what a model does — a ``type`` field, a capability record: it is handed each record as the
     vendor wrote it and returns its :class:`ModelInfo` capability tags (``[]`` for none). Without
     one, a record is read by its id and ``root`` (:func:`infer_capabilities`), the only fields
-    every OpenAI-compatible server carries.
+    every OpenAI-compatible server carries. ``efforts_of`` reads the same record for the
+    reasoning-effort levels the model takes (``[]`` for none); without one, a model declares none.
 
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL
@@ -783,6 +812,7 @@ async def openai_compatible_discover_models(
                 name=model_id,
                 capabilities=_record_capabilities(m, capabilities_of),
                 extra={"owned_by": m.get("owned_by", "")} if m.get("owned_by") else {},
+                efforts=_record_efforts(m, efforts_of),
             )
         )
     if rows and not out:
@@ -802,12 +832,14 @@ async def openai_compatible_list_models(
     *,
     default_base: str = "https://api.openai.com/v1",
     capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
+    efforts_of: Callable[[dict[str, Any]], list[str]] | None = None,
 ) -> list[ModelInfo]:
     """The fail-soft view of :func:`openai_compatible_discover_models`: ``[]`` on any
     failure (unreachable / non-200 / unparseable / missing config), never raises.
 
     ``default_base`` lets a branded app point at its own default host while reusing this
-    client, and ``capabilities_of`` reads its vendor's records (see the strict function).
+    client, and ``capabilities_of`` and ``efforts_of`` read its vendor's records (see the strict
+    function).
     The failure is LOGGED at WARNING rather than dropped: a provider that
     contributes nothing to the model pool was previously indistinguishable from one that
     was never asked, at every log level (#955). A caller that needs to tell "no models"
@@ -815,7 +847,11 @@ async def openai_compatible_list_models(
     """
     try:
         return await openai_compatible_discover_models(
-            endpoint, api_key, default_base=default_base, capabilities_of=capabilities_of
+            endpoint,
+            api_key,
+            default_base=default_base,
+            capabilities_of=capabilities_of,
+            efforts_of=efforts_of,
         )
     except ModelDiscoveryError as exc:
         record_swallowed_discovery_failure(exc)

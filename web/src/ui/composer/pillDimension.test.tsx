@@ -1,53 +1,54 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent } from './controls'
+import { AgentModelPill, ApprovalPill, effortsFor } from './controls'
 import { ProjectPicker } from '../ProjectPicker'
 
 // ── A value pill that never says what it controls ──────────────────────────────────────
 //
-// The composer's pill cluster is four value selectors in a row. Each renders an icon, its
-// CURRENT VALUE, and a chevron — and nothing else. Measured accessible names on #/chat before
-// this change:
+// The composer's pill cluster is value selectors in a row. Each renders an icon, its CURRENT
+// VALUE, and a chevron — and nothing else. Measured accessible names on #/chat before the pills
+// were given their dimension:
 //
 //   "Agent"      (which agent is bound)
 //   "Auto"       (the model)
 //   "Default"    (the reasoning effort)
 //   "Normal"     (the permission mode — rendered on surfaces that enable it)
 //
-// Four bare values. A screen-reader user tabbing the composer hears "Agent", "Auto", "Default"
-// and has no way to know they are the agent, the model and the reasoning effort — the dimension
-// lives only in the icon and the horizontal position, neither of which is announced.
+// Bare values. A screen-reader user tabbing the composer heard "Agent", "Auto", "Default" and had
+// no way to know they were the agent, the model and the reasoning effort — the dimension lived only
+// in the icon and the horizontal position, neither of which is announced.
 //
 // The app already solves this one row up. `HeaderModePill` composes
 // `aria-label={`${ariaLabel}: ${label}`}`, so the header's pills announce "Task mode: Agent" and
-// "Permission mode: Normal". The composer's pills are the same kind of control and now take the
-// same shape; the visible label is untouched, because on screen the dimension is already carried
-// by position and icon, which is exactly why the label spends its width on the value.
+// "Permission mode: Normal". The composer's pills are the same kind of control and take the same
+// shape; the visible label spends its width on the value.
+//
+// The agent, the model and the effort are now ONE pill (`AgentModelPill`): it shows the agent and
+// the model and announces both dimensions, and the effort is a row in its menu, offered only for a
+// model that declares levels (`theEffortRowIsOnlyForDeclaredLevels.test.tsx`).
 //
 // 🪤 THE AMBIGUITY THAT FOUND THIS. On #/chat the header renders a task-mode pill labelled
-// "Agent" with a Bot icon, and the composer renders the agent pill ALSO labelled "Agent" with a
+// "Agent" with a Bot icon, and the composer rendered the agent pill ALSO labelled "Agent" with a
 // Bot icon, 380px apart, controlling different things (which tools may run vs. which agent
 // answers). The accessible names were the only thing distinguishing them — and only one of the
-// two had a useful one. The remaining VISIBLE collision is a copy decision, left open
-// rather than guessed at here.
+// two had a useful one.
 
 describe('every composer pill announces its dimension', () => {
-  it('the agent pill says Agent (not "Agent: Agent") when nothing is bound', () => {
-    // Its fallback value IS the dimension word, so the composed name would stutter.
-    render(<AgentPill value="" onSelect={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Agent' })).toBeTruthy()
-  })
-
-  it('the agent pill names the dimension AND the bound agent', () => {
-    render(<AgentPill value="researcher" onSelect={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Agent: researcher' })).toBeTruthy()
-  })
-
-  it('the model pill says Model', () => {
-    render(<ModelPill value="" onSelect={vi.fn()} />)
+  it('the agent-and-model pill names both dimensions and both values', () => {
+    render(<AgentModelPill agent="researcher" model="" effort="" onSelect={vi.fn()} />)
     // Unset resolves to the "Auto" use-case chain.
+    expect(screen.getByRole('button', { name: 'Agent and model: researcher · Auto' })).toBeTruthy()
+  })
+
+  it('names the agent half "Agent" when nothing is bound', () => {
+    render(<AgentModelPill agent="" model="" effort="" onSelect={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Agent and model: Agent · Auto' })).toBeTruthy()
+  })
+
+  it('a host that offers only the model names only the model', () => {
+    render(<AgentModelPill parts={{ agent: false }} agent="researcher" model="" effort="" onSelect={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Model: Auto' })).toBeTruthy()
   })
 
@@ -58,15 +59,10 @@ describe('every composer pill announces its dimension', () => {
     expect(screen.getByRole('button', { name: 'Permission mode: Normal' })).toBeTruthy()
   })
 
-  it('the reasoning pill says Reasoning effort', () => {
-    render(<ReasoningPill value="" efforts={[{ value: 'low', label: 'Low' }]} onSelect={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Reasoning effort: Default' })).toBeTruthy()
-  })
-
   it('leaves the VISIBLE label alone (this is a naming fix, not a redesign)', () => {
-    render(<ReasoningPill value="" efforts={[{ value: 'low', label: 'Low' }]} onSelect={vi.fn()} />)
-    // The pill still shows just the value on screen; only the accessible name gained the axis.
-    expect(screen.getByRole('button').textContent).toBe('Default')
+    render(<AgentModelPill agent="researcher" model="" effort="" onSelect={vi.fn()} />)
+    // The pill still shows just the values on screen; only the accessible name carries the axes.
+    expect(screen.getByRole('button').textContent).toBe('researcher · Auto')
   })
 })
 
@@ -74,30 +70,42 @@ describe('every composer pill announces its dimension', () => {
 //
 // `GET /api/agent-providers/acp:kiro-cli/agents` returns every one of its agents with
 // `supported_efforts: []`, and codex the same for its one agent, while claude-code
-// declares five. The shipped behaviour HIDES the pill rather than greying it out, and hiding
+// declares five. The shipped behaviour HIDES the effort rather than greying it out, and hiding
 // is correct: a greyed control still asserts the axis exists for this runtime, while a hidden
 // one plus an API that refuses the value (tests/test_acp_effort_declaration.py) tells the
 // truth twice. The machine-readable truth is already in the payload — `supported_efforts: []`.
+// A native model says the same through its provider's record: `efforts` on the model list, absent
+// for a model that declares none.
 //
 // Railed because the decision is only as durable as the test under it: without this, a later
-// change could render a dead pill for kiro and nothing would object.
-describe('a runtime declaring no efforts offers no pill', () => {
-  it('renders nothing rather than a dead control', () => {
-    const { container } = render(<ReasoningPill value="" efforts={[]} onSelect={vi.fn()} />)
-    expect(container.innerHTML).toBe('')
-    expect(screen.queryByRole('button')).toBeNull()
+// change could render a dead effort row for kiro and nothing would object.
+describe('a runtime or model declaring no efforts offers no effort row', () => {
+  const data = {
+    agents: [], providers: [],
+    models: [
+      { name: 'Acme:deep', model_name: 'deep', provider: 'Acme', description: '', efforts: ['low', 'high'] },
+      { name: 'Acme:flat', model_name: 'flat', provider: 'Acme', description: '' },
+    ],
+    discovered: {
+      'acp:kiro-cli': [{ name: 'reviewer', provider_agent: 'reviewer', supported_efforts: [] }],
+      'acp:claude-code': [{ name: 'Claude Code', provider_agent: '', supported_efforts: [{ value: 'low', label: 'Low' }] }],
+    },
+  } as never
+
+  it('renders no effort row rather than a dead control', () => {
+    render(<AgentModelPill data={data} agent="reviewer" model="" effort="" onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Agent and model: / }))
+    expect(screen.queryByRole('button', { name: /^Effort/ })).toBeNull()
   })
 
-  it('effortsForAgent returns the runtime\'s DECLARED set, empty included', () => {
-    const data = {
-      discovered: {
-        'acp:kiro-cli': [{ name: 'reviewer', provider_agent: 'reviewer', supported_efforts: [] }],
-        'acp:claude-code': [{ name: 'Claude Code', provider_agent: '', supported_efforts: [{ value: 'low', label: 'Low' }] }],
-      },
-    } as never
-    expect(effortsForAgent(data, 'reviewer')).toEqual([])
+  it("effortsFor returns the runtime's or the model's DECLARED set, empty included", () => {
+    expect(effortsFor(data, 'reviewer', '')).toEqual([])
+    expect(effortsFor(data, 'researcher', 'Acme:flat')).toEqual([])
+    // Auto is no model, so it declares nothing.
+    expect(effortsFor(data, 'researcher', 'Auto')).toEqual([])
     // Vacuity floor: the helper is not simply returning [] for everything.
-    expect(effortsForAgent(data, 'Claude Code')).toEqual([{ value: 'low', label: 'Low' }])
+    expect(effortsFor(data, 'Claude Code', '')).toEqual([{ value: 'low', label: 'Low' }])
+    expect(effortsFor(data, 'researcher', 'Acme:deep')).toEqual([{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }])
   })
 })
 
@@ -175,10 +183,10 @@ describe('the rail', () => {
   })()
 
   it('finds every pill trigger (not vacuously green)', () => {
-    // Four at the time of writing. If a fifth pill appears, `dimension` being a REQUIRED prop
-    // means typecheck stops it before this test does — this floor is here so the assertion below
-    // cannot pass by matching nothing.
-    expect(sites.length, 'the matcher must find the pill triggers').toBeGreaterThanOrEqual(4)
+    // Three at the time of writing (agent-and-model, permission mode, reply style). If another
+    // pill appears, `dimension` being a REQUIRED prop means typecheck stops it before this test
+    // does — this floor is here so the assertion below cannot pass by matching nothing.
+    expect(sites.length, 'the matcher must find the pill triggers').toBeGreaterThanOrEqual(3)
   })
 
   it('has no pill trigger without a dimension', () => {

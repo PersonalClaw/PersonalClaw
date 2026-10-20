@@ -4,7 +4,7 @@ import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2,
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
 import { ORB_LOOKS } from './AgentOrb'
-import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, ReplyStylePill, effortsForAgent, PlusMenu } from './composer/controls'
+import { AgentModelPill, ApprovalPill, ReplyStylePill, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
 import { StopSweep } from './composer/StopSweep'
@@ -32,8 +32,8 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
 
 /** The one configurable composer — used by Chat and the goal composer. `controls` picks
  *  which inline pills + "+"-menu items appear; `data`/`selection` feed real
- *  agent/model/mode options. Pill cluster: [+] agent · model · approval ·
- *  reasoning … [mic] [send]. Textarea auto-grows to a user-resizable max. */
+ *  agent/model/mode options. Pill cluster: [+] agent-and-model · approval ·
+ *  reply style … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
@@ -164,10 +164,17 @@ export function Composer({
   const pills = (
     <div className="flex items-center gap-xs min-w-0 flex-wrap">
       {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
-      {controls.agent && <AgentPill data={data} value={sel?.agent ?? ''} openSignal={openAgentSignal} onSelect={(a) => onSelect?.({ agent: a })} />}
-      {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
+      {/* One pill for who answers: the agent, the model and, for a model that declares levels,
+          the reasoning effort. `/agent`, `/model` and `/effort` each open it; `/effort` opens its
+          levels too. */}
+      {(controls.agent || controls.model) && (
+        <AgentModelPill data={data} agent={sel?.agent ?? ''} model={sel?.model ?? ''} effort={sel?.reasoning ?? ''}
+          parts={{ agent: !!controls.agent, model: !!controls.model, effort: !!controls.reasoning }}
+          contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain}
+          openSignal={(openAgentSignal ?? 0) + (openModelSignal ?? 0) + (openReasoningSignal ?? 0)} effortSignal={openReasoningSignal}
+          onSelect={(p) => onSelect?.(p)} />
+      )}
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
-      {controls.reasoning && <ReasoningPill value={sel?.reasoning ?? ''} efforts={effortsForAgent(data, sel?.agent ?? '')} openSignal={openReasoningSignal} onSelect={(e) => onSelect?.({ reasoning: e })} />}
       {/* Reply style — feature-detected on the prop, not a `controls` flag:
           it needs a conversation to scope itself to, and the goal composer has none.
           Always rendered when present, including at Default, so a change in how replies

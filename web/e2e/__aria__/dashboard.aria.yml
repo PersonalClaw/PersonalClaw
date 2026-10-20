@@ -35,9 +35,7 @@
   - heading "Good <time of day>, Keyur" [level=#]
   - textbox "Message input"
   - button "Attach files"
-  - button "Agent"
-  - 'button "Model: Auto"': Auto
-  - 'button "Reasoning effort: Default"': Default
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
   - button "Send message" [disabled]
   - heading "To triage" [level=#]
   - paragraph: Nothing to triage — no approvals, messages or skill proposals are waiting.

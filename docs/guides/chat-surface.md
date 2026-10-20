@@ -559,7 +559,7 @@ With both on, the conversation takes about 90% of the window.
 
 ## Which model answers a turn
 
-A turn runs on the model you pick in the composer's model pill. Left on **Auto**, it runs on a
+A turn runs on the model you pick in the composer's agent-and-model pill. Left on **Auto**, it runs on a
 chain from **Settings → Models**, chosen by the folder the chat works in:
 
 - **Code & tools**, for a chat working in a folder of its own: the working directory you set for
@@ -582,6 +582,12 @@ Each turn names the model that answered it. Its details chip says **on <model>**
 **Answered by <model>, from your Code & tools chain** (or your Chat chain, or **picked for this
 chat**). On Auto the pill says the same, **Auto · <model>**, and its Auto row names the chain the
 next turn takes. A chat on an agent CLI runs on that CLI's own model.
+
+The same pill sets the reasoning effort, in a row under the chosen model, only when that model
+declares the levels it takes: an agent CLI's runtime declares them, and a native model's provider
+declares them in its record of the model. A model that declares none has no effort row, and nor
+does Auto. A switch to a model without the chat's level sets the effort back to Default, and the
+pill says so: **Effort set to Default: <model> has no High**.
 
 ## What gets recorded
 

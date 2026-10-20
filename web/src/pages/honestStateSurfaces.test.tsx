@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ReactElement } from 'react'
 import { api, type FeedbackProducerRow } from '../lib/api'
 import { writeQuery } from '../lib/data'
-import { ModelPill } from '../ui/composer/controls'
+import { AgentModelPill } from '../ui/composer/controls'
 import { AgentsListPage } from './agents/AgentsListPage'
 import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
 import { ChatHistorySidePanelBody } from './chat/history/ChatHistorySidePanel'
@@ -655,7 +655,7 @@ describe('the chat list says when it could not be read', () => {
 
 describe('the context ring never states an unmeasured percentage', () => {
   const pill = (contextPct?: number, contextWindow?: number | null) => (
-    <ModelPill data={undefined} agent="" value="Auto" onSelect={vi.fn()} contextPct={contextPct} contextWindow={contextWindow} />
+    <AgentModelPill data={undefined} agent="" model="Auto" effort="" onSelect={vi.fn()} contextPct={contextPct} contextWindow={contextWindow} />
   )
   const titleOf = (el: ReactElement) => render(el).container.querySelector('[title]')!.getAttribute('title')!
 

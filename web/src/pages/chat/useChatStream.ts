@@ -259,7 +259,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // has none) — an unmeasured context must show no percentage, not 0%.
   const [contextPct, setContextPct] = useState<number | undefined>(undefined)
   // The window the gateway named with its reading: `null` = none is declared or served,
-  // `undefined` = not said yet. It is what lets the unmeasured dot say WHY (`ModelPill`).
+  // `undefined` = not said yet. It is what lets the unmeasured dot say WHY (`AgentModelPill`).
   const [contextWindow, setContextWindow] = useState<number | null | undefined>(undefined)
   // A reading that arrived live outranks the one a later snapshot carries, which is older.
   const contextSaidLive = useRef(false)

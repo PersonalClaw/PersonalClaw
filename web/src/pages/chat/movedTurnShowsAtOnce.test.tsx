@@ -141,16 +141,16 @@ describe('a chat moved to another agent while its turn waits on a permission car
     // transports), and the composer names the agent the next message goes to.
     pushFrame('chat_message', { role: 'notice', content: 'Moved to oncall-triage — it is answering your message.' })
     expect(screen.getAllByText('Moved to oncall-triage — it is answering your message.')).toHaveLength(1)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Agent: oncall-triage' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Agent and model: oncall-triage · / })).toBeTruthy())
     // Her message is being answered by the agent she moved it to: the turn still runs.
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
   })
 
   it('names the default agent in the composer when the chat is moved back to it', async () => {
     await openOnTheParkedTurn({}, { agent: 'oncall-triage' })
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Agent: oncall-triage' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Agent and model: oncall-triage · / })).toBeTruthy())
     pushFrame('session_binding', { agent: '', model: '', acp_provider: '', acp_provider_agent: '', reasoning_effort: '' })
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Agent: oncall-triage' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Agent and model: oncall-triage · / })).toBeNull())
   })
 })
 

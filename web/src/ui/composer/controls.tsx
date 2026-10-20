@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
@@ -15,13 +15,7 @@ const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
   { id: 'trust', label: 'Trust', hint: 'Auto-approve in this chat' },
   { id: 'yolo', label: 'YOLO', hint: 'Auto-approve everywhere — auto-expires, re-enable to extend' },
 ]
-// Native effort levels; each native provider maps them to the shape its model takes.
-// ACP agents override this with their backend-declared supported_efforts.
-const NATIVE_EFFORTS: { value: string; label: string }[] = [
-  { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'max', label: 'Max' },
-]
-
-// Shared trigger for every composer pill (Agent/Model/Approval/Reasoning/Plus).
+// Shared trigger for every composer pill (agent-and-model, approval, reply style).
 // An active tint while its popover is open and a spring chevron flip; a press shows by
 // colour, at once, with no scale — these pills are pressed many times an hour. The
 // popover itself opens via Popover.
@@ -73,79 +67,6 @@ export function cleanAgentHint(desc?: string): string {
   return (desc ?? '').replace(/\s*--\s*⚠️[^]*$/u, '').replace(/\s*\(?\[?DO NOT (UPDATE|EDIT)[^]*$/i, '').trim()
 }
 
-export function AgentPill({ data, value, onSelect, openSignal }: { data?: ComposerData; value: string; onSelect: (agent: string) => void; openSignal?: number }) {
-  const [q, setQ] = useState('')
-  const searchId = `agent-search-${useId()}`
-  const nativeAgents = data?.agents ?? []
-  const discoveredEntries = Object.entries(data?.discovered ?? {})
-  const total = nativeAgents.length + discoveredEntries.reduce((n, [, a]) => n + a.length, 0)
-  // 🪤 `ready` DEFAULTS TRUE when absent, not false. Callers that pass fixed lists
-  // (the goal composer, tests) never set it, and defaulting to false would leave
-  // them stuck on "Loading agents…" forever. Only a host that opted in by threading
-  // `useComposerData` can report not-yet-read, which is exactly the host that knows.
-  const ready = data?.ready ?? true
-  const agentsErr = data?.agentsErr
-  const retry = data?.retry
-  // Long agent rosters (native + every discovered ACP agent) need a filter — 60+
-  // entries is unscannable. Show the search box only once the list is big enough
-  // to warrant it, so small setups stay clutter-free.
-  const showSearch = total > 8
-  const nq = q.trim().toLowerCase()
-  const native = nq ? nativeAgents.filter((a) => a.name.toLowerCase().includes(nq)) : nativeAgents
-  const discovered = discoveredEntries
-    .map(([rt, agents]) => [rt, nq ? agents.filter((d) => `${d.name} ${d.description}`.toLowerCase().includes(nq) || rt.toLowerCase().includes(nq)) : agents] as const)
-    .filter(([, agents]) => agents.length > 0)
-  const noMatches = nq && native.length === 0 && discovered.length === 0
-  return (
-    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} dimension="Agent" open={open} toggle={toggle} />}>
-      {(close) => (
-        <div className="flex max-h-[340px] flex-col">
-          {showSearch && (
-            <div className="relative shrink-0 px-1 pb-1">
-              <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-              <input id={searchId} autoComplete="off" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
-                data-type="body-s"
-                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-            </div>
-          )}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {native.map((a) => (
-              <MenuRow key={a.name} label={a.name} selected={a.name === value} onClick={() => { onSelect(a.name); close() }} />
-            ))}
-            {discovered.map(([rt, agents]) => (
-              <div key={rt}>
-                <div data-type="caption" className="px-m pt-m pb-1 uppercase tracking-wide text-on-surface-low">{rt}</div>
-                {agents.map((d) => (
-                  <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === value} onClick={() => { onSelect(d.name); close() }} />
-                ))}
-              </div>
-            ))}
-            {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
-            {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
-                three, and two of them are false. `useComposerData` seeds every list to `[]` and
-                readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
-                both `[]` — indistinguishable from a user who genuinely has no agents installed.
-                "No agents available" is a statement about the user's own setup, the kind they
-                believe, so on an unreachable gateway it sent them looking for a problem in their
-                install. The order below is deliberate: not-yet-known, then could-not-be-read, then
-                the one real emptiness. */}
-            {total === 0 && (
-              !ready
-                ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
-                : agentsErr
-                  ? <div role="alert" className="px-m py-2">
-                      <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
-                      {retry && <Button variant="ghost-accent" size="xs" onClick={() => retry()} className="mt-1"><RotateCcw size={13} /> Try again</Button>}
-                    </div>
-                  : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
-            )}
-          </div>
-        </div>
-      )}
-    </Popover>
-  )
-}
-
 function ContextRing({ pct }: { pct: number }) {
   // A 16px ring that fills with context-window usage; warms to danger as it nears
   // full so a user notices an at-risk turn before it truncates.
@@ -173,18 +94,98 @@ function unmeasuredTitle(windowTokens: number | null | undefined): string {
   return `Context usage not measured yet — it's measured each time the model answers${against}.`
 }
 
-export function ModelPill({ data, agent, value, onSelect, contextPct, contextWindow, openSignal, served, autoChain }: {
-  data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; contextWindow?: number | null; openSignal?: number
+/** A reasoning-effort level as the pill lists it: the value the chat stores and its name. */
+export type EffortLevel = { value: string; label: string }
+
+/** A level a native model's record declares, as the pill names it: `high` → "High". */
+const levelName = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
+
+/** The reasoning-effort levels the chosen agent and model declare; `[]` means none, and then the
+ *  pill offers no effort row. An agent CLI declares them for its runtime (`supported_efforts`,
+ *  verbatim, whichever of its models is chosen). A native model declares them through its
+ *  provider's record of it (`efforts` on the composer's model list), and one whose record names
+ *  none declares none. Auto names no model, so it declares none either. */
+export function effortsFor(data: ComposerData | undefined, agent: string, model: string): EffortLevel[] {
+  const acp = agent ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent) : undefined
+  if (acp) return acp.supported_efforts ?? []
+  if (!model || model === 'Auto') return []
+  const declared = (data?.models ?? []).find((m) => m.name === model)?.efforts ?? []
+  return declared.map((value) => ({ value, label: levelName(value) }))
+}
+
+/** What the agent-and-model pill can change. */
+export type AgentModelPick = { agent?: string; model?: string; reasoning?: ReasoningEffort }
+
+/** The composer's one pill for who answers: the agent, the model and, for a model that declares
+ *  levels, the reasoning effort. It shows "<agent> · <model>" (the model half "Auto · <served
+ *  model>" on Auto once a turn has named one) and opens one menu: the agents, the models, and an
+ *  effort row under the chosen model listing exactly the levels it declares (`effortsFor`). A model
+ *  that declares none has no effort row, and no other effort control exists.
+ *
+ *  A switch to an agent or a model that lacks the chat's level sets the effort back to Default in
+ *  the same pick, and the pill says so beside itself until it is next opened.
+ *
+ *  `parts` is the host's choice of halves (the composer's `controls.agent`, `.model` and
+ *  `.reasoning`); a pill offering one half names only that dimension. */
+export function AgentModelPill({ data, agent, model, effort, onSelect, parts, contextPct, contextWindow, served, autoChain, openSignal, effortSignal }: {
+  data?: ComposerData
+  agent: string
+  model: string
+  effort: ReasoningEffort
+  onSelect: (pick: AgentModelPick) => void
+  parts?: { agent?: boolean; model?: boolean; effort?: boolean }
+  contextPct?: number; contextWindow?: number | null
   /** The model the chat's latest turn was answered by, and how it was chosen. */
   served?: { model: string; chosen: string }
-  /** The Settings → Models chain the chat's turns run on while the pill is on Auto. */
+  /** The Settings → Models chain the chat's turns run on while the model is Auto. */
   autoChain?: string
+  /** Monotonic: each increment opens the pill (the `/agent`, `/model` and `/effort` commands). */
+  openSignal?: number
+  /** Monotonic: each increment opens the effort levels too (the `/effort` command). */
+  effortSignal?: number
 }) {
+  const showAgent = parts?.agent ?? true
+  const showModel = parts?.model ?? true
+  const showEffort = parts?.effort ?? true
+  const [q, setQ] = useState('')
+  const [effortOpen, setEffortOpen] = useState(false)
+  const [note, setNote] = useState('')
+  const searchId = `agent-search-${useId()}`
+  const agentHeading = useId()
+  const modelHeading = useId()
+  const lastEffortSignal = useRef(effortSignal ?? 0)
+  useEffect(() => {
+    if (effortSignal === undefined || effortSignal === lastEffortSignal.current) return
+    lastEffortSignal.current = effortSignal
+    if (effortSignal > 0) setEffortOpen(true)
+  }, [effortSignal])
+
+  // ── The agent half ──
+  const nativeAgents = data?.agents ?? []
+  const discoveredEntries = Object.entries(data?.discovered ?? {})
+  const total = nativeAgents.length + discoveredEntries.reduce((n, [, a]) => n + a.length, 0)
+  // 🪤 `ready` DEFAULTS TRUE when absent, not false. Callers that pass fixed lists
+  // (the goal composer, tests) never set it, and defaulting to false would leave
+  // them stuck on "Loading agents…" forever. Only a host that opted in by threading
+  // `useComposerData` can report not-yet-read, which is exactly the host that knows.
+  const ready = data?.ready ?? true
+  const agentsErr = data?.agentsErr
+  const retry = data?.retry
+  // Long agent rosters (native + every discovered ACP agent) need a filter — 60+
+  // entries is unscannable. Show the search box only once the list is big enough
+  // to warrant it, so small setups stay clutter-free.
+  const showSearch = showAgent && total > 8
+  const nq = q.trim().toLowerCase()
+  const native = nq ? nativeAgents.filter((a) => a.name.toLowerCase().includes(nq)) : nativeAgents
+  const discovered = discoveredEntries
+    .map(([rt, agents]) => [rt, nq ? agents.filter((d) => `${d.name} ${d.description}`.toLowerCase().includes(nq) || rt.toLowerCase().includes(nq)) : agents] as const)
+    .filter(([, agents]) => agents.length > 0)
+  const noMatches = nq && native.length === 0 && discovered.length === 0
+
+  // ── The model half ──
   // If the selected agent is an ACP-discovered agent, scope the model list to
   // the models THAT agent provides (not the native global model list).
-  const acp = agent
-    ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent)
-    : undefined
+  const acp = agent ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent) : undefined
   const acpModels = acp?.models ?? []
   // `undefined` = the backend measured NO context usage → plain dot, no number.
   // A measured 0 still renders the ring (reading "0% used"): an empty context is a
@@ -197,40 +198,145 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, contextWin
   const dot = contextPct !== undefined
     ? <ContextRing pct={contextPct} />
     : <span title={unmeasuredTitle(contextWindow)} className="size-1.5 rounded-pill bg-primary" />
-  // The pill shows the friendly model_name, not the raw "Provider:model_id" ref
-  // stored as the value (the dropdown rows already display model_name).
-  const onAuto = !value || value === 'Auto'
-  // On Auto it also names the model the latest turn was answered by: "Auto" alone read the same
-  // whichever chain served the turn, so a binding passed over looked like one that was used.
-  const pillLabel = onAuto
-    ? (served ? `Auto · ${served.model}` : 'Auto')
-    : (data?.models ?? []).find((m) => m.name === value)?.model_name || value
-  const pillTitle = onAuto && served
+  const onAuto = !model || model === 'Auto'
+  // The friendly model_name, not the raw "Provider:model_id" ref stored as the value. On Auto it
+  // also names the model the latest turn was answered by: "Auto" alone read the same whichever
+  // chain served the turn, so a binding passed over looked like one that was used.
+  const modelName = (m: string) => (data?.models ?? []).find((x) => x.name === m)?.model_name || m
+  const modelLabel = onAuto ? (served ? `Auto · ${served.model}` : 'Auto') : modelName(model)
+  const pillTitle = showModel && onAuto && served
     ? `Auto — the latest turn ran on ${served.model}${served.chosen ? `, ${served.chosen}` : ''}.`
     : undefined
   // Which chain Auto runs on, before the turn: an agent CLI brings its own model, so it has none.
   // Short enough for the menu's width, which cut a longer one off before the chain's name ended.
   const autoHint = autoChain && !acp ? `Your ${autoChain} chain` : 'Use-case chain (Settings → Models)'
-  return (
-    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} dimension="Model" open={open} toggle={toggle} wide={onAuto && !!served} title={pillTitle} />}>
-      {(close) => (
-        <div className="max-h-[320px] overflow-y-auto">
-          <MenuRow icon={<Cpu size={16} />} label="Auto" hint={autoHint} selected={onAuto} onClick={() => { onSelect('Auto'); close() }} />
-          {acp
-            ? acpModels.length > 0
-              ? acpModels.map((m) => <MenuRow key={m} icon={<Cpu size={16} />} label={m} hint={acp.runtime} selected={m === value} onClick={() => { onSelect(m); close() }} />)
-              : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
-            : (data?.models ?? []).map((m) => (
-                <MenuRow key={m.name} icon={<Cpu size={16} />} label={m.model_name || m.name} hint={m.provider} selected={m.name === value} onClick={() => { onSelect(m.name); close() }} />
-              ))}
-          {/* Precedence explainer: the pick sits one level
-              above the use-case chain — it never replaces the chain, only fronts it. */}
-          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
-            A picked model overrides this session's use-case chain; if it fails, the chain takes over.
-          </div>
+
+  // ── The effort ──
+  const levels = showEffort ? effortsFor(data, agent, model) : []
+  const rows: EffortLevel[] = [{ value: '', label: 'Default' }, ...levels]
+  const current = rows.find((l) => l.value === effort)?.label ?? levelName(effort)
+  /** Apply an agent or model pick. One that lacks the chat's level takes the effort back to
+   *  Default in the same write, and the pill says so. */
+  const pick = (patch: { agent?: string; model?: string }, name: string) => {
+    const next = effortsFor(data, patch.agent ?? agent, patch.model ?? model)
+    if (showEffort && effort && !next.some((l) => l.value === effort)) {
+      onSelect({ ...patch, reasoning: '' })
+      setNote(`Effort set to Default: ${name} has no ${current}`)
+    } else {
+      onSelect(patch)
+      setNote('')
+    }
+  }
+  const effortBlock = (close: () => void) => levels.length > 0 && (
+    <div className="pl-l">
+      <button type="button" aria-expanded={effortOpen} onClick={() => setEffortOpen((v) => !v)}
+        data-type="label-s"
+        className="flex w-full items-center gap-s rounded-md px-m py-s text-left text-on-surface-var hover:bg-surface-high active:bg-surface-high transition-colors">
+        <Gauge size={14} strokeWidth={2} className="shrink-0" />
+        <span className="flex-1 min-w-0 truncate">Effort: {current}</span>
+        <ChevronDown size={14} strokeWidth={2} className={cx('shrink-0 transition-transform', effortOpen && 'rotate-180')} />
+      </button>
+      {effortOpen && (
+        <div role="group" aria-label="Effort">
+          {rows.map((l) => (
+            <MenuRow key={l.value || 'default'} label={l.label} selected={l.value === effort}
+              onClick={() => { onSelect({ reasoning: l.value as ReasoningEffort }); setNote(''); close() }} />
+          ))}
         </div>
       )}
-    </Popover>
+    </div>
+  )
+
+  const label = [showAgent && (agent || 'Agent'), showModel && modelLabel].filter(Boolean).join(' · ')
+  const dimension = showAgent && showModel ? 'Agent and model' : showAgent ? 'Agent' : 'Model'
+  const heading = 'px-m pt-m pb-1 uppercase tracking-wide text-on-surface-low'
+  return (
+    <span className="inline-flex min-w-0 items-center gap-xs">
+      <Popover portal width={300} openSignal={openSignal} trigger={(open, toggle) => (
+        <PillButton icon={showModel ? dot : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
+          open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
+          toggle={() => { if (!open) { setNote(''); setEffortOpen(false) } toggle() }} />
+      )}>
+        {(close) => {
+          const modelRow = (key: string, rowLabel: string, value: string, hint: string, selected: boolean) => (
+            <Fragment key={key}>
+              <MenuRow icon={<Cpu size={16} />} label={rowLabel} hint={hint} selected={selected}
+                onClick={() => { pick({ model: value }, rowLabel); close() }} />
+              {selected && effortBlock(close)}
+            </Fragment>
+          )
+          const anySelected = onAuto || (acp ? acpModels.includes(model) : (data?.models ?? []).some((m) => m.name === model))
+          return (
+            <div className="flex max-h-[420px] flex-col">
+              {showSearch && (
+                <div className="relative shrink-0 px-1 pb-1">
+                  <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
+                  <input id={searchId} autoComplete="off" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
+                    data-type="body-s"
+                    className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                </div>
+              )}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {showAgent && (
+                  <div role="group" aria-labelledby={showModel ? agentHeading : undefined}>
+                    {showModel && <div id={agentHeading} data-type="caption" className={heading}>Agent</div>}
+                    {native.map((a) => (
+                      <MenuRow key={a.name} label={a.name} selected={a.name === agent} onClick={() => { pick({ agent: a.name }, a.name); close() }} />
+                    ))}
+                    {discovered.map(([rt, agents]) => (
+                      <div key={rt}>
+                        <div data-type="caption" className={heading}>{rt}</div>
+                        {agents.map((d) => (
+                          <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === agent} onClick={() => { pick({ agent: d.name }, d.name); close() }} />
+                        ))}
+                      </div>
+                    ))}
+                    {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
+                    {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
+                        three, and two of them are false. `useComposerData` seeds every list to `[]` and
+                        readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
+                        both `[]` — indistinguishable from a user who genuinely has no agents installed.
+                        "No agents available" is a statement about the user's own setup, the kind they
+                        believe, so on an unreachable gateway it sent them looking for a problem in their
+                        install. The order below is deliberate: not-yet-known, then could-not-be-read, then
+                        the one real emptiness. */}
+                    {total === 0 && (
+                      !ready
+                        ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
+                        : agentsErr
+                          ? <div role="alert" className="px-m py-2">
+                              <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
+                              {retry && <Button variant="ghost-accent" size="xs" onClick={() => retry()} className="mt-1"><RotateCcw size={13} /> Try again</Button>}
+                            </div>
+                          : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
+                    )}
+                    {!showModel && effortBlock(close)}
+                  </div>
+                )}
+                {showModel && (
+                  <div role="group" aria-labelledby={showAgent ? modelHeading : undefined} className={cx(showAgent && 'mt-xs border-t border-outline-variant/30')}>
+                    {showAgent && <div id={modelHeading} data-type="caption" className={heading}>Model</div>}
+                    {modelRow('auto', 'Auto', 'Auto', autoHint, onAuto)}
+                    {acp
+                      ? acpModels.length > 0
+                        ? acpModels.map((m) => modelRow(m, m, m, acp.runtime, m === model))
+                        : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
+                      : (data?.models ?? []).map((m) => modelRow(m.name, m.model_name || m.name, m.name, m.provider, m.name === model))}
+                    {!anySelected && effortBlock(close)}
+                    {/* Precedence explainer: the pick sits one level
+                        above the use-case chain — it never replaces the chain, only fronts it. */}
+                    <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
+                      A picked model overrides this session's use-case chain; if it fails, the chain takes over.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        }}
+      </Popover>
+      {note && <span role="status" data-type="caption" className="max-w-[16rem] truncate text-on-surface-low" title={note}>{note}</span>}
+    </span>
   )
 }
 
@@ -240,28 +346,6 @@ export function ApprovalPill({ value, onSelect }: { value: ApprovalMode; onSelec
     <Popover portal width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} dimension="Permission mode" open={open} toggle={toggle} />}>
       {(close) => APPROVAL.map((a) => (
         <MenuRow key={a.id} label={a.label} hint={a.hint} selected={a.id === value} onClick={() => { onSelect(a.id); close() }} />
-      ))}
-    </Popover>
-  )
-}
-
-/** Reasoning-effort selector. `efforts` are the bound agent's advertised effort
- *  options (ACP: backend-declared; native: NATIVE_EFFORTS). Renders nothing when
- *  the agent has no effort axis, so the pill only appears for reasoning-capable
- *  agents. A "Default" row (value "") always leads, for the model's own default. */
-export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
-  value: ReasoningEffort
-  efforts: { value: string; label: string }[]
-  onSelect: (e: ReasoningEffort) => void
-  openSignal?: number
-}) {
-  if (!efforts.length) return null
-  const rows = [{ value: '', label: 'Default' }, ...efforts]
-  const cur = rows.find((e) => e.value === value) ?? rows[0]
-  return (
-    <Popover portal width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} dimension="Reasoning effort" open={open} toggle={toggle} />}>
-      {(close) => rows.map((e) => (
-        <MenuRow key={e.value || 'default'} label={e.label} selected={e.value === value} onClick={() => { onSelect(e.value as ReasoningEffort); close() }} />
       ))}
     </Popover>
   )
@@ -382,15 +466,6 @@ export function ReplyStylePill({ choice, effective, source, agentDefault, styles
       )}
     </Popover>
   )
-}
-
-/** Resolve the effort options for the bound agent: an ACP discovered agent's
- *  backend-declared supported_efforts, else the native effort ladder. Empty when
- *  the ACP agent declares none (→ pill hidden). */
-export function effortsForAgent(data: ComposerData | undefined, agent: string): { value: string; label: string }[] {
-  const disc = agent ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent) : undefined
-  if (disc) return disc.supported_efforts ?? []
-  return NATIVE_EFFORTS
 }
 
 /** The "+" toolbar menu — the single entry point for composer add-ons, the one
