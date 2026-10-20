@@ -46,10 +46,12 @@ function rawHash(): string {
 }
 
 /** Rewrite a retired address in the bar to where it opens now (`routeRedirects.ts`), replacing
- *  its history entry, so Back never returns to it. */
+ *  its history entry, so Back never returns to it. The resolver reads the bar as written and drops
+ *  its one `#/`, as `rawHash` does: handed `rawHash()`, it would drop a second one the router reads
+ *  as a route. */
 function settleHash(): void {
   if (typeof location === 'undefined') return
-  const moved = redirectFor(rawHash())
+  const moved = redirectFor(location.hash)
   if (moved !== null) history.replaceState(null, '', `#/${moved}`)
 }
 
@@ -137,8 +139,9 @@ export function useHashRoute(fallback: string): HashRoute {
   // A same-page query update (setQuery: open an item, change a filter/tab) must NOT
   // bump it, or the whole page remounts + refetches before the panel opens.
   const apply = (written: string, replace: boolean, bumpEpoch: boolean) => {
-    // A retired address is never written: its new one is, as the one history entry.
-    const next = redirectFor(written) ?? written
+    // A retired address is never written: its new one is, as the one history entry. The resolver
+    // reads the bar this would write, `#/` and all.
+    const next = redirectFor(`#/${written}`) ?? written
     if (bumpEpoch) setNavEpoch((n) => n + 1)
     const live = rawHash()
     if (live === next) { applyHash(); return }
