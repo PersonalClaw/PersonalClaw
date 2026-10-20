@@ -22,7 +22,8 @@
  *
  *  The router's top-level routes and Settings' pages carry `since`: the first release tag whose
  *  `web/src/app/App.tsx` (`NAV`, `ROUTABLE`, `SHELL_ROUTES`) or `SettingsPage.tsx` (`SUBPAGES`)
- *  had them, read with `git show <tag>:<file>`. A tag cut later adds its new routes here.
+ *  had them, read with `git show <tag>:<file>`. A route on main that no tag has yet carries
+ *  `UNRELEASED`, and the tag cut later writes its own name in its place.
  *
  *  A parameter is a sample (`SAMPLE`), shaped like the real thing, never a record any home holds,
  *  so an entry opens its page's own state for an address whose record is missing. Pure data: no
@@ -32,6 +33,9 @@
 /** The release tags, oldest first. */
 export const RELEASES = ['v0.1.0', 'v0.1.1', 'v0.1.2', 'v0.1.3', 'v0.2.0', 'v0.2.1', 'v0.2.2', 'v0.2.3'] as const
 export type Release = (typeof RELEASES)[number]
+
+/** The `since` of a route main has and no tag does yet. */
+export const UNRELEASED = 'unreleased' as const
 
 /** Where an address came from. */
 export type RouteSource =
@@ -61,8 +65,8 @@ export interface ShippedRoute {
   readonly route: string
   /** Every producer known to make it. */
   readonly from: readonly RouteSource[]
-  /** The first release that had it, where the tags were read (see the header). */
-  readonly since?: Release
+  /** The first release that had it, where the tags were read (see the header), or `UNRELEASED`. */
+  readonly since?: Release | typeof UNRELEASED
   /** Where the shell settles when it opens this address, when that is not the address itself: a
    *  retired address's row in `routeRedirects.ts`, a page's own landing, or a link's own words
    *  rewritten into the ones the page reads. */
@@ -109,6 +113,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'files', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   { route: 'artifacts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.3' },
   { route: 'terminal', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
+  // Capabilities (#3817): one sidebar row, whose tabs are the five routes below it and the Store.
+  { route: 'capabilities', from: ['router', 'palette'], since: UNRELEASED },
   { route: 'agents', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'tools', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'skills', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
@@ -200,9 +206,11 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `artifacts/${S.artifact}?v=2`, from: ['documented'] },
 
   // ── Capabilities ──────────────────────────────────────────────────────────────────────────────
+  // Each tab keeps its page's address; the Store is the Apps page's store view (below).
   { route: 'agents/new', from: ['documented'] },
   { route: `agents?open=native%3A${S.agent}`, from: ['documented'] },
   { route: `tools?q=${S.server}`, from: ['gateway'] },
+  { route: 'tools?add=1', from: ['palette'] },
   { route: 'skills?mode=browse', from: ['deep-link', 'documented'] },
   { route: 'skills?mode=proposals', from: ['deep-link', 'gateway', 'documented'] },
   { route: 'prompts/new?kind=user', from: ['documented'] },
@@ -218,7 +226,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `workflows/defs/${S.workflow}/edit?from=2`, from: ['documented'] },
 
   // ── Apps ──────────────────────────────────────────────────────────────────────────────────────
-  { route: 'apps?view=store', from: ['documented'] },
+  { route: 'apps?view=store', from: ['palette', 'documented'] },
   { route: 'apps?view=native', from: ['documented'] },
   { route: 'apps?view=store&stag=search', from: ['documented'] },
   { route: 'apps?view=store&stag=ocr', from: ['gateway'] },

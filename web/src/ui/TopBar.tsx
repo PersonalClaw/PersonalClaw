@@ -73,6 +73,12 @@ export function useStackBelowCorners(): ((stacked: boolean) => void) | null {
   return useContext(StackBelowCorners)
 }
 
+/** Whether a bar above this one already clears the shell corners. A destination that draws its own
+ *  bar over its tabs' pages (Capabilities' tab strip) provides `true` around the page: the page's
+ *  own bar then has no corner floating over it, so it pads to the page's edges, and never moves its
+ *  row below corners that are not there. */
+export const CornersClearedAbove = createContext(false)
+
 /** The bar's measurement probe: a zero-height box across the bar, padded exactly as the row is
  *  when it sits BETWEEN the corners. Its content width is that band's width whichever way the row
  *  is laid out, so the stacking decision never reads its own result. Read by `HeaderActions`. */
@@ -121,10 +127,12 @@ export function TopBar({ left, right, below, keepCornerPadding = false, contentA
 }) {
   const panelOpen = useRightPanelOpen() && !keepCornerPadding
   const [stacked, setStacked] = useState(false)
+  // Under a bar that clears the corners already, there is no corner over this one.
+  const cleared = useContext(CornersClearedAbove)
   // Clear each shell corner PLUS a gap, so header content never butts up against the
   // flush-to-edge corner chrome (collapse tab / control cluster).
-  const cornerL = 'calc(var(--shell-corner-l, 56px) + var(--spacing-m, 12px))'
-  const cornerR = panelOpen ? 'var(--spacing-l, 16px)' : 'calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px))'
+  const cornerL = cleared ? 'var(--spacing-l, 16px)' : 'calc(var(--shell-corner-l, 56px) + var(--spacing-m, 12px))'
+  const cornerR = cleared || panelOpen ? 'var(--spacing-l, 16px)' : 'calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px))'
   // contentAligned: align the row to the SAME centered content column the body uses, so the
   // title/breadcrumb line up with the content below and track the width toggle. The body centers
   // a `--content-width` column in the main pane via mx-auto; the equivalent gutter is
@@ -137,12 +145,13 @@ export function TopBar({ left, right, below, keepCornerPadding = false, contentA
   // Stacked, the row is under BOTH corners (the left tab is the taller one), so only the page's
   // own edge is kept on either side.
   const edge = contentAligned ? `max(var(--spacing-l, 16px), ${gutter})` : 'var(--spacing-l, 16px)'
-  const padding = stacked
+  const underCorners = stacked && !cleared
+  const padding = underCorners
     ? { paddingLeft: edge, paddingRight: edge, paddingTop: 'max(var(--shell-corner-lh, 52px), var(--shell-corner-rh, 44px))' }
     : { paddingLeft: bandL, paddingRight: bandR }
   return (
     <StackBelowCorners.Provider value={setStacked}>
-      <header className="relative flex shrink-0 flex-col" style={padding} data-stacked={stacked || undefined}>
+      <header className="relative flex shrink-0 flex-col" style={padding} data-stacked={underCorners || undefined}>
         <div aria-hidden data-top-bar-band className="pointer-events-none invisible absolute inset-x-0 top-0 h-0"
           style={{ paddingLeft: bandL, paddingRight: bandR }} />
         {/* Left flexes + truncates; right is content-sized. A responsive HeaderActions cluster

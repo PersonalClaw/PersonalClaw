@@ -40,8 +40,9 @@ export type NavMode = 'starter' | 'expert'
  *
  *  The Design's set is "Chat, Inbox, Apps, Settings"; `dashboard` (Home) is added because it
  *  is the app's LANDING route (`useHashRoute('dashboard')`) and a rail that omits the page it
- *  opens on is a defect rather than a decision. Recorded as a deviation in the plan's log. */
-export const STARTER_NAV_IDS: readonly string[] = ['dashboard', 'chat', 'inbox', 'apps', 'settings']
+ *  opens on is a defect rather than a decision. Recorded as a deviation in the plan's log.
+ *  Apps and its Store are tabs of Capabilities now (#3817), so "get more" is that row. */
+export const STARTER_NAV_IDS: readonly string[] = ['dashboard', 'chat', 'inbox', 'capabilities', 'settings']
 
 export interface NavDisclosure {
   mode: NavMode

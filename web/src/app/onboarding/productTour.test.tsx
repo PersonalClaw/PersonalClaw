@@ -150,7 +150,7 @@ const { PersonalityProvider } = await import('../personality')
 const { IdentityProvider } = await import('../identity')
 
 // The tour walks rail → chat → inbox → approvals → settings and these tests also deep-link
-// `#/tools` and `#/discover`; every one of those routes except chat is `lazy(() => import(…))`
+// `#/triggers` and `#/discover`; every one of those routes except chat is `lazy(() => import(…))`
 // in `App.tsx`. Under the full suite that module transform, not the anchor poll, is what
 // outlasts `STOP_BUDGET_MS` (#2951) — so resolve them once here and let the module cache serve
 // `lazy`. `atStop`'s budget then measures the overlay, which is what it claims to measure.
@@ -158,7 +158,7 @@ await Promise.all([
   import('../../pages/inbox/InboxPage'),
   import('../../pages/dashboard/DashboardPage'),
   import('../../pages/settings/SettingsPage'),
-  import('../../pages/tools/ToolsPage'),
+  import('../../pages/triggers/TriggersSection'),
   import('../../pages/discover/DiscoverPage'),
 ])
 
@@ -434,17 +434,17 @@ describe("The auto-pin model behaves identically with the tour present", () => {
     expect(readNavDisclosure()).toEqual(before)
     expect(readNavDisclosure().pinned).toEqual([])
     // The starter rail is still the starter rail — five rows plus the expander.
-    expect(railLinks()).not.toContain('Tools')
+    expect(railLinks()).not.toContain('Triggers')
   })
 
   it('and auto-pin still WORKS — the assertion above is not a dead mechanism', async () => {
     // The vacuity guard. Without it, an auto-pin that had stopped writing entirely would
     // make "the record is untouched" pass forever.
     setNavMode('starter')
-    location.hash = '#/tools'
+    location.hash = '#/triggers'
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Tools', level: 1 })).toBeInTheDocument()
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('tools'))
+    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
   })
 })
 

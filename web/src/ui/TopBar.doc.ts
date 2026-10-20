@@ -20,6 +20,7 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'Reach for TopBar for any page header rather than hand-rolling one — it owns the shell-corner clearance so actions never slide under the floating corners.' },
       { guidance: true, description: 'On a WorkbenchLayout page whose SidePanel docks below the bar, set keepCornerPadding so the right actions keep clearing the shell corner.' },
       { guidance: true, description: 'Set contentAligned when the header carries body-level controls (breadcrumb + title/actions) so they line up with the content column and track the content-width toggle.' },
+      { guidance: true, description: "A destination that draws its own bar over its tabs' pages (Capabilities' tab strip) provides CornersClearedAbove around the page: the page's bar has no shell corner over it, so it pads to the page's edges." },
       { guidance: true, description: 'Put facts about the page in `below`, not beside the title: a chip in the row cannot shrink, so it overlaps the actions or starves the title, while a chip below can only wrap. Truncate a long chip and keep its full text in its title and accessible name.' },
       { guidance: false, description: 'Do not put theme/width controls in the TopBar (they belong in the shell corners) or list search/filter/sort here (put those in a WorkbenchLayout `controls` bar).' },
       { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },

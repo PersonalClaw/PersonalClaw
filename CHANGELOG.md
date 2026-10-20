@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
 - **The composer offers a reasoning effort again for a model whose provider app uses PersonalClaw's built-in Anthropic- or OpenAI-compatible client, with the levels that client sends the model (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature).**
 - **A finished turn's folded steps say how long the turn worked, "Worked for 1m 19s · 12 steps", where they said only how many steps there were.**
+- **Agents, skills, tools, prompts and apps are tabs of one Capabilities destination, with the Store a tab of its own: one sidebar row in place of five, each tab still at its own address, so a bookmark, a reload or a copied link opens the tab it did, and ⌘K goes to each tab, the Store and Add a tool server.**
 
 ### Fixed
 

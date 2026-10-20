@@ -29,16 +29,13 @@ export const ROUTES: RouteEntry[] = [
   { route: 'files', label: 'Files', needsData: true },
   { route: 'artifacts', label: 'Artifacts', needsData: true },
   { route: 'terminal', label: 'Terminal' },
-  { route: 'agents', label: 'Agents', needsData: true },
-  { route: 'tools', label: 'Tools', needsData: true },
-  { route: 'skills', label: 'Skills', needsData: true },
+  // Capabilities opens its first tab, Agents; each tab's own address is in VIEW_ROUTES below.
+  { route: 'capabilities', label: 'Capabilities', needsData: true },
   // `learning` was missing while sitting in NAV — 18 nav ids vs 17 entries — so the one page
   // this manifest exists to cover got NO axe scan and NO visual baseline. The gap was silent
   // precisely because the manifest is the only thing that would have reported it.
   { route: 'learning', label: 'Learning', needsData: true },
   { route: 'workflows', label: 'Workflows', needsData: true },
-  { route: 'prompts', label: 'Prompts', needsData: true },
-  { route: 'apps', label: 'Store', needsData: true },
   { route: 'settings', label: 'Settings' },
 ]
 
@@ -84,7 +81,17 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
 // These are plain hash routes — `useHashRoute` splits the query off the path, so
 // no interaction recipe is needed. `graphRouteCoverage.test.ts` fails if the
 // route stops resolving to the graph.
+//
+// A destination's tabs that keep addresses of their own are its surfaces too: Capabilities' Agents,
+// Tools, Skills, Prompts and Apps (#3817) are each at the route their page has always had, so each
+// keeps the visual baseline and the scans it had as a sidebar row. Their routes are not nav ids, and
+// `routeManifestParity.test.ts` counts this tier among the scanned ones.
 export const VIEW_ROUTES: RouteEntry[] = [
+  { route: 'agents', id: 'agents', label: 'Capabilities › Agents', needsData: true },
+  { route: 'skills', id: 'skills', label: 'Capabilities › Skills', needsData: true },
+  { route: 'tools', id: 'tools', label: 'Capabilities › Tools', needsData: true },
+  { route: 'prompts', id: 'prompts', label: 'Capabilities › Prompts', needsData: true },
+  { route: 'apps', id: 'apps', label: 'Capabilities › Apps', needsData: true },
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
   // The reading experience, reached at `#/knowledge/item/<id>?read=1` — the sharable
   // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
@@ -140,8 +147,8 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'prompts?tab=snippets', id: 'prompts-snippets', label: 'Prompts › snippets', needsData: true },
   { route: 'skills?mode=browse', id: 'skills-browse', label: 'Skills › browse', needsData: true },
   { route: 'skills?mode=proposals', id: 'skills-proposals', label: 'Skills › proposals', needsData: true },
-  { route: 'apps?view=native', id: 'apps-native', label: 'Store › native', needsData: true },
-  { route: 'apps?view=store', id: 'apps-store', label: 'Store › store', needsData: true },
+  { route: 'apps?view=native', id: 'apps-native', label: 'Capabilities › Apps › native', needsData: true },
+  { route: 'apps?view=store', id: 'apps-store', label: 'Capabilities › Store', needsData: true },
   { route: 'triggers?view=week', id: 'triggers-week', label: 'Triggers › week', needsData: true },
   { route: 'triggers/new', id: 'triggers-new', label: 'Triggers › new › schedule', needsData: true },
   { route: 'triggers/new?kind=lifecycle', id: 'triggers-new-lifecycle', label: 'Triggers › new › lifecycle', needsData: true },
