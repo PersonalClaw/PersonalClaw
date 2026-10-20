@@ -728,6 +728,26 @@ which the job named beside it runs by name: `tests/test_website_installer.py`, i
 and a rail (`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job
 stops running its file, so a file left out of the shards never runs nowhere.
 
+`shards check` holds the plan to files on every run. Each night `breadth.yml` also holds the
+shards to test ids, as a net under it. Every suite shard passes `--shard-ids FILE`, which writes
+each id the run collected, as many times as the run holds it (under xdist the controller writes
+the list its workers collected, which xdist runs only when every worker's is the same), and
+uploads it as `shard-ids-<leg>-<i>`. For each suite leg, a `planned-ids-<leg>` job on that
+leg's own runner and Python (its `PY` and setup-uv's, which `uv run pytest` collects on)
+collects the planned suite (`shards universe` writes every file the plan covers, with the same
+exclusions) and uploads `planned-ids-<leg>`. So a platform or a Python never reads as a
+mismatch. `shard-union` then runs `shards union` over the four legs whose red
+is the run's (ubuntu, macos, arm and coverage-shard), which fails, naming each leg, on an id no
+shard collected, an id the planned suite lacks, an id collected twice (by two shards or one),
+an id the planned suite holds twice, an id file that is not text, and a shard or a planned
+collection that uploaded no ids. It is red, never absent. The canary's shards are held to its
+own collection by `shard-union-canary`, which, with `planned-ids-canary`, is
+`continue-on-error` as the canary is: a red there is the next image's news, and `shard-union`
+never reads the canary's ids. `planned-ids-macos` waits for the macOS suite, as
+`security-macos` does, so it takes no macOS runner beside the suite's shards. The collections
+run no test, so they are ordinary posture, and they run every night, since the unions read that
+night's.
+
 The per-file seconds come from #3948's telemetry record (see "CI telemetry" below): each file's
 median first-attempt seconds over the leg's own reports in the three newest completed `main`
 runs whose history the collector wrote, red ones included and cancelled ones skipped, on the
@@ -807,6 +827,10 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   only in image and Python, so a red is the new image's: pytest keeps its own temporary
   folders, since `RUNNER_TEMP` sits under the runner's home, where the suite's home guard
   refuses a test's folders and paths print as `~/...`.
+- **The union check** also runs every night: a `planned-ids-<leg>` collection for each suite leg,
+  on that leg's runner and Python, and `shard-union`, which holds each gating leg's shards to it,
+  each test id once, and `shard-union-canary`, the canary's, advisory as the canary is (see "The
+  suite's shards").
 - **`report`** runs last, whatever the legs concluded. It writes the record (canonical JSON)
   as the artifact `breadth-evidence-<sha256>`, kept 90 days, and puts the digest in the
   summary. It keeps one issue per red leg, titled `breadth: <leg> is red`, and reads only what

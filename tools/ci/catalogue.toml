@@ -270,7 +270,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-ubuntu.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "ubuntu", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-ubuntu.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-ubuntu.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"] },
 ]
 
 [[job]]
@@ -290,7 +290,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-macos.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "macos", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-macos.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-macos.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-macos-{shard}.txt"] },
 ]
 
 [[job]]
@@ -310,7 +310,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-arm.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "arm", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-arm.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-arm.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-arm-{shard}.txt"] },
 ]
 
 [[job]]
@@ -330,7 +330,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-canary.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "canary", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-canary.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-canary.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-canary-{shard}.txt"] },
 ]
 
 [[job]]
@@ -350,7 +350,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-coverage-shard.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "coverage-shard", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "--cov=personalclaw", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-coverage-shard.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "--cov=personalclaw", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-coverage-shard-{shard}.txt"] },
 ]
 
 # The coverage shards' data combined into one report: all six shards' data or none.
@@ -432,6 +432,136 @@ script = [
   "tools/ci/install_smoke_served.sh",
 ]
 container = "ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794"
+
+# #3923: each suite leg's planned suite, collected on that leg's own runner and Python, and the
+# union check that holds the leg's shards to it. They collect and run no test, so they are no
+# security evidence; they run every night, since the union reads tonight's collections.
+[[job]]
+id = "planned-ids-ubuntu"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-ubuntu.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-ubuntu.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-ubuntu.txt"] },
+]
+
+[[job]]
+id = "planned-ids-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "macos-26"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-macos.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-macos.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-macos.txt"] },
+]
+
+[[job]]
+id = "planned-ids-arm"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04-arm"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-arm.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-arm.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-arm.txt"] },
+]
+
+[[job]]
+id = "planned-ids-coverage-shard"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-coverage-shard.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-coverage-shard.txt"] },
+]
+
+[[job]]
+id = "planned-ids-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-26.04"
+python = "3.12.15"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-canary.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-canary.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-canary.txt"] },
+]
+
+# The union of the four legs whose red is the run's. The canary's is its own job, advisory as
+# the canary is, so the next image's red never reds this one.
+[[job]]
+id = "shard-union"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+timeout_min = 10
+after = ["suite-ubuntu", "suite-macos", "suite-arm", "coverage-shard", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "planned-ids-coverage-shard"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "coverage-shard:6"] },
+]
+
+[[job]]
+id = "shard-union-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+timeout_min = 10
+after = ["suite-canary", "planned-ids-canary"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "canary:4"] },
+]
 
 # The dependency audit every night on main, where a new advisory lands without a commit. The
 # same command as `audit`, under breadth's cap.

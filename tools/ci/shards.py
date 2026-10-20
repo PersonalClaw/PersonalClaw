@@ -724,6 +724,124 @@ def _check(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
+def _universe(args: argparse.Namespace) -> int:
+    """Write every file the plan covers, one per line, for a collection of the planned suite
+    (``pytest --shard-list <file>``). Writes nothing and fails on a tree with none: pytest given
+    an empty list would collect every test, the rails and the job-owned files included."""
+    files = universe(Path(args.root))
+    if not files:
+        print(f"shards universe: no test file is collectable under {args.root}", file=sys.stderr)
+        return 1
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("".join(f"{f}\n" for f in files), encoding="utf-8")
+    print(f"the planned suite: {len(files)} test files")
+    return 0
+
+
+#: A shard's collected test ids, one per line, as ``tests/shard_list.py``'s ``--shard-ids``
+#: writes them and the union job finds them.
+SHARD_IDS = "shard-ids-{leg}-{shard}.txt"
+
+
+def _id_lines(path: Path) -> list[str]:
+    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def union_problems(
+    expected: Sequence[str], shard_ids: Mapping[int, Sequence[str] | None]
+) -> list[str]:
+    """What is wrong with the shards' collected ids as a run of ``expected``: an id the planned
+    suite holds twice, a shard that wrote no ids, an id collected twice (by one shard or by
+    two), an expected id no shard collected, and a collected id the planned suite does not
+    have. Empty when every id ran exactly once."""
+    planned: dict[str, int] = {}
+    for test in expected:
+        planned[test] = planned.get(test, 0) + 1
+    problems = [
+        f"{t} is in the planned suite {n} times" for t, n in sorted(planned.items()) if n > 1
+    ]
+    problems += [
+        f"shard {shard} wrote no id file, so the ids it would have run are not known to have run"
+        for shard, ids in sorted(shard_ids.items())
+        if ids is None
+    ]
+    count: dict[str, int] = {}
+    for ids in shard_ids.values():
+        for test in ids or ():
+            count[test] = count.get(test, 0) + 1
+    want = set(planned)
+    problems += [f"{t} was collected {n} times" for t, n in sorted(count.items()) if n > 1]
+    problems += [
+        f"{t} is in the planned suite and no shard collected it" for t in sorted(want - set(count))
+    ]
+    problems += [
+        f"{t} was collected by a shard and is not in the planned suite"
+        for t in sorted(set(count) - want)
+    ]
+    return problems
+
+
+#: A leg's planned suite, collected on that leg's own runner and Python: the ids its shards
+#: together must equal.
+PLANNED_IDS = "planned-ids-{leg}.txt"
+
+
+def _leg_and_shards(text: str) -> tuple[str, int]:
+    """``name:N``, as ``union --leg`` takes it."""
+    name, _, count = text.partition(":")
+    if not name or not count.isdigit() or int(count) < 1:
+        raise ValueError(f"--leg is name:shards, not {text!r}")
+    return name, int(count)
+
+
+def _leg_union(folder: Path, leg: str, n: int) -> list[str]:
+    """What is wrong with one leg: its planned collection missing or empty, or its shards' ids
+    not that collection's, each once."""
+    planned = PLANNED_IDS.format(leg=leg)
+    try:
+        expected = _id_lines(folder / planned)
+    except OSError:
+        return ["the planned suite was not collected on this leg's runner, so nothing is known"]
+    except UnicodeDecodeError:
+        return [f"{planned} is not UTF-8 text, so nothing is known"]
+    if not expected:
+        return ["the planned suite's collection names no test, so it failed"]
+    found: dict[int, Sequence[str] | None] = {}
+    unreadable: list[str] = []
+    for shard in range(1, n + 1):
+        name = SHARD_IDS.format(leg=leg, shard=shard)
+        try:
+            found[shard] = _id_lines(folder / name)
+        except OSError:
+            found[shard] = None
+        except UnicodeDecodeError:
+            # Read as naming nothing: every id the shard would have run is then one no shard ran.
+            found[shard] = []
+            unreadable.append(
+                f"{name} is not UTF-8 text, so the ids shard {shard} ran are not known"
+            )
+    problems = unreadable + union_problems(expected, found)
+    if not problems:
+        print(f"{leg}: {n} shards collected the planned suite's {len(expected)} ids, each once")
+    return problems
+
+
+def _union(args: argparse.Namespace) -> int:
+    """Check every leg named, then fail if any is short, so one red names every leg that is."""
+    try:
+        legs = [_leg_and_shards(text) for text in args.leg]
+    except ValueError as exc:
+        print(f"shards union: {exc}", file=sys.stderr)
+        return 1
+    bad = False
+    for leg, n in legs:
+        for problem in _leg_union(Path(args.dir), leg, n):
+            print(f"{leg}: {problem}")
+            bad = True
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci shards", description=__doc__.splitlines()[0] if __doc__ else ""
@@ -750,8 +868,19 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check", help="fail when a collectable file is in no shard or in two")
     p.add_argument("--plan", required=True)
     p.add_argument("--root", default=".")
+    p = sub.add_parser("universe", help="write every file the plan covers, for its collection")
+    p.add_argument("--root", default=".")
+    p.add_argument("--out", required=True)
+    p = sub.add_parser(
+        "union", help="fail unless a leg's shards collected the planned suite's ids, each once"
+    )
+    p.add_argument(
+        "--dir", required=True, help="the folder holding each leg's planned and shard id files"
+    )
+    p.add_argument("--leg", action="append", required=True, help="name:shards, once per leg")
     args = parser.parse_args(argv)
-    return {"plan": _plan, "list": _list, "check": _check}[args.command](args)
+    commands = {"plan": _plan, "list": _list, "check": _check, "universe": _universe}
+    return {**commands, "union": _union}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -1036,3 +1036,144 @@ def test_the_plan_command_names_its_own_run_to_the_record(tmp_path: Path, monkey
     assert shards.main([*argv, "--leg", "test-shard:ci.yml:junit-test-shard-:2"]) == 0
     assert 60 not in gh.downloads
     assert "runs 50" in json.loads(out.read_text("utf-8"))["legs"]["test-shard"]["durations"]
+
+
+# ── the union: the shards' test ids together are the planned suite's, each once ─────────────
+
+EXPECTED = ["tests/test_a.py::test_one", "tests/test_a.py::test_two[x]", "tests/test_b.py::test_b"]
+
+
+def _ids(folder: Path, name: str, ids: list[str]) -> None:
+    folder.mkdir(exist_ok=True)
+    (folder / name).write_text("".join(f"{line}\n" for line in ids), encoding="utf-8")
+
+
+def _union(
+    tmp_path: Path, expected: list[str] | None, *shard_ids: list[str] | None, leg: str = "ubuntu"
+) -> int:
+    """Run ``shards union`` over one leg: its planned suite's ids (None writes no file) and each
+    shard's ids (None leaves that shard's file out)."""
+    folder = tmp_path / "ids"
+    folder.mkdir(exist_ok=True)
+    if expected is not None:
+        _ids(folder, shards.PLANNED_IDS.format(leg=leg), expected)
+    for i, ids in enumerate(shard_ids, 1):
+        if ids is not None:
+            _ids(folder, shards.SHARD_IDS.format(leg=leg, shard=i), ids)
+    argv = ["union", "--dir", str(folder), "--leg", f"{leg}:{len(shard_ids)}"]
+    return shards.main(argv)
+
+
+def test_union_passes_when_the_shards_ids_are_the_expected_ids_each_once(tmp_path: Path) -> None:
+    assert _union(tmp_path, EXPECTED, EXPECTED[:2], EXPECTED[2:]) == 0
+
+
+def test_union_fails_on_a_planted_missing_id(tmp_path: Path, capsys) -> None:
+    """A test the planned suite collects that no shard collected ran nowhere."""
+    assert _union(tmp_path, EXPECTED, EXPECTED[:1], EXPECTED[2:]) != 0
+    assert "tests/test_a.py::test_two[x]" in capsys.readouterr().out
+
+
+def test_union_fails_on_a_planted_extra_id(tmp_path: Path, capsys) -> None:
+    """A test a shard collected that the planned suite does not is one the plan never named."""
+    extra = "tests/test_c.py::test_extra"
+    assert _union(tmp_path, EXPECTED, EXPECTED[:2], [*EXPECTED[2:], extra]) != 0
+    assert extra in capsys.readouterr().out
+
+
+def test_union_fails_on_an_id_two_shards_collected(tmp_path: Path, capsys) -> None:
+    assert _union(tmp_path, EXPECTED, EXPECTED[:2], EXPECTED[1:]) != 0
+    assert "tests/test_a.py::test_two[x]" in capsys.readouterr().out
+
+
+def test_union_fails_on_an_id_one_shard_collected_twice(tmp_path: Path, capsys) -> None:
+    assert _union(tmp_path, EXPECTED, [*EXPECTED[:2], EXPECTED[0]], EXPECTED[2:]) != 0
+    assert "tests/test_a.py::test_one" in capsys.readouterr().out
+
+
+def test_union_fails_closed_on_a_shard_that_wrote_no_id_file(tmp_path: Path, capsys) -> None:
+    """A shard that was cancelled, or failed before collecting, is red, never absent: the ids it
+    would have named are not known to have run."""
+    assert _union(tmp_path, EXPECTED, EXPECTED, None) != 0
+    assert "shard 2" in capsys.readouterr().out
+
+
+def test_union_fails_closed_on_a_leg_whose_planned_suite_was_not_collected(
+    tmp_path: Path, capsys
+) -> None:
+    assert _union(tmp_path, None, EXPECTED) != 0
+    assert "ubuntu" in capsys.readouterr().out
+
+
+def test_union_fails_on_an_expected_collection_that_names_no_test(tmp_path: Path) -> None:
+    """Nothing against nothing would pass: an empty planned collection is one that failed."""
+    assert _union(tmp_path, [], [], []) != 0
+
+
+def test_union_reports_every_leg_before_it_fails(tmp_path: Path, capsys) -> None:
+    """One command checks every leg, so a red names each leg that is short, not only the first."""
+    folder = tmp_path / "ids"
+    for leg in ("ubuntu", "macos"):
+        _ids(folder, shards.PLANNED_IDS.format(leg=leg), EXPECTED)
+        _ids(folder, shards.SHARD_IDS.format(leg=leg, shard=1), EXPECTED[:2])
+    argv = ["union", "--dir", str(folder), "--leg", "ubuntu:1", "--leg", "macos:1"]
+    assert shards.main(argv) != 0
+    out = capsys.readouterr().out
+    assert "ubuntu: tests/test_b.py::test_b" in out and "macos: tests/test_b.py::test_b" in out
+
+
+def test_union_fails_on_a_planned_collection_that_holds_an_id_twice(tmp_path: Path, capsys) -> None:
+    """A planned suite that would run a test twice is no suite to hold the shards to, each once."""
+    planned = [*EXPECTED, EXPECTED[2]]
+    assert _union(tmp_path, planned, EXPECTED[:2], EXPECTED[2:]) != 0
+    assert "tests/test_b.py::test_b is in the planned suite 2 times" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("unreadable", ["planned", "shard"])
+def test_union_names_an_id_file_that_is_not_text_and_still_checks_every_leg(
+    tmp_path: Path, unreadable: str, capsys
+) -> None:
+    """An id file that is not UTF-8 text is that leg's red, by name, and the legs after it are
+    still checked, so one red names every leg that is short."""
+    folder = tmp_path / "ids"
+    for leg in ("ubuntu", "macos"):
+        _ids(folder, shards.PLANNED_IDS.format(leg=leg), EXPECTED)
+        _ids(folder, shards.SHARD_IDS.format(leg=leg, shard=1), EXPECTED[:2])
+    name = shards.PLANNED_IDS if unreadable == "planned" else shards.SHARD_IDS
+    (folder / name.format(leg="ubuntu", shard=1)).write_bytes(b"\xff\xfe\n")
+    argv = ["union", "--dir", str(folder), "--leg", "ubuntu:1", "--leg", "macos:1"]
+    assert shards.main(argv) != 0
+    out = capsys.readouterr().out
+    assert f"ubuntu: {name.format(leg='ubuntu', shard=1)} is not UTF-8 text" in out
+    assert "macos: tests/test_b.py::test_b" in out
+
+
+@pytest.mark.parametrize("leg", ["ubuntu", "ubuntu:0", "ubuntu:x", ":2"])
+def test_union_refuses_a_leg_it_cannot_read(tmp_path: Path, leg: str, capsys) -> None:
+    """Refused as written, before any file is read: a leg of no shards is never a leg."""
+    folder = tmp_path / "ids"
+    _ids(folder, shards.PLANNED_IDS.format(leg="ubuntu"), EXPECTED)
+    assert shards.main(["union", "--dir", str(folder), "--leg", leg]) != 0
+    assert "--leg is name:shards" in capsys.readouterr().err
+
+
+def test_universe_writes_the_files_every_shard_of_a_plan_lists(tmp_path: Path) -> None:
+    """The planned suite's collection reads the same exclusions the plan does: the rails and the
+    files a job owns are out."""
+    root = _tree(tmp_path, "tests/test_a.py", "tests/sub/b_test.py", "tests/rails/test_r.py")
+    (root / "tests" / "test_website_installer.py").write_text("", encoding="utf-8")
+    out = tmp_path / "universe.txt"
+    assert shards.main(["universe", "--root", str(root), "--out", str(out)]) == 0
+    assert out.read_text(encoding="utf-8").splitlines() == shards.universe(root)
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "tests/sub/b_test.py",
+        "tests/test_a.py",
+    ]
+
+
+def test_universe_fails_and_writes_nothing_on_a_tree_with_no_test_file(tmp_path: Path) -> None:
+    """pytest given an empty list would collect every test, so none is ever written."""
+    root = _tree(tmp_path, "tests/helper.py")
+    out = tmp_path / "universe.txt"
+    assert shards.main(["universe", "--root", str(root), "--out", str(out)]) != 0
+    assert not out.exists()

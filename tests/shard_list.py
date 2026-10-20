@@ -36,6 +36,9 @@ from pathlib import Path
 import pytest
 
 OPTION = "--shard-list"
+#: ``--shard-ids FILE``: write every test id the run collected, one per line, sorted, for
+#: breadth's union check (``python -m tools.ci shards union``).
+IDS_OPTION = "--shard-ids"
 _KEY = pytest.StashKey["ShardList"]()
 #: Each process's (collection seconds, peak RSS at collection's end, peak RSS over the run),
 #: in seconds and MB, by worker id ("main" without xdist).
@@ -62,9 +65,42 @@ def addoption(parser: pytest.Parser) -> None:
         metavar="FILE",
         help="collect only the test files FILE names, one per line (a CI shard's list)",
     )
+    parser.addoption(
+        IDS_OPTION,
+        default=None,
+        metavar="FILE",
+        help="write every test id this run collected to FILE, one per line (breadth's union)",
+    )
+
+
+class _Ids:
+    """Writes the ids the run collected, sorted, each as many times as the run holds it, so a
+    test the run would run twice is named twice: the process's own items without xdist, or, in
+    the xdist controller, which collects nothing itself, a worker's ids as it reports them
+    (xdist runs nothing unless every worker collected the same list). A worker writes nothing;
+    its controller does. The file is written as soon as collection ends, so a run that fails
+    later still names what it collected."""
+
+    def __init__(self, out: Path) -> None:
+        self.out = out
+
+    def _write(self, ids: list[str]) -> None:
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        self.out.write_text("".join(f"{i}\n" for i in sorted(ids)), encoding="utf-8")
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        self._write([item.nodeid for item in session.items])
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_node_collection_finished(self, node, ids) -> None:  # noqa: ARG002
+        self._write(list(ids))
 
 
 def configure(config: pytest.Config) -> None:
+    ids_to = config.getoption(IDS_OPTION, None)
+    if ids_to and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_Ids(Path(ids_to).resolve()), "shard-list-ids")
     named = config.getoption(OPTION)
     if not named:
         return

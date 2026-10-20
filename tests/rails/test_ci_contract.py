@@ -528,6 +528,38 @@ def _plants(name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str
     return Control(name, plant, True, expect)
 
 
+def _plant_in_job(
+    name: str, rel: str, job_id: str, old: str, new: str, expect: str = ""
+) -> Control:
+    """A violation planted by one edit inside one job of a workflow: the first *old* after the
+    job's own ``  <job_id>:`` line, so text that every job of a family shares names one."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        start = text.find(f"\n  {job_id}:\n")
+        at = text.find(old, start)
+        assert start >= 0 and at >= 0, f"the plant {name!r} found no {old!r} in {rel}:{job_id}"
+        _write(root, rel, text[:at] + new + text[at + len(old) :])
+
+    return Control(name, plant, True, expect)
+
+
+def _plant_job_copy(name: str, rel: str, job_id: str, copy_id: str, expect: str = "") -> Control:
+    """A violation planted by a copy of one job of a workflow under a new id, as a new leg made
+    from an existing one would be: the job's own lines, up to the next job's."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        start = text.find(f"\n  {job_id}:\n")
+        assert start >= 0, f"the plant {name!r} found no job {job_id} in {rel}"
+        following = re.search(r"\n  [\w-]+:\n", text[start + 1 :])
+        end = start + 1 + following.start() if following else len(text)
+        copy = text[start:end].replace(f"\n  {job_id}:\n", f"\n  {copy_id}:\n", 1)
+        _write(root, rel, text[:end] + copy + text[end:])
+
+    return Control(name, plant, True, expect)
+
+
 def _toolchain_row(
     name: str, check: Callable[[Tree], list[str]], controls: tuple[Control, ...]
 ) -> Row:
@@ -1905,7 +1937,7 @@ def _runs_whatever_its_needs_concluded(job: dict[str, Any]) -> bool:
 
 #: The macOS legs that wait for the macOS suite instead of running beside its shards, which hold
 #: two macOS runners at a time (``max-parallel: 2``).
-_AFTER_THE_MACOS_SUITE = ("security-macos",)
+_AFTER_THE_MACOS_SUITE = ("security-macos", "planned-ids-macos")
 
 
 def macos_suite_first_violations(tree: Tree) -> list[str]:
@@ -1923,6 +1955,185 @@ def macos_suite_first_violations(tree: Tree) -> list[str]:
             bad.append(f"breadth.yml:{job_id} does not wait on macos, so it runs beside its shards")
         if not _runs_whatever_its_needs_concluded(jobs[job_id]):
             bad.append(f"breadth.yml:{job_id} does not run whatever macos concluded")
+    return bad
+
+
+#: Each union job of breadth.yml and the suite legs (job ids) it holds to their planned suites.
+#: The canary's red is the next image's news, never the run's (its job is continue-on-error), so
+#: its union is a job of its own, advisory as the canary is, and the gating union names it
+#: nowhere and waits on none of its jobs.
+_UNIONS: dict[str, tuple[str, ...]] = {
+    "shard-union": ("ubuntu", "macos", "arm", "coverage-shard"),
+    "shard-union-canary": ("canary",),
+}
+#: The jobs whose red is not a verdict on the run: the canary, its planned collection and its
+#: union, each continue-on-error.
+_ADVISORY_UNION_JOBS = frozenset({"canary", "planned-ids-canary", "shard-union-canary"})
+#: A suite leg's env a collection need not share: the Python is ``PY``, held on its own, and the
+#: coverage data file changes no test id.
+_COLLECTION_NEUTRAL_ENV = frozenset({"PY", "COVERAGE_FILE"})
+_SHARD_LIST = '--shard-list "$RUNNER_TEMP/shard.txt"'
+
+
+def _words_after(job: dict[str, Any], flag: str) -> list[str]:
+    """Every value *flag* takes in the job's ``run:`` text, a double-quoted one whole (it may
+    hold ``${{ matrix.shard }}``), quotes stripped."""
+    pattern = rf'(?:^|\s){re.escape(flag)}[\s=]+(?:"([^"]*)"|(\S+))'
+    return [m.group(1) or m.group(2) for m in re.finditer(pattern, _runs(job))]
+
+
+def _union_legs(job: dict[str, Any]) -> list[str]:
+    """The ``--leg`` values of the job's ``shards union`` commands."""
+    legs: list[str] = []
+    for words in _commands(_runs(job)):
+        pairs = list(zip(words, words[1:]))
+        if ("shards", "union") in pairs:
+            legs += [b for a, b in pairs if a == "--leg"]
+    return legs
+
+
+def _uploads(job: dict[str, Any]) -> list[str]:
+    return [
+        str((step.get("with") or {}).get("name", ""))
+        for step in job.get("steps") or []
+        if _action(step) == "actions/upload-artifact"
+    ]
+
+
+def _leg_python(job: dict[str, Any]) -> str:
+    pythons = _matrix_values(job, "python")
+    return pythons[0] if len(pythons) == 1 else str((job.get("env") or {}).get("PY", ""))
+
+
+def _setup_uv_pythons(job: dict[str, Any]) -> list[str]:
+    """Each setup-uv step's ``python-version``, as written: the interpreter ``uv sync`` builds
+    the venv on, so the one ``uv run pytest`` collects on (``PY`` only names the one
+    ``uv python find`` returns)."""
+    return [
+        str((step.get("with") or {}).get("python-version", ""))
+        for step in job.get("steps") or []
+        if _action(step) == "astral-sh/setup-uv"
+    ]
+
+
+def _continues_on_error(job: dict[str, Any]) -> bool:
+    return str(job.get("continue-on-error", "")).strip().lower() == "true"
+
+
+def _union_leg_violations(jobs: dict[str, Any], leg: str) -> list[str]:
+    """A suite leg's shards write and upload ids named for their own leg and shard, and its
+    planned collection runs on the leg's own runner, Python (its ``PY`` and setup-uv's, which the
+    venv its pytest collects in is built on) and env, and writes and uploads its own file."""
+    job, planned_id = jobs[leg], f"planned-ids-{leg}"
+    planned = jobs.get(planned_id)
+    shard = "${{ matrix.shard }}"
+    own = f"$RUNNER_TEMP/ids/{shards.SHARD_IDS.format(leg=leg, shard=shard)}"
+    bad = [
+        f"breadth.yml:{leg} writes its ids to {path}, not {own}"
+        for path in _words_after(job, "--shard-ids")
+        if path != own
+    ]
+    if not _words_after(job, "--shard-ids"):
+        bad.append(f"breadth.yml:{leg} passes no --shard-ids")
+    if f"shard-ids-{leg}-{shard}" not in _uploads(job):
+        bad.append(f"breadth.yml:{leg} uploads no shard-ids-{leg}-{shard}")
+    if planned is None:
+        return [*bad, f"breadth.yml has no {planned_id} job"]
+    if planned.get("runs-on") != job.get("runs-on"):
+        bad.append(
+            f"breadth.yml:{planned_id} runs on {planned.get('runs-on')}, "
+            f"not {leg}'s {job.get('runs-on')}"
+        )
+    want_py, got_py = _leg_python(job), str((planned.get("env") or {}).get("PY", ""))
+    if got_py != want_py:
+        bad.append(f"breadth.yml:{planned_id} collects on Python {got_py}, not {leg}'s {want_py}")
+    if _setup_uv_pythons(planned) != [want_py]:
+        bad.append(
+            f"breadth.yml:{planned_id}'s setup-uv sets up Python {_setup_uv_pythons(planned)}, "
+            f"not {leg}'s {want_py}, so its pytest collects on another"
+        )
+    env = {k: v for k, v in (job.get("env") or {}).items() if k not in _COLLECTION_NEUTRAL_ENV}
+    planned_env = {
+        k: v for k, v in (planned.get("env") or {}).items() if k not in _COLLECTION_NEUTRAL_ENV
+    }
+    if planned_env != env:
+        bad.append(f"breadth.yml:{planned_id}'s env is {planned_env}, not {leg}'s {env}")
+    file = f"$RUNNER_TEMP/ids/{shards.PLANNED_IDS.format(leg=leg)}"
+    if _words_after(planned, "--shard-ids") != [file]:
+        bad.append(f"breadth.yml:{planned_id} does not write its ids to {file} alone")
+    if planned_id not in _uploads(planned):
+        bad.append(f"breadth.yml:{planned_id} uploads no {planned_id}")
+    universe = [
+        words[words.index("--out") + 1].strip('"')
+        for words in _commands(_runs(planned))
+        if ("shards", "universe") in zip(words, words[1:]) and "--out" in words[:-1]
+    ]
+    collected = [
+        words
+        for words in _commands(_runs(planned))
+        if "pytest" in words and "--collect-only" in words
+    ]
+    if len(universe) != 1 or len(collected) != 1:
+        bad.append(f"breadth.yml:{planned_id} does not collect `shards universe`'s files")
+    elif [b.strip('"') for a, b in zip(collected[0], collected[0][1:]) if a == "--shard-list"] != (
+        universe
+    ):
+        bad.append(f"breadth.yml:{planned_id} collects a list other than `shards universe`'s")
+    return bad
+
+
+def shard_union_violations(tree: Tree) -> list[str]:
+    """Each suite leg's shards are held, test id by test id, to a collection of the planned
+    suite made on that leg's own runner and Python, by the one union that names the leg.
+
+    Every suite shard (a pytest over this run's shard list) is in exactly one union; each
+    union names exactly its legs, each with the leg's own shard count, waits on each and on its
+    collection, and runs whatever they concluded. The gating union is never continue-on-error and
+    waits on no advisory job; the canary's collection and union are continue-on-error, as the
+    canary is."""
+    jobs = _breadth_jobs(tree)
+    bad: list[str] = []
+    suites = {job_id for job_id, job in jobs.items() if _SHARD_LIST in _runs(job)}
+    held = [leg for legs in _UNIONS.values() for leg in legs]
+    bad += [
+        f"breadth.yml:{leg} runs suite shards that no union holds to its planned suite"
+        for leg in sorted(suites - set(held))
+    ]
+    for union, legs in _UNIONS.items():
+        job = jobs.get(union)
+        if job is None:
+            bad.append(f"breadth.yml has no {union} job")
+            continue
+        want = []
+        for leg in legs:
+            if leg not in jobs:
+                bad.append(f"breadth.yml has no {leg} job")
+                continue
+            want.append(f"{leg}:{len(_matrix_values(jobs[leg], 'shard'))}")
+            bad += _union_leg_violations(jobs, leg)
+            for needed in (leg, f"planned-ids-{leg}"):
+                if needed not in _needs(job):
+                    bad.append(f"breadth.yml:{union} does not wait on {needed}")
+        if sorted(_union_legs(job)) != sorted(want):
+            bad.append(f"breadth.yml:{union} holds {_union_legs(job)}, not {want}")
+        if not _runs_whatever_its_needs_concluded(job):
+            bad.append(f"breadth.yml:{union} does not run whatever its legs concluded")
+        advisory = union in _ADVISORY_UNION_JOBS
+        if _continues_on_error(job) != advisory:
+            bad.append(
+                f"breadth.yml:{union} is "
+                + ("not " if advisory else "")
+                + "continue-on-error, so "
+                + ("the canary's red is the run's" if advisory else "its red is swallowed")
+            )
+        if not advisory:
+            bad += [
+                f"breadth.yml:{union} waits on {other}, whose red is not the run's"
+                for other in sorted(set(_needs(job)) & _ADVISORY_UNION_JOBS)
+            ]
+    for job_id in sorted(_ADVISORY_UNION_JOBS - {"canary"}):
+        if job_id in jobs and not _continues_on_error(jobs[job_id]):
+            bad.append(f"breadth.yml:{job_id} is not continue-on-error, so the canary's red is")
     return bad
 
 
@@ -3902,8 +4113,232 @@ ROWS: tuple[Row, ...] = (
                 "  macos-renamed:\n",
                 expect="breadth.yml has no macos job",
             ),
+            _plant(
+                "planned-ids-macos waiting on freshness alone",
+                _BREADTH,
+                "    # beside the suite's two; it runs whatever the suite concluded.\n"
+                "    needs: [freshness, macos]\n",
+                "    # beside the suite's two; it runs whatever the suite concluded.\n"
+                "    needs: [freshness]\n",
+                expect="breadth.yml:planned-ids-macos does not wait on macos",
+            ),
             Control(
                 "rails-macos and the suite's shards, which wait on freshness alone, pass",
+                _nothing,
+                fails=False,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-each-suite-leg-is-held-to-its-own-planned-ids",
+        shard_union_violations,
+        (
+            _plant(
+                "the canary in the gating union",
+                _BREADTH,
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6 --leg canary:4\n",
+                expect="breadth.yml:shard-union holds",
+            ),
+            _plant(
+                "the gating union waiting on the canary",
+                _BREADTH,
+                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, planned-ids-ubuntu,",
+                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, canary,"
+                " planned-ids-ubuntu,",
+                expect="breadth.yml:shard-union waits on canary, whose red is not the run's",
+            ),
+            _plant(
+                "the gating union not waiting on a leg's planned collection",
+                _BREADTH,
+                " planned-ids-arm, planned-ids-coverage-shard]\n",
+                " planned-ids-coverage-shard]\n",
+                expect="breadth.yml:shard-union does not wait on planned-ids-arm",
+            ),
+            _plant(
+                "the gating union not waiting on a leg's shards",
+                _BREADTH,
+                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, planned-ids-ubuntu,",
+                "    needs: [freshness, ubuntu, macos, coverage-shard, planned-ids-ubuntu,",
+                expect="breadth.yml:shard-union does not wait on arm",
+            ),
+            _plant(
+                "no job for a leg the gating union names",
+                _BREADTH,
+                "\n  arm:\n",
+                "\n  arm-renamed:\n",
+                expect="breadth.yml has no arm job",
+            ),
+            _plant(
+                "the gating union leaving a leg out",
+                _BREADTH,
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
+                "--leg ubuntu:4 --leg macos:6 --leg coverage-shard:6\n",
+                expect="breadth.yml:shard-union holds",
+            ),
+            _plant(
+                "the gating union short of a leg's shards",
+                _BREADTH,
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
+                "--leg ubuntu:4 --leg macos:5 --leg arm:4 --leg coverage-shard:6\n",
+                expect="breadth.yml:shard-union holds",
+            ),
+            _plant(
+                "a leg's matrix grown past the union's count",
+                _BREADTH,
+                "        shard: [1, 2, 3, 4, 5, 6]\n",
+                "        shard: [1, 2, 3, 4, 5, 6, 7]\n",
+                expect="breadth.yml:shard-union holds",
+            ),
+            _plant_in_job(
+                "the gating union continue-on-error",
+                _BREADTH,
+                "shard-union",
+                "    timeout-minutes: 10\n",
+                "    timeout-minutes: 10\n    continue-on-error: true\n",
+                expect="breadth.yml:shard-union is continue-on-error",
+            ),
+            _plant_in_job(
+                "the gating union gated on success()",
+                _BREADTH,
+                "shard-union",
+                "    if: ${{ !cancelled() }}\n",
+                "    if: ${{ success() }}\n",
+                expect="breadth.yml:shard-union does not run whatever its legs concluded",
+            ),
+            _plant_in_job(
+                "the canary's union not continue-on-error",
+                _BREADTH,
+                "shard-union-canary",
+                "    continue-on-error: true\n",
+                "",
+                expect="breadth.yml:shard-union-canary is not continue-on-error",
+            ),
+            _plant_in_job(
+                "the canary's planned collection not continue-on-error",
+                _BREADTH,
+                "planned-ids-canary",
+                "    continue-on-error: true\n",
+                "",
+                expect="breadth.yml:planned-ids-canary is not continue-on-error",
+            ),
+            _plant(
+                "no canary union",
+                _BREADTH,
+                "  shard-union-canary:\n",
+                "  shard-union-canary-renamed:\n",
+                expect="breadth.yml has no shard-union-canary job",
+            ),
+            _plant(
+                "a macos shard writing the ubuntu shard's id file",
+                _BREADTH,
+                '--shard-ids "$RUNNER_TEMP/ids/shard-ids-macos-${{ matrix.shard }}.txt"',
+                '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"',
+                expect="breadth.yml:macos writes its ids to",
+            ),
+            _plant(
+                "a shard that collects with no --shard-ids",
+                _BREADTH,
+                ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"',
+                "",
+                expect="breadth.yml:canary passes no --shard-ids",
+            ),
+            _plant(
+                "an arm shard uploading its ids under the ubuntu shard's name",
+                _BREADTH,
+                "          name: shard-ids-arm-${{ matrix.shard }}\n",
+                "          name: shard-ids-ubuntu-${{ matrix.shard }}\n",
+                expect="breadth.yml:arm uploads no shard-ids-arm-",
+            ),
+            _plant_in_job(
+                "the arm leg's planned suite collected on an x86 runner",
+                _BREADTH,
+                "planned-ids-arm",
+                "    runs-on: ubuntu-24.04-arm\n",
+                "    runs-on: ubuntu-24.04\n",
+                expect="breadth.yml:planned-ids-arm runs on ubuntu-24.04, not arm's",
+            ),
+            _plant_in_job(
+                "the coverage leg's planned suite collected on another Python",
+                _BREADTH,
+                "planned-ids-coverage-shard",
+                '      PY: "3.12.15"\n',
+                '      PY: "3.13.16"\n',
+                expect="breadth.yml:planned-ids-coverage-shard collects on Python 3.13.16",
+            ),
+            _plant_in_job(
+                "the ubuntu leg's planned suite collected without the leg's env",
+                _BREADTH,
+                "planned-ids-ubuntu",
+                '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n',
+                "",
+                expect="breadth.yml:planned-ids-ubuntu's env is",
+            ),
+            _plant(
+                "the ubuntu leg's planned collection writing the arm leg's file",
+                _BREADTH,
+                '--shard-ids "$RUNNER_TEMP/ids/planned-ids-ubuntu.txt"',
+                '--shard-ids "$RUNNER_TEMP/ids/planned-ids-arm.txt"',
+                expect="breadth.yml:planned-ids-ubuntu does not write its ids to",
+            ),
+            _plant(
+                "a planned collection over a list other than the universe",
+                _BREADTH,
+                '--shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-arm.xml',
+                '--shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-planned-arm.xml',
+                expect="breadth.yml:planned-ids-arm collects a list other than",
+            ),
+            _plant(
+                "no planned collection for a leg",
+                _BREADTH,
+                "  planned-ids-macos:\n",
+                "  planned-ids-macos-renamed:\n",
+                expect="breadth.yml has no planned-ids-macos job",
+            ),
+            _plant_job_copy(
+                "a new suite leg, copied from the arm leg, that no union names",
+                _BREADTH,
+                "arm",
+                "arm-extra",
+                expect="breadth.yml:arm-extra runs suite shards that no union holds",
+            ),
+            _plant_in_job(
+                "the macos leg's planned collection uploading its ids under another name",
+                _BREADTH,
+                "planned-ids-macos",
+                "          name: planned-ids-macos\n",
+                "          name: planned-ids-macos-renamed\n",
+                expect="breadth.yml:planned-ids-macos uploads no planned-ids-macos",
+            ),
+            _plant_in_job(
+                "a planned collection whose list is a shard's, with no `shards universe`",
+                _BREADTH,
+                "planned-ids-arm",
+                'shards universe --out "$RUNNER_TEMP/universe.txt"',
+                'shards list --plan "$RUNNER_TEMP/plan.json" --leg arm --shard 1/4'
+                ' --out "$RUNNER_TEMP/universe.txt"',
+                expect="breadth.yml:planned-ids-arm does not collect `shards universe`'s files",
+            ),
+            _plant_in_job(
+                "a planned collection that runs a second collection",
+                _BREADTH,
+                "planned-ids-ubuntu",
+                "      - name: pytest (collect the planned suite, writing its ids)\n",
+                "      - name: an earlier collection\n"
+                "        run: uv run pytest --collect-only -qq -n0 tests/test_cli.py\n"
+                "      - name: pytest (collect the planned suite, writing its ids)\n",
+                expect="breadth.yml:planned-ids-ubuntu does not collect `shards universe`'s files",
+            ),
+            _plant_in_job(
+                "the coverage leg's planned suite collected in a venv on another Python",
+                _BREADTH,
+                "planned-ids-coverage-shard",
+                '          python-version: "3.12.15"\n',
+                '          python-version: "3.13.16"\n',
+                expect="breadth.yml:planned-ids-coverage-shard's setup-uv sets up Python",
+            ),
+            Control(
+                "the gating union downloading the canary's files too passes: it reads its legs'",
                 _nothing,
                 fails=False,
             ),
@@ -5885,6 +6320,7 @@ def suite_basetemp_violations(tree: Tree) -> list[str]:
 _CANARY_RUN = (
     'uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
     " --junitxml=reports/junit-canary.xml"
+    ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"'
 )
 
 
@@ -5989,6 +6425,15 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     # It reads the installer the website serves and PyPI as they are the night it runs: live,
     # like the nightly audit, so its evidence is never reused, by TTL or by tree.
     "install-smoke": _Mapped(("breadth.yml:install-smoke",), ("breadth",), live=True),
+    "planned-ids-ubuntu": _Mapped(("breadth.yml:planned-ids-ubuntu",), ("breadth",)),
+    "planned-ids-macos": _Mapped(("breadth.yml:planned-ids-macos",), ("breadth",)),
+    "planned-ids-arm": _Mapped(("breadth.yml:planned-ids-arm",), ("breadth",)),
+    "planned-ids-coverage-shard": _Mapped(
+        ("breadth.yml:planned-ids-coverage-shard",), ("breadth",)
+    ),
+    "planned-ids-canary": _Mapped(("breadth.yml:planned-ids-canary",), ("breadth",)),
+    "shard-union": _Mapped(("breadth.yml:shard-union",), ("breadth",)),
+    "shard-union-canary": _Mapped(("breadth.yml:shard-union-canary",), ("breadth",)),
     "client": _Mapped(("client",), ("change", "merge")),
     "web-unit": _Mapped(("web",), ("change", "merge"), reuse="tree"),
     "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
@@ -6204,6 +6649,20 @@ tmux -V
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/collection-parses__1.json"
 
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-ubuntu__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-macos__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union-canary__1.json"
+
 """,  # noqa: E501
     "breadth's: a leg's result, read back from the entry it wrote": r"""
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
@@ -6225,6 +6684,20 @@ tmux -V
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/audit__1.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/collection-parses__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-ubuntu__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-macos__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union-canary__1.json"
 
 """,  # noqa: E501
     "breadth's: the coverage shards' result, gated before the combine": r"""

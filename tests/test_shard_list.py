@@ -153,3 +153,124 @@ def test_without_a_shard_list_nothing_is_reported(tmp_path: Path) -> None:
     done = _run(_tree(tmp_path))
     assert done.returncode == 0
     assert "shard collection and memory" not in done.stdout
+
+
+# ── --shard-ids: the ids a run collected, for breadth's union check ───────────────────────────
+
+
+def _written_ids(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def test_shard_ids_writes_every_id_a_run_without_workers_collected(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    (root / "list.txt").write_text("tests/test_b.py\ntests/sub/test_c.py\n", encoding="utf-8")
+    out = root / "ids.txt"
+    done = _collect(root, "--shard-list", "list.txt", "--shard-ids", str(out))
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _written_ids(out) == ["tests/sub/test_c.py::test_it", "tests/test_b.py::test_it"]
+
+
+def test_shard_ids_writes_the_ids_the_workers_collected_once(tmp_path: Path) -> None:
+    """Every xdist worker collects the shard's whole list; the file names each id once, as the
+    controller heard it, not once per worker."""
+    root = _tree(tmp_path)
+    (root / "list.txt").write_text("tests/test_a.py\ntests/test_b.py\n", encoding="utf-8")
+    out = root / "ids.txt"
+    done = _run(root, "--shard-list", "list.txt", "--shard-ids", str(out), "-n", "2")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _written_ids(out) == ["tests/test_a.py::test_it", "tests/test_b.py::test_it"]
+
+
+def test_shard_ids_names_a_parametrized_case_and_a_class_test_by_their_node_ids(
+    tmp_path: Path,
+) -> None:
+    root = _tree(tmp_path)
+    (root / "tests" / "test_p.py").write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('x', [1, 2])\ndef test_p(x):\n    pass\n\n\n"
+        "class TestK:\n    def test_k(self):\n        pass\n",
+        encoding="utf-8",
+    )
+    (root / "list.txt").write_text("tests/test_p.py\n", encoding="utf-8")
+    out = root / "ids.txt"
+    assert _collect(root, "--shard-list", "list.txt", "--shard-ids", str(out)).returncode == 0
+    assert _written_ids(out) == [
+        "tests/test_p.py::TestK::test_k",
+        "tests/test_p.py::test_p[1]",
+        "tests/test_p.py::test_p[2]",
+    ]
+
+
+def test_without_shard_ids_no_file_is_written(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    (root / "list.txt").write_text("tests/test_a.py\n", encoding="utf-8")
+    assert _collect(root, "--shard-list", "list.txt").returncode == 0
+    assert not list(root.glob("*ids*"))
+
+
+def test_shard_ids_names_what_a_red_run_collected(tmp_path: Path) -> None:
+    """The file is written when collection ends, so a shard with a failing test still names
+    every id it collected, the failing one too, with workers and without."""
+    root = _tree(tmp_path)
+    (root / "tests" / "test_red.py").write_text("def test_red():\n    assert False\n", "utf-8")
+    (root / "list.txt").write_text("tests/test_a.py\ntests/test_red.py\n", encoding="utf-8")
+    for workers in ((), ("-n", "2")):
+        out = root / f"ids-{len(workers)}.txt"
+        done = _run(root, "--shard-list", "list.txt", "--shard-ids", str(out), *workers)
+        assert done.returncode != 0, done.stdout + done.stderr
+        assert _written_ids(out) == ["tests/test_a.py::test_it", "tests/test_red.py::test_red"]
+
+
+#: A plugin that holds the first test twice, as one that rewrites the run's items could.
+_TWICE = "\n\ndef pytest_collection_modifyitems(items):\n    items.append(items[0])\n"
+
+
+def test_shard_ids_names_an_id_the_run_holds_twice_twice(tmp_path: Path) -> None:
+    """A run that holds one test twice runs it twice, so the file names it twice, and the union
+    sees an id one shard collected twice, with workers and without."""
+    root = _tree(tmp_path)
+    conftest = root / "tests" / "conftest.py"
+    conftest.write_text(conftest.read_text(encoding="utf-8") + _TWICE, encoding="utf-8")
+    (root / "list.txt").write_text("tests/test_a.py\ntests/test_b.py\n", encoding="utf-8")
+    for workers in ((), ("-n", "2")):
+        out = root / f"ids-{len(workers)}.txt"
+        done = _run(root, "--shard-list", "list.txt", "--shard-ids", str(out), *workers)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "3 passed" in done.stdout, done.stdout
+        assert _written_ids(out) == [
+            "tests/test_a.py::test_it",
+            "tests/test_a.py::test_it",
+            "tests/test_b.py::test_it",
+        ]
+
+
+#: Each xdist worker records whether it holds the id writer, by its worker id.
+_PROBE = (
+    "\n\ndef pytest_collection_modifyitems(config, items):\n"
+    "    import os, pathlib\n"
+    "    worker = config.workerinput['workerid']\n"
+    "    held = config.pluginmanager.hasplugin('shard-list-ids')\n"
+    "    pathlib.Path(os.environ['SHARD_IDS_PROBE'], worker).write_text(str(held))\n"
+)
+
+
+def test_an_xdist_worker_writes_no_ids_its_controller_does(tmp_path: Path) -> None:
+    """Only the controller holds the id writer, so one process writes the file, never a worker
+    beside it."""
+    root = _tree(tmp_path)
+    conftest = root / "tests" / "conftest.py"
+    conftest.write_text(conftest.read_text(encoding="utf-8") + _PROBE, encoding="utf-8")
+    (root / "list.txt").write_text("tests/test_a.py\ntests/test_b.py\n", encoding="utf-8")
+    probe, out = root / "probe", root / "ids.txt"
+    probe.mkdir()
+    done = _run(
+        root,
+        *("--shard-list", "list.txt", "--shard-ids", str(out), "-n", "2"),
+        env={"SHARD_IDS_PROBE": str(probe)},
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert {p.name: p.read_text(encoding="utf-8") for p in probe.iterdir()} == {
+        "gw0": "False",
+        "gw1": "False",
+    }
+    assert _written_ids(out) == ["tests/test_a.py::test_it", "tests/test_b.py::test_it"]
