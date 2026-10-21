@@ -2,8 +2,8 @@
 
 Defense in depth for a system that runs an autonomous agent on your machine:
 authentication modes, command screening, an OS sandbox, one egress chokepoint,
-scoped tokens, supply-chain gates, untrusted-content fencing, and a
-tamper-evident audit log. Paths are relative to
+scoped tokens, supply-chain gates, untrusted-content fencing, and an audit
+log whose entries are tamper-evident. Paths are relative to
 `PersonalClaw/src/personalclaw/`.
 
 > This is the internal architecture reference. For the externally-facing view —
@@ -193,7 +193,7 @@ and the address is never logged, since a sign-in page's carries its single-use `
     refused, its Inbox row closed, and the trigger asks again, with a new token, the next time it
     stops.
   - The SEL integrity key (`sel_hmac.key`) lives as long as the log it signs: a new key would
-    leave every earlier record unverifiable, which is the one thing the chain is for. No export
+    leave every earlier record unverifiable, which is the one thing the key is for. No export
     carries it; a snapshot does, so a restore can still verify the records it brings back.
   - The web-push keypair lives until `personalclaw push init --force` replaces it: every paired
     device's subscription is bound to its public key, so replacing it signs every device out of
@@ -1638,11 +1638,20 @@ tradeoff — [limitations §1](../security/limitations.md#1-an-agent-cli-is-held
 
 ## Audit — the Security Event Log (`sel.py`)
 
-`SecurityEventLog` writes HMAC-chained events (key file `sel_hmac.key`) —
-tamper-evident, append-only. Events carry caller, operation, outcome, and
-`downstream_service` labels (the generic value is `"channel"`; no vendor
-names). API denials, webhook auth failures, and app lifecycle events all log
-here. The dashboard Security panel reads it.
+`SecurityEventLog` appends events to one file. Each entry carries an HMAC over its own record
+(key file `sel_hmac.key`), the previous entry's hash (`prev_hash`) included.
+
+- **What the integrity check catches:** `verify_integrity` recomputes each entry's HMAC, so an
+  entry of the live file edited in place by anyone without the key fails it. By default it reads
+  the last 5,000 entries (`_VERIFY_WINDOW`).
+- **What it does not:** it never follows the `prev_hash` links. The gateway, channel and MCP
+  processes append to the one log without coordinating, so their links interleave and the check
+  allows breaks in the chain on purpose; an entry deleted from the file goes unreported. It reads
+  only the live file, so a rotated file in `sel_archive/` is not checked again.
+
+Events carry caller, operation, outcome, and `downstream_service` labels (the generic value is
+`"channel"`; no vendor names). API denials, webhook auth failures, and app lifecycle events all
+log here. The dashboard Security panel reads it.
 
 **Events, not requests.** A refused authentication is a row, every time. A successful one is a
 row the first time a session is seen in a 15-minute window, and the rest of that window is one
@@ -1708,7 +1717,8 @@ promotion never offers "runs with undo" to an action that cannot be undone
 
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts
-a fresh chain (`verify_integrity` tolerates the break at a rotation), and the rotation is itself
+a fresh chain (`verify_integrity` reads only the live file, so the archived one is not checked
+again), and the rotation is itself
 logged (`sel.rotated`). Retention is age: 365 days, applied by the remediation engine's SEL prune
 to the live file and to whole archives, with a 512 MiB ceiling on the archive as a backstop
 (oldest first); every archive removal is logged. The durability inventory lists `sel_archive/`

@@ -499,7 +499,7 @@ A secret still appears in plaintext in these places:
   snapshot or export, a `pre-restore-*` directory, the time-travel history of `config.json`
   (`state-history/`, which never leaves the machine), and an audit-log row an earlier
   `personalclaw config set` wrote with the value in it. The audit log travels in an export,
-  and its rows are chained, so they are not rewritten.
+  and each of its rows carries an HMAC over itself, so they are not rewritten.
 - **A value with a NUL character**, which no environment variable or keychain entry can hold.
   Adding a server with one is refused; one that reaches `mcp.json` another way (an import, a
   hand edit) stays there and travels with it, and the gateway logs which variable it left. A

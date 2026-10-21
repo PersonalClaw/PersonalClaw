@@ -3,8 +3,8 @@
 PersonalClaw runs an autonomous agent on your own machine, so its security model
 is defense-in-depth: authentication modes, command screening, an OS sandbox, one
 egress chokepoint, app-scoped tokens, supply-chain scanning, untrusted-content
-fencing, and a tamper-evident audit log. The architecture is documented in
-[`docs/architecture/security.md`](docs/architecture/security.md), and the public
+fencing, and an audit log whose entries are tamper-evident. The architecture is
+documented in [`docs/architecture/security.md`](docs/architecture/security.md), and the public
 threat model — including the OWASP Agentic Security Top-10 (ASI) mapping and an
 honest statement of limitations — lives in
 [`docs/security/threat-model.md`](docs/security/threat-model.md).

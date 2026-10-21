@@ -132,8 +132,9 @@ died is terminalized instead of reading as running forever — with a recipe tha
 
 ### 🛡️ Security-first
 Tool approval modes, a shell-command denylist, an egress guard with allow/deny host policy,
-a tamper-evident (HMAC) security event log, app-scoped tokens, and honest labeling of the
-one permission it can't technically enforce. Controls are enforced at the point of execution,
+a security event log whose entries each carry an HMAC (an edited entry is caught, a deleted one
+is not), app-scoped tokens, and honest labeling of the one permission it can't technically
+enforce. Controls are enforced at the point of execution,
 not merely requested in a prompt — the [threat model](docs/security/threat-model.md) maps each
 to the OWASP Agentic Top-10 with code citations and states the limitations plainly. Found a
 security issue? Report it privately via [our security policy](SECURITY.md). See also the

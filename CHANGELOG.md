@@ -55,6 +55,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A native chat runs at its stored reasoning effort only when its model declares that level, also for a turn sent through the API or another channel with no composer open, and on Auto, which names no model, it runs at Default; setting a level the chat's model doesn't declare is refused, naming the model and the levels it declares.**
 - **A native chat's turns and the effort setting read a model's levels as the composer's effort row does: the levels its provider app lists for the model, none when the listing names none, and the levels PersonalClaw's built-in client sends only where the app says nothing of it; an app that listed a model with no levels hid the effort row while its turns still ran at the client's levels.**
 - **Workflow run and step times, on the workflow pages and the chat's workflow card, round to the whole second before they split off the minutes, so 119.6 seconds reads "2m 0s" where it read "1m 60s" and 59.6 seconds "1m 0s" where it read "60s"; a time under half a second reads "under 1s" where it read "0s".**
+- **The README, the security policy, the security model and the threat model say what the audit log's integrity check catches, an entry edited in place, and what it does not, an entry deleted from the file; they called the log HMAC-chained and tamper-evident.**
 
 ## [0.2.3] — 2026-10-19
 
