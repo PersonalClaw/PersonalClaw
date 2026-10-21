@@ -1,13 +1,12 @@
 import { AnimatePresence } from 'framer-motion'
-import { AlertTriangle, BookText, Boxes, Camera, Check, Clock, CornerDownLeft, EyeOff, ListChecks, Loader2, Pin, Repeat, X } from 'lucide-react'
-import { api, type MemoryMode } from '../../../lib/api'
+import { AlertTriangle, BookText, Boxes, Camera, Check, Clock, CornerDownLeft, EyeOff, ListChecks, Loader2, NotebookPen, Pin, Repeat, X } from 'lucide-react'
+import { api } from '../../../lib/api'
 import { reportActionFailure } from '../../../app/reportingWrite'
 import { Button } from '../../../ui/Button'
 import { IconButton } from '../../../ui/IconButton'
 import { Meter } from '../../../ui/Meter'
 import { MenuRow } from '../../../ui/Popover'
 import { ProjectPicker } from '../../../ui/ProjectPicker'
-import { Segmented } from '../../../ui/Segmented'
 import { SnipOverlay } from '../../../ui/SnipOverlay'
 import { ComposerStage } from '../../../ui/ComposerStage'
 import { ComposerNoticeLine } from '../../../ui/composer/ComposerNotice'
@@ -22,7 +21,7 @@ import { BundledFloorNotice } from '../BundledFloorNotice'
 import { AppPermissionNotice } from '../StartedByApp'
 import { AttachmentChips } from '../AttachmentChips'
 import { isImagePath } from '../imageAttachments'
-import { MEMORY_MODES, MEMORY_MODE_NOTICE } from '../memoryModeCopy'
+import { MEMORY_MODE_NOTICE } from '../memoryModeCopy'
 import { lastServedModel } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
 import type { useChatComposer } from './useChatComposer'
@@ -31,6 +30,7 @@ import { KnowledgeChips } from './KnowledgeChips'
 import { PasteCards } from './PasteCards'
 import { QueueStack } from './QueueStack'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
+import { ExecutionBoundary, TaskModePill, useBoundaryReading } from './ExecutionBoundary'
 
 // ── The chat's composer region ────────────────────────────────────────────────────────────────
 //
@@ -38,26 +38,38 @@ import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
 // notices, the notice line, uploads and their progress, the attachment, knowledge and paste chips,
 // the revert-optimize offer, the steers and the queue, the pickers and the crop step, the skills
 // review, the routing chip, the organize chip, the plan gate, the floor-model label, and a new
-// chat's project and memory mode. Its state and its actions are `useChatComposer`'s.
+// chat's project. In the composer's footer, beside the agent-and-model pill: the task mode and the
+// Execution Boundary control (`ExecutionBoundary`), where the next turn may act. Its state and its
+// actions are `useChatComposer`'s.
 
 const CHAT_CONTROLS: ComposerControls = {
   agent: true, model: true, approval: false, reasoning: true,
   attach: true, mic: true, optimize: true, slash: true,
 }
 
-export function ChatComposer({ composer, stream, sessionId, started, onOpenFile: setOpenFile, voiceCfg, speakingTurn }: {
+export function ChatComposer({ composer, stream, sessionId, started, onOpenFile: setOpenFile, voiceCfg, speakingTurn, onBriefAgent, onChangeFolder }: {
   composer: ReturnType<typeof useChatComposer>
   stream: ChatStream
   sessionId: string | null
   started: boolean
   onOpenFile: (path: string) => void
+  /** Prime the next turn with background context (`useChatHeader`'s Brief the agent), a row of the
+   *  `+` menu once the chat has started. */
+  onBriefAgent?: () => void
+  /** Open the Working directory prompt, from the Execution Boundary control of a started chat. */
+  onChangeFolder?: () => void
   /** The voice settings hands-free reads (`useChatVoice`). */
   voiceCfg: VoiceLoopConfig
   /** The reply being read out, which hands-free waits on. */
   speakingTurn: number | null
 }) {
-  const { acpFor, activatePlanMode, applySelection, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
-  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, autoChain, startedBy } = stream
+  const { acpFor, activatePlanMode, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
+  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, autoChain, startedBy, workingDir } = stream
+  // The sandbox and the network of the next turn, the gateway's words: an open chat's once its own
+  // read has landed, a new chat's for the agent it is set to.
+  const boundaryReading = useBoundaryReading(sessionId, !sessionId || postureKnown, acpFor(selection.agent)?.providerId ?? '')
+  // The working folder in words: the chat's own, else the folder a chat with none works in.
+  const folder = workingDir || (!sessionId && projectId ? 'the project’s folder' : 'the workspace')
   return (
     // `data-tour="chat"` — the product tour's chat stop points at the composer stage.
     // On the chat route this wrapper is the composer.
@@ -270,6 +282,12 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
                   onClick={() => { close(); void activatePlanMode() }} />
               )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
+              {/* Background context for the next reply, never shown in the transcript: it left the
+                  header for here, beside what else goes into a message. */}
+              {started && sessionRef.current && onBriefAgent && (
+                <MenuRow icon={<NotebookPen size={16} />} label="Brief the agent" hint="Background context for your next message"
+                  onClick={() => { close(); onBriefAgent() }} />
+              )}
             </>
           )}
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
@@ -278,22 +296,32 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
           onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
-          screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
+          screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}
+          hostPills={(
+            <>
+              <TaskModePill value={selection.taskMode ?? 'agent'} onChoose={chooseTaskMode} />
+              {/* In an app's conversation the app's grant decides every turn and a choice here
+                  would be overwritten by it, so the permission mode shows that grant and is not
+                  hers to move (the notice above the composer says why too). */}
+              <ExecutionBoundary approval={selection.approval ?? 'normal'} onApproval={chooseApproval}
+                lockedReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
+                memoryMode={memoryMode} onMemoryMode={!sessionId ? setMemoryMode : undefined}
+                folder={folder} onChangeFolder={started && sessionRef.current ? onChangeFolder : undefined}
+                reading={boundaryReading} />
+            </>
+          )} />
       </div>
-      {/* CREATE-TIME session setup — project binding + memory mode. Both are frozen
-          once the chat starts, so they are NOT composer controls (the composer's
-          controls stay live for the whole chat); they live just below the new-chat
-          composer and disappear once started. Keyed off !sessionId (a genuinely NEW
-          chat) rather than !started, so they don't flash while an existing session's
-          history is still loading (turns empty → started false, but sessionId set).
-          Project scoping opens via /project. */}
+      {/* CREATE-TIME session setup — the project binding, frozen once the chat starts, so it
+          is NOT a composer control (the composer's controls stay live for the whole chat); it
+          lives just below the new-chat composer and disappears once started. Keyed off
+          !sessionId (a genuinely NEW chat) rather than !started, so it doesn't flash while an
+          existing session's history is still loading (turns empty → started false, but
+          sessionId set). Project scoping opens via /project. The memory mode, frozen the same
+          way, is chosen in the Execution Boundary control. */}
       {!sessionId && (
         <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
           <ProjectPicker value={projectId} onChange={setProjectId}
             emptyLabel="No project" emptyHint="" openSignal={openProjectSignal} />
-          <Segmented ariaLabel="Memory mode" size="sm" value={memoryMode}
-            options={MEMORY_MODES.map((m) => ({ key: m.id, label: m.label, title: `${m.label} — ${m.hint}` }))}
-            onChange={(v) => setMemoryMode(v as MemoryMode)} />
         </div>
       )}
     </div>

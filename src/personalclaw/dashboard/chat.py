@@ -25,6 +25,7 @@ import asyncio  # noqa: F401
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings  # noqa: F401
+from personalclaw.dashboard.chat_boundary import api_chat_boundary  # noqa: F401
 from personalclaw.dashboard.chat_channel import (  # noqa: F401
     api_channel_reply_targets,
     api_chat_session_channel_link,

@@ -142,8 +142,9 @@ export interface ComposerProps {
     } | null
     onSelect: (style: string) => void
   }
-  /** Pills a host owns, drawn in the toolbar after the built-in ones — a choice that belongs to
-   *  what the host creates rather than to a conversation (the loop composer's "Runs on"). */
+  /** Pills a host owns, drawn in the toolbar after the built-in ones: the chat's task mode and
+   *  Execution Boundary control (what the next turn may do, and where), and the loop composer's
+   *  "Runs on", a choice that belongs to what that host creates. */
   hostPills?: ReactNode
   /** When true, a draft can be sent while a turn runs instead of being dropped. */
   canQueue?: boolean

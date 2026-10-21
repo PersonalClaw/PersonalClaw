@@ -99,8 +99,9 @@ Back returns to the list.
 
 Top to bottom:
 
-- **The header** holds the thread's own actions only: its title, Share and the overflow.
-  Configuration never appears here.
+- **The header** holds the thread's own actions only: its title, then Share (Copy chat link and
+  the "Continue on" hand-offs), the Session map and Activity, and the overflow (Save as starter,
+  New chat). Configuration never appears here.
 - **The reading column**, around 720 to 780 px whatever the window's width (`--reading-width`,
   768 px, in `web/src/design/tokens.css`), holds the turns. Code, tables, diffs and artifacts open
   beside it in an adjustable split that remembers its size; a compact window stacks them under it.
@@ -116,10 +117,12 @@ Top to bottom:
 - **Approval and question cards** sit where the agent asked. A card states the action and its
   consequence plainly, so the owner can answer from it alone.
 - **Sources** are inline citations at the answer, with the full list in the right pane.
-- **The composer** is the anchor: attachments, `@` mentions and `/` commands in it; the one
-  agent-and-model pill, the task mode and the reply style in its footer; and the Execution Boundary
-  control beside it. While a turn runs, the send button is its Stop. In reading mode the composer
-  folds away until the owner wants to type.
+- **The composer** is the anchor: attachments, `@` mentions and `/` commands in it, and Brief the
+  agent in its `+` menu; the one agent-and-model pill, the task mode and the reply style in its
+  footer; and the Execution Boundary control beside them, which shows the permission mode, the
+  working folder, the sandbox, the network reach and the memory mode, and changes the permission
+  mode, the folder and a new chat's memory mode. While a turn runs, the send button is its Stop. In
+  reading mode the composer folds away until the owner wants to type.
 - **The right pane** (activity, artifacts, sources) is closed until the owner opens it.
 
 ## What leaves Home and the thread header
@@ -131,7 +134,8 @@ Top to bottom:
 - **From the thread header:** the task-mode and permission-mode pills (to the composer and the
   Execution Boundary control), the agent and model selectors (one composer pill), Brief the agent (a
   row in the composer's `+` menu), the working directory (the Execution Boundary control), Save as
-  starter (the overflow), Activity (the right pane's toggle) and New chat (⌘N and the sidebar).
+  starter (the overflow) and New chat (⌘N, the sidebar and the overflow). Copy chat link and the
+  hand-offs go under Share. Activity stays, as the right pane's toggle.
 
 ## Indicator homes
 
@@ -141,10 +145,11 @@ Top to bottom:
 | Working, this thread | the orb and its status line at the turn head | none |
 | Working, another thread | a static pip on its sidebar row; Home's Running Now | none |
 | A loop waiting for input | Needs You; its sidebar pip | the buddy while the owner is away |
-| Permission mode and autonomy | the Execution Boundary control beside the composer, wherever the agent can act | the approval card itself |
-| Memory mode (temporary or incognito) | the Execution Boundary control, plus a subtle tint on the thread | none |
+| Permission mode | the Execution Boundary control beside the composer, wherever the agent can act | the approval card itself |
+| Task mode (autonomy) | the composer's footer, beside the Execution Boundary control | the plan review, while a plan waits |
+| Memory mode (temporary or incognito) | the Execution Boundary control, on the control itself, plus a subtle tint on the thread | none |
 | Context, tokens and cost | collapsed: opened from the composer, or pinned to the status line by the owner | a composer warning near the limit |
-| Working directory and sandbox | the Execution Boundary control | none |
+| Working directory, sandbox and network reach | the Execution Boundary control | none |
 | Sources and grounding | inline citations at the answer; the full list in the right pane | none |
 | Gateway connection and sync | the status line, quiet while connected; in words, with when it was last reached, while not. Focus mode hides the line unless the connection is lost | a banner, once the connection has stayed lost for 2 s, and gone when it is back |
 | Background helpers | inside the parent turn's folded steps; counted in Running Now | none |

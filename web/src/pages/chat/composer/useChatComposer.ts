@@ -887,6 +887,34 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     if (patch.reasoning !== undefined) persistSelection('this reasoning effort', api.setReasoningEffort(s, patch.reasoning as ReasoningEffort))
   }
 
+  /** Set the permission mode from the Execution Boundary control, and show it only once the gateway
+   *  has taken it: the call the header's pill made (`POST /api/chat/mode`), answered before the
+   *  composer says the new mode. The gateway refuses a mode its bounds do not allow (an operator
+   *  ceiling under which nothing approves without a person), and then the control keeps the mode the
+   *  chat is in and says why: `applySelection`'s report-and-keep-going is right for an agent or a
+   *  model, never for the mode that decides what runs without asking. A chat not started yet keeps
+   *  the pick, and it is set when the chat is made (`ensureSession`). Resolves `null` once taken,
+   *  else the gateway's reason. */
+  async function chooseApproval(mode: ApprovalMode): Promise<string | null> {
+    const s = sessionRef.current
+    if (s) {
+      try { await api.setApprovalMode(mode, s) } catch (e) { return failureSentence('change the permission mode', e) }
+    }
+    setSelection((sel) => ({ ...sel, approval: mode }))
+    return null
+  }
+
+  /** The task mode, the same way (`POST /api/chat/task-mode`): the gateway refuses to take a chat
+   *  out of Plan while its plan waits on her review, and the pill then stays on Plan and says so. */
+  async function chooseTaskMode(mode: TaskMode): Promise<string | null> {
+    const s = sessionRef.current
+    if (s) {
+      try { await api.setTaskMode(mode, s) } catch (e) { return failureSentence('change the task mode', e) }
+    }
+    setSelection((sel) => ({ ...sel, taskMode: mode }))
+    return null
+  }
+
   /** Apply a saved starter to the composer.
    *
    *  Only fields the template actually carries are applied: a template saved with no
@@ -1031,6 +1059,6 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   }
 
   return {
-    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

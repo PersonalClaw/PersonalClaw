@@ -160,7 +160,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
 
   const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} onOpenFile={setOpenFile}
-    voiceCfg={voiceCfg} speakingTurn={speakingTurn} />
+    voiceCfg={voiceCfg} speakingTurn={speakingTurn} onBriefAgent={header.briefAgent} onChangeFolder={header.setWorkspaceDir} />
 
   if (missing) return <MissingChat draft={input} navigate={navigate} />
   // A failed read with nothing painted: say it failed, and let the user retry. (A transcript

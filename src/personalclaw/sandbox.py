@@ -1729,30 +1729,31 @@ def remove_wrap(cleanup: str | None) -> None:
             pass
 
 
+def wrap_level(mode: str) -> str:
+    """The level a wrap at *mode* hides at (``off`` wraps nothing, :func:`_wrapped`).
+
+    ``auto`` and ``standard`` are ``standard``, which keeps git over SSH, the AWS CLI and kubectl
+    working; ``cc`` hides ``~/.aws`` but exposes ``~/.aws/config`` for credential_process flows;
+    ``strict`` hides everything. The one reading of a mode's level, so what a chat's Execution
+    Boundary says it hides (``dashboard.chat_boundary``) is what the wrap hides."""
+    return mode if mode in ("strict", "cc") else "standard"
+
+
 def _wrapped(argv: list[str], mode: str, *, network: bool) -> tuple[list[str], str | None]:
     """*argv* in the sandbox *mode* names, with or without the network (see :func:`wrap_argv`).
     Without *network* the caller has already made sure the sandbox can take it away."""
     if mode == "off":
         return argv, None
 
-    # "auto"/"standard" allows git-over-SSH, AWS CLI, kubectl.
-    # "cc" hides .aws (exposes only .aws/config for credential_process flows).
-    # "strict" hides everything.
-    if mode == "strict":
-        sandbox_level = "strict"
-    elif mode == "cc":
-        sandbox_level = "cc"
-    else:
-        sandbox_level = "standard"
-
+    level = wrap_level(mode)
     backend = detect_backend(config_mode=mode)
 
     if backend == "namespace":
-        wrapped = namespace_argv(argv, sandbox_level, network=network)
+        wrapped = namespace_argv(argv, level, network=network)
         # The launcher script is argv[1] — caller should clean it up
         return wrapped, wrapped[1]
     if backend == "sandbox-exec":
-        return sandbox_exec_argv(argv, sandbox_level, network=network)
+        return sandbox_exec_argv(argv, level, network=network)
 
     if backend == "none":
         if not getattr(_wrapped, "_warned", False):

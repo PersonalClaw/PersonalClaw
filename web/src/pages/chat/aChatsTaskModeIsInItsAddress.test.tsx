@@ -121,10 +121,11 @@ function page(sub: string, initial: Query) {
 }
 
 const pill = () => screen.getByRole('button', { name: /^Task mode:/ })
-const permission = () => screen.getByRole('button', { name: /^Permission mode:/ })
+// The permission mode is the Execution Boundary control's, beside the composer.
+const permission = () => screen.getByRole('button', { name: /^Execution boundary:/ })
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 60)) })
 async function pick(control: () => HTMLElement, name: string) {
-  act(() => { fireEvent.mouseEnter(control().parentElement!) })
+  fireEvent.click(control())
   fireEvent.click(await screen.findByRole('menuitemradio', { name }))
   await waitFor(() => expect(control()).toHaveAccessibleName(new RegExp(`: ${name}$`)))
   await settle()
@@ -255,7 +256,7 @@ describe('a link into a new thread that is already open', () => {
     m.go({ ...m.address.query, mode: 'agent' })
     await settle()
     expect(pill()).toHaveAccessibleName('Task mode: Agent')
-    expect(permission()).toHaveAccessibleName('Permission mode: Normal')
+    expect(permission()).toHaveAccessibleName('Execution boundary: Normal')
     expect(m.address.query.mode).toBeUndefined()
     expect(await sendDraft()).toEqual([['createChatSession', []], ['sendChat', ['list the files']]])
   })
@@ -266,7 +267,7 @@ describe('a link into a new thread that is already open', () => {
     m.go({ ...m.address.query, mode: 'build' })
     await settle()
     expect(pill()).toHaveAccessibleName('Task mode: Build')
-    expect(permission()).toHaveAccessibleName('Permission mode: Normal')
+    expect(permission()).toHaveAccessibleName('Execution boundary: Normal')
     expect(await sendDraft()).toEqual([['createChatSession', []], ['setTaskMode', ['build']], ['sendChat', ['list the files']]])
   })
 
@@ -276,7 +277,7 @@ describe('a link into a new thread that is already open', () => {
     m.go({ mode: 'ask' })
     await settle()
     expect(pill()).toHaveAccessibleName('Task mode: Ask')
-    expect(permission()).toHaveAccessibleName('Permission mode: Trust')
+    expect(permission()).toHaveAccessibleName('Execution boundary: Trust')
   })
 })
 

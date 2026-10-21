@@ -47,6 +47,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Notifications are a filter of the Inbox: Show › Notifications lists the feed, with its unread and per-kind narrowing, and the bell, ⌘K's Notifications and an old `#/notifications` link open it there.**
 - **Learning is a tab of Capabilities, beside Skills, whose proposals it links to, and keeps its page as it was: its own sidebar row goes, and `#/learning`, a bookmark of it and ⌘K's Learning still open it.**
 - **On Knowledge's All items view, the shelf row's first chip says No shelf, so it no longer shares the view's name.**
+- **One Execution Boundary control beside the composer shows where the next turn may act before it runs: the permission mode, the working folder, whether its commands run in this computer's sandbox, the network it reaches and the memory mode; the permission mode, the folder and a new chat's memory mode are changed there, a mode the gateway refuses stays as it was with its reason, and the task mode sits beside it, so the chat header keeps Share, the Session map, Activity and its `…`.**
 
 ### Fixed
 

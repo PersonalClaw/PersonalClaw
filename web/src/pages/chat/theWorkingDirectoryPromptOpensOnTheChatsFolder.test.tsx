@@ -5,6 +5,8 @@ import { runState } from '../../test/runState'
 
 // ── The Working directory prompt opens on the chat's folder, can clear it, and says what moved ───
 //
+// It opens from the Execution Boundary control beside the composer (Change working folder…).
+//
 // The prompt opened empty, so she could not see the folder the chat worked in, and its Set button
 // stayed unavailable on an empty path, so the clear the gateway supports was out of reach. It now
 // opens on the chat's folder (an untouched Set is no change), an empty path clears it (the chat
@@ -106,7 +108,9 @@ async function openThePrompt(before: () => void = () => {}) {
   )
   await screen.findByText(/Two of them, both in the parser/)
   before()
-  await user.click(screen.getByRole('button', { name: 'Working directory' }))
+  // The folder is changed from the Execution Boundary control beside the composer.
+  await user.click(screen.getByRole('button', { name: /^Execution boundary:/ }))
+  await user.click(await screen.findByRole('menuitem', { name: /^Change working folder/ }))
   const dialog = await screen.findByRole('dialog', { name: 'Working directory' })
   return { user, dialog, path: within(dialog).getByRole('textbox') as HTMLInputElement }
 }

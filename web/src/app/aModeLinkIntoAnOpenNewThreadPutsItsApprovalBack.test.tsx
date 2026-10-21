@@ -107,9 +107,10 @@ async function composerText(container: HTMLElement): Promise<string> {
   return editor.textContent ?? ''
 }
 const pill = () => screen.getByRole('button', { name: /^Task mode:/ })
-const permission = () => screen.getByRole('button', { name: /^Permission mode:/ })
+// The permission mode is the Execution Boundary control's, beside the composer.
+const permission = () => screen.getByRole('button', { name: /^Execution boundary:/ })
 async function pick(control: () => HTMLElement, name: string) {
-  act(() => { fireEvent.mouseEnter(control().parentElement!) })
+  fireEvent.click(control())
   fireEvent.click(await screen.findByRole('menuitemradio', { name }))
   await waitFor(() => expect(control()).toHaveAccessibleName(new RegExp(`: ${name}$`)))
   await settle()
@@ -127,7 +128,7 @@ describe('a mode link delivered to a new thread that is already open', () => {
     await deliver('#/chat/new?mode=agent')
     await settle()
     expect(pill()).toHaveAccessibleName('Task mode: Agent')
-    expect(permission()).toHaveAccessibleName('Permission mode: Normal')
+    expect(permission()).toHaveAccessibleName('Execution boundary: Normal')
     expect(location.hash).toBe('#/chat/new')
     expect(await composerText(container), 'the thread was not opened afresh').toContain('list the files')
     expect(posted(), 'the link wrote nothing').toEqual([])

@@ -4,23 +4,19 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
+  - button "Capabilities"
   - button "Learning"
-  - button "Prompts"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,32 +27,29 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
-  - 'button "Task mode: Agent"': Agent
-  - 'button "Permission mode: Normal"': Normal
-  - button "New chat"
   - button "Chat history"
+  - button "More actions"
   - img "Nothing running"
   - heading "Good <time of day>, Keyur" [level=#]
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
   - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
   - button "Optimize prompt (⌘↵)"
   - button "Voice input"
   - button "Hands-free voice"
   - button "Send message"
   - 'button "Project: No project"': No project
-  - radiogroup "Memory mode":
-    - radio "Persistent" [checked]
-    - radio "Temporary"
-    - radio "Incognito"
   - button "Show health-check status"
   - button "Break a goal into tasks"
   - button "Save a note to my knowledge base"
   - button "Run a command and explain the output"
   - button "What can you help me with?"
   - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
 - listbox "Slash commands":
   - option "/help List available slash commands" [selected]
   - option "/optimize Optimize a prompt, then send it"
@@ -70,13 +63,3 @@
   - option "/undo Roll back the last N conversation turns"
   - option "/rewind-to-turn Put back the agent's file edits after turn N (not a command's)"
   - option "/compact Compact the conversation to free context"
-- menu "Task mode":
-  - menuitemradio "Agent" [checked]
-  - menuitemradio "Ask"
-  - menuitemradio "Plan"
-  - menuitemradio "Build"
-- menu "Permission mode":
-  - menuitemradio "Normal" [checked]
-  - menuitemradio "Trust reads"
-  - menuitemradio "Trust"
-  - menuitemradio "YOLO"

@@ -13,8 +13,9 @@ import type { useChatComposer } from '../composer/useChatComposer'
 //
 // What the header above an open chat keeps and does: the bound project's name for its context
 // line, renaming the chat inline and regenerating its title, and the actions in its cluster —
-// copy the link, continue on a chat channel, brief the agent, set the working directory, and save
-// the setup as a starter. `ChatHeader.tsx` draws it.
+// copy the link and continue on a chat channel (its Share), and save the setup as a starter. Two
+// more the composer offers: brief the agent (a row of its `+` menu) and set the working directory
+// (its Execution Boundary control). `ChatHeader.tsx` draws the header.
 
 export function useChatHeader({ stream, composer }: {
   stream: Pick<ChatStream, 'sessionRef' | 'title' | 'setTitle' | 'setTitleNeed' | 'setAutoChain' | 'workingDir' | 'setWorkingDir'>
