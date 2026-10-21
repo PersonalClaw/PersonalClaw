@@ -15,78 +15,216 @@ resolving a pending approval with a STANDING verb (``yolo``, ``trust_agent``), a
 profile's ``approval_mode``, and the auth branch for internal routes, which validated an app
 token and then forgot it was an app's.
 
-These tests drive the real handlers. Each app case sets ``request["app"]`` the way
-``token_auth`` does for an app-scoped token; ``TestInternalRoutesKeepTheAppIdentity`` mints a
-real app token and runs it through the real middleware.
+The app is installed once for the module (``shared_app_rows.SharedApp``), through preview →
+consent → install, and every control, posture route, approval verb and internal route is a row on
+that install, behind the REAL token middleware and the REAL ``app_permission_middleware``. The
+token you mint for the app is presented both ways an app presents one: as a Bearer header beside
+your cookie (its SDK) and as the only credential (its backend). Each refusal is read back as the
+Security Event Log row that names the app. Before every row the home is put back to what the
+install left and checked by digest, every session is signed out, the fenced registries are read
+around it, and the row gets a gateway and a ``DashboardState`` of its own. A refused row reads
+your home before and after the app's requests, so a refusal that wrote anything fails its own
+row. The config handler and the chat's approve route are the real ones; a posture route and an
+internal route answer with a stand-in at its real template, recording who reached it. Each
+family's end-to-end refusal stays its own test, on an app installed for it alone.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-from aiohttp import web
+from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
-from signed_in_sessions import without_sign_in
+from chat_test_helpers import _make_state
+from shared_app_rows import (
+    RecordedRows,
+    Row,
+    SharedApp,
+    home_files,
+    planted_rows,
+    recording_sel,
+    written_since,
+)
+from table_rows import row
+from test_apps_cannot_change_your_models import PORT
+from test_apps_cannot_post_into_your_chats import OWNER_ONLY, WAYS, _AppGateway, _pending
+
+# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
+# mock bound.
+from personalclaw.apps import manager
+from personalclaw.dashboard.handlers.apps import register_app_routes
 
 pytestmark = pytest.mark.security
 
 
 APP = "evil-app"
+#: The ordinary setting the app declares in `permissions.config`, and one it does not.
+ORDINARY = "voice.echo_filter_enabled"
+UNDECLARED = "voice.duplex_mute_enabled"
+#: Your settings, your chats (whose mode and approvals are your posture) and the tool routes, so no
+#: refusal here is "path not declared"; and one ordinary setting, the list install consent shows.
+DECLARED = {"api": ["/api/config", "/api/chat", "/api/tools"], "config": [ORDINARY]}
+
+CONFIG = "/api/config/personalclaw"
+APPROVE = "/api/chat/sessions/{session}/approve"
+#: An internal route (PersonalClaw's own processes call it with the internal secret, the browser
+#: with its sign-in) and a mixed one, declared to the token middleware as the gateway declares them.
+TOOLS_INVOKE = "/api/tools/invoke"
+TRIGGERS = "/api/triggers"
+INTERNAL_SECRET = "s3cret"
+
+#: Why the config handler refuses an app a security setting, and an undeclared ordinary one.
+SECURITY_SETTING = "security_setting_owner_only"
+NOT_DECLARED = "config_field_not_declared"
 
 
-def _identity(app_name: str) -> Any:
-    """What ``token_auth`` hands the handler: the owner's user, plus the app claim if any."""
-
-    @web.middleware
-    async def mw(request: web.Request, handler: Any) -> web.StreamResponse:
-        request["user"] = "owner"
-        if app_name:
-            request["app"] = app_name
-        return await handler(request)
-
-    return mw
+# ── the shared app, and the gateway its rows reach ─────────────────────────────────────────────
 
 
-def _config_app(app_name: str = "") -> web.Application:
-    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+def _bundle(root: Path) -> Path:
+    """The probe app, declaring :data:`DECLARED`, and shipping nothing."""
+    d = root / "bundles" / APP
+    d.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": APP,
+        "version": "1.0.0",
+        "displayName": "Probe Posture",
+        "description": "A fixture app that declares the routes your security posture is set by.",
+        "permissions": DECLARED,
+    }
+    (d / "app.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return d
 
-    app = without_sign_in(web.Application(middlewares=[_identity(app_name)]))
-    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
-    return app
+
+@asynccontextmanager
+async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_AppGateway]:
+    """The real token middleware, with :data:`TOOLS_INVOKE` internal and :data:`TRIGGERS` mixed,
+    the real permission middleware and the request boundary, in front of the app routes and
+    *routes*, over a ``DashboardState`` of its own on the home."""
+    import personalclaw.config.loader as loader
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+    from personalclaw.dashboard.server import app_permission_middleware
+    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+
+    state = _make_state(loader.config_dir())
+    app = web.Application(
+        middlewares=[
+            token_auth_middleware(
+                port=PORT,
+                internal_routes=frozenset({f"POST {TOOLS_INVOKE}"}),
+                mixed_internal_routes=frozenset({f"POST {TRIGGERS}"}),
+                internal_secret=INTERNAL_SECRET,
+            ),
+            app_permission_middleware,
+            request_boundary_middleware(),
+        ]
+    )
+    app["state"] = state
+    register_app_routes(app)
+    for method, template, handler in routes:
+        app.router.add_route(method, template, handler)
+    owner = generate_token("owner", ttl_seconds=600)
+    async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
+        yield _AppGateway(client, owner, state)
+
+
+#: The fixture app, installed once for the module.
+SHARED = SharedApp(APP, _bundle, _gateway)
 
 
 @pytest.fixture
-def config_file(tmp_path, monkeypatch):
-    """An isolated home. `config_dir` too, because a PATCH's live-apply hooks (the Self-QA
-    reconcile) write beside the config file."""
-    path = tmp_path / "config.json"
-    path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    with patch("personalclaw.config.loader.config_path", return_value=path):
-        yield path
+def home(tmp_path, monkeypatch) -> Iterator[Path]:
+    """A home of this test's own, with every session signed out before and after."""
+    import personalclaw.config.loader as loader
+    from personalclaw.dashboard.token_auth import revoke_all_sessions
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    revoke_all_sessions()
+    yield tmp_path
+    revoke_all_sessions()
 
 
 @pytest.fixture
-def sel_rows():
-    """Every SEL row the config handlers write, captured."""
+def sel_rows() -> Iterator[MagicMock]:
+    """Every Security Event Log row the test's requests write, the token middleware's included."""
     fake = MagicMock()
-    with patch("personalclaw.dashboard.handlers.sel", return_value=fake):
+    with recording_sel(fake):
         yield fake.log_api_access
 
 
-def _seed(path, data: dict) -> str:
-    text = json.dumps(data)
-    path.write_text(text, encoding="utf-8")
-    return text
+def _denials(rows: MagicMock, resources: str) -> list:
+    return [
+        c
+        for c in rows.call_args_list
+        if c.kwargs.get("caller") == f"app:{APP}"
+        and c.kwargs.get("outcome") == "denied"
+        and c.kwargs.get("source") == "app_permissions"
+        and c.kwargs.get("resources") == resources
+    ]
 
 
-async def _patch(client: TestClient, field: str, value: Any, *, confirm: bool = False):
-    """The owner's write, as the SPA sends it: a field holding a whole list or object names the
-    revision of the value it replaces (`personalclaw/stale_write.py`) — read here from what is
-    stored, as a page would have read it — so what these tests measure is the consent rule."""
+def _routes(reached: list[tuple[str, str]]) -> list[tuple[str, str, Any]]:
+    """The real config handler and the chat's real approve route, and a stand-in at every posture
+    route and internal route, recording who reached it and at which path."""
+    from personalclaw.dashboard.chat_handlers import api_chat_session_approve
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+
+    async def stand_in(request: web.Request) -> web.Response:
+        reached.append((request.get("app", ""), request.path))
+        return web.json_response({"app": request.get("app", "")})
+
+    return [
+        ("PATCH", CONFIG, api_personalclaw_config_patch),
+        ("POST", APPROVE, api_chat_session_approve),
+        ("POST", TOOLS_INVOKE, stand_in),
+        ("POST", TRIGGERS, stand_in),
+        *((method, template, stand_in) for method, template, _path in POSTURE_ROUTES),
+    ]
+
+
+def _seed(home: Path, data: dict) -> None:
+    """*data* written into your config file, over what the install left there."""
+
+    def merge(into: dict, more: dict) -> None:
+        for key, value in more.items():
+            if isinstance(value, dict) and isinstance(into.get(key), dict):
+                merge(into[key], value)
+            else:
+                into[key] = value
+
+    path = home / "config.json"
+    stored = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    merge(stored, data)
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+
+def _stored(home: Path, field: str) -> Any:
+    stored: Any = json.loads((home / "config.json").read_text(encoding="utf-8"))
+    for part in field.split("."):
+        stored = stored[part]
+    return stored
+
+
+async def _write(
+    gw: _AppGateway,
+    field: str,
+    value: Any,
+    *,
+    confirm: bool = False,
+    token: str = "",
+    as_backend: bool = False,
+) -> tuple[int, str]:
+    """A write of *field*, as the SPA sends it (yours), or as the app sends it with *token*. A
+    field holding a whole list or object names the revision of the value it replaces
+    (`personalclaw/stale_write.py`), read here from what is stored, as a page would have read it,
+    so what these rows measure is the refusal and the consent rule."""
     from personalclaw.dashboard.handlers.core import _DOCUMENT_PATHS, _value_in_effect
     from personalclaw.stale_write import revision_of
 
@@ -94,102 +232,20 @@ async def _patch(client: TestClient, field: str, value: Any, *, confirm: bool = 
     if confirm:
         body["confirm"] = True
     headers = {"If-Match": revision_of(_value_in_effect(field))} if field in _DOCUMENT_PATHS else {}
-    return await client.patch("/api/config/personalclaw", json=body, headers=headers)
-
-
-def _denials_naming(rows: MagicMock, *, caller: str, field: str) -> list:
-    return [
-        c
-        for c in rows.call_args_list
-        if c.kwargs.get("caller") == caller
-        and c.kwargs.get("outcome") == "denied"
-        and c.kwargs.get("resources") == field
-    ]
-
-
-# ── An app can never write a security setting ──────────────────────────────────────
-
-
-class TestAnAppCannotWriteASecuritySetting:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("confirm", [False, True], ids=["no-confirm", "with-confirm"])
-    async def test_an_app_cannot_turn_yolo_on(self, config_file, sel_rows, confirm) -> None:
-        before = config_file.read_text(encoding="utf-8")
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, "agent.yolo", True, confirm=confirm)
-            assert resp.status == 403
-            body = await resp.json()
-        assert body["error"]["code"] == "security_setting_owner_only"
-        assert config_file.read_text(encoding="utf-8") == before, "nothing may be written"
-        assert _denials_naming(
-            sel_rows, caller=f"app:{APP}", field="agent.yolo"
-        ), "the refusal must leave an SEL row naming the app and the field"
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("field", "seed", "value"),
-        [
-            ("auth.require_totp", {"auth": {"require_totp": True}}, False),
-            ("auth.login_enabled", {"auth": {"login_enabled": False}}, True),
-            ("auth.lockout_threshold", {"auth": {"lockout_threshold": 5}}, 100),
-            ("auth.session_ttl", {"auth": {"session_ttl": "30d"}}, "365d"),
-        ],
+    return await gw.call(
+        "PATCH", CONFIG, body, app_token=token, as_backend=as_backend, headers=headers
     )
-    @pytest.mark.parametrize("confirm", [False, True], ids=["no-confirm", "with-confirm"])
-    async def test_an_app_cannot_loosen_sign_in(
-        self, config_file, sel_rows, field, seed, value, confirm
-    ) -> None:
-        before = _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, field, value, confirm=confirm)
-            assert resp.status == 403
-        assert config_file.read_text(encoding="utf-8") == before
-        assert _denials_naming(sel_rows, caller=f"app:{APP}", field=field)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("field", "seed", "value"),
-        [
-            # Tightening is refused too. These are the lockout and denial-of-service
-            # directions: 2FA before it is enrolled, a one-guess lockout, a deny-everything
-            # command pattern, a zero-token budget.
-            ("auth.require_totp", {"auth": {"require_totp": False}}, True),
-            ("auth.lockout_threshold", {"auth": {"lockout_threshold": 5}}, 1),
-            ("security.denied_commands", {}, [".*"]),
-            ("guardrails.budgets.max_tokens_per_day", {}, 1),
-            ("agent.yolo", {"agent": {"yolo": True}}, False),
-        ],
-    )
-    async def test_an_app_cannot_tighten_one_either(
-        self, config_file, sel_rows, field, seed, value
-    ) -> None:
-        before = _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, field, value)
-            assert resp.status == 403
-        assert config_file.read_text(encoding="utf-8") == before
-        assert _denials_naming(sel_rows, caller=f"app:{APP}", field=field)
-
-    @pytest.mark.asyncio
-    async def test_an_app_still_writes_an_ordinary_setting_it_declared(
-        self, config_file, sel_rows
-    ) -> None:
-        # The `/api/config` grant is not revoked wholesale: a field that governs nothing about
-        # who may do what stays writable by an app whose manifest names it in
-        # `permissions.config` — the list install consent shows. An undeclared one is refused
-        # (`test_apps_cannot_run_code_or_bypass_approvals.py`).
-        with patch(
-            "personalclaw.dashboard.handlers.core._app_config_fields",
-            return_value=["voice.echo_filter_enabled"],
-        ):
-            async with TestClient(TestServer(_config_app(APP))) as c:
-                resp = await _patch(c, "voice.echo_filter_enabled", False)
-                assert resp.status == 200
-        saved = json.loads(config_file.read_text(encoding="utf-8"))
-        assert saved["voice"]["echo_filter_enabled"] is False
 
 
-# ── The owner's loosening writes need consent; tightening never does ─────────────────
+#: The config transaction's lock, beside your config file (`config/transactions.py`).
+_LOCK = "config.json.lock"
+
+
+def _code(text: str) -> str:
+    return str(json.loads(text)["error"]["code"])
+
+
+# ── 1. Every control: the app is refused it, and you consent to loosening it ────────────────────
 
 #: (field, what is stored now, the looser value). Each is a write that weakens a control the
 #: owner set; each needs `confirm: true` from the owner, not a dialog one UI surface remembered.
@@ -278,98 +334,254 @@ LOOSENING_WRITES = [
 
 
 def _case_id(case: tuple) -> str:
-    field, seed, value = case
+    field, _seed, value = case
     return f"{field}={json.dumps(value, sort_keys=True)}"
 
 
-class TestTheOwnerConsentsToEveryLoosening:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("case", LOOSENING_WRITES, ids=_case_id)
-    async def test_without_confirm_it_is_refused_and_nothing_changes(
-        self, config_file, sel_rows, case
-    ) -> None:
-        field, seed, value = case
-        before = _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app())) as c:
-            resp = await _patch(c, field, value)
-            assert resp.status == 400, await resp.text()
-            body = await resp.json()
-        assert body["error"]["code"] == "confirmation_required"
+def _the_app_is_refused(field: str, value: Any, *, confirms: tuple[bool, ...]):
+    """The app's writes of *field*, sent both ways for each of *confirms*: each refused as a
+    security setting, with an SEL row naming the app and the field, and your home as it was."""
+
+    async def check(r: Row) -> None:
+        before = home_files(r.home)
+        theirs = [
+            await _write(r.gw, field, value, confirm=confirm, token=r.token, as_backend=alone)
+            for confirm in confirms
+            for alone in WAYS.values()
+        ]
+        written = written_since(r.home, before)
+        for status, text in theirs:
+            assert status == 403, text
+            assert _code(text) == SECURITY_SETTING, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(field)) == len(theirs), "each refusal leaves an SEL row naming the app"
+
+    return check
+
+
+def _a_loosening(case: tuple):
+    """The app is refused the write, with ``confirm`` and without; you are asked to consent, the
+    question naming the field and what it changes, and with your consent it is written."""
+    field, seed, value = case
+    refused = _the_app_is_refused(field, value, confirms=(False, True))
+
+    async def run(r: Row) -> None:
+        _seed(r.home, seed)
+        await refused(r)
+        before = home_files(r.home)
+        status, text = await _write(r.gw, field, value)
+        # Your write is refused inside the config transaction, whose lock file holds nothing.
+        written = [f for f in written_since(r.home, before) if f != _LOCK]
+        assert status == 400, text
+        error = json.loads(text)["error"]
+        assert error["code"] == "confirmation_required"
         # The refusal carries the sentence a consent dialog shows, so a surface that did not
-        # know this field was sensitive can still ask the right question.
-        assert body["error"]["detail"]["field"] == field
-        assert body["error"]["detail"]["consent"].strip()
+        # know this field was sensitive can still ask the right question…
+        assert error["detail"]["field"] == field
+        assert error["detail"]["consent"].strip()
         # …and what THIS write changes, from and to: the sentence alone is the same question
         # whatever value was typed (`test_a_loosening_consent_names_what_it_changes.py`).
-        assert body["error"]["detail"]["change"].strip()
-        assert config_file.read_text(encoding="utf-8") == before, "nothing may be written"
+        assert error["detail"]["change"].strip()
+        assert not written, f"an unconsented write changed your home: {written}"
+        status, text = await _write(r.gw, field, value, confirm=True)
+        assert status == 200, text
+        assert _stored(r.home, field) == value
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("case", LOOSENING_WRITES, ids=_case_id)
-    async def test_with_confirm_it_is_written(self, config_file, sel_rows, case) -> None:
-        field, seed, value = case
-        _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app())) as c:
-            resp = await _patch(c, field, value, confirm=True)
-            assert resp.status == 200, await resp.text()
-        stored: Any = json.loads(config_file.read_text(encoding="utf-8"))
-        for part in field.split("."):
-            stored = stored[part]
-        assert stored == value
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("field", "seed", "value"),
-        [
-            ("agent.yolo", {"agent": {"yolo": True}}, False),
-            ("agent.approval_mode", {"agent": {"approval_mode": "auto"}}, "interactive"),
-            ("auth.require_totp", {"auth": {"require_totp": False}}, True),
-            # Turning password sign-in OFF removes a way in; it never needs this consent. The
-            # Account panel's own dialog for it is a lockout warning, not a security one.
-            ("auth.login_enabled", {"auth": {"login_enabled": True}}, False),
-            ("auth.lockout_threshold", {"auth": {"lockout_threshold": 5}}, 3),
-            ("security.denied_commands", {}, ["^curl "]),
-            (
-                "guardrails.budgets.max_dollars_per_day",
-                {"guardrails": {"budgets": {"max_dollars_per_day": 50.0}}},
-                5.0,
-            ),
-            (
-                "guardrails.budgets.max_tokens_per_day",
-                {"guardrails": {"budgets": {"max_tokens_per_day": 0}}},
-                100_000,
-            ),
-            ("external_access.enabled", {"external_access": {"enabled": True}}, False),
-            ("guardrails.scan_mode", {"guardrails": {"scan_mode": "warn"}}, "block"),
-            ("security.credential_keychain", {}, True),
-        ],
-    )
-    async def test_tightening_never_needs_consent(
-        self, config_file, sel_rows, field, seed, value
-    ) -> None:
-        # Revoking a grant is the direction a broken or confused client must always be able
-        # to take; a consent requirement there would be a lock on the emergency exit.
-        _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app())) as c:
-            resp = await _patch(c, field, value)
-            assert resp.status == 200, await resp.text()
+    return run
 
 
-class TestEveryControlIsRefusedToAnApp:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("case", LOOSENING_WRITES, ids=_case_id)
-    async def test_an_app_is_refused_even_with_confirm(self, config_file, sel_rows, case) -> None:
-        field, seed, value = case
-        before = _seed(config_file, seed)
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, field, value, confirm=True)
-            assert resp.status == 403, await resp.text()
-            assert (await resp.json())["error"]["code"] == "security_setting_owner_only"
-        assert config_file.read_text(encoding="utf-8") == before
-        assert _denials_naming(sel_rows, caller=f"app:{APP}", field=field)
+def _controls() -> set[str]:
+    from personalclaw.config.edit_spec import security_control
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    return {k for k, spec in _EDITABLE_CONFIG.items() if security_control(spec)}
 
 
-# ── An agent profile's approval mode is the same control, stored per agent ──────────
+@pytest.mark.asyncio
+async def test_every_control_is_refused_to_an_app_and_loosened_only_with_your_consent(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [(_case_id(case), _a_loosening(case)) for case in LOOSENING_WRITES]
+    assert len(rows) == len(LOOSENING_WRITES), "a case was left out of the table"
+    assert {f for f, _s, _v in LOOSENING_WRITES} == _controls(), "a control was left out"
+    await SHARED.run(subtests, rows, _routes([]), label="control")
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    probe = (_case_id(LOOSENING_WRITES[0]), _a_loosening(LOOSENING_WRITES[0]))
+    failed = await planted_rows(SHARED, _routes([]), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
+
+
+#: The case the planted refusal below answers: dropping the 2FA requirement.
+PLANTED = ("auth.require_totp", {"auth": {"require_totp": True}}, False)
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """A config handler that, for the app's write of one field, stores it in your config and then
+    answers as the refusal does: a 403 saying it is a security setting, and an SEL row naming the
+    app and the field. Every other write goes to the real handler. Only your home tells it from a
+    refusal, so its row fails on that, and the rows either side of it, the home put back before
+    each, pass."""
+    import personalclaw.config.loader as loader
+    from personalclaw import sel
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+    from personalclaw.http_errors import json_error
+
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [(_case_id(case), _a_loosening(case)) for case in LOOSENING_WRITES]
+    at = LOOSENING_WRITES.index(PLANTED)
+    field, _seed_data, value = PLANTED
+
+    async def writes_then_refuses(request: web.Request) -> web.StreamResponse:
+        app = request.get("app", "")
+        body = await request.json()
+        if not app or body.get("path") != field:
+            return await api_personalclaw_config_patch(request)
+        _seed(loader.config_dir(), {"auth": {"require_totp": value}})
+        sel.sel().log_api_access(
+            caller=f"app:{app}",
+            operation="config.patch",
+            outcome="denied",
+            source="app_permissions",
+            resources=field,
+        )
+        return json_error(SECURITY_SETTING, message=f"{field} is a security setting", status=403)
+
+    routes = [
+        (m, t, writes_then_refuses if (m, t) == ("PATCH", CONFIG) else handler)
+        for m, t, handler in _routes([])
+    ]
+    recorded = RecordedRows()
+    await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="control")
+    name = _case_id(PLANTED)
+    assert list(recorded.failed) == [name], recorded.failed
+    assert "a refusal changed your home: ['config.json']" in recorded.failed[name]
+
+
+# ── 2. Tightening is refused to an app too, and never needs your consent ───────────────────────
+
+#: (field, what is stored now, the tighter value). The app is refused each — these include the
+#: lockout and denial-of-service directions: 2FA before it is enrolled, a one-guess lockout, a
+#: deny-everything command pattern, a one-token budget — and you write each without being asked:
+#: revoking a grant is the direction a broken or confused client must always be able to take,
+#: and a consent requirement there would be a lock on the emergency exit.
+TIGHTENING_WRITES = [
+    ("agent.yolo", {"agent": {"yolo": True}}, False),
+    ("agent.approval_mode", {"agent": {"approval_mode": "auto"}}, "interactive"),
+    ("auth.require_totp", {"auth": {"require_totp": False}}, True),
+    # Turning password sign-in OFF removes a way in; it never needs this consent. The Account
+    # panel's own dialog for it is a lockout warning, not a security one.
+    ("auth.login_enabled", {"auth": {"login_enabled": True}}, False),
+    ("auth.lockout_threshold", {"auth": {"lockout_threshold": 5}}, 3),
+    ("auth.lockout_threshold", {"auth": {"lockout_threshold": 5}}, 1),
+    ("security.denied_commands", {}, ["^curl "]),
+    ("security.denied_commands", {}, [".*"]),
+    (
+        "guardrails.budgets.max_dollars_per_day",
+        {"guardrails": {"budgets": {"max_dollars_per_day": 50.0}}},
+        5.0,
+    ),
+    (
+        "guardrails.budgets.max_tokens_per_day",
+        {"guardrails": {"budgets": {"max_tokens_per_day": 0}}},
+        100_000,
+    ),
+    ("guardrails.budgets.max_tokens_per_day", {}, 1),
+    ("external_access.enabled", {"external_access": {"enabled": True}}, False),
+    ("guardrails.scan_mode", {"guardrails": {"scan_mode": "warn"}}, "block"),
+    ("security.credential_keychain", {}, True),
+]
+
+
+def _a_tightening(case: tuple):
+    field, seed, value = case
+    refused = _the_app_is_refused(field, value, confirms=(False,))
+
+    async def run(r: Row) -> None:
+        _seed(r.home, seed)
+        await refused(r)
+        status, text = await _write(r.gw, field, value)
+        assert status == 200, text
+        assert _stored(r.home, field) == value
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_tightening_is_refused_to_an_app_and_never_needs_your_consent(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [(_case_id(case), _a_tightening(case)) for case in TIGHTENING_WRITES]
+    assert len(rows) == len(TIGHTENING_WRITES), "a case was left out of the table"
+    await SHARED.run(subtests, rows, _routes([]), label="control")
+
+
+# ── 3. An app still writes an ordinary setting it declared ─────────────────────────────────────
+
+
+async def _the_app_writes_the_ordinary_setting_it_declared(r: Row) -> None:
+    # The `/api/config` grant is not revoked wholesale: a field that governs nothing about who may
+    # do what stays writable by an app whose manifest names it in `permissions.config`.
+    for alone, value in zip(WAYS.values(), (False, True), strict=True):
+        status, text = await _write(r.gw, ORDINARY, value, token=r.token, as_backend=alone)
+        assert status == 200, text
+        assert _stored(r.home, ORDINARY) is value
+
+
+async def _the_app_is_refused_an_ordinary_setting_it_did_not_declare(r: Row) -> None:
+    before = home_files(r.home)
+    theirs = [
+        await _write(r.gw, UNDECLARED, False, token=r.token, as_backend=alone)
+        for alone in WAYS.values()
+    ]
+    written = written_since(r.home, before)
+    for status, text in theirs:
+        assert status == 403, text
+        assert _code(text) == NOT_DECLARED, text
+    assert not written, f"a refusal changed your home: {written}"
+    assert len(r.denials(UNDECLARED)) == 2, "each refusal leaves an SEL row naming the app"
+    status, text = await _write(r.gw, UNDECLARED, False)
+    assert status == 200, text
+    assert _stored(r.home, UNDECLARED) is False
+
+
+@pytest.mark.asyncio
+async def test_an_app_still_writes_an_ordinary_setting_it_declared(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [
+        ("the ordinary setting it declared", _the_app_writes_the_ordinary_setting_it_declared),
+        (
+            "an ordinary setting it did not declare",
+            _the_app_is_refused_an_ordinary_setting_it_did_not_declare,
+        ),
+    ]
+    await SHARED.run(subtests, rows, _routes([]), label="case")
+
+
+# ── 4. An agent profile's approval mode is the same control, stored per agent ──────────────────
 
 
 def _agent_request(body: Any, *, method: str = "POST", match: dict | None = None):
@@ -452,219 +664,277 @@ class TestAnAgentsApprovalModeIsTheOwners:
         assert _stored_approval_mode(agents_home, "a1") == "interactive"
 
 
-# ── The side doors to the same posture ─────────────────────────────────────────────
+# ── 5. The side doors to the same posture ──────────────────────────────────────────────────────
+
+#: Routes whose whole purpose is changing your posture, and that an app could reach with an
+#: ordinary declaration, each at its real template with a path it is sent to.
+#: `owner_only_api_reason` is what both the middleware and the install-time manifest check
+#: consult.
+POSTURE_ROUTES = [
+    ("POST", "/api/chat/mode", "/api/chat/mode"),
+    ("POST", "/api/incident/resume", "/api/incident/resume"),
+    ("POST", "/api/guardrails/project-trust", "/api/guardrails/project-trust"),
+    ("POST", "/api/autonomy/grant", "/api/autonomy/grant"),
+    ("POST", "/api/memory/approval-rules", "/api/memory/approval-rules"),
+    ("DELETE", "/api/memory/approval-rules/{key}", "/api/memory/approval-rules/some-key"),
+    ("POST", "/api/devices/pair/start", "/api/devices/pair/start"),
+    ("POST", "/api/external-access/clients", "/api/external-access/clients"),
+    (
+        "POST",
+        "/api/external-access/clients/{client_id}/disabled",
+        "/api/external-access/clients/abc/disabled",
+    ),
+    ("PUT", "/api/agent/config", "/api/agent/config"),
+    # Handing a grant back needs no confirmation from the owner, and is a denial of service from
+    # an app: it can undo every grant, restarting each cooldown.
+    ("POST", "/api/autonomy/demote", "/api/autonomy/demote"),
+    ("POST", "/api/autonomy/undo", "/api/autonomy/undo"),
+]
 
 
-class TestTheDedicatedPostureRoutesAreOwnerOnly:
-    """Routes whose whole purpose is changing the owner's posture, and that an app could reach
-    with an ordinary declaration. `owner_only_api_reason` is what both the middleware and the
-    install-time manifest check consult."""
+def _a_posture_route(reached: list[tuple[str, str]], method: str, path: str):
+    """No declaration reaches the route, not even ``*``: the app is refused both ways, each
+    refusal an SEL row naming it, your home as it was, and only your request reaches it."""
+    from personalclaw.apps.manifest import Permissions
+    from personalclaw.apps.permissions import PermissionChecker, owner_only_api_reason
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            "/api/chat/mode",
-            "/api/incident/resume",
-            "/api/guardrails/project-trust",
-            "/api/autonomy/grant",
-            "/api/memory/approval-rules",
-            "/api/memory/approval-rules/some-key",
-            "/api/devices/pair/start",
-            "/api/external-access/clients",
-            "/api/external-access/clients/abc/disabled",
-            "/api/agent/config",
-            # Handing a grant back needs no confirmation from the owner, and is a denial of
-            # service from an app: it can undo every grant, restarting each cooldown.
-            "/api/autonomy/demote",
-            "/api/autonomy/undo",
-        ],
-    )
-    def test_no_app_declaration_reaches_it(self, path) -> None:
-        from personalclaw.apps.manifest import Permissions
-        from personalclaw.apps.permissions import PermissionChecker, owner_only_api_reason
-
+    async def run(r: Row) -> None:
+        reached.clear()
         assert owner_only_api_reason(path), f"{path} must be owner-only"
         everything = PermissionChecker(app_name=APP, permissions=Permissions(api=["*"]))
         assert not everything.can_use_api(path), "not even a '*' declaration reaches it"
+        before = home_files(r.home)
+        theirs = await r.gw.both_ways(r.token, method, path, {})
+        written = written_since(r.home, before)
+        yours = await r.gw.call(method, path, {})
+        for status, text in theirs:
+            assert status == 403, text
+            assert OWNER_ONLY in text, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(path)) == 2, "each refusal leaves an SEL row naming the app"
+        assert yours[0] == 200, yours
+        assert reached == [("", path)], "only your request reached it"
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            # The stop and the read halves stay where an app can declare them.
-            "/api/incident",
-            "/api/chat/sessions/s1/messages",
-            "/api/devices/pair/complete",
-            "/api/external-access",
-            "/api/autonomy",
-            "/api/agents",
-        ],
-    )
-    def test_the_neighbouring_paths_stay_grantable(self, path) -> None:
-        from personalclaw.apps.permissions import owner_only_api_reason
-
-        assert owner_only_api_reason(path) == ""
+    return run
 
 
-def _approve_app(state: Any, app_name: str) -> web.Application:
-    """The chat's approve route behind the REAL permission middleware, which is what refuses an
-    app there (``ROUTE_AUTHZ`` declares the route the owner's)."""
-    from personalclaw.dashboard.chat_handlers import api_chat_session_approve
-    from personalclaw.dashboard.server import app_permission_middleware
-
-    app = web.Application(middlewares=[_identity(app_name), app_permission_middleware])
-    app["state"] = state
-    app.router.add_post("/api/chat/sessions/{session}/approve", api_chat_session_approve)
-    return app
-
-
-class _PendingApprovalState:
-    """One chat with one pending approval, recording every decision it is asked to make."""
-
-    def __init__(self) -> None:
-        import asyncio
-
-        self.decisions: list[tuple[str, str]] = []
-        session = MagicMock()
-        future = asyncio.get_running_loop().create_future()
-        session._approval_futures = {"req-1": future}
-        self._sessions = {"s1": session}
-
-    def refuse_ended_owner(self, approval_id: str) -> str:
-        return ""  # a chat still waiting: the work that asked has not ended
-
-    def answer_refusal(self, approval_id: str, by: Any) -> str:
-        from personalclaw import approval_answer
-
-        return approval_answer.refusal(by)
-
-    def decide_session_approval(
-        self, session: Any, request_id: str, action: str, *, by: Any
-    ) -> None:
-        self.decisions.append((request_id, action))
+@pytest.mark.asyncio
+async def test_no_app_declaration_reaches_a_posture_route(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = [(f"{m} {t}", _a_posture_route(reached, m, p)) for m, t, p in POSTURE_ROUTES]
+    assert len(rows) == len(POSTURE_ROUTES), "a route was left out of the table"
+    await SHARED.run(subtests, rows, _routes(reached), label="route")
 
 
-class TestAnAppAnswersNoApprovalInAChat:
-    """A standing verb raises the approval posture, and even a one-off answer decides whether your
-    agent's tool call runs, so no verb on the chat's approve route is an app's. Nor is
-    ``/api/approvals``: the menu-bar companion answers with your own sign-in
-    (``test_apps_cannot_post_into_your_chats.py``)."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "verb", ["yolo", "trust", "trust_agent", "trust_reads", "approved", "rejected"]
-    )
-    async def test_no_verb_is_decided_for_an_app(self, tmp_path, verb) -> None:
-        from test_apps_cannot_run_code_or_bypass_approvals import _home, _install
-
-        state = _PendingApprovalState()
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": ["/api/chat"]})
-            async with TestClient(TestServer(_approve_app(state, APP))) as c:
-                resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
-                assert resp.status == 403, await resp.text()
-        assert state.decisions == [], "nothing may be decided, least of all a standing grant"
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("verb", ["approved", "rejected"])
-    async def test_your_answer_is_decided(self, verb) -> None:
-        state = _PendingApprovalState()
-        async with TestClient(TestServer(_approve_app(state, ""))) as c:
-            resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
-            assert resp.status == 200
-        assert state.decisions == [("req-1", verb)]
+#: The stop and the read halves, which stay where an app can declare them.
+NEIGHBOURING_PATHS = [
+    "/api/incident",
+    "/api/chat/sessions/s1/messages",
+    "/api/devices/pair/complete",
+    "/api/external-access",
+    "/api/autonomy",
+    "/api/agents",
+]
 
 
-# ── Internal routes keep the app identity the token carries ───────────────────────
+def test_the_neighbouring_paths_stay_grantable(subtests) -> None:
+    from personalclaw.apps.permissions import owner_only_api_reason
+
+    for path in NEIGHBOURING_PATHS:
+        with row(subtests, path=path):
+            assert owner_only_api_reason(path) == ""
 
 
-#: The port the middleware names its session cookie after (``pc_token_{port}``).
-_PORT = 10000
+# ── 6. No approval in a chat is answered by an app ─────────────────────────────────────────────
+
+#: The chat card's whole vocabulary. A standing verb raises the approval posture, and even a
+#: one-off answer decides whether your agent's tool call runs, so no verb on the chat's approve
+#: route is an app's. Nor is ``/api/approvals``: the menu-bar companion answers with your own
+#: sign-in (``test_apps_cannot_post_into_your_chats.py``).
+VERBS = ["yolo", "trust", "trust_agent", "trust_reads", "approved", "rejected"]
 
 
-def _echo_identity_app(**mw_kwargs: Any) -> web.Application:
-    from personalclaw.dashboard.token_auth import token_auth_middleware
+def _no_verb_is_decided_for_the_app(verb: str):
+    path = APPROVE.replace("{session}", "mine")
 
-    async def echo(request: web.Request) -> web.Response:
-        return web.json_response({"app": request.get("app", "")})
+    async def run(r: Row) -> None:
+        _session, pending = _pending(r.gw.state, "mine")
+        before = home_files(r.home)
+        body = {"action": verb, "request_id": "req-1"}
+        theirs = await r.gw.both_ways(r.token, "POST", path, body)
+        written = written_since(r.home, before)
+        for status, text in theirs:
+            assert status == 403, text
+            assert OWNER_ONLY in text, text
+        assert not pending.done(), "nothing may be decided, least of all a standing grant"
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(path)) == 2, "each refusal leaves an SEL row naming the app"
 
-    app = web.Application(middlewares=[token_auth_middleware(port=_PORT, **mw_kwargs)])
-    app.router.add_post("/api/tools/invoke", echo)
-    app.router.add_post("/api/triggers", echo)
-    return app
+    return run
 
 
-class TestInternalRoutesKeepTheAppIdentity:
-    """An internal route admits the browser by its cookie or a `?token=`, from loopback. That
-    branch validated an app token like any other and never recorded the `app` claim, so the
-    request reached the handler as the owner — and `/api/tools/invoke` runs any tool. The app
-    permission middleware and every handler-level app check key on `request["app"]`, so this is
-    the one place the claim has to survive."""
+def _your_answer_is_decided(verb: str, body: dict[str, str]):
+    path = APPROVE.replace("{session}", "mine")
 
-    @pytest.fixture(autouse=True)
-    def _fresh_sessions(self):
-        from personalclaw.dashboard.token_auth import revoke_all_sessions
+    async def run(r: Row) -> None:
+        _session, pending = _pending(r.gw.state, "mine")
+        status, text = await r.gw.call("POST", path, {"action": verb, **body})
+        assert status == 200, text
+        assert pending.done() and pending.result() == verb
 
-        revoke_all_sessions()
-        yield
-        revoke_all_sessions()
+    return run
 
-    @pytest.mark.asyncio
-    async def test_an_app_token_as_the_credential_stays_an_app(self) -> None:
-        from personalclaw.dashboard.token_auth import generate_token
 
-        token = generate_token("owner", ttl_seconds=600, app=APP)
-        app = _echo_identity_app(
-            internal_routes=frozenset({"POST /api/tools/invoke"}), internal_secret="s3cret"
+#: Your answers, each naming the approval it answers, or naming none when one is pending.
+YOUR_ANSWERS = {"approved": {}, "rejected": {"request_id": "req-1"}}
+
+
+@pytest.mark.asyncio
+async def test_an_app_answers_no_approval_in_a_chat_and_you_do(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    from personalclaw.dashboard.approval_state import SESSION_APPROVAL_ACTIONS
+
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    assert set(VERBS) == SESSION_APPROVAL_ACTIONS, "the verbs are the card's vocabulary"
+    rows = [(f"the app's {verb}", _no_verb_is_decided_for_the_app(verb)) for verb in VERBS]
+    rows += [(f"your {verb}", _your_answer_is_decided(verb, b)) for verb, b in YOUR_ANSWERS.items()]
+    await SHARED.run(subtests, rows, _routes([]), label="case")
+
+
+# ── 7. Internal routes keep the app identity the token carries ─────────────────────────────────
+
+
+def _the_apps_token_stays_the_apps(reached: list[tuple[str, str]], alone: bool):
+    """An internal route admits the browser by its cookie or a ``?token=``, from loopback. That
+    branch validated an app token like any other and never recorded the ``app`` claim, so the
+    request reached the handler as the owner — and ``/api/tools/invoke`` runs any tool. The app
+    permission middleware and every handler-level app check key on ``request["app"]``, so this
+    is the one place the claim has to survive."""
+
+    async def run(r: Row) -> None:
+        reached.clear()
+        status, text = await r.gw.call(
+            "POST", TOOLS_INVOKE, {}, app_token=r.token, as_backend=alone
         )
-        async with TestClient(TestServer(app)) as c:
-            resp = await c.post(f"/api/tools/invoke?token={token}", json={})
-            assert resp.status == 200
-            assert (await resp.json())["app"] == APP
+        assert status == 200, text
+        assert json.loads(text)["app"] == APP
+        assert reached == [(APP, TOOLS_INVOKE)]
 
-    @pytest.mark.asyncio
-    async def test_an_app_token_layered_on_the_owner_cookie_stays_an_app(self) -> None:
-        from personalclaw.dashboard.token_auth import generate_token
+    return run
 
-        owner = generate_token("owner", ttl_seconds=600)
-        app_token = generate_token("owner", ttl_seconds=600, app=APP)
-        app = _echo_identity_app(
-            mixed_internal_routes=frozenset({"POST /api/triggers"}), internal_secret="s3cret"
-        )
-        async with TestClient(TestServer(app)) as c:
-            resp = await c.post(
-                "/api/triggers",
-                json={},
-                headers={
-                    "Cookie": f"pc_token_{_PORT}={owner}",
-                    "Authorization": f"Bearer {app_token}",
-                },
+
+def _the_apps_token_on_a_mixed_route_is_refused_as_the_apps(reached: list[tuple[str, str]]):
+    """A mixed internal route that is yours: the claim survives the cookie beside it, so the
+    permission middleware refuses the app, by name."""
+
+    async def run(r: Row) -> None:
+        reached.clear()
+        before = home_files(r.home)
+        theirs = await r.gw.both_ways(r.token, "POST", TRIGGERS, {})
+        written = written_since(r.home, before)
+        for status, text in theirs:
+            assert status == 403, text
+            assert OWNER_ONLY in text, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(TRIGGERS)) == 2, "each refusal leaves an SEL row naming the app"
+        assert reached == [], "the app's request reached nothing"
+
+    return run
+
+
+def _your_cookie_alone_is_you(reached: list[tuple[str, str]]):
+    async def run(r: Row) -> None:
+        reached.clear()
+        for path in (TOOLS_INVOKE, TRIGGERS):
+            status, text = await r.gw.call("POST", path, {})
+            assert status == 200, text
+            assert json.loads(text)["app"] == ""
+        assert reached == [("", TOOLS_INVOKE), ("", TRIGGERS)]
+
+    return run
+
+
+def _the_internal_secret_is_personalclaws_own(reached: list[tuple[str, str]]):
+    async def run(r: Row) -> None:
+        reached.clear()
+        for path in (TOOLS_INVOKE, TRIGGERS):
+            resp = await r.gw.client.post(
+                path, json={}, headers={"X-Internal-Secret": INTERNAL_SECRET}
             )
-            assert resp.status == 200
-            assert (await resp.json())["app"] == APP
-
-    @pytest.mark.asyncio
-    async def test_the_owner_cookie_alone_is_still_the_owner(self) -> None:
-        from personalclaw.dashboard.token_auth import generate_token
-
-        owner = generate_token("owner", ttl_seconds=600)
-        app = _echo_identity_app(
-            mixed_internal_routes=frozenset({"POST /api/triggers"}), internal_secret="s3cret"
-        )
-        async with TestClient(TestServer(app)) as c:
-            resp = await c.post(
-                "/api/triggers", json={}, headers={"Cookie": f"pc_token_{_PORT}={owner}"}
-            )
-            assert resp.status == 200
+            assert resp.status == 200, await resp.text()
             assert (await resp.json())["app"] == ""
+        assert reached == [("", TOOLS_INVOKE), ("", TRIGGERS)]
 
-    @pytest.mark.asyncio
-    async def test_the_internal_secret_is_still_core(self) -> None:
-        app = _echo_identity_app(
-            internal_routes=frozenset({"POST /api/tools/invoke"}), internal_secret="s3cret"
+    return run
+
+
+@pytest.mark.asyncio
+async def test_internal_routes_keep_the_app_identity(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = [
+        (
+            f"the app's token {way}, on an internal route, stays the app's",
+            _the_apps_token_stays_the_apps(reached, alone),
         )
-        async with TestClient(TestServer(app)) as c:
-            resp = await c.post(
-                "/api/tools/invoke", json={}, headers={"X-Internal-Secret": "s3cret"}
-            )
-            assert resp.status == 200
-            assert (await resp.json())["app"] == ""
+        for way, alone in WAYS.items()
+    ]
+    rows += [
+        (
+            "the app's token on a mixed route of yours is refused as the app's",
+            _the_apps_token_on_a_mixed_route_is_refused_as_the_apps(reached),
+        ),
+        ("your cookie alone is you", _your_cookie_alone_is_you(reached)),
+        (
+            "the internal secret is PersonalClaw's own",
+            _the_internal_secret_is_personalclaws_own(reached),
+        ),
+    ]
+    await SHARED.run(subtests, rows, _routes(reached), label="case")
+
+
+# ── 8. Each family, end to end, on an app installed for this test alone ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_each_family_refuses_an_app_installed_for_this_test_alone(home, sel_rows) -> None:
+    """Your settings, a posture route, a chat's approval and an internal route, each sent both
+    ways by an app installed for this test alone."""
+    reached: list[tuple[str, str]] = []
+    approve = APPROVE.replace("{session}", "mine")
+    async with _gateway(_routes(reached)) as gw:
+        await gw.install(_bundle(home))
+        token = str((await gw.ok("POST", f"/api/apps/{APP}/token"))["token"])
+        _session, pending = _pending(gw.state, "mine")
+        before = home_files(home)
+        yolo = [
+            await _write(gw, "agent.yolo", True, confirm=True, token=token, as_backend=alone)
+            for alone in WAYS.values()
+        ]
+        mode = await gw.both_ways(token, "POST", "/api/chat/mode", {"mode": "yolo"})
+        answer = await gw.both_ways(
+            token, "POST", approve, {"action": "yolo", "request_id": "req-1"}
+        )
+        triggers = await gw.both_ways(token, "POST", TRIGGERS, {})
+        invoke = await gw.both_ways(token, "POST", TOOLS_INVOKE, {})
+        written = written_since(home, before)
+    for status, text in yolo:
+        assert status == 403 and _code(text) == SECURITY_SETTING, text
+    assert not written, f"a refusal changed your home: {written}"
+    for path, sent in (("/api/chat/mode", mode), (approve, answer), (TRIGGERS, triggers)):
+        for status, text in sent:
+            assert status == 403 and OWNER_ONLY in text, f"{path}: {text}"
+        assert len(_denials(sel_rows, path)) == 2, path
+    assert len(_denials(sel_rows, "agent.yolo")) == 2
+    assert not pending.done(), "nothing was decided"
+    for status, text in invoke:
+        assert status == 200 and json.loads(text)["app"] == APP, text
+    assert (
+        reached == [(APP, TOOLS_INVOKE)] * 2
+    ), "only the internal route the app may call is reached"
