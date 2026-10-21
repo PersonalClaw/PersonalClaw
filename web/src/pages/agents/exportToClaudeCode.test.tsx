@@ -5,7 +5,8 @@ import { useState } from 'react'
 // ── Exporting your agents to Claude Code, from the Agents page ───────────────────────────────────
 //
 // The outbound export had every rail in the gateway and no way in: no page, no command and no route
-// reached it. These pin the way in — the Agents header opens it — and what it has to do there:
+// reached it. These pin the way in — the Agents list's More menu opens it, since the header holds only
+// New agent (#3817) — and what it has to do there:
 //
 //   · show the folder Claude Code reads its agents from (the gateway's answer, which follows
 //     CLAUDE_CONFIG_DIR) and confirm THAT folder, never one the page made up;
@@ -73,6 +74,7 @@ async function mount() {
 }
 
 async function openExport() {
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Export to Claude Code' }))
   return screen.findByRole('dialog', { name: 'Export to Claude Code' })
 }
@@ -100,7 +102,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('the Agents page exports your agents to Claude Code', () => {
-  it('opens from the header, offering only your own agents, and shows the folder the gateway named', async () => {
+  it('opens from the list\'s More menu, offering only your own agents, and shows the folder the gateway named', async () => {
     mockApi()
     await mount()
     const dialog = await openExport()

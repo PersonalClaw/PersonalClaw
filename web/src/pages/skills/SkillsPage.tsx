@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb, GraduationCap, FilePen, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
@@ -12,7 +11,8 @@ import { useIsMobile } from '../../app/useIsMobile'
 import { Modal } from '../../ui/Modal'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { SidePanel } from '../../ui/SidePanel'
+import { ListBesideDetail } from '../capabilities/ListBesideDetail'
+import { compareSkills } from '../capabilities/capabilityOrder'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace, type SkillSourceUnreachable } from '../../lib/api'
@@ -36,43 +36,44 @@ description: One line on when this skill should load.
 Instructions the agent follows when this skill is active.
 `
 
-type Mode = 'installed' | 'browse'
+type Mode = 'installed' | 'browse' | 'proposals'
 
 export function SkillsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
-  const [mode] = useQueryParam(query, setQuery, 'mode', 'installed')
-  if (mode === 'browse') {
-    return <Browse onInstalled={() => {}} onBack={() => setQuery({ mode: null, open: null, q: null })} query={query} setQuery={setQuery} />
-  }
-  if (mode === 'proposals') {
-    return <ProposalsView onBack={() => setQuery({ mode: null, open: null, q: null })} />
-  }
-  return <Installed
-    onBrowse={() => setQuery({ mode: 'browse', open: null, q: null })}
-    onProposals={() => setQuery({ mode: 'proposals', open: null, q: null })}
-    query={query} setQuery={setQuery} />
+  const [modeRaw] = useQueryParam(query, setQuery, 'mode', 'installed')
+  const mode: Mode = modeRaw === 'browse' || modeRaw === 'proposals' ? modeRaw : 'installed'
+  // The proposals waiting for review, counted on the view switch wherever the tab is. Its catch
+  // stays: it only feeds a count, and a missing count is not a lie.
+  const { data: proposals } = useQuery('skill-proposals-count', () => api.skillProposals().then((d) => d.proposals).catch(() => []))
+  const toggle = <ModeToggle mode={mode} proposals={proposals?.length ?? 0}
+    onChange={(m) => setQuery({ mode: m === 'installed' ? null : m, open: null, q: null })} />
+  if (mode === 'browse') return <Browse toggle={toggle} query={query} setQuery={setQuery} />
+  if (mode === 'proposals') return <ProposalsView toggle={toggle} />
+  return <Installed toggle={toggle} onBrowse={() => setQuery({ mode: 'browse', open: null, q: null })} query={query} setQuery={setQuery} />
 }
 
 // ── Proposals ─────────────────────────────────────────────────────────────────
-function ProposalsView({ onBack }: { onBack: () => void }) {
+function ProposalsView({ toggle }: { toggle: React.ReactNode }) {
   return (
-    <WorkbenchLayout
-      topBar={
+    <ListBesideDetail noun="skill proposals" detail={null}
+      header={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skill proposals</PageTitle></div>}
-          right={<HeaderActions><HeaderControl icon={Sparkles} label="Installed skills" variant="secondary" onClick={onBack} /></HeaderActions>}
+          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skill proposals</PageTitle>{toggle}</div>}
         />
       }
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         <SkillProposals />
       </div>
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }
 
-function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
-  // Left-slot nav Segmented: both options carry an icon, so it collapses to icon-only
+/** The Skills tab's three views: what is installed, the marketplace, and the proposals waiting for
+ *  review, with how many wait. Each is the address it always was (`?mode=`), and the header keeps
+ *  only New skill, so Proposals is a view here rather than a button beside it. */
+function ModeToggle({ mode, proposals, onChange }: { mode: Mode; proposals: number; onChange: (m: Mode) => void }) {
+  // Left-slot nav Segmented: every option carries an icon, so it collapses to icon-only
   // on mobile (matching the resolved header doctrine) rather than clipping "Installed"
   // into the action cluster on a narrow header. The active segment stays highlighted.
   const isMobile = useIsMobile()
@@ -96,19 +97,21 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   return (
     <Segmented ariaLabel="Skills view" value={mode} onChange={(m) => onChange(m as Mode)} iconOnly={isMobile}
       collapse="menu"
-      options={[{ key: 'installed', label: 'Installed', icon: Sparkles }, { key: 'browse', label: 'Browse', icon: Store }]} />
+      options={[
+        { key: 'installed', label: 'Installed', icon: Sparkles },
+        { key: 'browse', label: 'Browse', icon: Store },
+        // The count shows only while proposals wait: a counter that reads 0 is hidden.
+        { key: 'proposals', label: proposals > 0 ? `Proposals (${proposals})` : 'Proposals', icon: Lightbulb },
+      ]} />
   )
 }
 
 // ── Installed ───────────────────────────────────────────────────────────────
-function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () => void; onProposals: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+function Installed({ toggle, onBrowse, query, setQuery }: { toggle: React.ReactNode; onBrowse: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // No `.catch(() => [])` on the installed read. Swallowing the rejection handed the hook an EMPTY
   // LIST, so a user whose library is intact was told "No skills installed" under a coral CTA to go
-  // install some — measured against a 500 with native skills present on disk. The proposals read
-  // keeps its catch: it only feeds a count on a header button, and a missing badge is not a lie.
+  // install some — measured against a 500 with native skills present on disk.
   const { data: items, error: itemsErr, refresh } = useQuery<SkillItem[]>('skills', () => api.skills(), { persist: true })
-  const { data: proposals } = useQuery('skill-proposals-count', () => api.skillProposals().then((d) => d.proposals).catch(() => []))
-  const proposalCount = proposals?.length ?? 0
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openKeyRaw, setOpenKey] = useQueryParam(query, setQuery, 'open', '')
   const openKey = openKeyRaw || null
@@ -118,51 +121,44 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
 
   const load = () => { invalidateKeys('skills'); refresh() }
 
+  // In its named order: by name, case-insensitive, equal names by id. The route lists in the order a
+  // copy wins, which is not an order to read by.
   const filtered = useMemo(() => {
     if (!items) return null
     const n = q.trim().toLowerCase()
-    return n ? items.filter((s) => `${s.name} ${s.description}`.toLowerCase().includes(n)) : items
+    return (n ? items.filter((s) => `${s.name} ${s.description}`.toLowerCase().includes(n)) : items.slice()).sort(compareSkills)
   }, [items, q])
   const open = items?.find((s) => s.key === openKey) ?? null
 
   return (
     <>
-      <WorkbenchLayout
+      <ListBesideDetail noun="skills"
         controls={(items === undefined || items.length > 0)
           ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }}
               results={{ count: (filtered ?? []).length, noun: 'skills', active: !!q.trim() }} />
           : undefined}
-        topBar={
+        header={
           <TopBar
             keepCornerPadding
-            left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle><ModeToggle mode="installed" onChange={(m) => m === 'browse' && onBrowse()} /></div>}
+            left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle>{toggle}</div>}
             right={
               <HeaderActions>
-                <HeaderControl icon={Lightbulb} label={proposalCount > 0 ? `Proposals (${proposalCount})` : 'Proposals'} variant="secondary" onClick={onProposals} />
                 {/* 🔑 `New skill` IS the primary here, and it is the canonical spelling. Every other list
                     destination writes its create action `variant="primary" priority="primary"` — `New
                     chat`, `New task`, `New trigger`, `New project` (×2), `New agent`, `New report`, `New
-                    intent`, `Add knowledge`, `Install from URL`, `Start from template`. Skills was the
-                    sole outlier: it SPLIT the two attributes across two different controls, declaring
-                    `priority="primary"` here while rendering `variant="secondary"`, and giving the coral
-                    `variant="primary"` to a `Browse` button instead.
-
-                    🪤 AND THAT `Browse` BUTTON WAS THE MODE TAB, RENDERED TWICE. Same label, same `Store`
-                    icon, same `onBrowse` handler as the `ModeToggle` segment in the `left` slot ~870px
-                    away — one action with two affordances in one 40px strip, and the duplicate was the
-                    one wearing the primary colour. Deleted, not re-styled: `ModeToggle` already owns the
-                    action AND shows which mode you are in, which a button cannot. It stays reachable at
-                    every width (the toggle goes `iconOnly` on mobile rather than collapsing away). */}
+                    intent`, `Add knowledge`, `Install from URL`, `Start from template`. It is the one
+                    action the header holds (#3817): Proposals is a view on the switch beside the title,
+                    and Browse was always one. */}
                 <HeaderControl icon={Plus} label="New skill" variant="primary" priority="primary" onClick={() => setCreating(true)} />
               </HeaderActions>
             }
           />
         }
-        panel={open && (
-          <SidePanel key={open.key} fillHeight storeKey="skill-panel-w" icon={<Sparkles size={18} style={{ color: SOURCE_TONE[open.source] ?? 'var(--color-primary)' }} />} title={open.name} onClose={() => setOpenKey("")}>
-            <SkillInspector skill={open} onDeleted={() => { setOpenKey(""); load() }} onSaved={load} />
-          </SidePanel>
-        )}
+        detail={open && {
+          id: open.key, title: open.name, onClose: () => setOpenKey(''),
+          icon: <Sparkles size={18} style={{ color: SOURCE_TONE[open.source] ?? 'var(--color-primary)' }} />,
+          body: <SkillInspector skill={open} onDeleted={() => { setOpenKey(''); load() }} onSaved={load} />,
+        }}
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
           {/* The learning summary block. Above the list, INSIDE the content column so it
@@ -186,7 +182,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                 ]
                 return (
                   <ContextMenu key={s.key} items={menuItems}>
-                  <ListRow onClick={() => setOpenKey(s.key)} label={s.name}>
+                  <ListRow onClick={() => setOpenKey(s.key)} label={s.name} selected={s.key === openKey}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Sparkles size={19} style={{ color: tone }} /></span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-s">
@@ -227,7 +223,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
             </div>
           )}
         </div>
-      </WorkbenchLayout>
+      </ListBesideDetail>
 
       {creating && <SkillCreateModal onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load() }} />}
     </>
@@ -270,7 +266,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 }
 
 // ── Browse (marketplace) ──────────────────────────────────────────────────────
-function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: marketplaces = [] } = useQuery<SkillMarketplace[]>(
     'skills:marketplaces',
     // 🔴 `!== 'native'` was here too, and `/api/skills/marketplaces` returns exactly
@@ -333,7 +329,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   const totalMatches = Object.values(counts).reduce((a, b) => a + b, 0)
 
   return (
-    <WorkbenchLayout
+    <ListBesideDetail noun="results"
       controls={
         // 🪤 This list comes from a FETCH, not a client-side narrow, so `active` also waits for the
         // fetch to settle: announcing while `loading` would report the previous query's count, and
@@ -347,20 +343,20 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
           </select>
         </ListControls>
       }
-      topBar={
+      header={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle><ModeToggle mode="browse" onChange={(m) => m === 'installed' && onBack()} /></div>}
+          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle>{toggle}</div>}
         />
       }
-      panel={open && (
-        <SidePanel key={open.id} fillHeight storeKey="skill-panel-w" icon={<Download size={18} className="text-warn" />} title={open.name || open.id} onClose={() => setOpenId("")}>
-          {/* Installed-ness comes from the SERVER's annotation, OR from what this session just
-              installed. Reading only the session set claimed "not installed" about every already-present
-              skill on first paint, which is most of them on a stock install. */}
-          <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />
-        </SidePanel>
-      )}
+      detail={open && {
+        id: open.id, title: open.name || open.id, onClose: () => setOpenId(''),
+        icon: <Download size={18} className="text-warn" />,
+        // Installed-ness comes from the SERVER's annotation, OR from what this session just
+        // installed. Reading only the session set claimed "not installed" about every already-present
+        // skill on first paint, which is most of them on a stock install.
+        body: <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />,
+      }}
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
@@ -387,7 +383,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
                 ]
                 return (
                   <ContextMenu key={r.id} items={menuItems}>
-                  <ListRow onClick={() => setOpenId(r.id)} label={r.name || r.id}>
+                  <ListRow onClick={() => setOpenId(r.id)} label={r.name || r.id} selected={r.id === openId}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)' }}><Sparkles size={19} className="text-warn" /></span>
                     <div className="flex-1 min-w-0">
                       <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{r.name || r.id}</span>
@@ -404,7 +400,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
             </div>
           )}
       </div>
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }
 

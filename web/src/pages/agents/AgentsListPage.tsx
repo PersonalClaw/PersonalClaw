@@ -5,12 +5,13 @@ import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw, Upload } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { SidePanel } from '../../ui/SidePanel'
+import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
+import { ListMoreMenu } from '../capabilities/ListMoreMenu'
+import { compareAgents } from '../capabilities/capabilityOrder'
 import { useAgentsData, type NativeGroup, type DiscoveredGroup } from './agentsData'
 import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
 import { NativeAgentDetail, DiscoveredAgentDetail } from './AgentDetail'
@@ -76,7 +77,8 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
   // One filtered set, shared by the rows and the announcement. It used to be recomputed inline
   // three times, and a count derived from a FOURTH copy is exactly how an announcement starts
   // disagreeing with the list it describes.
-  const shownNative = native?.agents.filter(agentMatch) ?? []
+  // Each group in its named order: by display name, case-insensitive, equal names by id.
+  const shownNative = (native?.agents.filter(agentMatch) ?? []).sort(compareAgents)
   // Only READY providers render their rows (an unavailable runtime shows its reason instead), so
   // their agents are not on screen and must not be counted.
   const shownCount = shownNative.length
@@ -142,41 +144,44 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
     if (path.includes('/agents/') || path.endsWith('config.json')) reload()
   })
 
+  // The selected agent's detail, beside the list (`?open=`): its own pane, Back to the list on a
+  // compact window.
+  const detail: CapabilityDetail | null = openNative && native ? {
+    id: `n:${openNative.name}`, title: openNative.name, icon: <Users size={18} className="text-primary" />,
+    onClose: () => setOpen(null),
+    body: (
+      <NativeAgentDetail agent={openNative} isDefault={native.defaultAgent === openNative.name} editing={editing} onEditingChange={setEditing}
+        providerLabel={discovered.find((g) => g.providerId === openNative.provider)?.label}
+        onSaved={reload} onDeleted={() => { setOpen(null); reload() }} onSetDefault={() => setDefault(openNative.name)} />
+    ),
+  } : openDiscovered && open?.kind === 'discovered' ? {
+    id: `d:${open.id}`, title: openDiscovered.name,
+    icon: (() => { const pm = providerMeta(open.providerId); return <pm.icon size={18} style={{ color: pm.tone }} /> })(),
+    onClose: () => setOpen(null),
+    body: <DiscoveredAgentDetail agent={openDiscovered} providerId={open.providerId} label={discovered.find((g) => g.providerId === open.providerId)?.label} />,
+  } : null
+  const openKey = open?.kind === 'native' ? `native:${open.name}` : open ? `acp|${open.providerId}|${open.id}` : ''
+
   return (
-    <WorkbenchLayout
-      topBar={
+    <ListBesideDetail noun="agents" detail={detail}
+      header={
         <TopBar
           keepCornerPadding
           left={<PageTitle>Agents</PageTitle>}
           right={<HeaderActions>
-            {/* `default`, not `low`: it was a load/save that reported nothing when it was
-                ranked lowest; it now reconciles the agent file store into the config and is
-                the only control that makes a Store/app/snapshot agent visible (issue 344). */}
-            <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="default" onClick={syncAgents} />
-            <HeaderControl icon={Upload} label="Export to Claude Code" priority="low" onClick={() => setExporting(true)} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />
           </HeaderActions>}
         />
       }
       controls={<ListControls search={{ value: q, onChange: setQ, placeholder: 'Search agents', label: 'Search agents' }}
-        results={{ count: shownCount, noun: 'agents', active: !!n && !(loading && groups.length === 0) }} />}
-      panel={
-        <>
-          {openNative && native && (
-            <SidePanel key={`n:${openNative.name}`} fillHeight storeKey="agent-panel-w" icon={<Users size={18} className="text-primary" />} title={openNative.name} onClose={() => setOpen(null)}>
-              <NativeAgentDetail agent={openNative} isDefault={native.defaultAgent === openNative.name} editing={editing} onEditingChange={setEditing}
-                providerLabel={discovered.find((g) => g.providerId === openNative.provider)?.label}
-                onSaved={reload} onDeleted={() => { setOpen(null); reload() }} onSetDefault={() => setDefault(openNative.name)} />
-            </SidePanel>
-          )}
-          {openDiscovered && open?.kind === 'discovered' && (
-            <SidePanel key={`d:${open.id}`} fillHeight storeKey="agent-panel-w" icon={(() => { const pm = providerMeta(open.providerId); return <pm.icon size={18} style={{ color: pm.tone }} /> })()} title={openDiscovered.name} onClose={() => setOpen(null)}>
-              <DiscoveredAgentDetail agent={openDiscovered} providerId={open.providerId}
-                label={discovered.find((g) => g.providerId === open.providerId)?.label} />
-            </SidePanel>
-          )}
-        </>
-      }
+        results={{ count: shownCount, noun: 'agents', active: !!n && !(loading && groups.length === 0) }}>
+        {/* The header holds only New agent, so what else the list does is here, beside it. Sync is
+            the only control that makes a Store, app or snapshot agent visible (issue 344). */}
+        <ListMoreMenu actions={[
+          { label: syncing ? 'Syncing…' : 'Sync agents', icon: RefreshCw, onSelect: syncAgents, disabled: syncing },
+          { label: 'Export to Claude Code', icon: Upload, onSelect: () => setExporting(true) },
+        ]} />
+      </ListControls>}
     >
       <div className="mx-auto px-l py-l flex flex-col gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
         {!loaded && error ? (
@@ -201,7 +206,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                     ) : (
                       <div className="flex flex-col gap-s">
                         {shownNative.map((a) => (
-                          <NativeRow key={a.name} agent={a} isDefault={native.defaultAgent === a.name} onClick={() => setOpen({ kind: 'native', name: a.name })} />
+                          <NativeRow key={a.name} agent={a} isDefault={native.defaultAgent === a.name} selected={openKey === `native:${a.name}`} onClick={() => setOpen({ kind: 'native', name: a.name })} />
                         ))}
                       </div>
                     )}
@@ -211,7 +216,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 {/* Discovered per ACP provider */}
                 {discovered.map((g) => {
                   const pm = providerMeta(g.providerId, g.label)
-                  const items = g.agents.filter(agentMatch)
+                  const items = g.agents.filter(agentMatch).sort(compareAgents)
                   // Its agents are known only when the runtime is ready and its last Test listed
                   // them. Otherwise the group says what is wrong, and shows no count: "0" would say
                   // it offers none.
@@ -232,7 +237,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                       ) : (
                         <div className="flex flex-col gap-s">
                           {items.map((a) => (
-                            <DiscoveredRow key={a.id} agent={a} tone={pm.tone} icon={pm.icon} onClick={() => setOpen({ kind: 'discovered', providerId: g.providerId, id: a.id })} />
+                            <DiscoveredRow key={a.id} agent={a} tone={pm.tone} icon={pm.icon} selected={openKey === `acp|${g.providerId}|${a.id}`} onClick={() => setOpen({ kind: 'discovered', providerId: g.providerId, id: a.id })} />
                           ))}
                         </div>
                       )}
@@ -245,7 +250,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
       {/* Once the list is read: the dialog's choices are the agents on it, so an export opened from
           a link before they arrived would otherwise start with nothing ticked. */}
       {exporting && loaded && <ExportAgentsDialog agents={exportable} onClose={() => setExporting(false)} />}
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }
 
@@ -268,7 +273,7 @@ function GroupSection({ title, icon: Icon, tone, subtitle, count, badge, childre
   )
 }
 
-function NativeRow({ agent, isDefault, onClick }: { agent: SavedAgent; isDefault: boolean; onClick: () => void }) {
+function NativeRow({ agent, isDefault, selected, onClick }: { agent: SavedAgent; isDefault: boolean; selected: boolean; onClick: () => void }) {
   // Right-click / long-press → scoped actions. This row only performs "open" (the
   // detail panel owns save/delete/set-default); a single-item menu still aids
   // discoverability, matching the shared ContextMenu idiom used across rows.
@@ -285,7 +290,7 @@ function NativeRow({ agent, isDefault, onClick }: { agent: SavedAgent; isDefault
         rail's only other shipped uses — `InboxPage` lights it for UNREAD, `TriggersListPage` for
         ENABLED — where the rail always means "this row is live/needs you". The default row still
         pairs it with the star; the rest keep the coral icon square that says "agent". */}
-    <ListRow accent={isDefault ? 'var(--color-primary)' : undefined} onClick={onClick} label={agent.name}>
+    <ListRow accent={isDefault ? 'var(--color-primary)' : undefined} onClick={onClick} label={agent.name} selected={selected}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
@@ -348,7 +353,7 @@ function NativeRow({ agent, isDefault, onClick }: { agent: SavedAgent; isDefault
   )
 }
 
-function DiscoveredRow({ agent, tone, icon: Icon, onClick }: { agent: DiscoveredAgent; tone: string; icon: typeof Cpu; onClick: () => void }) {
+function DiscoveredRow({ agent, tone, icon: Icon, selected, onClick }: { agent: DiscoveredAgent; tone: string; icon: typeof Cpu; selected: boolean; onClick: () => void }) {
   // Discovered agents are runtime-provided + read-only, so "open" (the detail
   // panel) is the only action this row performs — a single-item ContextMenu,
   // consistent with the shared right-click idiom across list rows.
@@ -357,7 +362,7 @@ function DiscoveredRow({ agent, tone, icon: Icon, onClick }: { agent: Discovered
   ]
   return (
     <ContextMenu items={menuItems}>
-    <ListRow onClick={onClick} label={agent.name}>
+    <ListRow onClick={onClick} label={agent.name} selected={selected}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Icon size={19} style={{ color: tone }} /></span>
       <div className="flex-1 min-w-0">
         {/* Same two fixes on the discovered variant. This file already insists the two row shapes

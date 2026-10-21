@@ -2,11 +2,13 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, CircleAlert, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { SidePanel } from '../../ui/SidePanel'
+import { ListBesideDetail } from '../capabilities/ListBesideDetail'
+import { ListMoreMenu } from '../capabilities/ListMoreMenu'
+import { CapabilityPermissions, toolPermissions } from '../capabilities/CapabilityPermissions'
+import { compareToolProviders, compareTools } from '../capabilities/capabilityOrder'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
@@ -544,7 +546,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       // by name, and drawn as one they would offer a native provider's switch for an MCP server.
       // Their rows still say who they belong to: `serverTool` is set only on an MCP tool.
       if (serversUnread && list.some((t) => t.serverTool !== undefined)) continue
-      const filtered = list.filter(match)
+      const filtered = list.filter(match).sort(compareTools)
       // a provider is "off" when ALL its tools report providerDisabled (the backend
       // sets that flag per-tool when the whole provider is disabled).
       const provOff = list.length > 0 && list.every((t) => t.providerDisabled)
@@ -557,12 +559,14 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         tier: list[0]?.tier,
       })
     }
-    out.sort((a, b) => a.label.localeCompare(b.label))
     // MCP servers configured in PersonalClaw (shown even at 0 tools / errored)
     for (const s of servers) {
-      const list = (byProvider.get(s.name) ?? []).filter(match)
+      const list = (byProvider.get(s.name) ?? []).filter(match).sort(compareTools)
       out.push({ key: s.name, label: s.name, kind: 'mcp', tools: list, server: s, group: groupOf(byProvider.get(s.name) ?? []) })
     }
+    // The named order: the built-in providers by label, then the connected servers by name, each
+    // provider's tools by name. A server's place no longer follows the order it was configured in.
+    out.sort(compareToolProviders)
     // With a filter active, drop groups with no matching tools — including MCP
     // groups (an errored/0-tool server is only worth showing in the browse view).
     return out.filter((g) => g.tools.length > 0 || (g.kind === 'mcp' && !active) || !active)
@@ -592,40 +596,47 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         onImported={() => { setTimeout(load, 300); if (look) void lookIn(pressed, '') }} />
     )
 
+  const hasTools = tools === null || tools.length > 0
   return (
-    <WorkbenchLayout
-      topBar={
+    <ListBesideDetail noun="tools"
+      header={
         <TopBar
           keepCornerPadding
           left={<PageTitle>Tools</PageTitle>}
           right={
             <HeaderActions>
               <HeaderControl icon={Plus} label="Add tool server" priority="primary" onClick={() => setAddOpen(true)} />
-              <HeaderControl icon={probing ? Loader2 : RefreshCw} label="Re-probe MCP servers" priority="low" disabled={probing} onClick={reprobe} />
             </HeaderActions>
           }
         />
       }
-      controls={(tools === null || tools.length > 0)
-        ? <ListControls
-            search={{ value: q, onChange: setQ, placeholder: 'Search tools', label: 'Search tools' }}
-            results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }}
-            filter={{
-              value: risk, onChange: setRisk, ariaLabel: 'Filter by risk level',
-              options: [
-                { key: 'all', label: 'All' },
-                { key: 'safe', label: 'Safe', tone: 'var(--color-ok)' },
-                { key: 'caution', label: 'Caution', tone: 'var(--color-warn)' },
-                { key: 'destructive', label: 'Destructive', tone: 'var(--color-danger)' },
-              ],
-            }}
-          />
-        : undefined}
-      panel={open && (
-        <SidePanel key={open.name} fillHeight storeKey="tool-panel-w" icon={<Wrench size={18} className="text-primary" />} title={<span className="font-mono text-[1.0625rem]">{open.name}</span>} onClose={() => setOpenName("")}>
-          <ToolInspector tool={open} serverStatus={openServer ? serverHealth(openServer) : undefined} />
-        </SidePanel>
-      )}
+      // The bar is always there for the More menu, which holds what the header no longer does; its
+      // search and risk filter wait for tools to narrow.
+      controls={
+        <ListControls
+          search={hasTools ? { value: q, onChange: setQ, placeholder: 'Search tools', label: 'Search tools' } : undefined}
+          results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }}
+          filter={hasTools ? {
+            value: risk, onChange: setRisk, ariaLabel: 'Filter by risk level',
+            options: [
+              { key: 'all', label: 'All' },
+              { key: 'safe', label: 'Safe', tone: 'var(--color-ok)' },
+              { key: 'caution', label: 'Caution', tone: 'var(--color-warn)' },
+              { key: 'destructive', label: 'Destructive', tone: 'var(--color-danger)' },
+            ],
+          } : undefined}>
+          <ListMoreMenu actions={[{ label: probing ? 'Re-probing MCP servers…' : 'Re-probe MCP servers', icon: probing ? Loader2 : RefreshCw, onSelect: reprobe, disabled: probing }]} />
+        </ListControls>
+      }
+      detail={open && {
+        id: open.name, title: open.name, onClose: () => setOpenName(''),
+        icon: <Wrench size={18} className="text-primary" />,
+        body: (
+          <ToolInspector tool={open} serverStatus={openServer ? serverHealth(openServer) : undefined}
+            permissions={<CapabilityPermissions rows={toolPermissions(open, openServer,
+              !openServer ? undefined : elicitationServers ? elicitationServers.includes(openServer.name) : null)} />} />
+        ),
+      }}
     >
       <>
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
@@ -649,7 +660,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onToggleReadOnlyTrust={toggleReadOnlyTrust} onReviewReadOnlyTrust={(sv) => { void reviewReadOnlyTrust(sv) }} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} openName={openName} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onToggleReadOnlyTrust={toggleReadOnlyTrust} onReviewReadOnlyTrust={(sv) => { void reviewReadOnlyTrust(sv) }} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
               {importSection}
             </div>
           )}
@@ -660,7 +671,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         {clientPrompt && <SignInClientModal prompt={clientPrompt} onClose={() => setClientPrompt(null)}
           onSubmit={(client) => { const sv = servers.find((x) => x.name === clientPrompt.server); return sv ? signIn(sv, client) : Promise.resolve(false) }} />}
       </>
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }
 
@@ -745,7 +756,7 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onToggleReadOnlyTrust, onReviewReadOnlyTrust, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onToggleReadOnlyTrust: (s: McpServer) => void; onReviewReadOnlyTrust: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
+function GroupBlock({ g, openName, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onToggleReadOnlyTrust, onReviewReadOnlyTrust, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; openName: string | null; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onToggleReadOnlyTrust: (s: McpServer) => void; onReviewReadOnlyTrust: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
   const health = g.server ? serverHealth(g.server) : null
   const waiting = g.server?.status === 'waiting'
   // Stopped after failing to start again and again: its line below says why, with Retry.
@@ -763,7 +774,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
   const badge = g.kind === 'native' ? providerBadge(g) : null
   return (
     <div className={g.providerDisabled ? 'opacity-55' : ''}>
-      <div className="mb-s flex items-center gap-s">
+      <div className="mb-s flex flex-wrap items-center gap-s">
         {g.kind === 'mcp' ? <Server size={14} className="text-on-surface-low" /> : <Cpu size={14} className="text-on-surface-low" />}
         <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{g.label}</span>
         {g.kind === 'native'
@@ -965,14 +976,17 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           {health?.state === 'error' && <StartDetails detail={g.server?.detail} />}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-s sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-s @xl:grid-cols-2">
           {g.tools.map((t) => {
             const { props } = schemaProps(t.parameters)
             const off = t.disabled === true
+            // The tool whose detail is open beside the list: `aria-current` and the selection tint,
+            // as a selected `ListRow` has.
+            const selected = t.name === openName
             return (
               <div key={t.name}
-                className={`group flex items-start gap-s rounded-lg bg-surface-container px-m py-m transition-colors hover:bg-surface-high ${off ? 'opacity-55' : ''}`}>
-                <button onClick={() => onOpen(t.name)} className="flex min-w-0 flex-1 items-start gap-s text-left">
+                className={`group flex items-start gap-s rounded-lg px-m py-m transition-colors ${selected ? 'bg-primary/15' : 'bg-surface-container hover:bg-surface-high'} ${off ? 'opacity-55' : ''}`}>
+                <button onClick={() => onOpen(t.name)} aria-current={selected ? 'true' : undefined} className="flex min-w-0 flex-1 items-start gap-s text-left">
                   <Wrench size={16} className="text-primary shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">

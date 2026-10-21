@@ -37,6 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Agents, skills, tools, prompts and apps are tabs of one Capabilities destination, with the Store a tab of its own: one sidebar row in place of five, each tab still at its own address, so a bookmark, a reload or a copied link opens the tab it did, and ⌘K goes to each tab, the Store and Add a tool server.**
 - **The composer's effort row names Xhigh as Extra high.**
 - **The sidebar no longer draws a Capabilities header over the Capabilities row: Capabilities, Learning and Workflows follow Terminal under Platform, in the same order, each at the address it had.**
+- **Each Capabilities tab shows its list beside the selected item's detail, where Permissions says what the item may do; in a window under 840 px wide the detail shows in place of the list, with Back to it. A tab's header holds only its Add (Install on the Store): syncing and exporting agents, Re-probe MCP servers and Manage Sources are in the list's More menu, and Proposals is a view of Skills. Every list is in name order, tool servers included, and a sort control names the order it shows.**
 
 ### Fixed
 

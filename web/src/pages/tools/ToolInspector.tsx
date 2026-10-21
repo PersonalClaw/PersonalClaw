@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { FieldError } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle } from 'lucide-react'
@@ -22,7 +22,13 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  never consulted the flag at all — the confirm was unconditional local state. A parenthetical
  *  that attributes the safety to a field nothing reads is how the gap stayed invisible, so it
  *  names the real guard now (#506). */
-export function ToolInspector({ tool, serverStatus }: { tool: ToolItem; serverStatus?: { state: string; detail?: string } }) {
+export function ToolInspector({ tool, serverStatus, permissions }: {
+  tool: ToolItem
+  serverStatus?: { state: string; detail?: string }
+  /** What the tool may do, and the trust its server holds, as Capabilities' right pane shows it
+   *  (`CapabilityPermissions`): under its description, above its parameters. */
+  permissions?: ReactNode
+}) {
   const { props, required } = schemaProps(tool.parameters)
 
   return (
@@ -36,6 +42,8 @@ export function ToolInspector({ tool, serverStatus }: { tool: ToolItem; serverSt
       </div>
 
       {tool.description && <Section label="Description"><Markdown>{tool.description}</Markdown></Section>}
+
+      {permissions}
 
       <Section label={`Parameters${props.length ? ` · ${props.length}` : ''}`}>
         {props.length === 0 ? <p data-type="body-s" className="text-on-surface-low">No parameters.</p> : (

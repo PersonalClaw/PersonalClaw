@@ -20,6 +20,7 @@ import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm
 import { ModelUnavailableNote, unavailableModelOption } from './agentModelStatus'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { repoDocUrl } from '../../lib/repoDocs'
+import { CapabilityPermissions, agentPermissions, discoveredAgentPermissions } from '../capabilities/CapabilityPermissions'
 
 /** An agent as the editor starts from it: the draft of its profile, with the revision the same read
  *  reported — the base the save names. */
@@ -169,7 +170,6 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
             {agent.model_unavailable && <span className="font-sans text-[0.6875rem]" style={{ color: 'var(--color-warning)' }}>· unavailable</span>}
           </span>
         )}
-        {agent.approval_mode && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.approval_mode}</span>}
       </div>
 
       {agent.model_unavailable && agent.model && (
@@ -196,8 +196,9 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         </Section>
       )}
 
-      <Caps label="Skills" items={agent.skills} />
-      <Caps label="Tools" items={agent.tools} />
+      {/* What it may do: how its tool calls are approved, and the tools and skills it may use,
+          each changed with Edit and held by the gateway. */}
+      <CapabilityPermissions rows={agentPermissions(agent, (agent.provider || '').startsWith('acp') ? providerMeta(agent.provider, providerLabel).label : undefined)} />
       <Caps label="Triggers" items={agent.triggers} resolve={triggerNames} />
 
       {!reserved && <AgentAdvanced agentName={agent.name} />}
@@ -518,6 +519,8 @@ export function DiscoveredAgentDetail({ agent, providerId, label }: { agent: Dis
       </div>
 
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
+
+      <CapabilityPermissions rows={discoveredAgentPermissions(pm.label)} />
 
       {agent.provider_agent && <Section label="Runtime agent id"><span className="font-mono text-on-surface-var text-[0.8125rem]">{agent.provider_agent}</span></Section>}
       {(agent.models?.length ?? 0) > 0 && (

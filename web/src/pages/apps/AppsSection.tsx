@@ -12,14 +12,15 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { fadeEnter } from '../../design/motion'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/FilterMenu'
 import { Modal } from '../../ui/Modal'
-import { SidePanel } from '../../ui/SidePanel'
+import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
+import { ListMoreMenu } from '../capabilities/ListMoreMenu'
+import { byName, compareApps, orderSaid } from '../capabilities/capabilityOrder'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { MoreRow } from '../../ui/MoreRow'
@@ -165,8 +166,9 @@ export function sourceGroup(it: StoreItem, localSources: string[]): { key: strin
   return { key: `local:${key}`, label: localSourceLabel(key) }
 }
 
-/** Group items by source, ordered: Built-in first, then the rest alphabetically
- *  by label. Item order within a group is preserved (already sorted by the caller). */
+/** Group items by source, ordered: Built-in first, then the rest by label, A–Z, case-insensitive —
+ *  the order the Store's Sources rail lists them in, which reads this same grouping. Item order
+ *  within a group is preserved (already sorted by the caller, by display name: `compareApps`). */
 function groupBySource(items: StoreItem[], localSources: string[] = []): { key: string; label: string; items: StoreItem[] }[] {
   const groups = new Map<string, { key: string; label: string; items: StoreItem[] }>()
   for (const it of items) {
@@ -176,7 +178,7 @@ function groupBySource(items: StoreItem[], localSources: string[] = []): { key: 
     bucket.items.push(it)
   }
   return [...groups.values()].sort((a, b) =>
-    a.key === 'builtin' ? -1 : b.key === 'builtin' ? 1 : a.label.localeCompare(b.label))
+    a.key === 'builtin' ? -1 : b.key === 'builtin' ? 1 : byName(a.label, b.label) || (a.key < b.key ? -1 : 1))
 }
 
 /** A source-category heading rendered above each group's card grid. */
@@ -540,14 +542,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     if (libCap !== 'all') out = out.filter((a) =>
       libCap === 'ui' ? a.hasUI : libCap === 'backend' ? a.hasBackend : a.hasConfig)
     if (libEntity !== 'all') out = out.filter((a) => a.isProvider && a.providerType === libEntity)
-    const byName = (a: AppSummary, b: AppSummary) => a.displayName.localeCompare(b.displayName)
+    // The named order: by display name, case-insensitive, equal names by the app's name. Every
+    // other order breaks its ties the same way.
     out = [...out].sort((a, b) => {
       switch (libSort as LibSortKey) {
-        case 'updated': return timeDesc(a.updatedAt, b.updatedAt) || byName(a, b)
-        case 'installed': return timeDesc(a.installedAt, b.installedAt) || byName(a, b)
-        case 'status': return Number(b.enabled) - Number(a.enabled) || byName(a, b)
-        case 'type': return KIND_ORDER[libKind(a)] - KIND_ORDER[libKind(b)] || byName(a, b)
-        default: return byName(a, b)
+        case 'updated': return timeDesc(a.updatedAt, b.updatedAt) || compareApps(a, b)
+        case 'installed': return timeDesc(a.installedAt, b.installedAt) || compareApps(a, b)
+        case 'status': return Number(b.enabled) - Number(a.enabled) || compareApps(a, b)
+        case 'type': return KIND_ORDER[libKind(a)] - KIND_ORDER[libKind(b)] || compareApps(a, b)
+        default: return compareApps(a, b)
       }
     })
     return out
@@ -595,12 +598,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     if (storeEntity !== 'all') out = out.filter((e) => e.isProvider && e.providerType === storeEntity)
     if (storeTag !== 'all') out = out.filter((e) => (e.tags ?? []).includes(storeTag))
     if (storeSrc !== 'all') out = out.filter((e) => sourceGroup(e, catalog?.localSources ?? []).key === storeSrc)
-    const byName = (a: StoreItem, b: StoreItem) => a.displayName.localeCompare(b.displayName)
+    // The named order: by display name within each source group (the grouping is the grid's),
+    // case-insensitive, equal names by the listing's id. Every other order breaks its ties the same way.
     out = [...out].sort((a, b) => {
       switch (storeSort as StoreSortKey) {
-        case 'author': return (a.author || '').localeCompare(b.author || '') || byName(a, b)
-        case 'type': return Number(b.isProvider) - Number(a.isProvider) || byName(a, b)
-        default: return byName(a, b)
+        case 'author': return byName(a.author || '', b.author || '') || compareApps(a, b)
+        case 'type': return Number(b.isProvider) - Number(a.isProvider) || compareApps(a, b)
+        default: return compareApps(a, b)
       }
     })
     return out
@@ -613,6 +617,10 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // installed. Exactly one is set (installed apps aren't in the Store universe).
   const open = apps?.find((a) => a.name === openName) ?? null
   const openStore = open ? null : (storeUniverse.find((e) => e.name === openName) ?? null)
+  // The Store's category and source rail sits beside its cards while the list has the whole width.
+  // A detail beside the list leaves it a fixed narrow column, so the rail's two dimensions move into
+  // the Filter & sort menu then, as they do on a phone.
+  const railShown = !isMobile && !(open || openStore || sourcesOpen)
 
   // Shared, real app actions (enable/disable inline; configure/update/force-
   // uninstall modals; open→app page) — dispatched by BOTH the cards and the
@@ -667,20 +675,20 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     const entities = entityOptions(storeUniverse.filter((e) => e.isProvider).map((e) => e.providerType))
     if (entities.length) s.push({ title: 'Provider entity', value: storeEntity, defaultKey: 'all', onChange: setStoreEntity,
       options: [{ key: 'all', label: 'Any entity' }, ...entities] })
-    // The two rail dimensions appear in this dropdown ONLY on a narrow viewport.
-    // The rail owns them whenever it is on screen, so a wide user never meets the same
-    // filter twice — and a narrow user, who has no rail, still reaches both.
-    if (isMobile && storeCategories.length) {
+    // The two rail dimensions appear in this dropdown ONLY while the rail is not shown (a narrow
+    // viewport, or a detail beside the list). The rail owns them whenever it is on screen, so a
+    // wide user never meets the same filter twice — and one with no rail still reaches both.
+    if (!railShown && storeCategories.length) {
       s.push({ title: 'Categories', value: storeTag, defaultKey: 'all', onChange: setStoreTag,
         options: [{ key: 'all', label: 'All apps' }, ...storeCategories] })
     }
-    if (isMobile && storeSources.length) {
+    if (!railShown && storeSources.length) {
       s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc,
         options: [{ key: 'all', label: 'All sources' }, ...storeSources] })
     }
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, isMobile, storeCategories, storeSources])
+  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, railShown, storeCategories, storeSources])
 
   // 🔑 ONE definition of "narrowed" per view, named once and used by BOTH the empty state and the
   // announcement. Each was already written out — the library's inside its empty-state condition, the
@@ -691,14 +699,33 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
 
   // Controls show whenever there's a populated list to act on (or while loading).
   const showLibControls = !isStore && (apps === undefined || apps.length > 0)
-  // The Store now lists the full known-app universe (installed + available), so the
-  // controls show whenever it's non-empty (or still loading).
+  // The Store now lists the full known-app universe (installed + available), so its search and
+  // Filter & sort show whenever it's non-empty (or still loading). Its bar itself is always there,
+  // for the More menu that holds Manage Sources.
   const showStoreControls = isStore && (catalog === undefined || storeUniverse.length > 0)
+
+  // The selected app's detail beside the list (`?open=`): an installed app's with its lifecycle, or
+  // a Store listing's with its Install; or, with nothing selected, the Store's sources.
+  const shown = open ?? openStore
+  const detail: CapabilityDetail | null = shown ? {
+    id: shown.name, title: shown.displayName, icon: <AppIcon name={shown.icon} size={18} />,
+    onClose: () => setOpenName(''),
+    body: open ? (
+      <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
+        onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
+        onManageInstances={() => nav('settings/providers')} />
+    ) : (
+      <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
+    ),
+  } : sourcesOpen ? {
+    id: 'sources', title: 'Manage Sources', icon: <Database size={18} />, onClose: () => setSourcesOpen(false),
+    body: <SourcesPanel catalog={catalog} catalogError={catalogErr} reloadCatalog={reloadCatalog} onInstalled={noteInstalled} />,
+  } : null
 
   return (
     <>
-      <WorkbenchLayout
-        topBar={<TopBar
+      <ListBesideDetail noun="apps" detail={detail}
+        header={<TopBar
           keepCornerPadding
           left={
             <div className="flex items-center gap-3 min-w-0">
@@ -776,7 +803,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
             </div>
           }
           right={<HeaderActions>
-            {isStore && <HeaderControl icon={Database} label="Manage Sources" priority="default" onClick={() => setSourcesOpen(true)} />}
+            {/* The one action the header holds (#3817): Install on the Store tab, and on Apps, where
+                adding an app is installing one. Manage Sources is in the Store list's More menu. */}
             <HeaderControl icon={Plus} label="Install from URL" variant="primary" priority="primary" onClick={() => setInstalling(true)} />
           </HeaderActions>}
         />}
@@ -784,34 +812,18 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search installed apps', label: 'Search apps' }}
             results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}
             stale={apps !== undefined && appsStale}>
-            <FilterMenu sections={libSections} label="Filter & sort" />
+            {/* The control names the order the list shows. */}
+            <FilterMenu sections={libSections} label={orderSaid(libSort)} />
           </ListControls>
-        ) : showStoreControls ? (
-          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' }}
+        ) : isStore ? (
+          <ListControls
+            search={showStoreControls ? { value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' } : undefined}
             results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}
             stale={catalog !== undefined && catalogStale}>
-            <FilterMenu sections={storeSections} label="Filter & sort" />
+            {showStoreControls && <FilterMenu sections={storeSections} label={orderSaid(storeSort)} />}
+            <ListMoreMenu actions={[{ label: 'Manage Sources', icon: Database, onSelect: () => { setOpenName(''); setSourcesOpen(true) } }]} />
           </ListControls>
         ) : undefined}
-        panel={(open || openStore) ? (
-          <SidePanel key={(open ?? openStore)!.name} fillHeight storeKey="app-panel-w"
-            title={(open ?? openStore)!.displayName} icon={<AppIcon name={(open ?? openStore)!.icon} size={18} />}
-            onClose={() => setOpenName('')}>
-            {open ? (
-              <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
-                onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
-                onManageInstances={() => nav('settings/providers')} />
-            ) : (
-              <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
-            )}
-          </SidePanel>
-        ) : sourcesOpen && (
-          <SidePanel key="sources" fillHeight storeKey="app-sources-panel-w"
-            title="Manage Sources" icon={<Database size={18} />}
-            onClose={() => setSourcesOpen(false)}>
-            <SourcesPanel catalog={catalog} catalogError={catalogErr} reloadCatalog={reloadCatalog} onInstalled={noteInstalled} />
-          </SidePanel>
-        )}
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
           {isStore ? (
@@ -822,7 +834,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                and would go red if this line were deleted. Below the mobile threshold the
                rail is absent and its two dimensions move into the FilterMenu dropdown. */
             <div className="flex items-start gap-l">
-              {!isMobile && (
+              {railShown && (
                 <StoreSideRail
                   categories={storeCategories} category={storeTag} onCategory={setStoreTag}
                   categoryTotal={storeUniverse.length}
@@ -835,7 +847,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                   installedCount={(apps ?? []).filter((a) => !a.native).length}
                   onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
                   filtersActive={storeNarrowed}
-                  onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
+                  onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch} openName={openName}
                   onOpenSources={() => setSourcesOpen(true)} />
               </div>
             </div>
@@ -872,7 +884,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                       <SourceDivider label={g.label} count={g.items.length} />
                       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                         {g.items.map((it) => (
-                          <AppCard key={it.name} item={it}
+                          <AppCard key={it.name} item={it} selected={it.name === openName}
                             onInstall={() => {}} onOpen={() => setOpenName(it.name)} onAction={appActions.dispatch} />
                         ))}
                       </div>
@@ -882,7 +894,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
               </>
             )}
         </div>
-      </WorkbenchLayout>
+      </ListBesideDetail>
       {appActions.modals}
 
       {installing && <InstallModal onClose={() => setInstalling(false)} onInstalled={(name) => { setInstalling(false); noteInstalled(name) }} />}
@@ -924,7 +936,7 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *  Exported for the same reason `SourcesPanel` is: what a CARD-FOOTER install discloses at
  *  consent is a claim only a driven render can make. It is the fastest install path in the
  *  product and the one that used to disclose the least. */
-export function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
+export function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources, openName = '' }: {
   catalog: AppCatalog | null | undefined
   /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
    *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
@@ -942,6 +954,8 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
   onOpen: (name: string) => void
   onAction: DispatchAppAction
   onOpenSources: () => void
+  /** The listing whose detail is open beside the grid. */
+  openName?: string
 }) {
   // Every card-footer Install opens the ONE consent dialog, and nothing is installed until
   // the user confirms there. This was the fastest install path in the product and, on a clean
@@ -976,7 +990,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
               <SourceDivider label={g.label} count={g.items.length} />
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {g.items.map((e) => (
-                  <AppCard key={e.name} item={e}
+                  <AppCard key={e.name} item={e} selected={e.name === openName}
                     onInstall={() => install.begin(installTargetFor(e))}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
@@ -1238,8 +1252,10 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
  *     menu of the real lifecycle actions (Configure / Update / Enable-Disable /
  *     Force-uninstall). The card's NAME is a link to the detail panel (explicit
  *     "details" affordance), so the action buttons never double as "open panel". */
-function AppCard({ item, onInstall, onOpen, onAction }: {
+function AppCard({ item, onInstall, onOpen, onAction, selected = false }: {
   item: StoreItem; onInstall: () => void; onOpen: () => void; onAction: DispatchAppAction
+  /** The card whose detail is open beside the list. */
+  selected?: boolean
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
@@ -1334,10 +1350,10 @@ function AppCard({ item, onInstall, onOpen, onAction }: {
       // the tab order explicitly, as it did when Motion's hover gesture marked it focusable.
       tabIndex={-1}
       onClick={onOpen}
-      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container hover:shadow-lift has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
+      className={`group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border bg-surface-container hover:shadow-lift has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary ${selected ? 'border-primary' : 'border-outline-variant/40'}`}
       style={{ borderRadius: 'var(--radius-lg)' }}>
       {/* The name was carried by `title` on the wrapper before. */}
-      <RowHitTarget label={`${item.displayName} — details`} />
+      <RowHitTarget label={`${item.displayName} — details`} selected={selected} />
 
       {/* Banner — the full-bleed cap EVERY card carries. `data-art` names which of the
           two paths drew it, so a test can tell "the app's own hero" from "the generated

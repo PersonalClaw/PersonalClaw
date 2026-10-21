@@ -137,6 +137,8 @@ describe('the Look in press', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Look in Claude Code/ }))
     await screen.findByText(WEATHER.name)
     const before = importableMcp.mock.calls.length
+    // Re-probe is in the list's More menu: the header holds only Add tool server (#3817).
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('button', { name: 'Re-probe MCP servers' }))
     await waitFor(() => expect(importableMcp.mock.calls.length).toBeGreaterThan(before))
     await settle()

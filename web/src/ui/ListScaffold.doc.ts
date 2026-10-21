@@ -67,6 +67,7 @@ const docs: UiDoc[] = [
       { name: 'children', description: 'The row content (leading icon, title, meta, trailing controls).' },
       { name: 'label', description: "What the row IS, for assistive tech — normally the entity's title. A clickable row is a button, and without this its accessible name is computed from the whole subtree (measured up to 2001 characters for one inbox row). Required in practice for every clickable row; ignored on a static one, which is not a button." },
       { name: 'onClick', description: 'Makes the row interactive — a hover and press tint, the row-wide hit target and a pointer cursor. Omit for a static row.' },
+      { name: 'selected', description: "The row whose detail is open beside the list: `aria-current` on its button and the selection tint. A list beside a detail is not a listbox, so it is not `aria-selected`." },
     ],
     bestPractices: [
       { guidance: true, description: 'Pass `label` whenever you pass `onClick` — the row announces that one short name instead of reading its entire content as the button name. The body stays readable underneath as ordinary text.' },
