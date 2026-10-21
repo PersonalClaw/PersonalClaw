@@ -675,6 +675,7 @@ junit = ["reports/junit-web-unit.xml"]
 command = [
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },
+  { argv = ["npm", "run", "design:detect"] },
   { argv = ["npm", "run", "test:desktop"] },
   { argv = ["npm", "run", "test:mobile"] },
 ]

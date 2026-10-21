@@ -1109,6 +1109,13 @@ jobs:
         # are separate jobs because the harness boots a real gateway, so it needs the Python toolchain
         # too.)
         run: npm run test:web
+      - name: design detector
+        # Impeccable's deterministic rules over web/src, compared exactly with
+        # web/design-detector.baseline.jsonl by web/scripts/designDetector.mjs: a new finding, or
+        # one more of a rule in a file, turns this step red, and a fixed one asks for its line to
+        # change. It runs the platform binary package-lock.json installed (never the npm shim's
+        # download), with telemetry off, against the tracked web/DESIGN.md.
+        run: npm run design:detect
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
         # above already installed it — this step costs ~0.2s and needs no extra runner.
