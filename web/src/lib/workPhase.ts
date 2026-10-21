@@ -16,7 +16,9 @@ import type { AgentActivityState } from './useAgentActivity'
 //     Each surface's own looks are variants inside them.
 //   · `lineKey` — the copy row the gateway writes its line from. The line holds the state only
 //     ("Searching your knowledge"); a surface adds the work's name.
-//   · `world` — the state an ambient world shows it as (`useAgentActivity`'s five).
+//   · `world` — the state an ambient world shows it as (`useAgentActivity`'s six): live work held
+//     up (queued for a slot, retrying, waiting on a busy model) is `blocked`, apart from working, as
+//     the running list marks it (`running_now.BLOCKED_PHASES`).
 //   · `label` — the word the chat says for it.
 //
 // Colour and motion never carry a phase alone: a surface shows its label or its line beside them.
@@ -44,7 +46,7 @@ export interface PhaseLook {
 }
 
 export const WORK_PHASE_LOOKS: Record<WorkPhase, PhaseLook> = {
-  queued: { tone: 'primary', family: 'active', lineKey: 'queued', world: 'working', label: 'Waiting to start' },
+  queued: { tone: 'primary', family: 'active', lineKey: 'queued', world: 'blocked', label: 'Waiting to start' },
   thinking: { tone: 'primary', family: 'active', lineKey: 'thinking', world: 'working', label: 'Thinking' },
   searching: { tone: 'primary', family: 'active', lineKey: 'searching', world: 'working', label: 'Searching' },
   tool: { tone: 'primary', family: 'active', lineKey: 'tool', world: 'working', label: 'Working' },
@@ -56,8 +58,8 @@ export const WORK_PHASE_LOOKS: Record<WorkPhase, PhaseLook> = {
   input: { tone: 'info', family: 'waiting', lineKey: 'question', world: 'needs_input', label: 'Waiting for your answer' },
   done: { tone: 'ok', family: 'quiet', lineKey: 'done', world: 'idle', label: 'Done' },
   error: { tone: 'danger', family: 'blocked', lineKey: 'error', world: 'error', label: 'Stopped' },
-  retrying: { tone: 'primary', family: 'active', lineKey: 'retrying', world: 'working', label: 'Retrying' },
-  waiting_model: { tone: 'primary', family: 'active', lineKey: 'waiting_model', world: 'working', label: 'Waiting for the model' },
+  retrying: { tone: 'primary', family: 'active', lineKey: 'retrying', world: 'blocked', label: 'Retrying' },
+  waiting_model: { tone: 'primary', family: 'active', lineKey: 'waiting_model', world: 'blocked', label: 'Waiting for the model' },
   idle: { tone: 'neutral', family: 'quiet', lineKey: 'idle', world: 'idle', label: 'Nothing running' },
 }
 

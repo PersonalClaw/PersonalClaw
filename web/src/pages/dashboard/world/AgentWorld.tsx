@@ -273,9 +273,16 @@ export function AgentWorld() {
   )
 }
 
-/** One row of the no-canvas fallback. Deliberately the same three facts a node
- *  paints — kind weight, state tone, title — so the fallback is the scene in text,
- *  not a different feature. */
+/** A state in words, as the scene's summary says it: two tones alone (blocked's and idle's are
+ *  both quiet greys) cannot tell a reader which is which. */
+const STATE_WORD: Record<AgentActivityEntity['state'], string> = {
+  needs_input: 'waiting on you', waiting_approval: 'waiting for approval', error: 'in error',
+  blocked: 'blocked', working: 'working', idle: 'idle',
+}
+
+/** One row of the no-canvas fallback. Deliberately the same facts a node paints — kind
+ *  weight, state tone, title — with the state in words beside them, so the fallback is the
+ *  scene in text, not a different feature. */
 function StaticRow({ entity }: { entity: AgentActivityEntity | undefined }) {
   if (!entity) return null
   const v = STATE_VISUAL[entity.state]
@@ -291,6 +298,7 @@ function StaticRow({ entity }: { entity: AgentActivityEntity | undefined }) {
         }}
       />
       <span className="truncate text-on-surface-var">{entity.title}</span>
+      <span className="shrink-0 text-on-surface-low">{STATE_WORD[entity.state]}</span>
     </li>
   )
 }

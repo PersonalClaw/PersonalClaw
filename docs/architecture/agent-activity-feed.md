@@ -6,7 +6,7 @@ thing you glance at, not a list you read. PersonalClaw ships one first-party wor
 
 The platform's contribution is **this contract, not the scene**. A world is handed one
 typed value and renders it. It opens no socket, calls no endpoint, and knows nothing
-about loops, sessions or subagents beyond what is written here.
+about the work that runs beyond what is written here.
 
 - Contract + hook: `web/src/lib/useAgentActivity.ts`
 - First-party world: `web/src/pages/dashboard/world/` (`AgentWorld.tsx` paints,
@@ -24,9 +24,9 @@ useAgentActivity(): {
 }
 
 AgentActivityEntity = {
-  id: string             // kind-prefixed: 'loop:x' | 'session:x' | 'subagent:x'
-  kind: 'session' | 'loop' | 'subagent'
-  state: 'working' | 'needs_input' | 'waiting_approval' | 'idle' | 'error'
+  id: string             // kind-prefixed: 'session:x' | 'loop:x' | 'run:x' | 'subagent:x' | …
+  kind: 'session' | 'loop' | 'run' | 'subagent' | 'trigger' | 'webhook'
+  state: 'working' | 'blocked' | 'needs_input' | 'waiting_approval' | 'idle' | 'error'
   title: string          // never empty — falls back to the kind's noun
   progress?: number      // 0..1, ABSENT when unknown (see below)
   refs: { link: string; session?: string; parent?: string }
@@ -43,34 +43,34 @@ Three rules a world must honour:
 3. **`truncated > 0` must be stated.** Silently painting 64 of 300 misstates the scale
    of what is running.
 
-## Where the data comes from — four public sources, not three
+## Where the data comes from — the running list, and what it does not hold
 
-The fold reads only endpoints the dashboard already reads:
+What runs is read from **one** list, `GET /api/running` (`src/personalclaw/running_now.py`,
+[work phases](work-phases.md#the-running-list)): every kind of live work, each once. The
+gateway has already folded a loop's workers and planner into their loop, a run-backed
+loop into one row, and marked a row `blocked` when it is queued for a slot, retrying or
+waiting on a busy model. The other public sources add only what the list does not hold:
 
 | Source | Contributes | Notes |
 | --- | --- | --- |
-| `GET /api/loops` | every loop | the kind-aware uLoops surface |
-| `GET /api/chat/sessions` | live + recently-active chats | archived sessions are excluded; quiet ones are capped |
-| `GET /api/spawn` | background subagents | the monitor's own bounded list |
-| `GET /api/approvals` | **the `waiting_approval` state** | join key is `PendingApproval.session` |
+| `GET /api/running` | every piece of live work, and the just-finished tail | a chat's turn, a helper, a loop, a workflow run, a trigger's fire, a webhook's turn |
+| `GET /api/chat/sessions` | the quiet chats behind it | archived sessions and a loop's workers and planner (`origin: 'loop'`) are excluded; capped |
+| `GET /api/loops` | the loops that are not running, and a running loop's cycle budget | a loop on the list is the list's |
+| `GET /api/approvals` | which of a row's waits are approvals | a row's `waiting` names approvals and agents' questions alike |
 
-> The contract was first written with **three** sources. The fourth is deliberate and was
-> added during implementation: `waiting_approval` is in the declared state
-> vocabulary and is **not reachable** from a loop. A loop parked on a tool approval
-> still reports `status: 'running'`. A chat's row says it through its run state's
-> phase, but only for its own running turn. Without `/api/approvals` the state would
-> have shipped as an enum member no loop ever reaches. `/api/approvals` is public,
-> already polled by `DashboardLive`, and joins cleanly on `session` ↔
-> `Loop.session_key` / session `key`.
+A row's state is what waits on you for it first: an approval in its `waiting` is
+`waiting_approval`, any other wait (an agent's question) `needs_input`. Then the gateway's
+`blocked`, then its phase. "Busy" painted over "one click away from continuing" is the
+failure the surface exists to prevent: a run whose step's tool waits on you still says
+`running` in its own phase.
 
-An attributed approval **outranks** the entity's own status, for the same reason:
-"busy" painted over "one click away from continuing" is the failure the surface exists
-to prevent.
+A just-finished row paints how it ended: a failure is `error`, a finish rests as `idle`.
 
 ### Loop status → world state
 
-The 12-member `UnifiedLoopStatus` collapses to five states **here and nowhere else**,
-so every world agrees on what "stuck" looks like.
+A loop the running list does not hold keeps its status's state. The 12-member
+`UnifiedLoopStatus` collapses **here and nowhere else**, so every world agrees on what
+"stuck" looks like.
 
 | loop status | world state |
 | --- | --- |
@@ -83,37 +83,41 @@ so every world agrees on what "stuck" looks like.
 widget already treats both as "in flight or awaiting them", and a stalled run painted
 as calm `working` is precisely the lie an ambient surface must not tell.
 
-### Chat phase → world state
+### Phase → world state
 
-A chat's state comes from its row's `run_state`, the last `work_phase` payload the
-gateway sent for it ([work phases](work-phases.md)). While a turn runs, the state is
-its phase's `world` in `web/src/lib/workPhase.ts`, the one table of what each phase
-looks like. With no turn running, the chat is `idle`.
+A row's phase is the work's last `work_phase` payload ([work phases](work-phases.md)), and
+a chat's row is its `run_state`. Its state is the phase's `world` in
+`web/src/lib/workPhase.ts`, the one table of what each phase looks like. A quiet chat is
+`idle`.
 
-| phase while a turn runs | world state |
+| phase | world state |
 | --- | --- |
-| `queued` `thinking` `searching` `tool` `planning` `delegating` `streaming` `listening` `retrying` `waiting_model` | `working` |
+| `thinking` `searching` `tool` `planning` `delegating` `streaming` `listening` | `working` |
+| `queued` `retrying` `waiting_model` | `blocked`: live and held up, never painted as working |
 | `approval` | `waiting_approval` |
 | `input` | `needs_input` |
+| `error` | `error` |
+| `done` `idle` | `idle` |
 
 ## WS envelopes are SIGNALS, NEVER PAYLOADS
 
 This is the load-bearing invariant, inherited verbatim from the DashboardLive contract
 (`web/src/pages/dashboard/DashboardLive.tsx`).
 
-`work_phase`, `sessions`, `subagent*`, `update_progress`, `approval` and
-`approval_resolved` each **nudge a debounced refetch** (600 ms, so a streaming turn's
-envelope storm collapses into one request). A running turn's `work_phase` is said on
-each change of phase and again every 15 s, so the scene is read again at least that
-often while something runs. Not one field is ever read off an envelope.
+`running_changed`, `sessions`, `update_progress`, `approval`, `approval_resolved` and
+`refresh` each **nudge a debounced refetch** (600 ms, so a burst collapses into one
+request). The gateway rings `running_changed` at most once per 150 ms window, for a row
+added or removed or a phase or line that changed, and never for a running turn's liveness
+re-send, so a phase frame of its own is no signal here. Not one field is ever read off an
+envelope.
 A socket reopening after a drop forces a full catch-up refetch; a visibility-gated
-10 s poll covers the rest.
+60 s poll covers the rest.
 
 Why it matters: envelope shapes drift per producer, several producers emit the same
 type with different fields, and a stale process can emit a contradicting one. A surface
 that renders envelope payloads renders whichever producer spoke last.
 
-The rail is `web/src/lib/agentActivitySignals.test.tsx`. It delivers a `work_phase`
+The rail is `web/src/lib/agentActivitySignals.test.tsx`. It delivers a `running_changed`
 carrying deliberately **misleading** `phase`, `line`, `title`, `progress` and
 `entities` fields and asserts the rendered scene came from the refetch — paired with a
 positive control that the refetch demonstrably happened, because "no bad field

@@ -33,11 +33,11 @@ import { join } from 'node:path'
 // failure. The control assertion below pins that, because "just always render the section" is the
 // tempting over-correction and it would put a permanently empty slab in every surface's shell.
 //
-// 🪤 AND THERE IS A SECOND CONSUMER OF THIS ENDPOINT, which is how the browser probe was designed
-// wrong the first time. `lib/useAgentActivity.ts` also polls `/api/spawn`, so two reads land before the
-// widget is even opened, and a request-counting stub fed its good payload to the wrong caller. That
-// consumer already does the right thing (`setError(e)` and it leaves `sources` alone, so it keeps the
-// last known value) — which is the same shape as the fix here, arrived at independently.
+// 🪤 THERE WAS A SECOND CONSUMER OF THIS ENDPOINT, which is how the browser probe was designed wrong
+// the first time: `lib/useAgentActivity.ts` polled `/api/spawn` too, so two reads landed before the
+// widget was even opened. It reads the running list now (`GET /api/running`), which holds every
+// helper, and it does the same right thing on a failed read (`setError(e)` and it leaves `sources`
+// alone, so it keeps the last known value) — the same shape as the fix here, arrived at independently.
 
 const SRC = join(process.cwd(), 'src')
 const widget = readFileSync(join(SRC, 'ui/SystemWidget.tsx'), 'utf8')
@@ -116,7 +116,7 @@ describe('the background-agent fleet read', () => {
     // Named because it is the corroboration for the shape chosen here, and because a later pass
     // "simplifying" it to a clobber would reintroduce the same defect one layer up.
     const hook = readFileSync(join(SRC, 'lib/useAgentActivity.ts'), 'utf8')
-    expect(hook, 'useAgentActivity also reads /api/spawn').toMatch(/api\.spawnedAgents\(\)/)
+    expect(hook, 'useAgentActivity reads the running list').toMatch(/api\.running\(\)/)
     expect(hook, 'and records the error rather than emptying its sources').toMatch(/catch\([\s\S]{0,80}?setError\(/)
     expect(hook, 'it must not blank its sources on failure').not.toMatch(/catch[\s\S]{0,80}?setSources\(\s*(null|\{)/)
   })

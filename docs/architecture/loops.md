@@ -122,14 +122,14 @@ The loop surfaces do not care which home a loop has:
   projected into the loop wire shape by `workflows/loop_view.py` — newest first, filtered alike.
   A projected row carries **`run_id`**; that field, never the kind, is how a surface tells the two
   apart (`web/src/lib/loopKind.ts:loopRoute`, `lib/loopStatus.ts:loopActionSources`). The Loops
-  list, Home (hero + Active Work) and Mission Control's Working lane all read this one listing.
-  The Working lane also reads `GET /api/workflows/runs?status=running`, because a run started
-  from Workflows, by a trigger or by a project is neither a chat session nor a loop. It leaves a
-  run that backs a loop to the loop's card, and a sub-run to the run that spawned it
-  (`lib/attentionLanes.ts:toLanes`). Both lists are re-read when a run starts, moves or ends: the
-  watchdog sends the listing hint `refresh` naming `workflow_runs` on every `workflow_run_update`
-  (`workflows/watchdog._raw_publish`), and Mission Control, Home and the Workflows list's Runs tab
-  re-read on it, so a card moves lanes or leaves without a reload.
+  list and Home (hero + Active Work) read this one listing. Mission Control's Working lane reads
+  the running list instead (`GET /api/running`, [work phases](work-phases.md#the-running-list)),
+  where a run-backed loop is one row, a loop, a sub-run is part of the run that spawned it, and a
+  run started from Workflows, by a trigger or by a project has its own row. The listings are
+  re-read when a run starts, moves or ends: the watchdog sends the listing hint `refresh` naming
+  `workflow_runs` on every `workflow_run_update` (`workflows/watchdog._raw_publish`), Home and the
+  Workflows list's Runs tab re-read on it, and Mission Control re-reads on the list's own
+  `running_changed`, so a card moves or leaves without a reload.
 - **Status.** A run status is projected onto the nearest truthful loop status (`loop_view._STATUS`):
   `cancelled` → `stopped`; `escalated` → `complete` with a non-`done` stop reason, which renders
   "Ended early" (`cycle_budget` when the loop spent its iterations, `worker_failed` otherwise).
@@ -339,8 +339,8 @@ switch is off, when it carries on by itself. A stage the switch meets at dispatc
 manager refuses for it, waits rather than failing. The status stays `running`; the run's status, its
 row in the run list and its loop view carry the sentence (`held`). The run page shows it under a
 **Held** status, as the run list and the chat's run card read Held rather than Running
-(`workflowMeta.runLook`), and Mission Control's Working lane leaves a held run out, as it leaves out a
-held loop.
+(`workflowMeta.runLook`), and Mission Control's Working lane shows it blocked, saying it is held, as
+it shows a held loop.
 
 ### Mode: Attended and Unattended
 

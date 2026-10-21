@@ -25,9 +25,9 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: () => Promise.resolve([]),
-    chatSessions: () => Promise.resolve([]),
-    uLoops: () => Promise.resolve([]),
-    workflowRuns: () => Promise.resolve({ runs: [], total: 0, limit: 200, offset: 0 }),
+    // Nothing is running in these scenarios: the Working lane is the running list.
+    running: () => Promise.resolve({ running: [], finished: [] }),
+    status: () => Promise.resolve({}),
     skillProposals: (...a: unknown[]) => skillProposals(...a),
     acceptSkillProposal: (...a: unknown[]) => acceptSkillProposal(...a),
     rejectSkillProposal: (...a: unknown[]) => rejectSkillProposal(...a),
@@ -117,7 +117,7 @@ describe("Mission Control's Your turn and a skill proposal", () => {
 
 describe('toLanes and the proposal list', () => {
   it('keeps a row whose proposal is not in the list — stale degrades to visible', () => {
-    const lanes = toLanes([mirror(WRITEUP), mirror(AUTHORING)], [], [], [], [], [AUTHORING])
+    const lanes = toLanes([mirror(WRITEUP), mirror(AUTHORING)], [], [], [], [AUTHORING])
     const cards = lanes['your-turn']
     expect(cards.map((c) => c.origin).sort()).toEqual(['inbox', 'proposal'])
     const card = cards.find((c) => c.origin === 'proposal')

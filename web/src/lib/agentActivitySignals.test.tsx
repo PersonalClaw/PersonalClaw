@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { WsMessage } from './useChatSocket'
-import { TURN_STARTED, runState, runningState } from '../test/runState'
+import { TURN_STARTED } from '../test/runState'
 
 // ── WS envelopes are SIGNALS, NEVER PAYLOADS (the DashboardLive contract) ─────
 //
 // This is the architectural point of `useAgentActivity`, so it is asserted the only
 // way that means anything: deliver an envelope carrying MISLEADING fields — a
-// `work_phase` claiming a phase, a title and an entity list that contradict the
+// `running_changed` claiming a phase, a title and an entity list that contradict the
 // server — and prove the rendered scene came from the REFETCH, not the envelope.
 //
 // 🪤 Why a "no bad string appeared" test would be vacuous on its own: if the
@@ -19,8 +19,9 @@ import { TURN_STARTED, runState, runningState } from '../test/runState'
 /** The one envelope under test, stuffed with everything a payload-reading consumer
  *  would have grabbed. Every value here is a lie the server never said. */
 const POISON: WsMessage = {
-  type: 'work_phase',
+  type: 'running_changed',
   data: {
+    changed: [{ work: 'chat:live', session: 'live' }],
     session: 'live',
     phase: 'input',
     line: 'FROM-ENVELOPE',
@@ -51,12 +52,16 @@ function mockDeps() {
     ...(await orig<Record<string, unknown>>()),
     api: {
       uLoops: () => Promise.resolve([]),
-      spawnedAgents: () => Promise.resolve([]),
       approvals: () => Promise.resolve([]),
-      chatSessions: () => {
+      chatSessions: () => Promise.resolve([]),
+      // The running list is where a running chat is read: its row is its run state.
+      running: () => {
         fetches++
-        const run_state = wire.running ? runningState({ session: 'live' }) : runState({ session: 'live' })
-        return Promise.resolve([{ key: 'live', title: wire.title, messages: 1, run_state }])
+        const live = {
+          work: 'chat:live', kind: 'chat', session: 'live', phase: 'thinking', line: 'Thinking', since: null,
+          name: wire.title, agent: '', started_at: null, route: '#/chat/live', blocked: false, waiting: [],
+        }
+        return Promise.resolve({ running: wire.running ? [live] : [], finished: [] })
       },
     },
   }))
@@ -155,7 +160,7 @@ describe('a poisoned work_phase envelope cannot reach the rendered scene', () =>
 })
 
 describe('signal routing', () => {
-  it.each(['work_phase', 'sessions', 'update_progress', 'subagent_started', 'subagent_done', 'approval'])(
+  it.each(['running_changed', 'sessions', 'update_progress', 'approval', 'approval_resolved', 'refresh'])(
     '%s nudges a refetch', async (type) => {
       await mountProbe()
       await waitFor(() => expect(fetches).toBe(1))
@@ -168,6 +173,10 @@ describe('signal routing', () => {
     await waitFor(() => expect(fetches).toBe(1))
     deliver({ type: 'inbox_item', data: {} })
     deliver({ type: 'notification', data: {} })
+    // The running list rings for every phase change but a liveness re-send, so a phase frame of
+    // its own is not a signal here: it would re-read the list every fifteen seconds a turn runs.
+    deliver({ type: 'work_phase', data: {} })
+    deliver({ type: 'subagent_tool', data: {} })
     // Waited past the debounce window; a false-positive route would have fired.
     await new Promise((r) => setTimeout(r, 900))
     expect(fetches).toBe(1)
@@ -176,7 +185,7 @@ describe('signal routing', () => {
   it('a burst of envelopes collapses into ONE refetch (debounced)', async () => {
     await mountProbe()
     await waitFor(() => expect(fetches).toBe(1))
-    for (let i = 0; i < 25; i++) deliver({ type: 'work_phase', data: {} })
+    for (let i = 0; i < 25; i++) deliver({ type: i % 2 ? 'running_changed' : 'sessions', data: {} })
     await waitFor(() => expect(fetches).toBe(2), { timeout: 3000 })
     await new Promise((r) => setTimeout(r, 700))
     expect(fetches, '25 envelopes must not be 25 requests').toBe(2)
@@ -197,9 +206,9 @@ describe('the fold’s own failure is never silence', () => {
     vi.doMock('./api', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
       api: {
-        uLoops: () => Promise.reject(new Error('gateway down')),
+        running: () => Promise.reject(new Error('gateway down')),
+        uLoops: () => Promise.resolve([]),
         chatSessions: () => Promise.resolve([]),
-        spawnedAgents: () => Promise.resolve([]),
         approvals: () => Promise.resolve([]),
       },
     }))

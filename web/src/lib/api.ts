@@ -1519,6 +1519,46 @@ export interface RunState {
   queued_messages: number
   seq: number
 }
+/** The kinds of live work (`workref.WORK_KINDS`). */
+export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | 'webhook'
+
+/** One piece of live work in `GET /api/running` (`running_now`): the work's last `work_phase`
+ *  frame, with the row's own fields beside it. A chat's row is its `run_state`, so it carries that
+ *  payload's fields too. */
+export interface RunningRow {
+  /** `<kind>:<id>` (`workref.work_ref`). */
+  work: string
+  kind: WorkKind
+  /** The chat the work is for, or "" for work no chat started. */
+  session: string
+  phase: WorkPhase
+  /** What it is doing, in the gateway's words for its phase. */
+  line: string
+  /** When its phase or its line last changed: its last update. */
+  since: string | null
+  /** A chat's title, a loop's goal, a run's name, a helper's task. */
+  name: string
+  /** The agent doing it, "" when none or several. */
+  agent: string
+  started_at: string | null
+  /** The in-app route that opens the work, or "" when nothing does. */
+  route: string
+  /** Queued for a slot, waiting on a busy model, or retrying: live, and not working. */
+  blocked: boolean
+  /** The ids of the approvals and the agents' questions waiting on you for it. */
+  waiting: string[]
+}
+
+/** `GET /api/running`: everything live, oldest first, and the last endings, newest first. */
+export interface RunningList {
+  running: RunningRow[]
+  /** The last 20 endings, each kept 10 minutes: a finished row's phase is how it ended. */
+  finished: RunningRow[]
+}
+
+/** `GET /api/running/count`, read from the same list without its rows. */
+export interface RunningCount { live: number; blocked: number; waiting: number; finished: number }
+
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
@@ -9466,6 +9506,10 @@ export const api = {
   // Pending tool approvals (dashboard Action Center). resolveApproval mirrors the
   // in-chat approve/reject, keyed by the approval id.
   approvals: () => get<PendingApproval[]>('/api/approvals'),
+  /** Everything running now and the just-finished tail (`running_now`): one list every reader of
+   *  live work reads, read again when a `running_changed` frame says it moved. */
+  running: () => get<RunningList>('/api/running'),
+  runningCount: () => get<RunningCount>('/api/running/count'),
   resolveApproval: (id: string, action: 'approve' | 'reject') =>
     post<{ ok: boolean }>(`/api/approvals/${encodeURIComponent(id)}/${action}`, {}),
   // Content-free push. `pushStatus` carries the VAPID PUBLIC key

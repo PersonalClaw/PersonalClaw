@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type SkillProposal, type WorkflowRunSummary } from '../../lib/api'
+import { api, ApiError, hasApiCode, type InboxItem, type PendingApproval, type RunningList, type RunningRow, type SkillProposal } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
-import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
 import { TextLink } from '../../ui/TextLink'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
-import { LANES, toLanes, type ActivityInput, type Lane, type LaneCard } from '../../lib/attentionLanes'
+import { LANES, toLanes, type Lane, type LaneCard } from '../../lib/attentionLanes'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
+import { RunningLane, type InterruptedRow } from './RunningLane'
 
 // ── Mission Control — the locked four-lane attention view ──────────────────────────────────
 //
@@ -80,84 +81,55 @@ const LANE_EMPTY: Record<Lane, string> = {
   idle: 'Nothing is idle.',
 }
 
-// One `dashboard:`-namespaced key, one fetch, all THREE inputs. `toLanes` takes them together, so
-// reading them under separate keys would let the view paint a lane split computed from three
-// different instants.
+// One `dashboard:`-namespaced key, one fetch, every input. `toLanes` takes them together, so
+// reading them under separate keys would let the view paint a lane split computed from different
+// instants.
 const ATTENTION_KEY = 'dashboard:mission-control'
+
+/** Restart-cut rows kept at most, and for how long: as the gateway keeps its own endings
+ *  (`running_now.TAIL_ROWS`, `TAIL_SECS`). */
+const INTERRUPTED_KEPT = 20
+const INTERRUPTED_MS = 10 * 60 * 1000
 
 interface Attention {
   items: InboxItem[]
   approvals: PendingApproval[]
-  activity: ActivityInput[]
-  /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
-   *  lane's evidence for a loop no chat session carries. */
-  loops: Loop[]
-  /** Every RUNNING workflow run — the Working lane's evidence for a run that is neither a chat
-   *  session nor a loop. */
-  runs: WorkflowRunSummary[]
+  /** `GET /api/running`: the Working lane, and its just-finished tail. */
+  running: RunningList
   /** The skill proposals waiting on a yes or no — Home's To triage reads the same list, so a
    *  proposal is named and decided the same way on both. */
   proposals: SkillProposal[]
 }
 
-/** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
+/** ── WORKING IS THE RUNNING LIST ───────────────────────────────────────────────────────────────
  *
- *  "Working" is NOT derivable from the attention store. `InboxItemStatus`' lifecycle is
- *  pending → seen → handled | dismissed: two open states, two closed, and no in-flight one. The
- *  single candidate, `sent`, is an enum member nobody writes. Keying the lane off it would have
- *  shipped a permanently empty lane wearing a confident label — which is strictly worse than no
- *  lane, because an empty "Working" asserts that nothing is running.
+ *  "Working" is NOT derivable from the attention store: `InboxItemStatus`' lifecycle has no
+ *  in-flight state, and an empty "Working" asserts that nothing is running. It is read from the one
+ *  list of live work, `GET /api/running` (`running_now`), which every reader of live work shares:
+ *  a chat's turn, a helper, a loop with its workers and planner folded in, a workflow run, a
+ *  trigger's fire and a webhook's turn, each once. This view derives none of it: it used to fold
+ *  the chat list, the loop list and the running runs itself, and skipped every helper.
  *
- *  So running work is observed where it actually exists: the live chat sessions, each with its
- *  `run_state` — the chat's last phase frame, which names a turn while one runs and says whether a
- *  stop is asked of it. `laneFor` never returns `'working'`, so this argument is the ONLY path to
- *  that lane.
- *
- *  The list's origin fields travel too: they say which loop a worker session belongs to, which is
- *  how Working shows a loop once rather than once more per worker (`toLanes`), and the preview
- *  fields are what a chat with no title yet is named by (`sessionTitle`). */
-function activityOf(s: ChatSessionSummary): ActivityInput {
-  return {
-    key: s.key,
-    title: s.title,
-    run_state: s.run_state,
-    origin: s.origin,
-    source_id: s.source_id,
-    source_label: s.source_label,
-    prompt_preview: s.prompt_preview,
-    last_message: s.last_message,
-    created: s.created,
-    last_activity_ts: s.last_activity_ts,
-    last_ts: s.last_ts,
-  }
-}
-
-/** Deliberately NOT `.catch(() => [])` on any leg. A swallowed read failure paints four empty
+ *  Deliberately NOT `.catch(() => [])` on any leg. A swallowed read failure paints four empty
  *  lanes, and four empty lanes is this surface's "all clear" — the single most misleading thing it
  *  could show. The error reaches `useQuery` and the view says it could not load.
  *
- *  The three lists are handed to `toLanes` UNMERGED, and that is a correctness requirement rather
- *  than a stylistic one: the pending-approval registry raises an `agent_request` inbox row for
- *  every pending approval, carrying `refs.approval = <registry id>` — and `PendingApproval.id` IS
- *  that id. So a pending approval is already on the wire TWICE.
+ *  The approvals and the Inbox are handed to `toLanes` UNMERGED, and that is a correctness
+ *  requirement rather than a stylistic one: the pending-approval registry raises an
+ *  `agent_request` inbox row for every pending approval, carrying `refs.approval = <registry id>` —
+ *  and `PendingApproval.id` IS that id. So a pending approval is already on the wire TWICE.
  *  De-duplicating it is `toLanes`' job (it drops the mirror when the approval is in the same
  *  snapshot and KEEPS it when it is not, because losing a row is worse than a stale one).
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, sessions, loops, running, proposals] = await Promise.all([
+  const [items, approvals, running, proposals] = await Promise.all([
     api.inboxOpen(),
     api.approvals(),
-    api.chatSessions(),
-    api.uLoops(),
-    // 200 is the route's own ceiling (`api_runs_list`), far past what one install runs at once.
-    api.workflowRuns({ status: 'running', limit: 200 }),
+    api.running(),
     api.skillProposals(),
   ])
-  return {
-    items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs,
-    proposals: proposals.proposals,
-  }
+  return { items, approvals, running, proposals: proposals.proposals }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -261,26 +233,40 @@ function endedText(err: unknown): string | null {
 }
 
 /** The frames that change what this view shows. Push, not a poll: the registry broadcasts
- *  `approval`/`approval_resolved`, the Inbox `inbox*`, a session's run state `sessions`/
- *  `work_phase`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
- *  run starts, changes status or ends, and `loops` when a loop does — so a card appears,
- *  resolves or moves lane while the page is open, without a timer re-reading five endpoints on an
- *  idle tab. The two Working-lane lists had no frame here, so a run that finished or failed kept
- *  its "running" card until a reload. */
+ *  `approval`/`approval_resolved`, the Inbox `inbox*`, and the running list `running_changed`,
+ *  at most once per window and never for a running turn's liveness re-send — so a card appears,
+ *  resolves or moves lane while the page is open, without a timer re-reading every endpoint on an
+ *  idle tab. Each is a signal: the view reads its lists again and never a field of the frame. */
 function refreshesAttention(m: WsMessage): boolean {
   const type = m.type
-  if (type === 'refresh') return refreshKinds(m).some((k) => k === 'workflow_runs' || k === 'loops')
   return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
-    || type === 'sessions' || type === 'work_phase'
+    || type === 'running_changed'
+}
+
+/** The gateway's start time (`GET /api/status`), or `null` when it cannot be read: then whether it
+ *  restarted cannot be told, and nothing is said cut off. It feeds no lane. */
+async function startTime(): Promise<number | null> {
+  try {
+    const s = await api.status()
+    return typeof s.start_time === 'number' ? s.start_time : null
+  } catch {
+    return null
+  }
+}
+
+/** Live before the socket dropped, and neither live nor ended once it was back: what a restart cut
+ *  off, since the gateway that came back kept no ending of it. */
+export function cutOff(before: RunningRow[], after: RunningList): RunningRow[] {
+  const known = new Set([...after.running, ...after.finished].map((r) => r.work))
+  return before.filter((r) => !known.has(r.work))
 }
 
 export function MissionControl() {
   const { data, error, loading, refresh } = useQuery<Attention>(ATTENTION_KEY, readAttention)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
 
-  // `sessions`/`work_phase` fire on every turn-lifecycle step while something streams, and a running
-  // turn's phase again every fifteen seconds, so a burst collapses into one re-read shortly after it
-  // settles; the same debounce Home applies to them.
+  // An Inbox burst and the list's rings collapse into one re-read shortly after they settle; the
+  // same debounce Home applies to them.
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {
     if (!refreshesAttention(m)) return
@@ -288,18 +274,83 @@ export function MissionControl() {
     debounce.current = window.setTimeout(refresh, 300)
   }, [refresh])
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
-  useChatSocket(onMessage, refresh)
+
+  // ── Reconnecting, and what a restart cut off. While the socket is down the lane says its rows may
+  // be out of date. Back on a gateway whose start time moved, every row that was live and is now
+  // neither live nor ended is said as interrupted: the gateway that came back kept no ending of it.
+  // Such a row goes once its work is live or ended again, or after as long as the gateway keeps an
+  // ending. The rows compared are the last read while the socket was up, so a read that lands
+  // while it is down (a press of Approve) cannot hide what the restart cut off.
+  const [reconnecting, setReconnecting] = useState(false)
+  const down = useRef(false)
+  const [interrupted, setInterrupted] = useState<InterruptedRow[]>([])
+  const boot = useRef<number | null>(null)
+  const live = useRef<RunningRow[]>([])
+  useEffect(() => {
+    if (!data) return
+    if (!down.current) live.current = data.running.running
+    const known = new Set([...data.running.running, ...data.running.finished].map((r) => r.work))
+    setInterrupted((was) => {
+      const kept = was.filter((i) => !known.has(i.row.work))
+      return kept.length === was.length ? was : kept
+    })
+  }, [data])
+  useEffect(() => {
+    if (interrupted.length === 0) return undefined
+    const timer = window.setInterval(() => {
+      const now = Date.now()
+      setInterrupted((was) => {
+        const kept = was.filter((i) => now - i.at < INTERRUPTED_MS)
+        return kept.length === was.length ? was : kept
+      })
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [interrupted.length])
+  useEffect(() => {
+    void startTime().then((t) => { if (boot.current === null) boot.current = t })
+  }, [])
+  const onReconnect = useCallback(() => {
+    const before = live.current
+    refresh()
+    void (async () => {
+      const started = await startTime()
+      if (started === null) return
+      const was = boot.current
+      boot.current = started
+      // No start time from before the drop: whether it restarted cannot be told, so nothing is said.
+      if (was === null || started === was) return
+      let after: RunningList
+      try {
+        after = await api.running()
+      } catch {
+        return  // the lane's own read says the list cannot be read
+      }
+      const now = Date.now()
+      // A row said cut off already is not said again: a restart that came while the rows were not
+      // read since the last one (a read that failed, or one that landed while the socket was down)
+      // finds the same work in `before`.
+      setInterrupted((kept) => {
+        const said = new Set(kept.map((i) => i.row.work))
+        const cut = cutOff(before, after).filter((r) => !said.has(r.work)).map((row) => ({ row, at: now }))
+        return cut.length === 0 ? kept : [...cut, ...kept].slice(0, INTERRUPTED_KEPT)
+      })
+    })()
+  }, [refresh])
+  useChatSocket(onMessage, onReconnect, (up) => {
+    down.current = !up
+    setReconnecting(!up)
+  })
 
   const items = data?.items ?? []
   const approvals = data?.approvals ?? []
-  const activity = data?.activity ?? []
-  const loops = data?.loops ?? []
-  const runs = data?.runs ?? []
   const proposals = data?.proposals ?? []
+  const rows = data?.running.running ?? []
+  const finished = data?.running.finished ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
+  // Working is the running list's, so it hands `toLanes` none of the work that runs.
   const lanes = useMemo(
-    () => toLanes(items, approvals, activity, loops, runs, proposals),
-    [items, approvals, activity, loops, runs, proposals],
+    () => toLanes(items, approvals, [], [], proposals),
+    [items, approvals, proposals],
   )
 
   const mark = useCallback((key: string, o: Outcome) => {
@@ -420,7 +471,18 @@ export function MissionControl() {
           </div>
         ) : null}
 
-        {LANES.map((lane) => (
+        {LANES.map((lane) => lane === 'working' ? (
+          <RunningLane
+            key={lane}
+            rows={rows}
+            finished={finished}
+            interrupted={interrupted}
+            loading={loading}
+            failed={!!error && !data}
+            reconnecting={reconnecting}
+            empty={LANE_EMPTY.working}
+          />
+        ) : (
           <AttentionLaneSection
             key={lane}
             lane={lane}
@@ -469,7 +531,7 @@ function AttentionLaneSection({
         </h2>
         {/* The count is in the heading row's TEXT, not a coloured pip: "how many" is the first
             thing a user wants from a lane and the last thing a colour can say. */}
-        <span data-type="label-s" className="text-on-surface-low">
+        <span data-type="label-s" data-lane-count className="text-on-surface-low">
           {cards.length}
         </span>
         <span className="h-px flex-1 bg-outline-variant/40" />
@@ -564,15 +626,6 @@ function AttentionCard({
         <p data-type="body-s" className="min-w-0 text-on-surface">
           {question.prompt}
         </p>
-      ) : null}
-      {/* Working work opens where it runs. The derivation already put each card's page on
-          `refs.link` (a loop's cockpit, a run's page); nothing rendered it, so a Working card was
-          a name with no way to reach the work it named. */}
-      {(card.origin === 'run' || card.origin === 'loop') && typeof card.refs?.link === 'string' ? (
-        <TextLink href={card.refs.link} ink="emphasis" size="sm"
-          aria-label={`${card.origin === 'run' ? 'Open the run' : 'Open the loop'}: ${subject}`}>
-          {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
-        </TextLink>
       ) : null}
       {/* An agent's question is answered in the chat that asked it, where its card is. */}
       {item && typeof item.refs?.question === 'string' && typeof item.refs?.session === 'string' ? (

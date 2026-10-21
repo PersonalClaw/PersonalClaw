@@ -35,12 +35,13 @@
  *     `PendingApproval` carries no status at all — being in the list IS pending.
  *
  *     So Working is fed from the sources that actually observe running work: `ChatSession`
- *     (`GET /api/chat/sessions`), whose `run_state` is the chat's last phase frame, the loop
- *     listing (`GET /api/loops`) and the running workflow runs (`GET /api/workflows/runs`). Each
- *     is an optional argument, so `toLanes(items, approvals)` stays valid; pass nothing and
- *     Working is honestly empty rather than filled by a timestamp heuristic. **`laneFor` never
- *     returns `'working'`** — no single inbox item can prove it, and `laneFor` only sees inbox
- *     items.
+ *     (`GET /api/chat/sessions`), whose `run_state` is the chat's last phase frame, and the loop
+ *     listing (`GET /api/loops`). Each is an optional argument, so `toLanes(items, approvals)`
+ *     stays valid; pass nothing and Working is honestly empty rather than filled by a timestamp
+ *     heuristic. **`laneFor` never returns `'working'`** — no single inbox item can prove it, and
+ *     `laneFor` only sees inbox items. The thread rail reads its pips from this (`useThreads`);
+ *     Mission Control's Working lane is the running list instead (`GET /api/running`, `RunningLane`),
+ *     which holds every kind of live work, and hands this none of it.
  *
  *  ── THE TWO `null`s, AND WHY UNKNOWN IS NOT `idle` ─────────────────────────────────────────────
  *
@@ -57,7 +58,7 @@
  *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
  *  shown. Neither is a fallthrough — both branches are written out.
  */
-import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal, WorkflowRunSummary } from './api'
+import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal } from './api'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
 import { sessionTitle } from './sessionTitle'
@@ -94,11 +95,6 @@ export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'run_state'>
  *  above never see it. Optional, like `activity`. */
 export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id' | 'held'>
 
-/** `GET /api/workflows/runs?status=running` rows — the third in-flight evidence. A run
- *  started from Workflows, by a trigger or by a project is neither a chat session nor a loop, so
- *  neither source above sees it. Optional, like the two before it. */
-export type RunInput = Pick<WorkflowRunSummary, 'id' | 'workflow_name' | 'title' | 'status' | 'started_at' | 'created_at' | 'parent_run_id' | 'held'>
-
 /** `GET /api/skills/proposals` rows — the skills waiting on your yes or no. Optional, like the
  *  in-flight sources: omit them and a proposal still shows, as its Inbox row. */
 export type ProposalInput = Pick<SkillProposal, 'id' | 'slug' | 'description' | 'created_at'>
@@ -134,7 +130,6 @@ export type LaneCard =
   | (LaneCardBase & { origin: 'inbox'; item: AttentionInput })
   | (LaneCardBase & { origin: 'session'; session: ActivityInput })
   | (LaneCardBase & { origin: 'loop'; loop: LoopInput })
-  | (LaneCardBase & { origin: 'run'; run: RunInput })
   | (LaneCardBase & { origin: 'proposal'; proposal: ProposalInput })
 
 /** Base kind → lane, mirroring `inbox.py`'s two frozensets (fact 1).
@@ -412,7 +407,6 @@ export function toLanes(
   approvals: ApprovalInput[],
   activity: ActivityInput[] = [],
   loops: LoopInput[] = [],
-  runs: RunInput[] = [],
   proposals: ProposalInput[] = [],
 ): Record<Lane, LaneCard[]> {
   const out = emptyLanes()
@@ -519,37 +513,6 @@ export function toLanes(
       at: typeof l.started_at === 'number' && Number.isFinite(l.started_at) ? l.started_at : null,
       refs: { link: `#/${loopRoute(l)}` },
       loop: l,
-    })
-  }
-
-  // ── Running workflow RUNS. A run started from Workflows was working while this
-  // lane said "Nothing is running right now" — it is neither a chat session nor a loop. One piece of
-  // work is one card, so a run that backs a loop is left to the loop's card above (whatever the
-  // loop's status: a paused loop's run is not working either), and a sub-run is part of the run
-  // that spawned it. `running` without a start time is a run waiting for a concurrency slot
-  // (`containers.board_state_for` calls it queued), and the card says so rather than "running".
-  const loopRuns = new Set<string>()
-  for (const l of Array.isArray(loops) ? loops : []) {
-    if (l !== null && typeof l === 'object' && typeof l.run_id === 'string' && l.run_id !== '') loopRuns.add(l.run_id)
-  }
-  for (const r of Array.isArray(runs) ? runs : []) {
-    if (r === null || typeof r !== 'object') continue
-    const id = typeof r.id === 'string' ? r.id : ''
-    // A run incident mode holds is not working either, as a held loop is not (its status stays
-    // `running`; `held` says why).
-    if (id === '' || r.status !== 'running' || r.held || loopRuns.has(id)) continue
-    if (typeof r.parent_run_id === 'string' && r.parent_run_id !== '') continue
-    const started = typeof r.started_at === 'string' && r.started_at !== ''
-    out['working'].push({
-      key: `run:${id}`,
-      lane: 'working',
-      origin: 'run',
-      id,
-      title: firstLine(r.title) || firstLine(r.workflow_name) || 'Workflow run',
-      subtitle: started ? 'running' : 'waiting for a slot',
-      at: isoSeconds(started ? r.started_at : r.created_at),
-      refs: { link: `#/workflows/runs/${id}` },
-      run: r,
     })
   }
 
