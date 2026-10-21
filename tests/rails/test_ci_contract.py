@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import ci_masking
+import count_ratchet_census
 import getsource_census
 import local_actions
 import private_walkers
@@ -10125,6 +10126,344 @@ NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS = Row(
 )
 
 ROWS = (*ROWS, NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS)
+
+
+# ── No rail holds a count of the repository's sites to a fixed number ───────────────────────
+#
+# A count held to a fixed number goes red on whichever of two pull requests merges second, though
+# neither broke it. A rail lists its sites instead (tests/site_baseline.py). The comparisons still
+# in tests/rails are listed in a site baseline that only shrinks (tests/count_ratchet_census.py
+# holds the rule): a comparison the list does not hold fails, and so does a line whose comparison
+# is gone. What stays listed for good is an absolute cap, which counts no sites.
+
+_RATCHET = "tests/rails/test_listed.py"
+_RATCHET_SITE = f"{_RATCHET}::test_it::len(found) <= CEILING"
+_A_RATCHET = (
+    "from rails_repo import REPO\n\nCEILING = 3\n\n\n"
+    "def test_it():\n    found = sorted(REPO.glob('*.py'))\n    assert len(found) <= CEILING\n"
+)
+
+
+def _ratchet_scaffold(root: Path) -> None:
+    """A tree where the rule holds: one listed ratchet, a rail of comparisons that are no
+    ratchets, the same ratchet outside tests/rails, and the list registered."""
+    _write(root, _RATCHET, _A_RATCHET)
+    _write(
+        root,
+        "tests/rails/test_no_ratchet.py",
+        "import ast\n\nimport source_index\n\nPLANTED = 'x = 1\\ny = 2\\n'\n\n\n"
+        "def test_it():\n"
+        "    files = source_index.package_files()\n"
+        "    assert len(files) >= 1300\n"
+        "    assert len(files) > 1300\n"
+        "    assert len([f for f in files if f.name == 'x']) == 1\n"
+        "    assert len([f for f in files if f.name == 'y']) == 0\n"
+        "    assert len([f for f in files if f.name == 'z']) < 2\n"
+        "    assert len(files) != 7\n"
+        "    assert len(ast.parse(PLANTED).body) == 2\n"
+        "    thin = [f for f in files if len(f.name) < 30]\n"
+        "    assert thin\n",
+    )
+    _write(root, "tests/test_outside.py", _A_RATCHET)
+    _write(
+        root,
+        count_ratchet_census.BASELINE,
+        json.dumps({"site": _RATCHET_SITE, "reason": "not converted yet"}) + "\n",
+    )
+    registered = {
+        "site": count_ratchet_census.BASELINE,
+        "rail": _RATCHET,
+        "replaces": "no limit",
+        "ceiling": 1,
+        "reason": "the scaffold's list",
+    }
+    _write(root, site_baseline.REGISTRY, json.dumps(registered) + "\n")
+
+
+def _ratchet_check(root: Path) -> list[str]:
+    """The list's failures for *root*: against the gate's base on the real tree, and with no base
+    on a scaffold, which is not a repository."""
+    base = site_baseline.FROM_THE_GATE if root == REPO else None
+    try:
+        site_baseline.check(
+            count_ratchet_census.sites(root),
+            count_ratchet_census.BASELINE,
+            base,
+            root=root,
+            prune=False,
+        )
+    except AssertionError as exc:
+        return str(exc).splitlines()[1:] or [str(exc)]
+    return []
+
+
+def _new_rail(body: str, head: str = "", rel: str = "tests/rails/test_new.py"):
+    return lambda root: _write(
+        root,
+        rel,
+        f"import source_index\nfrom rails_repo import REPO\n{head}\n\ndef test_it():\n{body}",
+    )
+
+
+def _drop_listed_ratchet(root: Path) -> None:
+    _write(root, _RATCHET, "def test_it():\n    assert True\n")
+
+
+def _ratchets_of(*lines: dict[str, str]) -> Callable[[Path], None]:
+    text = "".join(json.dumps(line) + "\n" for line in lines)
+    return lambda root: (root / count_ratchet_census.BASELINE).write_text(text, encoding="utf-8")
+
+
+_FILES = "    files = source_index.package_files()\n"
+
+NO_RAIL_HOLDS_A_COUNT_TO_A_FIXED_NUMBER = Row(
+    name="no rail holds a count of the repository's sites to a fixed number",
+    check=_ratchet_check,
+    scaffold=_ratchet_scaffold,
+    controls=(
+        Control(
+            "a count held to a module's named number fails",
+            _new_rail(_FILES + "    assert len(files) <= BUDGET\n", head="BUDGET = 1500\n"),
+            expect="tests/rails/test_new.py::test_it::len(files) <= BUDGET is not listed",
+        ),
+        Control(
+            "a count of the repository held to a literal fails",
+            _new_rail(_FILES + "    assert len(files) <= 1500\n"),
+            expect="tests/rails/test_new.py::test_it::len(files) <= 1500 is not listed",
+        ),
+        Control(
+            "an exact count of the repository fails",
+            _new_rail("    assert len(sorted(REPO.rglob('*.md'))) == 112\n"),
+            expect="test_it::len(sorted(REPO.rglob('*.md'))) == 112 is not listed",
+        ),
+        Control(
+            "a count bound to a name first fails",
+            _new_rail(_FILES + "    n = len(files)\n    assert n < 41\n"),
+            expect="tests/rails/test_new.py::test_it::n < 41 is not listed",
+        ),
+        Control(
+            "a count written on the right fails",
+            _new_rail(_FILES + "    assert 40 >= sum(1 for f in files if f.suffix)\n"),
+            expect="test_it::40 >= sum((1 for f in files if f.suffix)) is not listed",
+        ),
+        Control(
+            "a count of a name a loop over the tree binds fails",
+            _new_rail(
+                "    for path in source_index.package_files():\n"
+                "        lines = path.read_text().splitlines()\n"
+                "        assert len(lines) <= 400\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(lines) <= 400 is not listed",
+        ),
+        Control(
+            "a count that reaches the tree through a helper module under tests fails",
+            lambda root: (
+                _write(
+                    root,
+                    "tests/walk_shared.py",
+                    "from rails_repo import REPO\n\n\n"
+                    "def walk():\n    return sorted(REPO.rglob('*.py'))\n",
+                ),
+                _write(
+                    root,
+                    "tests/rails/test_new.py",
+                    "from walk_shared import walk\n\n\n"
+                    "def test_it():\n    assert len(walk()) == 12\n",
+                ),
+            ),
+            expect="tests/rails/test_new.py::test_it::len(walk()) == 12 is not listed",
+        ),
+        Control(
+            "a count that reaches the tree through a module's file fails",
+            lambda root: _write(
+                root,
+                "tests/rails/test_new.py",
+                "from pathlib import Path\n\nimport personalclaw\n\n"
+                "SRC = Path(personalclaw.__file__).parent\n\n\n"
+                "def _modules():\n    return sorted(SRC.rglob('*.py'))\n\n\n"
+                "def test_it():\n    assert len(_modules()) == 9\n",
+            ),
+            expect="tests/rails/test_new.py::test_it::len(_modules()) == 9 is not listed",
+        ),
+        Control(
+            "a count in a chain of comparisons fails",
+            _new_rail(_FILES + "    assert 0 < len(files) <= 40\n"),
+            expect="tests/rails/test_new.py::test_it::0 < len(files) <= 40 is not listed",
+        ),
+        Control(
+            "an exact count written on the right fails",
+            _new_rail(_FILES + "    assert 12 == len(files)\n"),
+            expect="tests/rails/test_new.py::test_it::12 == len(files) is not listed",
+        ),
+        Control(
+            "a count of the test's own table held to a named number fails",
+            _new_rail("    rows = [1, 2]\n    assert len(rows) <= CEILING\n", head="CEILING = 3\n"),
+            expect="tests/rails/test_new.py::test_it::len(rows) <= CEILING is not listed",
+        ),
+        Control(
+            "a count held to a number the function names fails",
+            _new_rail(_FILES + "    limit = 40\n    assert len(files) <= limit\n"),
+            expect="tests/rails/test_new.py::test_it::len(files) <= limit is not listed",
+        ),
+        Control(
+            "a count held to a number imported from a helper module fails",
+            lambda root: (
+                _write(root, "tests/limits_shared.py", "CEILING = 40\n"),
+                _new_rail(
+                    "    rows = [1]\n    assert len(rows) <= CEILING\n",
+                    head="from limits_shared import CEILING\n",
+                )(root),
+            ),
+            expect="tests/rails/test_new.py::test_it::len(rows) <= CEILING is not listed",
+        ),
+        Control(
+            "a count held to a number read off a helper module fails",
+            lambda root: (
+                _write(root, "tests/rails/limits_shared.py", "CEILING = 40\n"),
+                _new_rail(
+                    "    rows = [1]\n    assert len(rows) <= limits_shared.CEILING\n",
+                    head="import limits_shared\n",
+                )(root),
+            ),
+            expect="test_it::len(rows) <= limits_shared.CEILING is not listed",
+        ),
+        Control(
+            "a count of what a helper module's function walks fails",
+            lambda root: (
+                _write(
+                    root,
+                    "tests/rails/walk_shared.py",
+                    "import source_index\n\n\n"
+                    "def walk():\n    return source_index.package_files()\n",
+                ),
+                _new_rail(
+                    "    assert len(walk_shared.walk()) == 12\n", head="import walk_shared\n"
+                )(root),
+            ),
+            expect="tests/rails/test_new.py::test_it::len(walk_shared.walk()) == 12 is not listed",
+        ),
+        Control(
+            "a count of what a with block reads fails",
+            _new_rail(
+                "    with (REPO / 'notes.txt').open() as notes:\n"
+                "        lines = notes.readlines()\n"
+                "    assert len(lines) <= 300\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(lines) <= 300 is not listed",
+        ),
+        Control(
+            "a count of a name bound by := fails",
+            _new_rail(
+                "    if (found := sorted(REPO.glob('*'))):\n        assert len(found) <= 30\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(found) <= 30 is not listed",
+        ),
+        Control(
+            "a count a comprehension keeps from the tree fails",
+            _new_rail(
+                "    rows = [1, 2]\n"
+                "    names = [name for name in rows if (REPO / str(name)).exists()]\n"
+                "    assert len(names) <= 30\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(names) <= 30 is not listed",
+        ),
+        Control(
+            "a count the module binds fails where it is held",
+            _new_rail("    assert FOUND <= 30\n", head="FOUND = len(sorted(REPO.glob('*')))\n"),
+            expect="tests/rails/test_new.py::test_it::FOUND <= 30 is not listed",
+        ),
+        Control(
+            "a count of a list a loop over the tree fills fails",
+            _new_rail(
+                "    found = []\n"
+                "    for path in source_index.package_files():\n"
+                "        found.append(path)\n"
+                "    assert len(found) <= 40\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(found) <= 40 is not listed",
+        ),
+        Control(
+            "a count of a dict filled from the test's own table where the tree says fails",
+            _new_rail(
+                "    by_name = {}\n"
+                "    for name in ('a', 'b', 'c'):\n"
+                "        if (REPO / name).exists():\n"
+                "            by_name[name] = 1\n"
+                "    assert len(by_name) == 3\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(by_name) == 3 is not listed",
+        ),
+        Control(
+            "a count of a list the module fills from the tree fails",
+            _new_rail(
+                "    assert len(FOUND) <= 40\n",
+                head=(
+                    "FOUND = []\n"
+                    "for _path in source_index.package_files():\n    FOUND.append(_path)\n"
+                ),
+            ),
+            expect="tests/rails/test_new.py::test_it::len(FOUND) <= 40 is not listed",
+        ),
+        Control(
+            "a count of a list extended by what the tree holds fails",
+            _new_rail(
+                "    found = []\n    found.extend(source_index.package_files())\n"
+                "    assert len(found) <= 40\n"
+            ),
+            expect="tests/rails/test_new.py::test_it::len(found) <= 40 is not listed",
+        ),
+        Control(
+            "a named number held to at most one fails too",
+            _new_rail(_FILES + "    assert len(files) <= ONE\n", head="ONE = 1\n"),
+            expect="tests/rails/test_new.py::test_it::len(files) <= ONE is not listed",
+        ),
+        Control(
+            "a second ratchet in a listed rail fails",
+            lambda root: _write(root, _RATCHET, _A_RATCHET + "    assert len(found) <= CEILING\n"),
+            expect=f"{_RATCHET_SITE} #2 is not listed",
+        ),
+        Control(
+            "a converted ratchet whose line stays fails: the list only shrinks",
+            _drop_listed_ratchet,
+            expect=f"Site {_RATCHET_SITE} is listed",
+        ),
+        Control(
+            "a converted ratchet with its line deleted passes",
+            lambda root: (_drop_listed_ratchet(root), _ratchets_of()(root)),
+            fails=False,
+        ),
+        Control(
+            "a ratchet outside tests/rails passes",
+            lambda root: _write(root, "tests/test_outside_two.py", _A_RATCHET),
+            fails=False,
+        ),
+        Control(
+            "a list the test fills from its own table, and a number the test names, pass",
+            _new_rail(
+                "    planted = [REPO / 'a']\n"
+                "    planted += [REPO / 'b', source_index.package_files()]\n"
+                "    planted.append(REPO / 'c')\n"
+                "    expected = 4\n"
+                "    assert len(planted) == expected\n"
+            ),
+            fails=False,
+        ),
+        Control(
+            "the test's own tables held to literals pass, though their entries read the tree",
+            _new_rail(
+                "    rows = [source_index.package_files(), REPO / 'a', REPO / 'b']\n"
+                "    assert len(rows) == 3\n"
+                "    paths = {name: REPO / name for name in SURFACES}\n"
+                "    assert len(paths) == 3\n"
+                "    assert len(sorted(TABLE)) == 3\n",
+                head="SURFACES = ('a', 'b', 'c')\nTABLE = (REPO / 'a', REPO / 'b', REPO / 'c')\n",
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, NO_RAIL_HOLDS_A_COUNT_TO_A_FIXED_NUMBER)
 
 
 # ── #3937's line is the source-pin census's own ──────────────────────────────────────────────
