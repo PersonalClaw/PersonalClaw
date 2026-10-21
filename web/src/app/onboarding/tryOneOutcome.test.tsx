@@ -187,6 +187,14 @@ describe('reminder card — creates it, fires it, and reads the notification bac
     expect(notifications).toHaveBeenCalled()
   })
 
+  it('its link opens the Inbox\'s Notifications filter, where the note landed, through the flow exit', async () => {
+    // Notifications are a filter of the Inbox (#3818); the feed's old page is a retired address.
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: /Create and fire once/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /See it in notifications/ }))
+    expect(onExitTo).toHaveBeenCalledWith('inbox?filter=notifications')
+  })
+
   it('a 200 with ok:false is a failure — the action did not run', async () => {
     // `TriggerRunResult.ok` is whether the ACTION ran; the request parsing fine is not the
     // same claim, and treating 200 as success is exactly the silent no-op #395 fixed.

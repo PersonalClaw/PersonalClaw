@@ -5,12 +5,12 @@ const doc: UiDoc = {
   name: 'NotificationBell',
   keywords: ['notification', 'bell', 'unread', 'shade', 'badge', 'alerts', 'feed', 'shell'],
   description:
-    'The shell-corner notification control: a bell with an unread counter that opens a shade of the few most-recent notifications. Each can be marked read / dismissed in place or opened (jumps to the full feed, deep-linked to the item); the footer navigates to the all-notifications page. Self-refreshes via a visibility-aware poll plus live WS updates.',
+    'The shell-corner notification control: a bell with an unread counter that opens a shade of the few most-recent notifications. Each can be marked read / dismissed in place or opened (jumps to the full feed, deep-linked to the item); the footer opens the full feed, the Notifications filter of the Inbox. Self-refreshes via a visibility-aware poll plus live WS updates.',
   props: [
-    { name: 'navigate', description: 'Router navigation function. Opening a notification calls navigate(`notifications?open=<ts>`); the footer calls navigate(`notifications`).' },
+    { name: 'navigate', description: 'Router navigation function. Opening a notification calls navigate(`inbox?filter=notifications&open=<ts>`); the footer calls navigate(`inbox?filter=notifications`), the Notifications filter of the Inbox.' },
   ],
   bestPractices: [
-    { guidance: true, description: 'Wire navigate to the app router so opening a notification deep-links to `notifications?open=<ts>` and the footer routes to the full feed.' },
+    { guidance: true, description: 'Wire navigate to the app router so opening a notification deep-links to `inbox?filter=notifications&open=<ts>` and the footer routes to the full feed, the Notifications filter of the Inbox.' },
     { guidance: true, description: 'Reach for it in the shell corner cluster (ShellCornerRight) rather than building a bespoke bell — it owns its own polling + WS refresh; do not wrap it in another poller.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
   ],

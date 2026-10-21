@@ -5,7 +5,7 @@ import { spring, overlayEnter, fadeEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { noteMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
+import { noteMeta, relTime, firstLine, toneChipBg, notificationsAddress } from '../pages/notifications/notificationMeta'
 import { RowHitTarget } from './RowHitTarget'
 import { UnreadRail } from '../pages/notifications/UnreadRail'
 import { rowSubject } from '../lib/rowSubject'
@@ -22,7 +22,7 @@ const MAX_SHADE = 5
  *  shade of the few most-recent notifications. Each can be marked read or DELETED
  *  in place (deleted, not "dismissed" — see the row's own note; the entry leaves
  *  disk), opened (jumps to the full feed, deep-linked to the item), and the footer
- *  navigates to the all-notifications page. */
+ *  opens the full feed. The full feed is the Inbox's Notifications filter (#3818). */
 export function NotificationBell({ navigate }: { navigate: (path: string) => void }) {
   const [items, setItems] = useState<NotificationItem[] | null>(null)
   const [open, setOpen] = useState(false)
@@ -98,7 +98,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   }
   function openItem(n: NotificationItem) {
     setOpen(false)
-    navigate(`notifications?open=${encodeURIComponent(n.ts)}`)
+    navigate(notificationsAddress(n.ts))
   }
 
   return (
@@ -173,7 +173,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
                 </motion.div>
               )}
             </div>
-            <button type="button" onClick={() => { setOpen(false); navigate('notifications') }}
+            <button type="button" onClick={() => { setOpen(false); navigate(notificationsAddress()) }}
               data-type="label-s"
               className="block w-full border-t border-outline-variant/40 px-m py-2.5 text-center text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors"
               style={fvs(500)}>

@@ -909,7 +909,7 @@ so the notice never names a message that is not there.
 
 **You answer someone new from the notification.** The note the gate raises for someone new
 (`channel_trust.note_unknown_sender`, `event: channel.unknown_sender`) offers **Allow** and
-**Deny** on the Notifications page (`POST /api/notifications/trust`, owner-only). The sender is
+**Deny** under the Inbox's Notifications filter (`POST /api/notifications/trust`, owner-only). The sender is
 read off the stored note, never the request, and only a sender the gate recorded telling you
 about is answered (`channel_trust.owner_was_asked_about`): a note another emitter wrote, or one
 an app raised, lets no one in. An Allow asks your consent first, and so does the Inbox's

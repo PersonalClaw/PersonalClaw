@@ -59,6 +59,10 @@ export const ROUTE_REDIRECTS: readonly RouteRedirect[] = [
   // (`tab`), the record (`sel`), a learned preference (`pref`) and a folder's own memory
   // (`partition`), all of which the page reads under the same names.
   { from: 'settings/memory', to: 'memory', keeps: { tab: 'tab', sel: 'sel', pref: 'pref', partition: 'partition' }, pr: 3815 },
+  // Notifications became a filter of the Inbox. The feed's own narrowing (unread, or one kind) is
+  // the filter's `show`, beside the `filter` that names it, and the note it had open is the one
+  // the filter opens. The bell, the palette and old transcripts held this address.
+  { from: 'notifications', to: 'inbox?filter=notifications', keeps: { filter: 'show', open: 'open' }, pr: 3818 },
 ]
 
 /** A segment as the router hands it to a page: decoded, or as written when it is not valid

@@ -63,7 +63,6 @@ const LoopsSection = lazy(() => import('../pages/loops/LoopsSection').then((m) =
 const CodeSection = lazy(() => import('../pages/code/CodeSection').then((m) => ({ default: m.CodeSection })))
 const SettingsPage = lazy(() => import('../pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const AgentsSection = lazy(() => import('../pages/agents/AgentsSection').then((m) => ({ default: m.AgentsSection })))
-const NotificationsPage = lazy(() => import('../pages/notifications/NotificationsPage').then((m) => ({ default: m.NotificationsPage })))
 const TriggersSection = lazy(() => import('../pages/triggers/TriggersSection').then((m) => ({ default: m.TriggersSection })))
 const LearningPage = lazy(() => import('../pages/learning/LearningPage').then((m) => ({ default: m.LearningPage })))
 const TasksSection = lazy(() => import('../pages/tasks/TasksSection').then((m) => ({ default: m.TasksSection })))
@@ -175,7 +174,6 @@ function renderPage(active: string, r: RouteProps) {
     case 'loop': return <LoopSection {...r} />
     case 'loops': return <LoopsSection {...r} />
     case 'code': return <CodeSection {...r} />
-    case 'notifications': return <NotificationsPage {...r} />
     case 'discover': return <DiscoverPage {...r} />
     case 'triggers': return <TriggersSection {...r} />
     case 'tasks': return <TasksSection {...r} />
@@ -186,6 +184,11 @@ function renderPage(active: string, r: RouteProps) {
     case 'library': return <KnowledgeSection {...r} />
     case 'memory': return <MemoryPage {...r} />
     case 'inbox': return <InboxPage {...r} />
+    // Notifications are a filter of the Inbox (#3818). `#/notifications` and its keys are retired to
+    // it (`routeRedirects.ts`), so the router never hands this case that address, only a deeper path
+    // no link wrote. The route stays routable for the links that still name it, `personalclaw://`
+    // and a native notification's tap among them, which the redirect then carries.
+    case 'notifications': return <InboxPage {...r} />
     case 'files': return <FilesSection {...r} />
     case 'artifacts': return <ArtifactsSection {...r} />
     case 'terminal': return <TerminalPage {...r} />
@@ -467,7 +470,11 @@ function AppInner() {
   // The REDIRECT branch hands a destination over in the other direction too. A fresh home pulls
   // every route here, so a user who asked for `#/settings/providers` got a different screen with
   // nothing to say why — indistinguishable from the app swallowing the click. Recording the route
-  // they asked for turns the redirect into a deferral the flow names and then keeps.
+  // they asked for turns the redirect into a deferral the flow names and then keeps. What it records
+  // is the address, query and all, as the router hands it over (a retired one already moved to where
+  // it opens now): a page keeps its view in the query, so the path alone landed on another view.
+  // `#/notifications` opens as `inbox?filter=notifications`, and kept as `inbox` it landed on the
+  // Inbox's items, not the feed.
   //
   // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash` and
   // `route` only catches up on the browser's async `hashchange`, so the exit branch can run again
@@ -497,6 +504,7 @@ function AppInner() {
   // was not enough: a failed read settled as "no name", this effect sent the user to setup, and a
   // first-run Skip there wrote the fallback name over the real one. A failed read is `failed`, and
   // the retry screen below owns the page until a read succeeds.
+  const addressSearch = new URLSearchParams(addressQuery).toString()
   useEffect(() => {
     if (identityStatus !== 'ready') return
     const wantsSetup = !onboarded || setupRerun
@@ -507,7 +515,10 @@ function AppInner() {
       // stays pending, because a visit here is not the end of setup.
       if (opensDuringSetup(route, sub)) return
       if (route !== 'onboarding') {
-        if (ROUTABLE.has(route) && route !== 'dashboard') setOnboardingExit([route, sub].filter(Boolean).join('/'))
+        if (ROUTABLE.has(route) && route !== 'dashboard') {
+          const path = [route, sub].filter(Boolean).join('/')
+          setOnboardingExit(addressSearch ? `${path}?${addressSearch}` : path)
+        }
         // 🔴 REPLACE FOR A FIRST RUN, PUSH FOR A RE-RUN. A push here made the browser's Back button a
         // bounce: Back left `#/onboarding`, this effect fired on the new route and pushed
         // `#/onboarding` straight back on top. Measured on a fresh home — Back flashed `#/dashboard`,
@@ -528,7 +539,7 @@ function AppInner() {
     // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
     if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }
     clearOnboardingExit()
-  }, [identityStatus, onboarded, setupRerun, route, sub, navigate])
+  }, [identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate])
 
   // ── Progressive disclosure over the rail ──
   // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
@@ -823,7 +834,8 @@ function AppInner() {
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
     { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
-    { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
+    // A filter of the Inbox, not a page of its own (#3818).
+    { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed inbox', run: () => navigate('inbox?filter=notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
     // Capabilities' tabs, each a row of its own: they left the sidebar for the one Capabilities row.
     { id: 'go:agents', label: 'Agents', hint: 'Go to', icon: Users, keywords: 'Capabilities', run: () => navigate('agents') },

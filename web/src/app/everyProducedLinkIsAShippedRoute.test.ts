@@ -218,7 +218,9 @@ describe('the router\'s tables and the palette\'s rows are catalogued', () => {
 
   it('🔑 every palette destination is an entry, and every entry naming the palette is one', () => {
     expect(palette.length, 'vacuity floor').toBeGreaterThanOrEqual(22)
-    expect(palette).toEqual(expect.arrayContaining(['mission-control', 'notifications', 'discover', 'settings', 'chat/new']))
+    expect(palette).toEqual(expect.arrayContaining(['mission-control', 'inbox?filter=notifications', 'discover', 'settings', 'chat/new']))
+    expect(palette, 'Notifications is a filter of the Inbox (#3818): its row opens the filter, not the retired page')
+      .not.toContain('notifications')
     // ⌘1 to ⌘9 open a thread of every kind at the address it has always had.
     expect(palette).toEqual(expect.arrayContaining([
       `chat/${SAMPLE.chat}`, `loops/${SAMPLE.loop}`, `code/${SAMPLE.code}`, `workflows/runs/${SAMPLE.run}`,

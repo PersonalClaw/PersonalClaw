@@ -303,7 +303,8 @@ def _resolve_notification(entity_id: str, state) -> InvestigateContext | None:
     if session:
         lines.append(f"\nLinked session: {session}")
 
-    back = "#/notifications"
+    # The feed is the Inbox's Notifications filter; ``#/notifications`` is a retired address.
+    back = "#/inbox?filter=notifications"
     if loop_id:
         back = f"#/loops/{loop_id}"
     elif job_id:

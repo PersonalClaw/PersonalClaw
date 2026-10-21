@@ -1,4 +1,5 @@
 import { api, isCreatedLoopRun } from '../../lib/api'
+import { notificationsAddress } from '../../pages/notifications/notificationMeta'
 
 /** The three first-success "try one" flows.
  *
@@ -371,7 +372,8 @@ export async function runReminderFlow(): Promise<TryOneOutcome> {
       { label: 'Cadence', value: trigger.schedule || REMINDER_SEED.cron },
       { label: 'Next time', value: whenNext(trigger.next_run_ts) },
     ],
-    href: 'notifications',
+    // The Inbox's Notifications filter (#3818), not the feed's retired page.
+    href: notificationsAddress(),
     linkLabel: 'See it in notifications',
   }
 }

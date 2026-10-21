@@ -118,7 +118,7 @@ const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
 const { IdentityProvider } = await import('./identity')
-const { clearOnboardingExit } = await import('./onboarding/exitTo')
+const { clearOnboardingExit, peekOnboardingExit } = await import('./onboarding/exitTo')
 const { requestSetupRerun } = await import('./onboarding/rerun')
 // Settings is a lazy route; resolving its chunk once keeps the assertions about the app rather than
 // about a module transform.
@@ -220,6 +220,22 @@ describe('the pages that run on setup’s answers still wait for it', () => {
     expect(await setupHeading()).toBeTruthy()
     expect(await screen.findByText(/Setup comes first/)).toBeTruthy()
     expect(screen.queryByRole('heading', { level: 1, name: 'Devices' })).toBeNull()
+  })
+
+  // What setup keeps is the address asked for, query and all, once the router has moved a retired
+  // one to where it opens now. A page's view lives in its query, so a kept path alone landed on
+  // another view: `#/notifications` is the Inbox's Notifications filter, `inbox?filter=notifications`,
+  // and kept as `inbox` it landed on the Inbox's items, not the feed.
+  it.each([
+    ['notifications', 'inbox?filter=notifications'],
+    ['notifications?filter=unread', 'inbox?filter=notifications&show=unread'],
+    ['inbox?filter=needs_reply', 'inbox?filter=needs_reply'],
+    ['settings/vocabulary', 'settings/voice?section=vocabulary'],
+  ])('#/%s: setup keeps the address it opens, #/%s, to land on once it ends', async (asked, kept) => {
+    openAt(`#/${asked}`)
+    expect(await setupHeading()).toBeTruthy()
+    await waitFor(() => expect(peekOnboardingExit()).not.toBe(''))
+    expect(peekOnboardingExit()).toBe(kept)
   })
 
   it('a destination setup deferred stays promised across a visit to the controls', async () => {

@@ -97,6 +97,7 @@ export const SAMPLE = {
   agent: 'writer',
   commit: '0a1b2c3',
   server: 'files',
+  notification: '2026-10-20T09:00:00+00:00',
 } as const
 
 const S = SAMPLE
@@ -127,7 +128,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'workflows', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   { route: 'apps', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'settings', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.1.0' },
-  { route: 'notifications', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
+  // Notifications are a filter of the Inbox (#3818): the route stays, retired to the filter.
+  { route: 'notifications', from: ['router', 'deep-link', 'notification', 'documented'], since: 'v0.1.0', lands: 'inbox?filter=notifications' },
   { route: 'discover', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.2' },
   { route: 'mission-control', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.2.0' },
   { route: 'loop', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
@@ -193,7 +195,14 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
 
   // ── Inbox and notifications ───────────────────────────────────────────────────────────────────
   { route: 'inbox?capture=1', from: ['tray', 'documented'] },
-  { route: 'notifications?filter=unread', from: ['documented'] },
+  // The Notifications filter (#3818), its narrowing and the note it opens: the palette's row and
+  // the bell's links, and where the old page's addresses land.
+  { route: 'inbox?filter=notifications', from: ['palette', 'documented'] },
+  { route: 'inbox?filter=notifications&show=unread', from: ['documented'] },
+  { route: `inbox?filter=notifications&open=${encodeURIComponent(S.notification)}`, from: ['documented'] },
+  // The page's own addresses from before, the bell's link to one note among them.
+  { route: 'notifications?filter=unread', from: ['documented'], lands: 'inbox?filter=notifications&show=unread' },
+  { route: `notifications?open=${encodeURIComponent(S.notification)}`, from: ['documented'], lands: `inbox?filter=notifications&open=${encodeURIComponent(S.notification)}` },
 
   // ── Triggers ──────────────────────────────────────────────────────────────────────────────────
   { route: 'triggers/new', from: ['documented'] },

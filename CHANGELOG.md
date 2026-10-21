@@ -43,6 +43,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Knowledge, Memory, Files and Artifacts are tabs of one Library: one sidebar row in place of three, and Memory leaves Settings for its tab at `#/memory`, where an old Settings → Memory link still lands on the view and the record it named. Knowledge's item list is called All items, and ⌘K goes to Library and each tab.**
 - **A Capabilities tab puts the selected item's detail beside its list only when the page has 840 px beside the sidebar, so with the sidebar expanded in a window about 840 px wide the detail shows in place of the list, with Back to it, and collapsing or expanding the sidebar switches the layout at once.**
 - **While the agent works, the orb at the head of its reply paints at most 30 frames a second, as the buddy's dots do, rather than every frame the display draws: the same drawing for less CPU.**
+- **Notifications are a filter of the Inbox: Show › Notifications lists the feed, with its unread and per-kind narrowing, and the bell, ⌘K's Notifications and an old `#/notifications` link open it there.**
 
 ### Fixed
 

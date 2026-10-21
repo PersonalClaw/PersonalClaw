@@ -121,7 +121,7 @@ function chains(table: readonly RouteRedirect[]): string[] {
 
 describe('the redirect table', () => {
   it('🪤 vacuity floor: it holds the addresses already retired on main', () => {
-    expect(ROUTE_REDIRECTS.map((r) => r.from)).toEqual(expect.arrayContaining(['files/:slug', 'settings/vocabulary']))
+    expect(ROUTE_REDIRECTS.map((r) => r.from)).toEqual(expect.arrayContaining(['files/:slug', 'settings/vocabulary', 'notifications']))
   })
 
   it('🔑 each row names the old address, an in-app new one and the pull request, and owns its address alone', () => {
@@ -183,6 +183,7 @@ describe('a redirect keeps the substate the new page reads', () => {
     expect(redirectFor('#/old/x', [moved]), 'written with its #/ too').toBe('new/x?tab=items')
     expect(redirectFor('files/report-1')).toBe('artifacts/report-1')
     expect(redirectFor('settings/vocabulary')).toBe('settings/voice?section=vocabulary')
+    expect(redirectFor('notifications')).toBe('inbox?filter=notifications')
   })
 
   it('🔑 the keys it keeps arrive under the new page\'s names; a key it does not keep meant something only to the old page', () => {
@@ -192,6 +193,14 @@ describe('a redirect keeps the substate the new page reads', () => {
       .toBe('new/x?tab=items&read=2')
     // The old Files page's own state (its folder and its content search) is not an artifact's.
     expect(redirectFor('files/report-1?dir=%2Ftmp&q=todo&include=*.md')).toBe('artifacts/report-1')
+    // The feed's narrowing is the Notifications filter's `show`, beside the `filter` that names it,
+    // and the note it opened is the one the filter opens. The Inbox's own search was never the
+    // feed's, so a `q` is dropped rather than searching the Inbox's items.
+    expect(normal(redirectFor('notifications?filter=unread&open=n-1&q=todo') ?? ''))
+      .toBe(normal('inbox?filter=notifications&show=unread&open=n-1'))
+    // Nor did the feed read a `show`, the filter's own name for its narrowing: carried, a stray one
+    // would narrow the feed.
+    expect(redirectFor('notifications?show=unread&q=todo')).toBe('inbox?filter=notifications')
   })
 
   it('🔑 written with a fixed segment percent-encoded, it is the same old address to the router, and retired the same', () => {
@@ -205,7 +214,8 @@ describe('a redirect keeps the substate the new page reads', () => {
   })
 
   it('an address with more or fewer segments, or another page\'s, is not retired', () => {
-    for (const address of ['old', 'old/x/y', 'older/x', 'files', 'files?file=src%2Fapp.py', 'artifacts/report-1', 'settings/voice', 'settings']) {
+    for (const address of ['old', 'old/x/y', 'older/x', 'files', 'files?file=src%2Fapp.py', 'artifacts/report-1', 'settings/voice', 'settings',
+      'notifications/x', 'inbox', 'inbox?filter=notifications', 'settings/notifications']) {
       expect(redirectFor(address, [moved, ...ROUTE_REDIRECTS]), address).toBeNull()
     }
   })
@@ -339,6 +349,13 @@ const SPELLINGS: readonly (readonly [address: string, opens: string | null])[] =
   // is read as its last value.
   ['settings/memory?tab=studio&sel=fact%3Aa?b', 'memory?tab=studio&sel=fact%3Aa%3Fb'],
   ['settings/memory?tab=health&tab=audit', 'memory?tab=audit'],
+  ['notifications', 'inbox?filter=notifications'],
+  ['%6Eotifications', 'inbox?filter=notifications'],
+  ['notifications/', 'inbox?filter=notifications'],
+  ['/notifications', 'inbox?filter=notifications'],
+  ['notifications?filter=unread', 'inbox?filter=notifications&show=unread'],
+  ['notifications?show=unread', 'inbox?filter=notifications'],
+  ['notifications?open=a?b', 'inbox?filter=notifications&open=a%3Fb'],
   ['Files/report-1', null],
   ['settings/Vocabulary', null],
   ['settings/Memory', null],
@@ -348,13 +365,18 @@ const SPELLINGS: readonly (readonly [address: string, opens: string | null])[] =
   ['settings/memory%2F', null],
   ['%2566iles/report-1', null],
   ['settings/%2576ocabulary', null],
+  ['Notifications', null],
+  ['%256Eotifications', null],
   // A second `#/` is a route of its own to the router, `#`, which opens no page.
   ['#/files/report-1', null],
   ['#/settings/vocabulary', null],
   ['#/settings/memory', null],
+  ['#/notifications', null],
   // An address the app never wrote: an artifact's slug holds no `/`, so its old link was always
   // `files/<slug>`, and that is what is retired. A deeper path opens the Files page as any other.
   ['files/report-1/extra', null],
+  // Nor did it write a path under `notifications`: the route's own case draws that one.
+  ['notifications/x', null],
 ]
 
 /** Whether the router handed a page an address a row retires: the path it read, decoded, has a
