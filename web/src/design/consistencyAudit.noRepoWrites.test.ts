@@ -86,6 +86,10 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
     'Lays out small throwaway trees to prove the one walker the tree scans share lists them ' +
     'in the order the walkers it replaced did, never follows a link, and remembers a listing ' +
     'and a read for the rest of the test file.',
+  'design/surfaceTreeHostPaths.test.ts':
+    'Makes a home folder and a link to it whose target path ends in the link\'s own path, as a ' +
+    'macOS temp folder\'s real path does, to prove the surface matrix folds both forms of a run\'s ' +
+    'home to `<e2e home>` in a committed accessibility-tree baseline.',
 }
 
 function testFiles(dir: string): string[] {
