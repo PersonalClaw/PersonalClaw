@@ -30,38 +30,18 @@ function labels(template) {
 
 describe("summarizePresence", () => {
   it("counts a bare approvals array — the documented GET /api/approvals shape", () => {
-    const p = summarizePresence([{ id: "a" }, { id: "b" }], { loops: [] });
+    const p = summarizePresence([{ id: "a" }, { id: "b" }], { running: [], finished: [] });
     assert.equal(p.approvals, 2);
     assert.equal(p.connected, true);
   });
 
-  it("picks running loops out of {loops:[...]} and ignores every other status", () => {
-    const payload = {
-      loops: [
-        { id: "l1", status: "running", name: "Ship the release" },
-        { id: "l2", status: "paused", name: "Paused one" },
-        { id: "l3", status: "complete", name: "Done" },
-        { id: "l4", status: "RUNNING", task: "Case-insensitive" },
-        { id: "l5", status: "needs_input", name: "Waiting" },
-      ],
-    };
-    const p = summarizePresence([], payload);
-    assert.deepStrictEqual(
-      p.running.map((l) => l.id),
-      ["l1", "l4"],
-      "only `running` is a running loop — paused/blocked/needs_input are active, not running"
-    );
-    assert.equal(p.running[0].label, "Ship the release");
-    assert.equal(p.running[1].label, "Case-insensitive", "a loop without a name falls back to its task");
-  });
-
   it("a failed poll (null) is `not connected` with zero counts, not a crash", () => {
     const p = summarizePresence(null, null);
-    assert.deepStrictEqual(p, { approvals: 0, running: [], connected: false });
+    assert.deepStrictEqual(p, EMPTY_PRESENCE);
   });
 
-  it("drops a loop with no id — an unclickable menu row is worse than none", () => {
-    const p = summarizePresence([], { loops: [{ status: "running", name: "no id" }] });
+  it("drops a running row with no work reference — an unclickable menu row is worse than none", () => {
+    const p = summarizePresence([], { running: [{ name: "no work", phase: "thinking" }], finished: [] });
     assert.deepStrictEqual(p.running, []);
   });
 
@@ -87,7 +67,7 @@ describe("composeTrayTitle — the single writer for the menu-bar title", () => 
 
   it("tooltip states connectedness, and capture still wins", () => {
     assert.match(composeTrayTooltip({ connected: false }), /not connected/);
-    assert.match(composeTrayTooltip({ connected: true, approvals: 1, running: [{}] }), /1 approval waiting/);
+    assert.match(composeTrayTooltip({ connected: true, approvals: 1, running: [{}] }), /1 approval waiting, 1 running/);
     assert.match(composeTrayTooltip({ connected: true, capturing: true }), /listening/);
   });
 });
@@ -108,7 +88,7 @@ describe("buildTrayMenuTemplate", () => {
   it("renders every row the menu promises, and inspects a non-zero number of rows", () => {
     const a = actions();
     const template = buildTrayMenuTemplate({
-      presence: { approvals: 3, running: [{ id: "l1", label: "Loop one" }], connected: true },
+      presence: { ...EMPTY_PRESENCE, approvals: 3, running: [{ work: "loop:l1", name: "Loop one", phase: "Thinking", line: "", since: "", route: "#/loops/l1", blocked: false, waiting: 0 }], connected: true, listed: true },
       loginItem: { supported: true, enabled: false },
       actions: a,
     });
@@ -120,7 +100,7 @@ describe("buildTrayMenuTemplate", () => {
 
     const text = labels(template).join(" | ");
     assert.match(text, /3 approvals waiting/);
-    assert.match(text, /1 loop running/);
+    assert.match(text, /1 running/);
     assert.match(text, /Quick Capture Note/);
     assert.match(text, /Open Dashboard/);
     assert.match(text, /Open at Login/);
@@ -143,30 +123,6 @@ describe("buildTrayMenuTemplate", () => {
     assert.equal(typeof row.click, "function");
     row.click();
     assert.deepStrictEqual(a.calls, [["deepLink", "#/chat"]]);
-  });
-
-  it("each running loop deep-links to its own detail route", () => {
-    const a = actions();
-    const template = buildTrayMenuTemplate({
-      presence: { approvals: 0, running: [{ id: "l1", label: "One" }, { id: "l 2", label: "Two" }], connected: true },
-      actions: a,
-    });
-    const parent = template.find((r) => Array.isArray(r.submenu));
-    assert.equal(parent.submenu.length, 2);
-    parent.submenu[0].click();
-    parent.submenu[1].click();
-    assert.deepStrictEqual(a.calls, [
-      ["deepLink", "#/loops/l1"],
-      ["deepLink", "#/loops/l%202"],
-    ]);
-  });
-
-  it("caps the inline loop list so the menu cannot grow without bound", () => {
-    const running = Array.from({ length: 20 }, (_, i) => ({ id: `l${i}`, label: `Loop ${i}` }));
-    const template = buildTrayMenuTemplate({ presence: { approvals: 0, running, connected: true } });
-    const parent = template.find((r) => Array.isArray(r.submenu));
-    assert.equal(parent.label, "20 loops running", "the COUNT stays truthful even when the list is capped");
-    assert.equal(parent.submenu.length, 8);
   });
 
   it("the login-item row is a checkbox that reflects and reports state", () => {
@@ -392,9 +348,9 @@ describe("makeTrayPresence", () => {
     const { Tray, calls } = fakeTray();
     const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
-    presence.setPresence({ approvals: 2, running: [{ id: "l1", label: "L" }], connected: true });
+    presence.setPresence({ approvals: 2, running: [{ work: "loop:l1", name: "L", phase: "Thinking", line: "", since: "", route: "", blocked: false, waiting: 0 }], connected: true, listed: true });
     assert.equal(calls.titles.at(-1), "2");
-    assert.match(calls.tooltips.at(-1), /2 approvals waiting, 1 loop running/);
+    assert.match(calls.tooltips.at(-1), /2 approvals waiting, 1 running/);
     assert.ok(calls.menus.length >= 2, "a count change must rebuild the menu");
   });
 

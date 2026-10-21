@@ -17,9 +17,18 @@ running. Its menu is live, refreshed every few seconds from the local gateway:
 - **Approvals waiting** — how many tool approvals are pending. Clicking the row opens
   the chat surface where they are answered. It stays clickable at zero, so it is a way
   in rather than a row that greys out the moment you catch up.
-- **Loops running** — a submenu of the loops currently `running`; each entry deep-links
-  to that loop. Paused, blocked and awaiting-input loops are *not* counted here — they
-  are active, but nothing is working on them.
+- **Running** — everything running now, the same list Mission Control's Working lane
+  shows (`GET /api/running`): a chat's turn, a helper, a loop, a workflow run, an
+  automation's fire and a webhook's turn, each once. Each entry says the work's name, its
+  phase, what it is doing and when that last changed, and opens the work where it runs
+  (Mission Control for work no page opens). A blocked entry (queued for a slot, retrying,
+  waiting on a busy model) says so, and the row counts how many are; an entry that waits on
+  you says how much does. The first 8 are listed, and the rest open in Mission Control. With
+  nothing running it says **Nothing running**; when the list cannot be read it says so; and
+  while the gateway cannot be reached it keeps the last entries it read, as **Last known**.
+- **Just finished** — the last endings, each saying how it ended (done, or stopped with its
+  reason) and when, and work a gateway restart cut off, said as **Interrupted** until it runs
+  or ends again, or for ten minutes.
 - **Quick Capture Note** — opens the Inbox with its note composer open, the same one the
   Inbox header's **Capture a note** opens. What you write is saved as your own Inbox
   item, up to 4,000 characters; if the save fails, your text stays in the composer.
