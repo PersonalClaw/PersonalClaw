@@ -51,17 +51,47 @@ function writeOpen(open: Record<string, boolean>): Record<string, boolean> {
   return open
 }
 
-/** Scroll the rail (the row's nearest scrolling ancestor) just far enough to show *el*. Never
- *  `scrollIntoView`, which may scroll the page as well, and would for a drawer parked off-screen. */
-function reveal(el: HTMLElement) {
+/** The rail's scroll area: *el*'s nearest scrolling ancestor (the sidebar, `NavRail`). */
+function scrollerOf(el: HTMLElement): HTMLElement | null {
   let sc = el.parentElement
   while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement
+  return sc
+}
+
+/** Scroll the rail just far enough to show *el*, clear of the top the scroller keeps clear (its
+ *  `scroll-padding-top`, the pinned bar's height: see `PINNED_BAR`). Never `scrollIntoView`, which
+ *  may scroll the page as well, and would for a drawer parked off-screen. */
+function reveal(el: HTMLElement) {
+  const sc = scrollerOf(el)
   if (!sc) return
   const r = el.getBoundingClientRect()
   const s = sc.getBoundingClientRect()
-  if (r.top < s.top) sc.scrollTop -= s.top - r.top
+  // The bar sticks flush with the scroller's top, so its height is what it covers there, whether it
+  // is stuck, at rest above, or being pushed off by the end of the threads.
+  const top = s.top + (parseFloat(getComputedStyle(sc).scrollPaddingTop) || 0)
+  if (r.top < top) sc.scrollTop -= top - r.top
   else if (r.bottom > s.bottom) sc.scrollTop += r.bottom - s.bottom
 }
+
+/** A row's label and mark, raised over its selected fill. */
+const ROW_LABEL_Z = 10
+
+/** The pinned bar: stuck to the top of the rail's scroll area (the sidebar, `NavRail`) while the
+ *  threads scroll under it, on the rail's own solid surface and above the rows' labels, so no row
+ *  shows through it.
+ *
+ *  A sticky box sticks inside its scroller's padding, and the sidebar pads its top by `--spacing-l`
+ *  (`py-l`), so at `top: 0` the rows passing under the bar showed in that band above it. The bar
+ *  sticks that far higher, flush with the sidebar's top edge, and pads its own top by 4 px so New
+ *  thread's focus ring (2 px out, 2 px wide) is not cut by that edge.
+ *
+ *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height: the top
+ *  the browser keeps clear when focus moves to a row (Tab, Shift+Tab, the arrow keys), and that
+ *  `reveal` and `WindowedList` keep clear when they scroll one into view, so a row never takes the
+ *  focus behind the bar (WCAG 2.4.11). */
+const PINNED_BAR = {
+  position: 'sticky', top: 'calc(-1 * var(--spacing-l))', zIndex: ROW_LABEL_Z + 1, background: 'var(--color-rail)', paddingTop: 4,
+} as const
 
 const countLabel = (n: number) => (n === 0 ? 'no threads' : `${n} thread${n === 1 ? '' : 's'}`)
 
@@ -100,8 +130,9 @@ export function shownThreads(sections: readonly RailSection[]): Thread[] {
 /** The sidebar's threads: New thread and a search at the top, then each project a disclosure
  *  group and each thread a dense row that opens it.
  *
- *  New thread and the search sit above every project whatever the read says, so they never move
- *  with the list. The search filters the rows by name as the owner types, over what the rail has
+ *  New thread and the search sit above every project whatever the read says, one bar that stays at
+ *  the top of the rail while the threads scroll under it, and leaves with them once they have
+ *  scrolled past. The search filters the rows by name as the owner types, over what the rail has
  *  read (`railSections`), and nothing matching has a row of its own. The rail says which rows it
  *  shows, top to bottom (`onShown`): the threads ⌘1 to ⌘9 open.
  *
@@ -132,6 +163,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
 }) {
   const base = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState<Record<string, boolean>>(readGroupsOpen)
   const [query, setQuery] = useState('')
   // The groups closed during this search, which the next change of the search forgets.
@@ -159,6 +191,19 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
     setOpen((prev) => (prev[selectedProject] === false ? writeOpen({ ...prev, [selectedProject]: true }) : prev))
   }, [selectedKey, selectedProject])
 
+  // The scroller keeps the bar's height clear at its top (`PINNED_BAR`), as long as the bar is there.
+  useEffect(() => {
+    const bar = barRef.current
+    const sc = bar && scrollerOf(bar)
+    if (!bar || !sc) return
+    const fit = () => { sc.style.scrollPaddingTop = `${bar.offsetHeight}px` }
+    fit()
+    if (typeof ResizeObserver === 'undefined') return () => { sc.style.scrollPaddingTop = '' }
+    const watch = new ResizeObserver(fit)
+    watch.observe(bar)
+    return () => { watch.disconnect(); sc.style.scrollPaddingTop = '' }
+  }, [])
+
   const selectedShown = sections.some((s) => s.open && s.threads.some((t) => t.key === selectedKey))
   useEffect(() => {
     if (!selectedKey || !selectedShown) return
@@ -172,18 +217,20 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   const headingId = `${base}-heading`
   return (
     <div ref={rootRef} role="group" aria-labelledby={headingId} className="flex flex-col">
-      <Eyebrow id={headingId} className="px-s pt-l pb-1">Threads</Eyebrow>
-      <button
-        type="button" onClick={onNewThread} title={`New thread (${bindingLabel('new-chat')})`}
-        data-type="body-m"
-        className="flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
-        style={withWeight({ minHeight: 32 }, 400)}>
-        <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">New thread</span>
-      </button>
-      <div className="py-1">
-        <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
-          placeholder="Search threads" ariaLabel="Search threads" name="thread-search" />
+      <Eyebrow id={headingId} className="px-s pt-l">Threads</Eyebrow>
+      <div ref={barRef} className="flex flex-col" style={PINNED_BAR}>
+        <button
+          type="button" onClick={onNewThread} title={`New thread (${bindingLabel('new-chat')})`}
+          data-type="body-m"
+          className="flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
+          style={withWeight({ minHeight: 32 }, 400)}>
+          <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate">New thread</span>
+        </button>
+        <div className="py-1">
+          <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
+            placeholder="Search threads" ariaLabel="Search threads" name="thread-search" />
+        </div>
       </div>
       <ResultAnnouncement count={matches} noun="threads" active={searching && status !== 'loading'} empty={noMatch} />
       {status === 'loading' && (
@@ -262,9 +309,9 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
       {/* The selected fill, the rail's own: quiet, and distinct from hover (a lighter fill) and from
           keyboard focus (the focus ring). */}
       {selected && <span aria-hidden className="absolute inset-0 rounded-pill bg-surface-low" />}
-      <span className="relative z-10 min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words">{thread.title}</span>
+      <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
       {pip && (
-        <span data-type="caption" className="relative z-10 shrink-0">
+        <span data-type="caption" className="relative shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
           <StateMark family={pip.family}>{pip.word}</StateMark>
         </span>
       )}

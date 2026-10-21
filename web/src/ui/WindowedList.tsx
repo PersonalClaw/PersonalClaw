@@ -309,7 +309,10 @@ export function WindowedList<T>({
       const listTop = el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop
       const rowTop = listTop + offsets[idx]
       const rowBottom = rowTop + (heightsRef.current.get(key) ?? estimateRowHeight)
-      if (rowTop < sc.scrollTop) sc.scrollTop = rowTop
+      // The top a scroller keeps clear (`scroll-padding-top`), as the browser keeps it clear when it
+      // scrolls focus into view: a bar stuck over the scroller's top covers it.
+      const clear = parseFloat(getComputedStyle(sc).scrollPaddingTop) || 0
+      if (rowTop - clear < sc.scrollTop) sc.scrollTop = rowTop - clear
       else if (rowBottom > sc.scrollTop + sc.clientHeight) sc.scrollTop = rowBottom - sc.clientHeight
     }
     // Re-window AROUND the target rather than stretching the range to reach it: a
