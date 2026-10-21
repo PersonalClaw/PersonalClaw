@@ -16,25 +16,50 @@ owner's access away, or read the owner's whole config — the gaps #3602 found a
 5. ``GET /api/config/personalclaw`` handed an app declaring ``/api/config`` the whole config, while
    the reference docs called it owner-only; and ``/api/file-*`` reached ``config.json`` directly.
 
-Every app-side case here drives the REAL ``app_permission_middleware`` (lifted to module level so
-a test is not a mirror) against an app installed in a scratch home, and reads the SEL row it
-writes. The owner-side cases drive the real handlers.
+The app is installed once for the module (``shared_app_rows.SharedApp``), through preview →
+consent → install, declaring every family below it may declare, and every route is a row on that
+install, behind the REAL token middleware and the REAL ``app_permission_middleware``. The token
+you mint for the app is presented both ways an app presents one: as a Bearer header beside your
+cookie (its SDK) and as the only credential (its backend). Each refusal is read back as the
+Security Event Log row that names the app. Before every row the home is put back to what the
+install left and checked by digest, every session is signed out, the fenced registries are read
+around it, and the row gets a gateway of its own. A refused row reads your home before and after
+the app's requests, so a refusal that wrote anything fails its own row. A route answers with a
+stand-in at its real template, recording who reached it; your settings and the file explorer are
+the real handlers. Each family's end-to-end refusal stays its own test, on an app installed for
+it alone. The owner-side cases drive the real handlers.
 """
 
 from __future__ import annotations
 
+import functools
 import json
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import quote
 
 import pytest
-from aiohttp import web
+from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+from shared_app_rows import (
+    RecordedRows,
+    Row,
+    SharedApp,
+    home_files,
+    planted_rows,
+    recording_sel,
+    written_since,
+)
+from table_rows import row
+from test_apps_cannot_change_your_models import PORT, _Gateway
 
+# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
+# mock bound.
 from personalclaw.apps import manager
+from personalclaw.dashboard.handlers.apps import register_app_routes
 
 pytestmark = pytest.mark.security
 
@@ -42,7 +67,11 @@ pytestmark = pytest.mark.security
 APP = "probe-app"
 
 
-# ── an installed app, in a scratch home ─────────────────────────────────────────────
+# ── an installed app, in a scratch home (the helpers other modules import) ─────────────
+#
+# These set the app's identity on the request itself, ahead of the real permission middleware,
+# and write the app's files into a home rather than installing it. This module's own rows run on
+# the shared app below; the modules that import these still use them.
 
 
 def _install(home: Path, name: str, permissions: dict, **manifest: Any) -> None:
@@ -73,14 +102,6 @@ def _home(tmp_path: Path) -> Iterator[Path]:
         patch.object(manager, "config_dir", return_value=tmp_path),
     ):
         yield tmp_path
-
-
-@pytest.fixture
-def sel_rows():
-    """Every row the permission middleware writes (it imports ``sel`` at the refusal)."""
-    fake = MagicMock()
-    with patch("personalclaw.sel.sel", return_value=fake):
-        yield fake.log_api_access
 
 
 def _denials(rows: MagicMock, path: str) -> list:
@@ -120,6 +141,241 @@ async def _call(app_name: str, method: str, template: str, path: str) -> tuple[i
         return resp.status, await resp.text()
 
 
+# ── the shared app, and the gateway its rows reach ─────────────────────────────────────────────
+
+#: The ordinary setting the app declares in `permissions.config`, and one it does not.
+ORDINARY = "voice.echo_filter_enabled"
+UNDECLARED = "mobile.ntfy_topic_url"
+#: Every family below an app's manifest may name, so no refusal here is "path not declared"; and
+#: one ordinary setting, the list install consent shows. `/api/mcp` and `/api/durability` are not
+#: among them: the install check refuses both (:func:`_declared_past_install`).
+DECLARED = {
+    "api": [
+        "/api/config",
+        "/api/file-read",
+        "/api/triggers",
+        "/api/workflows",
+        "/api/loops",
+        "/api/spawn",
+        "/api/apps",
+        "/api/autonomy",
+        "/api/devices",
+        "/api/channels",
+        "/api/incident",
+    ],
+    "config": [ORDINARY],
+}
+
+CONFIG = "/api/config/personalclaw"
+FILE_READ = "/api/file-read"
+OWNER_ONLY = "owner-only"
+#: Why the config handler refuses an app a setting it did not declare.
+NOT_DECLARED = "config_field_not_declared"
+
+#: The two ways an app presents the token you mint for it: beside your cookie, as its SDK sends it,
+#: and as the only credential, as its backend does (`test_apps_cannot_post_into_your_chats.WAYS`,
+#: which imports this module's helpers above, so this module cannot import it).
+WAYS = {"as its SDK": False, "as its backend": True}
+
+
+def _bundle(root: Path) -> Path:
+    """The probe app, declaring :data:`DECLARED`, and shipping nothing."""
+    d = root / "bundles" / APP
+    d.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": APP,
+        "version": "1.0.0",
+        "displayName": "Probe Reach",
+        "description": "A fixture app that declares the routes your automations and access use.",
+        "permissions": DECLARED,
+    }
+    (d / "app.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return d
+
+
+class _TokenGateway(_Gateway):
+    """The family's gateway (``test_apps_cannot_change_your_models._Gateway``)."""
+
+    async def both_ways(
+        self, token: str, method: str, path: str, body: Any = None
+    ) -> list[tuple[int, str]]:
+        """The app's request, sent once each way it presents *token* (:data:`WAYS`)."""
+        return [
+            await self.call(method, path, body, app_token=token, as_backend=alone)
+            for alone in WAYS.values()
+        ]
+
+
+@asynccontextmanager
+async def _token_gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_TokenGateway]:
+    """The real token middleware, permission middleware and request boundary, in front of the app
+    routes and *routes*."""
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+    from personalclaw.dashboard.server import app_permission_middleware
+    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+
+    app = web.Application(
+        middlewares=[
+            token_auth_middleware(port=PORT, local_only=False),
+            app_permission_middleware,
+            request_boundary_middleware(),
+        ]
+    )
+    register_app_routes(app)
+    for method, template, handler in routes:
+        app.router.add_route(method, template, handler)
+    owner = generate_token("owner", ttl_seconds=600)
+    async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
+        yield _TokenGateway(client, owner)
+
+
+#: The fixture app, installed once for the module.
+SHARED = SharedApp(APP, _bundle, _token_gateway)
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch) -> Iterator[Path]:
+    """A home of this test's own, with every session signed out before and after."""
+    import personalclaw.config.loader as loader
+    from personalclaw.dashboard.token_auth import revoke_all_sessions
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    revoke_all_sessions()
+    yield tmp_path
+    revoke_all_sessions()
+
+
+@pytest.fixture
+def sel_rows() -> Iterator[MagicMock]:
+    """Every Security Event Log row the test's requests write, the token middleware's included."""
+    fake = MagicMock()
+    with recording_sel(fake):
+        yield fake.log_api_access
+
+
+def _declared_past_install(home: Path, *families: str) -> None:
+    """The installed app's manifest naming *families* in ``permissions.api`` as well, written into
+    its install as a manifest edited after install would be. The install check refuses each
+    (asserted here), so only such a manifest declares one: what the permission middleware reads is
+    the ``app.json`` in the install, each request."""
+    from personalclaw.apps.manifest import AppManifest
+
+    path = home / "apps" / APP / "app.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for family in families:
+        refused = AppManifest.from_dict({**manifest, "permissions": {"api": [family]}}).validate()
+        assert any(OWNER_ONLY in e for e in refused), f"a manifest naming {family} installs"
+    manifest["permissions"]["api"] = [*manifest["permissions"]["api"], *families]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+#: The families no manifest may name, which a row asks for as an app whose manifest names them.
+UNDECLARABLE = ("/api/mcp", "/api/durability")
+
+
+def _past_install(path: str) -> tuple[str, ...]:
+    """The :data:`UNDECLARABLE` families *path* is under."""
+    return tuple(f for f in UNDECLARABLE if path == f or path.startswith(f + "/"))
+
+
+def _declares_no_setting(home: Path) -> None:
+    """The installed app's manifest with no ``permissions.config``: an app that declared
+    ``/api/config`` and no setting."""
+    path = home / "apps" / APP / "app.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["permissions"].pop("config")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _stand_in(reached: list[tuple[str, str]]) -> Any:
+    async def stand_in(request: web.Request) -> web.Response:
+        reached.append((request.get("app", ""), request.path))
+        return web.json_response({"reached": True})
+
+    return stand_in
+
+
+@functools.cache
+def _app_routes() -> frozenset[tuple[str, str]]:
+    """The routes the app routes serve with their real handlers (`register_app_routes`): a row
+    there reads your request answered by the handler, not refused."""
+    app = web.Application()
+    register_app_routes(app)
+    return frozenset((r.method, r.resource.canonical) for r in app.router.routes() if r.resource)
+
+
+def _code(text: str) -> str:
+    return str(json.loads(text)["error"]["code"])
+
+
+# ── the rows ───────────────────────────────────────────────────────────────────────────────────
+
+
+def _owner_only(
+    reached: list[tuple[str, str]],
+    method: str,
+    template: str,
+    path: str,
+    *,
+    says: str = OWNER_ONLY,
+    declares: tuple[str, ...] = (),
+):
+    """The app's request refused both ways as owner-only, each refusal saying *says* and leaving an
+    SEL row naming the app and the path, your home as it was, and your request reaching the route.
+    *declares* is written into the app's manifest first, so the app asks as one that declared it."""
+    from personalclaw.apps.permissions import owner_only_api_reason
+
+    async def run(r: Row) -> None:
+        reached.clear()
+        assert owner_only_api_reason(path, method=method, route=template), "must be owner-only"
+        if declares:
+            _declared_past_install(r.home, *declares)
+        before = home_files(r.home)
+        theirs = await r.gw.both_ways(r.token, method, path, {})
+        written = written_since(r.home, before)
+        yours = await r.gw.call(method, path, {})
+        for status, text in theirs:
+            assert status == 403, text
+            assert OWNER_ONLY in text and says in text, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(path)) == 2, "each refusal leaves an SEL row naming the app and path"
+        if (method, template) in _app_routes():
+            # The app's own routes answer you with their real handlers.
+            assert yours[0] != 403 and OWNER_ONLY not in yours[1], yours
+            assert reached == [], reached
+        else:
+            assert yours[0] == 200, yours
+            assert reached == [("", path)], "only your request reached it"
+
+    return run
+
+
+#: The one route here that takes no session: the token middleware lets every caller through to
+#: its own guards (a single-use code you minted, an origin check, a per-IP lockout), so the app's
+#: request reaches it as nobody's, and what the permission middleware would decide for the app is
+#: read from the decision itself.
+SIGNS_IN_ITS_OWN_CALLERS = "/api/devices/pair/complete"
+
+
+def _stays_the_apps(reached: list[tuple[str, str]], method: str, template: str, path: str):
+    """The app's request reaches the route both ways, as the app's, and is not refused."""
+    from personalclaw.apps.permissions import AppMay, app_request_denial, route_authz
+
+    async def run(r: Row) -> None:
+        reached.clear()
+        assert isinstance(route_authz(method, template), AppMay), "declared an app's"
+        assert app_request_denial(APP, path, method=method, route=template) == ""
+        theirs = await r.gw.both_ways(r.token, method, path, {})
+        for status, text in theirs:
+            assert status == 200, text
+        who = "" if path == SIGNS_IN_ITS_OWN_CALLERS else APP
+        assert reached == [(who, path)] * 2, reached
+        assert not r.denials(path)
+
+    return run
+
+
 # ── 1. MCP servers are the owner's ──────────────────────────────────────────────────
 
 #: Every MCP route, reads included: a write names a command the gateway launches, and a read
@@ -138,58 +394,57 @@ MCP_ROUTES = [
 ]
 
 
-class TestAnAppCannotDefineOrReadMcpServers:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("method", "template", "path"), MCP_ROUTES)
-    async def test_an_app_declaring_mcp_is_refused(
-        self, tmp_path, sel_rows, method, template, path
-    ) -> None:
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": ["/api/mcp", "/api/config"]})
-            status, text = await _call(APP, method, template, path)
-        assert status == 403, text
-        assert "MCP servers" in text, "the refusal names the capability, not a bare 403"
-        assert _denials(sel_rows, path), "the refusal leaves an SEL row naming the app and path"
+def _mcp_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
+    """Each MCP route refused to an app whose manifest names ``/api/mcp``, the refusal naming the
+    capability, not a bare 403."""
+    return [
+        (f"{m} {t}", _owner_only(reached, m, t, p, says="MCP servers", declares=_past_install(p)))
+        for m, t, p in MCP_ROUTES
+    ]
 
-    @pytest.mark.asyncio
-    async def test_the_owner_still_defines_one(self, tmp_path) -> None:
-        with _home(tmp_path):
-            status, _ = await _call("", "PUT", "/api/mcp/servers/{name}", "/api/mcp/servers/mine")
-        assert status == 200
 
-    def test_a_manifest_declaring_an_mcp_route_does_not_install(self) -> None:
-        from personalclaw.apps.manifest import AppManifest
+@pytest.mark.asyncio
+async def test_no_app_defines_or_reads_an_mcp_server(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _mcp_rows(reached)
+    assert len(rows) == len(MCP_ROUTES), "a route was left out of the table"
+    await SHARED.run(subtests, rows, _routes(reached), label="route")
 
-        errors = AppManifest.from_dict(
-            {
-                "name": "mcp-writer",
-                "version": "1.0.0",
-                "displayName": "x",
-                "description": "x",
-                "permissions": {"api": ["/api/mcp/servers"]},
-            }
-        ).validate()
+
+def test_what_a_manifest_may_declare(subtests) -> None:
+    """The install check: no MCP route and no security or unknown setting; and the manifest is how
+    an app ships a server, which install consent names."""
+    from personalclaw.apps.disclosure import describe
+    from personalclaw.apps.manifest import AppManifest
+
+    def manifest(name: str, **fields: Any) -> AppManifest:
+        return AppManifest.from_dict(
+            {"name": name, "version": "1.0.0", "displayName": "x", "description": "x", **fields}
+        )
+
+    with row(subtests, check="an MCP route does not install"):
+        errors = manifest("mcp-writer", permissions={"api": ["/api/mcp/servers"]}).validate()
         assert any("owner-only" in e and "MCP" in e for e in errors), errors
-
-    def test_the_manifest_is_how_an_app_ships_one_and_consent_names_it(self) -> None:
+    for entry, says in (("agent.yolo", "security setting"), ("no.such.field", "not a setting")):
+        with row(subtests, check=f"{entry} does not install"):
+            errors = manifest(
+                "nosy", permissions={"api": ["/api/config"], "config": [entry]}
+            ).validate()
+            assert any(entry in e and says in e for e in errors), errors
+    with row(subtests, check="a server it ships is named at install consent"):
         # The only door left is the manifest, and install consent shows what goes through it:
         # each server's command line or URL, from the one projection consent reads.
-        from personalclaw.apps.disclosure import describe
-        from personalclaw.apps.manifest import AppManifest
-
-        m = AppManifest.from_dict(
-            {
-                "name": "ships-code",
-                "version": "1.0.0",
-                "displayName": "x",
-                "description": "x",
-                "mcpServers": {
-                    "notes": {"command": "python", "args": ["server.py", "--stdio"]},
-                    "remote": {"url": "https://mcp.example.com/sse"},
-                },
-            }
+        shipped = manifest(
+            "ships-code",
+            mcpServers={
+                "notes": {"command": "python", "args": ["server.py", "--stdio"]},
+                "remote": {"url": "https://mcp.example.com/sse"},
+            },
         )
-        assert describe(m)["mcpServers"] == [
+        assert describe(shipped)["mcpServers"] == [
             {"name": "notes", "launches": "python server.py --stdio"},
             {"name": "remote", "launches": "https://mcp.example.com/sse"},
         ]
@@ -236,39 +491,46 @@ AUTOMATION_ROUTES_APP_MAY = [
     ("POST", "/api/loops/validate", "/api/loops/validate"),
 ]
 
-_AUTOMATION_GRANT = ["/api/triggers", "/api/workflows", "/api/loops", "/api/spawn", "/api/apps"]
+#: A route added tomorrow under `/api/triggers`, which no declaration covers yet.
+BRAND_NEW = ("POST", "/api/triggers/{id}/brand-new", "/api/triggers/t/brand-new")
 
 
-class TestAnAppCannotDefineOrFireAnAutomation:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("method", "template", "path"), AUTOMATION_ROUTES_OWNER_ONLY)
-    async def test_refused_with_a_row(self, tmp_path, sel_rows, method, template, path) -> None:
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": _AUTOMATION_GRANT})
-            status, text = await _call(APP, method, template, path)
-        assert status == 403, text
-        assert "owner-only" in text
-        assert _denials(sel_rows, path)
+def _a_new_write_fails_closed(reached: list[tuple[str, str]]):
+    """A route added tomorrow under ``/api/triggers`` is refused to every app until someone
+    declares whether an app may reach it — the runtime half of the rail."""
+    method, _template, path = BRAND_NEW
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("method", "template", "path"), AUTOMATION_ROUTES_APP_MAY)
-    async def test_stopping_stays_the_apps(self, tmp_path, method, template, path) -> None:
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": _AUTOMATION_GRANT})
-            status, text = await _call(APP, method, template, path)
-        assert status == 200, text
+    async def run(r: Row) -> None:
+        reached.clear()
+        before = home_files(r.home)
+        theirs = await r.gw.both_ways(r.token, method, path, {})
+        written = written_since(r.home, before)
+        yours = await r.gw.call(method, path, {})
+        for status, text in theirs:
+            assert status == 403, text
+            assert "has not declared whether an app may reach it" in text, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(path)) == 2, "each refusal leaves an SEL row naming the app and path"
+        assert yours[0] == 200 and reached == [("", path)], (yours, reached)
 
-    @pytest.mark.asyncio
-    async def test_a_new_write_in_a_family_fails_closed(self, tmp_path, sel_rows) -> None:
-        # A route added tomorrow under /api/triggers is refused to every app until someone
-        # declares whether an app may reach it — the runtime half of the rail.
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": ["/api/triggers"]})
-            status, text = await _call(
-                APP, "POST", "/api/triggers/{id}/brand-new", "/api/triggers/t/brand-new"
-            )
-        assert status == 403
-        assert "has not declared whether an app may reach it" in text
+    return run
+
+
+@pytest.mark.asyncio
+async def test_no_app_defines_or_fires_an_automation_and_it_still_stops_one(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = [(f"{m} {t}", _owner_only(reached, m, t, p)) for m, t, p in AUTOMATION_ROUTES_OWNER_ONLY]
+    rows += [
+        (f"{m} {t}", _stays_the_apps(reached, m, t, p)) for m, t, p in AUTOMATION_ROUTES_APP_MAY
+    ]
+    rows.append(("a new write in a family", _a_new_write_fails_closed(reached)))
+    assert (
+        len(rows) == len(AUTOMATION_ROUTES_OWNER_ONLY) + len(AUTOMATION_ROUTES_APP_MAY) + 1
+    ), "a route was left out of the table"
+    await SHARED.run(subtests, rows, _routes(reached), label="route")
 
 
 def _trigger_request(
@@ -652,143 +914,134 @@ ACCESS_ROUTES = [
     ("POST", "/api/durability/import", "/api/durability/import"),
 ]
 
+ACCESS_LEVERS = [
+    # The stop is the one lever an app keeps; resuming stays the owner's (#3602).
+    ("POST", "/api/incident", "/api/incident"),
+    # browser-connector redeems a code the owner minted.
+    ("POST", "/api/devices/pair/complete", "/api/devices/pair/complete"),
+]
 
-class TestAnAppCannotTakeTheOwnersAccessAway:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("method", "template", "path"), ACCESS_ROUTES)
-    async def test_refused_with_a_row(self, tmp_path, sel_rows, method, template, path) -> None:
-        grant = ["/api/autonomy", "/api/devices", "/api/channels", "/api/durability"]
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": grant})
-            status, text = await _call(APP, method, template, path)
+
+@pytest.mark.asyncio
+async def test_no_app_takes_your_access_away_and_its_levers_stay(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = [
+        (f"{m} {t}", _owner_only(reached, m, t, p, declares=_past_install(p)))
+        for m, t, p in ACCESS_ROUTES
+    ]
+    rows += [(f"{m} {t}", _stays_the_apps(reached, m, t, p)) for m, t, p in ACCESS_LEVERS]
+    assert len(rows) == len(ACCESS_ROUTES) + len(ACCESS_LEVERS), "a route was left out of the table"
+    await SHARED.run(subtests, rows, _routes(reached), label="route")
+
+
+# ── 5. An app reads only the settings it declared, and no file of your home ──────────
+
+
+def _config(home: Path) -> dict:
+    path = home / "config.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _with(config: dict, field: str, value: Any) -> dict:
+    """*config* with dotted *field* set to *value*."""
+    out = json.loads(json.dumps(config))
+    *parents, leaf = field.split(".")
+    node = out
+    for part in parents:
+        node = node.setdefault(part, {})
+    node[leaf] = value
+    return out
+
+
+async def _the_full_config_is_not_an_apps(r: Row) -> None:
+    """An app that declared ``/api/config`` and no setting is refused the read, by name."""
+    _declares_no_setting(r.home)
+    before = home_files(r.home)
+    theirs = await r.gw.both_ways(r.token, "GET", CONFIG)
+    written = written_since(r.home, before)
+    for status, text in theirs:
         assert status == 403, text
-        assert _denials(sel_rows, path)
+        assert _code(text) == NOT_DECLARED, text
+    assert not written, f"a refusal changed your home: {written}"
+    refusals = r.denials("permissions.config")
+    assert len(refusals) == 2, "each refusal leaves an SEL row naming the app"
+    assert all(c.kwargs.get("operation") == "config.read" for c in refusals), refusals
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "path"),
-        [
-            # The stop is the one lever an app keeps; resuming stays the owner's (#3602).
-            ("POST", "/api/incident", "/api/incident"),
-            # browser-connector redeems a code the owner minted.
-            ("POST", "/api/devices/pair/complete", "/api/devices/pair/complete"),
-        ],
-    )
-    async def test_the_documented_levers_stay(self, tmp_path, method, template, path) -> None:
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": ["/api/incident", "/api/devices"]})
-            status, text = await _call(APP, method, template, path)
+
+async def _it_reads_exactly_what_it_declared(r: Row) -> None:
+    for status, text in await r.gw.both_ways(r.token, "GET", CONFIG):
         assert status == 200, text
+        body = json.loads(text)
+        assert set(body) == {"voice"} and set(body["voice"]) == {"echo_filter_enabled"}, body
 
 
-# ── 5. An app reads only the settings it declared ────────────────────────────────────
-
-
-def _config_gateway(app_name: str) -> web.Application:
-    from personalclaw.dashboard.handlers import (
-        api_personalclaw_config,
-        api_personalclaw_config_patch,
+async def _it_writes_only_what_it_declared(r: Row) -> None:
+    before = home_files(r.home)
+    undeclared = await r.gw.both_ways(
+        r.token, "PATCH", CONFIG, {"path": UNDECLARED, "value": "https://ntfy.sh/stolen"}
     )
-    from personalclaw.dashboard.server import app_permission_middleware
-
-    @web.middleware
-    async def identity(request: web.Request, handler: Any) -> web.StreamResponse:
-        request["user"] = "owner"
-        if app_name:
-            request["app"] = app_name
-        return await handler(request)
-
-    app = web.Application(middlewares=[identity, app_permission_middleware])
-    app.router.add_get("/api/config/personalclaw", api_personalclaw_config)
-    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
-    return app
-
-
-@pytest.fixture
-def config_home(tmp_path, monkeypatch):
-    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
-    with patch("personalclaw.config.loader.config_path", return_value=tmp_path / "config.json"):
-        yield tmp_path
-
-
-class TestAnAppReadsOnlyTheSettingsItDeclared:
-    @pytest.mark.asyncio
-    async def test_the_full_config_is_not_an_apps(self, config_home, sel_rows) -> None:
-        _install(config_home, APP, {"api": ["/api/config"]})
-        rows = MagicMock()
-        with patch("personalclaw.dashboard.handlers.sel", return_value=rows):
-            async with TestClient(TestServer(_config_gateway(APP))) as client:
-                resp = await client.get("/api/config/personalclaw")
-                assert resp.status == 403
-                assert (await resp.json())["error"]["code"] == "config_field_not_declared"
-        assert any(
-            c.kwargs.get("caller") == f"app:{APP}" and c.kwargs.get("operation") == "config.read"
-            for c in rows.log_api_access.call_args_list
+    written = written_since(r.home, before)
+    for status, text in undeclared:
+        assert status == 403, text
+        assert _code(text) == NOT_DECLARED, text
+    assert not written, f"a refusal changed your home: {written}"
+    assert len(r.denials(UNDECLARED)) == 2, "each refusal leaves an SEL row naming the app"
+    for alone, value in zip(WAYS.values(), (False, True), strict=True):
+        was = _config(r.home)
+        status, text = await r.gw.call(
+            "PATCH", CONFIG, {"path": ORDINARY, "value": value}, app_token=r.token, as_backend=alone
         )
+        assert status == 200, text
+        # The answer to a write is a read of the config too. Found driving a real gateway: the
+        # declared write answered with every setting, past the GET's scope.
+        assert json.loads(text) == {"voice": {"echo_filter_enabled": value}}, text
+        assert _config(r.home) == _with(was, ORDINARY, value), "that setting, and nothing else"
 
-    @pytest.mark.asyncio
-    async def test_an_app_reads_exactly_what_it_declared(self, config_home) -> None:
-        _install(
-            config_home,
-            APP,
-            {"api": ["/api/config"], "config": ["voice.echo_filter_enabled"]},
-        )
-        async with TestClient(TestServer(_config_gateway(APP))) as client:
-            resp = await client.get("/api/config/personalclaw")
-            assert resp.status == 200
-            body = await resp.json()
-        assert set(body) == {"voice"} and set(body["voice"]) == {"echo_filter_enabled"}
 
-    @pytest.mark.asyncio
-    async def test_an_app_writes_only_what_it_declared(self, config_home) -> None:
-        _install(
-            config_home,
-            APP,
-            {"api": ["/api/config"], "config": ["voice.echo_filter_enabled"]},
-        )
-        async with TestClient(TestServer(_config_gateway(APP))) as client:
-            undeclared = await client.patch(
-                "/api/config/personalclaw",
-                json={"path": "mobile.ntfy_topic_url", "value": "https://ntfy.sh/stolen"},
-            )
-            assert undeclared.status == 403
-            assert (await undeclared.json())["error"]["code"] == "config_field_not_declared"
-            declared = await client.patch(
-                "/api/config/personalclaw",
-                json={"path": "voice.echo_filter_enabled", "value": False},
-            )
-            assert declared.status == 200
-            # The answer to a write is a read of the config too. Found driving a real gateway:
-            # the declared write answered with every setting, past the GET's scope.
-            assert await declared.json() == {"voice": {"echo_filter_enabled": False}}
-        saved = json.loads((config_home / "config.json").read_text(encoding="utf-8"))
-        assert saved == {"voice": {"echo_filter_enabled": False}}
+async def _you_read_everything(r: Row) -> None:
+    status, text = await r.gw.call("GET", CONFIG)
+    assert status == 200, text
+    assert {"agent", "auth", "security", "voice"} <= set(json.loads(text))
 
-    @pytest.mark.asyncio
-    async def test_the_owner_still_reads_everything(self, config_home) -> None:
-        async with TestClient(TestServer(_config_gateway(""))) as client:
-            body = await (await client.get("/api/config/personalclaw")).json()
-        assert {"agent", "auth", "security", "voice"} <= set(body)
 
-    @pytest.mark.parametrize(
-        ("entry", "says"),
-        [("agent.yolo", "security setting"), ("no.such.field", "not a setting")],
-    )
-    def test_a_manifest_cannot_declare_a_security_or_unknown_setting(self, entry, says) -> None:
-        from personalclaw.apps.manifest import AppManifest
+async def _no_file_of_your_home(r: Row) -> None:
+    """``config.json`` and ``mcp.json`` are files: an app that declared ``/api/file-read`` read the
+    MCP credentials, and one that declared ``/api/file-write`` could edit YOLO on."""
+    target = r.home / "config.json"
+    target.write_text(json.dumps(_with(_config(r.home), "agent.yolo", False)), encoding="utf-8")
+    path = f"{FILE_READ}?path={quote(str(target))}"
+    # Yours first: a home's first read of the explorer's roots makes its default projects and
+    # loop store, and what the app's requests are measured against is a home past that.
+    yours = await r.gw.call("GET", path)
+    before = home_files(r.home)
+    theirs = await r.gw.both_ways(r.token, "GET", path)
+    written = written_since(r.home, before)
+    for status, text in theirs:
+        # 403, an app refusal like every other (`files._app_path_refusal`).
+        assert status == 403, text
+    assert not written, f"a refusal changed your home: {written}"
+    assert len(r.denials(str(target))) == 2, "each refusal leaves an SEL row naming the app"
+    # The home is no root for anyone (#3675): your read of it is refused as well, a 400 that
+    # confirms nothing about the path.
+    assert yours[0] == 400, yours
 
-        errors = AppManifest.from_dict(
-            {
-                "name": "nosy",
-                "version": "1.0.0",
-                "displayName": "x",
-                "description": "x",
-                "permissions": {"api": ["/api/config"], "config": [entry]},
-            }
-        ).validate()
-        assert any(entry in e and says in e for e in errors), errors
+
+@pytest.mark.asyncio
+async def test_an_app_reads_only_the_settings_it_declared_and_no_file_of_your_home(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [
+        ("the full config, to an app that declared no setting", _the_full_config_is_not_an_apps),
+        ("the settings it declared", _it_reads_exactly_what_it_declared),
+        ("a setting it did not declare, and the one it did", _it_writes_only_what_it_declared),
+        ("your read of every setting", _you_read_everything),
+        ("your config file, through the file explorer", _no_file_of_your_home),
+    ]
+    await SHARED.run(subtests, rows, _routes([]), label="case")
 
 
 class TestTheFileExplorerKeepsAnAppOutOfTheHome:
@@ -814,27 +1067,170 @@ class TestTheFileExplorerKeepsAnAppOutOfTheHome:
             assert _validate_dashboard_path(str(target)) is None
             assert _validate_dashboard_path(str(uploaded)) == str(uploaded.resolve())
 
-    @pytest.mark.asyncio
-    async def test_through_the_gateway(self, tmp_path, monkeypatch) -> None:
-        from personalclaw.dashboard.handlers.files import api_file_read
-        from personalclaw.dashboard.server import app_permission_middleware
 
-        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-        monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
-        _install(tmp_path, APP, {"api": ["/api/file-read"]})
-        (tmp_path / "config.json").write_text('{"agent": {"yolo": false}}', encoding="utf-8")
+# ── the gateway every row reaches ──────────────────────────────────────────────────────────────
 
-        @web.middleware
-        async def identity(request: web.Request, handler: Any) -> web.StreamResponse:
-            request["user"] = "owner"
-            request["app"] = APP
-            return await handler(request)
 
-        gw = web.Application(middlewares=[identity, app_permission_middleware])
-        gw.router.add_get("/api/file-read", api_file_read)
-        async with TestClient(TestServer(gw)) as client:
-            resp = await client.get(
-                "/api/file-read", params={"path": str(tmp_path / "config.json")}
-            )
-            # 403, an app refusal like every other (`files._app_path_refusal`).
-            assert resp.status == 403, "the app never reads the owner's config through a file"
+def _routes(reached: list[tuple[str, str]]) -> list[tuple[str, str, Any]]:
+    """The real handlers of your settings and the file explorer, and a stand-in at every route the
+    tables name, recording who reached it and at which path. A template the app routes serve keeps
+    its real handler."""
+    from personalclaw.dashboard.handlers import (
+        api_personalclaw_config,
+        api_personalclaw_config_patch,
+    )
+    from personalclaw.dashboard.handlers.files import api_file_read
+
+    stand_in = _stand_in(reached)
+    tables = [
+        *MCP_ROUTES,
+        *AUTOMATION_ROUTES_OWNER_ONLY,
+        *AUTOMATION_ROUTES_APP_MAY,
+        BRAND_NEW,
+        *ACCESS_ROUTES,
+        *ACCESS_LEVERS,
+    ]
+    stand_ins = {(m, t): stand_in for m, t, _path in tables if (m, t) not in _app_routes()}
+    return [
+        ("GET", CONFIG, api_personalclaw_config),
+        ("PATCH", CONFIG, api_personalclaw_config_patch),
+        ("GET", FILE_READ, api_file_read),
+        *((m, t, handler) for (m, t), handler in stand_ins.items()),
+    ]
+
+
+# ── the table's isolation, and a refusal that writes ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    probe = _mcp_rows(reached)[0]
+    failed = await planted_rows(SHARED, _routes(reached), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
+
+
+#: The row the planted refusal below answers: defining a server the gateway launches.
+PLANTED = "PUT /api/mcp/servers/{name}"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """A permission check that lets the app's definition of a server through, to a handler that
+    saves it in your MCP config and then answers as the refusal does: a 403 naming the owner-only
+    capability, and an SEL row naming the app and the path. Every other request is decided as
+    before. Only your home tells it from a refusal, so its row fails on that, and the rows either
+    side of it, the home put back before each, pass."""
+    import personalclaw.config.loader as loader
+    from personalclaw import sel
+    from personalclaw.apps import permissions
+
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _mcp_rows(reached)
+    at = [name for name, _ in rows].index(PLANTED)
+    method, template = PLANTED.split(" ", 1)
+    decide = permissions.app_request_denial
+
+    def lets_the_planted_write_through(app_name: str, path: str, **route: str) -> str:
+        if (route.get("method"), route.get("route")) == (method, template):
+            return ""
+        return decide(app_name, path, **route)
+
+    async def writes_then_refuses(request: web.Request) -> web.Response:
+        app = request.get("app", "")
+        if not app:
+            reached.append(("", request.path))
+            return web.json_response({"reached": True})
+        server = {request.match_info["name"]: {"command": "sh", "args": ["-c", "id"]}}
+        (loader.config_dir() / "mcp.json").write_text(
+            json.dumps({"mcpServers": server}), encoding="utf-8"
+        )
+        reason = permissions.owner_only_refusal(permissions.owner_only_api_reason(request.path))
+        sel.sel().log_api_access(
+            caller=f"app:{app}",
+            operation=f"{request.method} {request.path}",
+            outcome="denied",
+            source="app_permissions",
+            resources=request.path,
+            error=reason,
+        )
+        raise web.HTTPForbidden(
+            text=f"app {app!r} not permitted to access {request.path}: {reason}"
+        )
+
+    monkeypatch.setattr(permissions, "app_request_denial", lets_the_planted_write_through)
+    routes = [
+        (m, t, writes_then_refuses if (m, t) == (method, template) else handler)
+        for m, t, handler in _routes(reached)
+    ]
+    recorded = RecordedRows()
+    await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="route")
+    assert list(recorded.failed) == [PLANTED], recorded.failed
+    assert "a refusal changed your home: ['mcp.json']" in recorded.failed[PLANTED]
+
+
+# ── 6. Each family, end to end, on an app installed for this test alone ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_each_family_refuses_an_app_installed_for_this_test_alone(home, sel_rows) -> None:
+    """An MCP server, an automation, your access, your settings and your config file, each asked
+    for both ways by an app installed for this test alone; and the stop it keeps, reached as its
+    own."""
+    reached: list[tuple[str, str]] = []
+    target = home / "config.json"
+    cancel = "/api/workflows/runs/r1/cancel"
+    async with _token_gateway(_routes(reached)) as gw:
+        await gw.install(_bundle(home))
+        token = str((await gw.ok("POST", f"/api/apps/{APP}/token"))["token"])
+        target.write_text(json.dumps(_with(_config(home), "agent.yolo", False)), encoding="utf-8")
+        config_file_path = f"{FILE_READ}?path={quote(str(target))}"
+        # Your read first, past the home's first read of the explorer's roots (see the row).
+        assert (await gw.call("GET", config_file_path))[0] == 400
+        before = home_files(home)
+        mcp = await gw.both_ways(token, "PUT", "/api/mcp/servers/evil", {"command": "sh"})
+        trigger = await gw.both_ways(token, "POST", "/api/triggers", {})
+        access = await gw.both_ways(token, "POST", "/api/autonomy/demote", {})
+        setting = await gw.both_ways(
+            token, "PATCH", CONFIG, {"path": UNDECLARED, "value": "https://ntfy.sh/stolen"}
+        )
+        config_file = await gw.both_ways(token, "GET", config_file_path)
+        written = written_since(home, before)
+        stopped = await gw.both_ways(token, "POST", cancel, {})
+    # What a row reads: the refusals that name this app.
+    seen = Row(gw, token, home, sel_rows, APP)
+    for path, sent, says in (
+        ("/api/mcp/servers/evil", mcp, "MCP servers"),
+        ("/api/triggers", trigger, OWNER_ONLY),
+        ("/api/autonomy/demote", access, OWNER_ONLY),
+    ):
+        for status, text in sent:
+            assert status == 403 and OWNER_ONLY in text and says in text, f"{path}: {text}"
+        assert len(seen.denials(path)) == 2, path
+    for status, text in setting:
+        assert status == 403 and _code(text) == NOT_DECLARED, text
+    assert len(seen.denials(UNDECLARED)) == 2
+    for status, text in config_file:
+        assert status == 403, text
+    assert len(seen.denials(str(target))) == 2
+    assert not written, f"a refusal changed your home: {written}"
+    for status, text in stopped:
+        assert status == 200, text
+    assert reached == [(APP, cancel)] * 2, "only the stop the app keeps is reached"
