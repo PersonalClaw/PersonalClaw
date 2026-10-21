@@ -2,11 +2,11 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
         "button \"Export as HTML\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Re-scan\"",
@@ -21,7 +21,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -32,6 +31,10 @@
         "button \"Rebuild links\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -41,7 +44,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -52,6 +54,10 @@
         "button \"Rebuild links\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -61,7 +67,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -70,9 +75,12 @@
         "button \"Open terminal\"",
         "button \"Re-scan\"",
         "button \"Rebuild links\"",
-        "button \"Settings\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -85,18 +93,18 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
         "button \"Export as HTML\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Re-scan\"",
@@ -111,7 +119,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -122,6 +129,10 @@
         "button \"Rebuild links\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -131,7 +142,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -142,6 +152,10 @@
         "button \"Rebuild links\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -151,7 +165,6 @@
         "summary \"Memory store + faiss consistencymemory.db healthy\""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Dream now\"",
         "button \"Expand sidebar\"",
@@ -160,9 +173,12 @@
         "button \"Open terminal\"",
         "button \"Re-scan\"",
         "button \"Rebuild links\"",
-        "button \"Settings\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -175,7 +191,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

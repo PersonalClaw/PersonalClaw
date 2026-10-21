@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,14 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts" [checked]
+    - radio "Apps"
+    - radio "Store"
   - heading "Prompts" [level=#]
   - radiogroup "Prompts view":
     - radio "User"
@@ -40,7 +45,7 @@
     - radio "Snippets" [checked]
   - button "New snippet"
   - searchbox "Search"
-  - button "Filter & sort": Sort & filter
+  - button "Filter & sort": Sorted by name
   - status
   - button "agent-runtime-identity"
   - text: agent-runtime-identity bundled # vars Tells the agent which agent it is, whom it works for, and which runtime it runs in (dashboard/channel/CLI/cron), so it answers natively. <theme> bundled
@@ -134,3 +139,5 @@
   - text: widget-instructions bundled # var Inline-widget rendering instructions for dashboard sessions, by density ('more' shows interactive widgets, 'less' is markdown-first). <theme> bundled
   - button "workspace-identity"
   - text: "workspace-identity bundled # var Workspace-identity block: explains the working directory is the workspace, with cwd-scoped memory and global/workspace lesson scopes. <theme> bundled"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

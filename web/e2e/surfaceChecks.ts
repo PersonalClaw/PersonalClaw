@@ -25,11 +25,13 @@ const atFolder = (p: string) => new RegExp(`${escaped(p)}(?=[/\\s,"':)]|$)`, 'g'
 function runFolds(): [RegExp, string][] {
   let home = ''
   try { home = harnessHome(process.env) } catch { return [] }
+  // The longer form first: a macOS temp folder's real path (`/private/var/folders/…`) holds the
+  // path as given (`/var/folders/…`), which folded first left `/private<e2e home>` behind.
   const forms = (p: string) => {
     const given = resolve(p)
     let real = given
     try { real = realpathSync(given) } catch { /* not made yet: the path as given stands */ }
-    return [...new Set([given, real])]
+    return [...new Set([given, real])].sort((a, b) => b.length - a.length)
   }
   return [
     ...forms(userHomeFor(home)).map((p): [RegExp, string] => [atFolder(p), '~']),

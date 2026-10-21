@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -14,6 +13,7 @@
         "button \"Facts#\"",
         "button \"Lesson\"",
         "button \"Lessons#\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Slots#\"",
@@ -27,7 +27,6 @@
       ],
       "390": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -43,6 +42,10 @@
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -53,7 +56,6 @@
       ],
       "412": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -69,6 +71,10 @@
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -79,7 +85,6 @@
       ],
       "768": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -92,11 +97,14 @@
         "button \"Lessons#\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Settings\"",
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Entities\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -110,7 +118,7 @@
     "known": {
       "200% text zoom": [
         "<div> \"All#Facts#Episodes#Lessons#Entities#Slot\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -118,7 +126,6 @@
     "targets": {
       "320": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -129,6 +136,7 @@
         "button \"Facts#\"",
         "button \"Lesson\"",
         "button \"Lessons#\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Slots#\"",
@@ -142,7 +150,6 @@
       ],
       "390": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -158,6 +165,10 @@
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -168,7 +179,6 @@
       ],
       "412": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -184,6 +194,10 @@
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -194,7 +208,6 @@
       ],
       "768": [
         "button \"All#\"",
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Documents#\"",
         "button \"Entities#\"",
@@ -207,11 +220,14 @@
         "button \"Lessons#\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Settings\"",
         "button \"Slots#\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Entities\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Records\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
@@ -225,7 +241,7 @@
     "known": {
       "200% text zoom": [
         "<div> \"All#Facts#Episodes#Lessons#Entities#Slot\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

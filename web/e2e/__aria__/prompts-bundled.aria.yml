@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,14 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts" [checked]
+    - radio "Apps"
+    - radio "Store"
   - heading "Prompts" [level=#]
   - radiogroup "Prompts view":
     - radio "User"
@@ -40,7 +45,7 @@
     - radio "Snippets"
   - button "New prompt"
   - searchbox "Search"
-  - button "Filter & sort": Sort & filter
+  - button "Filter & sort": Sorted by name
   - status
   - paragraph: Shipped with PersonalClaw and its apps, and run by them for their own work — agent <theme> prompts, titles, classifiers, judges. Editing one changes how that task behaves. They stay out of your chat prompt picker.
   - button "eval-judge"
@@ -129,3 +134,5 @@
   - text: "task-triage-classify bundled # vars The triage digest's cheap relevance gate: give each collected item a drop/surface/propose disposition against the user's own per-source filter rules. <theme> bundled"
   - button "task-triage-propose"
   - text: "task-triage-propose bundled # vars The triage digest's ONE strict-JSON proposal call: bind at most N tiered action proposals to the exact ordinals of the collect manifest. <theme> bundled"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

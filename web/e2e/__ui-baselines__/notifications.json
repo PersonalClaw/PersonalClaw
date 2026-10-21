@@ -25,7 +25,6 @@
         "button \"Investigate in chat: Backup restore drill passed — personalc\"",
         "button \"Mark all read\"",
         "button \"Mark read: Backup restore drill passed — personalclaw-snapsh\"",
-        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
@@ -62,8 +61,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Notifications #\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Inbox # unread · # notification\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -93,7 +92,6 @@
         "button \"Investigate in chat: Backup restore drill passed — personalc\"",
         "button \"Mark all read\"",
         "button \"Mark read: Backup restore drill passed — personalclaw-snapsh\"",
-        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
@@ -130,8 +128,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Notifications #\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Inbox # unread · # notification\" clips at #%: #x# in #x#"
       ]
     }
   }

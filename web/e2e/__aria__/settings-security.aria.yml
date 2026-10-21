@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,6 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
   - button "Back to Settings"
   - button "Settings"
   - text: Security
@@ -263,3 +260,5 @@
   - heading "Desktop capabilities" [level=#]
   - paragraph: Native permissions the PersonalClaw desktop app holds on this machine. Each one is granted by macOS, not by PersonalClaw — revoking it in <theme> Settings takes effect immediately, and nothing here can grant itself.
   - text: Desktop app not connected You are viewing this in a browser tab. Native capabilities — microphone, notifications, the menu-bar item — exist only while the PersonalClaw desktop app is running, so there is nothing to show or grant here.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

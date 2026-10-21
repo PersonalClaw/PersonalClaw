@@ -2,9 +2,9 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Preview\"",
@@ -17,7 +17,6 @@
         "input \"Query to preview injected memory context\""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
@@ -25,6 +24,10 @@
         "button \"Preview\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -33,7 +36,6 @@
         "input \"Query to preview injected memory context\""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
@@ -41,6 +43,10 @@
         "button \"Preview\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -49,15 +55,17 @@
         "input \"Query to preview injected memory context\""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Preview\"",
-        "button \"Settings\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -69,16 +77,16 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Preview\"",
@@ -91,7 +99,6 @@
         "input \"Query to preview injected memory context\""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
@@ -99,6 +106,10 @@
         "button \"Preview\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -107,7 +118,6 @@
         "input \"Query to preview injected memory context\""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
@@ -115,6 +125,10 @@
         "button \"Preview\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -123,15 +137,17 @@
         "input \"Query to preview injected memory context\""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Preview\"",
-        "button \"Settings\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=tab] \"Audit\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -143,7 +159,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

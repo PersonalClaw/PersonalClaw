@@ -2,40 +2,37 @@
   "dark": {
     "targets": {
       "320": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "input \"Search agents\""
       ],
       "390": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "input \"Search agents\""
       ],
       "412": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "input \"Search agents\""
@@ -43,60 +40,63 @@
       "768": [
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
+        "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
+        "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
         "input \"Search agents\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Agents\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Agents\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "input \"Search agents\""
       ],
       "390": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "input \"Search agents\""
       ],
       "412": [
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
         "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "input \"Search agents\""
@@ -104,20 +104,26 @@
       "768": [
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"Export to Claude Code\"",
+        "button \"More actions\"",
         "button \"New agent\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Sync agents\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
+        "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
         "input \"Search agents\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Agents\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Agents\" clips at #%: #x# in #x#"
       ]
     }
   }

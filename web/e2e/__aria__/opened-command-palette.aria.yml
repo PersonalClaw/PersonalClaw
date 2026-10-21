@@ -7,6 +7,9 @@
   - button "Library"
   - group "Threads":
     - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
@@ -15,7 +18,6 @@
   - button "Triggers"
   - button "Terminal"
   - button "Capabilities"
-  - button "Learning"
   - button "Workflows"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
@@ -62,7 +64,6 @@
   - option "Triggers Go to"
   - option "Terminal Go to"
   - option "Capabilities Go to"
-  - option "Learning Go to"
   - option "Workflows Go to"
   - option "Settings Go to"
   - option "Mission Control Go to"
@@ -70,6 +71,7 @@
   - option "Discover Go to"
   - option "Agents Go to"
   - option "Skills Go to"
+  - option "Learning Go to"
   - option "Tools Go to"
   - option "Prompts Go to"
   - option "Apps Go to"
@@ -88,16 +90,16 @@
   - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · ⌘⇧." [disabled]'
   - option "Show or hide the chat's working folder Open a chat to see its working folder Action · ⌘⇧E" [disabled]
   - option "Go to the next chat that needs you Action · ⌘⌥A"
-  - option "New chat Action · ⌘N"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
-  - option "Open chat # in the list Action · ⌘#"
+  - option "New thread Action · ⌘N"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
   - option "Approve the focused request Move focus to an approval, then press the key there Action · ⌘Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
 - text: navigate select ⌘K or ⌘⇧P toggle

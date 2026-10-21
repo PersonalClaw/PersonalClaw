@@ -13,6 +13,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -54,6 +55,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -95,6 +97,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -136,6 +139,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -169,7 +173,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -187,6 +191,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -228,6 +233,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -269,6 +275,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -310,6 +317,7 @@
         "button \"Log level: Error\"",
         "button \"Log level: Info\"",
         "button \"Log level: Warning\"",
+        "button \"New style\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"PersonalClaw\"",
@@ -343,7 +351,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }
