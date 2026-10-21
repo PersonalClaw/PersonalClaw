@@ -67,8 +67,8 @@ home or tab. The redirect replaces the history entry, so Back never bounces thro
 address, and query parameters and sub-paths carry over, so a deep link lands on the same item.
 Each retired path, with the query keys it carries, is one row of the redirect table,
 `web/src/app/routeRedirects.ts`: the old path, the new address, the segments and query keys the new
-page reads, and the pull request that moved it. A retired query value, such as an old Settings →
-Memory tab, is not a row: the page that still accepts it maps it. The router rewrites an old
+page reads, and the issue or pull request that retired it. A retired query value, such as an old
+Settings → Memory tab, is not a row: the page that still accepts it maps it. The router rewrites an old
 address before any page draws it, and no row lands on another row's old address, so a redirect
 never chains: when a page moves again, the rows that point at it move with it. A page sends its
 own address elsewhere only for what it holds at that moment, such as a room link that names no

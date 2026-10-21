@@ -17,8 +17,8 @@
  *
  *  What each row holds to (`routeRedirects.test.tsx`):
  *
- *    · it names the old address, the new one and the pull request that retired the old one, and its
- *      new address names its page: a carried segment never picks which page opens;
+ *    · it names the old address, the new one and the issue or pull request that retired the old
+ *      one, and its new address names its page: a carried segment never picks which page opens;
  *    · it lands on an address that opens as itself, never on an address another row retires, so a
  *      redirect never chains: when a page moves again, the rows that point at it move with it;
  *    · it keeps the substate the new page reads. Each `:name` segment of the old address fills the
@@ -44,8 +44,9 @@ export interface RouteRedirect {
   readonly to: string
   /** The old address's query keys the new page reads, each to the name the new page reads it by. */
   readonly keeps?: Readonly<Record<string, string>>
-  /** The pull request that retired the old address; `before v0.1.0` for one already retired in the
-   *  first release. */
+  /** The issue or pull request that retired the address; `before v0.1.0` for one already retired in
+   *  the first release. GitHub numbers issues and pull requests from one sequence, so either opens
+   *  at `#<number>`. */
   readonly pr: number | 'before v0.1.0'
 }
 

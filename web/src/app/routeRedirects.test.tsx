@@ -1,10 +1,10 @@
 /** Every retired address goes through one table, and the router reads it (#3819).
  *
  *  `routeRedirects.ts` is the one list of the addresses the app has retired, each with where it
- *  opens now and the pull request that moved it. Held here:
+ *  opens now and the issue or pull request that retired it. Held here:
  *
- *    · each row is well formed: an old address, an in-app new one that names its page, the pull
- *      request, and no address two rows retire;
+ *    · each row is well formed: an old address, an in-app new one that names its page, the issue or
+ *      pull request, and no address two rows retire;
  *    · a redirect never chains: no row lands on an address another row (or itself) retires. Both
  *      are read from the rows' patterns, not from samples, so a fixed segment one row names and
  *      another row carries is caught;
@@ -97,7 +97,7 @@ function malformed(table: readonly RouteRedirect[]): string[] {
     for (const [key, name] of Object.entries(row.keeps ?? {})) {
       if (fixedKeys.includes(name)) out.push(`${at}: it keeps ${key} as ${name}, which its new address already sets`)
     }
-    if (!(row.pr === 'before v0.1.0' || (Number.isInteger(row.pr) && row.pr > 0))) out.push(`${at}: it names no pull request`)
+    if (!(row.pr === 'before v0.1.0' || (Number.isInteger(row.pr) && row.pr > 0))) out.push(`${at}: it names no issue or pull request`)
     for (const other of table) {
       const shared = other === row ? null : meeting(row.from, other.from)
       if (shared) out.push(`${at}: #/${fill(row.from, shared)} is retired by another row too (${other.from})`)
@@ -124,7 +124,7 @@ describe('the redirect table', () => {
     expect(ROUTE_REDIRECTS.map((r) => r.from)).toEqual(expect.arrayContaining(['files/:slug', 'settings/vocabulary', 'notifications']))
   })
 
-  it('🔑 each row names the old address, an in-app new one and the pull request, and owns its address alone', () => {
+  it('🔑 each row names the old address, an in-app new one and the issue or pull request that retired the old one, and owns its address alone', () => {
     expect(malformed(ROUTE_REDIRECTS)).toEqual([])
   })
 
@@ -142,7 +142,7 @@ describe('the redirect table', () => {
       'old/:id -> https://elsewhere.test/:id: the new address is not an in-app path',
       'old2/:id -> new/:slug: the new address fills :slug, which the old one does not carry',
       'old3 -> new?tab=a: it keeps tab as tab, which its new address already sets',
-      'old4 -> new: it names no pull request',
+      'old4 -> new: it names no issue or pull request',
     ])
     expect(malformed([{ from: 'old/:id', to: 'a/:id', pr: 1 }, { from: 'old/:slug', to: 'b/:slug', pr: 2 }]))
       .toEqual([
