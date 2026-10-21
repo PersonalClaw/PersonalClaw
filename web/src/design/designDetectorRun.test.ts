@@ -7,6 +7,7 @@ import {
   baselineText,
   configProblems,
   detectorCommand,
+  detectorEnv,
   platformPackage,
   readRun,
   type Resolver,
@@ -71,6 +72,19 @@ describe('design detector run: the binary', () => {
       args: ['detect', '--json', '--no-inline-ignores', 'src'],
       cwd: WEB,
       env: { IMPECCABLE_NO_TELEMETRY: '1', DO_NOT_TRACK: '1' },
+    })
+  })
+
+  it('hands the binary no token: only PATH, HOME, temp dirs, the locale and the telemetry switches', () => {
+    const base = {
+      PATH: '/usr/bin', HOME: '/home/me', TMPDIR: '/tmp', LANG: 'en_US.UTF-8',
+      GITHUB_TOKEN: 'ghs_x', GH_TOKEN: 'gho_x', ACTIONS_RUNTIME_TOKEN: 'rt', ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'id',
+      CLAUDE_CODE_MESSAGING_TOKEN: 'm', AWS_PROFILE: 'p', AWS_SECRET_ACCESS_KEY: 's', NPM_TOKEN: 'n',
+    }
+    const env = detectorEnv({ env: { IMPECCABLE_NO_TELEMETRY: '1', DO_NOT_TRACK: '1' } }, base)
+    expect(env).toEqual({
+      PATH: '/usr/bin', HOME: '/home/me', TMPDIR: '/tmp', LANG: 'en_US.UTF-8',
+      IMPECCABLE_NO_TELEMETRY: '1', DO_NOT_TRACK: '1',
     })
   })
 
