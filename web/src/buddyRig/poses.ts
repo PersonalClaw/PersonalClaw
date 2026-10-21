@@ -13,6 +13,7 @@ import type { OrbState } from 'thinking-orbs'
 import { expr, physics, spring } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type PhaseFamily, type PhaseTone } from '../lib/workPhase'
 import { ORB_LOOKS, type AgentOrbSize } from '../ui/AgentOrb'
+import { ORB_FPS } from '../ui/orbDots'
 
 /** The phases the spike plays: each of the four families, and two of the active family's drawings. */
 export type RigPhase = 'idle' | 'thinking' | 'tool' | 'approval' | 'input' | 'error' | 'done'
@@ -118,8 +119,8 @@ export function tunedDrawingFor(size: number): AgentOrbSize {
   return size < 32 ? 20 : 64
 }
 
-/** The most frames a second the buddy paints its dots at. The agent orb in chat draws every frame
- *  the display does; the buddy, on screen for as long as the app runs, paints at most this many,
- *  which takes its loop from about 11% of a core to about the animating CPU bar's 5%
+/** The most frames a second the buddy paints its dots at: the agent orb's, since both draw through
+ *  one loop (`ui/orbDots.ts`). The buddy, on screen for as long as the app runs, paints at most this
+ *  many, which takes its loop from about 11% of a core to about the animating CPU bar's 5%
  *  (`docs/design/buddy/decisions/rig.md`). */
-export const BUDDY_FPS = 30
+export const BUDDY_FPS = ORB_FPS

@@ -26,9 +26,10 @@ the composer to show that the agent is at work. With no turn running, nothing on
 - Under a request for more contrast (`prefers-contrast: more`) the dots take the words' ink,
   `--color-on-surface`, and in forced colours the system's text colour. The badge is ringed, so in
   forced colours its ring and its glyph stay.
-- Its drawing is the `thinking-orbs` npm package (MIT), a dependency of the web app. Its `color`
-  prop takes the orb token's resolved value, so no copy of it lives in this tree, and its licence
-  ships in the build's third-party notices with every other bundled package's.
+- Its drawing is the `thinking-orbs` npm package (MIT), a dependency of the web app. The orb paints
+  the package's drawings with its engine and painter, tinted with the orb token's resolved value,
+  so no copy of it lives in this tree, and its licence ships in the build's third-party notices
+  with every other bundled package's.
 
 ## Phase to state
 
@@ -72,6 +73,9 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
 - Under reduced motion the orb is one static frame for its state.
 - It pauses offscreen and in a hidden tab. With no turn running, neither the orb nor anything else
   schedules an animation frame.
+- While it moves it paints at most 30 frames a second, whatever the display offers, through the
+  loop the buddy's dots are painted with (`web/src/ui/orbDots.ts`): it waits out each gap on a
+  timer and only then asks for one frame, so it asks for none between two paints.
 - It is `role="img"` with a label for each state, and it is announced once. The status line carries
   the words.
 - A sidebar row never shows the orb: a working thread's row has a static pip.

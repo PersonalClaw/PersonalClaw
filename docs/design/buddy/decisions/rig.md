@@ -49,15 +49,15 @@ of their own, at most at [the buddy's frame rate](#the-buddys-frame-rate):
    its dots' density and arrangement, and an SVG layer around it holds the badge (a ringed glyph)
    and the wash (a gradient). The layer is painted with the tokens as CSS variables and moved, with
    the whole orb, by the same presets through motion values. The spike's first runs drew the dots
-   with the agent orb's own component, which paints every frame the display draws and takes no
+   with `thinking-orbs`' own component, which paints every frame the display draws and takes no
    rate; to take the cap, the candidate now paints the same drawing itself.
 
 ## The buddy's frame rate
 
 The buddy paints its dots at most 30 frames a second (`BUDDY_FPS` in `poses.ts`). The agent orb in
-chat is unchanged and draws every frame the display does. A capped loop waits out the gap on a
-timer and only then asks for one frame, so the page draws nothing between two paints: the working
-hold measured 28.5 to 28.6 frames a second. A scheme change repaints the dots at once, moving or
+chat draws through the same loop at the same rate (`web/src/ui/orbDots.ts`). A capped loop waits out
+the gap on a timer and only then asks for one frame, so the page draws nothing between two paints:
+the working hold measured 28.5 to 28.6 frames a second. A scheme change repaints the dots at once, moving or
 still, rather than at the next capped paint. The motion library still moves the pose's values, and
 the layered candidate's SVG layer, at the display's rate while a change is moving.
 

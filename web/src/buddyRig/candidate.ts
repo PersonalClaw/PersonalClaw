@@ -1,7 +1,7 @@
 /** What the two rig candidates share (#3887): their props, the platform's answer on motion and
  *  visibility, and the inks they paint with. Everything that differs between them is the drawing. */
 
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useSyncExternalStore } from 'react'
 import { prefersReducedMotion } from '../design/motion'
 import { useInk } from '../ui/AgentOrb'
 import type { BuddySize, RigLook, RigPhase } from './poses'
@@ -46,20 +46,6 @@ export function useMayMove(): boolean {
   const reduced = useReducedMotionSetting()
   const shown = useSyncExternalStore(onVisibilityChange, visible, visible)
   return !reduced && shown
-}
-
-/** Whether `ref`'s element is on screen: an orb scrolled out of view pauses, as the agent orb's
- *  drawing does. On screen wherever there is no way to tell. */
-export function useOnScreen(ref: RefObject<Element | null>): boolean {
-  const [onScreen, setOnScreen] = useState(true)
-  useEffect(() => {
-    const el = ref.current
-    if (!el || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver(([entry]) => setOnScreen(entry.isIntersecting))
-    io.observe(el)
-    return () => io.disconnect()
-  }, [ref])
-  return onScreen
 }
 
 /** The dots' ink and the badge's and the wash's tone: their tokens, and the colours they resolve
