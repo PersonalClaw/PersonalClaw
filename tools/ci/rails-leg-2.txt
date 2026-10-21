@@ -10,7 +10,6 @@ tests/rails/test_a_step_runs_this_installs_personalclaw_tree.py
 tests/rails/test_acp_effective_risk_correlation_tree.py
 tests/rails/test_action_provider_chokepoints_tree.py
 tests/rails/test_agent_paths_resolve_at_call_time_tree.py
-tests/rails/test_agent_safety_rules_census_tree.py
 tests/rails/test_api_manifest_drift_tree.py
 tests/rails/test_app_data_copy_owner.py
 tests/rails/test_app_from_template_tree.py
@@ -27,7 +26,6 @@ tests/rails/test_bounty_wants_list.py
 tests/rails/test_browser_gate_stays_out_of_pytest_tree.py
 tests/rails/test_buddy_originality_record.py
 tests/rails/test_bundled_model_gate_tree.py
-tests/rails/test_by_name_load_census_tree.py
 tests/rails/test_cache_counters_single_store_tree.py
 tests/rails/test_channel_inbound_policy_gate_tree.py
 tests/rails/test_chat_craft_sel_audit_tree.py
@@ -37,7 +35,6 @@ tests/rails/test_ci_action_pins_tree.py
 tests/rails/test_ci_audit_tree.py
 tests/rails/test_ci_catalogue_tree.py
 tests/rails/test_ci_junit_artifacts_tree.py
-tests/rails/test_ci_plan_step_tree.py
 tests/rails/test_ci_python_suite_inputs_tree.py
 tests/rails/test_ci_supply_chain_contract.py
 tests/rails/test_ci_telemetry_schedules.py
@@ -63,7 +60,6 @@ tests/rails/test_every_approval_path_asks_the_deny_list_first.py
 tests/rails/test_every_database_opens_through_one_sqlite_tree.py
 tests/rails/test_every_dollar_is_priced_by_one_function_tree.py
 tests/rails/test_every_install_path_installs_the_lock_tree.py
-tests/rails/test_every_model_call_writes_its_usage_row_tree.py
 tests/rails/test_every_store_writer_uses_the_shared_writer_tree.py
 tests/rails/test_every_work_id_has_a_known_writer.py
 tests/rails/test_feedback_suppression_enforcement_tree.py
@@ -76,7 +72,6 @@ tests/rails/test_header_controls_doctrine_tree.py
 tests/rails/test_hook_advisory_status_tree.py
 tests/rails/test_identity_tree.py
 tests/rails/test_inbox_open_status_is_one_owner_tree.py
-tests/rails/test_inert_surface_baseline_tree.py
 tests/rails/test_installer_resolution_tree.py
 tests/rails/test_knowledge_contradiction_tree.py
 tests/rails/test_learning_flywheel_wiring.py
@@ -94,12 +89,10 @@ tests/rails/test_npm_advisory_floors_tree.py
 tests/rails/test_onboarding_state_tree.py
 tests/rails/test_one_embedding_control_plane_tree.py
 tests/rails/test_one_reading_of_a_json_answer_rail.py
-tests/rails/test_one_request_body_reader.py
 tests/rails/test_owner_only_census_tree.py
 tests/rails/test_owner_presence_census.py
 tests/rails/test_provider_config_secrets_tree.py
 tests/rails/test_provider_credential_status_reads_the_home_tree.py
-tests/rails/test_provider_instance_secrets_tree.py
 tests/rails/test_python_children_in_the_desktop_app_tree.py
 tests/rails/test_recall_ranking_disclosure_tree.py
 tests/rails/test_record_id_containment_tree.py
@@ -114,7 +107,6 @@ tests/rails/test_selfqa_companion_tree.py
 tests/rails/test_session_key_one_owner_audit.py
 tests/rails/test_session_organize_tree.py
 tests/rails/test_source_index.py
-tests/rails/test_spawn_env_audit_tree.py
 tests/rails/test_sqlite_compat_tree.py
 tests/rails/test_sqlite_driver_is_shared_tree.py
 tests/rails/test_sso_design_note_citations.py
@@ -122,7 +114,6 @@ tests/rails/test_stale_write_refusals_read_right_tree.py
 tests/rails/test_stats_tree.py
 tests/rails/test_stored_times_carry_their_offset_tree.py
 tests/rails/test_stored_upload_scan_census.py
-tests/rails/test_structural_baseline_tree.py
 tests/rails/test_supply_chain_tree.py
 tests/rails/test_task_collection_completeness_tree.py
 tests/rails/test_terminal_persist_capability_tree.py
@@ -140,8 +131,6 @@ tests/rails/test_usage_reachable_purposes_tree.py
 tests/rails/test_verify_wheel_contract_tree.py
 tests/rails/test_wf_error_codes_registry_tree.py
 tests/rails/test_what_stays_on_each_machine_tree.py
-tests/rails/test_wire_error_envelope_census.py
-tests/rails/test_workflow_definition_writer_census_tree.py
 tests/rails/test_workflows_admission_policies_tree.py
 tests/rails/test_workflows_attention_tree.py
 tests/rails/test_workflows_coalescer_tree.py

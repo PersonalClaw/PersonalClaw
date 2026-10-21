@@ -1680,23 +1680,26 @@ jobs:
     # tests/rails out of every plan, so `shards check` proves no shard lists one. breadth.yml's
     # `rails-macos` leg runs the same set nightly on macOS.
     #
-    # The rails run in two halves, in parallel, each under the 10-minute cap: one job running
-    # all of them hit that cap on more than half of main's pushes. tools/ci/rails-half-1.txt and
-    # rails-half-2.txt name each half's files, balanced by their recorded seconds, and `rails
-    # check` (in `rails-checks`) fails when a rail is in neither half or in both. Leg i runs
-    # rails-half-<i>.txt, each half on one leg: the CI contract row "each half of the rails runs
-    # once, on its own leg" holds the matrix to the lists. The cap is never raised: a half that
-    # outgrows it is rebalanced. `--shard-list` prints each worker's collection seconds and peak
-    # memory under "shard collection and memory", as a shard does.
+    # The rails run in three legs, in parallel, each well inside the 10-minute cap and the
+    # 8 minutes #3929 holds them to: one job running all of them hit that cap on more than half
+    # of main's pushes, and two halves still took up to 9. tools/ci/rails-leg-1.txt, -2.txt and
+    # -3.txt name each leg's files, balanced by each file's time on the slowest common runner
+    # (junit counts a test's subtests twice, so a test with subtests reads longer there than it
+    # runs), and `rails check` (in `rails-checks`) fails when a rail is in no leg or in two. Leg
+    # i runs rails-leg-<i>.txt: the CI contract row "each list of the rails runs once, on its own
+    # leg" holds the matrix to the lists, and "every rail is in exactly one leg of the rails job"
+    # plants each way a list could drop a rail or run one twice. The cap is never raised: a leg
+    # that outgrows it is rebalanced. `--shard-list` prints each worker's collection seconds and
+    # peak memory under "shard collection and memory", as a shard does.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
-      # One red half does not cancel the other: both halves' reports land in one push.
+      # One red leg does not cancel the others: every leg's report lands in one push.
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     # No PERSONALCLAW_HOME (see `test-shard`): the suite runs under the no-global-home contract.
     # The rest is `test-shard`'s environment, so a rail sees what it saw in a shard.
     env:
@@ -1711,7 +1714,7 @@ jobs:
           persist-credentials: false
       # The commit each site baseline (tests/site_baseline.py) is compared with, fetched as
       # apps-contract fetches it: a line the base's copy lacks passes only with `added` and a
-      # reason, and is written to this job's summary. The CI contract row "each rails half
+      # reason, and is written to this job's summary. The CI contract row "each rails leg
       # compares the site baselines with the gate's base" holds this step to apps-contract's.
       - name: fetch the base commit (each site baseline is compared with its copy there)
         id: base
@@ -1739,15 +1742,15 @@ jobs:
           node: "true"
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # This half's modules of tests/rails, on four workers. The two halves' junit together list
-      # every rail this run ran, so a rail red on main can be traced to the pull request's run
-      # that ran it. BASE_SHA is the base step's commit, which the site baselines read.
-      - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)
+      # This leg's modules of tests/rails, on four workers. The legs' junit together list every
+      # rail this run ran, so a rail red on main can be traced to the pull request's run that ran
+      # it. BASE_SHA is the base step's commit, which the site baselines read.
+      - name: the rails, leg ${{ matrix.shard }} of 3 (tests/rails)
         env:
           BASE_SHA: ${{ steps.base.outputs.ref }}
-        run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list tools/ci/rails-half-${{ matrix.shard }}.txt --junitxml=reports/junit-rails-${{ matrix.shard }}.xml
-      # Same argument as `test-shard`'s upload step, one artifact per half.
-      - name: Upload JUnit results (rails half ${{ matrix.shard }})
+        run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list tools/ci/rails-leg-${{ matrix.shard }}.txt --junitxml=reports/junit-rails-${{ matrix.shard }}.xml
+      # Same argument as `test-shard`'s upload step, one artifact per leg.
+      - name: Upload JUnit results (rails leg ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -1757,15 +1760,15 @@ jobs:
           retention-days: 7
 
   rails-checks:
-    # ── The whole-tree checks that ran beside the rails before they were halved ─────────────
+    # ── The whole-tree checks that ran beside the rails before they were split ──────────────
     # The census's own verdict, the asset licences, the gate aggregate and the npm advisory
-    # floors over the installed tree. About two minutes; its own job so neither rails half
-    # carries them.
+    # floors over the installed tree. About two minutes; its own job so no rails leg carries
+    # them.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # No PERSONALCLAW_HOME (see `test-shard`); the rest is the rails halves' environment.
+    # No PERSONALCLAW_HOME (see `test-shard`); the rest is the rails legs' environment.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
@@ -1785,9 +1788,8 @@ jobs:
         run: uv sync --locked --extra dev
       # The rule itself, apart from the contract row that holds it: the census's own verdict,
       # naming any rail outside tests/rails, and any module pytest collects under tests/rails
-      # (`test_*.py` or `*_test.py`) in neither of the rails job's halves
-      # (tools/ci/rails-half-1.txt, rails-half-2.txt) or in both. The planner plans this job on
-      # every diff, as it plans the rails.
+      # (`test_*.py` or `*_test.py`) in no leg of the rails job (tools/ci/rails-leg-1.txt, -2.txt
+      # and -3.txt) or in two. The planner plans this job on every diff, as it plans the rails.
       - name: every rail lives in tests/rails
         run: uv run python -m tools.ci rails check
       # Every tracked font, image, binary and fixture has a recorded source, licence and notice
@@ -1804,7 +1806,7 @@ jobs:
       #
       # Run as the script rather than `make gates` so the failure names the gate instead of
       # "make: *** [gates] Error 1", and placed in `rails-checks`, the home of the whole-tree
-      # checks that ran beside the rails before they were halved, so neither half carries it. It
+      # checks that ran beside the rails before they were split, so no rails leg carries it. It
       # imports only `scripts/*` + stdlib, so it needs no PERSONALCLAW_HOME — consistent with this
       # job's no-global-home contract.
       - name: gate aggregate (make gates)

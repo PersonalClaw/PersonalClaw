@@ -602,8 +602,8 @@ gh run download <run-id> --name junit-test-shard-2      # 1…4, one per shard
 
 `<testcase>` elements with a `<failure>` child are the failures, with the node
 id and the assertion message. The other jobs publish theirs under
-`junit-browse-live` (the `e2e` job's browse proof), `junit-rails-1` and `junit-rails-2` (the
-two halves of the rails), `junit-npm-floors`, `junit-client` and
+`junit-browse-live` (the `e2e` job's browse proof), `junit-rails-1` to `junit-rails-3` (the
+three legs of the rails), `junit-npm-floors`, `junit-client` and
 `junit-lint-installer`, and the `e2e` job uploads its browser run's JSON, blob and HTML
 reports as `e2e-reports`;
 the nightly `full` workflow adds one per matrix leg. This is how you tell a

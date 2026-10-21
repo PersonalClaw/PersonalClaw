@@ -2,8 +2,8 @@
 
 A **rail** reads the repository itself — the package, ``web/src``, ``docs``, the workflows,
 ``tests/``, any file beside them — and judges what it finds. Rails live in ``tests/rails/`` and
-run once per CI run, in the ``rails`` job's two halves (:data:`HALVES`, each rail in exactly
-one, held by :func:`half_violations`); the suite's shards never collect them
+run once per CI run, in the ``rails`` job's three legs (:data:`LEGS`, each rail in exactly
+one, held by :func:`leg_violations`); the suite's shards never collect them
 (``tools/ci/shards.py``). This module decides membership from each module's source, read with
 ``ast`` and never imported, so the rule is code and the ``rails`` row of the CI contract table
 can hold the tree to it.
@@ -480,7 +480,7 @@ def _is_test_module(name: str, patterns: Iterable[str]) -> bool:
 def test_modules(root: Path) -> Iterator[Path]:
     """Every test module under ``root/tests``, in path order: each ``.py`` file whose name
     pytest collects (:func:`python_files`), so ``foo_test.py`` is one as ``test_foo.py`` is, and
-    ``--shard-list`` and this census agree on what a half must list. Only the parts below
+    ``--shard-list`` and this census agree on what a leg must list. Only the parts below
     ``root`` are filtered, so a checkout that sits inside a dot-folder is still read whole."""
     patterns = python_files(root)
     for path in sorted((root / "tests").rglob("*.py")):
@@ -578,15 +578,15 @@ def violations(root: Path) -> list[str]:
     return misplaced(modules)
 
 
-#: The rails job's halves: each names the rail modules one half runs, one per line, and
-#: ``ci.yml``'s rails job runs half ``i`` with ``--shard-list tools/ci/rails-half-<i>.txt``.
-HALVES: tuple[str, ...] = ("tools/ci/rails-half-1.txt", "tools/ci/rails-half-2.txt")
+#: The rails job's legs: each names the rail modules one leg runs, one per line, and
+#: ``ci.yml``'s rails job runs leg ``i`` with ``--shard-list tools/ci/rails-leg-<i>.txt``.
+LEGS: tuple[str, ...] = tuple(f"tools/ci/rails-leg-{i}.txt" for i in (1, 2, 3))
 
 
-def half_violations(root: Path) -> list[str]:
-    """Everything wrong with the rails job's halves: a list that is missing or names nothing,
-    a rail module in neither half or in both, and a listed file that is not a test module under
-    :data:`RAILS`. Together the halves are exactly the rail modules, each once."""
+def leg_violations(root: Path) -> list[str]:
+    """Everything wrong with the rails job's legs: a list that is missing or names nothing,
+    a rail module in no leg or in two, and a listed file that is not a test module under
+    :data:`RAILS`. Together the legs are exactly the rail modules, each once."""
     rails = {
         rel
         for rel in (path.relative_to(root).as_posix() for path in test_modules(root))
@@ -594,24 +594,24 @@ def half_violations(root: Path) -> list[str]:
     }
     bad: list[str] = []
     seen: dict[str, list[str]] = {}
-    for half in HALVES:
+    for leg in LEGS:
         try:
-            lines = (root / half).read_text(encoding="utf-8").splitlines()
+            lines = (root / leg).read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError) as exc:
-            bad.append(f"{half} cannot be read ({type(exc).__name__}), so its half runs nothing")
+            bad.append(f"{leg} cannot be read ({type(exc).__name__}), so its leg runs nothing")
             continue
         listed = [line.strip() for line in lines if line.strip()]
         if not listed:
-            bad.append(f"{half} names no file, so its half runs nothing")
+            bad.append(f"{leg} names no file, so its leg runs nothing")
         for rel in listed:
-            seen.setdefault(rel, []).append(half)
+            seen.setdefault(rel, []).append(leg)
     for rel in sorted(rails - set(seen)):
-        bad.append(f"{rel} is in neither half of the rails job ({', '.join(HALVES)})")
-    for rel, halves in sorted(seen.items()):
-        if len(halves) > 1:
-            bad.append(f"{rel} is listed {len(halves)} times ({', '.join(halves)}): it runs once")
+        bad.append(f"{rel} is in no leg of the rails job ({', '.join(LEGS)})")
+    for rel, legs in sorted(seen.items()):
+        if len(legs) > 1:
+            bad.append(f"{rel} is listed {len(legs)} times ({', '.join(legs)}): it runs once")
         if rel not in rails:
-            bad.append(f"{rel} is listed in {halves[0]} and is no test module under {RAILS}/")
+            bad.append(f"{rel} is listed in {legs[0]} and is no test module under {RAILS}/")
     return bad
 
 
@@ -630,7 +630,7 @@ def main(argv: list[str] | None = None) -> int:
                 if found.kind != "suite":
                     print(found.line())
         return 0
-    bad = violations(Path(args.root)) + half_violations(Path(args.root))
+    bad = violations(Path(args.root)) + leg_violations(Path(args.root))
     for line in bad:
         print(line, file=sys.stderr)
     return 1 if bad else 0

@@ -312,96 +312,89 @@ def test_the_census_and_the_shards_read_the_same_test_modules(
     assert found - outside == rails
 
 
-def _halves(root: Path, first: str, second: str) -> None:
-    _plant(root, rails_census.HALVES[0], first)
-    _plant(root, rails_census.HALVES[1], second)
+def _legs(root: Path, *lists: str) -> None:
+    for leg, text in zip(rails_census.LEGS, lists, strict=True):
+        _plant(root, leg, text)
 
 
-def _two_rails(root: Path) -> None:
-    _plant(root, "tests/rails/test_a.py", ROWS[5][1])
-    _plant(root, "tests/rails/test_b.py", ROWS[5][1])
+def _three_rails(root: Path) -> None:
+    for name in ("test_a.py", "test_b.py", "test_c.py"):
+        _plant(root, f"tests/rails/{name}", ROWS[5][1])
     _plant(root, "tests/test_suite.py", ROWS[-1][1])
 
 
-def test_the_halves_hold_every_rail_once(tmp_path: Path) -> None:
-    _two_rails(tmp_path)
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
-    assert rails_census.half_violations(tmp_path) == []
+A, B, C = ("tests/rails/test_a.py\n", "tests/rails/test_b.py\n", "tests/rails/test_c.py\n")
+LEG_1, LEG_2, LEG_3 = rails_census.LEGS
+
+
+def test_the_legs_hold_every_rail_once(tmp_path: Path) -> None:
+    _three_rails(tmp_path)
+    _legs(tmp_path, A, B, C)
+    assert rails_census.leg_violations(tmp_path) == []
+
+
+def test_the_rails_job_runs_in_three_legs() -> None:
+    assert rails_census.LEGS == tuple(f"tools/ci/rails-leg-{i}.txt" for i in (1, 2, 3))
 
 
 @pytest.mark.parametrize(
-    ("first", "second", "expect"),
+    ("lists", "expect"),
     [
+        pytest.param((A, B, "\n"), f"{LEG_3} names no file", id="an empty leg"),
+        pytest.param((A, A, C), "tests/rails/test_b.py is in no leg", id="a rail in no leg"),
         pytest.param(
-            "tests/rails/test_a.py\n",
-            "\n",
-            "tools/ci/rails-half-2.txt names no file",
-            id="an empty half",
+            (A + B, B, C), "tests/rails/test_b.py is listed 2 times", id="a rail in two legs"
         ),
         pytest.param(
-            "tests/rails/test_a.py\n",
-            "tests/rails/test_a.py\n",
-            "tests/rails/test_b.py is in neither half",
-            id="a rail in neither half",
+            (A, B, C + B), "tests/rails/test_b.py is listed 2 times", id="a rail in legs 2 and 3"
         ),
         pytest.param(
-            "tests/rails/test_a.py\ntests/rails/test_b.py\n",
-            "tests/rails/test_b.py\n",
-            "tests/rails/test_b.py is listed 2 times",
-            id="a rail in both halves",
-        ),
-        pytest.param(
-            "tests/rails/test_a.py\ntests/test_suite.py\n",
-            "tests/rails/test_b.py\n",
-            "tests/test_suite.py is listed in tools/ci/rails-half-1.txt and is no test module",
+            (A + "tests/test_suite.py\n", B, C),
+            f"tests/test_suite.py is listed in {LEG_1} and is no test module",
             id="a suite module listed",
         ),
         pytest.param(
-            "tests/rails/test_a.py\ntests/rails/test_gone.py\n",
-            "tests/rails/test_b.py\n",
-            "tests/rails/test_gone.py is listed in tools/ci/rails-half-1.txt and is no test",
+            (A, B, C + "tests/rails/test_gone.py\n"),
+            f"tests/rails/test_gone.py is listed in {LEG_3} and is no test",
             id="a listed file that is gone",
         ),
     ],
 )
-def test_a_planted_half_violation_fails(tmp_path: Path, first: str, second: str, expect: str):
-    _two_rails(tmp_path)
-    _halves(tmp_path, first, second)
-    bad = rails_census.half_violations(tmp_path)
+def test_a_planted_leg_violation_fails(tmp_path: Path, lists: tuple[str, ...], expect: str):
+    _three_rails(tmp_path)
+    _legs(tmp_path, *lists)
+    bad = rails_census.leg_violations(tmp_path)
     assert any(expect in line for line in bad), bad
 
 
-def test_a_rail_named_the_other_way_pytest_collects_is_in_neither_half(tmp_path: Path) -> None:
+def test_a_rail_named_the_other_way_pytest_collects_is_in_no_leg(tmp_path: Path) -> None:
     """pytest collects ``*_test.py`` as well as ``test_*.py`` (its default ``python_files``), and
     ``--shard-list`` skips either kind when no list names it: so a rail of either name that no
-    half lists would run nowhere."""
-    _two_rails(tmp_path)
-    _plant(tmp_path, "tests/rails/c_test.py", ROWS[5][1])
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
-    assert rails_census.half_violations(tmp_path) == [
-        "tests/rails/c_test.py is in neither half of the rails job"
-        f" ({', '.join(rails_census.HALVES)})"
+    leg lists would run nowhere."""
+    _three_rails(tmp_path)
+    _plant(tmp_path, "tests/rails/d_test.py", ROWS[5][1])
+    _legs(tmp_path, A, B, C)
+    assert rails_census.leg_violations(tmp_path) == [
+        f"tests/rails/d_test.py is in no leg of the rails job ({', '.join(rails_census.LEGS)})"
     ]
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\ntests/rails/c_test.py\n")
-    assert rails_census.half_violations(tmp_path) == []
+    _legs(tmp_path, A, B, C + "tests/rails/d_test.py\n")
+    assert rails_census.leg_violations(tmp_path) == []
 
 
-def test_a_half_that_is_not_utf8_fails(tmp_path: Path) -> None:
-    _two_rails(tmp_path)
-    _plant(tmp_path, rails_census.HALVES[0], "tests/rails/test_a.py\n")
-    (tmp_path / rails_census.HALVES[1]).write_bytes(b"tests/rails/test_b.py\n\xff\n")
-    bad = rails_census.half_violations(tmp_path)
-    assert bad[0] == (
-        f"{rails_census.HALVES[1]} cannot be read (UnicodeDecodeError), so its half runs nothing"
-    ), bad
+def test_a_leg_that_is_not_utf8_fails(tmp_path: Path) -> None:
+    _three_rails(tmp_path)
+    _legs(tmp_path, A, B, C)
+    (tmp_path / LEG_2).write_bytes(b"tests/rails/test_b.py\n\xff\n")
+    bad = rails_census.leg_violations(tmp_path)
+    assert bad[0] == f"{LEG_2} cannot be read (UnicodeDecodeError), so its leg runs nothing", bad
 
 
 def test_a_folder_named_like_the_rails_is_not_theirs(tmp_path: Path) -> None:
-    """``tests/rails_other`` is not ``tests/rails``: its modules are in no half, and need not be."""
-    _two_rails(tmp_path)
+    """``tests/rails_other`` is not ``tests/rails``: its modules are in no leg, and need not be."""
+    _three_rails(tmp_path)
     _plant(tmp_path, "tests/rails_other/test_x.py", ROWS[-1][1])
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
-    assert rails_census.half_violations(tmp_path) == []
+    _legs(tmp_path, A, B, C)
+    assert rails_census.leg_violations(tmp_path) == []
 
 
 #: A conftest that wires ``--shard-list`` in, as ``tests/conftest.py`` does.
@@ -441,43 +434,45 @@ def _collected(root: Path, *args: str) -> set[str]:
     return {line for line in done.stdout.splitlines() if "::" in line}
 
 
-def test_halves_the_check_passes_collect_what_pytest_collects_in_tests_rails(
+def test_legs_the_check_passes_collect_what_pytest_collects_in_tests_rails(
     tmp_path: Path,
 ) -> None:
-    """Differential, against pytest itself: halves ``rails check`` passes collect, with the
+    """Differential, against pytest itself: legs ``rails check`` passes collect, with the
     ``--shard-list`` runs CI makes, exactly what ``pytest tests/rails`` collects, each test in
-    one half. A rail pytest collects that no half lists is a violation, never a pass."""
+    one leg. A rail pytest collects that no leg lists is a violation, never a pass."""
     _plant(tmp_path, "pyproject.toml", '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
     _plant(tmp_path, "tests/conftest.py", _SHARD_LIST_CONFTEST)
-    for rel in ("tests/rails/test_a.py", "tests/rails/test_b.py", "tests/rails/c_test.py"):
+    for rel in (
+        "tests/rails/test_a.py",
+        "tests/rails/test_b.py",
+        "tests/rails/test_c.py",
+        "tests/rails/d_test.py",
+    ):
         _plant(tmp_path, rel, ROWS[0][1])
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
-    assert any(
-        "c_test.py is in neither half" in line for line in rails_census.half_violations(tmp_path)
-    )
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\ntests/rails/c_test.py\n")
-    assert rails_census.half_violations(tmp_path) == []
+    _legs(tmp_path, A, B, C)
+    assert any("d_test.py is in no leg" in line for line in rails_census.leg_violations(tmp_path))
+    _legs(tmp_path, A, B + "tests/rails/d_test.py\n", C)
+    assert rails_census.leg_violations(tmp_path) == []
     whole = _collected(tmp_path)
-    first, second = (_collected(tmp_path, "--shard-list", half) for half in rails_census.HALVES)
-    assert len(whole) == 3, whole
-    assert not first & second and first | second == whole, (first, second)
+    legs = [_collected(tmp_path, "--shard-list", leg) for leg in rails_census.LEGS]
+    assert len(whole) == 4, whole
+    assert sum(len(leg) for leg in legs) == len(whole) and set().union(*legs) == whole, legs
 
 
-def test_a_missing_half_fails(tmp_path: Path) -> None:
-    _two_rails(tmp_path)
-    _plant(tmp_path, rails_census.HALVES[0], "tests/rails/test_a.py\ntests/rails/test_b.py\n")
-    bad = rails_census.half_violations(tmp_path)
-    assert bad == [
-        f"{rails_census.HALVES[1]} cannot be read (FileNotFoundError), so its half runs nothing"
-    ]
+def test_a_missing_leg_fails(tmp_path: Path) -> None:
+    _three_rails(tmp_path)
+    _legs(tmp_path, A + C, B, C)
+    (tmp_path / LEG_3).unlink()
+    bad = rails_census.leg_violations(tmp_path)
+    assert bad == [f"{LEG_3} cannot be read (FileNotFoundError), so its leg runs nothing"]
 
 
-def test_rails_check_reports_a_half_violation(tmp_path: Path, capsys) -> None:
-    _two_rails(tmp_path)
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_a.py\n")
+def test_rails_check_reports_a_leg_violation(tmp_path: Path, capsys) -> None:
+    _three_rails(tmp_path)
+    _legs(tmp_path, A, A, C)
     assert rails_census.main(["check", "--root", str(tmp_path)]) == 1
-    assert "tests/rails/test_b.py is in neither half" in capsys.readouterr().err
-    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert "tests/rails/test_b.py is in no leg" in capsys.readouterr().err
+    _legs(tmp_path, A, B, C)
     assert rails_census.main(["check", "--root", str(tmp_path)]) == 0
 
 

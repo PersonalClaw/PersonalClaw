@@ -23,7 +23,6 @@ tests/rails/test_asset_licenses_tree.py
 tests/rails/test_auth_config_properties_tree.py
 tests/rails/test_auto_approve_judges_the_command_not_the_title_tree.py
 tests/rails/test_automation_guide_event_name_matches_code.py
-tests/rails/test_bounded_log_rail_trims_by_time_tree.py
 tests/rails/test_breaker_lifetime_and_buckets_tree.py
 tests/rails/test_browse_live_legs_run_in_ci_tree.py
 tests/rails/test_browse_vision_grounding_tree.py
@@ -32,11 +31,9 @@ tests/rails/test_channel_delivery_per_provider_tree.py
 tests/rails/test_channel_trust_pairing_redemption_tree.py
 tests/rails/test_chat_plan_mode_tree.py
 tests/rails/test_ci_cancelled_is_not_a_verdict.py
-tests/rails/test_ci_capabilities_tree.py
 tests/rails/test_ci_concurrency_dedupe.py
 tests/rails/test_ci_contract.py
 tests/rails/test_ci_flake_report_tree.py
-tests/rails/test_ci_plan_tree.py
 tests/rails/test_ci_pr_feedback_tree.py
 tests/rails/test_ci_security_runs_in_its_own_job_tree.py
 tests/rails/test_ci_tier_enforcement.py
@@ -57,7 +54,6 @@ tests/rails/test_e2e_gateway_home_is_the_runs_tree.py
 tests/rails/test_e2e_home_seed_matches_the_boot_tree.py
 tests/rails/test_e2e_sign_in_is_not_in_the_home_tree.py
 tests/rails/test_each_home_has_its_own_tmux_server_tree.py
-tests/rails/test_each_tree_check_runs_in_one_place.py
 tests/rails/test_embedding_reindex_tree.py
 tests/rails/test_every_command_path_asks_the_denylist_tree.py
 tests/rails/test_every_install_names_a_supported_python_tree.py
@@ -71,12 +67,10 @@ tests/rails/test_guardrails_ladder_tree.py
 tests/rails/test_home_path_census.py
 tests/rails/test_home_resolver_is_not_bound_at_import_tree.py
 tests/rails/test_host_facts_single_source_tree.py
-tests/rails/test_http_error_codes_append_only_tree.py
 tests/rails/test_identity_report_schedule_tree.py
 tests/rails/test_inbound_mcp_tree.py
 tests/rails/test_inert_settings_controls_tree.py
 tests/rails/test_inprocess_tool_providers_tree.py
-tests/rails/test_keychain_namespace_census.py
 tests/rails/test_kill_timed_out_pipe_block_tree.py
 tests/rails/test_ledger_priced_tree.py
 tests/rails/test_ledger_rails.py
@@ -85,7 +79,6 @@ tests/rails/test_local_model_refresh_invariants_tree.py
 tests/rails/test_local_model_root_guard_tree.py
 tests/rails/test_loop_action_guard_mirror_tree.py
 tests/rails/test_loop_status_vocabulary_tree.py
-tests/rails/test_model_reach_census_tree.py
 tests/rails/test_native_capability_contract_tree.py
 tests/rails/test_native_ollama_bundle_tree.py
 tests/rails/test_network_clients_ask_the_guard_rail_tree.py
@@ -102,7 +95,6 @@ tests/rails/test_personalclaw_git_is_neutral_tree.py
 tests/rails/test_personalclaw_stays_inside_its_home_tree.py
 tests/rails/test_pre_edit_read_gate_tree.py
 tests/rails/test_private_home_file_modes_tree.py
-tests/rails/test_process_environment_writes_census_tree.py
 tests/rails/test_provider_boundary_residue.py
 tests/rails/test_release_pipeline_compares_versions_tree.py
 tests/rails/test_release_tag_semantics_tree.py
@@ -117,8 +109,6 @@ tests/rails/test_seed_demo_home_tree.py
 tests/rails/test_sel_docs_say_what_the_check_catches_tree.py
 tests/rails/test_sel_subject_census_tree.py
 tests/rails/test_service_keeps_its_environment_tree.py
-tests/rails/test_session_acquisition_census.py
-tests/rails/test_session_key_census_tree.py
 tests/rails/test_session_share_tree.py
 tests/rails/test_settings_control_coverage_tree.py
 tests/rails/test_site_baseline_tree.py

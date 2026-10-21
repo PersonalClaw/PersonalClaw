@@ -82,19 +82,19 @@ python = "3.12.15"
 reuse = "tree"
 timeout_min = 10
 workers = 4
-shards = 2
+shards = 3
 needs_node = true
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-rails-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-half-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"], env = { BASE_SHA = "{base}" } },
+  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-leg-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"], env = { BASE_SHA = "{base}" } },
 ]
 
-# The checks that ran beside the rails before they were halved: the census's own verdict (which
-# also holds every rail to exactly one half), the asset licences, the gate aggregate and the npm
-# advisory floors over the installed tree. Every plan holds it, as it holds the rails, whatever
-# its inputs (catalogue.RAILS_CHECKS_JOB), and a merge tier whose rails run in halves without it
-# is refused.
+# The checks that ran beside the rails before they were split into legs: the census's own
+# verdict (which also holds every rail to exactly one leg), the asset licences, the gate
+# aggregate and the npm advisory floors over the installed tree. Every plan holds it, as it holds
+# the rails, whatever its inputs (catalogue.RAILS_CHECKS_JOB), and a merge tier whose rails run in
+# legs without it is refused.
 [[job]]
 id = "rails-checks"
 tiers = ["change", "merge"]

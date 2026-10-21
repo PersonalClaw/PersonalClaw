@@ -35,10 +35,10 @@ separately, nightly in `breadth.yml`, in six shards of its own
 
 No shard runs the rails. The modules in `tests/rails/`, which check the source
 tree rather than run the product, are left out of every shard plan and run once
-per CI run in `ci.yml`'s `rails` job, in two parallel halves, each as `pytest
-tests/rails -n 4 --dist worksteal --shard-list tools/ci/rails-half-<i>.txt`, and
+per CI run in `ci.yml`'s `rails` job, in three parallel legs, each as `pytest
+tests/rails -n 4 --dist worksteal --shard-list tools/ci/rails-leg-<i>.txt`, and
 nightly on macOS in `breadth.yml`'s `rails-macos` leg. `pytest tests/rails -n 4
---dist worksteal` runs both halves' rails locally. A whole-suite `make test`
+--dist worksteal` runs every leg's rails locally. A whole-suite `make test`
 still collects them.
 
 No shard runs a test file that a workflow job runs by name, either. Each such file is listed,
