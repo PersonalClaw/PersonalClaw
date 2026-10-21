@@ -193,6 +193,11 @@ branch deleted or replaced stays gone. `check(found, path)` in `tests/site_basel
 site the file does not list, on a line whose site is gone, and on a site listed twice, each by
 name. Order is not checked.
 Only a vacuity floor stays a number: a scan that found fewer than N files measured nothing.
+The "no rail holds a count of the repository's sites to a fixed number" row of
+`tests/rails/test_ci_contract.py` holds `tests/rails` to this (`tests/count_ratchet_census.py`
+says what it counts): a count held to a fixed number from above fails by name unless
+`tests/rails/baselines/count-ratchets.sites.jsonl` lists it, and that list holds only the
+ratchets not converted yet and the absolute caps, which count no sites.
 
 - **You fixed a site:** delete its line, or run `python tests/site_baseline.py --prune`. That
   runs the registered rails and deletes every stale and repeated line, and it never adds one.
