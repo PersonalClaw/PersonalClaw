@@ -625,7 +625,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               { key: 'destructive', label: 'Destructive', tone: 'var(--color-danger)' },
             ],
           } : undefined}>
-          <ListMoreMenu actions={[{ label: probing ? 'Re-probing MCP servers…' : 'Re-probe MCP servers', icon: probing ? Loader2 : RefreshCw, onSelect: reprobe, disabled: probing }]} />
+          <ListMoreMenu actions={[{ label: probing ? 'Re-probing MCP servers…' : 'Re-probe MCP servers', icon: probing ? Loader2 : RefreshCw, onSelect: reprobe, disabledReason: probing ? 'A re-probe is running; it can run again once it ends.' : undefined }]} />
         </ListControls>
       }
       detail={open && {

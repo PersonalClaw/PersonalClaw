@@ -178,7 +178,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
         {/* The header holds only New agent, so what else the list does is here, beside it. Sync is
             the only control that makes a Store, app or snapshot agent visible (issue 344). */}
         <ListMoreMenu actions={[
-          { label: syncing ? 'Syncing…' : 'Sync agents', icon: RefreshCw, onSelect: syncAgents, disabled: syncing },
+          { label: syncing ? 'Syncing…' : 'Sync agents', icon: RefreshCw, onSelect: syncAgents, disabledReason: syncing ? 'A sync is running; it can run again once it ends.' : undefined },
           { label: 'Export to Claude Code', icon: Upload, onSelect: () => setExporting(true) },
         ]} />
       </ListControls>}

@@ -7,8 +7,9 @@ export interface ListMoreAction {
   label: string
   icon: LucideIcon
   onSelect: () => void
-  /** A row that cannot act right now (a sync already running). */
-  disabled?: boolean
+  /** Why the row cannot act right now (a sync already running), said under its name. The row stays
+   *  in the menu, dimmed, and does nothing when chosen, so its action is not lost from view. */
+  disabledReason?: string
 }
 
 /** The list's More menu, in its controls bar (#3817). A Capabilities tab's header holds only the
@@ -26,8 +27,9 @@ export function ListMoreMenu({ actions }: { actions: readonly ListMoreAction[] }
       {(close) => (
         <div className="flex flex-col gap-0.5">
           {actions.map((a) => (
-            <MenuRow key={a.label} icon={<a.icon size={15} />} label={a.label} disabled={a.disabled}
-              onClick={() => { if (a.disabled) return; close(); a.onSelect() }} />
+            <MenuRow key={a.label} label={a.label} nameIsLabel hint={a.disabledReason} title={a.disabledReason}
+              disabled={!!a.disabledReason} icon={<a.icon size={15} />}
+              onClick={() => { if (a.disabledReason) return; close(); a.onSelect() }} />
           ))}
         </div>
       )}
