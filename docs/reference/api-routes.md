@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **937 registrations** over **761 distinct paths** — 930 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **938 registrations** over **762 distinct paths** — 931 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 129 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 85 | 72 |
+| `/api/chat` | 86 | 73 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -156,7 +156,7 @@ The 129 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 930 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 931 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -370,6 +370,7 @@ The 930 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/chat/sessions/{session}/tool-result/{rid}` | the FULL raw output of |
 | `POST` | `/api/chat/sessions/{session}/undo` | roll back the last N conversation turns. |
 | `POST` | `/api/chat/sessions/{session}/workspace-dir` | set the working directory. |
+| `GET` | `/api/chat/switch-price` | what switching an open chat's model costs its next reply. |
 | `GET` | `/api/chat/tag-columns` | list sidebar column layout. |
 | `POST` | `/api/chat/tag-columns` | append a new sidebar column. |
 | `PUT` | `/api/chat/tag-columns/order` | reorder columns by id list. |

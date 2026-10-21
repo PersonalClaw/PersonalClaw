@@ -7,7 +7,8 @@ import { Button } from '../Button'
 import { physics } from '../../design/motion'
 import { cx } from '../cx'
 import type { ComposerData } from './types'
-import type { ApprovalMode, ReasoningEffort } from '../../lib/api'
+import type { ApprovalMode, ModelItem, ReasoningEffort } from '../../lib/api'
+import type { AskBeforeSwitch, SwitchQuestion } from './dearerSwitch'
 
 const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
   { id: 'normal', label: 'Normal', hint: 'Reads run; the rest ask when they need approval' },
@@ -132,8 +133,12 @@ export type AgentModelPick = { agent?: string; model?: string; reasoning?: Reaso
  *  lists are read, so no turn runs at a level the pill does not show.
  *
  *  `parts` is the host's choice of halves (the composer's `controls.agent`, `.model` and
- *  `.reasoning`); a pill offering one half names only that dimension. */
-export function AgentModelPill({ data, agent, model, effort, onSelect, parts, contextPct, contextWindow, served, autoChain, openSignal, effortSignal }: {
+ *  `.reasoning`); a pill offering one half names only that dimension.
+ *
+ *  `askBeforeSwitch`, given by an open chat, is asked before a switch to another of its own models
+ *  (never Auto, whose model the next turn's chain picks, nor an agent CLI's): a question it puts
+ *  takes the menu's place until it is answered (`dearerSwitch`). */
+export function AgentModelPill({ data, agent, model, effort, onSelect, parts, contextPct, contextWindow, served, autoChain, openSignal, effortSignal, askBeforeSwitch }: {
   data?: ComposerData
   agent: string
   model: string
@@ -149,6 +154,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   openSignal?: number
   /** Monotonic: each increment opens the effort levels too (the `/effort` command). */
   effortSignal?: number
+  askBeforeSwitch?: AskBeforeSwitch
 }) {
   const showAgent = parts?.agent ?? true
   const showModel = parts?.model ?? true
@@ -156,6 +162,12 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   const [q, setQ] = useState('')
   const [effortOpen, setEffortOpen] = useState(false)
   const [note, setNote] = useState('')
+  /** The question put before a switch of model, while it waits on an answer; `reading` until the
+   *  question is known. */
+  const [question, setQuestion] = useState<{ value: string; label: string; ask?: SwitchQuestion } | null>(null)
+  /** Bumped whenever the menu opens or closes, so a question read for a menu since closed is dropped. */
+  const asking = useRef(0)
+  const questionId = useId()
   const searchId = `agent-search-${useId()}`
   const agentHeading = useId()
   const modelHeading = useId()
@@ -271,15 +283,36 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   return (
     <span className="inline-flex min-w-0 items-center gap-xs">
       <Popover portal width={300} openSignal={openSignal} trigger={(open, toggle) => (
-        <PillButton icon={showModel ? dot : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
-          open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
-          toggle={() => { if (!open) { setNote(''); setEffortOpen(false) } toggle() }} />
+        <>
+          <PillButton icon={showModel ? dot : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
+            open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
+            toggle={() => { if (!open) { setNote(''); setEffortOpen(false) } asking.current++; setQuestion(null); toggle() }} />
+          {/* However the menu closes (Escape, a click outside), a question it was putting goes with
+              it, and an answer read for it later switches nothing. */}
+          <OnClose open={open} onClose={() => { asking.current++; setQuestion(null) }} />
+        </>
       )}>
         {(close) => {
-          const modelRow = (key: string, rowLabel: string, value: string, hint: string, selected: boolean) => (
+          /** Switch to `value`, first asking `askBeforeSwitch` when the row is one of the chat's own
+           *  models other than the current one. */
+          const chooseModel = (value: string, rowLabel: string, item?: ModelItem) => {
+            if (!askBeforeSwitch || !item || value === model) { pick({ model: value }, rowLabel); close(); return }
+            const turn = ++asking.current
+            setQuestion({ value, label: rowLabel })
+            askBeforeSwitch(item).then((ask) => {
+              if (turn !== asking.current) return
+              if (!ask) { setQuestion(null); pick({ model: value }, rowLabel); close() } else setQuestion({ value, label: rowLabel, ask })
+            })
+          }
+          if (question) return (
+            <SwitchQuestionPanel id={questionId} label={question.label} ask={question.ask}
+              onKeep={() => { asking.current++; setQuestion(null); close() }}
+              onSwitch={() => { const q = question; if (!q.ask) return; q.ask.switched(); asking.current++; setQuestion(null); pick({ model: q.value }, q.label); close() }} />
+          )
+          const modelRow = (key: string, rowLabel: string, value: string, hint: string, selected: boolean, item?: ModelItem) => (
             <Fragment key={key}>
               <MenuRow icon={<Cpu size={16} />} label={rowLabel} hint={hint} selected={selected}
-                onClick={() => { pick({ model: value }, rowLabel); close() }} />
+                onClick={() => chooseModel(value, rowLabel, item)} />
               {selected && effortBlock(close)}
             </Fragment>
           )
@@ -339,7 +372,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
                       ? acpModels.length > 0
                         ? acpModels.map((m) => modelRow(m, m, m, acp.runtime, m === model))
                         : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
-                      : (data?.models ?? []).map((m) => modelRow(m.name, m.model_name || m.name, m.name, m.provider, m.name === model))}
+                      : (data?.models ?? []).map((m) => modelRow(m.name, m.model_name || m.name, m.name, m.provider, m.name === model, m))}
                     {!anySelected && effortBlock(close)}
                     {/* Precedence explainer: the pick sits one level
                         above the use-case chain — it never replaces the chain, only fronts it. */}
@@ -355,6 +388,38 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
       </Popover>
       {note && <span role="status" data-type="caption" className="max-w-[16rem] truncate text-on-surface-low" title={note}>{note}</span>}
     </span>
+  )
+}
+
+/** Calls `onClose` when `open` turns false, however the menu was closed. */
+function OnClose({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const was = useRef(open)
+  useEffect(() => {
+    if (was.current && !open) onClose()
+    was.current = open
+  }, [open, onClose])
+  return null
+}
+
+/** The one question before a switch of model, in the menu's place until it is answered: Keep
+ *  current comes first and takes focus, since the switch is what costs. While the prices are read,
+ *  Switch waits on them. */
+function SwitchQuestionPanel({ id, label, ask, onKeep, onSwitch }: {
+  id: string; label: string; ask?: SwitchQuestion; onKeep: () => void; onSwitch: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => { ref.current?.querySelector<HTMLButtonElement>('button')?.focus() }, [])
+  return (
+    <div ref={ref} role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-said`} className="flex flex-col gap-s p-m">
+      <p id={`${id}-title`} data-type="label-m" className="text-on-surface">Switch to {label}?</p>
+      {ask
+        ? <p id={`${id}-said`} data-type="body-s" className="text-on-surface-var">{ask.said}</p>
+        : <p id={`${id}-said`} role="status" data-type="body-s" className="text-on-surface-low">Reading what the next reply costs…</p>}
+      <div className="flex justify-end gap-xs">
+        <Button variant="ghost" size="sm" onClick={onKeep}>Keep current</Button>
+        <Button variant="primary" size="sm" disabled={!ask} disabledReason="Reading what the next reply costs" onClick={onSwitch}>Switch</Button>
+      </div>
+    </div>
   )
 }
 

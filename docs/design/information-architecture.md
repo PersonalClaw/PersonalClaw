@@ -155,7 +155,7 @@ Top to bottom:
 | Permission mode | the Execution Boundary control beside the composer, wherever the agent can act | the approval card itself |
 | Task mode (autonomy) | the composer's footer, beside the Execution Boundary control | the plan review, while a plan waits |
 | Memory mode (temporary or incognito) | the Execution Boundary control, on the control itself, plus a subtle tint on the thread | none |
-| Context, tokens and cost | collapsed: opened from the composer, or pinned to the status line by the owner | a composer warning near the limit |
+| Context, tokens and cost | collapsed: opened from the composer, or pinned to the status line by the owner | a composer warning near the limit; one ask, with both prices, before a mid-chat switch of a long chat to a model that may cost more |
 | Working directory, sandbox and network reach | the Execution Boundary control | none |
 | Sources and grounding | inline citations at the answer; the full list in the right pane | none |
 | Gateway connection and sync | the status line, quiet while connected; in words, with when it was last reached, while not. Focus mode hides the line unless the connection is lost | a banner, once the connection has stayed lost for 2 s, and gone when it is back |

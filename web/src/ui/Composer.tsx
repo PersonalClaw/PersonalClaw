@@ -38,7 +38,7 @@ export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, autoChain, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   replyStyle, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -170,7 +170,7 @@ export function Composer({
       {(controls.agent || controls.model) && (
         <AgentModelPill data={data} agent={sel?.agent ?? ''} model={sel?.model ?? ''} effort={sel?.reasoning ?? ''}
           parts={{ agent: !!controls.agent, model: !!controls.model, effort: !!controls.reasoning }}
-          contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain}
+          contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain} askBeforeSwitch={askBeforeModelSwitch}
           openSignal={(openAgentSignal ?? 0) + (openModelSignal ?? 0) + (openReasoningSignal ?? 0)} effortSignal={openReasoningSignal}
           onSelect={(p) => onSelect?.(p)} />
       )}
