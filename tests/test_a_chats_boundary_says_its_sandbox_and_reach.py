@@ -31,7 +31,7 @@ from tests.chat_test_helpers import _api_app, _make_state
 
 AGENT_CLI = "acp:boundary-test-cli"
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.security]
 
 
 def _app(state) -> web.Application:
