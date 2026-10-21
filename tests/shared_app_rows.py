@@ -150,6 +150,10 @@ class SharedApp:
     #: Writes the app's bundle under the given folder and returns its directory.
     bundle: Callable[[Path], Path]
     gateway: Gateway
+    #: What you do once the app is installed, before the home is copied: another app installed
+    #: beside it, or a setting of yours saved. Given the gateway the install went through and the
+    #: home, so every row starts from it too.
+    prepare: Callable[[Any, Path], Awaitable[None]] | None = None
     _home: Path | None = None
     _copy: Path | None = None
     _digest: str = ""
@@ -167,6 +171,8 @@ class SharedApp:
             self._point_at(mp)
             async with self.gateway([]) as gw:
                 await gw.install(self.bundle(self._home))
+                if self.prepare is not None:
+                    await self.prepare(gw, self._home)
             shutil.copytree(self._home, self._copy, symlinks=True)
             self._digest = digest(self._copy)
         self._point_at(mp)
