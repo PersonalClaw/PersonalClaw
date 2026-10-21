@@ -1460,6 +1460,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "store_unreadable": (
         "A file this needs could not be read, so nothing was written to it; it is kept as it was."
     ),
+    # ── a chat's numbered mode picks (dashboard/chat_handlers.py stale_pick) ──
+    # 409: a permission or task mode pick numbered no higher than the last one the chat took on
+    # that control, so it is older than the mode the chat is in and nothing changed. The error's
+    # `detail` names the number taken (`{"last": n}`).
+    "stale_pick": "A later pick of this mode was already taken, so this older one changed nothing.",
 }
 
 

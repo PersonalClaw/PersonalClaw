@@ -21,7 +21,8 @@ import { MEMORY_MODES } from '../memoryModeCopy'
 // Both change what they change through the calls the chat header's pills made (`POST
 // /api/chat/mode`, `POST /api/chat/task-mode`), and both show only what the gateway took: a pick is
 // shown once the gateway answers it, and one it refuses leaves the control as it was, with the
-// gateway's reason beside it. Picking the mode the chat is in asks for it again, as the header's
+// gateway's reason beside it until it is seen. A pick the gateway does not answer is given up after
+// a short wait and says so. Picking the mode the chat is in asks for it again, as the header's
 // pills did: that is how YOLO, which expires, is extended. The sandbox and the network are the
 // gateway's words (`GET /api/chat/boundary`), shown as they come.
 //
@@ -57,7 +58,10 @@ const sentence = (m: { label: string; hint: string }) => `${m.label} — ${m.hin
 /** A pick the gateway answers: `null` once it has taken it, else the reason it refused. */
 export type Choose<T> = (value: T) => Promise<string | null>
 
-/** What the gateway said when it refused the last pick, beside the pill until it is next opened. */
+/** What the gateway said when it refused a pick, or that it did not answer one, beside the pill until
+ *  it is next opened or a mode is picked again. The answer to a pick made before it came back never
+ *  clears it: picks are answered one at a time, so that answer can come a moment later and the
+ *  reason would go unread. */
 function Refusal({ reason }: { reason: string }) {
   if (!reason) return null
   return <span role="alert" data-type="caption" className="max-w-[20rem] truncate text-danger" title={reason}>{reason}</span>
@@ -92,7 +96,8 @@ export function TaskModePill({ value, onChoose }: { value: TaskMode; onChoose: C
   const Icon = cur.icon
   const choose = async (id: TaskMode) => {
     setRefusal('')
-    setRefusal((await onChoose(id)) ?? '')
+    const reason = await onChoose(id)
+    if (reason) setRefusal(reason)
   }
   return (
     <span className="inline-flex min-w-0 items-center gap-xs">
@@ -182,7 +187,8 @@ export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMo
   ].join(' · ')
   const choose = async (id: ApprovalMode) => {
     setRefusal('')
-    setRefusal((await onApproval(id)) ?? '')
+    const reason = await onApproval(id)
+    if (reason) setRefusal(reason)
   }
   return (
     <span className="inline-flex min-w-0 items-center gap-xs">

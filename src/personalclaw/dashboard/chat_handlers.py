@@ -2508,6 +2508,61 @@ def _set_posture(
     session._trust_from_floor = ""
 
 
+#: How far ahead of this gateway's clock a pick's number may be, in milliseconds. The composer
+#: numbers picks off its own clock, which may run a little ahead of this one; a number far beyond
+#: it would leave no higher number to send, and every later pick of the chat refused.
+PICK_AHEAD_MS = 3_600_000
+
+
+def stale_pick(state: DashboardState, body: dict, control: str) -> web.Response | None:
+    """The refusal of a numbered mode pick that may not be taken, or ``None`` to take it.
+
+    The composer numbers each permission and task mode pick it sends, increasing for the chat
+    (``pick``), and may give one up when the gateway does not answer it in time; a pick given up
+    on can still arrive after a newer one of the same *control*. Taken then, it would put the chat
+    back in the older mode while the composer shows the newer one. So a pick numbered no higher than
+    the last one the chat took on *control* is refused (``409 stale_pick``, the number taken in its
+    detail) and changes nothing. A permission pick is held to the last one any chat took too: each
+    turns the gateway-wide YOLO on or off. A numbered pick names its chat, and its number is no more
+    than :data:`PICK_AHEAD_MS` ahead of this gateway's clock; a request with no number (another
+    channel, a script) is taken as it always was."""
+    import time
+
+    if "pick" not in body:
+        return None
+    pick = body["pick"]
+    if isinstance(pick, bool) or not isinstance(pick, int) or pick < 0:
+        return json_error(
+            "invalid_request", message="pick must be a whole number, 0 or more.", status=400
+        )
+    if pick > time.time() * 1000 + PICK_AHEAD_MS:
+        return json_error(
+            "invalid_request",
+            message="pick is too far ahead of this gateway's clock to be a pick's number.",
+            status=400,
+        )
+    session = state._sessions.get(body.get("session") or "")
+    if session is None:
+        return json_error(
+            "invalid_request", message="A numbered pick names a chat this gateway has.", status=400
+        )
+    last = session.mode_picks.get(control, -1)
+    if control == "mode":
+        last = max(last, state.last_permission_pick)
+    if pick <= last:
+        return json_error("stale_pick", status=409, error_extra={"detail": {"last": last}})
+    return None
+
+
+def take_pick(state: DashboardState, body: dict, control: str) -> None:
+    """Record a numbered pick as the last one its chat took on *control*, and a permission pick as
+    the last one any chat took (:func:`stale_pick`)."""
+    if "pick" in body:
+        state._sessions[body["session"]].mode_picks[control] = body["pick"]
+        if control == "mode":
+            state.last_permission_pick = body["pick"]
+
+
 async def api_chat_mode(request: web.Request) -> web.Response:
     """POST /api/chat/mode — set the tool APPROVAL mode (whether tools auto-approve).
 
@@ -2522,6 +2577,9 @@ async def api_chat_mode(request: web.Request) -> web.Response:
     which gates *which* tools are available + how the agent frames the work. Unlike
     the per-tool approve endpoint, this doesn't require a pending approval — it
     preemptively sets the mode for future tools.
+
+    A ``pick`` number in the body (the composer's) is judged by :func:`stale_pick`: one no higher
+    than the last the chat took is refused, and changes nothing.
     """
     state: DashboardState = request.app["state"]
     try:
@@ -2537,6 +2595,8 @@ async def api_chat_mode(request: web.Request) -> web.Response:
             status=400,
         )
     session_name = body.get("session") or None
+    if refused := stale_pick(state, body, "mode"):
+        return refused
 
     # A posture that approves calls on its own is a standing grant, and the operator ceiling
     # bounds every grant (`approval_grants`, rule 2): under `approval: ask` no switch approves a
@@ -2549,6 +2609,7 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         return json_error(
             "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
         )
+    take_pick(state, body, "mode")
 
     if mode == "yolo":
         state.enable_yolo()  # TTL enforced internally (state._YOLO_TTL)
@@ -2708,7 +2769,8 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
 
     Body: ``{mode: <task mode>, session?: <key>}``. ``mode`` is REQUIRED. When
     ``session`` is omitted the mode applies to all sessions (mirrors the approval
-    handler's broadcast shape); the response names the sessions it changed.
+    handler's broadcast shape); the response names the sessions it changed. A ``pick`` number is
+    judged as the approval handler judges it (:func:`stale_pick`).
     """
     state: DashboardState = request.app["state"]
     try:
@@ -2729,6 +2791,8 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
     session_name = body.get("session") or None
     if session_name is not None and session_name not in state._sessions:
         return web.json_response({"ok": False, "error": "unknown session"}, status=400)
+    if refused := stale_pick(state, body, "task_mode"):
+        return refused
 
     targets = (
         [state._sessions[session_name]]
@@ -2757,6 +2821,7 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
                 },
                 status=409,
             )
+    take_pick(state, body, "task_mode")
     for session in targets:
         # One write path for both postures — the session's own and the runtime's (the
         # native runtime gates in _guard_and_invoke, before approval, so a Trust/YOLO

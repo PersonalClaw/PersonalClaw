@@ -9,7 +9,7 @@ import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneF
 import { optimizeFailure, optimizeOutcome } from '../../../ui/composer/optimizeOutcome'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
-import { api, hasApiCode, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type DiscoveredAgent, type MemoryMode, type SessionTemplate } from '../../../lib/api'
+import { api, ApiError, hasApiCode, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type DiscoveredAgent, type MemoryMode, type SessionTemplate } from '../../../lib/api'
 import { idleRunState } from '../../../lib/workPhase'
 import { rewindPreviewText } from '../../../lib/rewindPreview'
 import { useComposerData } from '../../../lib/useComposerData'
@@ -34,6 +34,16 @@ import { repliesToSpeak } from '../useChatVoice'
 // through it (follow-up chips, widget actions, a comment on an open file). `ChatComposer.tsx`
 // draws it.
 
+
+/** How long a permission or task mode pick waits for the gateway before the control says it did
+ *  not answer and the next pick may go. Each call answers in well under a second; one that has not
+ *  answered in 15 s is not going to, and holding every later pick behind it left both controls
+ *  looking dead until a reload. */
+export const MODE_PICK_DEADLINE_MS = 15_000
+/** How many times the composer reads a chat's mode back after a pick it could not confirm, and how
+ *  long it waits between reads that fail: about a minute of a gateway that does not answer. */
+export const MODE_READ_TRIES = 5
+export const MODE_READ_RETRY_MS = 12_000
 
 // Authoritative "/help" output — the commands the dashboard handles directly.
 // These run as instant GUI actions; other "/…" text is sent to the agent.
@@ -894,39 +904,99 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
    *  chat is in and says why: `applySelection`'s report-and-keep-going is right for an agent or a
    *  model, never for the mode that decides what runs without asking. A chat not started yet keeps
    *  the pick, and it is set when the chat is made (`ensureSession`). Resolves `null` once taken,
-   *  else the gateway's reason. */
+   *  else the gateway's reason, or that it did not answer (`sendModePick`). */
   function chooseApproval(mode: ApprovalMode): Promise<string | null> {
-    return afterTheLastPick(async () => {
-      const s = sessionRef.current
-      if (s) {
-        try { await api.setApprovalMode(mode, s) } catch (e) { return failureSentence('change the permission mode', e) }
-      }
-      setSelection((sel) => ({ ...sel, approval: mode }))
-      return null
-    })
+    return sendModePick('approval', 'permission mode', (s, n) => api.setApprovalMode(mode, s, n), () => setSelection((sel) => ({ ...sel, approval: mode })),
+      (d) => setSelection((sel) => ({ ...sel, approval: (d.approval || 'normal') as ApprovalMode })))
   }
 
   /** The task mode, the same way (`POST /api/chat/task-mode`): the gateway refuses to take a chat
    *  out of Plan while its plan waits on her review, and the pill then stays on Plan and says so. */
   function chooseTaskMode(mode: TaskMode): Promise<string | null> {
-    return afterTheLastPick(async () => {
-      const s = sessionRef.current
-      if (s) {
-        try { await api.setTaskMode(mode, s) } catch (e) { return failureSentence('change the task mode', e) }
-      }
-      setSelection((sel) => ({ ...sel, taskMode: mode }))
-      return null
-    })
+    return sendModePick('taskMode', 'task mode', (s, n) => api.setTaskMode(mode, s, n), () => setSelection((sel) => ({ ...sel, taskMode: mode })),
+      (d) => setSelection((sel) => ({ ...sel, taskMode: (d.task_mode || 'agent') as TaskMode })))
   }
 
-  /** The mode picks, one at a time: a pick is sent once the one before it is answered. A pick shown
-   *  only once the gateway takes it must not race the last: two in flight are answered in either
-   *  order, and the composer would end on whichever answer came last, not on the mode the gateway
-   *  was last asked for. */
+  /** The mode picks, one at a time: a pick is sent once the one before it is answered, or once its
+   *  wait (`MODE_PICK_DEADLINE_MS`) is over. A pick shown only once the gateway takes it must not
+   *  race the last: two in flight are answered in either order, and the composer would end on
+   *  whichever answer came last, not on the mode the gateway was last asked for. */
   const modePicks = useRef<Promise<unknown>>(Promise.resolve())
-  function afterTheLastPick<T>(pick: () => Promise<T>): Promise<T> {
-    const next = modePicks.current.then(pick)
-    modePicks.current = next.catch(() => undefined)
+  /** Numbers the picks, in the order they were made. */
+  const pickCount = useRef(0)
+  /** For each control, the number of the latest pick made on it, taken or not. */
+  const madePick = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
+  /** For each control, how many picks on it the gateway has said it took: a read of the chat begun
+   *  before the latest of them may have read the mode the chat left. */
+  const takes = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
+  /** For each control, how many reads of the chat it has sent: only the latest one is shown, since
+   *  an earlier one may read the chat as it was before a pick whose answer never came back. */
+  const reads = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
+  /** The number the next pick is sent with: increasing for the chat across reloads and tabs on this
+   *  computer (it is read off the clock), and above any number the gateway said it took (a pick
+   *  made on another computer whose clock is ahead). The gateway refuses a pick numbered no higher
+   *  than the last it took on that control, so one given up on cannot land after a newer one. */
+  const sentFloor = useRef(0)
+  /** Show the mode the chat `s` is in on `control`, read from the gateway, unless the gateway says
+   *  it took a pick on it while the read is on its way (the read may predate that pick, whose own
+   *  answer then says the mode), or a later read was sent. Only the gateway knows which mode the
+   *  chat ended in after a wait given up on, a pick that failed in any way, or an older pick's
+   *  answer coming after a newer pick was made. */
+  function readModeBack(control: 'approval' | 'taskMode', s: string, adopt: (detail: ChatDetail) => void, tries = MODE_READ_TRIES) {
+    const before = takes.current[control]
+    const read = ++reads.current[control]
+    const current = () => takes.current[control] === before && reads.current[control] === read
+    api.chatSessionDetail(s).then((d) => { if (current()) adopt(d) }, () => {
+      // Unread: the control's message says the pick may or may not have been taken, and the read
+      // is tried again, a few times, while nothing newer has said the mode.
+      if (current() && tries > 1) setTimeout(() => { if (current()) readModeBack(control, s, adopt, tries - 1) }, MODE_READ_RETRY_MS)
+    })
+  }
+  function sendModePick(
+    control: 'approval' | 'taskMode', what: string, send: (session: string, pick: number) => Promise<unknown>,
+    take: () => void, adopt: (detail: ChatDetail) => void,
+  ): Promise<string | null> {
+    const pick = ++pickCount.current
+    madePick.current[control] = pick
+    /** The gateway took this pick. The latest pick made on the control is shown; an older one's
+     *  answer says nothing of the newer pick, which may have been taken after it, so the chat is
+     *  read back instead. */
+    const taken = (s: string) => {
+      takes.current[control]++
+      if (madePick.current[control] === pick) take()
+      else readModeBack(control, s, adopt)
+    }
+    const next = modePicks.current.then(() => new Promise<string | null>((resolve) => {
+      const s = sessionRef.current
+      if (!s) { take(); resolve(null); return }
+      const number = Math.max(Date.now(), sentFloor.current + 1)
+      sentFloor.current = number
+      const timer = setTimeout(() => {
+        resolve(`The gateway didn't answer in ${MODE_PICK_DEADLINE_MS / 1000} s, so this ${what} may or may not have been taken. This shows the ${what} once the gateway says which; pick it again to try again.`)
+        readModeBack(control, s, adopt)
+      }, MODE_PICK_DEADLINE_MS)
+      send(s, number).then(
+        // The gateway took it, in time or after its wait (`taken`).
+        () => { clearTimeout(timer); taken(s); resolve(null) },
+        (e) => {
+          clearTimeout(timer)
+          if (hasApiCode(e, 'stale_pick')) {
+            const last = (e as { detail?: { last?: unknown } }).detail?.last
+            if (typeof last === 'number') sentFloor.current = Math.max(sentFloor.current, last)
+          }
+          // A refusal changed nothing, but a lost connection or a server error may have come after
+          // the gateway took it: either way the chat's own read says where it is.
+          readModeBack(control, s, adopt)
+          const refused = e instanceof ApiError && e.status >= 400 && e.status < 500
+          resolve(refused
+            ? failureSentence(`change the ${what}`, e)
+            : `No clear answer came back (${String((e as Error)?.message || e)}), so this ${what} may or may not have been taken. This shows the ${what} once the gateway says which.`)
+        },
+      )
+    }))
+    // The queue goes on after every pick, answered or not: it never holds a pick's result, so the
+    // tail keeps nothing (the pick itself resolves, whatever the gateway did).
+    modePicks.current = next
     return next
   }
 

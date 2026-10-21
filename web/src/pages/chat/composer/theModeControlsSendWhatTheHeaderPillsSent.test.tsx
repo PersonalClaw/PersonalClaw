@@ -7,7 +7,8 @@ import { runState } from '../../../test/runState'
 // The permission mode and the task mode left the chat header for the composer's footer. What they
 // send to the gateway did not change: for every mode, picked from a chat in another mode or picked
 // again from a chat already in it, one request, the same method, path and body the header's pills
-// sent, and no other write. Picking the mode a chat is in still asks for it again: that is how YOLO,
+// sent, and no other write, each numbered for the chat so the gateway can refuse a pick older than
+// one it took (`stale_pick`). Picking the mode a chat is in still asks for it again: that is how YOLO,
 // which expires, is extended ("re-enable to extend"). In an app's conversation nothing is sent.
 //
 // The controls are found by what they are named on either side of the move (the header's
@@ -176,7 +177,7 @@ describe('the permission mode', () => {
       await pick('permission', label)
       await waitFor(() => expect(gw.sent.slice(before.sent)).toHaveLength(1))
       await settle()
-      expect(gw.sent.slice(before.sent)).toEqual([{ method: 'POST', path: '/api/chat/mode', body: { mode: id, session: SESSION } }])
+      expect(gw.sent.slice(before.sent)).toEqual([{ method: 'POST', path: '/api/chat/mode', body: { mode: id, session: SESSION, pick: expect.any(Number) } }])
       expect(writes().slice(before.writes)).toEqual([['setApprovalMode', [id, SESSION]]])
       expect(trigger('permission')).toHaveAccessibleName(new RegExp(`: ${label}$`))
     },
@@ -217,7 +218,7 @@ describe('the task mode', () => {
       await pick('task', label)
       await waitFor(() => expect(gw.sent.slice(before.sent)).toHaveLength(1))
       await settle()
-      expect(gw.sent.slice(before.sent)).toEqual([{ method: 'POST', path: '/api/chat/task-mode', body: { mode: id, session: SESSION } }])
+      expect(gw.sent.slice(before.sent)).toEqual([{ method: 'POST', path: '/api/chat/task-mode', body: { mode: id, session: SESSION, pick: expect.any(Number) } }])
       expect(writes().slice(before.writes)).toEqual([['setTaskMode', [id, SESSION]]])
     },
   )
