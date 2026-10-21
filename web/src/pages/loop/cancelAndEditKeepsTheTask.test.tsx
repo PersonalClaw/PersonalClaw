@@ -80,7 +80,8 @@ it('reads what was typed, then deletes the draft, and the composer opens with it
 
   const input = await screen.findByRole('textbox', { name: 'Message input' })
   await waitFor(() => expect(input.textContent).toContain(LOOP.task))
-  expect(screen.getByRole('radio', { name: 'Attended' }).getAttribute('aria-checked')).toBe('true')
+  // The Mode sits beside the input, on the loop's Execution boundary control (#3808).
+  expect(screen.getByRole('button', { name: /^Execution boundary:/ }).getAttribute('aria-label')).toBe('Execution boundary: Attended')
   expect(screen.getByRole('radio', { name: 'Existing codebase' }).getAttribute('aria-checked')).toBe('true')
   expect(screen.getByText('src/newsfold')).toBeTruthy()
 })
