@@ -2,14 +2,17 @@
  *
  *  `docs/design/information-architecture.md` gives Capabilities one layout for all six tabs: the
  *  list beside the selected item's detail, with the item's permissions in the right pane, and a
- *  header holding only Add (Install on the Store tab). From the 840 px width class up the list
- *  keeps a fixed width and the detail takes the rest; below it they show one at a time, the
- *  detail in place of the list, with Back returning to it. The selection is part of the address,
- *  so a reload, Back and a copied link restore it.
+ *  header holding only Add (Install on the Store tab). From 840 px of content up the list keeps a
+ *  fixed width and the detail takes the rest; below it they show one at a time, the detail in
+ *  place of the list, with Back returning to it. The 840 px are the room the tab has beside the
+ *  sidebar, not the window, so a collapsed and an expanded sidebar at one window width each get
+ *  the layout their room allows. The selection is part of the address, so a reload, Back and a
+ *  copied link restore it.
  *
  *  Each tab is drawn as the shell draws it: the real hash router under the Capabilities strip,
  *  around the tab's own page, over a gateway that answers the reads each page makes. What is
- *  asserted is what a person sees and the address the bar holds.
+ *  asserted is what a person sees and the address the bar holds. The window is a width the media
+ *  queries answer to, and the tab's box is that window less the sidebar beside it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
@@ -119,18 +122,75 @@ const TABS = [
 /** The address with the selection `open` added to it. */
 const withOpen = (address: string, open: string) => `${address}${address.includes('?') ? '&' : '?'}open=${encodeURIComponent(open)}`
 
-/** The window is narrower than the 840 px width class while this is true. */
-let compactWindow = false
+/** What the shell's sidebar takes from the window beside the page, its 8 px margins included
+ *  (`ui/NavRail.tsx`: 196 px expanded by default, 64 px collapsed). */
+const SIDEBAR = { expanded: 196 + 16, collapsed: 64 + 16 } as const
+type Sidebar = keyof typeof SIDEBAR
+
+/** The window's width, and the sidebar beside the page. */
+let room: { window: number; sidebar: Sidebar } = { window: 1440, sidebar: 'expanded' }
+
+/** The tab's box: the window less the sidebar. */
+const contentWidth = () => room.window - SIDEBAR[room.sidebar]
+
+/** A narrow window, whichever way the sidebar is: 800 px less the expanded sidebar leaves 588. */
+const narrow = () => { room = { window: 800, sidebar: 'expanded' } }
+
+/** Whether `query` holds for the window: its width bounds, and nothing else (no reduced motion, no
+ *  dark scheme). */
+function windowMatches(query: string): boolean {
+  const bounds = [...query.matchAll(/\((max|min)-width:\s*(\d+(?:\.\d+)?)px\)/g)]
+  return bounds.length > 0 && bounds.every(([, side, px]) => side === 'max' ? room.window <= Number(px) : room.window >= Number(px))
+}
+
+/** The ResizeObservers the page holds, and what each watches. */
+const watchers = new Set<{ callback: ResizeObserverCallback; targets: Set<Element>; observer: ResizeObserver }>()
+
+/** The tab's own box, the one element whose size this file gives. */
+const isTabBox = (el: Element) => el.matches('[data-capability-layout]')
+
+/** The sidebar collapses or expands, or the window changes width: what watches the tab's box hears
+ *  of it, as a ResizeObserver would. */
+async function resize(next: Partial<typeof room>) {
+  room = { ...room, ...next }
+  await act(async () => {
+    for (const w of [...watchers]) {
+      const entries = [...w.targets].filter(isTabBox)
+        .map((target) => ({ target, contentRect: target.getBoundingClientRect() }) as unknown as ResizeObserverEntry)
+      if (entries.length) w.callback(entries, w.observer)
+    }
+  })
+  await settle()
+}
 
 beforeEach(() => {
   vi.stubGlobal('fetch', () => new Promise(() => {}))
-  compactWindow = false
+  room = { window: 1440, sidebar: 'expanded' }
+  watchers.clear()
   vi.stubGlobal('matchMedia', (query: string) => ({
-    matches: compactWindow && query.includes('max-width: 839px'),
+    matches: windowMatches(query),
     media: query, onchange: null,
     addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
     dispatchEvent: () => false,
   }))
+  vi.stubGlobal('ResizeObserver', class {
+    readonly watcher: { callback: ResizeObserverCallback; targets: Set<Element>; observer: ResizeObserver }
+    constructor(callback: ResizeObserverCallback) {
+      this.watcher = { callback, targets: new Set(), observer: this as unknown as ResizeObserver }
+      watchers.add(this.watcher)
+    }
+    observe(target: Element) { this.watcher.targets.add(target) }
+    unobserve(target: Element) { this.watcher.targets.delete(target) }
+    disconnect() { watchers.delete(this.watcher) }
+  })
+  // Only the tab's box has a width; every other element keeps jsdom's empty box, so nothing else
+  // on the page sizes itself by this file's window.
+  const box = HTMLElement.prototype.getBoundingClientRect
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (!isTabBox(this)) return box.call(this)
+    const width = contentWidth()
+    return { x: 0, y: 0, top: 0, left: 0, width, height: 800, right: width, bottom: 800, toJSON: () => ({}) } as DOMRect
+  })
   localStorage.clear()
   sessionStorage.clear()
   resetDataStore()
@@ -140,6 +200,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 /** Open `address` as a copied link or a reload does, and let the page settle. */
@@ -255,8 +316,8 @@ describe('the list sits beside the selected item\'s detail', () => {
     expect(screen.queryByRole('region')).toBeNull()
   })
 
-  it.each(TABS)('$tab: below the 840 px width class the detail shows in place of the list, and Back returns to it', async ({ address, open: id, row, other, noun }) => {
-    compactWindow = true
+  it.each(TABS)('$tab: under 840 px of content the detail shows in place of the list, and Back returns to it', async ({ address, open: id, row, other, noun }) => {
+    narrow()
     await open(withOpen(address, id))
     expect(detail(row), `no detail named ${row}`).toBeTruthy()
     expect(listPane()!.hidden, 'the list is out of view while the detail shows').toBe(true)
@@ -269,9 +330,66 @@ describe('the list sits beside the selected item\'s detail', () => {
   })
 })
 
-describe('the focus follows a choice below the width class', () => {
+/** Whether the list and the detail sit side by side: the detail with its Close beside a list kept
+ *  in view at its fixed width, or the detail in the list's place with Back to it. */
+function layoutOf(name: string): 'beside' | 'one at a time' {
+  const pane = detail(name)
+  expect(pane, `no detail named ${name}`).toBeTruthy()
+  const list = listPane()!
+  if (!list.hidden) {
+    expect(list.style.width, 'beside a detail the list keeps its fixed width').toBe('22.5rem')
+    expect(within(pane!).getByRole('button', { name: 'Close' })).toBeTruthy()
+    return 'beside'
+  }
+  expect(within(pane!).getByRole('button', { name: 'Back to agents' })).toBeTruthy()
+  return 'one at a time'
+}
+
+describe('the switch reads the room the tab has beside the sidebar, not the window', () => {
+  // The window media queries answer to, the sidebar beside the page, the room that leaves the tab,
+  // and the layout that room gets. 840 px of content is the line: an expanded sidebar at an 840 px
+  // window leaves 628, where a detail beside the 360 px list would get under 270.
+  it.each([
+    { window: 840, sidebar: 'expanded', content: 628, layout: 'one at a time' },
+    { window: 840, sidebar: 'collapsed', content: 760, layout: 'one at a time' },
+    { window: 919, sidebar: 'collapsed', content: 839, layout: 'one at a time' },
+    { window: 920, sidebar: 'collapsed', content: 840, layout: 'beside' },
+    { window: 920, sidebar: 'expanded', content: 708, layout: 'one at a time' },
+    { window: 1051, sidebar: 'expanded', content: 839, layout: 'one at a time' },
+    { window: 1052, sidebar: 'expanded', content: 840, layout: 'beside' },
+  ] as const)('a $window px window with the sidebar $sidebar leaves $content px: $layout', async ({ window: w, sidebar, content, layout }) => {
+    room = { window: w, sidebar }
+    expect(contentWidth()).toBe(content)
+    await open(withOpen('agents', 'native:scout'))
+    expect(layoutOf('scout')).toBe(layout)
+  })
+
+  it('at one window width, collapsing and expanding the sidebar moves the detail in and out beside the list', async () => {
+    room = { window: 920, sidebar: 'collapsed' }
+    await open(withOpen('agents', 'native:scout'))
+    expect(layoutOf('scout')).toBe('beside')
+
+    await resize({ sidebar: 'expanded' })
+    expect(layoutOf('scout'), 'the expanded sidebar leaves 708 px').toBe('one at a time')
+    expect(location.hash, 'the selection stays open through it').toBe(`#/${withOpen('agents', 'native:scout')}`)
+
+    await resize({ sidebar: 'collapsed' })
+    expect(layoutOf('scout'), 'collapsed again, 840 px').toBe('beside')
+    expect(within(listPane()!).getAllByText('probe').length, 'the rest of the list is back in view').toBeGreaterThan(0)
+  })
+
+  it('the window narrowing under a collapsed sidebar is read the same way', async () => {
+    room = { window: 1440, sidebar: 'collapsed' }
+    await open(withOpen('agents', 'native:scout'))
+    expect(layoutOf('scout')).toBe('beside')
+    await resize({ window: 900 })
+    expect(layoutOf('scout'), '820 px of content').toBe('one at a time')
+  })
+})
+
+describe('the focus follows a choice under 840 px of content', () => {
   it('a row chosen there hands the focus to the detail\'s heading, and Back hands it back to the row', async () => {
-    compactWindow = true
+    narrow()
     await open('agents')
     const row = screen.getByRole('button', { name: 'probe' })
     row.focus()
@@ -285,7 +403,7 @@ describe('the focus follows a choice below the width class', () => {
   })
 
   it('a detail an address opens takes no focus', async () => {
-    compactWindow = true
+    narrow()
     await open(withOpen('agents', 'native:probe'))
     expect(document.activeElement).toBe(document.body)
   })
