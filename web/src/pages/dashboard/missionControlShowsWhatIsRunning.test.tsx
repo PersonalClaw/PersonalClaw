@@ -20,7 +20,7 @@ import { clockTime } from '../../lib/epoch'
 
 const running = vi.fn<() => Promise<RunningList>>()
 const inboxOpen = vi.fn()
-const status = vi.fn<() => Promise<{ start_time?: number }>>()
+const status = vi.fn<() => Promise<{ start_time?: number; uptime_secs?: number }>>()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -248,6 +248,19 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     expect(cutRows()).toHaveLength(1)
     act(() => { vi.advanceTimersByTime(2 * 60 * 1000) })
     expect(cutRows()).toHaveLength(0)
+  })
+
+  it('a desktop awake for the drop tells what a restart cut off, however long the gateway was down', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    status.mockResolvedValue({ start_time: Date.now() / 1000 - 3600, uptime_secs: 3600 })
+    running.mockResolvedValue(list([row()]))
+    await mount()
+    await within(working()).findByText('Plan the garden')
+    // The gateway goes, and is started again five minutes later.
+    act(() => { connected(false) })
+    act(() => { vi.advanceTimersByTime(5 * 60 * 1000) })
+    await restart(Date.now() / 1000 - 10, list())
+    await waitFor(() => expect(cutRows()).toHaveLength(1))
   })
 
   it('a start time it could not read first tells no restart, and the next one is told', async () => {

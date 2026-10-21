@@ -97,6 +97,9 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
    *  seconds later with nothing in this tab having written it. A 30-second-fresh room would
    *  present a deliberation that has already moved on as current. */
   rooms: LIVE,
+  /** The phone's Running section, the running list (`GET /api/running`). LIVE: what runs moves
+   *  behind the app's back by design, a phase every few seconds. */
+  'running-companion': LIVE,
   settings: CONFIG,
   skill: COLLECTION,
   'skill-proposals': COLLECTION,

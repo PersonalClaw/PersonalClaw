@@ -460,10 +460,19 @@ waiting. Approve or deny, and the run you were pinged about continues. If the ap
 while your phone was in your pocket, the screen says so rather than leaving you hunting for a card
 that no longer exists.
 
-Below the approvals are the running loops, open tasks, the Inbox and recent notifications. Every
-part of the screen follows what changes while it is open, and reads again when you come back to it
-or its connection returns, so a page you left open days ago shows what is true now: a loop that has
-ended is not offered for pausing, and a task finished at your desk is not listed as open.
+Below the approvals are what is running, open tasks, the Inbox and recent notifications. The Running
+list is the one Mission Control and the menu bar read: every chat turn, helper, loop, workflow run,
+automation and webhook at work, each with its name, its exact phase, what it is doing and when it
+last changed, and a link to it when a page opens it (a webhook's turn has none). A loop keeps its
+Pause, Nudge and Stop, and the loops not running now that you can still steer, a paused one among
+them, are listed under the rows. Under them, what just finished says how it ended, and work a
+gateway restart cut off is listed as interrupted, but only when the phone's rows were current as the
+gateway went: not after the phone slept through the restart, nor when the gateway came back more
+than two minutes after the connection dropped, since work may have ended in between. While the
+connection is down, the Running section says its rows may be out of date. Every part of the screen
+follows what changes while it is open, and reads again when you come back to it or its connection
+returns, so a page you left open days ago shows what is true now: a loop that has ended is not
+offered for pausing, and a task finished at your desk is not listed as open.
 
 Which notifications reach the phone at all is **Settings → Notifications**: every kind has a row,
 and *Approval needed* ships with the phone among its targets. Turn it off there and nothing else

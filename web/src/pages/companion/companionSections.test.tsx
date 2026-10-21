@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from './CompanionSections'
+import { InboxSection, RecentSection, RunningSection, TasksSection } from './CompanionSections'
 import { CompanionPage } from './CompanionPage'
 import { invalidateKeys } from '../../lib/data'
 import type { InboxItem, Loop, NotificationItem, TaskItem } from '../../lib/api'
@@ -26,6 +26,7 @@ import type { InboxItem, Loop, NotificationItem, TaskItem } from '../../lib/api'
 // so the branch order is load-bearing and is asserted per section, not once.
 
 const uLoops = vi.fn()
+const running = vi.fn()
 const uLoopAction = vi.fn()
 const uLoopNudge = vi.fn()
 const tasks = vi.fn()
@@ -44,6 +45,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => approvals(),
+      running: () => running(),
+      status: () => Promise.resolve({}),
       uLoops: () => uLoops(),
       uLoopAction: (id: string, action: string) => uLoopAction(id, action),
       uLoopNudge: (id: string, text: string) => uLoopNudge(id, text),
@@ -60,7 +63,7 @@ vi.mock('../../lib/api', async (orig) => {
 // The section keys live in their COLLECTION's namespace, not a `companion:` one — see the
 // trap note in `CompanionSections.tsx`. Cleared per test so `data === undefined` (and with it
 // every load-branch assertion below) is actually reachable.
-const KEYS = ['companion:approvals', 'loops-companion', 'tasks-companion', 'inbox-companion', 'notifications-companion']
+const KEYS = ['companion:approvals', 'running-companion', 'loops-companion', 'tasks-companion', 'inbox-companion', 'notifications-companion']
 
 /** A loop, freshly allocated per call. The fetcher must hand back a NEW array/object every
  *  time, exactly as a real `fetch().json()` does: the reconcile effect is keyed on the
@@ -108,6 +111,14 @@ const note = (over: Partial<NotificationItem> = {}): NotificationItem => ({
 function fakeLoops(initial: Loop[]) {
   let store = initial
   uLoops.mockImplementation(() => Promise.resolve(store.map((l) => ({ ...l }))))
+  // The running list holds a loop while its status is running, as `running_now` lists one.
+  running.mockImplementation(() => Promise.resolve({
+    running: store.filter((l) => l.status === 'running').map((l) => ({
+      work: `loop:${l.id}`, kind: 'loop', session: '', phase: 'thinking', line: 'Running', since: '',
+      name: l.name, agent: l.agent, started_at: '', route: `#/loops/${l.id}`, blocked: false, waiting: [],
+    })),
+    finished: [],
+  }))
   uLoopAction.mockImplementation((id: string, action: string) => {
     const to = action === 'pause' ? 'paused' : action === 'stop' ? 'stopped' : 'running'
     store = store.map((l) => (l.id === id ? { ...l, status: to as Loop['status'] } : l))
@@ -149,10 +160,11 @@ function fakeFeed(initial: NotificationItem[]) {
 }
 
 beforeEach(() => {
-  for (const fn of [uLoops, uLoopAction, uLoopNudge, tasks, updateTask, inboxOpen, updateInboxItem, notifications, ackNotification, approvals]) fn.mockReset()
+  for (const fn of [uLoops, running, uLoopAction, uLoopNudge, tasks, updateTask, inboxOpen, updateInboxItem, notifications, ackNotification, approvals]) fn.mockReset()
   // COLD cache per test. A warm entry paints instantly, which makes `data === undefined`
   // unreachable and quietly disables every load-branch assertion in this file.
   for (const k of KEYS) invalidateKeys(k)
+  running.mockResolvedValue({ running: [], finished: [] })
   sessionStorage.clear()
 })
 afterEach(cleanup)
@@ -161,12 +173,12 @@ afterEach(cleanup)
 describe('the Running section — pause / resume / stop / nudge via loop_routes', () => {
   it('lists only the STEERABLE loops and pauses one through PATCH /api/loops/{id}', async () => {
     fakeLoops([loop(), loop({ id: 'lp-2', name: 'Finished thing', status: 'complete' })])
-    render(<RunningLoopsSection />)
+    render(<RunningSection />)
 
     // A loop that has finished is not a decision, so it is not on the phone at all.
     expect(await screen.findByText('Nightly sweep')).toBeTruthy()
     expect(screen.queryByText('Finished thing')).toBeNull()
-    // The count in the heading is the STEERABLE count, not the raw list length.
+    // The count in the heading is what runs, not the raw loop list's length.
     expect(screen.getByRole('heading', { name: 'Running (1)' })).toBeTruthy()
 
     // The name carries the loop, because a phone paints one card per loop and four bare
@@ -182,7 +194,7 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
     // not a STEERABLE status, so the reconciling refetch drops the row off the phone — a
     // stopped loop is not a decision anyone is waiting on.
     fakeLoops([loop()])
-    render(<RunningLoopsSection />)
+    render(<RunningSection />)
     await userEvent.click(await screen.findByRole('button', { name: 'Stop Nightly sweep' }))
     await waitFor(() => expect(uLoopAction).toHaveBeenCalledWith('lp-1', 'stop'))
     await waitFor(() => expect(screen.queryByText('Nightly sweep')).toBeNull())
@@ -194,7 +206,7 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
     uLoopAction.mockRejectedValue(new Error('gateway said no'))
     const toasts: string[] = []
     window.addEventListener('ne:toast', (e) => toasts.push((e as CustomEvent).detail.message))
-    render(<RunningLoopsSection />)
+    render(<RunningSection />)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Pause Nightly sweep' }))
     // Back to Pause — the optimistic 'paused' was withdrawn, not left on screen where it
@@ -208,7 +220,7 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
     fakeLoops([loop()])
     uLoopNudge.mockReset()
     uLoopNudge.mockRejectedValue(new Error('nudge rejected'))
-    render(<RunningLoopsSection />)
+    render(<RunningSection />)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nudge Nightly sweep' }))
     const box = screen.getByRole('textbox', { name: 'What should Nightly sweep do next?' })
@@ -222,11 +234,20 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
   })
 
   it('announces a failed fetch instead of claiming nothing is running', async () => {
+    fakeLoops([loop()])
+    running.mockRejectedValue(new Error('running list unreachable'))
+    render(<RunningSection />)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('running list unreachable')
+    expect(screen.queryByText('Nothing running')).toBeNull()
+  })
+
+  it('announces a loop list it could not read, and still says what runs', async () => {
     uLoops.mockRejectedValue(new Error('loops unreachable'))
-    render(<RunningLoopsSection />)
+    render(<RunningSection />)
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('loops unreachable')
-    expect(screen.queryByText('Nothing running')).toBeNull()
+    expect(await screen.findByText('Nothing running')).toBeTruthy()
   })
 })
 

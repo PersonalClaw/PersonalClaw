@@ -31,6 +31,9 @@ const isApprovalFrame = (m: WsMessage) => m.type === 'approval' || m.type === 'a
 
 /** The frames that move each lane. */
 export const FOLLOWS = {
+  /** The running list's own ring: a row added or removed, a phase or line that changed, or what
+   *  waits on you for a row, at most once per window (`running_now.changed`). */
+  running: (m: WsMessage) => m.type === 'running_changed',
   /** The approval registry's two frames: one raised, one answered or ended. */
   approvals: isApprovalFrame,
   /** The listing hint: a loop was created, moved status, finished a cycle or was deleted (`loops`),

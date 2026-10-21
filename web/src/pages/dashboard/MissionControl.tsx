@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type InboxItem, type PendingApproval, type RunningList, type RunningRow, type SkillProposal } from '../../lib/api'
+import { api, ApiError, hasApiCode, type InboxItem, type PendingApproval, type RunningList, type SkillProposal } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -12,7 +12,8 @@ import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { LANES, toLanes, type Lane, type LaneCard } from '../../lib/attentionLanes'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
-import { RunningLane, type InterruptedRow } from './RunningLane'
+import { RunningLane } from './RunningLane'
+import { useCutOff } from '../../lib/useCutOff'
 
 // ── Mission Control — the locked four-lane attention view ──────────────────────────────────
 //
@@ -85,11 +86,6 @@ const LANE_EMPTY: Record<Lane, string> = {
 // reading them under separate keys would let the view paint a lane split computed from different
 // instants.
 const ATTENTION_KEY = 'dashboard:mission-control'
-
-/** Restart-cut rows kept at most, and for how long: as the gateway keeps its own endings
- *  (`running_now.TAIL_ROWS`, `TAIL_SECS`). */
-const INTERRUPTED_KEPT = 20
-const INTERRUPTED_MS = 10 * 60 * 1000
 
 interface Attention {
   items: InboxItem[]
@@ -243,24 +239,6 @@ function refreshesAttention(m: WsMessage): boolean {
     || type === 'running_changed'
 }
 
-/** The gateway's start time (`GET /api/status`), or `null` when it cannot be read: then whether it
- *  restarted cannot be told, and nothing is said cut off. It feeds no lane. */
-async function startTime(): Promise<number | null> {
-  try {
-    const s = await api.status()
-    return typeof s.start_time === 'number' ? s.start_time : null
-  } catch {
-    return null
-  }
-}
-
-/** Live before the socket dropped, and neither live nor ended once it was back: what a restart cut
- *  off, since the gateway that came back kept no ending of it. */
-export function cutOff(before: RunningRow[], after: RunningList): RunningRow[] {
-  const known = new Set([...after.running, ...after.finished].map((r) => r.work))
-  return before.filter((r) => !known.has(r.work))
-}
-
 export function MissionControl() {
   const { data, error, loading, refresh } = useQuery<Attention>(ATTENTION_KEY, readAttention)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
@@ -275,71 +253,10 @@ export function MissionControl() {
   }, [refresh])
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
 
-  // ── Reconnecting, and what a restart cut off. While the socket is down the lane says its rows may
-  // be out of date. Back on a gateway whose start time moved, every row that was live and is now
-  // neither live nor ended is said as interrupted: the gateway that came back kept no ending of it.
-  // Such a row goes once its work is live or ended again, or after as long as the gateway keeps an
-  // ending. The rows compared are the last read while the socket was up, so a read that lands
-  // while it is down (a press of Approve) cannot hide what the restart cut off.
-  const [reconnecting, setReconnecting] = useState(false)
-  const down = useRef(false)
-  const [interrupted, setInterrupted] = useState<InterruptedRow[]>([])
-  const boot = useRef<number | null>(null)
-  const live = useRef<RunningRow[]>([])
-  useEffect(() => {
-    if (!data) return
-    if (!down.current) live.current = data.running.running
-    const known = new Set([...data.running.running, ...data.running.finished].map((r) => r.work))
-    setInterrupted((was) => {
-      const kept = was.filter((i) => !known.has(i.row.work))
-      return kept.length === was.length ? was : kept
-    })
-  }, [data])
-  useEffect(() => {
-    if (interrupted.length === 0) return undefined
-    const timer = window.setInterval(() => {
-      const now = Date.now()
-      setInterrupted((was) => {
-        const kept = was.filter((i) => now - i.at < INTERRUPTED_MS)
-        return kept.length === was.length ? was : kept
-      })
-    }, 30_000)
-    return () => window.clearInterval(timer)
-  }, [interrupted.length])
-  useEffect(() => {
-    void startTime().then((t) => { if (boot.current === null) boot.current = t })
-  }, [])
-  const onReconnect = useCallback(() => {
-    const before = live.current
-    refresh()
-    void (async () => {
-      const started = await startTime()
-      if (started === null) return
-      const was = boot.current
-      boot.current = started
-      // No start time from before the drop: whether it restarted cannot be told, so nothing is said.
-      if (was === null || started === was) return
-      let after: RunningList
-      try {
-        after = await api.running()
-      } catch {
-        return  // the lane's own read says the list cannot be read
-      }
-      const now = Date.now()
-      // A row said cut off already is not said again: a restart that came while the rows were not
-      // read since the last one (a read that failed, or one that landed while the socket was down)
-      // finds the same work in `before`.
-      setInterrupted((kept) => {
-        const said = new Set(kept.map((i) => i.row.work))
-        const cut = cutOff(before, after).filter((r) => !said.has(r.work)).map((row) => ({ row, at: now }))
-        return cut.length === 0 ? kept : [...cut, ...kept].slice(0, INTERRUPTED_KEPT)
-      })
-    })()
-  }, [refresh])
-  useChatSocket(onMessage, onReconnect, (up) => {
-    down.current = !up
-    setReconnecting(!up)
-  })
+  // Reconnecting, and what a restart cut off, as every reader of the running list says them
+  // (`useCutOff`).
+  const cut = useCutOff(data?.running, refresh, !!error)
+  useChatSocket(onMessage, cut.onReconnect, cut.onStatus)
 
   const items = data?.items ?? []
   const approvals = data?.approvals ?? []
@@ -476,10 +393,10 @@ export function MissionControl() {
             key={lane}
             rows={rows}
             finished={finished}
-            interrupted={interrupted}
+            interrupted={cut.interrupted}
             loading={loading}
             failed={!!error && !data}
-            reconnecting={reconnecting}
+            reconnecting={cut.reconnecting}
             empty={LANE_EMPTY.working}
           />
         ) : (

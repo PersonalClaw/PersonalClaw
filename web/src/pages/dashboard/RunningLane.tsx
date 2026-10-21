@@ -2,7 +2,8 @@ import { useId, useState } from 'react'
 import type { RunningRow } from '../../lib/api'
 import { clockTime } from '../../lib/epoch'
 import { rowSubject } from '../../lib/rowSubject'
-import { WORK_PHASE_LOOKS, workPhaseOf } from '../../lib/workPhase'
+import { INTERRUPTED_LINE, KIND_WORD, phaseOf } from '../../lib/runningRows'
+import type { CutRow } from '../../lib/useCutOff'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
@@ -22,18 +23,6 @@ import { TextLink } from '../../ui/TextLink'
 /** Rows shown before "Show all": a lane of fifty cards is a wall, and the count says the rest. */
 export const LARGE_LIST = 25
 
-/** Work a gateway restart cut off: live before the socket dropped, and neither live nor ended once
- *  it was back on a gateway that had restarted. `at` is when the page saw it cut off (epoch ms). */
-export interface InterruptedRow { row: RunningRow; at: number }
-
-/** What it says of work a restart cut off. */
-export const INTERRUPTED_LINE = 'The gateway restarted while it ran.'
-
-/** What a row's link names it by beside its name: what kind of work it is, which stays while it
- *  runs, where its line changes with every phase. */
-const KIND_WORD: Record<RunningRow['kind'], string> = {
-  chat: 'chat', loop: 'loop', workflow: 'workflow run', subagent: 'helper', trigger: 'automation', webhook: 'webhook',
-}
 
 export function RunningLane({
   rows,
@@ -46,7 +35,8 @@ export function RunningLane({
 }: {
   rows: RunningRow[]
   finished: RunningRow[]
-  interrupted: InterruptedRow[]
+  /** Work a restart cut off (`useCutOff`). */
+  interrupted: CutRow[]
   loading: boolean
   /** The list could not be read at all: the lane says so rather than that nothing runs. */
   failed: boolean
@@ -107,12 +97,6 @@ export function RunningLane({
       ) : null}
     </section>
   )
-}
-
-/** A phase's word and tone, or the wire's own word for one this build does not know. */
-function phaseOf(row: RunningRow) {
-  const phase = workPhaseOf(row.phase)
-  return phase ? WORK_PHASE_LOOKS[phase] : { label: String(row.phase || ''), tone: 'neutral' as const }
 }
 
 function RunningCard({ row }: { row: RunningRow }) {
