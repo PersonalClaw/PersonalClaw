@@ -25,6 +25,8 @@ import { AttachmentCount } from './InboxAttachments'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ComposeNoteModal } from './ComposeNoteModal'
 import { ProposalsLens } from './ProposalsLens'
+import { NotificationsPage } from '../notifications/NotificationsPage'
+import { NOTIFICATIONS_FILTER } from '../notifications/notificationMeta'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
@@ -44,12 +46,35 @@ const FILTERS = [
  *  dialog sends her there by this name, read from here: it said "Handled", a filter the page calls
  *  "Done". */
 const SETTLED_FILTER_LABEL = FILTERS.find((f) => f.key === 'handled')!.label
+/** The filter that lists the notification feed rather than the Inbox's items (#3818), offered last:
+ *  it is the other list the Inbox holds, not a narrowing of this one. No count beside it, since the
+ *  items' view does not read the feed. */
+const NOTIFICATIONS_OPTION = { key: NOTIFICATIONS_FILTER, label: 'Notifications' }
+
+/** The Inbox: its items, or, on the Notifications filter, the notification feed (#3818).
+ *
+ *  Both are what arrived for the owner, so they live in one place: what was the Notifications page
+ *  is this page's `?filter=notifications`, drawn by `NotificationsPage` with the feed's own
+ *  narrowing (`?show`) and its open note (`?open`), and `#/notifications` retires to it
+ *  (`app/routeRedirects.ts`). Moving between the two leaves the other list's open record behind. */
+export function InboxPage(props: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
+  const { query, setQuery } = props
+  if (query.filter !== NOTIFICATIONS_FILTER) return <InboxItems {...props} />
+  // The Inbox's own Show section, so the feed's menu leads back to the items. Their counts are the
+  // items' view's to show, which reads the items; this one reads only the feed.
+  const inboxFilters: FilterSectionDef = {
+    title: 'Show', value: NOTIFICATIONS_FILTER, defaultKey: 'open',
+    onChange: (key) => setQuery({ filter: key === 'open' ? null : key, show: null, open: null }, { replace: true }),
+    options: [...FILTERS, NOTIFICATIONS_OPTION],
+  }
+  return <NotificationsPage {...props} inboxFilters={inboxFilters} />
+}
 
 /** Inbox = a general triage queue fed by pluggable message-source providers
  *  (filesystem today; Slack/email future). Each item is AI-classified with a
  *  confidence and an optional drafted reply. Header shows source health; rows
  *  triage at a glance; the SidePanel is the full triage workspace. */
-export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
+function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
   // No `.catch(() => [])` on the items read. Swallowing the rejection handed the hook an EMPTY
   // LIST, and an empty inbox is the state this surface is proudest of: measured against a 500,
   // `#/inbox` said "Inbox zero — you're all caught up" and rendered PIXEL-IDENTICAL to a healthy
@@ -314,7 +339,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     [items, me],
   )
   const filterSections: FilterSectionDef[] = [{
-    title: 'Show', value: filter, defaultKey: 'open', onChange: setFilter,
+    title: 'Show', value: filter, defaultKey: 'open',
+    // To the feed, leaving the item that is open here behind: `?open` names a note there.
+    onChange: (key) => (key === NOTIFICATIONS_FILTER ? setQuery({ filter: key, open: null }, { replace: true }) : setFilter(key)),
     // The Filtered view is only offered when something is actually withheld — an always-on
     // chip that reads 0 for most users would be a dead control.
     options: [
@@ -326,6 +353,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       // that pattern, not a new one.
       ...((filterCount('favorites') ?? 0) > 0 ? [{ key: 'favorites', label: 'Favorites', count: filterCount('favorites') }] : []),
       ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
+      NOTIFICATIONS_OPTION,
     ],
   }]
   return (

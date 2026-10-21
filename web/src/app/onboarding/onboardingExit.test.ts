@@ -95,7 +95,7 @@ describe('the guard consumes it', () => {
     // setup is not wanted, the route is not `#/onboarding`, and the shell can render it. Pinned with
     // the dependency list so a new guard input cannot be added without this rail being re-read.
     expect(app()).toMatch(
-      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[identityStatus, onboarded, setupRerun, route, sub, navigate\]\)/)
+      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate\]\)/)
   })
 
   it('the redirect INTO onboarding still holds the gate', () => {
@@ -118,8 +118,10 @@ describe('the guard consumes it', () => {
 
   it('the redirect DEFERS the route the user asked for, so it is not a silent hijack', () => {
     // A fresh home pulls every route here. Recording the requested route turns the redirect into a
-    // promise the flow names on screen and `finish()` keeps by landing there.
-    expect(app()).toMatch(/setOnboardingExit\(\[route, sub\]\.filter\(Boolean\)\.join\('\/'\)\)/)
+    // promise the flow names on screen and `finish()` keeps by landing there. The address is kept
+    // with its query, where a page keeps its view: what that lands on is driven through the real
+    // shell in `securityControlsDoNotWaitForSetup.test.tsx`.
+    expect(app()).toMatch(/const path = \[route, sub\]\.filter\(Boolean\)\.join\('\/'\)\n\s*setOnboardingExit\(addressSearch \? `\$\{path\}\?\$\{addressSearch\}` : path\)/)
   })
 
   it('🔴 a pending destination survives a run that happens while setup is still wanted (#3506)', () => {
@@ -132,7 +134,7 @@ describe('the guard consumes it', () => {
     const src = app()
     const effect = src.slice(
       src.indexOf("if (identityStatus !== 'ready') return"),
-      src.indexOf('[identityStatus, onboarded, setupRerun, route, sub, navigate])'))
+      src.indexOf('[identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate])'))
     const wantsSetup = effect.indexOf('if (wantsSetup) {')
     // 🪤 The STATEMENT, anchored at its own indentation — `indexOf('clearOnboardingExit()')` finds
     // the prose mention in the branch's own comment first and truncates the slice before the return.

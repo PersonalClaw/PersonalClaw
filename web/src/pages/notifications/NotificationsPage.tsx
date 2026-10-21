@@ -22,25 +22,28 @@ import { rowSubject } from '../../lib/rowSubject'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type NotificationItem } from '../../lib/api'
 import { useAutonomyLadder } from '../../lib/rungs'
-import { noteMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg, notificationLink } from './notificationMeta'
+import { noteMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg, notificationLink, notificationsAddress } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
-import { accentChip, toneChipSkin } from '../../design/accent'
+import { toneChipSkin } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { reportingWrite } from '../../app/reportingWrite'
 import { ConsentDeclined } from '../../lib/securityConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { ApprovalDecision } from '../../app/ApprovalDecision'
 
-/** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
- *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
- *  (all by ts). Filter by read-state + kind; grouped Today / Yesterday / Earlier.
- *  Live via the shared WS `notification_ack` / new-notification events. */
-
-
-export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
-  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })  // 'all' | 'unread' | <kind>
+/** The Inbox's Notifications filter (#3818): the triage feed of agent/schedule/trigger/task events,
+ *  drawn by `InboxPage` at `#/inbox?filter=notifications`. It was the page at `#/notifications`,
+ *  which retires here (`app/routeRedirects.ts`). Items are keyed by `ts`; the backend supports
+ *  ack / unack / ack-all / delete / clear (all by ts). Narrowed by read-state + kind under `show`
+ *  (the old page's `filter`, which names the Inbox filter now); grouped Today / Yesterday / Earlier.
+ *  Live via the shared WS `notification_ack` / new-notification events.
+ *
+ *  `inboxFilters` is the Inbox's own Show section, handed in by `InboxPage`, so the menu that
+ *  narrows the feed also leads back to the Inbox's items. */
+export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'> & { inboxFilters?: FilterSectionDef }) {
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'show', 'all', { replace: true })  // 'all' | 'unread' | <kind>
   const [openTsRaw, setOpenTs] = useQueryParam(query, setQuery, 'open', '')
   const openTs = openTsRaw || null
   const [now, setNow] = useState(() => Date.now())
@@ -169,7 +172,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
   }
 
   const filterSection: FilterSectionDef = useMemo(() => ({
-    title: 'Show', value: filter, defaultKey: 'all', onChange: setFilter,
+    title: 'Notifications', value: filter, defaultKey: 'all', onChange: setFilter,
     options: [
       { key: 'all', label: 'All', count: items?.length ?? 0 },
       { key: 'unread', label: 'Unread', count: unread },
@@ -182,7 +185,11 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       topBar={
         <TopBar
           keepCornerPadding
-          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{unread}</span>}</PageTitle>}
+          // The Inbox, filtered: its name, and the feed's own count where the items' view says how
+          // many are open. Two children, so the count truncates first, as on the items' view.
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {items && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
+            {unread} unread · {items.length} notification{items.length === 1 ? '' : 's'}
+          </span>}</PageTitle>}
           right={items && items.length > 0 ? (
             // Direct header actions (the header is otherwise empty now that the
             // filter lives on the page); each collapses to an icon when tight.
@@ -193,9 +200,11 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
           ) : undefined}
         />
       }
-      controls={(items === undefined || items.length > 0)
+      // Shown on an empty feed too while the Inbox's filters are in it: the menu is the way back
+      // to the Inbox's items.
+      controls={(inboxFilters || items === undefined || items.length > 0)
         ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
-            <FilterMenu sections={[filterSection]} />
+            <FilterMenu sections={inboxFilters ? [inboxFilters, filterSection] : [filterSection]} label="Show" />
           </ListControls>
         : undefined}
       panel={open && (
@@ -373,7 +382,7 @@ function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem
             35x "…: Refine a skill" and 26x "…: Loop progress", because the title is a KIND here, not
             an identity. The row shows title + the body's first line, and so does the name — capped,
             because the other half of this change fixed a tile named by 695 characters of its body. */}
-        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
+        <InvestigateButton kind="notification" id={n.ts} backLink={`#/${notificationsAddress()}`} size={34}
           label={`Investigate in chat: ${subject}`} />
         {n.acked
           ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} />

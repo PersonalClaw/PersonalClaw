@@ -174,7 +174,8 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
 // recipe, so nothing but the missing list entry was keeping them unscanned:
 //   · mission-control — locked dashboard view the server registers as a preset
 //     (`views_store._mission_control_preset`), reached from the command palette.
-//   · notifications   — attention surface, reached from the header bell.
+//   · notifications   — retired to the Inbox's Notifications filter (#3818); the visit opens the
+//                       filter through its redirect, which is the address a stored link still has.
 //   · discover        — store/discovery surface, reached from Apps.
 // The ones still exempt are exempt for a REAL reason (see EXEMPT_FROM_THE_HARNESS): they
 // need a path parameter to address a specific record (`#/loops/<id>`, `#/code/<id>`), or

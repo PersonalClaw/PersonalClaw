@@ -218,6 +218,17 @@ export function notificationLink(n: Pick<NotificationItem, 'statusUrl'>): { labe
   return { label: 'Open', path }
 }
 
+/** The Inbox's filter that lists this feed (#3818). The feed had a page of its own,
+ *  `#/notifications`, and is a filter of the Inbox now: `#/inbox?filter=notifications`, its own
+ *  narrowing (unread, or one kind) under `show`, and the note it has open under `open`, as an
+ *  item's is. The old address and its keys retire to it through `app/routeRedirects.ts`. */
+export const NOTIFICATIONS_FILTER = 'notifications'
+
+/** The Notifications filter's address, after `#/`, on the note `ts` names when given. */
+export function notificationsAddress(ts?: string): string {
+  return `inbox?filter=${NOTIFICATIONS_FILTER}${ts ? `&open=${encodeURIComponent(ts)}` : ''}`
+}
+
 export function firstLine(body: string, max = 120): string {
   const line = (body || '').split('\n').find((l) => l.trim()) ?? ''
   return line.length > max ? line.slice(0, max) + '…' : line

@@ -307,7 +307,8 @@ class TestNotificationResolver:
         ctx = await inv.resolve("notification", "2026-07-28T01:00:00Z", state)
         assert ctx is not None
         assert "Digest ready" in ctx.title and "5 items" in ctx.snapshot
-        assert ctx.back_link == "#/notifications"
+        # The feed is the Inbox's Notifications filter; #/notifications is a retired address.
+        assert ctx.back_link == "#/inbox?filter=notifications"
 
     @pytest.mark.asyncio
     async def test_failure_notification_gets_why_did_this_fail_prompt(self):

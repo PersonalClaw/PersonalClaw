@@ -11,9 +11,10 @@ that table. Held here, for the gateway's producers of links to Memory:
   · the investigate back link of a memory record and of a learned lesson is ``#/memory``;
   · the Discover tip for memory opens ``memory``, with no query;
   · no back link the investigate resolvers write, and no Discover tip, is an address a row of the
-    table retires. Each row's old path is read from the table and matched as the router matches
-    it: segment by segment, empty segments dropped, each segment decoded once, a ``:name``
-    standing for any one segment.
+    table retires: ``#/notifications`` among them, now a filter of the Inbox, which the notification
+    resolver's default back link named. Each row's old path is read from the table and matched as
+    the router matches it: segment by segment, empty segments dropped, each segment decoded once,
+    a ``:name`` standing for any one segment.
 """
 
 from __future__ import annotations
@@ -56,10 +57,11 @@ def _retired_by(link: str, rows: list[str]) -> str | None:
 
 
 def _back_links() -> list[str]:
-    """Every back link an investigate resolver writes as a literal. A ``{…}`` placeholder of an
-    f-string fills one segment, which only a row's ``:name`` matches."""
+    """Every back link an investigate resolver writes as a literal: passed as ``back_link=``, or
+    assigned to the ``back`` it then passes, as the notification resolver's are. A ``{…}``
+    placeholder of an f-string fills one segment, which only a row's ``:name`` matches."""
     src = Path(inv.__file__).read_text(encoding="utf-8")
-    links = re.findall(r'back_link=f?"([^"]*)"', src)
+    links = re.findall(r'(?:back_link=|\bback = )f?"([^"]*)"', src)
     assert len(links) >= 10, f"parsed back links look wrong: {links}"
     return links
 
@@ -73,6 +75,8 @@ def test_control_the_matcher_reads_an_address_as_the_router_does():
     assert _retired_by("#/memory", rows) is None
     assert _retired_by("#/settings/memory/extra", rows) is None
     assert _retired_by("#/artifacts/{art.slug}", rows) is None
+    assert _retired_by("#/notifications", rows) == "notifications"
+    assert _retired_by("#/inbox?filter=notifications", rows) is None
 
 
 @pytest.mark.asyncio
