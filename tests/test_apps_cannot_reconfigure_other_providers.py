@@ -20,27 +20,49 @@ off.
    enabled — and an app this core cannot host is exactly that once startup refuses it, so a
    settings save started it.
 
-Every app-side case goes through the REAL ``app_permission_middleware`` in front of the REAL app
-and provider routes, for fixture apps the owner installed through preview → consent → install
-(``POST /api/apps/preview``, then ``POST /api/apps`` with its digest), and reads the Security
-Event Log row that names the app. Names this change adds are imported inside the tests, so on a
-tree without them each test fails on its own rather than the module failing to collect.
+The apps are installed once for the module (``shared_app_rows.SharedApp``), through preview →
+consent → install, in each of the two shapes a provider's settings take: one settings record
+(:data:`SETTINGS`) and one record per instance (:data:`INSTANCES`). Each install is Alpha, whose
+token the rows mint, and Bravo, which you configured; the instances install has the MCP Tool
+Servers card's app as well. Every row runs on that install behind the REAL token middleware, the
+REAL ``app_permission_middleware`` and the REAL app and provider routes, on a gateway started
+from the home as a restart starts one: every installed app loaded from its files. The token you
+mint for an app is presented both ways an app presents one: as a Bearer header beside your cookie
+(its SDK) and as the only credential (its backend). Each refusal is read back as the Security
+Event Log row that names the app. Before every row the home is put back to what the install left
+and checked by digest, every session is signed out, the fenced registries are read around it, and
+the row gets a gateway of its own, which takes every fixture provider back out when it closes. A
+refused row reads your home before and after the app's requests, so a refusal that wrote anything
+fails its own row. Each family's end-to-end refusal stays its own test, on apps installed for it
+alone.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sys
 import types
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from aiohttp import web
+from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+from shared_app_rows import (
+    RecordedRows,
+    Row,
+    SharedApp,
+    home_files,
+    planted_rows,
+    recording_sel,
+    written_since,
+)
+from test_apps_cannot_change_your_models import PORT, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
 # mock bound.
@@ -58,15 +80,23 @@ ALPHA = "probe-alpha"
 BRAVO = "probe-bravo"
 #: The first-party MCP Tool Servers app's name (`providers/mcp_instances.MCP_TOOLS_EXTENSION`).
 MCP_TOOLS = "mcp-tools"
-#: The test gateway's stand-in for an app token's claim: the dev middleware sets `request["app"]`
-#: from a verified app token, and this sets it from a header, so one gateway serves you and both
-#: apps.
-AS_APP = "X-Probe-App"
 #: Where a hostile write points another app's provider.
 ATTACKER = "https://collector.attacker.example/v1"
-#: The key you gave Bravo, which Bravo's provider connects with.
+#: Where you pointed Bravo, and the key you gave it, which Bravo's provider connects with.
+BRAVO_AT = "https://bravo.example"
 BRAVO_KEY = "fake-key-1"
+#: The key an instance you add carries.
+INSTANCE_KEY = "fake-key-main"
+#: What Bravo's running provider was built from, in each shape, as you configured it.
+BRAVO_SERVES = {
+    "settings": [{"endpoint": BRAVO_AT, "api_key": BRAVO_KEY}],
+    "instances": [{"endpoint": BRAVO_AT, "api_key": INSTANCE_KEY}],
+}
 WIRE = "_providerscope_wire"
+
+#: The two ways an app presents the token you mint for it: beside your cookie, as its SDK sends it,
+#: and as the only credential, as its backend does.
+WAYS = {"as its SDK": False, "as its backend": True}
 
 _SCHEMA = {
     "type": "object",
@@ -135,7 +165,7 @@ def _bundle(root: Path, name: str, *, shape: str) -> Path:
     return d
 
 
-# ── the process-wide state the fixtures reach ─────────────────────────────────────────────────
+# ── the gateway a user's clicks and an app's requests reach ────────────────────────────────────
 
 
 class _Board:
@@ -153,35 +183,100 @@ class _Board:
         self.rechecked.append(name)
 
 
-@pytest.fixture
-def wire() -> Iterator[types.ModuleType]:
-    module = types.ModuleType(WIRE)
-    module.built = []  # type: ignore[attr-defined]
-    sys.modules[WIRE] = module
-    yield module
-    sys.modules.pop(WIRE, None)
+#: The writes that replace a whole settings record, and so name the copy they were built from in
+#: `If-Match` (`personalclaw/stale_write.py`): the SPA reads the record first and sends the revision
+#: that read reported, and so does this gateway's caller, with the same credential. A caller the
+#: read refuses gets no revision, and its write is refused before any handler runs, as before.
+_WHOLE_RECORD_WRITES = re.compile(
+    r"/api/providers/[^/]+/config|/api/providers/[^/]+/instances/[^/]+|/api/apps/[^/]+/config"
+)
 
 
-@pytest.fixture
-def board(monkeypatch) -> _Board:
-    fake = _Board()
-    monkeypatch.setattr(provider_routes, "get_availability_board", lambda: fake)
-    return fake
+def _revision(status: int, text: str) -> str:
+    try:
+        read = json.loads(text)
+    except ValueError:
+        return ""
+    record = read.get("instance", read) if isinstance(read, dict) else {}
+    if status >= 300 or not isinstance(record, dict):
+        return ""
+    return str(record.get("revision") or "")
 
 
-@pytest.fixture
-def home(tmp_path, monkeypatch, wire, board) -> Iterator[Path]:
-    """An isolated home and a fresh provider registry. Teardown takes every fixture provider back
-    out of the registries it reached, so no test answers for the next."""
-    import personalclaw.config.loader as loader
-    from personalclaw import mcp_client
+class _ProviderGateway(_Gateway):
+    """The family's gateway (``test_apps_cannot_change_your_models._Gateway``), with the wire
+    Bravo's and Alpha's code records each build on, and the availability board."""
+
+    def __init__(
+        self, client: TestClient, owner_token: str, wire: types.ModuleType, board: _Board
+    ) -> None:
+        super().__init__(client, owner_token)
+        self.wire = wire
+        self.board = board
+
+    async def call(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        *,
+        app_token: str = "",
+        as_backend: bool = False,
+        headers: dict[str, str] | None = None,
+        form: Any = None,
+    ) -> tuple[int, str]:
+        headers = dict(headers or {})
+        if method in ("PATCH", "PUT") and _WHOLE_RECORD_WRITES.fullmatch(path):
+            read = await super().call("GET", path, app_token=app_token, as_backend=as_backend)
+            revision = _revision(*read)
+            if revision:
+                headers["If-Match"] = f'"{revision}"'
+        return await super().call(
+            method,
+            path,
+            body,
+            app_token=app_token,
+            as_backend=as_backend,
+            headers=headers,
+            form=form,
+        )
+
+    async def both_ways(
+        self, token: str, method: str, path: str, body: Any = None
+    ) -> list[tuple[int, str]]:
+        """The app's request, sent once each way it presents *token* (:data:`WAYS`)."""
+        return [
+            await self.call(method, path, body, app_token=token, as_backend=alone)
+            for alone in WAYS.values()
+        ]
+
+    async def add_instance(
+        self, app: str, endpoint: str, *, app_token: str = "", as_backend: bool = False
+    ) -> str:
+        """An instance of *app*'s provider at *endpoint*: yours, or the app's with *app_token*."""
+        body = {"display_name": "Main", "config": {"endpoint": endpoint, "api_key": INSTANCE_KEY}}
+        path = f"/api/providers/{app}/instances"
+        status, text = await self.call(
+            "POST", path, body, app_token=app_token, as_backend=as_backend
+        )
+        assert status < 300, f"POST {path} → {status}: {text}"
+        return str(json.loads(text)["instance"]["id"])
+
+
+def _start_providers() -> None:
+    """Every installed app loaded from its files, as a gateway restart loads them."""
+    from personalclaw.apps import app_runtime
+
+    registry_module.reset_provider_registry()
+    app_runtime.start_installed(gateway=False)
+
+
+def _stop_providers() -> None:
+    """Every fixture provider taken back out of the registries it reached, and its code out of this
+    process, so the next start imports the files on disk."""
+    from personalclaw.config.loader import config_dir
     from personalclaw.tool_providers import registry as tools
 
-    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(mcp_client, "_registry", None)
-    registry_module.reset_provider_registry()
-    yield tmp_path
     registry = registry_module.get_provider_registry()
     for name in list(registry._extensions):
         registry.disable(name)
@@ -189,110 +284,116 @@ def home(tmp_path, monkeypatch, wire, board) -> Iterator[Path]:
     for provider in list(tools.list_providers()):
         if str(getattr(provider, "name", "")).startswith((ALPHA, BRAVO, MCP_TOOLS)):
             tools.unregister_provider(provider)
-    here = str(tmp_path)
+    here = str(config_dir())
     for name, module in list(sys.modules.items()):
         if str(getattr(module, "__file__", "") or "").startswith(here):
             sys.modules.pop(name, None)
 
 
-@pytest.fixture
-def sel_rows():
-    """Every row the permission middleware writes (it imports ``sel`` at the refusal)."""
-    fake = MagicMock()
-    with patch("personalclaw.sel.sel", return_value=fake):
-        yield fake.log_api_access
-
-
-def _denials(rows: MagicMock, app: str, path: str) -> list:
-    return [
-        c
-        for c in rows.call_args_list
-        if c.kwargs.get("caller") == f"app:{app}"
-        and c.kwargs.get("outcome") == "denied"
-        and c.kwargs.get("resources") == path
-    ]
-
-
-# ── the gateway a user's clicks and an app's backend reach ─────────────────────────────────────
-
-
-#: The writes that replace a whole settings record, and so name the copy they were built from in
-#: `If-Match` (`personalclaw/stale_write.py`): the SPA reads the record first and sends the revision
-#: that read reported, and so does this gateway's caller. A caller the read refuses gets no
-#: revision, and its write is refused before any handler runs, as before.
-_WHOLE_RECORD_WRITES = re.compile(
-    r"/api/providers/[^/]+/config|/api/providers/[^/]+/instances/[^/]+|/api/apps/[^/]+/config"
-)
-
-
-class _Gateway:
-    def __init__(self, client: TestClient) -> None:
-        self.client = client
-
-    async def _send(
-        self, method: str, path: str, body: Any, headers: dict[str, str]
-    ) -> tuple[int, Any]:
-        resp = await self.client.request(method, path, json=body, headers=headers)
-        text = await resp.text()
-        try:
-            return resp.status, json.loads(text)
-        except ValueError:
-            return resp.status, text
-
-    async def call(
-        self, method: str, path: str, body: Any = None, *, as_app: str = ""
-    ) -> tuple[int, Any]:
-        headers = {AS_APP: as_app} if as_app else {}
-        if method in ("PATCH", "PUT") and _WHOLE_RECORD_WRITES.fullmatch(path):
-            status, read = await self._send("GET", path, None, headers)
-            record = read.get("instance", read) if isinstance(read, dict) else {}
-            if status < 300 and isinstance(record, dict) and record.get("revision"):
-                headers = {**headers, "If-Match": f'"{record["revision"]}"'}
-        return await self._send(method, path, body, headers)
-
-    async def ok(self, method: str, path: str, body: Any = None, *, as_app: str = "") -> Any:
-        status, data = await self.call(method, path, body, as_app=as_app)
-        assert status < 300, f"{method} {path} as {as_app or 'you'} → {status}: {data}"
-        return data
-
-    async def install(self, source: Path) -> None:
-        """The owner's install: review, then install with the digest the review returned."""
-        review = await self.ok("POST", "/api/apps/preview", {"source": str(source)})
-        assert review.get("consent"), review
-        await self.ok("POST", "/api/apps", {"source": str(source), "consent": review["consent"]})
-
-    async def add_instance(self, app: str, endpoint: str, *, as_app: str = "") -> str:
-        body = {
-            "display_name": "Main",
-            "config": {"endpoint": endpoint, "api_key": "fake-key-main"},
-        }
-        made = await self.ok("POST", f"/api/providers/{app}/instances", body, as_app=as_app)
-        return str(made["instance"]["id"])
+def _restart() -> None:
+    _stop_providers()
+    _start_providers()
 
 
 @asynccontextmanager
-async def _gateway() -> AsyncIterator[_Gateway]:
+async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_ProviderGateway]:
+    """The real token middleware, permission middleware and request boundary, in front of the app
+    routes, the provider routes and *routes*, on a gateway started from the home: every installed
+    app's providers loaded from its files when it opens, and taken out when it closes."""
+    from personalclaw import mcp_client
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
     from personalclaw.dashboard.server import app_permission_middleware
+    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
 
-    @web.middleware
-    async def identity(request: web.Request, handler: Any) -> web.StreamResponse:
-        request["user"] = "owner"
-        caller = request.headers.get(AS_APP, "")
-        if caller:
-            request["app"] = caller
-        return await handler(request)
+    wire = types.ModuleType(WIRE)
+    wire.built = []  # type: ignore[attr-defined]
+    board = _Board()
+    kept = mcp_client._registry
+    sys.modules[WIRE] = wire
+    mcp_client._registry = None
+    try:
+        with patch.object(provider_routes, "get_availability_board", lambda: board):
+            _start_providers()
+            app = web.Application(
+                middlewares=[
+                    token_auth_middleware(port=PORT, local_only=False),
+                    app_permission_middleware,
+                    request_boundary_middleware(),
+                ]
+            )
+            register_app_routes(app)
+            provider_routes.register_routes(app)
+            instance_routes.register_instance_routes(app)
+            for method, template, handler in routes:
+                app.router.add_route(method, template, handler)
+            owner = generate_token("owner", ttl_seconds=600)
+            async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
+                yield _ProviderGateway(client, owner, wire, board)
+    finally:
+        _stop_providers()
+        mcp_client._registry = kept
+        sys.modules.pop(WIRE, None)
 
-    app = web.Application(middlewares=[identity, app_permission_middleware])
-    register_app_routes(app)
-    provider_routes.register_routes(app)
-    instance_routes.register_instance_routes(app)
-    async with TestClient(TestServer(app)) as client:
-        yield _Gateway(client)
+
+# ── the shared installs ────────────────────────────────────────────────────────────────────────
 
 
-async def _installed(gw: _Gateway, home: Path, shape: str, *names: str) -> None:
-    for name in names:
-        await gw.install(_bundle(home, name, shape=shape))
+async def _bravo_configured(gw: _ProviderGateway, home: Path) -> None:
+    """Bravo installed beside Alpha, and pointed where you point it, with its key."""
+    await gw.install(_bundle(home, BRAVO, shape="settings"))
+    await gw.ok(
+        "PATCH", f"/api/providers/{BRAVO}/config", {"endpoint": BRAVO_AT, "api_key": BRAVO_KEY}
+    )
+
+
+async def _bravo_and_the_card_installed(gw: _ProviderGateway, home: Path) -> None:
+    """Bravo and the MCP Tool Servers card's app installed beside Alpha, and one instance of
+    Bravo's that you added."""
+    for name in (BRAVO, MCP_TOOLS):
+        await gw.install(_bundle(home, name, shape="instances"))
+    await gw.add_instance(BRAVO, BRAVO_AT)
+
+
+#: Alpha and Bravo with one settings record each, Bravo's yours.
+SETTINGS = SharedApp(
+    ALPHA,
+    functools.partial(_bundle, name=ALPHA, shape="settings"),
+    _gateway,
+    prepare=_bravo_configured,
+)
+#: Alpha, Bravo and the MCP Tool Servers card's app with one record per instance, Bravo's one
+#: instance yours.
+INSTANCES = SharedApp(
+    ALPHA,
+    functools.partial(_bundle, name=ALPHA, shape="instances"),
+    _gateway,
+    prepare=_bravo_and_the_card_installed,
+)
+SHAPES = {"settings": SETTINGS, "instances": INSTANCES}
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch) -> Iterator[Path]:
+    """A home of this test's own, with every session signed out before and after."""
+    import personalclaw.config.loader as loader
+    from personalclaw.dashboard.token_auth import revoke_all_sessions
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    revoke_all_sessions()
+    yield tmp_path
+    revoke_all_sessions()
+
+
+@pytest.fixture
+def sel_rows() -> Iterator[MagicMock]:
+    """Every Security Event Log row the test's requests write, the token middleware's included."""
+    fake = MagicMock()
+    with recording_sel(fake):
+        yield fake.log_api_access
+
+
+# ── what the home and the running providers hold ───────────────────────────────────────────────
 
 
 def _stored(app: str) -> dict[str, Any]:
@@ -325,12 +426,41 @@ def _tool_providers(app: str) -> list[Any]:
     return [p for p in list_providers() if str(getattr(p, "name", "")).split(":", 1)[0] == app]
 
 
+def _serving(app: str) -> list[dict[str, Any]]:
+    """The settings each provider *app* serves your agents was built from."""
+    return sorted((dict(p.config) for p in _tool_providers(app)), key=json.dumps)
+
+
 def _mcp_servers(home: Path) -> set[str]:
     """The servers ``mcp.json`` names — what the gateway launches."""
     path = home / "mcp.json"
     if not path.exists():
         return set()
     return set(json.loads(path.read_text()).get("mcpServers", {}))
+
+
+def _refusals(r: Row, method: str, path: str, *, app: str = ALPHA) -> list:
+    """The rows the permission middleware wrote refusing *app* this request, in this row."""
+    return [
+        c
+        for c in r.sel.call_args_list
+        if c.kwargs.get("caller") == f"app:{app}"
+        and c.kwargs.get("outcome") == "denied"
+        and c.kwargs.get("source") == "app_permissions"
+        and c.kwargs.get("resources") == path
+        and c.kwargs.get("operation") == f"{method} {path}"
+    ]
+
+
+async def _token(gw: _ProviderGateway, app: str) -> str:
+    """The token you mint for *app*, as its SDK asks for one on mount."""
+    return str((await gw.ok("POST", f"/api/apps/{app}/token"))["token"])
+
+
+def _ok(answers: list[tuple[int, str]]) -> list[Any]:
+    for status, text in answers:
+        assert status < 300, f"{status}: {text}"
+    return [json.loads(text) for _status, text in answers]
 
 
 # ── 1. Another app's provider is refused before its handler runs ───────────────────────────────
@@ -362,369 +492,421 @@ PROVIDER_ROUTES: list[tuple[str, str, str, Any]] = [
     ("POST", "/api/providers/{name}/instances/{id}/test", "instances", None),
 ]
 
-
-async def _victim(gw: _Gateway, home: Path, shape: str) -> str:
-    """Install Alpha and Bravo in *shape*, configure Bravo as you would, and return the id of
-    Bravo's instance (``""`` for the settings shape)."""
-    await _installed(gw, home, shape, ALPHA, BRAVO)
-    if shape == "settings":
-        yours = {"endpoint": "https://bravo.example", "api_key": BRAVO_KEY}
-        await gw.ok("PATCH", f"/api/providers/{BRAVO}/config", yours)
-        return ""
-    return await gw.add_instance(BRAVO, "https://bravo.example")
+#: The same read as `GET`, and the Apps page's settings route, which writes the file `PATCH
+#: /api/providers/{name}/config` does and is held to the calling app by the same row, before its
+#: handler runs (#3614 checked it inside the handler).
+SETTINGS_ALSO: list[tuple[str, str, Any]] = [
+    ("HEAD", "/api/providers/{name}/config", None),
+    ("GET", "/api/apps/{name}/config", None),
+    ("PUT", "/api/apps/{name}/config", {"endpoint": ATTACKER}),
+]
 
 
-class TestAnAppCannotReconfigureAnotherAppsProvider:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "shape", "body"), PROVIDER_ROUTES, ids=lambda v: str(v)
-    )
-    async def test_every_route_refuses_another_apps_provider(
-        self, home, sel_rows, wire, board, method, template, shape, body
-    ) -> None:
-        async with _gateway() as gw:
-            instance_id = await _victim(gw, home, shape)
-            built = list(wire.built)
-            path = template.replace("{name}", BRAVO).replace("{id}", instance_id)
-            status, answer = await gw.call(method, path, body, as_app=ALPHA)
-        assert status == 403, answer
-        assert "is not this app" in str(answer), answer
-        assert _denials(sel_rows, ALPHA, path), "the refusal leaves an SEL row naming the app"
-        assert "bravo.example" not in str(answer), "nothing of Bravo's settings comes back"
-        assert wire.built == built, "no code of Bravo's ran for Alpha's request"
-        assert board.rechecked == []
+def _another_apps(method: str, template: str, body: Any, shape: str):
+    """Alpha's request for Bravo's provider refused both ways as not Alpha's, each refusal leaving
+    an SEL row naming Alpha and the path; nothing of Bravo's settings in the answer, none of
+    Bravo's code run, your home as it was, and Bravo's running provider connecting where you
+    pointed it, with its own key. A write names only the endpoint: the key stays Bravo's, so a
+    provider rebuilt from the result would connect to the attacker with Bravo's key."""
 
-    @pytest.mark.asyncio
-    async def test_its_provider_keeps_connecting_where_you_pointed_it(self, home, sel_rows) -> None:
-        """The write names only the endpoint. The key stays Bravo's, so a provider rebuilt from
-        the result connects to the attacker with Bravo's key."""
-        async with _gateway() as gw:
-            await _victim(gw, home, "settings")
-            status, _answer = await gw.call(
-                "PATCH", f"/api/providers/{BRAVO}/config", {"endpoint": ATTACKER}, as_app=ALPHA
-            )
-        live = registry_module.get_provider_registry().get(BRAVO).provider_instance
-        assert live.config == {"endpoint": "https://bravo.example", "api_key": BRAVO_KEY}
-        assert _stored(BRAVO)["endpoint"] == "https://bravo.example"
-        assert status == 403
+    async def run(r: Row) -> None:
+        (instance_id,) = _ids(BRAVO) if "{id}" in template else ("",)
+        path = template.replace("{name}", BRAVO).replace("{id}", instance_id)
+        built = list(r.gw.wire.built)
+        assert _serving(BRAVO) == BRAVO_SERVES[shape], "Bravo runs as you configured it"
+        before = home_files(r.home)
+        theirs = await r.gw.both_ways(r.token, method, path, body)
+        written = written_since(r.home, before)
+        for status, text in theirs:
+            assert status == 403, text
+            assert method == "HEAD" or "is not this app" in text, text
+            assert "bravo.example" not in text, "nothing of Bravo's settings comes back"
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(_refusals(r, method, path)) == 2, "each refusal leaves an SEL row naming the app"
+        assert r.gw.wire.built == built, "no code of Bravo's ran for Alpha's request"
+        assert r.gw.board.rechecked == []
+        assert _serving(BRAVO) == BRAVO_SERVES[shape], "and connects where you pointed it"
 
-    @pytest.mark.asyncio
-    async def test_its_instances_are_not_repointed_added_or_removed(self, home, sel_rows) -> None:
-        async with _gateway() as gw:
-            instance_id = await _victim(gw, home, "instances")
-            base = f"/api/providers/{BRAVO}/instances"
-            repoint = await gw.call(
-                "PUT", f"{base}/{instance_id}", {"config": {"endpoint": ATTACKER}}, as_app=ALPHA
-            )
-            add = await gw.call(
-                "POST",
-                base,
-                {"display_name": "Mine", "config": {"endpoint": ATTACKER}},
-                as_app=ALPHA,
-            )
-            remove = await gw.call("DELETE", f"{base}/{instance_id}", as_app=ALPHA)
-        assert [repoint[0], add[0], remove[0]] == [403, 403, 403], (repoint, add, remove)
-        assert _ids(BRAVO) == [instance_id]
-        assert _instance(BRAVO, instance_id).config["endpoint"] == "https://bravo.example"
-        (served,) = _tool_providers(BRAVO)
-        assert served.config["endpoint"] == "https://bravo.example", "the running provider too"
+    return run
 
 
-# ── 2. What an app reads is its own provider ────────────────────────────────────────────────────
+#: A read and a write added tomorrow under `/api/providers/{name}`, which no declaration covers.
+BRAND_NEW = [
+    ("GET", "/api/providers/{name}/brand-new"),
+    ("POST", "/api/providers/{name}/brand-new"),
+]
 
 
-class TestAnAppReadsOnlyItsOwnProvider:
-    @pytest.mark.asyncio
-    async def test_the_list_holds_only_the_apps_own(self, home) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "settings", ALPHA, BRAVO)
-            as_alpha = await gw.ok("GET", "/api/providers", as_app=ALPHA)
-            tools_only = await gw.ok("GET", "/api/providers?type=tool", as_app=ALPHA)
-            yours = await gw.ok("GET", "/api/providers")
-        assert [p["name"] for p in as_alpha["providers"]] == [ALPHA]
-        assert [p["name"] for p in tools_only["providers"]] == [ALPHA]
-        names = {p["name"] for p in yours["providers"]}
-        assert {ALPHA, BRAVO, "personalclaw-filesystem"} <= names, "you still list every one"
+def _brand_new_routes(reached: list[tuple[str, str]]) -> list[tuple[str, str, Any]]:
+    """A stand-in at each :data:`BRAND_NEW` route, recording who reached it and at which path."""
 
-    @pytest.mark.asyncio
-    async def test_head_is_the_same_read(self, home, sel_rows) -> None:
-        async with _gateway() as gw:
-            await _victim(gw, home, "settings")
-            resp = await gw.client.head(f"/api/providers/{BRAVO}/config", headers={AS_APP: ALPHA})
-        assert resp.status == 403
-        assert _denials(sel_rows, ALPHA, f"/api/providers/{BRAVO}/config")
+    async def stand_in(request: web.Request) -> web.Response:
+        reached.append((request.get("app", ""), request.path))
+        return web.json_response({"reached": True})
+
+    return [(method, template, stand_in) for method, template in BRAND_NEW]
 
 
-# ── 3. You reach every provider, and an app reaches its own ─────────────────────────────────────
+def _a_new_route_fails_closed(reached: list[tuple[str, str]]):
+    """A route added under ``/api/providers`` is refused to every app until someone declares whether
+    an app may reach it, a read as well as a write, even one naming the app's own provider. You
+    reach it."""
+
+    async def run(r: Row) -> None:
+        reached.clear()
+        paths = []
+        for method, template in BRAND_NEW:
+            path = template.replace("{name}", ALPHA)
+            paths.append(path)
+            before = home_files(r.home)
+            theirs = await r.gw.both_ways(r.token, method, path)
+            written = written_since(r.home, before)
+            yours = await r.gw.call(method, path)
+            for status, text in theirs:
+                assert status == 403, f"{method}: {text}"
+                assert "has not declared whether an app may reach it" in text, f"{method}: {text}"
+            assert not written, f"a refusal changed your home: {written}"
+            assert len(_refusals(r, method, path)) == 2, f"{method}: each refusal leaves an SEL row"
+            assert yours[0] == 200, yours
+        assert reached == [("", path) for path in paths], "only your requests reached it"
+
+    return run
 
 
-class TestYoursAndTheAppsOwn:
-    @pytest.mark.asyncio
-    async def test_you_reconfigure_any_apps_provider(self, home, board) -> None:
-        async with _gateway() as gw:
-            await _victim(gw, home, "settings")
-            await gw.ok(
-                "PATCH", f"/api/providers/{BRAVO}/config", {"endpoint": "https://b2.example"}
-            )
-            await gw.ok("GET", f"/api/providers/{BRAVO}/config")
-            await gw.ok("POST", f"/api/providers/{BRAVO}/availability")
-        assert _stored(BRAVO)["endpoint"] == "https://b2.example"
-        assert board.rechecked == [BRAVO]
-
-    @pytest.mark.asyncio
-    async def test_you_manage_any_apps_instances(self, home) -> None:
-        async with _gateway() as gw:
-            instance_id = await _victim(gw, home, "instances")
-            base = f"/api/providers/{BRAVO}/instances"
-            await gw.ok(
-                "PUT", f"{base}/{instance_id}", {"config": {"endpoint": "https://b2.example"}}
-            )
-            await gw.ok("POST", f"{base}/{instance_id}/test")
-            second = await gw.add_instance(BRAVO, "https://b3.example")
-            await gw.ok("DELETE", f"{base}/{second}")
-        assert _ids(BRAVO) == [instance_id]
-        (served,) = _tool_providers(BRAVO)
-        assert served.config["endpoint"] == "https://b2.example"
-
-    @pytest.mark.asyncio
-    async def test_an_app_reconfigures_its_own_provider(self, home, board) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "settings", ALPHA, BRAVO)
-            path = f"/api/providers/{ALPHA}"
-            await gw.ok("PATCH", f"{path}/config", {"endpoint": "https://a.example"}, as_app=ALPHA)
-            read = await gw.ok("GET", f"{path}/config", as_app=ALPHA)
-            await gw.ok("GET", path, as_app=ALPHA)
-            await gw.ok("GET", f"{path}/schema", as_app=ALPHA)
-            await gw.ok("POST", f"{path}/availability", as_app=ALPHA)
-        assert read["config"]["endpoint"] == "https://a.example"
-        assert _stored(ALPHA)["endpoint"] == "https://a.example"
-        live = registry_module.get_provider_registry().get(ALPHA).provider_instance
-        assert live.config["endpoint"] == "https://a.example", "the save reached its provider"
-        assert board.rechecked == [ALPHA]
-
-    @pytest.mark.asyncio
-    async def test_an_app_manages_its_own_instances(self, home) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "instances", ALPHA, BRAVO)
-            base = f"/api/providers/{ALPHA}/instances"
-            first = await gw.add_instance(ALPHA, "https://a1.example", as_app=ALPHA)
-            second = await gw.add_instance(ALPHA, "https://a2.example", as_app=ALPHA)
-            await gw.ok(
-                "PUT",
-                f"{base}/{first}",
-                {"config": {"endpoint": "https://a3.example"}},
-                as_app=ALPHA,
-            )
-            await gw.ok("POST", f"{base}/{first}/test", as_app=ALPHA)
-            await gw.ok("DELETE", f"{base}/{second}", as_app=ALPHA)
-            listed = await gw.ok("GET", base, as_app=ALPHA)
-            one = await gw.ok("GET", f"{base}/{first}", as_app=ALPHA)
-        assert [i["id"] for i in listed["instances"]] == [first]
-        assert one["instance"]["config"]["endpoint"] == "https://a3.example"
-        assert "fake-key-main" not in json.dumps(listed), "its own key stays masked"
-        (served,) = _tool_providers(ALPHA)
-        assert served.config["endpoint"] == "https://a3.example"
+def _settings_table(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
+    """Every settings route asked for Bravo's provider, and a route nobody declared yet."""
+    routes = [(m, t, b) for m, t, shape, b in PROVIDER_ROUTES if shape == "settings"]
+    rows = [
+        (f"{m} {t}", _another_apps(m, t, b, "settings")) for m, t, b in [*routes, *SETTINGS_ALSO]
+    ]
+    rows.append(("a route added under /api/providers", _a_new_route_fails_closed(reached)))
+    return rows
 
 
-# ── 4. The MCP Tool Servers card is every server the gateway launches ──────────────────────────
+@pytest.mark.asyncio
+async def test_no_app_reaches_another_apps_settings_or_a_route_not_yet_declared(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _settings_table(reached)
+    settings_routes = [r for r in PROVIDER_ROUTES if r[2] == "settings"]
+    assert len(rows) == len(settings_routes) + len(SETTINGS_ALSO) + 1, "a route was left out"
+    await SETTINGS.run(subtests, rows, _brand_new_routes(reached), label="route")
 
 
-class TestTheMcpToolServersCardIsYours:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("caller", [MCP_TOOLS, ALPHA])
-    async def test_no_app_defines_or_reads_a_server_through_it(
-        self, home, sel_rows, caller
-    ) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "instances", MCP_TOOLS, ALPHA)
-            base = f"/api/providers/{MCP_TOOLS}/instances"
-            evil = {
-                "display_name": "evil",
-                "config": {"transport": "stdio", "command": "sh", "args": "-c id"},
-            }
-            made = await gw.call("POST", base, evil, as_app=caller)
-            listed = await gw.call("GET", base, as_app=caller)
-            yours = await gw.call("GET", base)
-        assert made[0] == 403, made
-        assert listed[0] == 403, listed
-        assert "evil" not in _mcp_servers(home), "no server was defined"
-        assert _denials(sel_rows, caller, base)
-        assert yours[0] == 200, "you still reach the card"
-
-    @pytest.mark.asyncio
-    async def test_the_app_named_for_it_is_refused_as_owner_only(self, home, sel_rows) -> None:
-        """The ownership rule alone would pass an app installed under the name ``mcp-tools``: the
-        card's instances are not that app's, they are every server in ``mcp.json``."""
-        async with _gateway() as gw:
-            await _installed(gw, home, "instances", MCP_TOOLS)
-            status, text = await gw.call(
-                "POST",
-                f"/api/providers/{MCP_TOOLS}/instances",
-                {"display_name": "evil", "config": {"command": "sh"}},
-                as_app=MCP_TOOLS,
-            )
-        assert status == 403
-        assert "owner-only capability" in str(text), text
-        assert "MCP servers" in str(text), text
+#: What a server on the MCP Tool Servers card would launch.
+EVIL = {"display_name": "evil", "config": {"transport": "stdio", "command": "sh", "args": "-c id"}}
+MCP_CARD = f"/api/providers/{MCP_TOOLS}/instances"
 
 
-# ── 5. A disabled app stays off when one of its instances changes ──────────────────────────────
+def _no_app_defines_or_reads_a_server(caller: str):
+    """The card's instances are every server in ``mcp.json``, not the card's app's: an app named for
+    it is refused as owner-only, as is any other, naming the MCP servers, and you still reach it.
+    The ownership rule alone would pass the app installed under the name ``mcp-tools``."""
+
+    async def run(r: Row) -> None:
+        token = r.token if caller == ALPHA else await _token(r.gw, caller)
+        before = home_files(r.home)
+        made = await r.gw.both_ways(token, "POST", MCP_CARD, EVIL)
+        listed = await r.gw.both_ways(token, "GET", MCP_CARD)
+        written = written_since(r.home, before)
+        yours = await r.gw.call("GET", MCP_CARD)
+        for status, text in [*made, *listed]:
+            assert status == 403, text
+            assert "owner-only capability" in text and "MCP servers" in text, text
+        assert not written, f"a refusal changed your home: {written}"
+        assert "evil" not in _mcp_servers(r.home), "no server was defined"
+        for method in ("POST", "GET"):
+            assert len(_refusals(r, method, MCP_CARD, app=caller)) == 2, method
+        assert yours[0] == 200, yours
+
+    return run
 
 
-async def _switched_off(gw: _Gateway, home: Path) -> str:
-    """Alpha installed, running one instance, then switched off from the Apps page."""
-    await _installed(gw, home, "instances", ALPHA)
-    instance_id = await gw.add_instance(ALPHA, "https://a1.example")
+def _instances_refusals() -> list[tuple[str, Any]]:
+    rows = [
+        (f"{m} {t}", _another_apps(m, t, b, shape))
+        for m, t, shape, b in PROVIDER_ROUTES
+        if shape == "instances"
+    ]
+    rows += [
+        (f"the MCP Tool Servers card, as {caller}", _no_app_defines_or_reads_a_server(caller))
+        for caller in (MCP_TOOLS, ALPHA)
+    ]
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_no_app_reaches_another_apps_instances_or_your_mcp_servers(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await INSTANCES.home(tmp_path_factory, monkeypatch)
+    rows = _instances_refusals()
+    instance_routes_here = [r for r in PROVIDER_ROUTES if r[2] == "instances"]
+    assert len(rows) == len(instance_routes_here) + 2, "a route was left out"
+    await INSTANCES.run(subtests, rows, [], label="route")
+
+
+# ── 2. You reach every provider, and an app reaches its own and lists only its own ─────────────
+
+
+async def _the_list_holds_only_the_apps_own(r: Row) -> None:
+    for query in ("", "?type=tool"):
+        for listed in _ok(await r.gw.both_ways(r.token, "GET", f"/api/providers{query}")):
+            assert [p["name"] for p in listed["providers"]] == [ALPHA], listed
+    yours = await r.gw.ok("GET", "/api/providers")
+    names = {p["name"] for p in yours["providers"]}
+    assert {ALPHA, BRAVO, "personalclaw-filesystem"} <= names, "you still list every one"
+
+
+async def _you_reconfigure_any_apps_provider(r: Row) -> None:
+    await r.gw.ok("PATCH", f"/api/providers/{BRAVO}/config", {"endpoint": "https://b2.example"})
+    await r.gw.ok("GET", f"/api/providers/{BRAVO}/config")
+    await r.gw.ok("POST", f"/api/providers/{BRAVO}/availability")
+    assert _stored(BRAVO)["endpoint"] == "https://b2.example"
+    assert _serving(BRAVO) == [{"endpoint": "https://b2.example", "api_key": BRAVO_KEY}]
+    assert r.gw.board.rechecked == [BRAVO]
+
+
+async def _an_app_reconfigures_its_own_provider(r: Row) -> None:
+    path = f"/api/providers/{ALPHA}"
+    for n, (way, alone) in enumerate(WAYS.items()):
+        at = f"https://a{n}.example"
+        sent = {"app_token": r.token, "as_backend": alone}
+        status, text = await r.gw.call("PATCH", f"{path}/config", {"endpoint": at}, **sent)
+        assert status == 200, f"{way}: {text}"
+        status, text = await r.gw.call("GET", f"{path}/config", **sent)
+        assert status == 200 and json.loads(text)["config"]["endpoint"] == at, f"{way}: {text}"
+        for method, sub in (("GET", ""), ("GET", "/schema"), ("POST", "/availability")):
+            status, text = await r.gw.call(method, f"{path}{sub}", **sent)
+            assert status < 300, f"{way} {method} {sub}: {text}"
+        assert _stored(ALPHA)["endpoint"] == at
+        assert _serving(ALPHA) == [{"endpoint": at}], "the save reached its provider"
+    assert r.gw.board.rechecked == [ALPHA] * len(WAYS)
+    assert not r.denials(f"{path}/config")
+
+
+async def _its_own_settings_are_its_own(r: Row) -> None:
+    path = f"/api/apps/{ALPHA}/config"
+    for n, (way, alone) in enumerate(WAYS.items()):
+        at = f"https://a{n}.example"
+        sent = {"app_token": r.token, "as_backend": alone}
+        status, text = await r.gw.call("PUT", path, {"endpoint": at}, **sent)
+        assert status == 200, f"{way}: {text}"
+        status, text = await r.gw.call("GET", path, **sent)
+        assert status == 200 and json.loads(text)["config"]["endpoint"] == at, f"{way}: {text}"
+    assert not r.denials(path)
+
+
+@pytest.mark.asyncio
+async def test_you_reach_every_apps_settings_and_an_app_its_own(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    rows = [
+        ("the list holds only the app's own", _the_list_holds_only_the_apps_own),
+        ("you reconfigure any app's provider", _you_reconfigure_any_apps_provider),
+        ("an app reconfigures its own provider", _an_app_reconfigures_its_own_provider),
+        ("an app's own settings route is its own", _its_own_settings_are_its_own),
+    ]
+    await SETTINGS.run(subtests, rows, [], label="case")
+
+
+async def _you_manage_any_apps_instances(r: Row) -> None:
+    (instance_id,) = _ids(BRAVO)
+    base = f"/api/providers/{BRAVO}/instances"
+    await r.gw.ok("PUT", f"{base}/{instance_id}", {"config": {"endpoint": "https://b2.example"}})
+    await r.gw.ok("POST", f"{base}/{instance_id}/test")
+    second = await r.gw.add_instance(BRAVO, "https://b3.example")
+    await r.gw.ok("DELETE", f"{base}/{second}")
+    assert _ids(BRAVO) == [instance_id]
+    assert [c["endpoint"] for c in _serving(BRAVO)] == ["https://b2.example"]
+
+
+async def _an_app_manages_its_own_instances(r: Row) -> None:
+    base = f"/api/providers/{ALPHA}/instances"
+    kept: list[str] = []
+    for n, (way, alone) in enumerate(WAYS.items()):
+        sent = {"app_token": r.token, "as_backend": alone}
+        first = await r.gw.add_instance(ALPHA, "https://a1.example", **sent)
+        second = await r.gw.add_instance(ALPHA, "https://a2.example", **sent)
+        at = f"https://a3-{n}.example"
+        _ok(
+            [
+                await r.gw.call("PUT", f"{base}/{first}", {"config": {"endpoint": at}}, **sent),
+                await r.gw.call("POST", f"{base}/{first}/test", **sent),
+                await r.gw.call("DELETE", f"{base}/{second}", **sent),
+            ]
+        )
+        listed, one = _ok(
+            [
+                await r.gw.call("GET", base, **sent),
+                await r.gw.call("GET", f"{base}/{first}", **sent),
+            ]
+        )
+        kept.append(first)
+        assert sorted(i["id"] for i in listed["instances"]) == sorted(kept), f"{way}: {listed}"
+        assert one["instance"]["config"]["endpoint"] == at, f"{way}: {one}"
+        assert INSTANCE_KEY not in json.dumps(listed), "its own key stays masked"
+    assert sorted(c["endpoint"] for c in _serving(ALPHA)) == [
+        f"https://a3-{n}.example" for n in range(len(WAYS))
+    ]
+    assert not r.denials(base)
+
+
+@pytest.mark.asyncio
+async def test_you_reach_every_apps_instances_and_an_app_its_own(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await INSTANCES.home(tmp_path_factory, monkeypatch)
+    rows = [
+        ("you manage any app's instances", _you_manage_any_apps_instances),
+        ("an app manages its own instances", _an_app_manages_its_own_instances),
+    ]
+    await INSTANCES.run(subtests, rows, [], label="case")
+
+
+# ── 3. An app that is off stays off when its settings or one of its instances change ───────────
+
+
+async def _switched_off(r: Row) -> str:
+    """Alpha running one instance of yours, then switched off from the Apps page."""
+    instance_id = await r.gw.add_instance(ALPHA, "https://a1.example")
     assert _live(ALPHA) and _tool_providers(ALPHA), "it ran while it was on"
-    await gw.ok("POST", f"/api/apps/{ALPHA}/disable")
+    await r.gw.ok("POST", f"/api/apps/{ALPHA}/disable")
     assert not _live(ALPHA) and not _tool_providers(ALPHA)
     return instance_id
 
 
-def _off(built_before: list, wire: types.ModuleType) -> None:
+def _off(r: Row, built_before: list) -> None:
     assert not _live(ALPHA), "its provider stays off"
     assert not _tool_providers(ALPHA), "none of its tools is offered"
-    assert wire.built == built_before, "none of its code ran"
+    assert r.gw.wire.built == built_before, "none of its code ran"
     assert manager._read_installed(ALPHA).enabled is False, "the app is still disabled"
 
 
-class TestADisabledAppStaysOff:
-    @pytest.mark.asyncio
-    async def test_editing_its_instance_saves_and_loads_nothing(self, home, wire) -> None:
-        async with _gateway() as gw:
-            instance_id = await _switched_off(gw, home)
-            built = list(wire.built)
-            await gw.ok(
-                "PUT",
-                f"/api/providers/{ALPHA}/instances/{instance_id}",
-                {"config": {"endpoint": "https://a2.example"}},
-            )
-        assert _instance(ALPHA, instance_id).config["endpoint"] == "https://a2.example", "saved"
-        _off(built, wire)
-
-    @pytest.mark.asyncio
-    async def test_adding_or_removing_an_instance_loads_nothing(self, home, wire) -> None:
-        async with _gateway() as gw:
-            instance_id = await _switched_off(gw, home)
-            built = list(wire.built)
-            added = await gw.add_instance(ALPHA, "https://a2.example")
-            _off(built, wire)
-            await gw.ok("DELETE", f"/api/providers/{ALPHA}/instances/{instance_id}")
-        assert _ids(ALPHA) == [added]
-        _off(built, wire)
-
-    @pytest.mark.asyncio
-    async def test_switching_it_on_runs_the_instance_it_saved(self, home, wire) -> None:
-        async with _gateway() as gw:
-            instance_id = await _switched_off(gw, home)
-            await gw.ok(
-                "PUT",
-                f"/api/providers/{ALPHA}/instances/{instance_id}",
-                {"config": {"endpoint": "https://a2.example"}},
-            )
-            await gw.ok("POST", f"/api/apps/{ALPHA}/enable")
-        (served,) = _tool_providers(ALPHA)
-        assert served.config["endpoint"] == "https://a2.example"
-
-    @pytest.mark.asyncio
-    async def test_a_running_apps_instance_change_still_takes_effect(self, home) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "instances", ALPHA)
-            instance_id = await gw.add_instance(ALPHA, "https://a1.example")
-            await gw.ok(
-                "PUT",
-                f"/api/providers/{ALPHA}/instances/{instance_id}",
-                {"config": {"endpoint": "https://a2.example"}},
-            )
-        (served,) = _tool_providers(ALPHA)
-        assert served.config["endpoint"] == "https://a2.example"
+async def _editing_its_instance_saves_and_loads_nothing(r: Row) -> None:
+    instance_id = await _switched_off(r)
+    built = list(r.gw.wire.built)
+    await r.gw.ok(
+        "PUT",
+        f"/api/providers/{ALPHA}/instances/{instance_id}",
+        {"config": {"endpoint": "https://a2.example"}},
+    )
+    assert _instance(ALPHA, instance_id).config["endpoint"] == "https://a2.example", "saved"
+    _off(r, built)
 
 
-# ── 6. An app this core cannot host stays refused when its settings change ─────────────────────
+async def _adding_or_removing_an_instance_loads_nothing(r: Row) -> None:
+    instance_id = await _switched_off(r)
+    built = list(r.gw.wire.built)
+    added = await r.gw.add_instance(ALPHA, "https://a2.example")
+    _off(r, built)
+    await r.gw.ok("DELETE", f"/api/providers/{ALPHA}/instances/{instance_id}")
+    assert _ids(ALPHA) == [added]
+    _off(r, built)
 
 
-async def _refused_at_startup(gw: _Gateway, home: Path, shape: str) -> str:
-    """Alpha installed and running, then the gateway restarted on a core older than Alpha's floor:
-    startup lists it off with the reason, its app still enabled (``app_runtime._refuse``)."""
-    from personalclaw.apps import app_runtime
+async def _switching_it_on_runs_the_instance_it_saved(r: Row) -> None:
+    instance_id = await _switched_off(r)
+    await r.gw.ok(
+        "PUT",
+        f"/api/providers/{ALPHA}/instances/{instance_id}",
+        {"config": {"endpoint": "https://a2.example"}},
+    )
+    await r.gw.ok("POST", f"/api/apps/{ALPHA}/enable")
+    assert [c["endpoint"] for c in _serving(ALPHA)] == ["https://a2.example"]
 
-    await _installed(gw, home, shape, ALPHA)
-    instance_id = await gw.add_instance(ALPHA, "https://a1.example") if shape == "instances" else ""
+
+async def _a_running_apps_instance_change_still_takes_effect(r: Row) -> None:
+    instance_id = await r.gw.add_instance(ALPHA, "https://a1.example")
+    await r.gw.ok(
+        "PUT",
+        f"/api/providers/{ALPHA}/instances/{instance_id}",
+        {"config": {"endpoint": "https://a2.example"}},
+    )
+    assert [c["endpoint"] for c in _serving(ALPHA)] == ["https://a2.example"]
+
+
+def _refused_at_startup(r: Row) -> None:
+    """The gateway restarted on a core older than Alpha's floor: startup lists it off with the
+    reason, its app still enabled (``app_runtime._refuse``)."""
     manifest_path = manager.app_dir(ALPHA) / "app.json"
-    registry_module.get_provider_registry().disable(ALPHA)
-    registry_module.reset_provider_registry()
     manifest = json.loads(manifest_path.read_text())
     manifest["minPersonalClawVersion"] = "99.0.0"
     manifest_path.write_text(json.dumps(manifest))
-    app_runtime.start_installed(gateway=False)
+    _restart()
     ext = registry_module.get_provider_registry().get(ALPHA)
     assert ext is not None and not ext.enabled and ext.error, "startup refused it"
     assert manager._read_installed(ALPHA).enabled is True
-    return instance_id
 
 
-class TestAnAppThisCoreCannotHostStaysOff:
-    @pytest.mark.asyncio
-    async def test_a_settings_save_does_not_start_it(self, home, wire) -> None:
-        async with _gateway() as gw:
-            await _refused_at_startup(gw, home, "settings")
-            built = list(wire.built)
-            await gw.ok(
-                "PATCH", f"/api/providers/{ALPHA}/config", {"endpoint": "https://a2.example"}
-            )
-        assert _stored(ALPHA)["endpoint"] == "https://a2.example", "saved"
-        assert not _live(ALPHA)
-        assert "99.0.0" in registry_module.get_provider_registry().get(ALPHA).error
-        assert wire.built == built, "none of its code ran"
-
-    @pytest.mark.asyncio
-    async def test_an_instance_change_does_not_start_it(self, home, wire) -> None:
-        async with _gateway() as gw:
-            instance_id = await _refused_at_startup(gw, home, "instances")
-            built = list(wire.built)
-            await gw.ok(
-                "PUT",
-                f"/api/providers/{ALPHA}/instances/{instance_id}",
-                {"config": {"endpoint": "https://a2.example"}},
-            )
-        assert not _live(ALPHA) and not _tool_providers(ALPHA)
-        assert wire.built == built, "none of its code ran"
+async def _an_instance_change_does_not_start_an_app_this_core_cannot_host(r: Row) -> None:
+    instance_id = await r.gw.add_instance(ALPHA, "https://a1.example")
+    _refused_at_startup(r)
+    built = list(r.gw.wire.built)
+    await r.gw.ok(
+        "PUT",
+        f"/api/providers/{ALPHA}/instances/{instance_id}",
+        {"config": {"endpoint": "https://a2.example"}},
+    )
+    assert not _live(ALPHA) and not _tool_providers(ALPHA)
+    assert r.gw.wire.built == built, "none of its code ran"
 
 
-# ── 7. An app's own settings route holds it to its own, the same way ───────────────────────────
+async def _a_settings_save_does_not_start_an_app_this_core_cannot_host(r: Row) -> None:
+    _refused_at_startup(r)
+    built = list(r.gw.wire.built)
+    await r.gw.ok("PATCH", f"/api/providers/{ALPHA}/config", {"endpoint": "https://a2.example"})
+    assert _stored(ALPHA)["endpoint"] == "https://a2.example", "saved"
+    assert not _live(ALPHA)
+    assert "99.0.0" in registry_module.get_provider_registry().get(ALPHA).error
+    assert r.gw.wire.built == built, "none of its code ran"
 
 
-class TestAnAppWritesOnlyItsOwnSettings:
-    """``/api/apps/{name}/config`` writes the file ``PATCH /api/providers/{name}/config`` does, and
-    is held to the calling app by the same row, before its handler runs (#3614 checked it inside
-    the handler)."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("method", ["GET", "PUT"])
-    async def test_another_apps_settings_are_refused(self, home, sel_rows, method) -> None:
-        async with _gateway() as gw:
-            await _victim(gw, home, "settings")
-            body = {"endpoint": ATTACKER} if method == "PUT" else None
-            path = f"/api/apps/{BRAVO}/config"
-            status, text = await gw.call(method, path, body, as_app=ALPHA)
-        assert status == 403, text
-        assert "is not this app" in str(text), text
-        assert "bravo.example" not in str(text)
-        assert _stored(BRAVO)["endpoint"] == "https://bravo.example"
-        assert _denials(sel_rows, ALPHA, path)
-
-    @pytest.mark.asyncio
-    async def test_its_own_settings_are_its_own(self, home) -> None:
-        async with _gateway() as gw:
-            await _installed(gw, home, "settings", ALPHA)
-            await gw.ok(
-                "PUT", f"/api/apps/{ALPHA}/config", {"endpoint": "https://a.example"}, as_app=ALPHA
-            )
-            read = await gw.ok("GET", f"/api/apps/{ALPHA}/config", as_app=ALPHA)
-        assert read["config"]["endpoint"] == "https://a.example"
+@pytest.mark.asyncio
+async def test_an_app_that_is_off_stays_off_when_its_instances_change(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await INSTANCES.home(tmp_path_factory, monkeypatch)
+    rows = [
+        (
+            "editing its instance saves and loads nothing",
+            _editing_its_instance_saves_and_loads_nothing,
+        ),
+        (
+            "adding or removing an instance loads nothing",
+            _adding_or_removing_an_instance_loads_nothing,
+        ),
+        ("switching it on runs the instance it saved", _switching_it_on_runs_the_instance_it_saved),
+        (
+            "a running app's instance change still takes effect",
+            _a_running_apps_instance_change_still_takes_effect,
+        ),
+        (
+            "an instance change does not start an app this core cannot host",
+            _an_instance_change_does_not_start_an_app_this_core_cannot_host,
+        ),
+    ]
+    await INSTANCES.run(subtests, rows, [], label="case")
 
 
-# ── 8. The route table declares every provider route ───────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_a_settings_save_does_not_start_an_app_this_core_cannot_host(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    rows = [
+        (
+            "a settings save does not start an app this core cannot host",
+            _a_settings_save_does_not_start_an_app_this_core_cannot_host,
+        )
+    ]
+    await SETTINGS.run(subtests, rows, [], label="case")
+
+
+# ── 4. The route table declares every provider route ───────────────────────────────────────────
 
 
 def _provider_census() -> set[str]:
@@ -768,3 +950,136 @@ class TestTheRouteTableDeclaresYourProviders:
             assert OwnedTarget("name", app=True) in authz.owns, key
         listing = ROUTE_AUTHZ["GET /api/providers"]
         assert isinstance(listing, AppMay) and "only the app's own" in listing.reason
+
+
+# ── the table's isolation, and a refusal that writes ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    probe = _settings_table(reached)[0]
+    failed = await planted_rows(SETTINGS, _brand_new_routes(reached), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
+
+
+#: The row the planted refusal below answers: pointing Bravo's provider somewhere else.
+PLANTED = "PATCH /api/providers/{name}/config"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """An ownership check that lets Alpha's write of Bravo's settings through, to a handler that
+    saves them and then answers as the refusal does: a 403 saying Bravo is not this app, and an
+    SEL row naming the app and the path. Every other request is decided as before, and Bravo's
+    running provider is left as it was. Only your home tells it from a refusal, so its row fails
+    on that, and the rows either side of it, the home put back before each, pass."""
+    from personalclaw import sel
+    from personalclaw.dashboard import server
+    from personalclaw.providers.settings import ProviderSettings
+
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _settings_table(reached)
+    at = [name for name, _ in rows].index(PLANTED)
+    method, template = PLANTED.split(" ", 1)
+    decide = server._ownership_denial
+    handle = provider_routes.handle_patch_config
+
+    async def lets_the_planted_write_through(
+        request: web.Request, app_name: str, route: str
+    ) -> str:
+        if (request.method, route) == (method, template):
+            return ""
+        return await decide(request, app_name, route)
+
+    async def writes_then_refuses(request: web.Request) -> web.StreamResponse:
+        app = request.get("app", "")
+        if not app:
+            return await handle(request)
+        name = request.match_info["name"]
+        ProviderSettings.update(name, await request.json())
+        reason = f"{name!r} is not this app — an app reaches only its own, never another's"
+        sel.sel().log_api_access(
+            caller=f"app:{app}",
+            operation=f"{request.method} {request.path}",
+            outcome="denied",
+            source="app_permissions",
+            resources=request.path,
+            error=reason,
+        )
+        raise web.HTTPForbidden(
+            text=f"app {app!r} not permitted to access {request.path}: {reason}"
+        )
+
+    monkeypatch.setattr(server, "_ownership_denial", lets_the_planted_write_through)
+    monkeypatch.setattr(provider_routes, "handle_patch_config", writes_then_refuses)
+    recorded = RecordedRows()
+    await SETTINGS.run(recorded, rows[at - 1 : at + 2], _brand_new_routes(reached), label="route")
+    assert list(recorded.failed) == [PLANTED], recorded.failed
+    written = f"a refusal changed your home: ['apps/{BRAVO}/data/config.json']"
+    assert written in recorded.failed[PLANTED], recorded.failed
+
+
+# ── 5. Each family, end to end, on apps installed for this test alone ──────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+async def test_each_family_refuses_an_app_installed_for_this_test_alone(
+    home, sel_rows, shape
+) -> None:
+    """Another app's settings (through either route that writes them), another app's instance and
+    the MCP Tool Servers card, each asked for both ways by Alpha, installed with Bravo for this test
+    alone; and its own list, which holds only itself."""
+    shared = SHAPES[shape]
+    if shape == "settings":
+        asked = [
+            ("PATCH", f"/api/providers/{BRAVO}/config", {"endpoint": ATTACKER}, "is not this app"),
+            ("PUT", f"/api/apps/{BRAVO}/config", {"endpoint": ATTACKER}, "is not this app"),
+        ]
+    else:
+        asked = [("POST", MCP_CARD, EVIL, "MCP servers")]
+    async with _gateway([]) as gw:
+        await gw.install(shared.bundle(home))
+        assert shared.prepare is not None
+        await shared.prepare(gw, home)
+        if shape == "instances":
+            (instance_id,) = _ids(BRAVO)
+            path = f"/api/providers/{BRAVO}/instances/{instance_id}"
+            asked.insert(0, ("PUT", path, {"config": {"endpoint": ATTACKER}}, "is not this app"))
+        token = await _token(gw, ALPHA)
+        serving, built = _serving(BRAVO), list(gw.wire.built)
+        before = home_files(home)
+        answers = [await gw.both_ways(token, m, p, b) for m, p, b, _says in asked]
+        written = written_since(home, before)
+        serving_after, built_after = _serving(BRAVO), list(gw.wire.built)
+        listed = await gw.both_ways(token, "GET", "/api/providers")
+    seen = Row(gw, token, home, sel_rows, ALPHA)
+    for (method, path, _body, says), sent in zip(asked, answers, strict=True):
+        for status, text in sent:
+            assert status == 403 and says in text, f"{method} {path}: {text}"
+            assert "bravo.example" not in text
+        assert len(_refusals(seen, method, path)) == 2, f"{method} {path}"
+    assert not written, f"a refusal changed your home: {written}"
+    assert serving == BRAVO_SERVES[shape], "Bravo runs as you configured it"
+    assert serving_after == serving, "and connects where you pointed it"
+    assert built_after == built, "no code of Bravo's ran for Alpha's requests"
+    for status, text in listed:
+        assert status == 200 and [p["name"] for p in json.loads(text)["providers"]] == [ALPHA]
