@@ -731,6 +731,7 @@ EVERY_FRAME = CHAT_FRAMES + [
     "refresh",
     "inbox_new_item",
     "inbox_item_updated",
+    "running_changed",
 ]
 
 #: The menu-bar companion's declaration, verbatim from its manifest (PersonalClawApps): it relays
@@ -860,8 +861,8 @@ LOOP_READER = "probe-loop-reader"
 async def _an_app_that_may_read_the_loops_hears_none_of_their_phases(state, socks) -> None:
     """No app hears the phase of work no chat started, the stricter of the two reaches the
     contract left open: an app the permission middleware lets read every loop still hears none of
-    their phases, nor a run's, nor a helper's that no chat started, until the list of what runs
-    says which apps may hear of it."""
+    their phases, nor a run's, nor a helper's that no chat started. The running list reads an app
+    the same rows (``running_now.Reach``)."""
     from personalclaw.apps.permissions import app_request_denial, checker_for
 
     assert not app_request_denial(LOOP_READER, "/api/loops", method="GET", route="/api/loops")
@@ -875,6 +876,27 @@ async def _an_app_that_may_read_the_loops_hears_none_of_their_phases(state, sock
         )
     assert _frames(reader) == []
     assert len(_frames(socks["yours"])) == 3, "your socket still hears every piece of work"
+
+
+async def _the_running_list_rings_an_app_only_for_its_own_work(state, socks) -> None:
+    """The list's doorbell (``running_now.changed``) names the work that moved. An app hears it
+    only when work it may hear the phase of moved, cut to that work: its own chat and the helper
+    working for it, and none of yours, of another app's or of work no chat started. Your socket
+    hears every ring, whole."""
+    changed = [
+        {"work": "chat:mine", "session": "mine"},
+        {"work": "chat:ours", "session": "ours"},
+        {"work": "subagent:h1", "session": "ours"},
+        {"work": "chat:theirs", "session": "theirs"},
+        {"work": "loop:l1", "session": ""},
+        {"work": "webhook:deploy", "session": ""},
+    ]
+    state.broadcast_ws("running_changed", {"changed": changed})
+    state.broadcast_ws("running_changed", {"changed": changed[-2:]})
+    assert [f["data"] for f in _frames(socks[APP])] == [{"changed": changed[1:3]}]
+    assert [f["data"] for f in _frames(socks[OTHER])] == [{"changed": [changed[3]]}]
+    assert _frames(socks[RELAY]) == [], "the approval relay hears no ring: a ring is no approval"
+    assert [f["data"]["changed"] for f in _frames(socks["yours"])] == [changed, changed[-2:]]
 
 
 async def _a_helper_no_chat_started_reaches_no_app(state, socks) -> None:
@@ -1052,6 +1074,9 @@ SOCKET_ROWS: dict[str, Any] = {
         _an_app_that_may_read_the_loops_hears_none_of_their_phases
     ),
     "a helper no chat started reaches no app": _a_helper_no_chat_started_reaches_no_app,
+    "the running list rings an app only for its own work": (
+        _the_running_list_rings_an_app_only_for_its_own_work
+    ),
     "each frame reaches the apps it reached before but work no chat started": (
         _each_frame_reaches_the_apps_it_reached_before_but_work_no_chat_started
     ),
@@ -1068,14 +1093,17 @@ SOCKET_ROWS: dict[str, Any] = {
 async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
     """The three apps installed once, in this test's home; every row on sockets and a state of its
     own, the home as the install left it after every row."""
-    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 12, "a frame or a case was left out"
+    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 13, "a frame or a case was left out"
     with _home(tmp_path):
         _install(tmp_path, APP, {"api": ["/api/ws"], "events": EVERY_FRAME})
         _install(tmp_path, OTHER, {"api": ["/api/ws"], "events": EVERY_FRAME})
         _install(
             tmp_path,
             RELAY,
-            {"api": ["/api/loops", "/api/approvals", "/api/ws"], "events": ["approval"]},
+            {
+                "api": ["/api/loops", "/api/approvals", "/api/ws"],
+                "events": ["approval", "running_changed"],
+            },
         )
         _install(
             tmp_path, LOOP_READER, {"api": ["/api/loops", "/api/ws"], "events": ["work_phase"]}

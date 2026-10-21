@@ -129,6 +129,19 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
         "owner_image": str(getattr(claim, "owner_image", "") or ""),
     }
     atomic_json_write(path, payload)
+    _moved(claim.trigger_id)
+
+
+def _moved(trigger_id: str) -> None:
+    """A fire started or ended: the running list may hold a row for it (``running_now``), which
+    moved. Best-effort: the claim is written whether or not anything hears of it."""
+    try:
+        from personalclaw import running_now
+        from personalclaw.workref import work_ref
+
+        running_now.changed_elsewhere(work_ref("trigger", trigger_id))
+    except Exception:
+        logger.debug("could not ring the running list for %s", trigger_id, exc_info=True)
 
 
 #: What the claim of a run of yours is held as (:func:`hand_run_holder`): Run now, the review's Run
@@ -179,12 +192,13 @@ def release_claim(trigger_id: str, *, base_dir: Path | str | None = None) -> boo
     path = _claim_path(trigger_id, base_dir)
     try:
         os.unlink(path)
-        return True
     except FileNotFoundError:
         return False
     except OSError:
         logger.debug("could not release claim for %s", trigger_id, exc_info=True)
         return False
+    _moved(trigger_id)
+    return True
 
 
 def is_running(trigger_id: str, *, now: float = 0.0, base_dir: Path | str | None = None) -> bool:

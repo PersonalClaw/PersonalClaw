@@ -40,15 +40,23 @@ own chat's work; you read everything. The count and the tail are cut the same wa
 
 The gateway's memory is read on its event loop (:func:`taken`), and the stores, the rows and who
 reads them off it (:func:`read`), so nothing the loop changes is read from another thread.
+
+**The list says it moved** in one ``running_changed`` frame per window (:data:`WINDOW_SECS`), a
+doorbell naming the work that moved, ``{"changed": [{"work", "session"}, ...]}``, never a payload
+to render: a reader reads the list again (:func:`changed`). It rings when a row is added or removed
+or its phase or line changes, and when what waits on the owner for a row does; a streamed chunk
+and a turn's liveness re-send of an unchanged phase ring nothing. An app's socket hears a ring cut
+to the work it may hear the phase of, and none when that is nothing (``ws_state``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from urllib.parse import quote
 
@@ -86,6 +94,11 @@ LIVE_LOOP_STATUSES = frozenset(
 
 #: The run statuses a workflow run is live in. A draft has not started; a paused run is hers.
 LIVE_RUN_STATUSES = ("running", "needs_input")
+
+#: The frame that says the list moved, and how long the changes it names are gathered for: short
+#: enough that a phase change reads at once, long enough that a burst is one read of the list.
+CHANGED = "running_changed"
+WINDOW_SECS = 0.15
 
 #: The fields every row carries, whatever its kind.
 ROW_FIELDS = (
@@ -477,6 +490,7 @@ def webhook_started(state: Any, session_key: str, *, name: str, agent: str) -> N
         held.turns += 1
         return
     _hooks(state)[work] = _Hook(name=str(name or ""), agent=str(agent or ""), started=_now())
+    changed(state, work)
 
 
 def webhook_ended(state: Any, session_key: str, *, outcome: str, said: str) -> None:
@@ -491,6 +505,7 @@ def webhook_ended(state: Any, session_key: str, *, outcome: str, said: str) -> N
     if held.turns > 0:
         return
     book.pop(work, None)
+    changed(state, work)
     if outcome == "completed":
         phase, line = WorkPhase.DONE, done_in(max(0.0, _now() - held.started))
     elif outcome == "cancelled":
@@ -759,3 +774,101 @@ def reach_of(request: Any, state: Any) -> Reach:
     if reader.everyone:
         return Reach(state, everyone=True)
     return Reach(state, chat=reader.chat)
+
+
+# ── The list moved ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _Bell:
+    """The changes gathered for the next ring, by work, each with the chat it is in, and the
+    event loop the ring is due on."""
+
+    pending: dict[str, str] = field(default_factory=dict)
+    handle: asyncio.TimerHandle | None = None
+    loop: asyncio.AbstractEventLoop | None = None
+
+
+def _bell(state: Any) -> _Bell:
+    bell = getattr(state, "_running_bell", None)
+    if not isinstance(bell, _Bell):
+        bell = _Bell()
+        state._running_bell = bell
+    return bell
+
+
+def changed(state: Any, work: str, session: str = "") -> None:
+    """The row of *work*, in the chat *session* (``""`` for none), was added or removed, or what
+    it says changed: the list rings once its window closes, naming every piece of work that moved
+    in it. Called from any thread: off the event loop, the change is handed to it."""
+    home = getattr(state, "_ws_loop", None)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if home is not None and loop is not home:
+        # Off the gateway's loop (a thread, or a loop of its own): the change is handed to it.
+        if not home.is_closed():
+            home.call_soon_threadsafe(changed, state, work, session)
+        return
+    if loop is None:
+        return
+    bell = _bell(state)
+    bell.pending[str(work)] = str(session or "")
+    if bell.handle is not None and (bell.loop is None or bell.loop.is_closed()):
+        bell.handle = None  # due on a loop that is gone: it will never ring
+    if bell.handle is None:
+        bell.loop = loop
+        bell.handle = loop.call_later(WINDOW_SECS, _ring, state)
+
+
+def _ring(state: Any) -> None:
+    bell = _bell(state)
+    bell.handle = None
+    pending, bell.pending = bell.pending, {}
+    if pending:
+        moved = [{"work": work, "session": session} for work, session in pending.items()]
+        state.broadcast_ws(CHANGED, {"changed": moved})
+
+
+def changed_elsewhere(work: str) -> None:
+    """*work* moved somewhere that holds no dashboard state (the trigger claim store): the
+    gateway's list rings for it, when this process is the gateway's."""
+    from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+    state = get_dashboard_state()
+    if state is not None:
+        changed(state, work)
+
+
+def chat_said(state: Any, session: Any, *, again: bool) -> None:
+    """The chat *session* said its phase (``chat_phase``): its row moved, unless the frame is a
+    liveness re-send (*again*), or the chat is a loop's worker, which its loop speaks for."""
+    if not again and _is_a_chat(session):
+        changed(state, work_ref("chat", str(session.key)), str(session.key))
+
+
+def asked(state: Any, entry: Mapping[str, Any]) -> None:
+    """The approval *entry* was asked or answered: each row it waits on the owner for moved, the
+    chat's in its chat, a helper's in the chat its own frames name (the chat it works for)."""
+    from personalclaw.dashboard import work_phases
+
+    raw = str(entry.get("session") or "")
+    for work in approval_work(entry):
+        kind, _, ident = work.partition(":")
+        if kind == "chat":
+            changed(state, work, ident)
+        elif kind == "subagent":
+            said = work_phases.current(state, work)
+            changed(state, work, said["session"] if said is not None else work_phases.chat_of(raw))
+        else:
+            changed(state, work)
+
+
+def question_changed(state: Any, session_key: str) -> None:
+    """A question an agent asks the owner in *session_key* was asked or ended: the row of the work
+    that session runs (a chat's, its loop's, its run's) moved, whether or not its phase did."""
+    work = work_of_session(session_key)
+    if work:
+        kind, _, ident = work.partition(":")
+        changed(state, work, ident if kind == "chat" else "")

@@ -579,6 +579,14 @@ class OwnerQuestions:
                 say(chat)
             except Exception:
                 logger.debug("could not say what chat %s waits on", chat, exc_info=True)
+        # What waits on her for the work the chat runs (its own, its loop's, its run's) changed,
+        # whether or not its phase did: the running list moved (`running_now`).
+        try:
+            from personalclaw import running_now
+
+            running_now.question_changed(self._state, chat)
+        except Exception:
+            logger.debug("could not ring the running list for %s", chat, exc_info=True)
 
     def _push_sessions(self) -> None:
         push = getattr(self._state, "push_sessions_update", None)

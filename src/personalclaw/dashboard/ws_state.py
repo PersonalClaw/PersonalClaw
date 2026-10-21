@@ -77,7 +77,11 @@ _UNHEARD = object()
 
 def _has_app_view(event_type: str) -> bool:
     """Whether an app's socket gets *event_type* in a view of its own rather than as sent."""
-    return event_type in CONVERSATION_LIST_FRAMES or event_type in NOTIFICATION_FRAMES
+    return (
+        event_type in CONVERSATION_LIST_FRAMES
+        or event_type in NOTIFICATION_FRAMES
+        or event_type in RUNNING_LIST_FRAMES
+    )
 
 
 #: The approval registry's frames. They say no more than ``GET /api/approvals`` answers, and the
@@ -97,6 +101,12 @@ APPROVAL_REGISTRY_ROUTE = "/api/approvals"
 #: hears none of their phases. The running list (``running_now``, ``GET /api/running``) reads an
 #: app the rows of exactly the work this rule lets its socket hear of, by this same rule.
 WORK_FRAMES: frozenset[str] = frozenset({"work_phase"})
+
+#: The running list's doorbell (``running_now.changed``): ``{"changed": [{"work", "session"}]}``,
+#: the work that moved in one window. An app's socket hears it cut to the work whose phase frame it
+#: may hear (the rule above), and none when that is nothing, so a ring never says that your work,
+#: another app's or work no chat started moved.
+RUNNING_LIST_FRAMES: frozenset[str] = frozenset({"running_changed"})
 
 #: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,
 #: ``("inbox_item", source)`` or ``("work", name)``.
@@ -368,7 +378,22 @@ class DashboardWebSocketState:
         a conversation list with the app's own rows, a notification frame cut to its own notes."""
         if event_type in CONVERSATION_LIST_FRAMES:
             return self._own_rows(app, event_type, data)
+        if event_type in RUNNING_LIST_FRAMES:
+            return self._own_changes(app, data)
         return self._own_notifications(app, event_type, data)
+
+    def _own_changes(self, app: str, data: object) -> object:
+        """A running list ring's *data* cut to the work *app* may hear the phase of, or
+        :data:`_UNHEARD` when that is none."""
+        moved = data.get("changed") if isinstance(data, dict) else None
+        if not isinstance(moved, list):
+            return _UNHEARD
+        kept = []
+        for one in moved:
+            subject = frame_subject("work_phase", one) if isinstance(one, dict) else None
+            if subject is not None and self._app_may_hear_about(app, "work_phase", subject):
+                kept.append(one)
+        return {"changed": kept} if kept else _UNHEARD
 
     def _own_rows(self, app: str, event_type: str, data: object) -> object:
         """A conversation list frame's *data* with only *app*'s own conversations in it."""

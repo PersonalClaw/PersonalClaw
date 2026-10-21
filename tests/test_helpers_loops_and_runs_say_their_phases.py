@@ -394,7 +394,8 @@ def _hook_absent(state: Any, entry: Any, *, waiting: bool) -> None:
 async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) -> list:
     """Ask *approval_id* through the real registry, in a home of its own (*tmp_path*), and end it
     as *ending*, with the helper's phase hook replaced by *hook*: every effect the registry has, in
-    order, and what each party was answered, with the helper's own frames left out."""
+    order, and what each party was answered, with the helper's own frames left out, and the
+    running list's ring, which goes out on its own clock once its window closes."""
     from personalclaw import auto_denials, inbox
     from personalclaw.dashboard import work_phases
     from personalclaw.triggers import lifecycle_fire
@@ -403,7 +404,9 @@ async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) 
     w = _World(tmp_path, _scripted())
     effects: list[Any] = []
     w.state.broadcast_ws = lambda kind, data=None: (
-        effects.append(("frame", kind, _plain(data))) if kind != "work_phase" else None
+        effects.append(("frame", kind, _plain(data)))
+        if kind not in ("work_phase", "running_changed")
+        else None
     )
     audit = MagicMock()
 
