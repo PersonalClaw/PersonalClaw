@@ -118,7 +118,10 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   // OWN leading icon + status glyph, so there is no separate timeline dot+rail (the
   // old dot duplicated each card's ✓ and never centered on the connector). An SDLC
   // tool result becomes a live progress widget; text renders as prose.
-  const renderItem = (seg: Segment, i: number): React.ReactNode => {
+  // `answer`: the segment is part of the final answer. Only the answer's blocks open beside the
+  // reading: the work folds away once the turn is done, which unmounts its blocks, so a block opened
+  // from there would be gone from its pane on a fold and missing from a reload.
+  const renderItem = (seg: Segment, i: number, answer = false): React.ReactNode => {
     if (seg.kind === 'tool') {
       const t = seg as ToolSegment
       // A Code project / Goal Loop created or started from chat renders as a live
@@ -171,7 +174,9 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
       const body = parseSwitchToAgent(parseOptions(seg.text).body).body
       if (!body) return null
-      const prose = <Markdown key={i} widgets onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown>
+      // `beside`: the answer's code, diffs and tables open beside the reading, where the chat gives
+      // them a place.
+      const prose = <Markdown key={i} widgets beside={answer} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown>
       return seg === cutHere ? <Fragment key={i}>{prose}<ReplyCutNote cut="incomplete" /></Fragment> : prose
     }
     return null
@@ -206,11 +211,11 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   // A question still waiting on her is never folded away either: the agent is halted on it.
   const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
   const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s) || waitsForHer(s)
-  const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
+  const sdlcNodes = segments.filter(isLiveCard).map((s, i) => renderItem(s, i)).filter(Boolean)
   // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
   // inside the work's span, and was drawn there too, live: a line a reload never showed.
-  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s)).map(renderItem).filter(Boolean)
-  const finalNodes = finalSegs.map(renderItem).filter(Boolean)
+  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s)).map((s, i) => renderItem(s, i)).filter(Boolean)
+  const finalNodes = finalSegs.map((s, i) => renderItem(s, i, true)).filter(Boolean)
   const hasFinal = finalNodes.length > 0
   // Collapse the work only when the turn is done AND produced a final answer to
   // focus on; otherwise show it inline (still streaming, or it ended on a step).

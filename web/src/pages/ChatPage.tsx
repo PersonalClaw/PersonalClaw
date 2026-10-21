@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { type RoutingSuggestion } from './chat/RoutingChip'
 import { DotGlow } from '../ui/DotGlow'
+import { PaneHost } from '../ui/PaneHost'
+import { BesideRegistry, OpenBesideProvider, useBesideBlock } from '../ui/OpenBeside'
 import { LoadError } from '../ui/ListScaffold'
 import { RoomView } from './chat/RoomView'
 import { useIdentity } from '../app/identity'
@@ -21,6 +23,7 @@ import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnL
 import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
 import { useChatPanes } from './chat/panes/useChatPanes'
 import { ChatPanes, ToolResultModal } from './chat/panes/ChatPanes'
+import { besidePane } from './chat/beside/blockBeside'
 import { useChatHeader } from './chat/header/useChatHeader'
 import { ChatHeader } from './chat/header/ChatHeader'
 import { ChatHero } from './chat/hero/ChatHero'
@@ -145,7 +148,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const { focus, reading, setReading } = useViewModes()
   // The panels docked beside the chat and a tool's full result (`chat/panes/useChatPanes`).
   const panes = useChatPanes({ query, setQuery, stream, focus })
-  const { setOpenFile } = panes
+  // The transcript's two callbacks into the panes, each one stable for the chat's life: a reply's
+  // text is memoized, and a new callback would draw every block in it again, which drops the focus
+  // on a block's controls and highlights its code once more.
+  const panesRef = useRef(panes)
+  panesRef.current = panes
+  const setOpenFile = useCallback((path: string | null) => panesRef.current.setOpenFile(path), [])
+  // A reply's block opened beside the reading (`chat/beside/blockBeside`): the blocks on screen
+  // register under their addresses here, and Open beside puts one in the address.
+  const openBeside = useCallback((address: string) => panesRef.current.setBeside(address), [])
+  const [besideRegistry] = useState(() => new BesideRegistry())
+  const besideBlock = useBesideBlock(besideRegistry, panes.beside)
+  // Where a stacked block goes on a compact window: between the thread and the composer, so the
+  // composer stays last and the thread and the block share the room above it.
+  const [stackSlot, setStackSlot] = useState<HTMLDivElement | null>(null)
   // The transcript's view and its turns' actions (`chat/transcript/useTranscript`).
   const transcript = useTranscript({
     sessionId, query, setQuery, navigate, stream, started, notice, memoryMode, setSelection,
@@ -171,7 +187,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     </div>
   )
 
+  // The block the address opens beside the reading, once the chat's turns have loaded: the split,
+  // in the chat's pane host, which remembers its width and stacks the block under the thread where
+  // the two do not fit side by side.
+  const beside = besidePane({
+    address: panes.beside, block: besideBlock, ready: started && !loadingHistory, onClose: () => panes.setBeside(null),
+  })
+
   return (
+    <OpenBesideProvider open={openBeside} registry={besideRegistry}>
     <div className="relative flex h-full flex-col overflow-hidden">
       <ChatHeader header={header} stream={stream} composer={composer} panes={panes} transcript={transcript}
         started={started} navigate={navigate} />
@@ -181,7 +205,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           the shared SidePanel primitive so they match every other page. */}
       <div className="relative flex min-h-0 flex-1">
         {/* 🪤 INERT WHILE THE MOBILE SESSION MAP COVERS IT. The drawer below is a flex SIBLING
-            whose fit-width exceeds a phone viewport, so when it opens this column is squeezed to
+            whose fit-width exceeds a phone viewport, so when it opens this column, and a block open
+            beside it in the pane host, is squeezed to
             ZERO width — measured at 390px: the composer's `.cm-scroller` ends up `clientWidth: 0`
             with `scrollWidth: 19`. That is not merely invisible, it is a keyboard trap in waiting:
             a tab-order stop and (per axe's `getScroll`, buffer 13) a `scrollable-region-focusable`
@@ -191,7 +216,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             leave the composer focusable and trade one serious violation for `aria-hidden-focus`.
             The header control that closes the drawer lives ABOVE this row, so the user is never
             shut out. */}
-        <div className="relative flex min-w-0 flex-1 flex-col" inert={mapOpen && isMobile && started}
+        <div className="flex min-h-0 min-w-0 flex-1" inert={mapOpen && isMobile && started}>
+        <PaneHost surface="chat" pane={beside} stackInto={stackSlot}>
+        <div className="relative flex h-full min-w-0 flex-col"
           style={folded ? { '--composer-fold-room': FOLD_ROOM } as React.CSSProperties : undefined}>
           {/* The composer's light, staged in THIS column rather than the page: its box is
               the stage `DotGlow` fades the halo out inside of, so a docked panel beside the
@@ -219,6 +246,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}
                 onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { setInput(t); focusComposerSoon() }}
                 send={send} speak={speak} speakingTurn={speakingTurn} />
+              <div ref={setStackSlot} className="contents" />
               {/* Folded (reading mode), this region floats over the end of the transcript, which then
                   takes the column's whole height; its controls are the only part that takes a click. */}
               <div className={folded ? 'pointer-events-none absolute inset-x-0 bottom-0 z-20 px-l pb-l pt-8' : 'relative shrink-0 px-l pb-l'}>
@@ -251,11 +279,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </>
           )}
         </div>
+        </PaneHost>
+        </div>
 
         <ChatPanes panes={panes} stream={stream} transcript={transcript} started={started} setQuery={setQuery}
           navigate={navigate} send={send} />
       </div>
       <ToolResultModal panes={panes} />
     </div>
+    </OpenBesideProvider>
   )
 }

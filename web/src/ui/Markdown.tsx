@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useState } from 'react'
+import { createContext, memo, useContext, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { physics } from '../design/motion'
 import { fvs } from '../design/fontWeight'
@@ -8,7 +8,7 @@ import remarkMath from 'remark-math'
 import rehypeRaw from 'rehype-raw'
 import rehypeKatex from 'rehype-katex'
 import hljs from 'highlight.js/lib/common'
-import { Play, Copy, Check, ImageOff, RefreshCw } from 'lucide-react'
+import { Play, Copy, Check, ImageOff, RefreshCw, PanelRightOpen } from 'lucide-react'
 import type { PluggableList } from 'unified'
 import { requestRunInTerminal } from '../pages/terminal/terminalBridge'
 import { api } from '../lib/api'
@@ -19,6 +19,7 @@ import { MermaidBlock } from './widget/MermaidBlock'
 import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
 import { copyText } from '../app/clipboard'
+import { fingerprint, useBesideRegistration, useOpenBeside, type BesideBlock } from './OpenBeside'
 
 /** The one renderer for markdown this app did not write: a model's reply, a tool's result, a
  *  knowledge item's body (a feed entry, a scraped page, an uploaded file, a mirrored
@@ -43,16 +44,28 @@ import { copyText } from '../app/clipboard'
 // shell-ish languages where "Run in terminal" makes sense.
 const SHELL_LANGS = new Set(['shell', 'bash', 'sh', 'zsh', 'console', 'shellsession', 'fish'])
 
+/** A block's Open beside: it puts the block in the split beside the reading (`OpenBesideProvider`). Shown
+ *  with the block's other controls, on hover and on focus, and always on a screen that cannot hover. */
+function BesideButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label={`Open ${name} beside`} title="Open beside"
+      className="inline-flex size-6 items-center justify-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+      <PanelRightOpen size={12} />
+    </button>
+  )
+}
+
 /** Render a unified-diff code block with +/- line tinting. */
-function DiffBlock({ code }: { code: string }) {
+function DiffBlock({ code, onBeside }: { code: string; onBeside?: () => void }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => { if (await copyText(code, 'the code')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
         <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">diff</span>
+        {onBeside && <span className="ml-auto opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"><BesideButton name="diff" onClick={onBeside} /></span>}
         <button type="button" onClick={copy} aria-label="Copy diff" title={copied ? 'Copied' : 'Copy'}
-          className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100"
+          className={`${onBeside ? '[@media(hover:none)]:opacity-100 ' : 'ml-auto '}inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100`}
           style={copied ? { color: 'var(--color-success)' } : undefined}>
           <AnimatePresence mode="wait" initial={false}>
             <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={physics.playful} className="grid place-items-center">
@@ -87,7 +100,7 @@ function DiffBlock({ code }: { code: string }) {
   )
 }
 
-function isDiff(code: string, lang?: string): boolean {
+export function isDiff(code: string, lang?: string): boolean {
   if (lang === 'diff') return true
   const lines = code.split('\n')
   return lines.filter((l) => /^@@|^[+-][^+-]/.test(l)).length >= 2
@@ -160,7 +173,7 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
   )
 }
 
-function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBeside?: () => void }) {
   let html = ''
   try {
     html = lang && hljs.getLanguage(lang)
@@ -175,13 +188,14 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
         {lang && <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">{lang}</span>}
-        <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
+        <div className={`ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100${onBeside ? ' [@media(hover:none)]:opacity-100' : ''}`}>
           {runnable && (
             <button type="button" onClick={run} title="Run in terminal" data-type="caption"
               className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-on-surface-low hover:bg-surface-high hover:text-primary">
               <Play size={11} /> Run
             </button>
           )}
+          {onBeside && <BesideButton name={lang ? `${lang} code` : 'code'} onClick={onBeside} />}
           <button type="button" onClick={copy} title={copied ? 'Copied' : 'Copy'} aria-label="Copy code"
             className="inline-flex size-6 items-center justify-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface"
             style={copied ? { color: 'var(--color-success)' } : undefined}>
@@ -302,7 +316,9 @@ function codeText(children: unknown): string {
   return (children === undefined || children === null ? '' : String(children)).replace(/\n$/, '')
 }
 
-function renderCode({ className, children, inPre }: any) {
+/** What a `code` element renders as: an inline span, a diagram, a diff or a code block, with its
+ *  text and the language its fence declares. Read once, for the renderer and for Open beside. */
+function codeShape({ className, children, inPre }: any): { kind: 'inline' | 'mermaid' | 'diff' | 'code'; str: string; lang?: string } {
   const m = /language-(\w+)/.exec(className || '')
   const str = codeText(children)
   // Block vs inline. `inPre` decides it; the other two are independent fallbacks
@@ -317,11 +333,54 @@ function renderCode({ className, children, inPre }: any) {
   // and it dragged every unrelated line in that result onto a 1424px canvas. The same
   // bytes plus one newline were already a contained, scrollable `<pre>`.
   const isBlock = inPre || !!className || str.includes('\n')
-  if (!isBlock) return <code className="rounded-sm bg-surface-high px-1.5 py-0.5 text-[0.85em] font-mono text-primary-emphasis">{children}</code>
   const lang = m?.[1]
-  if (lang === 'mermaid') return <MermaidBlock code={str} />
-  if (isDiff(str, lang)) return <DiffBlock code={str} />
-  return <CodeBlock code={str} lang={lang} />
+  if (!isBlock) return { kind: 'inline', str }
+  if (lang === 'mermaid') return { kind: 'mermaid', str, lang }
+  return { kind: isDiff(str, lang) ? 'diff' : 'code', str, lang }
+}
+
+function renderCode({ className, children, inPre, onBeside }: any) {
+  const { kind, str, lang } = codeShape({ className, children, inPre })
+  if (kind === 'inline') return <code className="rounded-sm bg-surface-high px-1.5 py-0.5 text-[0.85em] font-mono text-primary-emphasis">{children}</code>
+  if (kind === 'mermaid') return <MermaidBlock code={str} />
+  if (kind === 'diff') return <DiffBlock code={str} onBeside={onBeside} />
+  return <CodeBlock code={str} lang={lang} onBeside={onBeside} />
+}
+
+/** A code block or diff as a block that can open beside the reading, named by its language and
+ *  text (`OpenBeside`), or null for an inline span or a diagram. */
+function besideCode(shape: ReturnType<typeof codeShape>): BesideBlock | null {
+  const { kind, str, lang } = shape
+  if (kind !== 'code' && kind !== 'diff') return null
+  return {
+    address: `${kind}-${fingerprint(`${lang ?? ''}\n${str}`)}`, kind,
+    title: kind === 'diff' ? 'Diff' : lang ? `${lang} code` : 'Code', label: kind,
+    render: () => (kind === 'diff' ? <DiffBlock code={str} /> : <CodeBlock code={str} lang={lang} />),
+  }
+}
+
+/** A table's cells as text, a tab after each cell and a newline after each row: what names it. */
+function hastText(node: any): string {
+  if (!node) return ''
+  if (node.type === 'text') return String(node.value ?? '')
+  const inner = (node.children ?? []).map(hastText).join('')
+  if (node.tagName === 'tr') return `${inner}\n`
+  return node.tagName === 'td' || node.tagName === 'th' ? `${inner}\t` : inner
+}
+
+/** A table, with its Open beside over its top corner on hover and on focus, and always on a screen
+ *  that cannot hover. Unseen, it takes no click. */
+function TableBlock({ children, onBeside }: { children: React.ReactNode; onBeside?: () => void }) {
+  const table = <div className="my-3 overflow-x-auto"><table data-type="body-s" className="w-full border-collapse">{children}</table></div>
+  if (!onBeside) return table
+  return (
+    <div className="group/table relative">
+      {table}
+      <span className="pointer-events-none absolute top-1 right-1 rounded bg-surface-high opacity-0 transition-opacity group-hover/table:pointer-events-auto group-hover/table:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+        <BesideButton name="table" onClick={onBeside} />
+      </span>
+    </div>
+  )
 }
 
 const COMPONENTS: Record<string, React.ComponentType<any>> = {
@@ -532,6 +591,18 @@ function linkifyMemory(children: any, citations: MemoryCitation[]): any {
   })
 }
 
+/** A table under `Markdown`'s `beside`: registered under its cells' address, with its Open beside. */
+function BesideTable({ children, node }: any) {
+  const place = useOpenBeside()
+  const text = hastText(node)
+  const block: BesideBlock | null = place && text.trim() ? {
+    address: `table-${fingerprint(text)}`, kind: 'table', title: 'Table', label: 'table',
+    render: () => <TableBlock>{children}</TableBlock>,
+  } : null
+  useBesideRegistration(place, block)
+  return <TableBlock onBeside={block && place ? () => place.open(block.address) : undefined}>{children}</TableBlock>
+}
+
 /** When `onFileClick` is supplied, file mentions become clickable: inline-code
  *  that looks like a path renders as a link, AND bare paths inside prose
  *  (paragraphs / list items) are linkified — so file mentions are interactive
@@ -541,8 +612,9 @@ function componentsWith(
   onFileClick?: (path: string) => void,
   chatSessionKey?: string,
   citations?: MemoryCitation[],
+  beside = false,
 ): Record<string, React.ComponentType<any>> {
-  if (!onFileClick && !chatSessionKey && !(citations && citations.length)) return COMPONENTS
+  if (!onFileClick && !chatSessionKey && !(citations && citations.length) && !beside) return COMPONENTS
   const base: Record<string, React.ComponentType<any>> = { ...COMPONENTS }
   // Scope the inline-image renderer to the chat session so a deleted image's
   // placeholder can offer "Regenerate" (re-runs at the same slug, server recovers
@@ -568,8 +640,14 @@ function componentsWith(
       // This is the SECOND `renderCode` call site; a fix that only threads the signal into
       // COMPONENTS would leave chat, the highest-traffic consumer, on the old predicate.
       const inPre = useContext(InPre)
+      const place = useOpenBeside()
       const str = codeText(children)
-      if (onFileClick && !className && looksLikeFile(str)) {
+      const fileLink = !!onFileClick && !className && looksLikeFile(str)
+      // A block registers under its address while it is mounted, so the place beside the reading
+      // can show it (`OpenBeside`); its Open beside opens that address.
+      const block = beside && place && !fileLink ? besideCode(codeShape({ className, children, inPre })) : null
+      useBesideRegistration(place, block)
+      if (fileLink) {
         return (
           <button type="button" onClick={() => onFileClick(str.trim())} title={`Open ${str.trim()}`}
             className="rounded-sm bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] font-mono text-primary-emphasis underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-surface-highest hover:decoration-primary">
@@ -577,8 +655,9 @@ function componentsWith(
           </button>
         )
       }
-      return renderCode({ className, children, inPre })
+      return renderCode({ className, children, inPre, onBeside: block && place ? () => place.open(block.address) : undefined })
     },
+    ...(beside ? { table: BesideTable } : {}),
     p({ children }: any) { return <p data-type="body-m" className="my-1.5 leading-relaxed">{L(children)}</p> },
     li({ children }: any) { return <li data-type="body-m" className="leading-relaxed">{L(children)}</li> },
     td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{L(children)}</td> },
@@ -600,13 +679,16 @@ function stringifyChildren(v: unknown): string {
 }
 
 /** Plain markdown (no widget split) — the inner renderer. */
-function MarkdownText({ children, onFileClick, chatSessionKey, citations }: {
-  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]
+function MarkdownText({ children, onFileClick, chatSessionKey, citations, beside = false }: {
+  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]; beside?: boolean
 }) {
-  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
+  // One set of components for as long as what they close over holds: a new set is a new type for
+  // every block, which remounts it (losing the focus on its controls and highlighting it again).
+  const components = useMemo(() => componentsWith(onFileClick, chatSessionKey, citations, beside), [onFileClick, chatSessionKey, citations, beside])
+  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={components}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
+export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations, beside }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
   /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
    *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
@@ -626,6 +708,10 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
   /** episodic memory manifest for THIS turn — resolves `[Memory N]` citation chips.
    *  Absent → tokens render as plain text. */
   citations?: MemoryCitation[]
+  /** Offer each code block, diff and table an Open beside, where a surface provides a place beside
+   *  its reading (`OpenBesideProvider`). Not while the text streams: a block still arriving has no
+   *  end, so it neither offers it nor registers. */
+  beside?: boolean
 }) {
   // Defensive: callers occasionally pass agent/tool-authored content that isn't
   // a clean string (an object/array where a doc was expected). Coerce so a stray
@@ -644,8 +730,9 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
   // Split out `<widget>` blocks where the caller runs them; render each as a sandboxed
   // iframe, prose as MD.
   const segments = widgets ? parseWidgetBlocks(text, streaming) : null
+  const offerBeside = !!beside && !streaming
   if (!segments || (segments.length === 1 && segments[0].type === 'md')) {
-    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations}>{text}</MarkdownText></div>
+    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside}>{text}</MarkdownText></div>
   }
   let wi = 0
   return (
@@ -654,7 +741,7 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
     // keeps the float contained inside THIS turn.
     <div className={`flow-root text-on-surface ${className ?? ''}`}>
       {segments.map((seg, i) => {
-        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations}>{seg.content}</MarkdownText>
+        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside}>{seg.content}</MarkdownText>
         // Resolve the block's renderer through the ONE content registry (was a
         // hardcoded react/widget fork): adding an inline-embeddable type is now a
         // registry entry, not an edit here.

@@ -23,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A model app on a wire of its own can ask whether a model takes adaptive thinking, by the rule PersonalClaw's built-in Anthropic-compatible client uses: `personalclaw.sdk.model.thinks_adaptively` and the `adaptive-thinking` core feature (an SDK addition no app has to change for; `bedrock-models` can use it in place of its own copy of the rule).**
 - **The sidebar's threads start with New thread and a search that narrows them by name; within a project, pinned threads come first and then the most recently active, and a thread starting, waiting or failing never moves its row; ⌘1 to ⌘9 open the threads the sidebar shows, top to bottom, where they opened the chat list's.**
 - **Helpers, goal loops and workflow runs now say what they are doing in the same phases a chat's turn does, on the `work_phase` frame: waiting to start, the step they are on, waiting for your OK or your answer, and how they ended. An app hears a helper's only for a chat it started, and no app hears a loop's or a run's.**
+- **A code block, a diff or a table in a reply opens beside the conversation from its own Open beside, in a split you can resize that keeps its width; the address names the open block, so a reload, Back or a copied link opens the same one, and a narrow window stacks it under the conversation. A diff under review in a code project stacks the same way.**
 
 ### Changed
 

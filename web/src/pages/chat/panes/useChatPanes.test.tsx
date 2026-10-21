@@ -129,6 +129,22 @@ describe('useChatPanes honours focus mode', () => {
     expect(result.current.query.file).toBeUndefined()
   })
 
+  it('takes a block open beside the reading as one of its panes', () => {
+    const { result } = mount({ beside: 'code-abc', activity: '1' })
+    expect(result.current.p.beside).toBe('code-abc')
+    act(() => result.current.setFocus(true))
+    expect(result.current.query.beside, 'entering focus mode closes the split').toBeUndefined()
+    act(() => result.current.setFocus(false))
+    expect(result.current.query.beside, 'and leaving it opens it again').toBe('code-abc')
+    act(() => result.current.setFocus(true))
+    act(() => result.current.p.setActivityOpen(true))
+    act(() => result.current.p.setBeside('table-def'))
+    expect(result.current.query.beside).toBe('table-def')
+    expect(result.current.query.activity, 'opening it in focus mode closes the others').toBeUndefined()
+    act(() => result.current.p.setBeside(null))
+    expect(result.current.query.beside).toBeUndefined()
+  })
+
   it('a pane opened in it stays when it ends, beside the ones it closed', () => {
     const { result } = mount({ activity: '1' })
     act(() => result.current.setFocus(true))
