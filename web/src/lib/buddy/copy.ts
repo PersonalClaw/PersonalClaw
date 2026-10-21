@@ -194,8 +194,9 @@ export interface BuddyAnswer {
   key: 'approve' | 'reject'
   label: string
   name: string
-  /** `primary` for Allow, as the phone's prompt styles it; `danger` for Deny's edge. */
-  tone: 'primary' | 'danger'
+  /** As the chat's approval card styles them: Allow `neutral` and Deny its `danger` edge. Neither
+   *  is the primary, so the buddy never argues for an answer. */
+  tone: 'neutral' | 'danger'
 }
 
 /** An approval alert's controls and what its Deny does, in the app's own words: the phone's prompt
@@ -211,7 +212,7 @@ export function approvalAnswers(row: Pick<PendingApproval, 'tool' | 'deny_effect
 } {
   const denyEffect = row.deny_effect || ''
   return {
-    allow: { key: 'approve', label: 'Allow', name: `Allow ${row.tool}`, tone: 'primary' },
+    allow: { key: 'approve', label: 'Allow', name: `Allow ${row.tool}`, tone: 'neutral' },
     deny: { key: 'reject', label: 'Deny', name: `Deny ${row.tool}${denyEffect ? `. ${denyEffect}` : ''}`, tone: 'danger' },
     denyEffect,
   }
