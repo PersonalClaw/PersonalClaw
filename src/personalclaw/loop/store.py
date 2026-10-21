@@ -877,7 +877,7 @@ def get_redacted(loop_id: str) -> dict | None:
     # Whether this kind advances phase_status (#448) — declared by the kind strategy, so
     # the FE never re-enumerates the phase-tracking kinds itself.
     view["phase_tracked"] = _phase_tracked(loop.kind)
-    view["findings"] = files.get_findings(loop_id)
+    view["findings"], view["last_cycle_at"] = files.findings_and_last_cycle(loop_id)
     # `total_cycles` is DERIVED here, not stored: it is the length of the
     # projection already in hand, so the API keeps the field every loop surface reads while the
     # SQLite column that used to cache it is gone. `len(findings)` rather than
@@ -977,8 +977,8 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
     preview match the detail view (the FE cards read ``findings.length`` + the last
     finding directly). Ported from both legacy engines. Unlike a per-row get_redacted it never
     CREATES anything per loop (no ``files_dir``, hence no ``loop_dir`` mkdir) — but it does READ
-    one file per row: ``get_findings`` projects over ``<id>/events.jsonl``, so this path costs
-    O(rows) ledger reads. Measured while retiring ``total_cycles``, and the reason
+    one file per row: ``findings_and_last_cycle`` projects over ``<id>/events.jsonl``, so this
+    path costs O(rows) ledger reads. Measured while retiring ``total_cycles``, and the reason
     the derived count below reuses the findings already in hand rather than asking for a second
     scan of the same file."""
     loops = list_for_project(project_id) if project_id else list_all()
@@ -991,7 +991,9 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
         # Same declaration as the detail view (#448) — the list rows fold a run through the
         # SAME runFold, so withholding it here would make the cards disagree with the cockpit.
         d["phase_tracked"] = _phase_tracked(loop.kind)
-        d["findings"] = files.get_findings(loop.id)
+        # When its newest cycle ran (`files.findings_and_last_cycle`), from the same read: the
+        # sidebar places a loop among a project's threads by it.
+        d["findings"], d["last_cycle_at"] = files.findings_and_last_cycle(loop.id)
         # Derived, same as the detail view — and free here, because the row
         # already carries the projection it counts.
         d["total_cycles"] = len(d["findings"])

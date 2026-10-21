@@ -59,9 +59,10 @@ export interface Thread {
   /** The owner pinned it. Only a chat can be pinned; a loop never is. */
   pinned: boolean
   /** When it last did something, in epoch ms, 0 when nothing says. A chat's is its list row's
-   *  activity (`sessionRecencyMs`). A loop's is its newest cycle's, which its workers' latest activity
-   *  is (each cycle is a worker's turn; the loop list carries no cycle time), else when it
-   *  completed, started or was created: the newest of these. Its status never changes it. */
+   *  activity (`sessionRecencyMs`). A loop's is its newest cycle's, which its row says
+   *  (`last_cycle_at`); a row with none says it by its workers' latest activity (each cycle is a
+   *  worker's turn), else when it completed, started or was created: the newest of these. Its
+   *  status never changes it, and neither does a worker's turn under way once a cycle time is in. */
   activeAt: number
 }
 
@@ -73,7 +74,7 @@ export interface ProjectThreads {
 /** The chat list's fields the join reads. */
 export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned'>
 /** The loop list's fields the join reads. */
-export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at'>>
+export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at'>>
 
 export interface ThreadSources {
   sessions: ThreadChat[]
@@ -117,9 +118,13 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
 
   const loopThreads: Thread[] = []
   const loopBySession = new Map<string, string>()
+  // The loops whose rows say when their newest cycle ran: that time places them, so their workers'
+  // activity does not.
+  const cycleTimed = new Set<string>()
   for (const l of loops) {
     const id = str(l.id)
     if (id === '') continue
+    const lastCycle = ms(l.last_cycle_at)
     loopThreads.push({
       key: `loop:${id}`,
       kind: l.kind === 'code' ? 'code' : 'loop',
@@ -129,8 +134,9 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       route: loopRoute(l),
       pip: l.status === 'failed' ? 'failed' : null,
       pinned: false,
-      activeAt: Math.max(ms(l.completed_at), ms(l.started_at), ms(l.created_at)),
+      activeAt: lastCycle || Math.max(ms(l.completed_at), ms(l.started_at), ms(l.created_at)),
     })
+    if (lastCycle > 0) cycleTimed.add(`loop:${id}`)
     if (str(l.session_key) !== '') loopBySession.set(str(l.session_key), `loop:${id}`)
   }
 
@@ -169,7 +175,9 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       activeAt: sessionRecencyMs(s),
     })
   }
-  for (const t of loopThreads) t.activeAt = Math.max(t.activeAt, workerActivity.get(t.key) ?? 0)
+  for (const t of loopThreads) {
+    if (!cycleTimed.has(t.key)) t.activeAt = Math.max(t.activeAt, workerActivity.get(t.key) ?? 0)
+  }
 
   /** The thread whose work a session key is: a listed chat or loop worker, else a loop worker's
    *  key shape (`loopApprovalSession`), since an approval can name a worker the list has not
@@ -236,10 +244,11 @@ export async function readThreads(): Promise<ThreadLists> {
 }
 
 /** The frames that change a thread or its pip: a chat's run state, an approval, an Inbox row, and
- *  the gateway's listing hint naming the loops. */
+ *  the gateway's listing hint naming the loops, or the workflow runs a loop may run on (as Home and
+ *  Mission Control read it): a loop's newest cycle places it. */
 function changesThreads(m: WsMessage): boolean {
   const type = m.type
-  if (type === 'refresh') return refreshKinds(m).includes('loops')
+  if (type === 'refresh') return refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs')
   return type === 'sessions' || type === 'work_phase' || type === 'approval' || type === 'approval_resolved'
     || type.startsWith('inbox')
 }
