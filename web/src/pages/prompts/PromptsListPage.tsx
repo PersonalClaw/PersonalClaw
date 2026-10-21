@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Plus, FileText, Puzzle, Maximize2, User, Cog, Package } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
-import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { Segmented } from '../../ui/Segmented'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { SidePanel } from '../../ui/SidePanel'
+import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
+import { comparePrompts, orderSaid } from '../capabilities/capabilityOrder'
+import { useIsMobile } from '../../app/useIsMobile'
 import { ContextMenu, type ContextMenuItem, Disintegrate } from '../../ui/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptKind, type PromptSnippet } from '../../lib/api'
@@ -73,7 +75,9 @@ export function applyView(rows: Row[], q: string, sort: SortKey, source: string)
   // Measured before this: 42 prompts + 44 snippets all reported `source: 'user'`, so the "Bundled"
   // option filtered to nothing while every row's badge read "bundled".
   if (source !== 'all') out = out.filter((r) => sourceLabel(r.source, r.tags) === source)
-  const byName = (a: Row, b: Row) => (a.title || a.name).localeCompare(b.title || b.name)
+  // The named order: by title, or name where there is none, A–Z, case-insensitive, equal titles by
+  // name (`comparePrompts`). Every other order breaks its ties the same way.
+  const byName = comparePrompts
   out.sort((a, b) => {
     switch (sort) {
       case 'updated': return (b.updated_at ?? 0) - (a.updated_at ?? 0) || byName(a, b)
@@ -118,6 +122,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const openName = openNameRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
   const isSnips = tab === 'snippets'
+  const isMobile = useIsMobile()
   // The Source filter and sort exist only where origins still MIX — the snippets. On a prompt tab
   // the tab already is the origin, so "Bundled" there could only ever filter the User tab to
   // nothing — and a `src` left in the URL would do that with no visible control to clear it.
@@ -163,18 +168,47 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
     ...(isSnips ? [{ title: 'Source', value: source, defaultKey: 'all', onChange: (k: string) => setSource(k), options: SOURCES.map((s) => ({ key: s.key, label: s.label })) }] : []),
   ]
 
+  // The open record's detail, beside the list (`?open=`), with its way to the full page.
+  const closeDetail = () => setQuery({ open: null, edit: null })
+  const detail: CapabilityDetail | null = isSnips
+    ? openSnip && {
+        id: `s:${openSnip.name}`, title: openSnip.name, onClose: closeDetail,
+        icon: <Puzzle size={18} style={{ color: sourceTone(openSnip.source) }} />,
+        body: (
+          <>
+            <OpenFullPageBar onOpen={() => onOpen('snippets', openSnip.name)} />
+            <SnippetDetail snippet={openSnip} editing={editing} onEditingChange={setEditing} onSaved={() => load()} onDeleted={() => onDeleted(openSnip.name)} />
+          </>
+        ),
+      }
+    : openPrompt && {
+        id: `p:${openPrompt.name}`, title: openPrompt.name, onClose: closeDetail,
+        icon: <FileText size={18} style={{ color: sourceTone(openPrompt.source) }} />,
+        body: (
+          <>
+            <OpenFullPageBar onOpen={() => onOpen(tabOf(openPrompt), openPrompt.name)} />
+            <PromptDetail prompt={openPrompt} editing={editing} onEditingChange={setEditing} onSaved={() => load()} onDeleted={() => onDeleted(openPrompt.name)} onNavigate={navigate} />
+          </>
+        ),
+      }
+
   return (
-    <WorkbenchLayout
-      topBar={
+    <ListBesideDetail noun={isSnips ? 'snippets' : 'prompts'} detail={detail}
+      header={
         <TopBar
           keepCornerPadding
-          left={<PageTitle>Prompts</PageTitle>}
+          // The view switch sits beside the title, as the Skills and Apps tabs' do, so the header's
+          // actions are the one that adds (#3817). Search, sort and the source filter live on the
+          // list's own bar.
+          left={
+            <div className="flex min-w-0 items-center gap-m">
+              <PageTitle className="shrink-0">Prompts</PageTitle>
+              <Segmented ariaLabel="Prompts view" collapse="menu" iconOnly={isMobile} value={tab}
+                onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
+            </div>
+          }
           right={
-            // Structural view switch + primary action in the 4-tier cluster (degrade
-            // together, no clip on mobile). Search / sort / source-filter live on the
-            // page (controls bar).
             <HeaderActions>
-              <HeaderSegmented ariaLabel="Prompts view" value={tab} onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
               <HeaderControl icon={Plus} label={isSnips ? 'New snippet' : 'New prompt'} variant="primary" priority="primary" onClick={() => onCreate(createKind)} />
             </HeaderActions>
           }
@@ -184,24 +218,10 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
         ? <ListControls
             search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}
             results={{ count: (rows ?? []).length, noun: isSnips ? 'snippets' : 'prompts', active: !!q.trim() }}>
-            <FilterMenu sections={filterSections} label="Sort & filter" />
+            {/* The control names the order the list shows. */}
+            <FilterMenu sections={filterSections} label={orderSaid(sort)} />
           </ListControls>
         : undefined}
-      panel={
-        isSnips
-          ? (openSnip && (
-              <SidePanel key={openSnip.name} fillHeight storeKey="prompt-panel-w" icon={<Puzzle size={18} style={{ color: sourceTone(openSnip.source) }} />} title={openSnip.name} onClose={() => setQuery({ open: null, edit: null })}>
-                <OpenFullPageBar onOpen={() => onOpen('snippets', openSnip.name)} />
-                <SnippetDetail snippet={openSnip} editing={editing} onEditingChange={setEditing} onSaved={() => load()} onDeleted={() => onDeleted(openSnip.name)} />
-              </SidePanel>
-            ))
-          : (openPrompt && (
-              <SidePanel key={openPrompt.name} fillHeight storeKey="prompt-panel-w" icon={<FileText size={18} style={{ color: sourceTone(openPrompt.source) }} />} title={openPrompt.name} onClose={() => setQuery({ open: null, edit: null })}>
-                <OpenFullPageBar onOpen={() => onOpen(tabOf(openPrompt), openPrompt.name)} />
-                <PromptDetail prompt={openPrompt} editing={editing} onEditingChange={setEditing} onSaved={() => load()} onDeleted={() => onDeleted(openPrompt.name)} onNavigate={navigate} />
-              </SidePanel>
-            ))
-      }
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {rows === null && loadErr ? (
@@ -233,7 +253,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
               return (
                 <Disintegrate key={r.name} active={deletingName === r.name} onDone={finishDelete}>
                 <ContextMenu items={menuItems}>
-                <ListRow accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
+                <ListRow accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name} selected={r.name === openName}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
                     <span data-type="label-m" className="truncate text-on-surface font-mono" style={fvs(500)}>{r.name}</span>
@@ -272,6 +292,6 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
           </div>
         )}
       </div>
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }

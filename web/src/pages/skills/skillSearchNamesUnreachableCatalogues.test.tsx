@@ -19,6 +19,8 @@ function mockApi() {
     api: {
       skillMarketplaces: () => Promise.resolve([{ name: 'skills.sh' }]),
       searchSkillsCounted: (...a: unknown[]) => searchSkillsCounted(...a),
+      // The Skills views count the proposals waiting on their switch, Browse among them.
+      skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     },
   }))
 }

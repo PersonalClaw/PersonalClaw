@@ -20,17 +20,26 @@ import { join } from 'node:path'
 // cannot hover; it has to be VISIBLE. The census's "identifier-ish → add a title" rule is a default,
 // not a law — check whether the reader on that surface has a pointer at all.
 //
-// The fix is the app's own idiom: one column below `sm:`, as nine other grids already do
+// The fix was the app's own idiom: one column below `sm:`, as nine other grids already do
 // (SecurityPanel, ArtifactGrid, ArtifactCompare, ScheduleForm, AgentForm, AuditPanel,
 // PresetEmptyState, DesignCockpitPage ×2).
+//
+// 🔑 THE LIST, NOT THE WINDOW, DECIDES IT NOW (#3817). The Tools tab's list sits in a fixed 22.5rem
+// column beside a selected tool's detail on a wide window, where `sm:` (a 640 px window) handed it
+// two columns of ~170 px — this defect again, on a desktop. The grid asks its own list instead: the
+// list pane is a `@container` (`capabilities/ListBesideDetail.tsx`), and the grid goes to two
+// columns from a 36rem list (`@xl:`), one below it, whatever the window.
 
 const SRC = readFileSync(join(process.cwd(), 'src/pages/tools/ToolsPage.tsx'), 'utf8')
 const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 
-describe('the tool grid gives a name room on a phone', () => {
-  it('is one column below sm, two above', () => {
-    expect(CODE).toMatch(/<div className="grid grid-cols-1 gap-s sm:grid-cols-2">/)
+const LAYOUT = readFileSync(join(process.cwd(), 'src/pages/capabilities/ListBesideDetail.tsx'), 'utf8')
+
+describe('the tool grid gives a name room on a phone, and in a list beside a detail', () => {
+  it('is one column until its list is 36rem wide, two above', () => {
+    expect(CODE).toMatch(/<div className="grid grid-cols-1 gap-s @xl:grid-cols-2">/)
+    expect(LAYOUT, 'the list pane is the container the grid asks').toMatch(/data-capability-list[\s\S]*?className=\{`@container /)
   })
 
   it('no unconditional two-column grid remains on this page', () => {
@@ -41,7 +50,7 @@ describe('the tool grid gives a name room on a phone', () => {
     expect(CODE, 'a bare grid-cols-2 would collapse the name again')
       .not.toMatch(/(?<![:-])\bgrid-cols-2\b/)
     // …and the responsive one, which carries the prefix, is present.
-    expect(CODE).toMatch(/sm:grid-cols-2/)
+    expect(CODE).toMatch(/@xl:grid-cols-2/)
   })
 
   it('the cell still holds everything that made it tight — the vacuity floor', () => {

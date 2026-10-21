@@ -15,6 +15,7 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { SOURCE_TONE, holdsRefinementCopy, noBaselineReason, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
+import { CapabilityPermissions, skillReach } from '../capabilities/CapabilityPermissions'
 
 /** The copy of a skill one row describes, as its routes address it: an agent's own copy (an
  *  `agent-local` row) with its `agent`, any other by its name alone — the copy agents get, the one
@@ -104,11 +105,9 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
 
       <p className="text-on-surface text-[0.9375rem] leading-relaxed">{skill.description}</p>
 
-      {skill.loaded_by_agents.length > 0 && (
-        <Section label="Used by">
-          <div className="flex flex-wrap gap-1.5">{skill.loaded_by_agents.map((a) => <span key={a} className="rounded-pill bg-surface-high px-m h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{a}</span>)}</div>
-        </Section>
-      )}
+      {/* Its reach: when it loads, and the agents it reaches, the ones whose skill list names it
+          among them. Who may use it is each agent's own list, changed in the agent's editor. */}
+      <CapabilityPermissions rows={skillReach(skill)} />
 
       <Section label="Files">
         {files === undefined ? <div className="flex flex-col gap-1.5"><Skeleton className="h-9 w-full rounded-md" /><Skeleton className="h-9 w-full rounded-md" /></div>

@@ -175,10 +175,14 @@ export function InlineLoadError({ what, error, onRetry }: {
 /** List row wrapper — rows fade in together, and (when clickable) hover and press show
  *  by colour, at once. Exit collapses the row's height so a removal closes its gap.
  *  Consistent across every list page. */
-export function ListRow({ onClick, children, accent, label }: {
+export function ListRow({ onClick, children, accent, label, selected = false }: {
   onClick?: () => void
   children: ReactNode
   accent?: string
+  /** The row whose detail is open beside the list. A list beside a detail is not a listbox, so
+   *  `aria-current` marks it, as `ui/NavRail` marks the page you are on, with the selection tint
+   *  a `Combobox`'s active option has. */
+  selected?: boolean
   /** What this row IS, for assistive tech — usually the entity's title.
    *
    *  Without it a row's accessible name is computed from its subtree, so AT reads the
@@ -226,7 +230,7 @@ export function ListRow({ onClick, children, accent, label }: {
       // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
       // would also light the row when the checkbox or a tag filter inside it takes focus
       // and double-ring with that control's own indicator.
-      className={`group relative isolate flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
+      className={`group relative isolate flex items-center gap-l overflow-hidden rounded-lg px-l py-l text-left transition-colors ${selected ? 'bg-primary/15' : 'bg-surface-container hover:bg-surface-high'} ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
       {/* The row's tab stop and accessible name, as a real <button> SIBLING of the
@@ -251,6 +255,7 @@ export function ListRow({ onClick, children, accent, label }: {
         <button
           type="button"
           aria-label={label}
+          aria-current={selected ? 'true' : undefined}
           className="absolute inset-0 -z-10 cursor-pointer outline-none"
         />
       )}

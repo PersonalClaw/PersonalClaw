@@ -360,7 +360,8 @@ A client that still sends it is told it was revoked, and when.
 ## Taking your agents into Claude Code
 
 The MCP surface lets your editor's assistant *ask* PersonalClaw things. To give Claude Code your
-agents themselves, export them from **Agents → Export to Claude Code**.
+agents themselves, export them from **Capabilities → Agents**: **Export to Claude Code** is in the
+list's More menu (**⋯**).
 
 - **Where it writes.** Claude Code's own agents folder: `$CLAUDE_CONFIG_DIR/agents` when that
   variable is set, otherwise `~/.claude/agents`. The dialog shows the folder, and **Export** is

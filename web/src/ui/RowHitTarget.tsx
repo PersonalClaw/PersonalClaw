@@ -30,15 +30,19 @@
  *  The ring is drawn on the WRAPPER, not here: this button sits at `-z-10`, so its own ring
  *  would paint behind the row's background.
  */
-export function RowHitTarget({ label }: {
+export function RowHitTarget({ label, selected = false }: {
   /** What the row IS — normally the entity's title. Without it the row's accessible name
    *  is computed from its whole subtree; measured up to 2001 characters for one inbox row. */
   label: string
+  /** The row whose detail is open beside its list: `aria-current`, as `ListRow`'s `selected`.
+   *  The wrapper draws what shows it. */
+  selected?: boolean
 }) {
   return (
     <button
       type="button"
       aria-label={label}
+      aria-current={selected ? 'true' : undefined}
       // `-z-10` keeps it UNDER the row content, so the row's own controls keep their own
       // clicks with no z-index needed on any child. Empty space still activates the row.
       className="absolute inset-0 -z-10 cursor-pointer outline-none"
