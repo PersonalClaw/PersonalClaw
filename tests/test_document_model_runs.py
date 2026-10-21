@@ -217,10 +217,14 @@ def _format_vocabulary_hits(source: str) -> list[str]:
 
 def test_model_module_names_no_file_format_vocabulary() -> None:
     source = Path(model_module.__file__).read_text(encoding="utf-8")
-    # Vacuity guard 1: we are scanning real code, not an empty string left by the strip.
+    # Vacuity guard 1: we are scanning real code, not an empty string left by the strip. What the
+    # rail scans is every statement of the module but its docstring, each as the module has it.
     body = _code_below_module_docstring(source)
-    assert "BLOCK_KINDS" in body
-    assert "class Run" in body
+    statements = ast.parse(source).body
+    assert isinstance(statements[0], ast.Expr), "the module lost the docstring the strip skips"
+    assert [ast.dump(node) for node in ast.parse(body).body] == [
+        ast.dump(node) for node in statements[1:]
+    ]
     assert len(body) > 0.5 * len(source)
 
     assert _format_vocabulary_hits(source) == []

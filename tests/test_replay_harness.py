@@ -655,17 +655,80 @@ class TestTheCuratorPass:
         assert replay_mod.replay_budget() == 0.0
         assert replay_mod.replay_enabled() is False
 
-    def test_the_curator_tick_awaits_the_replay_pass(self):
+    #: A memory consolidation's maintenance, with replay left off in the home's config: (a
+    #: proposal pending before the pass, the curator tick files one during it, the curator tick
+    #: raises). Each pending proposal ends the pass carrying the pass's "replay is off" report.
+    _PASSES = {
+        "pending-before-the-pass": (True, False, False),
+        "filed-by-the-curator-tick": (False, True, False),
+        "the-curator-tick-fails": (True, False, True),
+    }
+
+    @pytest.mark.parametrize(("before", "filed", "fails"), _PASSES.values(), ids=_PASSES)
+    def test_a_memory_consolidation_runs_the_replay_pass_after_the_curator(
+        self, tmp_path, monkeypatch, cfg_file, caplog, before, filed, fails
+    ):
         """The hook itself. A pass with no scheduled caller is the shape that keeps
         turning up — `capture_store.prune`'s docstring named a "curator tick" for a whole release
-        while nothing called it."""
-        from pathlib import Path
+        while nothing called it. Driven through the real `HistoryConsolidator._consolidate_locked`
+        (a model that answers one line, a memory service whose own upkeep does nothing): the
+        pass's maintenance runs the replay pass to its end, after the curator tick, so a proposal
+        the tick files in the same pass is replayed in it, and a tick that fails stops nothing."""
+        import logging
+        from unittest.mock import MagicMock
 
-        import personalclaw.history as history_mod
+        from personalclaw.history import HistoryConsolidator
+        from personalclaw.learning import curator_tick
 
-        source = Path(history_mod.__file__).read_text(encoding="utf-8")
-        assert "await replay_mod.run_pass()" in source
-        assert "from personalclaw.learning import replay as replay_mod" in source
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        pids = []
+        if before:
+            proposals_mod._save(a_proposal(pid="skill-ea6tick01"))  # noqa: SLF001
+            pids.append("skill-ea6tick01")
+
+        def tick(_svc):
+            if fails:
+                raise RuntimeError("the curator tick broke")
+            if filed:
+                proposals_mod._save(a_proposal(pid="skill-ea6tick02"))  # noqa: SLF001
+            return ""
+
+        monkeypatch.setattr(curator_tick, "run_curator_tick", tick)
+        if filed:
+            pids.append("skill-ea6tick02")
+
+        class _QuietService:
+            has_vector = False
+
+            def __getattr__(self, _name):
+                return lambda *_a, **_k: 0
+
+        rows = [{"role": "user", "content": "hi", "ts": "2026-08-26"}]
+        log = MagicMock()
+        log.get_unconsolidated = MagicMock(return_value=(rows, 1))
+        log.read_messages = MagicMock(return_value=rows)
+        log.get_metadata = MagicMock(return_value={})
+        memory = MagicMock()
+        memory.read_preferences = MagicMock(return_value="")
+        memory.read_projects = MagicMock(return_value="")
+        consolidator = HistoryConsolidator(log=log, memory=memory, vector_store=None, migrated=True)
+        consolidator._memory_service = _QuietService()  # type: ignore[assignment]
+
+        async def _one_line(_prompt: str, _chat_key: str, **_kw: object):
+            return {"history_entry": "one line"}
+
+        consolidator._call_llm = _one_line  # type: ignore[assignment]
+
+        with caplog.at_level(logging.INFO, logger="personalclaw.history"):
+            run(consolidator._consolidate_locked("k", include_history=True))
+
+        log.mark_consolidated.assert_called_once_with("k", 1)  # the pass ran to its end
+        for pid in pids:
+            report = proposals_mod.get(pid).replay
+            assert report.get("state") == "unreplayed", (pid, report)
+            assert report.get("reason") == replay_mod.UNREPLAYED_DISABLED, (pid, report)
+        notes = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Learning re")]
+        assert notes == ["Learning replay: replay considered=1 unreplayed=1"], notes
 
 
 # ── the config round-trip ────────────────────────────────────────────────────

@@ -867,13 +867,14 @@ async def test_the_gateway_polls_a_feed_its_owner_creates(tmp_path, monkeypatch)
 def test_the_provider_opens_no_socket_of_its_own():
     """Every byte must come through `net.fetch` under the engine-owned SOURCE egress policy
     — a provider re-implementing the fetch is the exact bypass the boundary exists to stop.
+    That the gateway's own poll of a feed fetches it through `net.client.fetch`, under that
+    profile, is driven by test_the_gateway_polls_a_feed_its_owner_creates.
     """
     import personalclaw.knowledge_providers.feed_source as feed_mod
 
     src = Path(feed_mod.__file__).read_text(encoding="utf-8")
     for banned in ("import socket", "urllib.request", "import requests", "aiohttp"):
         assert banned not in src, f"feed_source must not use {banned}"
-    assert "from personalclaw.net.client import fetch" in src
 
 
 @pytest.mark.asyncio

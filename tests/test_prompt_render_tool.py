@@ -66,6 +66,39 @@ class TestPromptRenderDispatch:
         assert out.startswith("Error") and "empty" in out
 
 
+#: Run in a process of its own: refuse every import of a workflow module, then use the Prompts
+#: category as an agent would, and print what it answered and which workflow modules it loaded.
+_WITHOUT_THE_WORKFLOW_FEATURE = """
+import json, sys
+from unittest.mock import patch
+
+
+def _workflow_module(name):
+    return name.startswith("personalclaw.") and "workflow" in name.split(".", 1)[1]
+
+
+class _Refuse:
+    def find_spec(self, fullname, path=None, target=None):
+        if _workflow_module(fullname):
+            raise ImportError("Prompts reached the workflow feature: " + fullname)
+        return None
+
+
+sys.meta_path.insert(0, _Refuse())
+import personalclaw.mcp_prompts as prompts
+
+seen = {"listed": [tool["name"] for tool in prompts._list_tools()]}
+answer = {"name": "report", "rendered": "Report on the infra team."}
+with patch.object(prompts, "_post", return_value=answer) as post:
+    call = {"prompt_id": "report", "vars": json.dumps({"team": "infra"})}
+    seen["rendered"] = str(prompts._call_tool("prompt_render", call))
+    seen["asked"] = [list(call.args) for call in post.call_args_list]
+seen["missing"] = str(prompts._call_tool("prompt_render", {}))
+seen["loaded"] = sorted(name for name in sys.modules if _workflow_module(name))
+print(json.dumps(seen))
+"""
+
+
 class TestPromptsCategoryIsIndependent:
     """The relocation is the point: Prompts must survive the workflow feature's
     replacement. The rebuild deleted `mcp_workflows` wholesale (anything still living there
@@ -86,20 +119,32 @@ class TestPromptsCategoryIsIndependent:
         assert "prompt_render" not in names
         assert all(n.startswith("workflow_") for n in names)
 
-    def test_prompts_module_does_not_import_workflows(self):
-        """A dependency back onto the doomed module would defeat the relocation."""
-        from pathlib import Path
+    def test_prompts_work_where_the_workflow_feature_cannot_be_imported(self, tmp_path):
+        """A dependency back onto the doomed module would defeat the relocation. In a process
+        that refuses every import of a workflow module (`personalclaw.workflows.*`,
+        `personalclaw.mcp_workflows`), the Prompts category imports, lists `prompt_render`,
+        renders a saved prompt with its variables and refuses a call that names none, and no
+        workflow module is loaded."""
+        import json
+        import os
+        import subprocess
+        import sys
 
-        import personalclaw.mcp_prompts as mod
-
-        source = Path(mod.__file__).read_text(encoding="utf-8")
-        assert "import" in source  # sanity: we really read the module
-        offending = [
-            line
-            for line in source.splitlines()
-            if line.strip().startswith(("import ", "from ")) and "workflow" in line.lower()
-        ]
-        assert offending == [], f"mcp_prompts must not import workflows: {offending}"
+        env = {**os.environ, "PERSONALCLAW_HOME": str(tmp_path)}
+        done = subprocess.run(
+            [sys.executable, "-c", _WITHOUT_THE_WORKFLOW_FEATURE],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        assert done.returncode == 0, done.stderr[-2000:]
+        seen = json.loads(done.stdout.strip().splitlines()[-1])
+        assert seen["listed"] == ["prompt_render"]
+        assert seen["asked"] == [["/api/prompts/report/render", {"variables": {"team": "infra"}}]]
+        assert seen["rendered"].endswith("carry out the following:\n\nReport on the infra team.")
+        assert seen["missing"].lower().startswith("error") and "prompt_id" in seen["missing"]
+        assert seen["loaded"] == [], "Prompts must not reach the workflow feature"
 
     def test_aggregated_surface_still_exposes_prompt_render(self):
         """The ACP MCP-server surface aggregates category modules explicitly; a new

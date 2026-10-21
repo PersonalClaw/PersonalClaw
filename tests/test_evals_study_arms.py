@@ -513,20 +513,85 @@ def test_a_rejected_diff_registers_NOTHING(eval_home):
 # ── the invocation surface (the `_judge_bench` shape) ────────────────────────
 
 
-def test_the_cli_command_is_wired_to_the_dispatch():
-    """A module with no production importer is not done. This is the importer.
+#: `personalclaw study <argv>` (`{id}` is the study the flywheel filed, when it filed one):
+#: (argv, a study filed first, the money seams answer rather than refuse, exit code, what stdout
+#: says, what stderr says). Each flag reaches what it names: `--list` and `--view` read the
+#: registrations, `--run --dry-run` prices the study (by `--samples` too) and calls nothing,
+#: `--run` alone runs it to a verdict, and no flag at all is the usage error.
+_COMMAND = {
+    "list-none": (["--list"], False, False, 0, "No study has been registered yet", ""),
+    "list": (["--list"], True, False, 0, "{id}\ttemplate_ab", ""),
+    "view": (["--view", "{id}"], True, False, 0, '"study_id": "{id}"', ""),
+    "view-unknown": (["--view", "nope"], True, False, 1, "", "no registered study 'nope'"),
+    "dry-run": (["--run", "{id}", "--dry-run"], True, False, 0, "30 arm + 90 judge", ""),
+    "samples": (
+        ["--run", "{id}", "--dry-run", "--samples", "1"],
+        True,
+        False,
+        0,
+        "30 arm + 30 judge",
+        "",
+    ),
+    "run": (["--run", "{id}", "--samples", "1"], True, True, 0, "Verdict:", ""),
+    "nothing": ([], True, False, 2, "", "Nothing to do"),
+}
 
-    The same rail `test_evals_harvest` puts on `eval-harvest`: asserting the parser AND the
-    dispatch arm, because a command that parses and dispatches nowhere is a help page.
-    """
-    import pathlib
 
-    from personalclaw import cli, cli_commands
+@pytest.mark.parametrize(
+    ("argv", "filed", "spends", "code", "out", "err"), _COMMAND.values(), ids=_COMMAND
+)
+def test_the_command_a_user_types_runs_the_study_it_names(
+    eval_home, monkeypatch, capsys, argv, filed, spends, code, out, err
+):
+    """A module with no production importer is not done. This is the importer: the command line
+    a user types, through the CLI's own parser and dispatch (`cli.main`), reaches the study with
+    every flag it was given. A command that parses and dispatches nowhere is a help page."""
+    import sys
 
-    assert cli._study is cli_commands._study
-    source = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
-    assert 'sub.add_parser(\n        "study"' in source
-    assert 'args.command == "study"' in source
+    from personalclaw import cli
+    from personalclaw.evals.judge_bench import JudgeCall
+    from personalclaw.learning import refiner_tools
+    from personalclaw.providers import loader
+    from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
+
+    _install_harvested(3)
+    asyncio.run(NativeWorkflowDefProvider().save_def(**OLD_SPEC))
+    study_id = ""
+    if filed:
+        study_id = refiner_tools.file_template_diff(
+            WORKFLOW, ops=DIFF_OPS, rationale="bullets beat paragraphs", run_ids=["r0", "r1", "r2"]
+        )["study_id"]
+
+    async def arm(prompt, *, use_case):
+        if not spends:
+            raise AssertionError("the command spent money")
+        return "- a\n- b\n- c" if "bullets" in prompt else "One long paragraph."
+
+    async def judge(prompt, *, use_case):
+        if not spends:
+            raise AssertionError("the command spent money")
+        better = "B" if prompt.index("- a") > prompt.index("One long") else "A"
+        return JudgeCall(text=json.dumps({"winner": better, "cannot_judge": ""}))
+
+    monkeypatch.setattr(study_arms, "_one_shot_completion", arm)
+    monkeypatch.setattr(studies, "live_judge_caller", judge)
+    monkeypatch.setattr(loader, "bootstrap_cli_providers", lambda: None)
+    capsys.readouterr()
+
+    line = [part.replace("{id}", study_id) for part in argv]
+    monkeypatch.setattr(sys, "argv", ["personalclaw", "study", *line])
+    exit_code = 0
+    try:
+        cli.main()
+    except SystemExit as exc:
+        exit_code = exc.code
+    stdout, stderr = capsys.readouterr()
+
+    assert exit_code == code, (stdout, stderr)
+    assert out.replace("{id}", study_id) in stdout, stdout
+    assert err in stderr, stderr
+    verdict = store.read_study_verdict(study_id) if study_id else None
+    assert (verdict is not None) == spends, "only `--run` without `--dry-run` reaches a verdict"
 
 
 def test_the_preflight_counts_BOTH_positions_of_every_pair(eval_home):
