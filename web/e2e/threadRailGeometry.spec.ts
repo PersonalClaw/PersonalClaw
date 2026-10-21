@@ -1,0 +1,215 @@
+import { test, expect, type Page } from '@playwright/test'
+import { gotoRoute } from './helpers'
+import { idleRunState } from '../src/lib/workPhase'
+
+// ── NEW THREAD AND THE SEARCH STAY PINNED AT THE TOP OF THE SIDEBAR WHILE THE THREADS SCROLL ─────
+//
+// The sidebar is one scroll area: the wordmark, the leading destinations, the threads under their
+// projects, then the Platform rows. New thread and the search are one bar at the top of the threads
+// (#3814), and while the threads scroll under it the bar stays at the top of the sidebar, on the
+// rail's solid surface, so no row shows through it. Once the threads have scrolled past, the bar
+// goes with them: it is the threads' bar, and the rows below are never under it.
+//
+// jsdom lays nothing out, so `threadRailKeepsItsTopPinned.test.tsx` reads the bar's styles and checks
+// the scrolling against sizes set by hand. This asks a real browser the property: with forty threads
+// and a short window, scrolled into the threads, the bar's top is the sidebar's top, the bar is the
+// topmost thing everywhere on it while a row passes under it, and it paints opaque; scrolled past the
+// threads in a window too short to hold the rows below them, the bar leaves with the threads and a
+// Platform row shows whole where it was. Focus moved up a row by the keyboard, and a thread the
+// address opens above the bar, each land below the bar, whole and topmost (WCAG 2.4.11). The threads
+// and projects are route stubs, so the layout is the only variable.
+
+const COUNT = 40
+const key = (i: number) => `e2e-rail-${String(i).padStart(2, '0')}`
+
+/** Forty chats with no project, newest first in the sidebar: `e2e-rail-00` is the newest. */
+const SESSIONS = Array.from({ length: COUNT }, (_, i) => ({
+  key: key(i), title: `Rail thread ${String(i).padStart(2, '0')}`, messages: 2, run_state: 'idle',
+  last_activity_ts: new Date(Date.UTC(2026, 9, 1) - i * 60_000).toISOString(),
+}))
+
+async function stubThreads(page: Page): Promise<void> {
+  const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  await page.route('**/api/loops', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json({ loops: [] })) : route.fallback())
+  await page.route('**/api/chat/sessions', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json(SESSIONS)) : route.fallback())
+  // No projects, so every thread is under No project and no project row moves the layout.
+  await page.route('**/api/projects', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json({ projects: [] })) : route.fallback())
+  // A thread the address opens reads its own detail: an idle chat with one exchange.
+  await page.route('**/api/chat/sessions/e2e-rail-*', (route) => {
+    const k = new URL(route.request().url()).pathname.split('/').pop()!
+    return route.request().method() === 'GET'
+      ? route.fulfill(json({
+        key: k, title: SESSIONS.find((s) => s.key === k)?.title ?? k, run_state: idleRunState(k), queue: [],
+        messages: [
+          { role: 'user', content: 'Hello.', ts: '2026-10-01T00:00:00+00:00' },
+          { role: 'assistant', content: 'Hello again.', ts: '2026-10-01T00:00:05+00:00' },
+        ],
+        task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
+      }))
+      : route.fallback()
+  })
+}
+
+interface RailGeometry {
+  navTop: number
+  barTop: number
+  barBottom: number
+  groupBottom: number
+  /** Thread rows whose box crosses the bar's band: what is scrolled under it. */
+  rowsUnderBar: number
+  /** Points on the bar where something else is topmost, by what is there. */
+  shownThrough: string[]
+  /** The bar's own background colour, as painted. */
+  barBackground: string
+}
+
+/** Read the sidebar in one evaluate, so every number shares a layout pass. */
+async function readRail(page: Page): Promise<RailGeometry> {
+  return page.evaluate(() => {
+    const nav = document.querySelector<HTMLElement>('nav[data-tour="rail"]')
+    const newThread = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New thread')
+    const bar = newThread?.parentElement
+    const group = bar?.closest('[role="group"]')
+    if (!nav || !bar || !group) throw new Error('no sidebar, New thread bar or Threads group')
+    const n = nav.getBoundingClientRect()
+    const b = bar.getBoundingClientRect()
+    const rows = [...group.querySelectorAll('[data-thread-key]')].map((r) => r.getBoundingClientRect())
+    const shownThrough: string[] = []
+    for (const fx of [0.05, 0.5, 0.95]) {
+      for (const fy of [0.1, 0.5, 0.9]) {
+        const x = b.left + b.width * fx
+        const y = b.top + b.height * fy
+        if (y < n.top || y > n.bottom) continue
+        const hit = document.elementFromPoint(x, y)
+        if (!hit || !bar.contains(hit)) shownThrough.push(`${Math.round(fx * 100)}%,${Math.round(fy * 100)}%: ${hit?.closest('[data-thread-key]')?.getAttribute('aria-label') ?? hit?.tagName ?? 'nothing'}`)
+      }
+    }
+    return {
+      navTop: n.top,
+      barTop: b.top,
+      barBottom: b.bottom,
+      groupBottom: group.getBoundingClientRect().bottom,
+      rowsUnderBar: rows.filter((r) => r.bottom > b.top + 1 && r.top < b.bottom - 1).length,
+      shownThrough,
+      barBackground: getComputedStyle(bar).backgroundColor,
+    }
+  })
+}
+
+/** Scroll the sidebar by *dy* and let it paint. */
+async function scrollRail(page: Page, dy: number): Promise<void> {
+  await page.evaluate((d) => { document.querySelector('nav[data-tour="rail"]')!.scrollTop += d }, dy)
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+}
+
+/** Whether a painted CSS colour is fully opaque: not transparent, and no alpha under 1, whether the
+ *  browser writes it `rgba(r, g, b, a)` or `<space>(… / a)`. */
+const opaque = (color: string) => color !== 'transparent'
+  && !/rgba\([^)]*,\s*(0|0?\.\d+)\)$/.test(color) && !/\/\s*(0|0?\.\d+)\)$/.test(color)
+
+test.describe('the top of the thread rail', () => {
+  test.use({ viewport: { width: 1280, height: 640 } })
+
+  test('stays at the top of the sidebar while the threads scroll under it, and nothing shows through', async ({ page }) => {
+    await stubThreads(page)
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+
+    const before = await readRail(page)
+    expect(before.barTop, 'the bar starts below the destinations above it').toBeGreaterThan(before.navTop)
+    // Scroll the threads well past where the bar sat: it stays at the sidebar's top.
+    await scrollRail(page, before.barTop - before.navTop + 300)
+    const scrolled = await readRail(page)
+    expect(Math.abs(scrolled.barTop - scrolled.navTop), 'the bar is pinned to the top of the sidebar').toBeLessThanOrEqual(1)
+    expect(scrolled.rowsUnderBar, 'a thread row is scrolled under the bar').toBeGreaterThan(0)
+    expect(scrolled.shownThrough, 'the bar is the topmost thing everywhere on it').toEqual([])
+    expect(opaque(scrolled.barBackground), `the bar paints opaque, not ${scrolled.barBackground}`).toBe(true)
+  })
+
+  test('scrolled past the threads, the bar leaves with them and never covers the rows below', async ({ page }) => {
+    // Short enough that, scrolled to the end, the threads end less than a bar's height below the
+    // sidebar's top: the bar is then pushed off with them, the case the check is for.
+    await page.setViewportSize({ width: 1280, height: 320 })
+    await stubThreads(page)
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+    await scrollRail(page, 100_000)
+    const past = await readRail(page)
+    expect(past.groupBottom, 'the threads end within a bar\'s height of the sidebar\'s top').toBeLessThan(past.navTop + (past.barBottom - past.barTop))
+    expect(Math.abs(past.barBottom - past.groupBottom), 'the bar sits at the threads\' end, inside them').toBeLessThanOrEqual(1)
+    const below = await page.evaluate(() => {
+      const group = document.querySelector('nav[data-tour="rail"] [role="group"]')!
+      const row = [...document.querySelectorAll<HTMLElement>('nav[data-tour="rail"] button')]
+        .find((b) => !group.contains(b) && b.getBoundingClientRect().top >= group.getBoundingClientRect().bottom)!
+      const r = row.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return { name: row.getAttribute('aria-label') ?? row.textContent, mine: !!hit && row.contains(hit) }
+    })
+    expect(below.mine, `the first row below the threads (${below.name}) is the topmost thing at its centre`).toBe(true)
+  })
+
+  test('focus moved up a row by the keyboard lands below the bar, never behind it', async ({ page }) => {
+    await stubThreads(page)
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+    const before = await readRail(page)
+    /** The thread row with the focus: its box, whether it is topmost at its centre, and the bar's. */
+    const focused = () => page.evaluate(() => {
+      const row = document.activeElement as HTMLElement
+      const bar = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New thread')!.parentElement!
+      const r = row.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return { key: row.dataset.threadKey ?? '', top: r.top, barBottom: bar.getBoundingClientRect().bottom, mine: !!hit && row.contains(hit) }
+    })
+    for (const keyName of ['ArrowUp', 'Shift+Tab']) {
+      // The same place each time: scrolled into the threads, the bar stuck, a row under it.
+      await page.evaluate(() => { document.querySelector('nav[data-tour="rail"]')!.scrollTop = 0 })
+      await scrollRail(page, before.barTop - before.navTop + 300)
+      // The first row whole below the bar, then up one: the row above it is under the bar.
+      const first = await page.evaluate(() => {
+        const bar = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New thread')!.parentElement!
+        const edge = bar.getBoundingClientRect().bottom
+        return [...document.querySelectorAll<HTMLElement>('[data-thread-key]')].find((r) => r.getBoundingClientRect().top >= edge)!.dataset.threadKey!
+      })
+      await page.locator(`[data-thread-key="${first}"]`).focus()
+      expect((await focused()).key, 'the row below the bar has the focus').toBe(first)
+      await page.keyboard.press(keyName)
+      const now = await focused()
+      expect(now.key, `${keyName} moved the focus to the thread above`).not.toBe(first)
+      expect(now.top, `after ${keyName} the focused row starts at or below the bar`).toBeGreaterThanOrEqual(now.barBottom - 1)
+      expect(now.mine, `after ${keyName} the focused row is the topmost thing at its centre`).toBe(true)
+    }
+  })
+
+  test('a thread the address opens above the bar is scrolled to just below it, whole', async ({ page }) => {
+    await stubThreads(page)
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+    const before = await readRail(page)
+    await scrollRail(page, before.barTop - before.navTop + 600)
+
+    await page.evaluate((k) => { location.hash = `#/chat/${k}` }, key(0))
+    const row = page.locator(`[data-thread-key="chat:${key(0)}"]`)
+    await expect(row).toHaveAttribute('aria-current', 'page')
+    // The route change runs a view transition, during which the page under its snapshot takes no
+    // hit at all: read the row once the transition has settled.
+    await page.evaluate(() => (document as unknown as { activeViewTransition?: { finished: Promise<unknown> } }).activeViewTransition?.finished.catch(() => {}))
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    const read = async () => {
+      const geo = await readRail(page)
+      const box = await row.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        return { top: r.top, bottom: r.bottom, mine: !!hit && el.contains(hit) }
+      })
+      return { ...box, barBottom: geo.barBottom }
+    }
+    // Polled, so a transition still painting its snapshot reads as not yet, never as a failure.
+    await expect.poll(async () => (await read()).mine, { message: 'the row is the topmost thing at its centre', timeout: 5_000 }).toBe(true)
+    const box = await read()
+    expect(box.top, `the row starts at or below the bar (row ${box.top}-${box.bottom}, bar to ${box.barBottom})`).toBeGreaterThanOrEqual(box.barBottom - 1)
+  })
+})

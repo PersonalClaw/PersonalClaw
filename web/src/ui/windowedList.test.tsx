@@ -266,6 +266,16 @@ describe('WindowedList — clause: anchor / deep-link to a row still scrolls to 
     expect(scroller.scrollTop).toBeGreaterThan(0)
   })
 
+  it('a row it scrolls up to lands clear of the top the scroller keeps clear (scroll-padding-top)', () => {
+    // A bar stuck over the scroller's top covers it, as the thread rail's New thread and search do:
+    // the browser leaves that room when it scrolls focus into view, and so does the list.
+    const { scroller, scrollTo, setAnchor } = mount({ n: 5000 })
+    scroller.style.scrollPaddingTop = '40px'
+    scrollTo(4000 * ROW_H)
+    setAnchor('r3990')
+    expect(scroller.scrollTop).toBe(3990 * ROW_H - 40)
+  })
+
   it('an anchor that is not in the list is a no-op, not a crash', () => {
     const { list, scroller } = mount({ n: 5000, anchorKey: 'nope' })
     expect(renderedKeys(list)[0]).toBe('r0')
