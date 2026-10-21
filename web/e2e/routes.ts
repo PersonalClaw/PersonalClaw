@@ -30,10 +30,6 @@ export const ROUTES: RouteEntry[] = [
   { route: 'terminal', label: 'Terminal' },
   // Capabilities opens its first tab, Agents; each tab's own address is in VIEW_ROUTES below.
   { route: 'capabilities', label: 'Capabilities', needsData: true },
-  // `learning` was missing while sitting in NAV — 18 nav ids vs 17 entries — so the one page
-  // this manifest exists to cover got NO axe scan and NO visual baseline. The gap was silent
-  // precisely because the manifest is the only thing that would have reported it.
-  { route: 'learning', label: 'Learning', needsData: true },
   { route: 'workflows', label: 'Workflows', needsData: true },
   { route: 'settings', label: 'Settings' },
 ]
@@ -82,13 +78,14 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
 // route stops resolving to the graph.
 //
 // A destination's tabs that keep addresses of their own are its surfaces too: Capabilities' Agents,
-// Tools, Skills, Prompts and Apps (#3817) are each at the route their page has always had, so each
-// keeps the visual baseline and the scans it had as a sidebar row, and so are Library's Knowledge,
-// Files and Artifacts (#3815). Their routes are not nav ids, and `routeManifestParity.test.ts` counts
-// this tier among the scanned ones.
+// Skills, Learning, Tools, Prompts and Apps (#3817) are each at the route their page has always
+// had, so each keeps the visual baseline and the scans it had as a sidebar row, and so are Library's
+// Knowledge, Files and Artifacts (#3815). Their routes are not nav ids, and
+// `routeManifestParity.test.ts` counts this tier among the scanned ones.
 export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'agents', id: 'agents', label: 'Capabilities › Agents', needsData: true },
   { route: 'skills', id: 'skills', label: 'Capabilities › Skills', needsData: true },
+  { route: 'learning', id: 'learning', label: 'Capabilities › Learning', needsData: true },
   { route: 'tools', id: 'tools', label: 'Capabilities › Tools', needsData: true },
   { route: 'prompts', id: 'prompts', label: 'Capabilities › Prompts', needsData: true },
   { route: 'apps', id: 'apps', label: 'Capabilities › Apps', needsData: true },

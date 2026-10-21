@@ -1,9 +1,10 @@
 /** Capabilities is one destination, and each of its tabs is its own address (#3817).
  *
- *  Agents, Skills, Tools, Prompts and Apps were five sidebar rows, and the Store a view of the last
- *  one. They are the six tabs of Capabilities, and each tab keeps the address its page always had,
- *  so a bookmark, a reload, Back and a copied link open the tab they opened before: no address is
- *  retired, and none goes through the redirect table.
+ *  Agents, Skills, Learning, Tools, Prompts and Apps were six sidebar rows, and the Store a view of
+ *  the last one. They are the seven tabs of Capabilities, Learning beside the Skills whose proposals
+ *  it links to, and each tab keeps the address its page always had, so a bookmark, a reload, Back
+ *  and a copied link open the tab they opened before: no address is retired, and none goes through
+ *  the redirect table.
  *
  *  The real shell is booted as `main.tsx` boots it, on a set-up home whose reads are still on their
  *  way (what a page shows while it waits is that page), at each address, and asserted on what a
@@ -82,6 +83,7 @@ afterEach(() => {
 const TABS = [
   ['Agents', 'agents', 'Agents'],
   ['Skills', 'skills', 'Skills'],
+  ['Learning', 'learning', 'Learning'],
   ['Tools', 'tools', 'Tools'],
   ['Prompts', 'prompts', 'Prompts'],
   ['Apps', 'apps', 'Apps'],
@@ -160,6 +162,12 @@ describe('each tab of Capabilities is its own address', () => {
     expect(location.hash).toBe(`#/${address}`)
   })
 
+  it('the strip shows the tabs in its order, Learning beside Skills', async () => {
+    await open('learning')
+    expect(strip(), 'no Capabilities strip').not.toBeNull()
+    expect(within(strip()!).getAllByRole('radio').map((r) => r.textContent)).toEqual(TABS.map(([tab]) => tab))
+  })
+
   it('#/capabilities, the sidebar row\'s own address, opens the first tab, Agents', async () => {
     await open('capabilities')
     expect(checkedTab()).toBe('Agents')
@@ -208,6 +216,23 @@ describe('each tab of Capabilities is its own address', () => {
   })
 })
 
+describe('Learning sits beside the skill proposals', () => {
+  it('its link to the waiting skill proposals opens them on the Skills tab, under the same strip', async () => {
+    answers.learningProposals = {
+      rows: [], total: 0, by_kind: {}, by_tier: {}, flagged: 0, unrenderable: [], bulk_acceptable: 0, skill_proposals_pending: 2,
+    }
+    await open('learning')
+    const before = strip()
+    expect(checkedTab()).toBe('Learning')
+    fireEvent.click(await screen.findByRole('button', { name: 'Review in Skill proposals' }))
+    await settle()
+    expect(location.hash).toBe('#/skills?mode=proposals')
+    expect(checkedTab()).toBe('Skills')
+    expect(heading()).toBe('Skill proposals')
+    expect(strip(), 'the strip stays where it is').toBe(before)
+  })
+})
+
 describe('the Store is a tab of its own', () => {
   it('the Apps tab toggles Native and Library only, and the Store tab draws no toggle of its own', async () => {
     await open('apps')
@@ -220,13 +245,13 @@ describe('the Store is a tab of its own', () => {
 })
 
 describe('the sidebar holds one Capabilities row', () => {
-  it('in place of Agents, Tools, Skills, Prompts and Apps', async () => {
+  it('in place of Agents, Tools, Skills, Learning, Prompts and Apps', async () => {
     await open('dashboard')
     const names = railRows()
     expect(names).toContain('Capabilities')
-    for (const gone of ['Agents', 'Tools', 'Skills', 'Prompts', 'Apps']) expect(names).not.toContain(gone)
-    // Learning and Workflows keep their rows until their own moves.
-    expect(names).toEqual(expect.arrayContaining(['Learning', 'Workflows', 'Settings']))
+    for (const gone of ['Agents', 'Tools', 'Skills', 'Learning', 'Prompts', 'Apps']) expect(names).not.toContain(gone)
+    // Workflows keeps its row until its own move (#3816).
+    expect(names).toEqual(expect.arrayContaining(['Workflows', 'Settings']))
   })
 
   it('and an app UI the owner pinned stays a row of its own, below the destinations', async () => {
@@ -272,7 +297,6 @@ const DESTINATIONS = [
   ['Triggers', 'triggers'],
   ['Terminal', 'terminal'],
   ['Capabilities', 'capabilities'],
-  ['Learning', 'learning'],
   ['Workflows', 'workflows'],
   ['Settings', 'settings'],
 ] as const
@@ -287,15 +311,15 @@ describe('no sidebar header repeats a row under it', () => {
     }
   })
 
-  it('Capabilities, Learning and Workflows keep their place and their order, with no header of their own', async () => {
+  it('Capabilities and Workflows keep their place and their order, with no header of their own', async () => {
     await open('dashboard')
     const labels = DESTINATIONS.map(([label]) => label) as string[]
     expect(railRows().filter((r) => labels.includes(r))).toEqual(labels)
     const headers = railGroups().map((g) => g.header)
-    for (const name of ['Capabilities', 'Learning', 'Workflows']) expect(headers).not.toContain(name)
+    for (const name of ['Capabilities', 'Workflows']) expect(headers).not.toContain(name)
   })
 
-  it.each(DESTINATIONS.filter(([label]) => ['Capabilities', 'Learning', 'Workflows'].includes(label)))(
+  it.each(DESTINATIONS.filter(([label]) => ['Capabilities', 'Workflows'].includes(label)))(
     'the %s row still opens #/%s', async (label, address) => {
       await open('dashboard')
       fireEvent.click(within(rail()).getByRole('button', { name: label }))
@@ -311,6 +335,7 @@ describe('the palette and the catalogue cover every tab', () => {
     ['go:capabilities', 'Capabilities', 'capabilities'],
     ['go:agents', 'Agents', 'agents'],
     ['go:skills', 'Skills', 'skills'],
+    ['go:learning', 'Learning', 'learning'],
     ['go:tools', 'Tools', 'tools'],
     ['go:prompts', 'Prompts', 'prompts'],
     ['go:apps', 'Apps', 'apps'],

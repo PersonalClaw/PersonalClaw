@@ -182,7 +182,7 @@ describe('the disclosure store', () => {
   })
 
   it('undisclosedCount counts only what starter holds back', () => {
-    const ids = [...STARTER_NAV_IDS, 'triggers', 'learning', 'app/weather']
+    const ids = [...STARTER_NAV_IDS, 'triggers', 'workflows', 'app/weather']
     expect(undisclosedCount(ids, [])).toBe(2)
     expect(undisclosedCount(ids, ['triggers'])).toBe(1)
   })
@@ -201,7 +201,7 @@ describe('the rail a fresh install sees', () => {
     })
     for (const label of ['Home', 'Chat', 'Inbox', 'Capabilities', 'Settings']) expect(names).toContain(label)
     // The vacuity guard for every assertion below: something really is hidden.
-    for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
+    for (const label of ['Triggers', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
   })
 
   it('drops the section headers, which have nothing left to group', async () => {
@@ -242,8 +242,7 @@ describe('the rail a fresh install sees', () => {
     // which is the moment to classify it.
     localStorage.setItem('nav-disclosure', JSON.stringify({
       mode: 'starter',
-      pinned: ['projects', 'library', 'tasks', 'triggers', 'terminal',
-        'learning', 'workflows'],
+      pinned: ['projects', 'library', 'tasks', 'triggers', 'terminal', 'workflows'],
     }))
     renderApp()
     await waitFor(() => expect(railLinks()).toContain('Workflows'))
@@ -342,7 +341,7 @@ describe('expert mode', () => {
 
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows', 'Projects', 'Library']) {
+      for (const label of ['Triggers', 'Terminal', 'Workflows', 'Projects', 'Library']) {
         expect(names).toContain(label)
       }
     })
@@ -375,7 +374,7 @@ describe('expert mode', () => {
     renderApp()
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Home', 'Chat', 'Learning', 'Triggers', 'Terminal', 'Workflows', 'Settings']) {
+      for (const label of ['Home', 'Chat', 'Triggers', 'Terminal', 'Workflows', 'Settings']) {
         expect(names).toContain(label)
       }
     })
