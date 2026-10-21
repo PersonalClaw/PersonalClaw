@@ -21,7 +21,12 @@ const RUN_HOME = join(tmpdir(), 'personalclaw-e2e-Ab3dEf')
 const GATEWAY_HOME = join(tmpdir(), 'user-home-for-personalclaw-e2e-Ab3dEf')
 
 describe("the matrix's accessibility tree folds the host's paths", () => {
-  afterEach(() => { vi.unstubAllEnvs() })
+  /** Scratch folders a case made under the OS temp folder, removed after each case. */
+  const made: string[] = []
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
 
   it('folds the checkout to <repo>', () => {
     const line = `  - group: PersonalClaw's server starts ${REPO}/.venv/bin/personalclaw mcp-core`
@@ -58,17 +63,14 @@ describe("the matrix's accessibility tree folds the host's paths", () => {
     // in every tree that prints a folder of the home, a baseline no Linux run reads back. Made here
     // with a link whose target ends in the link's own path, so the case runs on any machine.
     const base = realpathSync(mkdtempSync(join(tmpdir(), 'fold-order-')))
-    try {
-      const real = join(base, 'outer', base.slice(1), 'home')
-      mkdirSync(real, { recursive: true })
-      const given = join(base, 'home')
-      symlinkSync(real, given)
-      vi.stubEnv('PW_E2E_HOME', given)
-      expect(normalizeTree(`  - text: ${real}/workspace`)).toBe('  - text: <e2e home>/workspace')
-      expect(normalizeTree(`  - text: ${given}/workspace`)).toBe('  - text: <e2e home>/workspace')
-    } finally {
-      rmSync(base, { recursive: true, force: true })
-    }
+    made.push(base)
+    const real = join(base, 'outer', base.slice(1), 'home')
+    mkdirSync(real, { recursive: true })
+    const given = join(base, 'home')
+    symlinkSync(real, given)
+    vi.stubEnv('PW_E2E_HOME', given)
+    expect(normalizeTree(`  - text: ${real}/workspace`)).toBe('  - text: <e2e home>/workspace')
+    expect(normalizeTree(`  - text: ${given}/workspace`)).toBe('  - text: <e2e home>/workspace')
   })
 
   it('leaves a path of no one in particular alone', () => {
