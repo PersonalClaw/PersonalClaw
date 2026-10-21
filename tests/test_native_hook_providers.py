@@ -94,26 +94,82 @@ def test_bash_ignores_a_junk_config_timeout_rather_than_raising():
     assert res.stdout == "hi"
 
 
-def test_the_store_fire_path_gives_a_command_the_legacy_mode_default():
+class _TimedProvider:
+    """An action provider that records the timeout each run is handed. Its own default is the
+    providers' 30s signature default, so a run handed none reads as 30."""
+
+    def __init__(self) -> None:
+        self.timeouts: list[int] = []
+
+    async def execute(self, config, ctx, timeout=30):
+        self.timeouts.append(timeout)
+        return SimpleNamespace(success=True)
+
+
+def _floor_in_every_name(monkeypatch, floors: dict[str, int], asked: list[str]) -> None:
+    """Put a stand-in for `firepath.action_timeout` under every product module name that holds
+    it: it records the provider it is asked about and answers from *floors*."""
+    from every_name import put_in_every_name
+
+    from personalclaw.triggers.firepath import action_timeout
+
+    def _stand_in(provider_name: str) -> int:
+        asked.append(provider_name)
+        return floors[provider_name]
+
+    put_in_every_name(monkeypatch, action_timeout, _stand_in)
+
+
+def test_the_store_fire_path_gives_a_command_the_legacy_mode_default(
+    tmp_path, monkeypatch, subtests
+):
     """🔴 The other half of the same defect. `_fire_store_trigger` called `execute(config, ctx)`
     with no `timeout=`, so every store-backed bash fire took the 30s SIGNATURE default where the
     legacy dispatcher (gateway.py's `zt_timeout`/mode-default block) allowed a command 300s.
 
-    Source-level because the alternative is booting a gateway to time a subprocess; the value is the
-    contract, and the two providers' own precedence is asserted directly above. The floor itself is
-    `firepath.action_timeout`, shared with the Run button, which passed none either.
+    The floor is `firepath.action_timeout`, shared with the Run button, which passed none either;
+    the two providers' own precedence is asserted directly above. Each row fires a granted
+    trigger through the gateway's real dispatch, with the action's provider a recorder. The run
+    is handed the mode default for its action, and with a stand-in floor under every name that
+    holds the shared one, it is handed what the stand-in answers for that action, once.
     """
-    import pathlib
+    from table_rows import row
 
-    import personalclaw.gateway as G
+    import personalclaw.action_providers as AP
+    from personalclaw.gateway import GatewayOrchestrator
     from personalclaw.triggers.firepath import action_timeout
 
     assert action_timeout("bash") == 300
     assert action_timeout("notify") == 30
-    src = pathlib.Path(G.__file__).read_text()
-    assert "timeout = action_timeout(provider_name)" in src
-    assert "await provider.execute(config, ctx, timeout=timeout)" in src
-    assert "await provider.execute(config, ctx)\n" not in src
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    command = ("bash", {"command": "echo hi"})
+    notice = ("notify", {"title_template": "done"})
+    hook = ("webhook", {"url": "https://example.invalid/hook"})
+    rows = [
+        ("a command gets a command's 300s", command, None, 300),
+        ("a notice gets 30s", notice, None, 30),
+        ("a webhook gets 30s", hook, None, 30),
+        ("a command gets the shared floor's answer", command, {"bash": 1234}, 1234),
+        ("a notice gets the shared floor's answer", notice, {"notify": 7}, 7),
+    ]
+    for name, (provider_name, config), floors, handed in rows:
+        with row(subtests, name=name), monkeypatch.context() as m:
+            asked: list[str] = []
+            if floors is not None:
+                _floor_in_every_name(m, floors, asked)
+            provider = _TimedProvider()
+            m.setattr(AP, "get_action_provider", lambda _name: provider)
+            trigger = SimpleNamespace(
+                id=f"clock:{provider_name}",
+                kind="clock",
+                workflow={"inline": {"provider": provider_name, "config": dict(config)}},
+                capabilities={"providers": [provider_name]},
+            )
+            fire = object.__new__(GatewayOrchestrator)._fire_store_trigger
+            asyncio.run(fire(trigger, {"trigger_id": trigger.id, "kind": "clock"}))
+            assert provider.timeouts == [handed], f"{name}: {provider.timeouts}"
+            if floors is not None:
+                assert asked == [provider_name], f"{name}: the floor was asked {asked}"
 
 
 # ── renderer ──────────────────────────────────────────────────────────────
