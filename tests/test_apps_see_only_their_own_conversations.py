@@ -558,6 +558,8 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/reply-styles"),
     ("GET", "/api/chat/screen-frame"),
     ("GET", "/api/chat/image-input"),
+    # Where your next turn may act: the sandbox and the network of your chats.
+    ("GET", "/api/chat/boundary"),
     ("GET", "/api/sessions/context"),
     ("GET", "/api/sessions/health"),
     # What your chats said, searched for your agent (`chat_search`), which calls it as itself.

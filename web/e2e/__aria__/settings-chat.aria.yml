@@ -4,23 +4,19 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
+  - button "Capabilities"
   - button "Learning"
-  - button "Prompts"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +27,6 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
   - button "Back to Settings"
   - button "Settings"
   - text: Chat
@@ -134,4 +129,6 @@
   - switch "Agent Rooms"
   - heading "Chat starters" [level=#]
   - paragraph: Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.
-  - paragraph: No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.
+  - paragraph: No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header’s … menu.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

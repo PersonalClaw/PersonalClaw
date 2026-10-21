@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **934 registrations** over **758 distinct paths** — 927 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **935 registrations** over **759 distinct paths** — 928 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 84 | 71 |
+| `/api/chat` | 85 | 72 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 927 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 928 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -295,6 +295,7 @@ The 927 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/channels/{name}/owner/pairing` | mint the owner's code and return it once. |
 | `POST` | `/api/channels/{name}/test` | active probe (e.g. Slack auth.test). |
 | `POST` | `/api/chat` | send message to a session, stream response via SSE. |
+| `GET` | `/api/chat/boundary` | the sandbox and the reach of a chat's next turn. |
 | `GET` | `/api/chat/folders` | list all project folders. |
 | `POST` | `/api/chat/folders` | create a project folder. |
 | `DELETE` | `/api/chat/folders/{id}` | delete a folder, ungroup its sessions. |

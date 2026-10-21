@@ -4,23 +4,19 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
+  - button "Capabilities"
   - button "Learning"
-  - button "Prompts"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,56 +27,58 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
-  - 'button "Task mode: Agent"': Agent
-  - 'button "Permission mode: Normal"': Normal
-  - button "New chat"
   - button "Chat history"
+  - button "More actions"
   - img "Nothing running"
   - heading "Good <time of day>, Keyur" [level=#]
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
   - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
   - button "Optimize prompt (⌘↵)" [disabled]
   - button "Voice input"
   - button "Hands-free voice"
   - button "Send message" [disabled]
   - 'button "Project: No project"': No project
-  - radiogroup "Memory mode":
-    - radio "Persistent" [checked]
-    - radio "Temporary"
-    - radio "Incognito"
   - button "Show health-check status"
   - button "Break a goal into tasks"
   - button "Save a note to my knowledge base"
   - button "Run a command and explain the output"
   - button "What can you help me with?"
   - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
 - searchbox "Search pages, actions and content"
 - text: esc
 - listbox "Commands and results":
   - option "Home Go to" [selected]
   - option "Chat Go to"
   - option "Projects Go to"
-  - option "Knowledge Go to"
+  - option "Library Go to"
   - option "Tasks Go to"
   - option "Inbox Go to"
   - option "Triggers Go to"
-  - option "Files Go to"
-  - option "Artifacts Go to"
   - option "Terminal Go to"
-  - option "Agents Go to"
-  - option "Tools Go to"
-  - option "Skills Go to"
+  - option "Capabilities Go to"
   - option "Learning Go to"
-  - option "Prompts Go to"
   - option "Workflows Go to"
-  - option "Apps Go to"
   - option "Settings Go to"
   - option "Mission Control Go to"
   - option "Notifications Go to"
   - option "Discover Go to"
+  - option "Agents Go to"
+  - option "Skills Go to"
+  - option "Tools Go to"
+  - option "Prompts Go to"
+  - option "Apps Go to"
+  - option "Store Go to"
+  - option "Add a tool server Action"
+  - option "Knowledge Go to"
+  - option "Memory Go to"
+  - option "Files Go to"
+  - option "Artifacts Go to"
   - option "Start a loop Action"
   - option "Open Settings Action"
   - option "Command palette Not available here Action · ⌘K or ⌘⇧P" [disabled]
@@ -88,6 +86,7 @@
   - 'option "Show or hide the terminal drawer Action · ⌘J or ⌘`"'
   - 'option "Focus mode: hide the sidebar and the side pane Action · ⌘\\"'
   - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · ⌘⇧." [disabled]'
+  - option "Show or hide the chat's working folder Open a chat to see its working folder Action · ⌘⇧E" [disabled]
   - option "Go to the next chat that needs you Action · ⌘⌥A"
   - option "New chat Action · ⌘N"
   - option "Open chat # in the list Action · ⌘#"
@@ -102,13 +101,3 @@
   - option "Approve the focused request Move focus to an approval, then press the key there Action · ⌘Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
 - text: navigate select ⌘K or ⌘⇧P toggle
-- menu "Task mode":
-  - menuitemradio "Agent" [checked]
-  - menuitemradio "Ask"
-  - menuitemradio "Plan"
-  - menuitemradio "Build"
-- menu "Permission mode":
-  - menuitemradio "Normal" [checked]
-  - menuitemradio "Trust reads"
-  - menuitemradio "Trust"
-  - menuitemradio "YOLO"

@@ -117,8 +117,11 @@ describe('the declaration-implies-implementation census', () => {
     expect(missing, `these declare a keyboard-navigable role but implement no cursor:\n${missing.join('\n')}`).toEqual([])
   })
 
-  it('the five adopters are the ones we expect', () => {
+  it('the adopters are the ones we expect', () => {
     expect(focusMoving.sort()).toEqual([
+      // The chat's task mode and Execution Boundary control: pick-one menus where moving must never
+      // choose, since choosing Trust or YOLO answers the approvals the chat waits on.
+      'pages/chat/composer/ExecutionBoundary.tsx',
       'pages/files/browse/FileTree.tsx',
       'ui/HeaderActions.tsx',
       'ui/ProjectPicker.tsx',
@@ -127,7 +130,7 @@ describe('the declaration-implies-implementation census', () => {
     ])
   })
 
-  it('all five route arrows through the one reducer, not five spellings', () => {
+  it('every adopter routes arrows through the one reducer, not a spelling of its own', () => {
     for (const rel of focusMoving) {
       expect(codeOf(rel), `${rel} should call menuCursorKeydown`).toMatch(/menuCursorKeydown\(/)
     }
@@ -154,7 +157,7 @@ describe('the declaration-implies-implementation census', () => {
   it('the pick-one popups open on their SELECTED option, not the top', () => {
     // APG: focus starts on the checked/selected item so the user hears what is set. The action
     // menus (ContextMenu, FileTree) correctly keep the default 0 — nothing there is "current".
-    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx']) {
+    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx', 'pages/chat/composer/ExecutionBoundary.tsx']) {
       expect(read(rel), `${rel} should seed the cursor from the value`).toMatch(/initialIndex:/)
     }
     for (const rel of ['ui/motion/ContextMenu.tsx', 'pages/files/browse/FileTree.tsx']) {
@@ -185,7 +188,7 @@ describe('the declaration-implies-implementation census', () => {
 
   it('only the hover-opening popup declines autoFocus', () => {
     expect(read('ui/HeaderActions.tsx'), 'the mode pill opens on mouseenter').toMatch(/autoFocus: false/)
-    const others = ['ui/ProjectPicker.tsx', 'ui/Segmented.tsx', 'ui/motion/ContextMenu.tsx', 'pages/files/browse/FileTree.tsx']
+    const others = ['ui/ProjectPicker.tsx', 'ui/Segmented.tsx', 'ui/motion/ContextMenu.tsx', 'pages/files/browse/FileTree.tsx', 'pages/chat/composer/ExecutionBoundary.tsx']
     for (const rel of others) expect(read(rel), `${rel} opens by intent — focus should follow`).not.toMatch(/autoFocus: false/)
   })
 })

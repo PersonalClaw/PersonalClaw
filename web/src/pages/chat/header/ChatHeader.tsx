@@ -1,10 +1,10 @@
-import { Edit3, History, MessageSquare, PanelRight, Pencil, Sparkles, Link2, ArrowLeft, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, NotebookPen, FolderCog, ListTree, Send } from 'lucide-react'
+import { Edit3, History, PanelRight, Pencil, Sparkles, Link2, ArrowLeft, ListTree, Send, Share2 } from 'lucide-react'
 import { IconButton } from '../../../ui/IconButton'
 import { TopBar } from '../../../ui/TopBar'
-import { HeaderActions, HeaderControl, HeaderModePill } from '../../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderMenu } from '../../../ui/HeaderActions'
+import { bindingLabel } from '../../../app/keymap'
 import { chatContextChips } from '../ChatContextLine'
 import { NeedsModelNote } from '../NoModelSetupState'
-import { type ApprovalMode, type TaskMode } from '../../../lib/api'
 import { sessionTitle } from '../../../lib/sessionTitle'
 import type { ChatStream } from '../useChatStream'
 import type { useChatComposer } from '../composer/useChatComposer'
@@ -16,37 +16,13 @@ import type { ChatHeaderState } from './useChatHeader'
 //
 // The bar above an open chat: the way back, the title and its rename and regenerate, the context
 // line under it (what the chat is about and what it is waiting on), and the cluster on the right —
-// the task and permission pills, the chat's actions, New chat, and the openers of the Session Map,
-// the Activity rail and, on a new chat, the history panel. `useChatHeader` keeps what it does.
-
-// Options for the chat-header segmented controls. Permission mirrors the
-// composer's approval modes; memory mirrors MEMORY_MODES — both as the canonical
-// Segmented slider rather than a menu.
-// `title` carries the same explanatory hint the composer's ApprovalPill shows,
-// so hovering a header tab (now the primary approval control) tells the user
-// what e.g. "YOLO" or "Plan" actually does rather than just its name.
-const APPROVAL_SLIDER = [
-  { key: 'normal', label: 'Normal', icon: Shield, title: 'Normal — a tool that only reads runs; the rest ask when they need approval' },
-  { key: 'trust_reads', label: 'Trust reads', icon: Eye, title: 'Trust reads — read-only shell commands run without asking too' },
-  { key: 'trust', label: 'Trust', icon: ShieldCheck, title: 'Trust — auto-approve every tool in this chat' },
-  { key: 'yolo', label: 'YOLO', icon: Zap, title: 'YOLO — auto-approve everywhere; auto-expires, re-enable to extend' },
-]
-
-// Task mode — ORTHOGONAL to approval (which gates *whether* a tool auto-approves).
-// Task mode gates *which* tools run + how the agent frames the work, layered on the
-// active agent. Plan moved here from the approval slider (it was never an approval
-// posture — it suppresses execution). Applies live + mid-chat like approval.
-const TASK_MODE_SLIDER = [
-  { key: 'agent', label: 'Agent', icon: Bot, title: 'Agent — full execution (default)' },
-  { key: 'ask', label: 'Ask', icon: MessageSquare, title: 'Ask — read-only Q&A; mutating tools are blocked' },
-  { key: 'plan', label: 'Plan', icon: ClipboardList, title: 'Plan — plan the work without executing any tool' },
-  { key: 'build', label: 'Build', icon: Hammer, title: 'Build — scoped to producing an artifact / widget / skill' },
-]
+// Share, the openers of the Session Map and the Activity rail (on a new chat, the history panel),
+// and the `…` holding Save as starter and New chat. `useChatHeader` keeps what it does.
 
 export function ChatHeader({ header, stream, composer, panes, transcript, started, navigate }: {
   header: ChatHeaderState
   stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'sessionCost' | 'branchedFrom' | 'startedBy' | 'investigateOrigin'>
-  composer: Pick<ReturnType<typeof useChatComposer>, 'selection' | 'applySelection' | 'memoryMode' | 'screenShare' | 'projectId'>
+  composer: Pick<ReturnType<typeof useChatComposer>, 'memoryMode' | 'screenShare' | 'projectId'>
   panes: Pick<ChatPanesState, 'activityOpen' | 'setActivityOpen' | 'historyOpen' | 'setHistoryOpen'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'setMapOpen'>
   started: boolean
@@ -54,10 +30,10 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
 }) {
   const {
     projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
-    saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff, briefAgent, setWorkspaceDir,
+    saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff,
   } = header
   const { sessionRef, title, titleNeed, sessionCost, branchedFrom, startedBy, investigateOrigin } = stream
-  const { selection, applySelection, memoryMode, screenShare, projectId } = composer
+  const { memoryMode, screenShare, projectId } = composer
   const { activityOpen, setActivityOpen, historyOpen, setHistoryOpen } = panes
   const { mapOpen, setMapOpen } = transcript
   // The header's context line: what this conversation IS, under its title (`ChatContextLine`).
@@ -134,45 +110,26 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
     )}
     below={headerLine.length > 0 ? headerLine : undefined}
     right={
-      // Two live mode selectors (Task, Permission) + New chat / Regen / Activity.
-      // Task + Permission are hover-expand mode pills (WidthPill idiom): each shows
-      // ONLY the current selection at rest and expands to the full option list on
-      // hover — so at rest the header spends width on ONE pill per axis, not all N
-      // options. They live in the 4-tier cluster (primary, never-overflow) so they
-      // collapse to icon-only when tight and always stay visible.
+      // The thread's own actions only (`docs/design/information-architecture.md`, "Inside a
+      // thread"): Share, the Session map and Activity, and the `…` holding Save as starter and New
+      // chat. What decides the next turn sits beside the composer: the task mode and the Execution
+      // Boundary control, which holds the permission mode and the working folder. Brief the agent
+      // is a row of the composer's `+` menu.
       //
-      // Header ordering tenet: the side-panel opener is the RIGHTMOST control. On
-      // the new-chat page that's "Chat history"; once started it's "Activity".
+      // Header ordering tenet: the side-panel opener is the RIGHTMOST control. On the new-chat page
+      // that's "Chat history"; once started it's "Activity".
       <HeaderActions className="max-w-[70vw]">
-        <HeaderModePill ariaLabel="Task mode" value={selection.taskMode ?? 'agent'}
-          options={TASK_MODE_SLIDER} onChange={(v) => applySelection({ taskMode: v as TaskMode })} />
-        {/* In an app's conversation the app's grant decides every turn and your choice here
-            would be overwritten by it, so the pill shows that grant and is not yours to move
-            (the composer says why). */}
-        <HeaderModePill ariaLabel="Permission mode" value={selection.approval ?? 'normal'}
-          disabled={!!startedBy}
-          disabledReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
-          options={APPROVAL_SLIDER} onChange={(v) => applySelection({ approval: v as ApprovalMode })} />
-        {/* A control like its neighbours, so it takes the cluster's ladder — icon when the row
-            is tight, a row of the `…` menu when tighter. Beside the title it was 40px nothing
-            else could use, and past the viewport's edge at 1024px and below. */}
+        {/* The chat's link and the channels it can continue on, in one menu. A control like its
+            neighbours, so it takes the cluster's ladder, and its rows join the `…` when tighter. */}
         {started && sessionRef.current && (
-          <HeaderControl icon={Link2} label="Copy chat link" priority="low" onClick={copyLink} />
+          <HeaderMenu icon={Share2} label="Share" items={[
+            { label: 'Copy chat link', icon: Link2, onSelect: () => void copyLink() },
+            ...handoffChannels.map((c) => ({
+              label: `Continue on ${c.display_name}`, icon: Send,
+              hint: c.owner?.id ? undefined : 'No owner paired yet', onSelect: () => void handOff(c),
+            })),
+          ]} />
         )}
-        {started && sessionRef.current && handoffChannels.map((c) => (
-          <HeaderControl key={`handoff-${c.name}`} icon={Send} label={`Continue on ${c.display_name}`} priority="low"
-            hint={c.owner?.id ? undefined : 'No owner paired yet'} onClick={() => void handOff(c)} />
-        ))}
-        {started && sessionRef.current && (
-          <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
-        )}
-        {started && sessionRef.current && (
-          <HeaderControl icon={FolderCog} label="Working directory" priority="low" onClick={setWorkspaceDir} />
-        )}
-        {started && sessionRef.current && (
-          <HeaderControl icon={Sparkles} label="Save as starter" priority="low" onClick={saveAsTemplate} />
-        )}
-        <HeaderControl icon={Edit3} label="New chat" variant="primary" priority="primary" onClick={() => navigate('chat/new')} />
         {/* The Session Map's ONE control, on every viewport (the "one named control"):
             it shows/hides the gutter rail on a pointer device and opens/closes the drawer on
             the mobile form, so there is never a second name for "show me the map".
@@ -194,6 +151,11 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
         {!started && (
           <HeaderControl icon={History} label="Chat history" active={historyOpen} ariaExpanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)} />
         )}
+        {/* The overflow: kept one click away, never a slot on the row. */}
+        {started && sessionRef.current && (
+          <HeaderControl icon={Sparkles} label="Save as starter" inOverflow onClick={saveAsTemplate} />
+        )}
+        <HeaderControl icon={Edit3} label="New chat" hint={bindingLabel('new-chat')} inOverflow onClick={() => navigate('chat/new')} />
       </HeaderActions>} />
   )
 }

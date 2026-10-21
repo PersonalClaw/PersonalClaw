@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
 // ── The chat header names the app that started the chat, where you look ──────────────────────────
@@ -170,10 +170,12 @@ describe('the title row holds only what names the chat', () => {
     }
   })
 
-  it('makes "Copy chat link" a control of the cluster', async () => {
+  it('makes "Copy chat link" a row of the cluster\'s Share menu', async () => {
     open()
     const banner = await header()
-    const copy = within(banner).getByRole('button', { name: 'Copy chat link' })
-    expect(row(banner).contains(copy), 'copy-link is still wedged beside the title').toBe(false)
+    const share = within(banner).getByRole('button', { name: 'Share' })
+    expect(row(banner).contains(share), 'sharing is still wedged beside the title').toBe(false)
+    fireEvent.click(share)
+    expect(await screen.findByRole('menuitem', { name: 'Copy chat link' })).toBeTruthy()
   })
 })

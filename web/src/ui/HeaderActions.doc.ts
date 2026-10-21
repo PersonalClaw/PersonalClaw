@@ -1,6 +1,6 @@
 import type { UiDoc } from './uiDoc'
 
-// HeaderActions.tsx exports four related components, so its doc default-exports an
+// HeaderActions.tsx exports five related components, so its doc default-exports an
 // array — one UiDoc per exported component. The ORDERING TENET (once a source
 // comment) becomes machine-readable bestPractices here.
 const docs: UiDoc[] = [
@@ -10,14 +10,14 @@ const docs: UiDoc[] = [
     description:
       'The one responsive header-controls cluster. Its children degrade together on a single 4-tier ladder (FULL: icon+label → TEXT: label only → ICON: icon only → OVERFLOW: a … menu) as horizontal space shrinks, measured via offscreen probes and a ResizeObserver. In OVERFLOW it keeps the highest-priority controls visible and pushes the rest into an auto-built … menu — no page hand-rolls a header overflow menu. It leaves the title slot what that slot cannot shed (every shrink-0 control and gap beside the title) plus a floor for the title itself, and when the band between the shell corners cannot hold that beside the narrowest the cluster can get (its never-overflow controls plus the …), it asks its TopBar to lay the row out below the corners across the full width.',
     props: [
-      { name: 'children', description: 'The header controls (HeaderControl / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
+      { name: 'children', description: 'The header controls (HeaderControl / HeaderMenu / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
       { name: 'className', description: 'Extra classes on the cluster container (tokens only).' },
     ],
     bestPractices: [
       { guidance: true, description: 'ORDERING TENET: a control that opens a side panel (SidePanel/detail/inspector rail) is the RIGHTMOST child, always.' },
       { guidance: true, description: 'ORDERING TENET: a destructive control (Delete) sits LEFTMOST of the right-edge group. Canonical shape: [Delete] … [other controls] … [open-side-panel].' },
       { guidance: true, description: "Keep the Delete and panel-opener controls priority='low' even though their positions are fixed — priority governs OVERFLOW shedding independently of visual order." },
-      { guidance: false, description: 'Do not build a header overflow menu by hand — it falls out of the same child list automatically in the OVERFLOW tier.' },
+      { guidance: false, description: 'Do not build a header overflow menu by hand — it falls out of the same child list automatically in the OVERFLOW tier, and a HeaderControl marked inOverflow is a row of it at every tier.' },
       { guidance: false, description: 'Do not put chips or other facts about the page beside the title: they cannot shrink, so they either overlap the cluster or starve the title. Put them in TopBar `below`, which wraps; put an action (copy link) in the cluster as a HeaderControl, which sheds into the … menu.' },
     ],
     anatomy: ['outer measured container', 'offscreen aria-hidden probe rows (one per tier)', 'visible control row', 'auto … overflow menu (Popover)'],
@@ -41,12 +41,29 @@ const docs: UiDoc[] = [
       { name: 'priority', description: "OVERFLOW shedding order: 'primary' stays visible longest, 'low' sheds first." },
       { name: 'hint', description: 'Secondary hint text shown on the overflow menu row.' },
       { name: 'className', description: 'Extra classes (tokens only).' },
+      { name: 'inOverflow', description: 'Always a row of the … menu, at every tier, never a button on the row: an action kept one click away without spending a slot (a thread\'s Save as starter). Its presence keeps the … on the row.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Always pass an icon if the control should survive the ICON tier — a label-only control can only reach TEXT before overflowing.' },
+      { guidance: true, description: 'A header holds at most three always-visible actions (web/REDESIGN.md §3 rule 4); mark the rest inOverflow.' },
       { guidance: false, description: 'Do not place a HeaderControl outside a HeaderActions cluster — it relies on the cluster context for its tier.' },
     ],
     anatomy: ['tier-aware button (icon / label)', 'overflow menu-row descriptor'],
+  },
+  {
+    name: 'HeaderMenu',
+    keywords: ['header', 'menu', 'share', 'actions', 'dropdown'],
+    description: 'A header control that opens a short menu of actions (a thread\'s Share: Copy chat link and its hand-offs). It takes the cluster\'s ladder like HeaderControl, and when the row sheds it into the … its rows go there under their own names, since a menu row cannot open a second menu. The menu is a role=menu of menuitems with the shared cursor: it opens on its first row, the arrows move, Enter picks, Escape or Tab closes it with focus back on the control.',
+    props: [
+      { name: 'icon', description: 'Lucide icon, shown beside the label and alone at the ICON tier.' },
+      { name: 'label', description: 'The control\'s name and the menu\'s.' },
+      { name: 'items', description: 'The menu\'s rows: a label, an optional icon and hint, and what the row does.' },
+      { name: 'priority', description: "OVERFLOW shedding order, as HeaderControl's." },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Use for a few actions of one kind that would otherwise each take a header slot.' },
+    ],
+    anatomy: ['tier-aware trigger button', 'portaled Popover with a role=menu of rows'],
   },
   {
     name: 'HeaderSegmented',

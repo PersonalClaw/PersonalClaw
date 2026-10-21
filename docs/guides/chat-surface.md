@@ -188,7 +188,7 @@ that chat.
 ### Changing the agent while it answers
 
 Picking another agent, agent CLI, model, reasoning effort or working directory while a turn runs
-— in the composer, the chat header's **Working directory**, with **Route** on the routing chip,
+— in the composer, its Execution Boundary control's **Change working folder…**, with **Route** on the routing chip,
 or through the API — applies to the message being answered. The running turn stops, so nothing
 more of it runs in the folder you left, a permission card it was waiting on ends as not run, and
 your message is answered again by what you picked. The chat says so where the conversation is:
@@ -558,6 +558,31 @@ With both on, the conversation takes about 90% of the window.
 
 ---
 
+## Where the next turn may act
+
+Two controls in the composer's footer, beside the agent-and-model pill, decide what the next turn
+may do before it runs:
+
+- **The task mode**: Agent, Ask, Plan or Build, which tools run and how the agent frames the work.
+- **The Execution Boundary control**: where the turn may act. It shows the permission mode
+  (Normal, Trust reads, Trust or YOLO), the folder the chat works in, whether the commands it
+  starts run in this computer's sandbox and what that hides from them, the network its work
+  reaches (its run's egress tier), and the memory mode. It changes the permission mode, the
+  working folder of a started chat (**Change working folder…**), and a new chat's memory mode,
+  which is chosen there and fixed once the chat starts. A Temporary or Incognito chat says so on
+  the control itself.
+
+A mode is shown once the gateway has taken it. One it refuses, such as Trust under an operator
+ceiling that lets nothing approve without a person, or leaving Plan while a plan waits on your
+review, leaves the control as it was, with the gateway's reason beside it. In a conversation an
+app started, the app's permissions decide every turn, so the permission mode is shown and not
+yours to change. The sandbox and the network are read from the gateway
+(`GET /api/chat/boundary`), in its words.
+
+The chat header keeps the thread's own actions: **Share** (Copy chat link, and Continue on each
+paired channel), the Session map, Activity, and the `…` with **Save as starter** and **New chat**
+(⌘N). **Brief the agent** is a row of the composer's `+` menu.
+
 ## The chat's working folder
 
 **Where:** `⌘⇧E` (`Ctrl+Shift+E` on Windows/Linux), or the command palette (`⌘K`), where it is
@@ -568,8 +593,8 @@ them. A click on a folder opens it in place, and a click on a file opens it besi
 file named in an answer does. The list is the Files page's: it shows only what that page may
 browse, and a folder it may not is refused here with the same reason. Nothing in it renames,
 deletes or uploads. It lists the folder again when you open it and when a turn ends, since the
-agent may have written there. A chat with no working folder says so; the chat header's **Working
-directory** sets one.
+agent may have written there. A chat with no working folder says so; **Change working folder…** in
+the Execution Boundary control beside the composer sets one.
 
 ---
 
@@ -595,7 +620,7 @@ A turn runs on the model you pick in the composer's agent-and-model pill. Left o
 chain from **Settings → Models**, chosen by the folder the chat works in:
 
 - **Code & tools**, for a chat working in a folder of its own: the working directory you set for
-  it (the chat header's **Working directory**), its project's folder, or its agent's. While Code &
+  it (**Change working folder…** in the Execution Boundary control), its project's folder, or its agent's. While Code &
   tools has no model bound, these turns use your Chat chain.
 - **Chat**, for every other chat: one in the workspace every chat starts in.
 

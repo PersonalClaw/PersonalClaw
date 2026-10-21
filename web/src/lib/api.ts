@@ -1566,6 +1566,14 @@ export interface ChatSessionSummary {
 /** The two fields that say which app started a conversation, as the list and the detail send
  *  them. */
 export type AppStarted = Pick<ChatSessionSummary, 'created_by_app' | 'created_by_app_name'>
+/** Where a chat's next turn may act that its own read does not say (`GET /api/chat/boundary`).
+ *  `sandbox`: whether the commands it starts run in a sandbox (`confined`), and what that hides.
+ *  `reach`: its run's egress tier (`off`, `listed`, `registry`, `all`) and what that reaches. Each
+ *  carries a short `label` and the sentence that `said` it, both the gateway's. */
+export interface ChatBoundary {
+  sandbox: { confined: boolean; label: string; said: string }
+  reach: { tier: string; label: string; said: string }
+}
 // ── Agent Rooms ─────────────────────────────────────────────────────────────────────────
 // A room is a persistent shared transcript plus a member list, where the human and N bound
 // agents deliberate. It is NOT a chat session: rooms live under `/api/rooms`, each member
@@ -9135,6 +9143,16 @@ export const api = {
     post(`/api/chat/sessions/${session}/reasoning-effort`, { reasoning_effort }),
   setApprovalMode: (mode: ApprovalMode, session = '') => post('/api/chat/mode', { mode, session }),
   setTaskMode: (mode: TaskMode, session = '') => post('/api/chat/task-mode', { mode, session }),
+  /** The sandbox and the reach of a chat's next turn, as its Execution Boundary control shows them:
+   *  an open chat's (`session`), or a new chat's on the agent CLI `runtime` names (none: the built-in
+   *  agent). The gateway writes each reading's words; the control shows them as they come. */
+  chatBoundary: ({ session = '', runtime = '' }: { session?: string; runtime?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (session) q.set('session', session)
+    if (runtime) q.set('runtime', runtime)
+    const qs = q.toString()
+    return get<ChatBoundary>(`/api/chat/boundary${qs ? `?${qs}` : ''}`)
+  },
 
   // Chat plan mode — a chat bound to the SAME stepwise planning walkthrough the
   // loop/code planners use (`PlanSession`/`PlanStep` above, not a second shape). Manual

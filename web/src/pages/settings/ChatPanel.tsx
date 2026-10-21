@@ -143,7 +143,7 @@ function StartersSection() {
           <p data-type="body-s" className="py-m text-on-surface-low">Loading…</p>
         ) : items.length === 0 ? (
           <p data-type="body-s" className="py-m text-on-surface-low">
-            No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.
+            No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header’s … menu.
           </p>
         ) : items.map((t) => (
           <Row key={t.id} label={t.name} hint={[t.agent, t.model, t.reasoning_effort].filter(Boolean).join(' · ') || 'Uses your defaults'}>

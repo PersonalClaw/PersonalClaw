@@ -843,6 +843,9 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
         chat_questions.api_chat_question_answer,
     )
     app.router.add_post("/api/chat/mode", chat.api_chat_mode)
+    # The sandbox and the reach of a chat's next turn, which its Execution Boundary control shows
+    # beside the composer before anything runs.
+    app.router.add_get("/api/chat/boundary", chat.api_chat_boundary)
     app.router.add_post("/api/chat/task-mode", chat.api_chat_task_mode)
     # Chat plan mode — the composer affordance + the shared planning
     # walkthrough's approve/comment/edit gates, chat-owned.

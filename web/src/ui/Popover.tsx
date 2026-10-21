@@ -310,7 +310,7 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom' | 'right', align
  *  is a high-frequency surface, and the icon nudge and press squish it used to have only
  *  made a dense list wobble under the pointer. */
 export function MenuRow({
-  icon, label, hint, selected, onClick, role, tabIndex, disabled,
+  icon, label, hint, selected, onClick, role, tabIndex, disabled, title, nameIsLabel,
 }: {
   icon?: ReactNode; label: string; hint?: string; selected?: boolean; onClick?: () => void
   /** The ITEM role required by the popup's container role, when it declares one.
@@ -333,10 +333,18 @@ export function MenuRow({
    *  item stays reachable so the user learns it exists and is unavailable, rather than finding a
    *  gap in the list. Dims at the kit's control level (40). */
   disabled?: boolean
+  /** The whole sentence behind a hint the row can only show the start of (it truncates). */
+  title?: string
+  /** Name the row by its label alone, so the hint is not run into its name ("Normala tool that
+   *  only reads…"): with `title`, the hint is then read as the row's description. For a pick-one
+   *  row whose label is the value a reader is choosing. */
+  nameIsLabel?: boolean
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
+      aria-label={nameIsLabel ? label : undefined}
       role={role}
       tabIndex={tabIndex}
       aria-disabled={disabled || undefined}

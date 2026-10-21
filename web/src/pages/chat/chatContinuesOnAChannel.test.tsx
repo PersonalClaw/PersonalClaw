@@ -5,7 +5,7 @@ import { runState } from '../../test/runState'
 // ── A chat can continue on a channel, from the chat's own menu ──────────────────────────────────
 //
 // `POST /api/chat/sessions/{session}/handoff` had an API route and no caller: nothing in the UI
-// could hand a chat to Telegram or Discord. The chat's header now carries "Continue on <channel>"
+// could hand a chat to Telegram or Discord. The chat header's Share menu carries "Continue on <channel>"
 // for each connected chat channel, and the handoff names the channel it chose.
 
 const h = vi.hoisted(() => ({
@@ -115,17 +115,27 @@ async function openChat(): Promise<HTMLElement> {
   return banner
 }
 
-describe("the chat's menu", () => {
+/** The chat's Share menu, opened from the header: its link and the channels it can continue on. */
+async function share(banner: HTMLElement): Promise<HTMLElement> {
+  fireEvent.click(within(banner).getByRole('button', { name: 'Share' }))
+  return screen.findByRole('menu', { name: 'Share' })
+}
+
+describe("the chat's Share menu", () => {
   it('offers each chat channel, and not the dashboard itself', async () => {
     const banner = await openChat()
-    expect(await within(banner).findByRole('button', { name: 'Continue on Telegram' })).toBeTruthy()
-    expect(within(banner).getByRole('button', { name: 'Continue on Discord' })).toBeTruthy()
-    expect(within(banner).queryByRole('button', { name: 'Continue on Web UI' })).toBeNull()
+    await waitFor(() => expect(h.channels).toHaveBeenCalled())
+    const menu = await share(banner)
+    expect(await within(menu).findByRole('menuitem', { name: 'Continue on Telegram' })).toBeTruthy()
+    expect(within(menu).getByRole('menuitem', { name: /^Continue on Discord/ })).toBeTruthy()
+    expect(within(menu).queryByRole('menuitem', { name: /^Continue on Web UI/ })).toBeNull()
   })
 
   it('hands this chat to the channel chosen', async () => {
     const banner = await openChat()
-    fireEvent.click(await within(banner).findByRole('button', { name: 'Continue on Telegram' }))
+    await waitFor(() => expect(h.channels).toHaveBeenCalled())
+    const menu = await share(banner)
+    fireEvent.click(await within(menu).findByRole('menuitem', { name: 'Continue on Telegram' }))
     await waitFor(() => expect(h.handoffSession).toHaveBeenCalledWith('chat-7-x', 'telegram'))
     expect(h.confirm.mock.calls[0][0].title).toBe('Continue on Telegram?')
     await waitFor(() => expect(h.notify).toHaveBeenCalledWith('This chat is in your Telegram messages now.', 'success'))
@@ -134,13 +144,17 @@ describe("the chat's menu", () => {
   it('a failed channel read offers no channel, and the header still works', async () => {
     h.channels.mockReset().mockRejectedValue(new Error('HTTP 500'))
     const banner = await openChat()
-    expect(within(banner).queryByRole('button', { name: /^Continue on / })).toBeNull()
+    const menu = await share(banner)
+    expect(within(menu).getByRole('menuitem', { name: 'Copy chat link' })).toBeTruthy()
+    expect(within(menu).queryByRole('menuitem', { name: /^Continue on / })).toBeNull()
     expect(within(banner).getByText('Launch plan')).toBeTruthy()
   })
 
   it('a channel with no owner says where to pair one instead of sending into nowhere', async () => {
     const banner = await openChat()
-    fireEvent.click(await within(banner).findByRole('button', { name: 'Continue on Discord' }))
+    await waitFor(() => expect(h.channels).toHaveBeenCalled())
+    const menu = await share(banner)
+    fireEvent.click(await within(menu).findByRole('menuitem', { name: /^Continue on Discord/ }))
     await waitFor(() => expect(h.notify).toHaveBeenCalled())
     expect(String(h.notify.mock.calls[0][0])).toMatch(/Discord doesn't know who you are yet. Pair its owner in Settings → Providers → Discord → Configure/)
     expect(h.handoffSession).not.toHaveBeenCalled()

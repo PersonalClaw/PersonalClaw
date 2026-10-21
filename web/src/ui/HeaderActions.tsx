@@ -54,9 +54,17 @@ interface ChildReg {
    *  row form — e.g. a Segmented mode-slider). It always stays visible; in OVERFLOW it
    *  renders icon-only. It still participates in the tier decision. */
   neverOverflow?: boolean
+  /** This control is ALWAYS a row of the `…` menu, at every tier: an action the header keeps one
+   *  click away without spending a visible slot on it (a thread's Save as starter). Its presence
+   *  keeps the `…` on the row. */
+  inOverflow?: boolean
   /** Overflow menu row descriptor (used when this control is pushed into `…`). */
-  menu: { label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }
+  menu: OverflowRow & { rows?: OverflowRow[] }
 }
+
+/** One row of the `…` menu. A control that opens a menu of its own (`HeaderMenu`) lists its rows
+ *  there instead of itself, since a menu row cannot open a second menu. */
+interface OverflowRow { label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }
 
 interface ClusterCtx {
   tier: Tier
@@ -92,13 +100,25 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
   regRef.current = reg
   useLayoutEffect(() => {
     if (!ctx) return
-    ctx.register({ id, ...regRef.current })
+    // A row of the `…` runs what the control does NOW: the descriptor is re-registered only when
+    // what the menu shows changes, so a row holding the handler of the render that registered it
+    // would act on that render's state (Save as starter saving the agent picked before the last).
+    const { menu } = regRef.current
+    ctx.register({
+      id, ...regRef.current,
+      menu: {
+        ...menu,
+        onSelect: menu.onSelect && (() => regRef.current.menu.onSelect?.()),
+        rows: menu.rows?.map((r, i) => ({ ...r, onSelect: () => regRef.current.menu.rows?.[i]?.onSelect?.() })),
+      },
+    })
     return () => ctx.unregister(id)
     // Re-register when the descriptor's identity-bearing fields change so the
     // container's overflow math + menu labels stay correct.
-  }, [ctx, id, reg.priority, reg.canIcon, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled])
-  if (!ctx) return { visible: true, tier: 'full' }
-  const visible = ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id)
+  }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
+    reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
+  if (!ctx) return { visible: !reg.inOverflow, tier: 'full' }
+  const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
   return { visible, tier: ctx.tier }
 }
 
@@ -296,7 +316,12 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
 
       // Per-child icon width: measure from the icon probe's children in DOM order.
       const iconEls = probeIcon.current ? Array.from(probeIcon.current.children) as HTMLElement[] : []
-      const domIds = [...regs.current.keys()]
+      // A control that always lives in the `…` draws nothing in the probes, so it has no probe
+      // element to be indexed by; it costs the row the `…` instead (`dots`).
+      const domIds = [...regs.current.values()].filter((r) => !r.inOverflow).map((r) => r.id)
+      // Nothing measured is no layout to fit into (a test's document), where every width reads 0
+      // and the row is drawn whole, as it always was there.
+      const dots = [...regs.current.values()].some((r) => r.inOverflow) && wFull > 0 ? DOTS : 0
       const iconW = (id: number) => {
         const i = domIds.indexOf(id)
         return (iconEls[i]?.offsetWidth ?? 40) + GAP
@@ -310,7 +335,7 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
         if (r.neverOverflow) floorW += iconW(r.id)
         else overflowable = true
       }
-      const floor = clusterFloor({ iconTier: wIcon, neverOverflow: floorW, overflowable, dots: DOTS })
+      const floor = clusterFloor({ iconTier: wIcon + dots, neverOverflow: floorW, overflowable, dots: DOTS })
 
       // The title slot: what it cannot shed, what it would like, and whether it holds anything
       // (an empty slot still reports its own padding) — the one reading both halves of the width
@@ -337,7 +362,7 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
         const rank = TIER_ORDER.indexOf(target)
         const curRank = TIER_ORDER.indexOf(cur)
         const margin = rank < curRank ? HYST : 0 // stepping UP (richer) needs slack
-        return natural + margin <= avail
+        return natural + margin + dots <= avail
       }
 
       let next: Tier
@@ -367,7 +392,7 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
         if (r.neverOverflow) keep.add(r.id)
       }
       for (const { r } of ordered) {
-        if (keep.has(r.id)) continue
+        if (keep.has(r.id) || r.inOverflow) continue
         // A control that can't go icon-only can't be a bare visible item in overflow
         // — it always lives in the menu.
         if (!r.canIcon) continue
@@ -433,13 +458,12 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
   // The overflow menu's actions = children NOT kept visible (in overflow), lowest
   // priority first (they collapsed first, so read top-to-bottom low→high feels off —
   // keep DOM order for predictability, which mirrors the row's left→right order).
+  //
+  // A control that always lives in the `…` (`inOverflow`) is in it at every tier, so the `…` is on
+  // the row whenever one is registered; in OVERFLOW the controls the row shed join it.
   const overflowActions = useMemo(() => {
-    if (tier !== 'overflow') return []
-    const menuIds = [...regs.current.keys()].filter((id) => !visibleIds || !visibleIds.has(id))
-    return menuIds
-      .map((id) => regs.current.get(id))
-      .filter((r): r is ChildReg => !!r)
-      .map((r) => ({ id: r.id, ...r.menu }))
+    const shed = (r: ChildReg) => r.inOverflow || (tier === 'overflow' && (!visibleIds || !visibleIds.has(r.id)))
+    return [...regs.current.values()].filter(shed).map((r) => ({ id: r.id, ...r.menu }))
   }, [tier, visibleIds, regVersion])
 
   return (
@@ -475,7 +499,7 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
               (and out when it re-expands) rather than snapping. It sits OUTSIDE the
               measured scroll row, so animating it can't feed the ResizeObserver. */}
           <AnimatePresence>
-            {tier === 'overflow' && overflowActions.length > 0 && (
+            {overflowActions.length > 0 && (
               <motion.div key="overflow" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} transition={spring.spatialFast}>
                 <HeaderOverflow actions={overflowActions} />
               </motion.div>
@@ -495,7 +519,7 @@ function sameSet(a: Set<number> | null, b: Set<number>): boolean {
 }
 
 /** The internal `…` menu the container owns — the collapsed tail of the cluster. */
-function HeaderOverflow({ actions }: { actions: { id: number; label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }[] }) {
+function HeaderOverflow({ actions }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[] }) {
   return (
     <Popover align="right" width={220} placement="bottom"
       trigger={(open, toggle) => (
@@ -507,8 +531,10 @@ function HeaderOverflow({ actions }: { actions: { id: number; label: string; ico
       )}>
       {(close) => (
         <div className="flex flex-col gap-0.5">
-          {actions.map((a) => (
-            <div key={a.id} className={a.danger ? '[&_button]:text-danger' : ''}>
+          {/* A control with a menu of its own lists its rows here, under its name, since a row
+              cannot open a second menu. */}
+          {actions.flatMap((a) => (a.rows ?? [a]).map((r, i) => ({ ...r, key: `${a.id}:${i}` }))).map((a) => (
+            <div key={a.key} className={a.danger ? '[&_button]:text-danger' : ''}>
               <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
                 disabled={a.disabled} onClick={() => { a.onSelect?.(); close() }} />
             </div>
@@ -541,7 +567,7 @@ const variants: Record<Variant, string> = {
  *  in that case; the container draws the menu row from this control's declaration). */
 export function HeaderControl({
   icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, disabledReason, danger,
-  priority = 'default', hint, title, className,
+  priority = 'default', hint, title, className, inOverflow,
 }: {
   icon?: LucideIcon
   label: string
@@ -570,12 +596,15 @@ export function HeaderControl({
   /** Secondary line shown on the `…`-menu row (not in the button). */
   hint?: string
   className?: string
+  /** Always a row of the `…` menu, at every tier, never a button on the row. */
+  inOverflow?: boolean
 }) {
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   const softOff = !!disabled && !!disabledReason
   const { visible, tier } = useHeaderChild({
     priority,
     canIcon: !!Icon,
+    inOverflow,
     menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
   })
   if (!visible) return null // container is showing this as a `…`-menu row
@@ -622,6 +651,69 @@ export function HeaderControl({
       {showIcon && <Icon size={16} />}
       {showLabel && <span className="whitespace-nowrap">{label}</span>}
     </button>
+  )
+}
+
+/** A header control that opens a short menu of actions: a thread's Share, holding Copy chat link
+ *  and its "Continue on <channel>" hand-offs. It takes the cluster's ladder like `HeaderControl`
+ *  (icon and label, icon only), and when the row sheds it into the `…`, its rows go there under
+ *  their own names, since a menu row cannot open a second menu.
+ *
+ *  The menu is a `role="menu"` of `menuitem`s with the shared cursor: it opens with focus on its
+ *  first row, the arrows move, Enter picks, and Escape or Tab closes it with focus back on the
+ *  control. Portaled, so the page body cannot paint over it. */
+export function HeaderMenu({ icon: Icon, label, items, priority = 'default' }: {
+  icon: LucideIcon
+  label: string
+  items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
+  priority?: Priority
+}) {
+  const { visible, tier } = useHeaderChild({
+    priority,
+    canIcon: true,
+    menu: { label, icon: Icon, rows: items },
+  })
+  if (!visible) return null
+  const iconOnly = tier === 'icon' || tier === 'overflow'
+  return (
+    <Popover portal placement="bottom" align="right" width={260}
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open}
+          title={label} aria-label={iconOnly ? label : undefined}
+          data-type="label-s"
+          className={cx(
+            'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
+            'transition-colors duration-(--duration-short)',
+            iconOnly ? 'size-10' : 'h-10 px-l',
+            open ? variants.secondary : variants.ghost,
+          )}
+          style={fvs(470)}>
+          <Icon size={16} />
+          {!iconOnly && <span className="whitespace-nowrap">{label}</span>}
+        </button>
+      )}>
+      {(close) => <HeaderMenuRows label={label} items={items} close={close} />}
+    </Popover>
+  )
+}
+
+/** `HeaderMenu`'s open menu: its rows, with the shared keyboard cursor. */
+function HeaderMenuRows({ label, items, close }: {
+  label: string
+  items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
+  close: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const { move, restoreFocus, tabIndexFor } = useMenuCursor({ containerRef: ref, count: items.length, openKey: 'open' })
+  const dismiss = () => { close(); restoreFocus() }
+  return (
+    <div ref={ref} role="menu" aria-label={label} className="flex flex-col gap-0.5"
+      onKeyDown={(e) => { menuCursorKeydown(e.nativeEvent, { move, dismiss }) }}>
+      {items.map((it, i) => (
+        <MenuRow key={it.label} role="menuitem" tabIndex={tabIndexFor(i)} icon={it.icon ? <it.icon size={16} /> : undefined}
+          label={it.label} hint={it.hint} onClick={() => { close(); it.onSelect() }} />
+      ))}
+    </div>
   )
 }
 

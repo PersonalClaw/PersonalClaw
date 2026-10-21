@@ -1617,6 +1617,11 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "PUT /api/chat/tag-columns/order": OwnerOnly(_ORGANISES_CHATS),
     "PATCH /api/chat/tag-columns/{id}": OwnerOnly(_ORGANISES_CHATS),
     "DELETE /api/chat/tag-columns/{id}": OwnerOnly(_ORGANISES_CHATS),
+    # Where your next turn may act: the sandbox your chats' commands run in and the network they
+    # reach. Yours to read beside your composer, and nothing an app's work needs.
+    "GET /api/chat/boundary": OwnerOnly(
+        "where your chats' turns may act: their sandbox and network"
+    ),
     # ── chat reads (`READ_DECLARED_FAMILIES`): a transcript is its conversation's ──
     # A read that names one conversation is held to the app's own before the handler loads
     # anything; the list answers an app with its own conversations only.

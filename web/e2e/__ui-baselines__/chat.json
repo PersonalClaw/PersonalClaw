@@ -7,14 +7,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -26,10 +25,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: dark — switch to light\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "390": [
         "button \"Add to message\"",
@@ -37,14 +33,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -56,10 +51,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: dark — switch to light\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "412": [
         "button \"Add to message\"",
@@ -67,14 +59,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -86,10 +77,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: dark — switch to light\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "768": [
         "button \"Add to message\"",
@@ -97,13 +85,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
-        "button \"New chat\"",
+        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -115,16 +103,13 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: dark — switch to light\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"AgentNormalNew chatChat historyAgentNorm\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"Chat historyChat historyChat historyGood\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -136,14 +121,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -155,10 +139,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: light — switch to system\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "390": [
         "button \"Add to message\"",
@@ -166,14 +147,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -185,10 +165,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: light — switch to system\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "412": [
         "button \"Add to message\"",
@@ -196,14 +173,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
-        "button \"New chat\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -215,10 +191,7 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: light — switch to system\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ],
       "768": [
         "button \"Add to message\"",
@@ -226,13 +199,13 @@
         "button \"Break a goal into tasks\"",
         "button \"Chat history\"",
         "button \"Choose a model\"",
+        "button \"Execution boundary: Normal\"",
         "button \"Expand sidebar\"",
         "button \"Hands-free voice\"",
-        "button \"New chat\"",
+        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Optimize prompt (⌘↵)\"",
-        "button \"Permission mode: Normal\"",
         "button \"Project: No project\"",
         "button \"Reply style: Agent default\"",
         "button \"Run a command and explain the output\"",
@@ -244,16 +217,13 @@
         "button \"Task mode: Agent\"",
         "button \"Theme: light — switch to system\"",
         "button \"Voice input\"",
-        "button \"What can you help me with?\"",
-        "button[role=radio] \"Incognito — Reads memory, writes nothing back\"",
-        "button[role=radio] \"Persistent — Remember across sessions\"",
-        "button[role=radio] \"Temporary — No memory read or written, and forgotten when th\""
+        "button \"What can you help me with?\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"AgentNormalNew chatChat historyAgentNorm\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"Chat historyChat historyChat historyGood\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }
