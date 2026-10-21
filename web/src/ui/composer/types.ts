@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AgentDef, AgentProvider, DiscoveredAgent, ModelItem, ApprovalMode, TaskMode, ReasoningEffort } from '../../lib/api'
 import type { WorkPhase } from '../../lib/workPhase'
+import type { AskBeforeSwitch } from './dearerSwitch'
 
 /** Which controls a composer instance surfaces. Chat enables most; the goal
  *  composer enables only the shared core (send + optimize) and supplies its own
@@ -168,6 +169,9 @@ export interface ComposerProps {
   /** The model that answered the bound chat's latest turn and how it was chosen ("from your Code &
    *  tools chain"), which the model pill's Auto names. Absent before any turn named one. */
   servedModel?: { model: string; chosen: string }
+  /** Asked before a switch to another of the open chat's models, so a switch that may cost more
+   *  is asked about once (`dearerSwitch`). Absent: every switch goes straight through. */
+  askBeforeModelSwitch?: AskBeforeSwitch
   /** The Settings → Models chain the bound chat's turns run on while the pill is on Auto ("Code &
    *  tools", "Chat"), which the Auto row names. `''`/absent when the host does not know it. */
   autoChain?: string

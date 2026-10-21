@@ -1574,6 +1574,19 @@ export interface ChatBoundary {
   sandbox: { confined: boolean; label: string; said: string }
   reach: { tier: string; label: string; said: string }
 }
+/** What switching an open chat's model costs its next reply, which re-reads the chat
+ *  (`GET /api/chat/switch-price`). `tokens` is the chat's context as its ring measured it, `null`
+ *  unknown. `current` is the model its latest turn ran on, `next` the one picked, each with the
+ *  input price of those tokens in dollars, `null` when nothing prices it (unknown, never free).
+ *  `ask` is the gateway's call: the context is at least `threshold` and `next` is not known to cost
+ *  no more. */
+export interface SwitchPrice {
+  ask: boolean
+  tokens: number | null
+  threshold: number
+  current: { provider: string; model: string; dollars: number | null }
+  next: { provider: string; model: string; dollars: number | null }
+}
 // ── Agent Rooms ─────────────────────────────────────────────────────────────────────────
 // A room is a persistent shared transcript plus a member list, where the human and N bound
 // agents deliberate. It is NOT a chat session: rooms live under `/api/rooms`, each member
@@ -9164,6 +9177,10 @@ export const api = {
     const qs = q.toString()
     return get<ChatBoundary>(`/api/chat/boundary${qs ? `?${qs}` : ''}`)
   },
+  /** What switching the open chat `session` to `model` on the provider entry `provider` costs its
+   *  next reply, read before the switch (`SwitchPrice`). */
+  chatSwitchPrice: (session: string, provider: string, model: string) =>
+    get<SwitchPrice>(`/api/chat/switch-price?${new URLSearchParams({ session, provider, model })}`),
 
   // Chat plan mode — a chat bound to the SAME stepwise planning walkthrough the
   // loop/code planners use (`PlanSession`/`PlanStep` above, not a second shape). Manual

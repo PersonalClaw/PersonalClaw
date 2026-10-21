@@ -117,6 +117,7 @@ from personalclaw.dashboard.chat_session_map import (  # noqa: F401
     api_chat_session_map,
     session_map_marks,
 )
+from personalclaw.dashboard.chat_switch_price import api_chat_switch_price  # noqa: F401
 from personalclaw.dashboard.chat_tags import (  # noqa: F401
     api_chat_session_drop,
     api_chat_session_tags,

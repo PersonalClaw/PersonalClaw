@@ -221,6 +221,7 @@ class _ChatSession(ChatQueue):
         "_trust_from_floor",
         "_task_mode",
         "mode_picks",
+        "answered_by",
         "_investigate_ctx",
         "_suppress_autonudge_rearm",
         "_titled",
@@ -391,6 +392,10 @@ class _ChatSession(ChatQueue):
         # one the composer gave up on cannot land after a newer one (`chat_handlers.stale_pick`).
         # Transient: a restarted gateway takes the next pick it is sent.
         self.mode_picks: dict[str, int] = {}
+        # ``(provider entry, model id)`` of the model the chat's latest turn was answered by, as
+        # the turn was priced (`chat_runner`), or ``None`` before a turn this gateway ran. What a
+        # chat on Auto runs on, for the ask before a switch to a dearer model (`chat_switch_price`).
+        self.answered_by: tuple[str, str] | None = None
         # Investigate Anywhere: the staged context envelope (a dict from
         # InvestigateContext.to_dict) consumed + cleared by the FIRST turn's
         # _inject_investigate_context. Transient — never persisted with history.

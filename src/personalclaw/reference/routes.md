@@ -216,6 +216,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/sessions/{session}/tool-result/{rid}` — the FULL raw output of
 - `POST /api/chat/sessions/{session}/undo` — roll back the last N conversation turns.
 - `POST /api/chat/sessions/{session}/workspace-dir` — set the working directory.
+- `GET /api/chat/switch-price` — what switching an open chat's model costs its next reply.
 - `GET /api/chat/tag-columns` — list sidebar column layout.
 - `POST /api/chat/tag-columns` — append a new sidebar column.
 - `PUT /api/chat/tag-columns/order` — reorder columns by id list.

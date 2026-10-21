@@ -13,6 +13,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`GET /api/running` lists everything running now (chats, helpers with queued ones marked, goal loops, workflow runs, automations' fires and webhook turns), each with its phase, what it is doing, which agent is doing it and what waits on you for it, with a short just-finished tail and a count at `/api/running/count`; an app that declares the route reads only the work of chats it started.**
 - **A `running_changed` frame says the running list moved, at most once every 150 ms, naming the work that moved and nothing to render, and never for a streamed chunk or a running turn's liveness re-send; an app hears it only for work in chats it started.**
 - **A pending approval says where it is answered: the work its session runs, a run's step and a room (`work`, `step`, `room`), on its registry row, its frame, its Inbox row and the note an unanswered one leaves, so the nudge, the Inbox and a loop's, a run's or a room's page link to it and claim it from those, and none reads the session key's shape.**
+- **Switching a long chat (50,000 tokens or more) to a model that may cost more asks first, with what the next reply's re-read costs on each model at your prices; once you answer Switch, that chat doesn't ask again.**
 
 ### Changed
 

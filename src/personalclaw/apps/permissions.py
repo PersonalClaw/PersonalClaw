@@ -1622,6 +1622,11 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/boundary": OwnerOnly(
         "where your chats' turns may act: their sandbox and network"
     ),
+    # What a switch of your chat's model costs its next reply, asked before a dearer one. Yours to
+    # read beside your composer: an app's work never picks your chat's model.
+    "GET /api/chat/switch-price": OwnerOnly(
+        "what switching your chat's model costs its next reply"
+    ),
     # ── chat reads (`READ_DECLARED_FAMILIES`): a transcript is its conversation's ──
     # A read that names one conversation is held to the app's own before the handler loads
     # anything; the list answers an app with its own conversations only.

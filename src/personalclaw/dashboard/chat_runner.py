@@ -5151,6 +5151,10 @@ async def run_chat(
                     _turn_priced = _turn_price.priced
                     _turn_model = _record_model or ""
                     _turn_provider = _record_provider
+                    # What the chat runs on now, while it is on Auto: the ask before a switch to a
+                    # dearer model prices its next reply against it (`chat_switch_price`).
+                    if _record_model:
+                        session.answered_by = (_record_provider, _record_model)
                     _turn_chosen = how_chosen(client, getattr(event, "served_model_ref", "") or "")
                 _stop_reason, _output_cap = event.stop_reason, getattr(event, "output_cap", 0)
                 _answered = not is_cancelled_stop(_stop_reason)

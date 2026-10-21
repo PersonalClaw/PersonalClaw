@@ -1,7 +1,7 @@
 import { AnimatePresence } from 'framer-motion'
 import { AlertTriangle, BookText, Boxes, Camera, Check, Clock, CornerDownLeft, EyeOff, ListChecks, Loader2, NotebookPen, Pin, Repeat, X } from 'lucide-react'
 import { api } from '../../../lib/api'
-import { reportActionFailure } from '../../../app/reportingWrite'
+import { failureSentence, reportActionFailure } from '../../../app/reportingWrite'
 import { Button } from '../../../ui/Button'
 import { IconButton } from '../../../ui/IconButton'
 import { Meter } from '../../../ui/Meter'
@@ -11,6 +11,7 @@ import { SnipOverlay } from '../../../ui/SnipOverlay'
 import { ComposerStage } from '../../../ui/ComposerStage'
 import { ComposerNoticeLine } from '../../../ui/composer/ComposerNotice'
 import type { ComposerControls } from '../../../ui/composer/types'
+import { rememberSwitchAnswered, switchAnswered, switchSentence, type AskBeforeSwitch } from '../../../ui/composer/dearerSwitch'
 import { ChatPlanGate } from '../../../ui/chat/ChatPlanGate'
 import type { VoiceLoopConfig } from '../voiceConfig'
 import { PromptPalette } from '../PromptPalette'
@@ -45,6 +46,24 @@ import { ExecutionBoundary, TaskModePill, useBoundaryReading } from './Execution
 const CHAT_CONTROLS: ComposerControls = {
   agent: true, model: true, approval: false, reasoning: true,
   attach: true, mic: true, optimize: true, slash: true,
+}
+
+/** The ask before a switch of the open chat `session`'s model: the gateway says whether to ask and
+ *  with what prices (`GET /api/chat/switch-price`), and a chat whose owner answered Switch once is
+ *  not asked again. A price that could not be read is asked about with the reason, never switched
+ *  past in silence. */
+function askBeforeSwitch(session: string): AskBeforeSwitch {
+  return async (m) => {
+    if (switchAnswered(session)) return null
+    const switched = () => rememberSwitchAnswered(session)
+    const id = m.model_name || m.name
+    try {
+      const price = await api.chatSwitchPrice(session, m.provider, id)
+      return price.ask ? { said: switchSentence(price), switched } : null
+    } catch (e) {
+      return { said: `${failureSentence(`read what the next reply costs on ${id}`, e)} The next reply re-reads this whole chat on the model it runs on.`, switched }
+    }
+  }
 }
 
 export function ChatComposer({ composer, stream, sessionId, started, onOpenFile: setOpenFile, voiceCfg, speakingTurn, onBriefAgent, onChangeFolder }: {
@@ -293,7 +312,7 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}
