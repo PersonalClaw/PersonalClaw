@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**
+
 ## [0.2.4] — 2026-10-21
 
 A patch release on 0.2.3 that fixes a critical heap overflow in Pillow's JPEG decoder, eight more
