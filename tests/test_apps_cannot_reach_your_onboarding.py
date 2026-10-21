@@ -341,11 +341,11 @@ async def test_what_an_app_no_longer_gets(subtests, tmp_path_factory, monkeypatc
 
 
 def _census() -> set[str]:
-    from personalclaw.manifest_reference import _routes_from_ast
+    from route_census import routes
 
     return {
         f"{r['method']} {r['path']}"
-        for r in _routes_from_ast()
+        for r in routes()
         if r["path"] == FAMILY or r["path"].startswith(FAMILY + "/")
     }
 
