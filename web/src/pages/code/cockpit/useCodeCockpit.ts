@@ -4,7 +4,7 @@ import { useQuery } from '../../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { useVisiblePoll } from '../../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../../lib/agentFeed'
-import { isStepPhase, phaseFeedLine } from '../../../lib/workPhase'
+import { isAChatsPhase, isStepPhase, phaseFeedLine } from '../../../lib/workPhase'
 import { useRunStream } from '../../loops/useRunStream'
 import { belongsToLoop } from '../../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../../loops/runFold'
@@ -289,6 +289,7 @@ export function useCodeCockpit({ id, query, setQuery }: { id: string } & Pick<Ro
       return { ...m0, [sess]: [...a, { kind: 'status' as const, label }].slice(-50) }
     })
     if (m.type === 'work_phase') {
+      if (!isAChatsPhase(m.data)) return  // a helper's, under its worker's key: not the worker's turn
       // The worker's phase, as the gateway measured it, while its turn runs. A step's own
       // phases are its tool card and its writing is the say line, so the feed says the rest
       // ("Thinking" as the turn starts, "Needs your OK: …"), once per change; the thinking

@@ -1,11 +1,12 @@
 """The phases of a piece of work: what an agent is doing, said the same way on every surface.
 
 A chat turn, a loop, a workflow run and a helper are each, at any moment, in one phase of the
-closed set below. Each phase has one meaning, one tone, one of four shared visual families, and the
-copy row its one line is written from. The gateway decides the phase from what it measures
-(``work_phase`` frames, a chat's ``run_state``), and every surface reads the phase's tone, family
-and words from ``web/src/lib/workPhase.ts``, which ``tests/test_work_phase_vocabulary.py`` pins to
-this table in both directions — two tables of one vocabulary drift, as the loop status's did.
+closed set below (each kind's producer is in :data:`PHASE_PRODUCERS`). Each phase has one meaning,
+one tone, one of four shared visual families, and the copy row its one line is written from. The
+gateway decides the phase from what it measures (``work_phase`` frames, a chat's ``run_state``),
+and every surface reads the phase's tone, family and words from ``web/src/lib/workPhase.ts``, which
+``tests/test_work_phase_vocabulary.py`` pins to this table in both directions — two tables of one
+vocabulary drift, as the loop status's did.
 
 **The four families** carry urgency: ``active`` (work in flight), ``waiting`` (on the owner's yes
 or her answer), ``blocked`` (it failed) and ``quiet`` (it finished, or nothing runs). Each
@@ -27,6 +28,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
+from typing import Any
+
+from personalclaw.auth.lifetimes import duration_words
 
 
 class WorkPhase(str, Enum):
@@ -159,3 +163,165 @@ ENDINGS: Mapping[str, WorkPhase] = MappingProxyType(
         "interrupted": WorkPhase.ERROR,
     }
 )
+
+
+def done_in(seconds: float) -> str:
+    """The line of work that finished after *seconds*."""
+    return f"Done in {duration_words(seconds)}" if round(seconds) else "Done in under a second"
+
+
+def _stopped(reason: str) -> str:
+    return f"Stopped: {reason}" if reason else "Stopped"
+
+
+# ── Every kind of work, and where it says its phases ─────────────────────────────────────────────
+
+#: The kinds of work (``workref.WORK_KINDS``) that say their phases, each with the module that says
+#: them. ``tests/test_every_kind_of_work_says_its_phase.py`` holds every kind to this table or to
+#: :data:`NO_PHASE_OF_ITS_OWN`.
+PHASE_PRODUCERS: Mapping[str, str] = MappingProxyType(
+    {
+        "chat": "personalclaw.dashboard.chat_phase",
+        "subagent": "personalclaw.dashboard.work_phases",
+        "loop": "personalclaw.dashboard.work_phases",
+        "workflow": "personalclaw.dashboard.work_phases",
+    }
+)
+
+#: The kinds of work that say no phase of their own, each with why.
+NO_PHASE_OF_ITS_OWN: Mapping[str, str] = MappingProxyType(
+    {
+        "trigger": (
+            "A fire is over once it has started its work: the helper or the workflow run it "
+            "started, which its history row names (ActionResult.work_id), says its own phases."
+        ),
+        "webhook": (
+            "Its agent turn runs outside the chat runner, in a session nobody watches, and "
+            "nothing yet keeps a list of the turns webhooks run to say their phases from."
+        ),
+    }
+)
+
+
+# ── A loop's phase, by its status ────────────────────────────────────────────────────────────────
+
+#: What running work incident mode holds says: it waits to start again, for the switch, not for
+#: her. A loop's views and a run's say why (``loop.loop.held_reason``, ``incident_hold``).
+HELD: tuple[WorkPhase, str] = (WorkPhase.QUEUED, "Held: incident mode is on")
+
+#: The phase each loop status reads as (``loop.loop.LoopStatus``), with its line, and the two
+#: statuses its views derive (``web/src/lib/loopStatus.ts``, ``effectiveLoopStatus``): ``held``, a
+#: running loop incident mode holds, and ``ended_early``, a finished loop that stopped at one of its
+#: ceilings rather than meeting its goal. Its plan waiting for her launch is her OK; stalled,
+#: blocked and a question all wait on her answer; her own pause is quiet, as nothing runs.
+LOOP_STATUS_PHASES: Mapping[str, tuple[WorkPhase, str]] = MappingProxyType(
+    {
+        "intake": (WorkPhase.THINKING, "Analyzing"),
+        "planning": (WorkPhase.PLANNING, "Planning"),
+        "review": (WorkPhase.APPROVAL, "Needs your OK: its plan"),
+        "ready": (WorkPhase.QUEUED, "Waiting to start"),
+        "running": (WorkPhase.THINKING, "Running"),
+        "paused": (WorkPhase.IDLE, "Paused"),
+        "stagnant": (WorkPhase.INPUT, "Stalled"),
+        "blocked": (WorkPhase.INPUT, "Blocked"),
+        "needs_input": (WorkPhase.INPUT, "Needs your answer"),
+        "complete": (WorkPhase.DONE, "Done"),
+        "failed": (WorkPhase.ERROR, "Stopped"),
+        "stopped": (WorkPhase.DONE, "Stopped"),
+        "held": HELD,
+        "ended_early": (WorkPhase.ERROR, "Ended early"),
+    }
+)
+
+
+def loop_phase(
+    status: str, *, stop_reason: str = "", held: str = "", reason: str = ""
+) -> tuple[WorkPhase, str]:
+    """What a loop in *status* is doing, and its line. *held* is its views' sentence while incident
+    mode holds it, *stop_reason* why it ended (``LoopStopReason``) and *reason* its error, which a
+    failure says."""
+    if status == "running" and held:
+        status = "held"
+    elif status == "complete" and stop_reason and stop_reason != "done":
+        status = "ended_early"
+    phase, line = LOOP_STATUS_PHASES[status]
+    if status == "failed":
+        line = _stopped(reason)
+    return phase, line
+
+
+# ── A workflow run's phase, by its status, its step and its gate ────────────────────────────────
+
+#: The phase each workflow run status reads as (``workflows.models.RunStatus``), with its line. A
+#: step it runs is a tool, named as its author named the step; a gate it waits at reads by its ask
+#: (:func:`gate_phase`). A cancel is a stop, done; a decline is her own decision, done; a failure
+#: and an escalation are errors.
+RUN_STATUS_PHASES: Mapping[str, tuple[WorkPhase, str]] = MappingProxyType(
+    {
+        "draft": (WorkPhase.QUEUED, "Waiting to start"),
+        "running": (WorkPhase.THINKING, "Running"),
+        "paused": (WorkPhase.IDLE, "Paused"),
+        "needs_input": (WorkPhase.INPUT, "Needs your answer"),
+        "complete": (WorkPhase.DONE, "Done"),
+        "failed": (WorkPhase.ERROR, "Stopped"),
+        "cancelled": (WorkPhase.DONE, "Stopped"),
+        "escalated": (WorkPhase.ERROR, "Stopped"),
+        "declined": (WorkPhase.DONE, "Declined"),
+    }
+)
+
+
+def run_phase(status: str, *, reason: str = "", held: str = "") -> tuple[WorkPhase, str]:
+    """What a workflow run in *status* is doing, and its line: a failure says its *reason*, a
+    decline its own sentence, and a running run incident mode holds (*held*, its views' sentence)
+    says it is held."""
+    if status == "running" and held:
+        return HELD
+    phase, line = RUN_STATUS_PHASES[status]
+    if phase is WorkPhase.ERROR:
+        line = _stopped(reason)
+    elif status == "declined" and reason:
+        line = reason
+    return phase, line
+
+
+#: The phase a gate's ask reads as, by its kind (``workflows.human_input.AskKind``): a yes or no is
+#: her OK, any other answer is her input, and an event gate waits for something to happen, not for
+#: her.
+GATE_PHASES: Mapping[str, WorkPhase] = MappingProxyType(
+    {
+        "approval": WorkPhase.APPROVAL,
+        "choice": WorkPhase.INPUT,
+        "text": WorkPhase.INPUT,
+        "form": WorkPhase.INPUT,
+        "event": WorkPhase.QUEUED,
+    }
+)
+
+
+def gate_phase(ask: Mapping[str, Any]) -> tuple[WorkPhase, str]:
+    """What a run waiting at a gate with *ask* is doing, and its line. An ask of a kind there is not
+    reads as an approval, as the engine renders it (``Ask.from_dict``)."""
+    phase = GATE_PHASES.get(str(ask.get("kind") or ""), WorkPhase.APPROVAL)
+    prompt = str(ask.get("prompt") or "")
+    if phase is WorkPhase.APPROVAL:
+        return phase, f"Needs your OK: {prompt or 'a step'}"
+    if phase is WorkPhase.INPUT:
+        return phase, f"Asks: {prompt or 'a question'}"
+    return phase, prompt or "Waiting for its event"
+
+
+# ── A helper's ending ────────────────────────────────────────────────────────────────────────────
+
+
+def helper_ending(info: Any) -> tuple[WorkPhase, str]:
+    """How the helper *info* (``subagent.SubagentInfo``) ended, and its line: a stop is done; her
+    Deny of its start is done, in the decline's own words; a failure says its error."""
+    error = str(getattr(info, "error", "") or "")
+    if getattr(info, "cancelled", False) or getattr(info, "stopped_by_you", False):
+        return WorkPhase.DONE, "Stopped"
+    if getattr(info, "declined", False):
+        return WorkPhase.DONE, error or "Declined"
+    if error:
+        return WorkPhase.ERROR, _stopped(error)
+    return WorkPhase.DONE, done_in(float(getattr(info, "elapsed", 0.0) or 0.0))

@@ -8,6 +8,9 @@ surface guesses a phase from words, a timer or a flag of its own.
   (web), pinned equal in both directions by `tests/test_work_phase_vocabulary.py`
 - A chat's phases: `src/personalclaw/dashboard/chat_phase.py`, fed by the chat runner
   (`dashboard/chat_runner.py`), the approval registry and the owner's questions
+- A helper's, a loop's and a workflow run's phases: `src/personalclaw/dashboard/work_phases.py`,
+  fed by the subagent manager's events, the approval registry, the loop store and a run's
+  publisher
 - Work references: `src/personalclaw/workref.py`
 - Design: [the phase contract](../design/buddy/signals.md#1-one-phase-contract), each
   phase's line in [copy](../design/buddy/copy.md#one-line-per-state), and the agent
@@ -72,6 +75,37 @@ vocabulary so every surface already has their looks.
 Times are UTC instants. A frame is sent when the phase, its line or one of the other
 fields changes, never per streamed chunk.
 
+For a helper, a loop and a workflow run the payload is the work's own part of it:
+
+| Field | Meaning |
+| --- | --- |
+| `work` | `subagent:<id>`, `loop:<id>` or `workflow:<run>` |
+| `kind` | `subagent`, `loop` or `workflow` |
+| `session` | the chat the work is for: the chat a helper works for, its own or the one whose batch it is a task of (`work_phases.chat_of`); `""` for work no chat started: a loop, a run, and a helper started by anything else (a workflow step no chat's batch is, an app's own run, another helper, a loop's worker, a schedule), whatever key its parent runs under |
+| `phase`, `line`, `since` | as a chat's |
+| `seq` | the stream stamp, as a chat's |
+
+**Who hears it.** A frame that names a chat in `session` reaches an app's socket only when the app
+started that chat, as every chat frame does. A frame about work no chat started reaches no app's
+socket, only the owner's (`dashboard/ws_state.py::WORK_FRAMES`). That is the stricter of the two
+reaches such work could have: an app the permission middleware lets read the loops
+(`GET /api/loops`) still hears none of their phases, until a list of the work that runs says which
+apps may hear of it. A page that shows a chat reads a frame as that chat's run state only when it
+is the chat's own (`workPhase.isAChatsPhase`): a helper's names the chat it works for, but its
+phase is its own.
+
+**Every kind of work** says its phases or is listed with why it says none of its own
+(`work_phase.PHASE_PRODUCERS`, `NO_PHASE_OF_ITS_OWN`; `tests/test_every_kind_of_work_says_its_phase.py`):
+
+| Kind | Says its phases from |
+| --- | --- |
+| `chat` | its turn (`chat_phase`) |
+| `subagent` | the subagent manager's events and the approval registry (`work_phases`) |
+| `loop` | its status, and its worker's turn while it runs (`work_phases`) |
+| `workflow` | its run's events (`work_phases`) |
+| `trigger` | none of its own: a fire is over once it has started its work, a helper or a run, which says its own |
+| `webhook` | none yet: its turn runs outside the chat runner, and nothing keeps a list of the turns webhooks run |
+
 ## How a chat turn says its phases
 
 `run_chat` runs inside one wrapper, `_says_its_phases`: it begins the turn's phase
@@ -110,6 +144,62 @@ A retry of the same turn (its connection was lost before any step) is not an end
 the turn goes on in its retry. `tests/test_every_way_a_turn_ends_sends_the_final_phase.py`
 walks every exit, anchored on the outcomes `terminal_outcome_for_turn` can give.
 
+## How a helper, a loop and a workflow run say their phases
+
+A frame goes out when the phase or its line changes, never per chunk. A wait on the owner is said
+over the step it interrupts, which is said again when the wait ends. The last frame says how the
+work ended, and nothing is kept of it after.
+
+**A helper** says `queued` while it waits for a slot, `thinking` once it starts, each call's phase
+by the chat's own rule (`work_phase.classify_call`: a search says where it looks, any other call
+is a tool under its own label), `streaming` once on its first words after another phase, and
+`approval` while its start or one of its calls waits on the owner's OK. Its ending: a stop is
+`done` ("Stopped"), her Deny of its start is `done` in the decline's own words, a failure is
+`error` with its error, and a finish is `done` with how long it took.
+
+**A loop** says the phase of its status, and while it runs, what its worker's turn does: the
+worker is a chat (`loop-<id>`), which says its own phases, and the loop says them too, back to
+running once the worker's turn ends. A loop that is not running is not doing what its worker's
+turn still says. Incident mode holds a running loop without writing its status, so the loop says
+it is held when the switch moves (the gateway's watch of it) as when its status is written, the
+worker's turn ending under the hold included, and runs again once the switch is off.
+
+| Status | Phase | Line |
+| --- | --- | --- |
+| `intake` | `thinking` | Analyzing |
+| `planning` | `planning` | Planning |
+| `review` | `approval` | Needs your OK: its plan |
+| `ready` | `queued` | Waiting to start |
+| `running` | `thinking` | Running |
+| `paused` | `idle` | Paused |
+| `stagnant`, `blocked` | `input` | Stalled, Blocked |
+| `needs_input` | `input` | Needs your answer |
+| `complete` | `done` | Done |
+| `failed` | `error` | Stopped: its error |
+| `stopped` | `done` | Stopped |
+| held (running, while incident mode holds it) | `queued` | Held: incident mode is on |
+| ended early (complete at a ceiling, not its goal) | `error` | Ended early |
+
+**A workflow run** says the phase of its status, a `tool` for each step it starts (named as its
+author named the step), and while it waits at a gate, the gate's ask: a yes or no is `approval`,
+any other answer `input`, and an event gate, which waits for something to happen rather than for
+her, `queued`. The gate's ask outlasts the run's own needs-input status until the gate is answered
+or the run leaves it, and a step started while it waits does not say over it. An escalation asks
+nothing of her, and is no gate. Incident mode holds a running run without changing its status: the
+run's publisher says it is held, and that it carries on (`workflows/incident_hold.py`).
+
+| Status | Phase | Line |
+| --- | --- | --- |
+| `draft` | `queued` | Waiting to start |
+| `running` | `thinking` | Running |
+| `paused` | `idle` | Paused |
+| `needs_input` | `input` (or the gate's ask) | Needs your answer |
+| `complete` | `done` | Done |
+| `failed`, `escalated` | `error` | Stopped: its error |
+| `cancelled` | `done` | Stopped |
+| `declined` | `done` | the decline's own sentence |
+| held (running, while incident mode holds it) | `queued` | Held: incident mode is on |
+
 ## Liveness
 
 While a turn runs, the gateway sends its chat's `work_phase` again every 15 s, with
@@ -144,4 +234,5 @@ phase.
   (`workPhase.phaseFeedLine`).
 - **Every ambient surface** (Mission Control, Home, the agent worlds) treats the frame
   as a doorbell and reads the phase from the chat list
-  ([agent-activity-feed.md](agent-activity-feed.md)).
+  ([agent-activity-feed.md](agent-activity-feed.md)). A helper's, a loop's and a workflow
+  run's frame rings it too, and is read the same way: as a signal, never as a payload.

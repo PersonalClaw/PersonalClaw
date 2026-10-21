@@ -629,6 +629,8 @@ class SubagentManager:
         self._on_spawn_approval = on_spawn_approval
         self._is_yolo = is_yolo
         self._on_event = on_event
+        # The events fired from code that cannot await them (`_fire_soon`), held until each is sent.
+        self._events_in_flight: set[asyncio.Task] = set()  # type: ignore[type-arg]
         self._running_count = 0
         # Per-fan-out running count: keyed by ``_fanout_key(info)``. A run's
         # lane is capped independently so one wide fan-out cannot starve every other
@@ -1452,6 +1454,8 @@ class SubagentManager:
             self._agents[agent_id] = info
             self._queue.append(info)
             subagent_waiting.record(info, QUEUED)
+            # Said at once, so the work it is reads as waiting to start (its phase), not as nothing.
+            self._fire_soon("subagent_queued", info, {"task": info.task, "agent": info.agent})
             logger.info(
                 "Subagent %s queued (%d running, lane[%s]=%d, %d queued)",
                 agent_id,
@@ -1764,6 +1768,8 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = f"spawn refused: {stop_reason}"
             subagent_waiting.forget(info.id)
+            # It said it waited: it says how its wait ended, as one that ran says how it ended.
+            self._fire_soon("subagent_done", info, subagent_endings.done_event(info))
             self._drain_queue()
             return
         logger.info("Draining queue: dispatching %s (%d left)", info.id, len(self._queue))
@@ -2076,6 +2082,18 @@ class SubagentManager:
                 await self._on_event(etype, info, extra or {})
             except Exception:
                 logger.warning("on_event failed for %s/%s", etype, info.id, exc_info=True)
+
+    def _fire_soon(self, etype: str, info: SubagentInfo, extra: dict | None = None) -> None:
+        """Fire *etype* from code that cannot await it, on the running loop; nothing off it."""
+        if not self._on_event:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._fire_event(etype, info, extra), name=f"{etype}:{info.id}")
+        self._events_in_flight.add(task)
+        task.add_done_callback(self._events_in_flight.discard)
 
     @staticmethod
     def _write_tombstone(info: SubagentInfo, cause: str) -> None:
@@ -2584,6 +2602,8 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = reason
             subagent_waiting.forget(agent_id)
+            # It said it waited: it says how its wait ended, as one that ran says how it ended.
+            await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
             return True
         await self._force_reap(agent_id, info, time.time() - info.started, reason=reason)
         return True

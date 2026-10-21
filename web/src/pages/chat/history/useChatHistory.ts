@@ -10,6 +10,7 @@ import { useQuery, invalidateKeys } from '../../../lib/data'
 import { downloadFrom } from '../../../lib/download'
 import { sessionRecencyMs } from '../../../lib/epoch'
 import { sessionTitle } from '../../../lib/sessionTitle'
+import { isAChatsPhase } from '../../../lib/workPhase'
 import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 
 // ── The chat history page's controller ─────────────────────────────────────────────────────────
@@ -196,6 +197,7 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
   }
   useEffect(() => () => window.clearTimeout(relistTimer.current), [])
   const turnMoved = (frame: Record<string, unknown>) => {
+    if (!isAChatsPhase(frame)) return false  // a helper's phase moves no chat's turn
     const s = (sessions ?? []).find((x) => x.key === frame.session)
     return !!s && !!s.run_state?.turn !== !!frame.turn
   }

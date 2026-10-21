@@ -22,7 +22,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.dashboard import channel_links, chat_phase
+from personalclaw.dashboard import channel_links, chat_phase, work_phases
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.chat_queue import ChatQueue
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
@@ -1229,6 +1229,30 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """*count* helpers work for the chat *session_key* now: while its turn runs, it is handing
         off to them (``chat_phase``)."""
         chat_phase.helpers_at_work(self, session_key, count)
+
+    def say_helper(self, event: str, info: Any, extra: dict[str, Any], session: str) -> None:
+        """The helper *info* sent *event*, working for the chat *session* (``""`` for none): its own
+        phase, said when it changed (``work_phases``)."""
+        work_phases.helper_event(self, event, info, extra, session=session)
+
+    def say_loop(self, loop: Any) -> None:
+        """The loop *loop* was written with its status: its phase, said when it changed
+        (``work_phases``)."""
+        work_phases.loop_status(self, loop)
+
+    def say_loop_deleted(self, loop_id: str) -> None:
+        """The loop *loop_id* was deleted: one that had not ended says so (``work_phases``)."""
+        work_phases.loop_deleted(self, loop_id)
+
+    def say_run(self, run_id: str, event: str, payload: dict[str, Any]) -> None:
+        """The workflow run *run_id* published *event*: its phase, said when it changed
+        (``work_phases``)."""
+        work_phases.run_event(self, run_id, event, payload)
+
+    def say_incident_changed(self) -> None:
+        """The incident switch moved: each running loop says whether it is held now
+        (``work_phases``)."""
+        work_phases.incident_changed(self)
 
     async def tell_linked_channel(self, session_key: str, text: str) -> bool:
         """Say *text* on the channel thread a conversation is linked to, where its replies go.

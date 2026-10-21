@@ -823,6 +823,180 @@ def _an_inbox_item_reaches_only_the_app_that_raised_it(frame: str):
     return case
 
 
+async def _a_phase_of_work_no_chat_started_reaches_no_app(state, socks) -> None:
+    """A loop's, a workflow run's and a helper's that no chat started: its phase is about that
+    work alone, so it reaches your socket and no app's, though both apps declare `work_phase`.
+    A helper's phase for a chat reaches the app that started the chat, as every chat frame
+    does."""
+    for work in ("loop:l1", "workflow:r1", "subagent:h0"):
+        kind = work.split(":", 1)[0]
+        state.broadcast_ws(
+            "work_phase",
+            {"work": work, "kind": kind, "session": "", "phase": "thinking", "line": "Running"},
+        )
+    for chat, helper in (("ours", "subagent:h1"), ("mine", "subagent:h2")):
+        state.broadcast_ws(
+            "work_phase",
+            {"work": helper, "kind": "subagent", "session": chat, "phase": "tool", "line": "x"},
+        )
+    assert [f["data"]["work"] for f in _frames(socks[APP])] == ["subagent:h1"]
+    assert _frames(socks[OTHER]) == []
+    assert [f["data"]["work"] for f in _frames(socks["yours"])] == [
+        "loop:l1",
+        "workflow:r1",
+        "subagent:h0",
+        "subagent:h1",
+        "subagent:h2",
+    ], "your socket still hears every piece of work"
+
+
+#: An app that may read the loops (``GET /api/loops`` answers it every loop, redacted) and declares
+#: `work_phase`. It is not the relay: it hears no approval, only what it declares.
+LOOP_READER = "probe-loop-reader"
+
+
+async def _an_app_that_may_read_the_loops_hears_none_of_their_phases(state, socks) -> None:
+    """No app hears the phase of work no chat started, the stricter of the two reaches the
+    contract left open: an app the permission middleware lets read every loop still hears none of
+    their phases, nor a run's, nor a helper's that no chat started, until the list of what runs
+    says which apps may hear of it."""
+    from personalclaw.apps.permissions import app_request_denial, checker_for
+
+    assert not app_request_denial(LOOP_READER, "/api/loops", method="GET", route="/api/loops")
+    assert checker_for(LOOP_READER).can_use_event("work_phase"), "the positive control"
+    reader = _socket()
+    state.register_ws(reader, app=LOOP_READER)
+    for work in ("loop:l1", "workflow:r1", "subagent:h0"):
+        state.broadcast_ws(
+            "work_phase",
+            {"work": work, "kind": work.split(":", 1)[0], "session": "", "phase": "thinking"},
+        )
+    assert _frames(reader) == []
+    assert len(_frames(socks["yours"])) == 3, "your socket still hears every piece of work"
+
+
+async def _a_helper_no_chat_started_reaches_no_app(state, socks) -> None:
+    """A helper's phase as its producer says it (``work_phases.helper_event``), for the parent key
+    each kind of work runs a helper under, as the gateway names it: one a chat started reaches the
+    app that started that chat and no other; one no chat started names no chat and reaches no
+    app, whoever's key its parent has, an app's own run's too. Your socket hears every one."""
+    from types import SimpleNamespace
+
+    from personalclaw.dashboard import work_phases
+
+    parents = {
+        "ours": "ours",
+        "theirs": "theirs",
+        "mine": "mine",
+        "workflow:r1:n1": "",
+        f"app:{APP}": "",
+        "subagent:h0": "",
+        "loop-a1b2c3d4": "",
+        "": "",
+    }
+    with patch("personalclaw.workflows.batch_start.task_of_chat", lambda key: ("", "", "")):
+        for i, parent in enumerate(parents):
+            helper = SimpleNamespace(id=f"h{i}", done=False)
+            work_phases.helper_event(state, "subagent_spawn", helper, {}, session=parent)
+    named = {f["data"]["work"]: f["data"]["session"] for f in _frames(socks["yours"])}
+    assert named == {f"subagent:h{i}": chat for i, chat in enumerate(parents.values())}
+    assert [f["data"]["work"] for f in _frames(socks[APP])] == ["subagent:h0"]
+    assert [f["data"]["work"] for f in _frames(socks[OTHER])] == ["subagent:h1"]
+    assert _frames(socks[RELAY]) == []
+
+
+#: What a frame can name as its conversation: each chat, one that does not exist, a forged name
+#: beside the app's own, and no conversation at all, in each way a producer can say none.
+_NAMED: tuple[Any, ...] = (
+    "mine",
+    "ours",
+    "theirs",
+    "ghost",
+    "ours ",
+    "OURS",
+    ["ours"],
+    7,
+    "",
+    None,
+)
+_MISSING = object()
+
+#: What a phase of work can name as its work: the ones no subject can be read from, and a work
+#: named as the app's own chat is, which names no chat for all that.
+_WORK: tuple[Any, ...] = ("subagent:h9", "loop:l1", "workflow:r1", "ours", "chat:ours", 7, _MISSING)
+
+
+async def _each_frame_reaches_the_apps_it_reached_before_but_work_no_chat_started(
+    state, socks
+) -> None:
+    """The differential over the gate: every frame type the apps declare, about every conversation
+    a frame can name, reaches each socket as it did before helpers, loops and runs said their
+    phases. Your socket hears all of it, an app a conversation it started (the approval relay any
+    approval), and a frame naming none every app that declared its type. The one difference is a
+    phase of work no chat started, which reaches no app, the ones whose work cannot be read too."""
+    from personalclaw.dashboard.ws_state import (
+        APPROVAL_RELAY_FRAMES,
+        CONVERSATION_LIST_FRAMES,
+        FRAME_CONVERSATION_FIELDS,
+        INBOX_ITEM_FRAMES,
+        _has_app_view,
+    )
+
+    started = {"ours": APP, "theirs": OTHER}
+    declared = {APP: set(EVERY_FRAME), OTHER: set(EVERY_FRAME), RELAY: {"approval"}}
+    frames = [
+        f
+        for f in EVERY_FRAME
+        if f not in CONVERSATION_LIST_FRAMES and f not in INBOX_ITEM_FRAMES and not _has_app_view(f)
+    ]
+    assert {"work_phase", "chat_chunk", "approval", "session_title", "refresh"} <= set(frames)
+
+    def heard_before(app: str, frame: str, named: Any) -> bool:
+        if frame not in declared[app]:
+            return False
+        if named is _MISSING or named is None or named == "":
+            return True
+        if started.get(named if isinstance(named, str) else repr(named)) == app:
+            return True
+        return frame in APPROVAL_RELAY_FRAMES and app == RELAY
+
+    def heard_now(app: str, frame: str, named: Any) -> bool:
+        no_chat = named is _MISSING or named is None or named == ""
+        return heard_before(app, frame, named) and not (frame == "work_phase" and no_chat)
+
+    sent: list[tuple[str, Any, Any]] = []
+    for frame in frames:
+        field = FRAME_CONVERSATION_FIELDS.get(frame, "session")
+        for named in (*_NAMED, _MISSING):
+            for work in _WORK if frame == "work_phase" else (_MISSING,):
+                tag = f"{frame}#{len(sent)}"
+                data: dict[str, Any] = {"tag": tag, "phase": "thinking", "line": "x"}
+                if named is not _MISSING:
+                    data[field] = named
+                if work is not _MISSING:
+                    data["work"] = work
+                state.broadcast_ws(frame, data)
+                sent.append((frame, named, work))
+
+    changed = {
+        (frame, repr(named))
+        for frame, named, _work in sent
+        for app in declared
+        if heard_before(app, frame, named) != heard_now(app, frame, named)
+    }
+    assert changed == {
+        ("work_phase", repr(n)) for n in ("", None, _MISSING)
+    }, "the one change is a phase of work no chat started"
+    tags = [f"{frame}#{i}" for i, (frame, _n, _w) in enumerate(sent)]
+    assert [f["data"]["tag"] for f in _frames(socks["yours"])] == tags, "your socket hears it all"
+    want = {
+        app: [t for t, (f, n, _w) in zip(tags, sent) if heard_now(app, f, n)] for app in declared
+    }
+    heard = {app: [f["data"]["tag"] for f in _frames(socks[app])] for app in declared}
+    wrong = {app: sorted(set(heard[app]) ^ set(want[app])) for app in declared}
+    assert heard == want, f"heard wrongly: {wrong}"
+
+
 async def _a_frame_about_no_conversation_is_still_delivered_by_its_type(state, socks) -> None:
     """The floor: the filter is about WHOSE conversation, not a mute on app sockets."""
     state.push_refresh("history")
@@ -869,6 +1043,16 @@ SOCKET_ROWS: dict[str, Any] = {
         )
         for frame in ("inbox_new_item", "inbox_item_updated")
     },
+    "a phase of work no chat started reaches no app": (
+        _a_phase_of_work_no_chat_started_reaches_no_app
+    ),
+    "an app that may read the loops hears none of their phases": (
+        _an_app_that_may_read_the_loops_hears_none_of_their_phases
+    ),
+    "a helper no chat started reaches no app": _a_helper_no_chat_started_reaches_no_app,
+    "each frame reaches the apps it reached before but work no chat started": (
+        _each_frame_reaches_the_apps_it_reached_before_but_work_no_chat_started
+    ),
     "a frame about no conversation is still delivered by its type": (
         _a_frame_about_no_conversation_is_still_delivered_by_its_type
     ),
@@ -882,7 +1066,7 @@ SOCKET_ROWS: dict[str, Any] = {
 async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
     """The three apps installed once, in this test's home; every row on sockets and a state of its
     own, the home as the install left it after every row."""
-    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 8, "a frame or a case was left out"
+    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 12, "a frame or a case was left out"
     with _home(tmp_path):
         _install(tmp_path, APP, {"api": ["/api/ws"], "events": EVERY_FRAME})
         _install(tmp_path, OTHER, {"api": ["/api/ws"], "events": EVERY_FRAME})
@@ -890,6 +1074,9 @@ async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_p
             tmp_path,
             RELAY,
             {"api": ["/api/loops", "/api/approvals", "/api/ws"], "events": ["approval"]},
+        )
+        _install(
+            tmp_path, LOOP_READER, {"api": ["/api/loops", "/api/ws"], "events": ["work_phase"]}
         )
         installed = home_files(tmp_path)
         for name, check in SOCKET_ROWS.items():
@@ -1065,6 +1252,31 @@ def _a_chats_phase_names_the_chat_it_is_about() -> None:
     assert "work_phase" in _frame_census()[1], "the positive control"
 
 
+def _a_phase_of_other_work_names_its_chat_or_only_the_work() -> None:
+    """The other producer of `work_phase`: `work_phases` builds a helper's, a loop's and a
+    workflow run's payload, naming the chat a helper works for, and for work no chat started
+    nothing but the work, which `frame_subject` reads as a subject no app owns."""
+    from personalclaw.dashboard import work_phases
+    from personalclaw.dashboard.ws_state import frame_subject
+
+    state = MagicMock()
+    state._work_phases = {}
+    state.next_stream_seq.return_value = 7
+    work_phases.run_event(state, "r1", "workflow_run_update", {"status": "running"})
+    helper = MagicMock(id="h1", done=False)
+    work_phases.helper_event(state, "subagent_spawn", helper, {}, session="ours")
+    (run_frame, run_payload), (helper_frame, helper_payload) = [
+        c.args for c in state.broadcast_ws.call_args_list
+    ]
+    assert run_frame == helper_frame == "work_phase"
+    assert frame_subject("work_phase", run_payload) == ("work", "workflow:r1")
+    assert frame_subject("work_phase", helper_payload) == ("conversation", "ours")
+    assert frame_subject("work_phase", {"work": "loop:l1", "session": None}) == (
+        "work",
+        "loop:l1",
+    )
+
+
 def _every_inbox_item_frame_carries_its_source() -> None:
     """An inbox frame's data is the item's `to_dict()`, which is what `frame_subject` reads the
     `source` off — so a frame naming the app that raised it, or no app at all."""
@@ -1104,6 +1316,9 @@ def test_the_gate_reads_every_frame_that_names_a_conversation_or_a_note(subtests
         ),
         "the retag run names the chat it is reading": _the_retag_run_names_the_chat_it_is_reading,
         "a chat's phase names the chat it is about": _a_chats_phase_names_the_chat_it_is_about,
+        "a phase of other work names its chat or only the work": (
+            _a_phase_of_other_work_names_its_chat_or_only_the_work
+        ),
         "every inbox item frame carries its source": _every_inbox_item_frame_carries_its_source,
         "every notification frame in the tree is listed": (
             _every_notification_frame_in_the_tree_is_listed

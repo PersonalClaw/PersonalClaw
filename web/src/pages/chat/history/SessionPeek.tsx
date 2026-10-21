@@ -8,7 +8,7 @@ import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { TurnHead, type TurnEnding } from '../transcript/TurnHead'
 import { notify } from '../../../app/appSdk'
 import { api, type ChatHistoryMsg, type RunState } from '../../../lib/api'
-import { livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
+import { isAChatsPhase, livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
 import { useChatSocket } from '../../../lib/useChatSocket'
 
 /** Body of the history page's session PEEK panel: a LIVE mini-chat — the latest
@@ -76,6 +76,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
     const d = m.data || {}
     if (d.session !== sessionKey) return
     if (m.type === 'work_phase') {
+      if (!isAChatsPhase(d)) return  // a helper's, which names the chat it works for
       takeRunState(d as unknown as RunState, 'frame')
     } else if (m.type === 'chat_chunk') {
       setStreamText((t) => (t ?? '') + String(d.content ?? ''))

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { playCue } from '../../design/soundCues'
-import { workPhaseOf, type WorkPhase } from '../../lib/workPhase'
+import { isAChatsPhase, workPhaseOf, type WorkPhase } from '../../lib/workPhase'
 import { api, ApiError, type RunState } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../../lib/data'
@@ -643,7 +643,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       // What the turn is doing, as the gateway measured it, and whether it takes a steer — applied
       // only when newer than what the page holds: a frame held while a snapshot was read can be
       // older than the snapshot's run state.
-      case 'work_phase': takeRunState(d as unknown as RunState); break
+      // A helper's frame names the chat it works for too; its phase is its own (`isAChatsPhase`).
+      case 'work_phase': if (isAChatsPhase(d)) takeRunState(d as unknown as RunState); break
       // Live reasoning stream. Only consumed while the Settings → Chat
       // "Show thinking inline" toggle is on — off drops the frame here, so no
       // thinking segment ever enters transcript state (and none is persisted:

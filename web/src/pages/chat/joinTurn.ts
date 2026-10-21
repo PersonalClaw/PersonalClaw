@@ -1,3 +1,5 @@
+import { isAChatsPhase } from '../../lib/workPhase'
+
 /** A tab joining a turn it did not start.
  *
  *  Two tabs on one chat: the tab that sends adds the question itself, so the server never echoes
@@ -29,6 +31,6 @@ export function joinsATurnStartedElsewhere(
   following: boolean,
 ): boolean {
   if (following || !open || !TURN_FRAMES.has(frame.type)) return false
-  if (frame.type === 'work_phase' && !frame.data?.turn) return false
+  if (frame.type === 'work_phase' && (!frame.data?.turn || !isAChatsPhase(frame.data))) return false
   return frame.data?.session === open
 }
