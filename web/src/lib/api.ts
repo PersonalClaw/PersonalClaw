@@ -9170,10 +9170,12 @@ export const api = {
   /** The sandbox and the reach of a chat's next turn, as its Execution Boundary control shows them:
    *  an open chat's (`session`), or a new chat's on the agent CLI `runtime` names (none: the built-in
    *  agent). The gateway writes each reading's words; the control shows them as they come. */
-  chatBoundary: ({ session = '', runtime = '' }: { session?: string; runtime?: string } = {}) => {
+  chatBoundary: ({ session = '', runtime = '', loop, kind = '' }: { session?: string; runtime?: string; loop?: 'attended' | 'unattended'; kind?: string } = {}) => {
     const q = new URLSearchParams()
     if (session) q.set('session', session)
     if (runtime) q.set('runtime', runtime)
+    if (loop) q.set('loop', loop)
+    if (loop && kind) q.set('kind', kind)
     const qs = q.toString()
     return get<ChatBoundary>(`/api/chat/boundary${qs ? `?${qs}` : ''}`)
   },

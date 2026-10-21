@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **Settings stays at the foot of the sidebar while the rest of it scrolls, so in a short window it no longer sits in the sidebar's edge with its focus ring cut off.**
+- **A new loop's Mode (Attended or Unattended) sits beside the loop composer's input as its Execution Boundary control, with where the loop will work, the sandbox its commands run in and the network its work reaches; it left the page's header.**
 
 ### Fixed
 

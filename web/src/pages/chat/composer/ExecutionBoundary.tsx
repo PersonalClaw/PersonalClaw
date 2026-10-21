@@ -129,26 +129,27 @@ function TaskModeMenu({ value, close, onPick }: { value: TaskMode; close: () => 
 /** The sandbox and the reach of the next turn, read from the gateway: `undefined` while it is being
  *  read, `null` when it could not be. An open chat is read once its own read has landed (`ready`),
  *  for the agent it runs on; a new chat for the agent CLI it is set to (`runtime`), or the built-in
- *  agent. A change of either reads it again. */
-export function useBoundaryReading(session: string | null, ready: boolean, runtime: string): ChatBoundary | null | undefined {
+ *  agent; a loop not created yet of the kind `kind` for its runtime and its Mode (`loop`). A change
+ *  of any reads it again. */
+export function useBoundaryReading(session: string | null, ready: boolean, runtime: string, loop?: 'attended' | 'unattended', kind = ''): ChatBoundary | null | undefined {
   const [reading, setReading] = useState<ChatBoundary | null | undefined>(undefined)
   useEffect(() => {
     if (!ready) return
     let alive = true
     setReading(undefined)
-    api.chatBoundary({ session: session ?? '', runtime }).then(
+    api.chatBoundary({ session: session ?? '', runtime, loop, kind }).then(
       (r) => { if (alive) setReading(r) },
       () => { if (alive) setReading(null) },
     )
     return () => { alive = false }
-  }, [session, ready, runtime])
+  }, [session, ready, runtime, loop, kind])
   return reading
 }
 
 /** What a reading says while it has nothing to say yet, or could not be read: a gateway that does
  *  not serve the reading (an older one) answers nothing this can show, and says so rather than
  *  anything about the sandbox or the network. */
-function said(reading: ChatBoundary | null | undefined, part: 'sandbox' | 'reach'): { label: string; said: string } {
+export function said(reading: ChatBoundary | null | undefined, part: 'sandbox' | 'reach'): { label: string; said: string } {
   if (reading === undefined) return { label: 'Reading…', said: 'Reading…' }
   const r = reading?.[part]
   if (!r || typeof r.label !== 'string' || typeof r.said !== 'string') return { label: 'Not read', said: 'Not read: the gateway did not answer.' }
@@ -260,7 +261,7 @@ function BoundaryPanel({ approval, lockedReason, memoryMode, onMemoryMode, folde
 
 /** One thing the control shows. Read as "Sandbox: <sentence>" when the menu's description is said
  *  as one line, so the colon and the space after it are there for a reader, not drawn. */
-function Fact({ term, said: words }: { term: string; said: string }) {
+export function Fact({ term, said: words }: { term: string; said: string }) {
   return (
     <div>
       <dt className="text-on-surface-low">{term}<span className="sr-only">: </span></dt>

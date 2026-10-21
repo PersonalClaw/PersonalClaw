@@ -33,23 +33,29 @@ const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
  *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
  *  the dimension is already obvious from position and icon on screen, which is exactly why the
  *  visible label spends its width on the value. */
-export function PillButton({ icon, label, dimension, open, toggle, wide = false, title }: {
+export function PillButton({ icon, label, dimension, open, toggle, wide = false, title, disabledReason }: {
   icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void
   /** Room for a two-part value ("Codex · Careful coder", or one marked unavailable) that the
    *  standard width would cut to its first word. */
   wide?: boolean
   /** The whole sentence behind a value the pill can only show the start of. */
   title?: string
+  /** Why the pill cannot open right now: it stays reachable, announced unavailable, dimmed, and
+   *  says why in its title. */
+  disabledReason?: string
 }) {
   return (
     <button
-      type="button" onClick={toggle} aria-expanded={open} title={title}
+      type="button" onClick={disabledReason ? undefined : toggle} aria-expanded={open} title={disabledReason ? `${title ? `${title}. ` : ''}${disabledReason}` : title}
+      aria-disabled={disabledReason ? true : undefined}
       // A pill whose value IS its dimension ("Agent" when no specific agent is bound) would
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       data-type="label-s"
       className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[16rem]' : 'max-w-[160px]',
-        open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high active:bg-surface-high')}
+        open ? 'bg-surface-high text-on-surface'
+          : disabledReason ? 'cursor-not-allowed text-on-surface-var opacity-40'
+            : 'text-on-surface-var hover:bg-surface-high active:bg-surface-high')}
       style={fvs(470)}
     >
       {icon}

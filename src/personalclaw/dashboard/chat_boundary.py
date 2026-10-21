@@ -51,15 +51,22 @@ _REACH: dict[str, tuple[str, str]] = {
 }
 
 
-def reach_reading(run: str) -> dict[str, str]:
+def reach_reading(run: str, *, unattended: bool | None = None) -> dict[str, str]:
     """The network the work of *run* reaches: its egress tier, its label and its sentence.
 
     *run* is the chat's key, the one its tool calls are bound to, or ``""`` for a chat not
-    started yet, which resolves as an attended run. A tier this table does not know reads as
-    ``all`` does, as the guard reads it (``net.policy.egress_policy_for_tier``)."""
+    started yet, which resolves as an attended run. Given *unattended*, the reading is of work not
+    started yet whose posture is known (a loop whose Mode is chosen), read for that posture. A
+    tier this table does not know reads as ``all`` does, as the guard reads it
+    (``net.policy.egress_policy_for_tier``)."""
     from personalclaw.guardrails import policy
 
-    tier = policy.profile_for_session(run).egress_tier
+    profile = (
+        policy.profile_for_session(run)
+        if unattended is None
+        else policy.profile_for_posture(unattended)
+    )
+    tier = profile.egress_tier
     label, said = _REACH.get(tier, _REACH["all"])
     return {"tier": tier, "label": label, "said": said}
 
@@ -163,11 +170,30 @@ async def api_chat_boundary(request: web.Request) -> web.Response:
 
     ``session`` names an open chat, read for the agent it runs on and its own run; without it the
     reading is a new chat's, on the agent CLI ``runtime`` names (``acp:<cli>``) or, with none, the
-    built-in agent. Answers ``{sandbox: {confined, label, said}, reach: {tier, label, said}}``. An
-    unknown ``session`` is refused rather than read as a new chat, whose reading may differ."""
+    built-in agent. ``loop`` (``attended`` or ``unattended``), without ``session``, reads a loop
+    not created yet of the kind ``kind`` names: its reach for the posture its planner's and workers'
+    sessions get, which is its Mode's, except a kind that runs as a workflow run
+    (``workflows.service.PORTED_LOOP_KINDS``), whose stages run unattended whatever its Mode. (A
+    loop's gate checks are held to unattended work's tier too, whatever its Mode.) Answers
+    ``{sandbox: {confined, label, said}, reach: {tier, label, said}}``. An unknown ``session`` is
+    refused rather than read as a new chat, whose reading may differ."""
     state: DashboardState = request.app["state"]
     key = request.query.get("session", "")
     runtime = request.query.get("runtime", "")
+    loop = request.query.get("loop", "")
+    if loop:
+        if key or loop not in ("attended", "unattended"):
+            return json_error(
+                "invalid_request",
+                message="loop is attended or unattended, for a loop not created yet.",
+                status=400,
+            )
+        from personalclaw.workflows.service import PORTED_LOOP_KINDS
+
+        unattended = loop == "unattended" or request.query.get("kind", "") in PORTED_LOOP_KINDS
+        return web.json_response(
+            {"sandbox": sandbox_reading(runtime), "reach": reach_reading("", unattended=unattended)}
+        )
     if key:
         session = state._sessions.get(key)
         if session is None:
