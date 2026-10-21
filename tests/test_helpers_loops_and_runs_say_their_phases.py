@@ -498,6 +498,32 @@ async def test_the_helpers_phase_only_reads_the_approval_it_waits_on(tmp_path, a
     assert failures == [True, False], "the planted failure was reached both ways"
 
 
+@pytest.mark.parametrize("ending", ["approved", "rejected", "expired", "cancelled"])
+@pytest.mark.parametrize("approval_id", ["subagent:h1:r1", "spawn:h2", "workflow:r1:n1"])
+@pytest.mark.asyncio
+async def test_the_running_lists_ring_only_reads_the_approval_it_rings_for(
+    tmp_path, monkeypatch, approval_id, ending
+):
+    """The running list's ring for an approval (``running_now.asked``) only reads too: when it
+    fails, an approval asked and then answered, expired or cancelled has every effect it has when
+    the ring works, in the same order, and answers both parties the same."""
+    from personalclaw import running_now
+
+    before = await _an_approval_ends(tmp_path / "before", approval_id, ending, _hook_absent)
+    assert any(e[0] == "push" for e in before), "the positive control: it was asked"
+    rang: list[str] = []
+
+    def failing(state: Any, entry: Any) -> None:
+        rang.append(str(entry.get("id")))
+        raise RuntimeError("the running list could not be rung")
+
+    monkeypatch.setattr(running_now, "asked", failing)
+    assert (
+        await _an_approval_ends(tmp_path / "failing", approval_id, ending, _hook_absent) == before
+    )
+    assert rang and set(rang) == {approval_id}, "the planted failure was reached"
+
+
 @pytest.mark.asyncio
 async def test_the_manager_says_when_a_spawn_waits_for_a_slot_and_when_it_ends_waiting():
     """The real queue: a spawn that waits for a slot is said to, and one stopped while it waits
