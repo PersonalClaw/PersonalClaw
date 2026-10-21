@@ -307,7 +307,7 @@ gateway's user.
 install-consent screen itself — `anthropic>=0.20`, not "this app installs some
 packages". `app_manager.describe_python_dependencies` classifies each against the
 same core pin set the guard above gates on, so a package core does not own reads as
-new code the gateway will load, while a core-owned pin (`Pillow>=10,<13`) reads
+new code the gateway will load, while a core-owned pin (`Pillow>=10,<14`) reads
 as "the version you already have must satisfy this, or the install is refused". An
 app declaring none shows nothing at all. This section documenting the behaviour is
 not a substitute for that: a user consenting in a modal does not read a threat
