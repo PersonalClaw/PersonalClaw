@@ -691,10 +691,12 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                 </div>
                 {/* Collections rail. A shelf REPLACES the item source (a smart shelf's
                     membership is server-resolved), so selecting one also parks the
-                    search/type chips above — they describe the library, not the shelf. */}
+                    search/type chips above — they describe the library, not the shelf.
+                    Its first chip chooses no shelf, so it says so: All items is the view's own
+                    name (#3815), and two controls, one over the other, would read the same. */}
                 <div className="mb-m flex flex-wrap items-center gap-1.5">
                   <FilterChip active={!collectionTok} onClick={() => setCollectionTok('')}>
-                    <Library size={12} /> All items
+                    <Library size={12} /> No shelf
                   </FilterChip>
                   {/* The shelf name is the only user-authored text in this rail, so it is the
                       only chip that can be arbitrarily long. Bounded + truncated (with the full
