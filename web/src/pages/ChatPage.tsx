@@ -15,6 +15,7 @@ import { useChatComposer } from './chat/composer/useChatComposer'
 import { taskModeFromQuery, useTaskModeInUrl } from './chat/composer/taskModeInUrl'
 import { ChatComposer } from './chat/composer/ChatComposer'
 import { ComposerFold, FOLD_ROOM } from './chat/composer/ComposerFold'
+import { PRIVATE_THREAD_TINT } from './chat/memoryModeCopy'
 import { useChatStream } from './chat/useChatStream'
 import { useTranscript } from './chat/transcript/useTranscript'
 import { Transcript } from './chat/transcript/Transcript'
@@ -218,8 +219,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             shut out. */}
         <div className="flex min-h-0 min-w-0 flex-1" inert={mapOpen && isMobile && started}>
         <PaneHost surface="chat" pane={beside} stackInto={stackSlot}>
-        <div className="relative flex h-full min-w-0 flex-col"
-          style={folded ? { '--composer-fold-room': FOLD_ROOM } as React.CSSProperties : undefined}>
+        {/* The thread's surface. A chat that is not persistent wears a faint tint on it, from the
+            moment its mode is picked in a new chat's composer to the end of the chat, so the page
+            itself says it is private, not only the control and the notice. */}
+        <div className="relative flex h-full min-w-0 flex-col" data-thread-surface=""
+          data-memory-mode={memoryMode !== 'persistent' ? memoryMode : undefined}
+          style={{
+            ...(folded ? { '--composer-fold-room': FOLD_ROOM } : {}),
+            ...(memoryMode !== 'persistent' ? { backgroundColor: PRIVATE_THREAD_TINT } : {}),
+          } as React.CSSProperties}>
           {/* The composer's light, staged in THIS column rather than the page: its box is
               the stage `DotGlow` fades the halo out inside of, so a docked panel beside the
               column (Activity, file peek, chat history, the mobile map drawer — all opaque

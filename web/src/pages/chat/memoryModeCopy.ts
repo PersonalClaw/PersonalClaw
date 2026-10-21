@@ -42,6 +42,14 @@ const KEPT_AS_FOR_ANY_CHAT =
   'Your Audit log records each tool call it makes, and the approvals, questions and notes it raises '
   + "reach your Inbox and notifications as any chat's do."
 
+/** The faint tint the thread of a chat that is not persistent wears (#3808). The notice above the
+ *  composer and the Execution Boundary control say the mode in words; the tint lets a glance at the
+ *  page tell a private chat from a kept one. The scheme's secondary accent at a few percent: enough
+ *  to read as a different room, too little to compete with the transcript's own colours. At 4 %
+ *  the session map's resting marker still clears 3:1 in every scheme; a stronger tint should
+ *  re-measure it against the tinted surface. */
+export const PRIVATE_THREAD_TINT = 'color-mix(in srgb, var(--color-secondary) 4%, transparent)'
+
 /** The notice above the composer of a chat that is not persistent — said before the user types,
  *  because such a chat looks like any other. */
 export const MEMORY_MODE_NOTICE: Record<Exclude<MemoryMode, 'persistent'>, string> = {

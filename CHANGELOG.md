@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A `running_changed` frame says the running list moved, at most once every 150 ms, naming the work that moved and nothing to render, and never for a streamed chunk or a running turn's liveness re-send; an app hears it only for work in chats it started.**
 - **A pending approval says where it is answered: the work its session runs, a run's step and a room (`work`, `step`, `room`), on its registry row, its frame, its Inbox row and the note an unanswered one leaves, so the nudge, the Inbox and a loop's, a run's or a room's page link to it and claim it from those, and none reads the session key's shape.**
 - **Switching a long chat (50,000 tokens or more) to a model that may cost more asks first, with what the next reply's re-read costs on each model at your prices; once you answer Switch, that chat doesn't ask again.**
+- **A temporary or incognito chat's thread wears a faint tint, from the moment the mode is picked for a new chat to the chat's end, so the page itself says the chat is private, not only the Execution Boundary control and the notice above the composer; a kept chat has none (#3808).**
 
 ### Changed
 
