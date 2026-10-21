@@ -8,59 +8,68 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-10-21
+
+A patch release on 0.2.3 that fixes a critical heap overflow in Pillow's JPEG decoder, eight more
+Pillow advisories, and certifi's trust in root certificates whose intermediate keys were
+compromised. PersonalClaw now requires Pillow 13 and certifi 2026.10.19 or newer, so any update
+installs them, whether pip or uv made the install, and the gateway image and the desktop app ship
+them.
+
+The dashboard starts its new layout: agents, skills, tools, prompts, apps, Learning and the Store
+are tabs of one Capabilities page, Knowledge, Memory, Files and Artifacts tabs of one Library, and
+notifications a filter of the Inbox; the sidebar lists your chats, goal loops and code sessions
+under their projects, the gateway's connection sits in a status line at the bottom of the window,
+and an Execution Boundary control beside the composer shows where the next turn may act. Every old
+address still opens.
+
+After upgrading, update `bedrock-models`, `anthropic-models` and `openrouter-models`, and
+`design-critique` if you have it, in Capabilities → Apps: an older model app declares no reasoning
+levels, so its chats run at Default effort until it is updated, and an older `design-critique` asks
+for a Pillow below 13, which holds up every app install that has Python packages to fetch. It
+installs over 0.2.3.
+
+### Security
+
+- **PersonalClaw requires Pillow 13 (`Pillow>=13,<14`), which fixes nine advisories in its JPEG, GIF, TIFF, PDF and EPS readers, its TIFF writer and its morphology code, a critical heap overflow in the JPEG decoder (GHSA-8g5g-8vmr-9782) among them: any update installs it, and the gateway image and the desktop app ship 13.0.0.**
+- **PersonalClaw requires certifi 2026.10.19 or newer (`certifi>=2026.10.19`), which no longer trusts root certificates whose intermediate keys were compromised (GHSA-6q48-6c7w-9gw2, critical): any update installs it, and the gateway image and the desktop app ship it.**
+
 ### Added
 
+- **The sidebar lists your chats, goal loops and code sessions under their projects, with No project last, below New thread and a search that narrows them by name, both of which stay at its top while the threads scroll under them. Within a project, pinned threads come first and then the most recently active, a goal loop or a code session by when its newest cycle ran, which each `GET /api/loops` row says (`last_cycle_at`); each row says when it is running, waiting on you or failed, and a thread starting, waiting or failing, or a worker's turn under way, never moves its row. ⌘1 to ⌘9 open the threads the sidebar shows, top to bottom, where they opened the chat list's. The thread the address opens is the one lit and scrolled into view, so a reload, Back or a copied address shows the same one, and on a phone the sidebar's drawer holds them too.**
 - **⌘⇧E shows a chat's working folder beside the conversation, and a click on a file opens it in the chat's file peek; a chat with no working folder says so.**
-- **While a reply is running, the composer's Stop button has a thin arc turning round it, at the pace of the Loading sweep slider; it holds still while the reply waits for your OK or your answer, as the orb does, and with reduced motion on it stays still.**
-- **Settings → Design → Motion has a slider for each animation length: the short, fade, medium and long transitions and each loop's cycle, and every animation takes its length from one of them.**
-- **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
-- **On macOS the desktop window's controls sit in the strip above the sidebar, and the sidebar takes the system's translucent material while the page stays opaque; with Reduce transparency on, or on Linux, the window stays opaque.**
-- **A code project's cockpit keeps its review in its address: the Files or Changes tab, the file, diff or commit the center shows, and the open task, so a reload, Back, a copied address or a `personalclaw://code/<id>` link opens the same review; a link only opens it and never steers, queues or runs anything.**
-- **Write reply styles of your own in Settings, and let an app add styles only when it holds the new `replyStyles` permission.**
-- **A new chat asks once how you like things explained, and keeps your answer as a pinned preference.**
-- **⌘K has Start a loop, so every top-level page is one search away, and a link to an address the app has retired, such as an artifact's link from before artifacts had their own page, opens the new page straight away instead of passing through the old one.**
-- **The sidebar lists your chats, goal loops and code sessions under their projects, with chats that have no project under No project, last; each row says when it is running, waiting on you or failed. The thread the address opens is the one lit, so a reload, Back or a copied address shows the same one, and on a phone the sidebar's drawer holds them too.**
-- **A model app on a wire of its own can ask whether a model takes adaptive thinking, by the rule PersonalClaw's built-in Anthropic-compatible client uses: `personalclaw.sdk.model.thinks_adaptively` and the `adaptive-thinking` core feature (an SDK addition no app has to change for; `bedrock-models` can use it in place of its own copy of the rule).**
-- **The sidebar's threads start with New thread and a search that narrows them by name; within a project, pinned threads come first and then the most recently active, and a thread starting, waiting or failing never moves its row; ⌘1 to ⌘9 open the threads the sidebar shows, top to bottom, where they opened the chat list's.**
-- **Helpers, goal loops and workflow runs now say what they are doing in the same phases a chat's turn does, on the `work_phase` frame: waiting to start, the step they are on, waiting for your OK or your answer, and how they ended. An app hears a helper's only for a chat it started, and no app hears a loop's or a run's.**
 - **A code block, a diff or a table in a reply opens beside the conversation from its own Open beside, in a split you can resize that keeps its width; the address names the open block, so a reload, Back or a copied link opens the same one, and a narrow window stacks it under the conversation. A diff under review in a code project stacks the same way.**
+- **Settings → Design → Motion has a slider for each animation length, the short, fade, medium and long transitions and each loop's cycle, and every animation takes its length from one of them: while a reply runs, the composer's Stop button turns a thin arc at the Loading sweep's pace, still while the reply waits for your OK or your answer and with reduced motion on.**
+- **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
+- **A code project's cockpit opens a diff in a pane beside the editor instead of over it: resize it by its edge or the arrow keys, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from. The cockpit keeps its review in its address: the Files or Changes tab, the file, diff or commit it shows and the open task, so a reload, Back, a copied address or a `personalclaw://code/<id>` link opens the same review, and a link never steers, queues or runs anything.**
+- **On macOS the desktop window's controls sit in the strip above the sidebar, and the sidebar takes the system's translucent material while the page stays opaque; with Reduce transparency on, or on Linux, the window stays opaque.**
+- **Write reply styles of your own in Settings, and let an app add styles only when it holds the new `replyStyles` permission; a new chat asks once how you like things explained, and keeps your answer as a pinned preference.**
+- **⌘K has Start a loop, so every top-level page is one search away, and a link to an address the app has retired, such as an artifact's link from before artifacts had their own page, opens the new page straight away instead of passing through the old one.**
+- **Helpers, goal loops and workflow runs say what they are doing in the same phases a chat's turn does, on the `work_phase` frame: waiting to start, the step they are on, waiting for your OK or your answer, and how they ended. An app hears a helper's only for a chat it started, and no app hears a loop's or a run's.**
+- **A model app on a wire of its own can ask whether a model takes adaptive thinking, by the rule PersonalClaw's built-in Anthropic-compatible client uses: `personalclaw.sdk.model.thinks_adaptively` and the `adaptive-thinking` core feature (an SDK addition no app has to change for; `bedrock-models` can use it in place of its own copy of the rule).**
 
 ### Changed
 
-- **Focus mode hides the status line too, so the work keeps the window; while the gateway isn't answering, the line shows anyway.**
-- **The gateway connection sits in a thin status line at the bottom of the window instead of the top-right corner: a still dot while connected, and while not, the state in words with when the gateway was last reached; a banner over the page follows once the connection has stayed lost for 2 seconds, and System status opens from the line.**
-- **The composer has one pill for the agent and the model; it offers a reasoning effort, under the chosen model, only for a model that declares its levels, and a switch to a model without the chat's level sets it back to Default and says so.**
-- **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
-- **Navigation and sending are instant; motion is kept for panels and moves.**
-- **A code project's cockpit opens a diff in a pane beside the editor instead of over it: drag its edge or use the arrow keys to resize it, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from.**
-- **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
-- **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
-- **The composer offers a reasoning effort again for a model whose provider app uses PersonalClaw's built-in Anthropic- or OpenAI-compatible client, with the levels that client sends the model (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature).**
-- **A finished turn's folded steps say how long the turn worked, "Worked for 1m 19s · 12 steps", where they said only how many steps there were.**
-- **After a reload, a finished turn's folded steps say the time the gateway measured for the turn, as the live page does, where they counted from the turn's first step to its last, and they no longer list the tools the turn used.**
-- **Agents, skills, tools, prompts and apps are tabs of one Capabilities destination, with the Store a tab of its own: one sidebar row in place of five, each tab still at its own address, so a bookmark, a reload or a copied link opens the tab it did, and ⌘K goes to each tab, the Store and Add a tool server.**
-- **The composer's effort row names Xhigh as Extra high.**
-- **The sidebar no longer draws a Capabilities header over the Capabilities row: Capabilities and Workflows follow Terminal under Platform, in the same order, each at the address it had.**
-- **Each Capabilities tab shows its list beside the selected item's detail, where Permissions says what the item may do; in a window under 840 px wide the detail shows in place of the list, with Back to it. A tab's header holds only its Add (Install on the Store): syncing and exporting agents, Re-probe MCP servers and Manage Sources are in the list's More menu, and Proposals is a view of Skills. Every list is in name order, tool servers included, and a sort control names the order it shows.**
-- **Knowledge, Memory, Files and Artifacts are tabs of one Library: one sidebar row in place of three, and Memory leaves Settings for its tab at `#/memory`, where an old Settings → Memory link still lands on the view and the record it named. Knowledge's item list is called All items, and ⌘K goes to Library and each tab.**
-- **A Capabilities tab puts the selected item's detail beside its list only when the page has 840 px beside the sidebar, so with the sidebar expanded in a window about 840 px wide the detail shows in place of the list, with Back to it, and collapsing or expanding the sidebar switches the layout at once.**
-- **While the agent works, the orb at the head of its reply paints at most 30 frames a second, as the buddy's dots do, rather than every frame the display draws: the same drawing for less CPU.**
+- **Agents, skills, tools, prompts, apps and Learning are tabs of one Capabilities page, with the Store a tab of its own: one sidebar row in place of six, under Platform between Terminal and Workflows, and each tab at the address it had, so a bookmark, a reload or a `personalclaw://` link opens the tab it did, ⌘K goes to each tab and to Add a tool server, and `personalclaw://capabilities` opens the page. Every tab but Learning, which keeps its page, lists its items in name order, tool servers included, with a sort control that names the order it shows, beside the selected item's detail, where Permissions says what the item may do, or shows the detail in place of the list, with Back, when the page has under 840 px beside the sidebar, and collapsing or expanding the sidebar switches the layout at once. A tab's header holds only its Add (Install on the Store): syncing and exporting agents, Re-probe MCP servers and Manage Sources are in the list's More menu, and Proposals is a view of Skills.**
+- **Knowledge, Memory, Files and Artifacts are tabs of one Library: one sidebar row in place of three, and Memory leaves Settings for its tab at `#/memory`, where an old Settings → Memory link still lands on the view and the record it named. ⌘K and a `personalclaw://library` or `personalclaw://memory` link open them, and Knowledge's item list is All items, whose shelf row starts with No shelf.**
 - **Notifications are a filter of the Inbox: Show › Notifications lists the feed, with its unread and per-kind narrowing, and the bell, ⌘K's Notifications and an old `#/notifications` link open it there.**
-- **Learning is a tab of Capabilities, beside Skills, whose proposals it links to, and keeps its page as it was: its own sidebar row goes, and `#/learning`, a bookmark of it and ⌘K's Learning still open it.**
-- **On Knowledge's All items view, the shelf row's first chip says No shelf, so it no longer shares the view's name.**
+- **The gateway connection sits in a thin status line at the bottom of the window instead of the top-right corner: a still dot while connected, and while not, the state in words with when the gateway was last reached. A banner over the page follows once the connection has stayed lost for 2 seconds, System status opens from the line, and focus mode hides it while the gateway answers.**
 - **One Execution Boundary control beside the composer shows where the next turn may act before it runs: the permission mode, the working folder, whether its commands run in this computer's sandbox, the network it reaches and the memory mode; the permission mode, the folder and a new chat's memory mode are changed there, a mode the gateway refuses stays as it was with its reason, and the task mode sits beside it, so the chat header keeps Share, the Session map, Activity and its `…`.**
-- **The sidebar places a goal loop or a code session among its project's threads by when its newest cycle ran, which each `GET /api/loops` row now says (`last_cycle_at`), so a worker's turn under way no longer moves it; one that has run no cycle sits where it did.**
-- **The sidebar's New thread and thread search stay at its top while the threads scroll under them, and a thread the address opens is scrolled into view below them.**
+- **The composer has one pill for the agent and the model, with a reasoning effort under the chosen model only for a model that declares its levels, Xhigh named Extra high; a switch to a model without the chat's level sets it back to Default and says so.**
+- **A model's reasoning levels are the ones its provider app lists for it, and where the app says nothing of the model, the ones PersonalClaw's built-in Anthropic- or OpenAI-compatible client sends it (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature): `bedrock-models` from 0.1.20, and `anthropic-models` and `openrouter-models` from 0.1.7, list each model's levels, and an older copy lists none, so the composer offers no effort for its models until you update it.**
+- **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
+- **Navigation and sending are instant; motion is kept for panels and moves, and the orb at the head of a reply paints at most 30 frames a second, as the buddy's dots do: the same drawing for less CPU.**
+- **A finished turn's folded steps say how long the turn worked, "Worked for 1m 19s · 12 steps", by the time the gateway measured, after a reload too, where they said only how many steps there were, and they no longer list the tools the turn used.**
+- **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
+- **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
 
 ### Fixed
 
-- **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
-- **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
-- **A chat on Auto, or on any model that declares no effort levels, runs at Default effort, where one that had stored a level kept running at it with no control left to show or change it; the composer says it set Default.**
+- **A native chat runs at its stored reasoning effort only when its model declares that level, read as the composer reads it, also for a turn sent through the API or another channel with no composer open; on Auto, or on a model that declares no levels, it runs at Default and the composer says it set Default, and setting a level the model doesn't declare is refused, naming the model and the levels it declares.**
 - **A model on an OpenAI-compatible provider whose id has `o1`, `o3` or `o4` only inside another word is no longer sent a reasoning effort, and Xhigh reaches an OpenAI reasoning model as High, as Max does.**
-- **A native chat runs at its stored reasoning effort only when its model declares that level, also for a turn sent through the API or another channel with no composer open, and on Auto, which names no model, it runs at Default; setting a level the chat's model doesn't declare is refused, naming the model and the levels it declares.**
-- **A native chat's turns and the effort setting read a model's levels as the composer's effort row does: the levels its provider app lists for the model, none when the listing names none, and the levels PersonalClaw's built-in client sends only where the app says nothing of it; an app that listed a model with no levels hid the effort row while its turns still ran at the client's levels.**
+- **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
 - **Workflow run and step times, on the workflow pages and the chat's workflow card, round to the whole second before they split off the minutes, so 119.6 seconds reads "2m 0s" where it read "1m 60s" and 59.6 seconds "1m 0s" where it read "60s"; a time under half a second reads "under 1s" where it read "0s".**
+- **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
 - **The README, the security policy, the security model and the threat model say what the audit log's integrity check catches, an entry edited in place, and what it does not, an entry deleted from the file; they called the log HMAC-chained and tamper-evident.**
 
 ## [0.2.3] — 2026-10-19

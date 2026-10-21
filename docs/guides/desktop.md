@@ -116,11 +116,12 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
 ```
 
 - **The page** is one of the dashboard's pages, by the name its address uses: `dashboard`, `chat`,
-  `projects`, `knowledge`, `tasks`, `inbox`, `triggers`, `files`, `artifacts`, `terminal`,
-  `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`, `apps`, `settings`,
-  `notifications`, `discover`, `loop`, `loops`, `code`, `app` or `mission-control`. `threads` is
-  another name for `chat` and `automations` for `triggers`. Names are lower case. The app's two
-  shell pages, `onboarding` and `companion`, are not on the list: a link to either is refused.
+  `projects`, `library`, `knowledge`, `memory`, `tasks`, `inbox`, `triggers`, `files`, `artifacts`,
+  `terminal`, `capabilities`, `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`,
+  `apps`, `settings`, `notifications`, `discover`, `loop`, `loops`, `code`, `app` or
+  `mission-control`. `threads` is another name for `chat` and `automations` for `triggers`. Names
+  are lower case. The app's two shell pages, `onboarding` and `companion`, are not on the list: a
+  link to either is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
   `. _ : @ ~ -`.
 - **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder), on a
@@ -175,7 +176,9 @@ For example:
 |---|---|
 | `personalclaw://threads/new?prompt=draft%20this` | a new thread, with the prompt in its composer, unsent |
 | `personalclaw://settings/providers` | Settings, at its providers address |
-| `personalclaw://skills` | Skills |
+| `personalclaw://capabilities` | Capabilities |
+| `personalclaw://skills` | Skills, a tab of Capabilities |
+| `personalclaw://memory` | Memory, a tab of the Library |
 | `personalclaw://automations` | Automations |
 | `personalclaw://artifacts/<slug>` | that artifact |
 | `personalclaw://threads/<key>?pane=activity&file=src%2Fapp.py` | that thread, with its Activity pane and that file open |

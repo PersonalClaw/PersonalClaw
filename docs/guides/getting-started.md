@@ -406,6 +406,17 @@ PersonalClaw *looks*, the other whether it *installs*.
 
 ### Upgrading from 0.2.x
 
+- **From 0.2.3 to 0.2.4, update the model apps, and `design-critique` if you have it.**
+  `bedrock-models` before 0.1.20, and `anthropic-models` and `openrouter-models` before 0.1.7,
+  list no reasoning levels for their models, so the composer offers no effort for them and their
+  chats run at Default until the app is updated. 0.2.4 requires Pillow 13, so a `design-critique`
+  before 0.1.3, which asks for a Pillow below 13, counts as missing its packages: the desktop app
+  does not start it, and installing or updating any other app whose Python packages are not
+  already installed fails until it is updated. Capabilities → Apps marks each one with Update
+  available, and **Update…** in its menu installs the new version.
+- **0.2.4 requires Pillow 13 and certifi 2026.10.19 or newer**, its security fixes, so the update
+  installs them whether pip or uv made the install; the gateway image and the desktop app ship
+  them.
 - **The dashboard API is version 2.** A client that declares version 1 is refused; an open
   dashboard tab needs only a reload. A script that read a chat's state reads its `run_state`
   instead, on `GET /api/chat/sessions` rows, `GET /api/chat/sessions/{session}` and the chats of

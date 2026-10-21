@@ -1,10 +1,11 @@
 """No text about reply styles points the owner at a Settings control that does not exist.
 
 The platform default is ``agent.reply_style``. Settings → Agent defaults carries its row,
-labelled Reply style, so the CHANGELOG, the chat guide, the module, the config fields' own
-descriptions, the agent form and the composer's picker may send the owner there, and only
-while that row exists: each text that names Agent defaults (or, in the CHANGELOG, Settings) is
-held to it. The behaviour is held in ``tests/test_reply_style.py``.
+labelled Reply style, so the CHANGELOG's unreleased and newest release's entries, the chat
+guide, the module, the config fields' own descriptions, the agent form and the composer's
+picker may send the owner there, and only while that row exists: each text that names Agent
+defaults (or, in the CHANGELOG, Settings) is held to it. The behaviour is held in
+``tests/test_reply_style.py``.
 """
 
 from __future__ import annotations
@@ -37,8 +38,12 @@ def _region(relative: str, start: str, end: str) -> str:
 
 def _texts() -> dict[str, str]:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = changelog[: changelog.index("\n## ", changelog.index("## [Unreleased]") + 1)]
-    headlines = [line for line in unreleased.splitlines() if "reply style" in line.lower()]
+    # [Unreleased] and the newest release, which Settings → Updates shows: a release cut leaves
+    # [Unreleased] empty, and the entries it moved are the ones a reader meets next.
+    start = changelog.index("## [Unreleased]")
+    newest = changelog.index("\n## [", start + 1)
+    recent = changelog[start : changelog.index("\n## [", newest + 1)]
+    headlines = [line for line in recent.splitlines() if "reply style" in line.lower()]
     assert headlines, "the CHANGELOG names no reply style, so this reads nothing"
     agent_meta = {f.name: f.metadata for f in fields(AgentProfile)}["reply_style"]
     platform_meta = {f.name: f.metadata for f in fields(AgentConfig)}["reply_style"]

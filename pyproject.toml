@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # ── Project metadata (PEP 621) ────────────────────────────────────────────────
 [project]
 name = "personalclaw"
-version = "0.2.3"
+version = "0.2.4"
 description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
 # A PEP 639 SPDX expression, emitted as `License-Expression`; the trove classifier it
 # supersedes is gone, and setuptools refuses the pair.
@@ -122,8 +122,10 @@ dependencies = [
     "trafilatura>=2,<3",
     "nh3>=0.2",
     "openpyxl>=3.1,<4",
-    # Knowledge media thumbnails (media.py): downscale uploaded images to WebP.
-    "Pillow>=10,<13",
+    # Knowledge media thumbnails (media.py): downscale uploaded images to WebP. 13 is the floor
+    # because 13.0.0 is the first release that fixes the JPEG decoder's heap overflow and eight
+    # other advisories in reading and writing images, and only a floor moves an install pip made.
+    "Pillow>=13,<14",
     # Codebase graph (codegraph/): tree-sitter parsers for the code index the agent
     # queries instead of grepping blind. CORE rather than
     # an extra, so `code_map` is simply present everywhere — an accelerator that half
@@ -145,6 +147,10 @@ dependencies = [
     # the documented install path for pip/uv users. This keeps a bare
     # `pip install personalclaw` lean without breaking any provider that's actually used.
     "httpx>=0.27",
+    # The CA bundle httpx and requests trust by default (aiohttp reads the system's). No code
+    # imports it; it is listed for its floor: 2026.10.19 removes root certificates whose
+    # intermediate keys were compromised, and only a floor moves an install pip made.
+    "certifi>=2026.10.19",
     "PyYAML>=6,<7",
     # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
     # os.environ without hand-copying .env — an unconditional import at startup.

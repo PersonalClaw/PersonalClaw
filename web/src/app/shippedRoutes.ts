@@ -108,10 +108,10 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'chat', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'projects', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // Library (#3815): one sidebar row, whose tabs are Knowledge, Memory, Files and Artifacts.
-  { route: 'library', from: ['router', 'palette'], since: UNRELEASED },
+  { route: 'library', from: ['router', 'palette', 'deep-link'], since: UNRELEASED },
   { route: 'knowledge', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   // Library's Memory tab, which was Settings › Memory.
-  { route: 'memory', from: ['router', 'palette', 'documented'], since: UNRELEASED },
+  { route: 'memory', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'tasks', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'triggers', from: ['router', 'palette', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
@@ -119,7 +119,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'artifacts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.3' },
   { route: 'terminal', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // Capabilities (#3817): one sidebar row, whose tabs are the five routes below it and the Store.
-  { route: 'capabilities', from: ['router', 'palette'], since: UNRELEASED },
+  { route: 'capabilities', from: ['router', 'palette', 'deep-link'], since: UNRELEASED },
   { route: 'agents', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'tools', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'skills', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },

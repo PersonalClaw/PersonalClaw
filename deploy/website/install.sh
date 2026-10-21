@@ -53,7 +53,7 @@ PC_PACKAGE="personalclaw"
 # WHY IT CANNOT ROT. A hand-typed version in a shell script is the defect in #2554 (two
 # copies drifted three weeks). tests/test_website_installer.py pins this constant to
 # CHANGELOG.md's second-newest release heading, so it reds the release after it goes stale.
-PC_MIN_VERSION="0.2.2"
+PC_MIN_VERSION="0.2.3"
 # The Python the tool environment is built on, named because uv will not choose a supported one
 # by itself: it ignores the upper bound of a package's Requires-Python, so an install that names
 # none lands on the newest interpreter uv finds or downloads (measured, uv 0.12.19: a wheel
