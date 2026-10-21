@@ -154,6 +154,11 @@ function TipCard({ tip, depth, reduce, onGo, onDismiss }: {
       // unmount+mount: the card that was behind animates forward into the front
       // card's box instead of fading in at its final size.
       layoutId={`discover-card-${tip.id}`}
+      // A card moves only when its depth does: the front one is dismissed and the next rises. Every
+      // read Home makes re-renders the deck, and a `layout` element with no dependency measures
+      // itself on each render, which asks for an animation frame; an idle Home asks for none.
+      // Rail: `discoverDeckAtRestAsksNoFrame.test.tsx`.
+      layoutDependency={depth}
       initial={{ opacity: 0, scale: 1 - STEP_SCALE * (depth + 1), y: -STEP_Y * (depth + 1) }}
       animate={{
         opacity: isFront ? 1 : STEP_OPACITY,
