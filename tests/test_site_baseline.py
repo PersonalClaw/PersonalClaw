@@ -1,9 +1,11 @@
-"""A site baseline fails by name, shrinks only, and merges like code.
+"""A site baseline fails by name, shrinks only, and merges as a set of lines.
 
 Each test builds a repository of its own in ``tmp_path``, whose ``.gitattributes`` holds the line
-``site_baseline.UNION_ATTRIBUTE``, so the merges below run through the union driver the repository
-declares (``tests/rails/test_site_baseline_tree.py`` holds the real ``.gitattributes`` to that
-line). A planted "site" is a file under ``src/``, and the baseline lists one line per file. Git runs
+``site_baseline.SITES_ATTRIBUTE`` (``tests/rails/test_site_baseline_tree.py`` holds the real
+``.gitattributes`` to that line), and whose merge driver is the one a clone of this repository
+has: ``scripts/install_git_hooks.sh``, the script ``npm run hooks:install`` runs, configures it in
+the planted repository, and the script it names is copied in. So the merges below run as a clone's
+do. A planted "site" is a file under ``src/``, and the baseline lists one line per file. Git runs
 with the suite's neutral environment (``tests/git_helper_guard.py``), never the machine's own.
 """
 
@@ -12,6 +14,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,13 +22,15 @@ import git_helper_guard
 import pytest
 import site_baseline
 from site_baseline import (
+    DRIVER,
     REGISTRY,
-    UNION_ATTRIBUTE,
+    SITES_ATTRIBUTE,
     check,
     check_registry,
     code_site,
     load,
     numbered,
+    parse,
     scoped,
 )
 from table_rows import row
@@ -33,20 +38,46 @@ from table_rows import row
 from personalclaw.sdk.testing import neutral_git_env
 
 BASELINE = "tests/rails/baselines/planted.sites.jsonl"
+#: A second baseline, registered on the line after the planted one.
+SECOND = "tests/rails/baselines/second.sites.jsonl"
 RAIL = "tests/rails/test_planted.py"
 #: The sites the base commit has, sorted. ``c`` and ``m`` are neighbours in the file.
 BASE_SITES = ("a", "c", "m", "x", "z")
 TODAY = "2026-10-19"
 #: The file GitHub names for a step's job summary.
 JOB_SUMMARY = "GITHUB_STEP_SUMMARY"
+#: What ``npm run hooks:install`` runs in a clone: it configures the merge driver.
+INSTALLER = site_baseline.REPO / "scripts" / "install_git_hooks.sh"
+
+
+def _env() -> dict[str, str]:
+    return os.environ | neutral_git_env(git_helper_guard.own_global_config())
 
 
 def _git(repo: Path, *args: str) -> str:
-    env = os.environ | neutral_git_env(git_helper_guard.own_global_config())
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, env=env, check=True
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, env=_env(), check=True
     )
     return proc.stdout.strip()
+
+
+def _configure_as_a_clone(repo: Path) -> None:
+    """Run the hook installer in *repo*, as a clone runs it, and copy in each file of this
+    repository the merge driver it configures runs. ``CI`` is dropped from its environment,
+    since the installer configures nothing on a CI runner."""
+    (repo / ".githooks").mkdir()
+    env = {name: value for name, value in _env().items() if name != "CI"}
+    subprocess.run(["sh", str(INSTALLER)], cwd=repo, env=env, check=True, capture_output=True)
+    driver = subprocess.run(
+        ["git", "-C", str(repo), "config", "--get", f"merge.{DRIVER}.driver"],
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    for word in driver.stdout.split():
+        if (site_baseline.REPO / word).is_file():
+            (repo / word).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(site_baseline.REPO / word, repo / word)
 
 
 def _site(name: str, **extra: str) -> dict[str, str]:
@@ -106,11 +137,13 @@ def _no_job_summary(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """Sites a, c, m, x and z, listed in a registered baseline, committed on ``main``."""
+    """Sites a, c, m, x and z, listed in a registered baseline, committed on ``main`` in a
+    repository configured as a clone of this one (:func:`_configure_as_a_clone`)."""
     path = tmp_path / "repo"
     (path / "src").mkdir(parents=True)
     _git(path, "init", "-q", "-b", "main")
-    (path / ".gitattributes").write_text(UNION_ATTRIBUTE + "\n", encoding="utf-8")
+    (path / ".gitattributes").write_text(SITES_ATTRIBUTE + "\n", encoding="utf-8")
+    _configure_as_a_clone(path)
     (path / RAIL).parent.mkdir(parents=True)
     (path / RAIL).write_text("", encoding="utf-8")
     _plant(path, *BASE_SITES)
@@ -131,15 +164,21 @@ def _branch(repo: Path, name: str, fix: str, add: str, **line: str) -> str:
     return _commit(repo, name)
 
 
-def _land(repo: Path, first: str, second: str) -> tuple[str, str] | None:
-    """``first`` lands on main, then ``second`` is rebased onto it: the three-way merge git
-    makes for the rebase, as a commit with ``first`` as its parent. ``None`` on a conflict."""
-    proc = subprocess.run(
+def _merge(repo: Path, first: str, second: str) -> subprocess.CompletedProcess[str]:
+    """The three-way merge git makes to rebase ``second`` onto ``first``, written as a tree: on
+    stdout the tree first, and on stderr whatever the merge driver said."""
+    return subprocess.run(
         ["git", "-C", str(repo), "merge-tree", "--write-tree", first, second],
         capture_output=True,
         text=True,
-        env=os.environ | neutral_git_env(git_helper_guard.own_global_config()),
+        env=_env(),
     )
+
+
+def _land(repo: Path, first: str, second: str) -> tuple[str, str] | None:
+    """``first`` lands on main, then ``second`` is rebased onto it: the merge (:func:`_merge`)
+    as a commit with ``first`` as its parent, checked out. ``None`` on a conflict."""
+    proc = _merge(repo, first, second)
     if proc.returncode == 1:
         return None
     assert proc.returncode == 0, proc.stderr
@@ -156,7 +195,7 @@ def test_two_branches_that_each_fix_a_site_and_add_one_merge_in_either_order(rep
     two = _branch(repo, "two", fix="z", add="o", added=TODAY)
     for first, second in ((one, two), (two, one)):
         landed = _land(repo, first, second)
-        assert landed is not None, "the two baselines conflicted: the union driver did not run"
+        assert landed is not None, "the two baselines conflicted: the sites-set driver did not run"
         base, _ = landed
         assert _found(repo) == ["a", "m", "n", "o", "x"]
         added = check(_found(repo), BASELINE, base, root=repo, prune=False)
@@ -164,33 +203,85 @@ def test_two_branches_that_each_fix_a_site_and_add_one_merge_in_either_order(rep
         check_registry(_baselines(repo), base, root=repo, prune=False)
     _git(repo, "checkout", "-q", "main")
     _git(repo, "rm", "-q", ".gitattributes")
-    _commit(repo, "no union driver")
+    _commit(repo, "no driver")
     one = _branch(repo, "one-plain", fix="c", add="n", added=TODAY)
     two = _branch(repo, "two-plain", fix="z", add="o", added=TODAY)
     assert _land(repo, one, two) is None, "without the driver the same two branches conflict"
 
 
-def test_a_union_merge_that_repeats_a_site_fails(repo: Path):
+def _ceilings(repo: Path) -> list[tuple[str, object]]:
+    return [(line.site, line.fields.get("ceiling")) for line in load(repo / REGISTRY)]
+
+
+def test_a_branch_from_before_a_ceiling_change_brings_back_no_stale_row(repo: Path):
+    """A branch from before main lowered a ceiling registers a baseline on the next line. A union
+    merge kept both sides of that hunk, so the old ceiling's row came back beside the new one with
+    no conflict. Merged as sets of lines, the old row is one main deleted, and it stays deleted;
+    a clone without the driver's configuration stops on it as a conflict."""
+    _git(repo, "checkout", "-q", "-b", "lower", "main")
+    _fix(repo, "z")
+    _lines(repo, *(_site(site) for site in ("a", "c", "m", "x")))
+    _write(repo / REGISTRY, _registration(ceiling=4))
+    lowered = _commit(repo, "lower")
+    _git(repo, "checkout", "-q", "-b", "second", "main")
+    _write(repo / SECOND, _site("s"))
+    _write(repo / REGISTRY, _registration(), _registration(SECOND, ceiling=1, added=TODAY))
+    second = _commit(repo, "second")
+    landed = _land(repo, lowered, second)
+    assert landed is not None, "the rebase stopped: the sites-set driver did not merge it"
+    assert _ceilings(repo) == [(BASELINE, 4), (SECOND, 1)], "the old ceiling's row came back"
+    check_registry(_baselines(repo), lowered, root=repo, prune=False)
+    _git(repo, "config", "--remove-section", f"merge.{DRIVER}")
+    assert _land(repo, lowered, second) is None, "without the driver git merged it as text, cleanly"
+
+
+def _both_change_a_ceiling(repo: Path) -> tuple[str, str]:
+    _git(repo, "checkout", "-q", "-b", "four", "main")
+    _write(repo / REGISTRY, _registration(ceiling=4))
+    four = _commit(repo, "four")
+    _git(repo, "checkout", "-q", "-b", "three", "main")
+    _write(repo / REGISTRY, _registration(ceiling=3))
+    return four, _commit(repo, "three")
+
+
+def _both_add_a_site(repo: Path) -> tuple[str, str]:
     one = _branch(repo, "one", fix="c", add="n", added=TODAY)
     _git(repo, "checkout", "-q", "-b", "two", "main")
     _plant(repo, "n")
     _lines(
         repo,
-        *(_site(s) for s in ("a", "c", "m")),
+        *(_site(site) for site in ("a", "c", "m")),
         {"site": "n", "reason": "admitted twice", "added": TODAY},
-        *(_site(s) for s in ("x", "z")),
+        *(_site(site) for site in ("x", "z")),
     )
-    two = _commit(repo, "two")
-    landed = _land(repo, one, two)
-    assert landed is not None
-    with pytest.raises(AssertionError, match=r"Site n is listed 2 times"):
-        check(_found(repo), BASELINE, landed[0], root=repo, prune=False)
+    return one, _commit(repo, "two")
 
 
-def test_a_union_merge_that_brings_back_a_deleted_line_fails_until_pruned(repo: Path):
-    """What the union driver cannot do: two branches that fix neighbouring sites edit one hunk,
-    and the union keeps both sides of it, so each deleted line comes back. The check names
-    them as stale, never passes them, and ``--prune`` deletes them."""
+#: Two branches that each give one site a line of their own: the file, the site, and the two.
+TWICE = [
+    ("both change one ceiling", REGISTRY, BASELINE, _both_change_a_ceiling),
+    ("both add one site", BASELINE, "n", _both_add_a_site),
+]
+
+
+def test_two_branches_that_each_change_one_sites_line_stop_as_a_conflict(repo: Path, subtests):
+    """Two lines for one site are for a person to choose between, so the merge stops, the file
+    holds both lines, and the driver names the file and the site."""
+    assert len(TWICE) == 2, "a case was dropped from the table"
+    for name, path, site, branches in TWICE:
+        with row(subtests, case=name):
+            proc = _merge(repo, *branches(repo))
+            assert proc.returncode == 1, f"the merge did not stop: {proc.stdout}{proc.stderr}"
+            assert f"{path} lists the site {site} twice" in proc.stderr, proc.stderr
+            tree = proc.stdout.splitlines()[0]
+            merged = parse(_git(repo, "show", f"{tree}:{path}") + "\n", path)[0]
+            assert [line.site for line in merged].count(site) == 2, merged
+
+
+def test_a_branch_from_before_a_fix_brings_back_no_deleted_line(repo: Path):
+    """Two branches that fix neighbouring sites edit one hunk, and a union merge kept both sides
+    of it, so each deleted line came back. Merged as sets of lines, each stays deleted. A line a
+    merge resolved by hand brings back is named as stale, never as an addition, until pruned."""
     _git(repo, "checkout", "-q", "-b", "one", "main")
     _fix(repo, "c")
     _lines(repo, *(_site(s) for s in ("a", "m", "x", "z")))
@@ -200,13 +291,16 @@ def test_a_union_merge_that_brings_back_a_deleted_line_fails_until_pruned(repo: 
     _lines(repo, *(_site(s) for s in ("a", "c", "x", "z")))
     two = _commit(repo, "two")
     landed = _land(repo, one, two)
-    assert landed is not None
+    assert landed is not None, "the rebase stopped: the sites-set driver did not merge it"
     base, _ = landed
+    assert [line.site for line in load(repo / BASELINE)] == ["a", "x", "z"], "a line came back"
+    check(_found(repo), BASELINE, base, root=repo, prune=False)
+    _lines(repo, *(_site(s) for s in BASE_SITES))
     with pytest.raises(AssertionError) as failed:
         check(_found(repo), BASELINE, base, root=repo, prune=False)
     message = str(failed.value)
     assert "Site c is listed" in message and "Site m is listed" in message, message
-    assert "was added" not in message, "a line the merge brought back is stale, not an addition"
+    assert "was added" not in message, "a line brought back is stale, not an addition"
     check(_found(repo), BASELINE, base, root=repo, prune=True)
     check(_found(repo), BASELINE, base, root=repo, prune=False)
     kept = [line.site for line in load(repo / BASELINE)]

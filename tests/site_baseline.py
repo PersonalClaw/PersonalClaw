@@ -8,15 +8,17 @@ themselves, one JSON object per line, each with the reason it is allowed::
     {"site": "src/personalclaw/x.py::Handler.get::web.json_response(body)", "reason": "..."}
 
 The file is named ``*.sites.jsonl``, and the repository's ``.gitattributes`` merges every such
-file with git's ``union`` driver: two branches that each add a line merge without a conflict.
+file with the ``sites-set`` driver (``scripts/git_sites_merge.py``), a three-way merge of two sets
+of lines: two branches that each add a line merge without a conflict, a line either branch deleted
+or replaced stays gone, and two branches that each change one site's line stop as a conflict.
 
 :func:`check` compares the sites a rail found with the file, and fails, naming each site, on
 
 - a site the file does not list: fix it, or add its line with a reason;
 - a line whose site no longer exists: delete it, since the file only shrinks;
-- a site listed twice, which a union merge can leave.
+- a site listed twice, as a merge resolved by hand can leave it.
 
-Order is not checked, since a union merge keeps each side's new lines where that side put them.
+Order is not checked. The driver and ``--prune`` both write the lines sorted by site.
 ``python tests/site_baseline.py --prune`` runs the rails that hold a baseline with
 ``SITE_BASELINE_PRUNE=1``, and each check then deletes its stale and repeated lines and sorts the
 file. It never adds a line.
@@ -38,10 +40,10 @@ job summary then names it against that ceiling and lists each of its sites with 
 registered file that is renamed or deleted fails until its registry line goes too, and a registry
 line may not raise its ceiling.
 
-**What a union merge cannot do.** git merges two edits that touch neighbouring lines as one hunk,
-and the union driver keeps both sides of it, so a line one branch deleted beside a line the other
-branch changed comes back. The check names it as stale and ``--prune`` deletes it; it never
-passes a site nobody listed.
+**A clone without the driver.** ``npm run hooks:install`` configures it in a clone; one that never
+ran it merges a baseline as git merges text, so two edits of neighbouring lines stop as a conflict
+to resolve by hand. A line a hand resolution brings back, one the base deleted, the check names as
+stale and ``--prune`` deletes it; it never passes a site nobody listed.
 
 A site in code is named ``path::qualified.name::<the node's source>`` (:func:`code_site`), its
 whitespace collapsed, so an edit above it or another site in the same function leaves its name
@@ -69,8 +71,12 @@ from typing import Any
 #: its own tests in the suite and the rails that hold the real tree can import it.
 REPO = Path(__file__).resolve().parents[1]
 
-#: The ``.gitattributes`` line that merges every site baseline with git's union driver.
-UNION_ATTRIBUTE = "*.sites.jsonl merge=union"
+#: The merge driver every site baseline merges with: ``merge.sites-set.driver``, which
+#: ``scripts/install_git_hooks.sh`` configures to run ``scripts/git_sites_merge.py``.
+DRIVER = "sites-set"
+
+#: The ``.gitattributes`` line that merges every site baseline with :data:`DRIVER`.
+SITES_ATTRIBUTE = f"*.sites.jsonl merge={DRIVER}"
 
 #: Every baseline file, one line each, from the repository's root.
 REGISTRY = "tests/rails/baselines/index.sites.jsonl"
@@ -127,8 +133,7 @@ def parse(text: str, label: str) -> tuple[list[Line], list[str]]:
     problems: list[str] = []
     if text and not text.endswith("\n"):
         problems.append(
-            f"{label} does not end with a newline, so a union merge would join its last line to "
-            "the other branch's first"
+            f"{label} does not end with a newline, so a line added after its last would join it"
         )
     for number, raw in enumerate(text.splitlines(), 1):
         if not raw.strip():
@@ -247,8 +252,8 @@ _SITES = _Words(
     new="Site {site} is not listed in {rel}: fix it, or add a line for it with a reason",
     stale="Site {site} is listed in {rel} but no longer exists: delete its line ({prune})",
     repeated=(
-        "Site {site} is listed {count} times in {rel}, as a union merge can leave it: keep one "
-        "line ({prune})"
+        "Site {site} is listed {count} times in {rel}, as a merge resolved by hand can leave "
+        "it: keep one line ({prune})"
     ),
     added=(
         "Site {site} was added to the baseline in this branch; add `added` and a reason, or fix "
@@ -304,8 +309,8 @@ def _added_since(
     lines: list[Line], at_base: list[Line], present: set[str], words: _Words
 ) -> tuple[list[Line], list[str]]:
     """The lines the base does not have, each passing only with ``added`` and a reason. A line
-    whose site is gone is stale, and is named as that alone: a union merge that brings back a
-    line main deleted reads as new against main, and the fix is to delete it."""
+    whose site is gone is stale, and is named as that alone: a merge resolved by hand that brings
+    back a line main deleted reads as new against main, and the fix is to delete it."""
     known = {line.site for line in at_base}
     fresh = [line for line in lines if line.site not in known and line.site in present]
     added = [line for line in fresh if line.added and line.reason]
@@ -475,23 +480,23 @@ _PROBES = ("tests/rails/baselines/probe.sites.jsonl", "web/src/probe.sites.jsonl
 
 
 def attribute_problems(root: Path = REPO) -> list[str]:
-    """Why git at *root* would not merge a site baseline with the union driver: its
-    ``.gitattributes`` lacks :data:`UNION_ATTRIBUTE` as a line of its own, or git, asked about a
-    baseline, answers anything but ``union`` (a later line that overrides it, say)."""
+    """Why git at *root* would not merge a site baseline with :data:`DRIVER`: its
+    ``.gitattributes`` lacks :data:`SITES_ATTRIBUTE` as a line of its own, or git, asked about a
+    baseline, answers anything but :data:`DRIVER` (a later line that overrides it, say)."""
     attributes = Path(root) / ".gitattributes"
     if not attributes.is_file():
-        return [f"{root} has no .gitattributes, so no site baseline merges with the union driver"]
+        return [f"{root} has no .gitattributes, so no site baseline merges with {DRIVER}"]
     lines = [line.strip() for line in attributes.read_text(encoding="utf-8").splitlines()]
     problems = []
-    if UNION_ATTRIBUTE not in lines:
-        problems.append(f".gitattributes does not hold the line `{UNION_ATTRIBUTE}`")
+    if SITES_ATTRIBUTE not in lines:
+        problems.append(f".gitattributes does not hold the line `{SITES_ATTRIBUTE}`")
     asked = _git(Path(root), "check-attr", "merge", "--", *_PROBES)
     if asked.returncode:
         return [*problems, f"git check-attr failed: {asked.stderr.strip()}"]
     for answer in asked.stdout.splitlines():
         path, _, value = answer.partition(": merge: ")
-        if value != "union":
-            problems.append(f"git merges {path} with merge={value}, not union")
+        if value != DRIVER:
+            problems.append(f"git merges {path} with merge={value}, not {DRIVER}")
     return problems
 
 

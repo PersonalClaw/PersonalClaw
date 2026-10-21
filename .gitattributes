@@ -1,3 +1,5 @@
-# A site baseline lists one site per line (tests/site_baseline.py). The union driver keeps
-# both sides' new lines, so two branches that each add a site merge without a conflict.
-*.sites.jsonl merge=union
+# A site baseline lists one site per line (tests/site_baseline.py), so it merges as a set of lines
+# (scripts/git_sites_merge.py): two branches that each add a site merge without a conflict, a line
+# either branch deleted stays deleted, and two branches that each change one site's line stop as a
+# conflict. `npm run hooks:install` configures the driver; a clone without it merges as text.
+*.sites.jsonl merge=sites-set

@@ -187,9 +187,11 @@ A rail that holds a population down lists the sites it allows, rather than compa
 a fixed number. A count goes red on whichever of two pull requests merges second, though neither
 broke it: each fixed one site and added another. A list does not. The list is a `*.sites.jsonl`
 file, one JSON object per line, `{"site": "...", "reason": "..."}`, and `.gitattributes` merges
-every such file with git's `union` driver, so two branches that each add a line merge without a
-conflict. `check(found, path)` in `tests/site_baseline.py` fails on a site the file does not list,
-on a line whose site is gone, and on a site listed twice, each by name. Order is not checked.
+every such file with the `sites-set` driver (`scripts/git_sites_merge.py`), a three-way merge of
+two sets of lines: two branches that each add a line merge without a conflict, and a line either
+branch deleted or replaced stays gone. `check(found, path)` in `tests/site_baseline.py` fails on a
+site the file does not list, on a line whose site is gone, and on a site listed twice, each by
+name. Order is not checked.
 Only a vacuity floor stays a number: a scan that found fewer than N files measured nothing.
 
 - **You fixed a site:** delete its line, or run `python tests/site_baseline.py --prune`. That
@@ -208,15 +210,23 @@ Only a vacuity floor stays a number: a scan that found fewer than N files measur
   it leaves its name alone; repeats of one name are `#2`, `#3` (`numbered`).
 
 `tests/rails/test_site_baseline_tree.py` holds the real tree to this: every baseline file is
-registered, and `.gitattributes` holds the line `*.sites.jsonl merge=union`.
+registered, and `.gitattributes` holds the line `*.sites.jsonl merge=sites-set`.
+
+**The driver in your clone.** `npm run hooks:install` (which `npm install` runs) configures it,
+as `git config merge.sites-set.driver "python3 scripts/git_sites_merge.py %O %A %B %P"`. A merge,
+rebase or cherry-pick then keeps every line either side added and drops every line either side
+deleted, relative to the commit both started from, and writes the file sorted by site. When the
+result lists one site twice, because both branches changed that site's line or both added one,
+the merge stops as a conflict: the file holds both lines and git's output names the site. Keep
+one, and run the rails. A clone that never ran the installer merges a baseline as git merges text,
+so a hunk both branches changed stops as a conflict too; it never brings a line back unseen.
 
 Pull requests land by GitHub's rebase merge, which refuses a conflicting pull request rather than
-resolving it. Whether GitHub applies the union driver is not known, and either way nothing is
-merged by hand: where it does not, a baseline two pull requests both changed stops the second as
-a conflict. Then rebase the branch on main on your machine, where git applies the driver, run the
-rails, and push. Never resolve a baseline in GitHub's web editor. A union merge keeps both sides
-of a hunk that both branches changed, so when two branches edit neighbouring lines, a line one of
-them deleted comes back: the check names it as stale, and `--prune` deletes it.
+resolving it, and GitHub runs no merge driver of a clone's own, so a baseline two pull requests
+both changed stops the second as a conflict. Then rebase the branch on main on your machine,
+where git applies the driver, run the rails, and push. Never resolve a baseline in GitHub's web
+editor. A line a merge resolved by hand brings back, one the base deleted, the check names as
+stale, and `--prune` deletes it.
 
 ## Conventions
 

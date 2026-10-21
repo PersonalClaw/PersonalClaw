@@ -1,5 +1,6 @@
 #!/bin/sh
-# Point this clone at the repository-owned hooks (.githooks/). Runs automatically
+# Point this clone at the repository-owned hooks (.githooks/), and configure the
+# merge driver .gitattributes names for the site baselines. Runs automatically
 # from npm `postinstall`, and on demand:
 #     npm run hooks:install
 # Same pattern as personalclaw.dev; the local core.hooksPath wins over any
@@ -33,4 +34,13 @@ if [ "$(git config --local --get core.hooksPath)" != ".githooks" ]; then
   exit 1
 fi
 
+# The site baselines (*.sites.jsonl) merge as sets of lines, not as text: every
+# line either branch added is kept, every line either branch deleted goes, and one
+# site listed twice stops as a conflict. git runs the driver from the top of the
+# work tree, so the path is the checked-out script's. Without this configuration
+# git merges a baseline as text, which stops on any hunk both branches changed.
+git config --local merge.sites-set.name "three-way merge of the site baselines' lines"
+git config --local merge.sites-set.driver "python3 scripts/git_sites_merge.py %O %A %B %P"
+
 echo "Installed repository Git hooks from .githooks (pre-commit lint, DCO sign-off, pre-push)."
+echo "Configured the site baselines' merge driver (merge.sites-set, scripts/git_sites_merge.py)."
