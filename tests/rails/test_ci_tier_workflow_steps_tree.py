@@ -1,6 +1,6 @@
-"""The tier workflows' own steps, run as written (#3915): pr.yml's and merge.yml's plan, merge.yml's
-check of the catalogue, the verdict each run ends with, and the setup action's programs step their
-stage jobs call.
+"""The tier workflows' own steps, run as written (#3915): pr.yml's and merge.yml's read of the
+partner head and their plan, merge.yml's check of the catalogue, the verdict each run ends with,
+and the setup action's programs step their stage jobs call.
 
 Each step's ``run:`` is read out of its workflow and run under ``bash -e``, as GitHub runs a step
 with no ``shell:``, with ``gh`` and ``git`` stubbed: ``gh`` lists the changed names as its
@@ -8,20 +8,25 @@ with no ``shell:``, with ``gh`` and ``git`` stubbed: ``gh`` lists the changed na
 (this checkout's, archived), and the planner either answers with a planted text or is the real
 one.
 
-What the rows hold. The plan step publishes only the keys and the stage jobs' matrices, each the
-planner's own: an answer that is not a plan this workflow can run (no answer, a planner that
-fails, keys missing or twice, a stage job the workflow does not run, a stage job's matrix that is
-not a list of entries alone, an entry in a container, entries other than the keys) publishes
-nothing and fails the step, so the verdict reads an empty plan and a failed job. A main whose
-tools/ci cannot be fetched plans nothing either. The planner is main's, run from a folder of its
-own over this checkout's catalogue. The check step refuses a catalogue main refuses, and a run of
-main checks nothing. The verdict step reads main's ``verdict.py``, the plan's keys and the run's
-records: green only with every record, red on a missing record, an empty plan or a failed job,
-red when main's copy cannot be read, and never green on a malformed record. It is the results
-job's last step, held back by nothing but a cancelled run, so the harness runs it as GitHub
-does. The programs step is off unless a tier workflow names programs; it refuses every name
-outside tmux, shellcheck and dash before it installs anything, and installs each one PATH lacks
-from apt-get on Linux or brew on macOS, nothing elsewhere.
+What the rows hold. The partner step publishes the apps repository's main as one full object id, and
+an answer that is not one (a failed read, an empty one, a ref name, two lines, a short id) publishes
+nothing and fails the step. The plan step publishes only the keys, each key's partners and the stage
+jobs' matrices, each the planner's own: an answer that is not a plan this workflow can run (no
+answer, a planner that fails, keys missing or twice, partners by key missing or for other keys than
+the plan's, a stage job the workflow does not run, a stage job's matrix that is not a list of
+entries alone, an entry in a container, entries other than the keys) publishes nothing and fails the
+step, so the verdict reads an empty plan and a failed job. A main whose tools/ci cannot be fetched
+plans nothing either. The planner is main's, run from a folder of its own over this checkout's
+catalogue. The check step refuses a catalogue main refuses, and a run of main checks nothing. The
+verdict step reads main's ``verdict.py``, the plan's keys, the run's records and the partner head
+and the partners by key the plan job published: green only with every record, red on a missing
+record, an empty plan or a failed job, red on a record of another partner head, on a record of a job
+that reads the partner naming none and on one of a job that reads none naming it, and when no
+partner head was published, red when main's copy cannot be read, and never green on a malformed
+record. It is the results job's last step, held back by nothing but a cancelled run, so the harness
+runs it as GitHub does. The programs step is off unless a tier workflow names programs; it refuses
+every name outside tmux, shellcheck and dash before it installs anything, and installs each one PATH
+lacks from apt-get on Linux or brew on macOS, nothing elsewhere.
 """
 
 from __future__ import annotations
@@ -52,6 +57,7 @@ _TIERS = {
 }
 _REPO = "o/r"
 _HEAD = "a" * 40
+_PARTNER = "c" * 40
 _RUN_ID = "4242"
 
 
@@ -121,6 +127,7 @@ printf '%s\\n' "$*" >> "$STUB/git.log"
 case "$1" in
   fetch) [ -f "$STUB/fetch-fails" ] && exit 128; exit 0 ;;
   archive) cat "$STUB/judge.tar"; exit 0 ;;
+  ls-remote) [ -f "$STUB/ls-remote" ] || exit 128; cat "$STUB/ls-remote"; exit 0 ;;
 esac
 exit 1
 """
@@ -226,10 +233,17 @@ def _own_plan(tier: str, changed: tuple[str, ...]) -> dict:
     return grid
 
 
-def _answer(grid: dict, jobs: dict[str, list[dict]] | None = None) -> str:
+def _answer(
+    grid: dict, jobs: dict[str, list[dict]] | None = None, key_partners: object = "grid"
+) -> str:
+    """The planner's answer for ``grid``; ``key_partners`` replaces its partners by key, and
+    None leaves the line out."""
     split = jobs if jobs is not None else planner.stage_jobs(grid)
     lines = ["full=false", "jobs=[]", "matrix=" + json.dumps({"include": grid["include"]})]
     lines.append("keys=" + json.dumps(grid["keys"]))
+    if key_partners is not None:
+        by_key = grid["partners"] if key_partners == "grid" else key_partners
+        lines.append("key-partners=" + json.dumps(by_key))
     lines += [f"matrix-{name}=" + json.dumps({"include": e}) for name, e in split.items()]
     return "\n".join(lines) + "\n"
 
@@ -285,6 +299,7 @@ def test_the_real_planner_publishes_its_keys_and_each_stage_jobs_matrix(
     want = _own_plan(tier, changed)
     published = ran.published
     assert json.loads(published.pop("keys")) == want["keys"]
+    assert json.loads(published.pop("key-partners")) == want["partners"]
     split = planner.stage_jobs(want)
     assert set(published) == set(split) <= set(jobs), ran.lines
     for name, entries in split.items():
@@ -346,6 +361,35 @@ def test_a_planted_plan_is_published_as_the_planner_printed_it(
     assert ran.rc == 0, ran.log
     assert json.loads(ran.published["test"]) == {"include": grid["include"]}
     assert json.loads(ran.published["keys"]) == grid["keys"]
+    assert json.loads(ran.published["key-partners"]) == grid["partners"]
+
+
+@pytest.mark.parametrize(
+    "key_partners",
+    [
+        pytest.param(None, id="no partners by key"),
+        pytest.param("first key left out", id="a key left out"),
+        pytest.param("a key beside", id="a key the plan does not hold"),
+        pytest.param("not lists", id="partners that are not a list"),
+        pytest.param(["static"], id="not an object"),
+    ],
+)
+def test_partners_by_key_that_are_not_the_plans_publish_nothing(
+    tmp_path: Path, judge_tar: Path, key_partners: object
+) -> None:
+    # The verdict holds each record to its key's partners, so the step publishes none it cannot
+    # hold every key to.
+    grid = _own_plan("change", ("docs/a.md",))
+    by_key = dict(grid["partners"])
+    if key_partners == "first key left out":
+        key_partners = {k: v for k, v in by_key.items() if k != grid["keys"][0]}
+    elif key_partners == "a key beside":
+        key_partners = {**by_key, "lint": []}
+    elif key_partners == "not lists":
+        key_partners = {k: "apps-partner" for k in by_key}
+    ran = _run_plan(tmp_path, "pr.yml", judge_tar, answer=_answer(grid, key_partners=key_partners))
+    _no_plan(ran)
+    assert "no plan: the key partners are not each key's list of partner names" in ran.log, ran.log
 
 
 def test_a_stage_job_the_workflow_does_not_run_publishes_nothing(
@@ -472,14 +516,86 @@ def test_the_check_is_the_last_step_of_the_job_the_merge_decision_requires() -> 
     assert ids[-1] == "catalogue-check" and ids.index("plan") < ids.index("catalogue-check")
 
 
+# ── the partner step ─────────────────────────────────────────────────────────────────────────
+
+_APPS_MAIN = "https://github.com/PersonalClaw/PersonalClawApps refs/heads/main"
+
+
+def _run_partners(tmp: Path, workflow: str, listed: str | None) -> Ran:
+    """Run ``workflow``'s partner step once, ``git ls-remote`` answering ``listed`` (or failing,
+    for None)."""
+    stub, bin_, temp = _stubs(tmp)
+    if listed is not None:
+        (stub / "ls-remote").write_text(listed, encoding="utf-8", newline="")
+    output = tmp / "GITHUB_OUTPUT"
+    output.write_text("")
+    step = _step(workflow, "changes", "partners")
+    env = {
+        "PATH": f"{bin_}:/usr/bin:/bin",
+        "HOME": str(tmp),
+        "STUB": str(stub),
+        "GITHUB_OUTPUT": str(output),
+        "RUNNER_TEMP": str(temp),
+    }
+    done = _bash(step["run"], tmp, env, tmp)
+    git_log = stub / "git.log"
+    return Ran(
+        rc=done.returncode,
+        lines=output.read_text(encoding="utf-8").split("\n")[:-1],
+        log=done.stdout + done.stderr + (git_log.read_text() if git_log.exists() else ""),
+        argv=None,
+        cwd=None,
+        runner_temp=temp,
+    )
+
+
+def test_both_workflows_read_the_partner_head_with_the_same_step_and_no_env() -> None:
+    step = _step("pr.yml", "changes", "partners")
+    assert step == _step("merge.yml", "changes", "partners")
+    assert "env" not in step and "${{" not in step["run"] and "with" not in step
+
+
+@pytest.mark.parametrize("workflow", sorted(_TIERS))
+def test_the_partner_step_publishes_the_apps_repositorys_main(tmp_path, workflow) -> None:
+    ran = _run_partners(tmp_path, workflow, f"{_PARTNER}\trefs/heads/main\n")
+    assert ran.rc == 0, ran.log
+    assert ran.lines == [f"apps-partner={_PARTNER}"]
+    assert f"ls-remote {_APPS_MAIN}" in ran.log
+
+
+@pytest.mark.parametrize(
+    "listed",
+    [
+        pytest.param(None, id="a read that fails"),
+        pytest.param("", id="no ref listed"),
+        pytest.param("main\trefs/heads/main\n", id="a ref name"),
+        pytest.param(f"{_PARTNER}\trefs/heads/main\n{_HEAD}\trefs/heads/main\n", id="two lines"),
+        pytest.param(f"{_PARTNER[:12]}\trefs/heads/main\n", id="a short id"),
+        pytest.param(f"{_PARTNER.upper()}\trefs/heads/main\n", id="an id in capitals"),
+    ],
+)
+def test_a_head_that_is_not_one_object_id_publishes_nothing(tmp_path, listed) -> None:
+    ran = _run_partners(tmp_path, "merge.yml", listed)
+    assert ran.rc != 0, ran.log
+    assert ran.lines == []
+    assert "::error title=no partner::" in ran.log, ran.log
+
+
 # ── the verdict step ─────────────────────────────────────────────────────────────────────────
 
 
-def _record(key: str, *, result: str = "success", head: str = _HEAD, attempt: int = 1) -> str:
+def _record(
+    key: str,
+    *,
+    result: str = "success",
+    head: str = _HEAD,
+    attempt: int = 1,
+    partners: dict[str, str] | None = None,
+) -> str:
     return verdict.job_record(
         key=key,
         result=result,
-        identity=verdict.Identity(head, {}),
+        identity=verdict.Identity(head, partners or {}),
         steps=[(["true"], 0, 0.1)],
         attempt=attempt,
         run_id=int(_RUN_ID),
@@ -500,6 +616,8 @@ def _run_verdict(
     gh_down: bool = False,
     attempt: str = "1",
     plant: Callable[[Path], None] | None = None,
+    partner: str = _PARTNER,
+    key_partners: object = "none read",
 ) -> Ran:
     stub, bin_, temp = _stubs(tmp)
     (stub / "verdict.py").write_bytes((REPO / "tools" / "ci" / "verdict.py").read_bytes())
@@ -523,6 +641,8 @@ def _run_verdict(
         "GH_TOKEN": "a-token",
         "NEEDS": needs,
         "KEYS": json.dumps(keys) if keys is not None else "",
+        "KEY_PARTNERS": _by_key(keys, key_partners),
+        "APPS_PARTNER": partner,
         "HEAD_SHA": _HEAD,
         "GITHUB_REPOSITORY": _REPO,
         "GITHUB_RUN_ID": _RUN_ID,
@@ -535,8 +655,18 @@ def _run_verdict(
     return Ran(done.returncode, [], log, None, None, temp)
 
 
+def _by_key(keys: list[str] | None, key_partners: object) -> str:
+    """``KEY_PARTNERS`` as the plan job publishes it: by default every key reads no partner,
+    and with no plan nothing is published."""
+    if key_partners == "none read":
+        return json.dumps({k: [] for k in keys}) if keys is not None else ""
+    return key_partners if isinstance(key_partners, str) else json.dumps(key_partners)
+
+
 _KEYS = ["static", "rails (1/2)", "rails (2/2)"]
 _GREEN_NEEDS = _needs(changes="success", test="success")
+#: A merge run whose apps-contract reads the apps checkout and whose other entries read none.
+_PARTNER_KEYS = {"static": [], "apps-contract": ["apps-partner"], "rails (1/2)": []}
 
 
 @pytest.mark.parametrize("workflow", sorted(_TIERS))
@@ -546,6 +676,8 @@ def test_the_verdict_step_reads_the_env_the_harness_gives_it(workflow: str) -> N
         "GH_TOKEN": "${{ github.token }}",
         "NEEDS": "${{ toJSON(needs) }}",
         "KEYS": "${{ needs.changes.outputs.keys }}",
+        "KEY_PARTNERS": "${{ needs.changes.outputs.key-partners }}",
+        "APPS_PARTNER": "${{ needs.changes.outputs.apps-partner }}",
         "HEAD_SHA": "${{ github.sha }}",
     }
     assert "${{" not in step["run"]
@@ -597,6 +729,64 @@ def test_no_plan_is_an_empty_plan_and_red(tmp_path: Path) -> None:
     needs = _needs(changes="failure", test="skipped")
     ran = _run_verdict(tmp_path, "merge.yml", keys=None, records={}, needs=needs)
     assert ran.rc == 1 and "empty plan" in ran.log, ran.log
+
+
+def _partner_run(tmp: Path, **changed: dict[str, str]) -> Ran:
+    """The merge run of :data:`_PARTNER_KEYS`, each record naming its job's partners, with
+    ``changed``'s keys (``apps_contract`` for apps-contract) naming others."""
+    named = {"static": {}, "apps-contract": {"apps-partner": _PARTNER}, "rails (1/2)": {}}
+    named.update({k.replace("_", "-"): v for k, v in changed.items()})
+    records = {k: _record(k, partners=v) for k, v in named.items()}
+    keys = list(_PARTNER_KEYS)
+    return _run_verdict(
+        tmp, "merge.yml", keys=keys, records=records, needs=_GREEN_NEEDS, key_partners=_PARTNER_KEYS
+    )
+
+
+def test_a_record_of_the_runs_partner_head_is_green_beside_records_naming_none(tmp_path) -> None:
+    # apps-contract's record names the apps checkout; every other entry's names none.
+    ran = _partner_run(tmp_path)
+    assert ran.rc == 0, ran.log
+
+
+def test_a_record_of_another_partner_head_is_red(tmp_path: Path) -> None:
+    ran = _partner_run(tmp_path, apps_contract={"apps-partner": "d" * 40})
+    assert ran.rc == 1 and "`apps-contract`: stale partner" in ran.log, ran.log
+
+
+def test_a_partner_reading_record_naming_no_partner_is_red(tmp_path: Path) -> None:
+    ran = _partner_run(tmp_path, apps_contract={})
+    assert ran.rc == 1, ran.log
+    assert "`apps-contract`: stale partner (names no apps-partner, which its job reads)" in ran.log
+
+
+def test_a_record_of_a_job_that_reads_no_partner_naming_one_is_red(tmp_path: Path) -> None:
+    ran = _partner_run(tmp_path, static={"apps-partner": _PARTNER})
+    assert ran.rc == 1 and "`static`: stale partner" in ran.log, ran.log
+    assert "which its job does not read" in ran.log
+
+
+def test_partners_by_key_the_verdict_cannot_hold_the_plan_to_are_refused(tmp_path: Path) -> None:
+    # The plan job's checks keep this from being published; the verdict refuses it as well.
+    keys = list(_PARTNER_KEYS)
+    records = {k: _record(k) for k in keys}
+    ran = _run_verdict(
+        tmp_path, "merge.yml", keys=keys, records=records, needs=_GREEN_NEEDS, key_partners={}
+    )
+    assert ran.rc == 2 and "name no partners for" in ran.log, ran.log
+
+
+def test_no_published_partner_head_is_never_green(tmp_path: Path) -> None:
+    # The plan job failed before it published one: the verdict cannot name the candidate.
+    ran = _run_verdict(
+        tmp_path,
+        "merge.yml",
+        keys=_KEYS,
+        records={k: _record(k) for k in _KEYS},
+        needs=_GREEN_NEEDS,
+        partner="",
+    )
+    assert ran.rc != 0, ran.log
 
 
 def test_a_record_of_a_later_attempt_than_the_runs_is_refused(tmp_path: Path) -> None:

@@ -331,6 +331,24 @@ def test_an_entry_names_its_external_inputs() -> None:
     assert by_id["rails"]["external"] == []
 
 
+def test_each_key_names_the_partner_checkouts_its_job_reads() -> None:
+    # What each record must name, for the verdict: only a revision input is a partner checkout,
+    # so the shard plan and the package index name no partner.
+    cat = _real()
+    m = planner.matrix(cat, planner.plan(cat, "merge", None, overrides=()))
+    assert list(m["partners"]) == m["keys"]
+    assert m["partners"]["apps-contract"] == ["apps-partner"]
+    assert m["partners"]["python-suite (1/4)"] == []
+    assert m["partners"]["rails (1/3)"] == []
+    assert {n for names in m["partners"].values() for n in names} == {"apps-partner"}
+
+
+def test_the_partner_checkouts_are_the_revision_inputs() -> None:
+    kinds = catalogue.EXTERNAL_INPUT_KINDS
+    assert catalogue.REVISION_INPUTS == {k for k, kind in kinds.items() if kind == "revision"}
+    assert catalogue.REVISION_INPUTS == {"apps-partner"}
+
+
 # ── the workflow jobs a matrix is run by ─────────────────────────────────────────────────────
 
 
@@ -418,8 +436,9 @@ def test_the_command_prints_the_matrix_as_json(tmp_path: Path) -> None:
     done = _cli(tmp_path, "--matrix")
     assert done.returncode == 0, done.stderr
     data = json.loads(done.stdout)
-    assert set(data) == {"include", "keys"}
+    assert set(data) == {"include", "keys", "partners"}
     assert "web" in data["keys"]
+    assert data["partners"]["web"] == []
 
 
 def test_the_command_adds_the_matrix_and_keys_to_its_output_lines(tmp_path: Path) -> None:
@@ -427,15 +446,20 @@ def test_the_command_adds_the_matrix_and_keys_to_its_output_lines(tmp_path: Path
     assert done.returncode == 0, done.stderr
     lines = done.stdout.splitlines()
     assert [line.split("=", 1)[0] for line in lines] == [
-        "full", "jobs", "matrix", "keys", "matrix-build", "matrix-test", "matrix-test-2",
+        "full", "jobs", "matrix", "keys", "key-partners",
+        "matrix-build", "matrix-test", "matrix-test-2",
     ]  # fmt: skip
     matrix = json.loads(lines[2].split("=", 1)[1])
     # The object a workflow's `strategy.matrix` reads holds `include` alone: any other key
     # would become a matrix dimension and multiply the jobs.
     assert set(matrix) == {"include"}
     assert json.loads(lines[3].split("=", 1)[1]) == [e["key"] for e in matrix["include"]]
+    # Each key's partner checkouts, every key once, for the verdict to hold each record to.
+    partners = json.loads(lines[4].split("=", 1)[1])
+    assert list(partners) == json.loads(lines[3].split("=", 1)[1])
+    assert all(names == [] for names in partners.values())
     # One line per stage job with an entry, each its own `include` alone, together the matrix.
-    split = {line.split("=", 1)[0]: json.loads(line.split("=", 1)[1]) for line in lines[4:]}
+    split = {line.split("=", 1)[0]: json.loads(line.split("=", 1)[1]) for line in lines[5:]}
     assert all(set(m) == {"include"} for m in split.values())
     split_keys = [e["key"] for m in split.values() for e in m["include"]]
     assert sorted(split_keys) == sorted(json.loads(lines[3].split("=", 1)[1]))

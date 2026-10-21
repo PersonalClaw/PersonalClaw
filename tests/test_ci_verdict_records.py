@@ -42,13 +42,14 @@ def _record(
     head: str = HEAD,
     attempt: int = 1,
     run_id: int | None = RUN,
+    partners: dict[str, str] | None = None,
     **more: object,
 ) -> str:
     steps = [(["true"], 0 if result == "success" else 1, 0.5)]
     return verdict.job_record(
         key=key,
         result=result,
-        identity=verdict.Identity(head, {"apps": PARTNER}),
+        identity=verdict.Identity(head, {"apps": PARTNER} if partners is None else partners),
         steps=steps,
         attempt=attempt,
         run_id=run_id,
@@ -76,6 +77,7 @@ def _setup(
     *,
     keys: list[str] = KEYS,
     needs: dict = NEEDS,
+    key_partners: object = None,
 ) -> list[str]:
     plan = tmp_path / "plan.json"
     plan.write_text(json.dumps(keys))
@@ -87,12 +89,19 @@ def _setup(
         # download-artifact puts each artifact in a folder of its own.
         (folder / name).mkdir(parents=True, exist_ok=True)
         (folder / name / "record.json").write_text(text)
-    return [
+    args = [
         "--plan", str(plan), "--needs", str(needs_file), "--records", str(folder),
         "--run-id", str(RUN),
         "--head", HEAD, "--partner", f"apps={PARTNER}",
         "--run-head", HEAD, "--run-partner", f"apps={PARTNER}",
     ]  # fmt: skip
+    if key_partners is not None:
+        by_key = tmp_path / "key-partners.json"
+        by_key.write_text(
+            key_partners if isinstance(key_partners, str) else json.dumps(key_partners)
+        )
+        args += ["--key-partners", str(by_key)]
+    return args
 
 
 def _all_green(attempt: int = 1) -> dict[str, str]:
@@ -133,6 +142,113 @@ def test_a_record_of_an_older_head_reads_red_as_stale(tmp_path, capsys) -> None:
     records.update(_named(_record("static", head=OLD_HEAD)))
     assert _run(_setup(tmp_path, records)) == 1
     assert "`static`: stale head" in capsys.readouterr().out
+
+
+# A record names only the partners its own job read: the merge tier's apps-contract names the
+# apps checkout, and every other entry names none. ``--key-partners`` gives each planned key's
+# partners from the plan, and each record must name exactly those.
+
+#: Each key's partners, as the plan gives them: suite (2/2) stands in for apps-contract.
+KEY_PARTNERS = {"static": [], "suite (1/2)": [], "suite (2/2)": ["apps"]}
+
+
+def _merge_tier_records(apps: str = PARTNER, **more: dict[str, str]) -> dict[str, str]:
+    partners = {"static": {}, "suite (1/2)": {}, "suite (2/2)": {"apps": apps}}
+    partners.update({key.replace("_", " "): named for key, named in more.items()})
+    return _named(*(_record(key, partners=named) for key, named in partners.items()))
+
+
+def test_records_naming_their_own_partners_or_none_read_green(tmp_path, capsys) -> None:
+    args = _setup(tmp_path, _merge_tier_records(), key_partners=KEY_PARTNERS)
+    assert _run(args) == 0, capsys.readouterr().out
+
+
+def test_a_record_of_an_older_partner_head_reads_red_as_stale(tmp_path, capsys) -> None:
+    assert (
+        _run(_setup(tmp_path, _merge_tier_records(apps=OLD_HEAD), key_partners=KEY_PARTNERS)) == 1
+    )
+    out = capsys.readouterr().out
+    assert "`suite (2/2)`: stale partner" in out
+    assert "`static`" not in out
+
+
+def test_a_partner_record_naming_none_reads_red(tmp_path, capsys) -> None:
+    records = _merge_tier_records()
+    records.update(_named(_record("suite (2/2)", partners={})))
+    assert _run(_setup(tmp_path, records, key_partners=KEY_PARTNERS)) == 1
+    assert (
+        "`suite (2/2)`: stale partner (names no apps, which its job reads"
+        in capsys.readouterr().out
+    )
+
+
+def test_a_record_of_a_job_that_reads_no_partner_naming_one_reads_red(tmp_path, capsys) -> None:
+    records = _merge_tier_records()
+    records.update(_named(_record("static", partners={"apps": PARTNER})))
+    assert _run(_setup(tmp_path, records, key_partners=KEY_PARTNERS)) == 1
+    assert "`static`: stale partner" in capsys.readouterr().out
+
+
+def test_a_partner_the_candidate_does_not_name_reads_red(tmp_path, capsys) -> None:
+    args = _setup(tmp_path, _merge_tier_records(), key_partners=KEY_PARTNERS)
+    assert _run(_without(_without(args, "--partner"), "--run-partner")) == 1
+    out = capsys.readouterr().out
+    assert "`suite (2/2)`: stale partner" in out
+    assert "which the candidate (none) does not name" in out
+
+
+def test_without_key_partners_a_record_is_held_to_the_candidates_partners(tmp_path, capsys) -> None:
+    # Fail closed: with no partners by key, a record naming none of the candidate's is stale.
+    assert _run(_setup(tmp_path, _merge_tier_records())) == 1
+    out = capsys.readouterr().out
+    assert "`static`: stale partner" in out and "`suite (1/2)`: stale partner" in out
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "why"),
+    [
+        ("not JSON", "{", "--key-partners is not JSON"),
+        ("not an object", json.dumps(list(KEY_PARTNERS)), "a mapping of"),
+        (
+            "a planned key missing",
+            json.dumps({"static": [], "suite (1/2)": []}),
+            "name no partners for",
+        ),
+        (
+            "a key outside the plan",
+            json.dumps({**KEY_PARTNERS, "lint": []}),
+            "which is not planned",
+        ),
+        ("a partner that is not a name", json.dumps({**KEY_PARTNERS, "static": [1]}), "a list of"),
+    ],
+)
+def test_key_partners_it_cannot_read_are_refused(tmp_path, capsys, name, text, why) -> None:
+    assert _run(_setup(tmp_path, _merge_tier_records(), key_partners=text)) == 2, name
+    assert why in capsys.readouterr().err
+
+
+def test_key_partners_without_records_are_refused(tmp_path, capsys) -> None:
+    args = _without(
+        _without(_setup(tmp_path, {}, key_partners=KEY_PARTNERS), "--records"), "--run-id"
+    )
+    assert _run(args) == 2
+    assert "--key-partners is read only with --records" in capsys.readouterr().err
+
+
+def test_key_partners_given_twice_are_refused(tmp_path, capsys) -> None:
+    args = _setup(tmp_path, _merge_tier_records(), key_partners=KEY_PARTNERS)
+    assert _run([*args, "--key-partners", args[-1]]) == 2
+    assert "argument --key-partners: given twice" in capsys.readouterr().err
+
+
+def test_records_are_read_as_naming_their_own_partners() -> None:
+    (result,) = verdict.from_job_records([_record("static", partners={})])
+    assert result.own_partners
+
+
+def test_needs_results_carry_the_runs_whole_identity() -> None:
+    results = verdict.from_needs(json.dumps(NEEDS), verdict.Identity(HEAD, {}))
+    assert results and not any(r.own_partners for r in results)
 
 
 def test_a_cancelled_matrix_job_in_needs_reads_red_even_with_every_record(tmp_path) -> None:

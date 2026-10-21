@@ -209,6 +209,128 @@ def test_a_plan_that_did_all_its_work_reads_green(subtests: object) -> None:
             assert got.reasons == (), f"{name}: green with reasons {got.reasons}"
 
 
+# ── decide: a record's own partners ───────────────────────────────────────────────────────────
+#
+# A run-job record names only the partners its own job read (``own_partners``): apps-contract's
+# names the apps checkout, every other job's names none. So the verdict is given each planned
+# key's partners (``key_partners``, from the plan: the job's catalogue entry's revision inputs),
+# and a record must name exactly those, each at the candidate's revision. Given none, a record is
+# held to the candidate's partners exactly, as a ``needs`` result always is (the rows above).
+
+#: The merge tier's partners by key: apps-contract reads the apps checkout, the others none.
+KEY_PARTNERS = {"static": [], "apps-contract": ["apps"], "rails (1/2)": []}
+
+
+def own(key: str, partners: dict[str, str], head: str = HEAD) -> JobResult:
+    return JobResult(key, "success", Identity(head, partners), 1, own_partners=True)
+
+
+def merge_tier(changed: dict[str, dict[str, str]] | None = None) -> list[JobResult]:
+    """The merge tier's records, each naming its job's partners, with ``changed``'s replaced."""
+    named = {"static": {}, "apps-contract": {"apps": PARTNER}, "rails (1/2)": {}, **(changed or {})}
+    return [own(key, partners) for key, partners in named.items()]
+
+
+#: (name, results, the red key, a phrase of its detail): each red as ``stale partner``.
+OWN_PARTNER_RED_ROWS: list[tuple[str, list[JobResult], str, str]] = [
+    (
+        "apps-contract's record naming no partner",
+        merge_tier({"apps-contract": {}}),
+        "apps-contract",
+        "names no apps, which its job reads",
+    ),
+    (
+        "apps-contract's record naming a partner its job does not read",
+        merge_tier({"apps-contract": {"apps": PARTNER, "web": OTHER}}),
+        "apps-contract",
+        f"ran with partner web={OTHER}, which its job does not read",
+    ),
+    (
+        "a record of a job that reads no partner naming one",
+        merge_tier({"static": {"apps": PARTNER}}),
+        "static",
+        f"ran with partner apps={PARTNER}, which its job does not read",
+    ),
+    (
+        "apps-contract's record of an older partner head",
+        merge_tier({"apps-contract": {"apps": OLD_PARTNER}}),
+        "apps-contract",
+        f"ran with partner apps={OLD_PARTNER}, not apps={PARTNER}",
+    ),
+    (
+        "apps-contract's record naming the candidate's revision under another partner's name",
+        merge_tier({"apps-contract": {"web": PARTNER}}),
+        "apps-contract",
+        f"ran with partner web={PARTNER}, which its job does not read",
+    ),
+]
+
+
+def test_a_record_names_exactly_its_jobs_partners_at_the_candidates_revisions(
+    subtests: object,
+) -> None:
+    assert len(OWN_PARTNER_RED_ROWS) == 5, "a red row was dropped from the table"
+    for name, results, key, why in OWN_PARTNER_RED_ROWS:
+        with row(subtests, case=name):
+            got = decide(list(KEY_PARTNERS), results, CANDIDATE, key_partners=KEY_PARTNERS)
+            assert [(r.key, r.kind) for r in got.reasons] == [(key, "stale partner")], name
+            assert why in got.reasons[0].detail, got.reasons[0].detail
+
+
+def test_records_that_name_their_own_partners_or_none_read_green() -> None:
+    got = decide(list(KEY_PARTNERS), merge_tier(), CANDIDATE, key_partners=KEY_PARTNERS)
+    assert got.green, got.reasons
+
+
+def test_a_partner_its_job_reads_that_the_candidate_does_not_name_reads_red() -> None:
+    got = decide(list(KEY_PARTNERS), merge_tier(), Identity(HEAD, {}), key_partners=KEY_PARTNERS)
+    assert [(r.key, r.kind) for r in got.reasons] == [("apps-contract", "stale partner")]
+    assert "its job reads apps, which the candidate (none) does not name" in got.reasons[0].detail
+
+
+def test_with_no_partners_by_key_a_record_is_held_to_the_candidates_partners_exactly() -> None:
+    # The fail-closed reading: a record naming none of the candidate's partners is stale.
+    got = decide(["static"], [own("static", {})], CANDIDATE)
+    assert [(r.key, r.kind) for r in got.reasons] == [("static", "stale partner")]
+    assert decide(["static"], [own("static", {"apps": PARTNER})], CANDIDATE).green
+
+
+def test_a_record_naming_no_partner_still_needs_the_candidates_head() -> None:
+    got = decide(
+        ["static"], [own("static", {}, head=OLD_HEAD)], CANDIDATE, key_partners={"static": []}
+    )
+    assert [(r.key, r.kind) for r in got.reasons] == [("static", "stale head")]
+
+
+def test_a_needs_result_naming_no_partner_is_still_stale() -> None:
+    # The run's identity, not a job's: it must name the candidate's partners exactly, whatever
+    # the partners by key say.
+    result = JobResult("static", "success", Identity(HEAD, {}), 1)
+    got = decide(["static"], [result], CANDIDATE, key_partners={"static": []})
+    assert [(r.key, r.kind) for r in got.reasons] == [("static", "stale partner")]
+
+
+def test_decide_refuses_partners_by_key_that_are_not_the_plans(subtests: object) -> None:
+    rows: list[tuple[str, object, str]] = [
+        ("a planned key with no entry", {"static": []}, "name no partners for apps-contract"),
+        (
+            "an entry for a key outside the plan",
+            {"static": [], "apps-contract": ["apps"], "lint": []},
+            "name partners for lint, which is not planned",
+        ),
+        ("partners that are not a list", {"static": [], "apps-contract": "apps"}, "a list of"),
+        ("a partner named twice", {"static": [], "apps-contract": ["apps", "apps"]}, "twice"),
+        ("an empty partner name", {"static": [], "apps-contract": [""]}, "a list of"),
+        ("not a mapping", ["static", "apps-contract"], "a mapping of"),
+    ]
+    assert len(rows) == 6, "a refusal was dropped from the table"
+    for name, key_partners, why in rows:
+        with row(subtests, case=name):
+            with pytest.raises(Refused, match=why):
+                planned = ["static", "apps-contract"]
+                decide(planned, [], CANDIDATE, key_partners=key_partners)  # type: ignore[arg-type]
+
+
 def test_a_sha256_repository_reads_green() -> None:
     # Built here, not in a table, so an identity that refuses SHA-256 fails this control alone.
     head, partner = "a" * 64, "c" * 64

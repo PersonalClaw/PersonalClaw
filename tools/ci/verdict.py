@@ -8,7 +8,14 @@ they must be for. The verdict is green only when all of these hold:
 - every result for that key, on every attempt, is ``success``;
 - every one of those results names the candidate's head and the candidate's partner revisions
   (:class:`Identity`), so a result for an older head, or an older head of a partner repository,
-  is not this candidate's.
+  is not this candidate's. A per-job record names only the partners its own job read
+  (``JobResult.own_partners``): apps-contract's names the apps checkout, every other job's
+  names none. So given each planned key's partners (``key_partners``, which the plan reads from
+  the job's catalogue entry), a record must name exactly its key's, each one the candidate
+  names, at the candidate's revision: a record of a job that reads a partner and names none, or
+  one naming a partner its job does not read, is stale. Given no partners by key, a record is
+  held to the candidate's partners exactly, as a ``needs`` result, which carries the run's
+  whole identity, always is.
 
 Anything else is red, with one :class:`Reason` per key that fell short: ``missing``,
 ``cancelled``, ``skipped``, ``failure``, ``unknown result``, ``no identity``, ``stale head``,
@@ -43,7 +50,8 @@ it cannot read. Every usage error is input it cannot read: there is no ``-h``, s
 would exit 0 having judged nothing, and an option given twice is refused, not last-wins. When
 ``$GITHUB_STEP_SUMMARY`` is set, the verdict's reasons, or why the input could not be read, are
 appended to it. ``--records`` adds one run's per-job records (:func:`read_records`), with
-``--run-id`` naming that run, and ``--attempt`` names the run's attempt.
+``--run-id`` naming that run and ``--key-partners`` each planned key's partners (a JSON object of
+key to partner names, with --records only), and ``--attempt`` names the run's attempt.
 
 :func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a run of a
 catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
@@ -124,7 +132,10 @@ class FailedTest:
 class JobResult:
     """One job's result on one attempt. ``identity`` is None when the result named none, and
     ``run_id`` when it named no run (a local record, or a ``needs`` result). ``tests`` are the
-    failed tests its record names, in the record's order; a ``needs`` result names none."""
+    failed tests its record names, in the record's order; a ``needs`` result names none.
+    ``own_partners`` is True for a per-job record, whose identity names only the partners its
+    own job read (held to its key's partners when :func:`decide` is given them), and False for
+    a ``needs`` result, whose identity is the run's whole one."""
 
     key: str
     result: str
@@ -132,6 +143,7 @@ class JobResult:
     attempt: int = 1
     run_id: int | None = None
     tests: tuple[FailedTest, ...] = ()
+    own_partners: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,10 +168,14 @@ class Verdict:
 
 
 def _fault(
-    result: JobResult, candidate: Identity, run_id: int | None = None
+    result: JobResult,
+    candidate: Identity,
+    run_id: int | None = None,
+    reads: frozenset[str] | None = None,
 ) -> tuple[str, str] | None:
     """What is wrong with one planned result, or None when it counts for the candidate (and,
-    when ``run_id`` is given, for that run)."""
+    when ``run_id`` is given, for that run). ``reads`` is the partners the result's own job
+    reads, given for a key whose partners the plan names."""
     if result.result not in WORDS:
         return "unknown result", f"GitHub gives no job the result {result.result!r}"
     if result.result != SUCCESS:
@@ -172,7 +188,28 @@ def _fault(
         return "no identity", "the result names no head, so it cannot be this candidate's"
     if result.identity.head_sha != candidate.head_sha:
         return "stale head", f"ran on {result.identity.head_sha}, not {candidate.head_sha}"
-    if dict(result.identity.external_revisions) != dict(candidate.external_revisions):
+    if result.own_partners and reads is not None:
+        # Exactly the partners its own job reads, each at the candidate's revision: a job that
+        # reads a partner and names none is as stale as one naming a partner it does not read.
+        named = result.identity.external_revisions
+        for name in sorted(set(named) - reads):
+            return "stale partner", (
+                f"ran with partner {name}={named[name]}, which its job does not read"
+            )
+        for name in sorted(reads - set(named)):
+            return "stale partner", f"names no {name}, which its job reads"
+        for name in sorted(reads):
+            want = candidate.external_revisions.get(name)
+            if want is None:
+                return "stale partner", (
+                    f"its job reads {name}, which the candidate ({_revisions(candidate)})"
+                    " does not name"
+                )
+            if named[name] != want:
+                return "stale partner", (
+                    f"ran with partner {name}={named[name]}, not {name}={want}"
+                )
+    elif dict(result.identity.external_revisions) != dict(candidate.external_revisions):
         return "stale partner", (
             f"ran with partners {_revisions(result.identity)}, not {_revisions(candidate)}"
         )
@@ -185,7 +222,10 @@ def _revisions(identity: Identity) -> str:
 
 
 def _planned(
-    results: Sequence[JobResult], candidate: Identity, run_id: int | None = None
+    results: Sequence[JobResult],
+    candidate: Identity,
+    run_id: int | None = None,
+    reads: frozenset[str] | None = None,
 ) -> tuple[str, str] | None:
     """The fault of one planned key's results, or None when every attempt was green here."""
     if not results:
@@ -197,11 +237,11 @@ def _planned(
     latest = max(r.attempt for r in results)
     for r in results:
         if r.attempt == latest:
-            fault = _fault(r, candidate, run_id)
+            fault = _fault(r, candidate, run_id, reads)
             if fault:
                 return fault
     for r in sorted(results, key=lambda r: r.attempt):
-        fault = _fault(r, candidate, run_id)
+        fault = _fault(r, candidate, run_id, reads)
         if fault:
             return "red on an earlier attempt", f"attempt {r.attempt}: {fault[0]}; {fault[1]}"
     return None
@@ -217,17 +257,43 @@ def _unplanned(results: Sequence[JobResult]) -> tuple[str, str] | None:
     return None
 
 
+def _key_partners(
+    key_partners: Mapping[str, Iterable[str]], plan: Sequence[str]
+) -> dict[str, frozenset[str]]:
+    """``key_partners`` read for ``plan``: every planned key and no other, each a list of
+    partner names, none twice. Anything else is refused, so no key is left unheld."""
+    if not isinstance(key_partners, Mapping):
+        raise Refused("the partners by key must be a mapping of each planned key to its partners")
+    out: dict[str, frozenset[str]] = {}
+    for key, names in key_partners.items():
+        if key not in plan:
+            raise Refused(f"the partners by key name partners for {key}, which is not planned")
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            raise Refused(f"the partners of {key} must be a list of partner names")
+        if len(set(names)) != len(names):
+            raise Refused(f"the partners of {key} name one partner twice")
+        out[key] = frozenset(names)
+    missing = [key for key in plan if key not in out]
+    if missing:
+        raise Refused(f"the partners by key name no partners for {', '.join(missing)}")
+    return out
+
+
 def decide(
     planned: Iterable[str],
     results: Iterable[JobResult],
     candidate: Identity,
     *,
     run_id: int | None = None,
+    key_partners: Mapping[str, Iterable[str]] | None = None,
 ) -> Verdict:
     """The verdict on ``candidate``: green only when every planned job did its work on it.
 
     ``run_id`` is given when ``results`` are one run's own: each planned result must then name
-    that run, and each planned key must have a result on attempt 1."""
+    that run, and each planned key must have a result on attempt 1. ``key_partners`` names, for
+    every planned key and no other, the partners its own job reads: each record of that key must
+    name exactly those, at the candidate's revisions. Without it, a record is held to the
+    candidate's partners exactly."""
     if run_id is not None and (not _whole(run_id) or run_id < 1):
         raise Refused(f"run_id must be a whole number from 1, got {run_id!r}")
     plan: list[str] = []
@@ -236,6 +302,7 @@ def decide(
             raise Refused(f"a planned job key must be a non-empty string, got {key!r}")
         if key not in plan:
             plan.append(key)
+    reads = None if key_partners is None else _key_partners(key_partners, plan)
     by_key: dict[str, list[JobResult]] = {}
     tests: list[FailedTest] = []
     for r in results:
@@ -245,7 +312,9 @@ def decide(
     if not plan:
         reasons.append(Reason("", "empty plan", "a plan with no jobs proves nothing"))
     for key in plan:
-        fault = _planned(by_key.get(key, []), candidate, run_id)
+        fault = _planned(
+            by_key.get(key, []), candidate, run_id, None if reads is None else reads[key]
+        )
         if fault:
             reasons.append(Reason(key, *fault))
     for key in sorted(set(by_key) - set(plan)):
@@ -595,7 +664,7 @@ def _one_record(text: str, n: int) -> JobResult:
         for t in (data["rerun"] or {}).get("tests", [])
     ]
     tests += [FailedTest(key, attempt, test, QUARANTINED, WAIVED) for test in quarantined]
-    return JobResult(key, data["result"], identity, attempt, run_id, tuple(tests))
+    return JobResult(key, data["result"], identity, attempt, run_id, tuple(tests), True)
 
 
 def from_job_records(texts: Iterable[str]) -> list[JobResult]:
@@ -840,6 +909,18 @@ def _plan(path: str) -> list[str]:
     return data
 
 
+def _json_file(path: str, what: str) -> object:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except RecursionError:
+        raise Refused(f"{what} {path} is nested too deeply to read") from None
+    except ValueError as exc:
+        raise Refused(f"{what} is not JSON: {exc}") from None
+    except OSError as exc:
+        raise Refused(f"cannot read {what} {path}: {exc}") from None
+
+
 def _attempt(text: str | None) -> int:
     if text is None:
         return 1
@@ -897,6 +978,11 @@ def main(argv: list[str] | None = None) -> int:
         "--run-id", action=_Once, help="this run's id, github.run_id (with --records only)"
     )
     parser.add_argument(
+        "--key-partners",
+        action=_Once,
+        help="a JSON object of each planned key's partner names (with --records only)",
+    )
+    parser.add_argument(
         "--attempt", action=_Once, help="this run's attempt, 1 to 999999 (default 1)"
     )
     try:
@@ -906,9 +992,12 @@ def main(argv: list[str] | None = None) -> int:
         attempt = _attempt(args.attempt)
         planned = _plan(args.plan)
         run_id: int | None = None
+        key_partners: dict[str, Iterable[str]] | None = None
         if args.records is None:
             if args.run_id is not None:
                 raise Refused("--run-id is read only with --records")
+            if args.key_partners is not None:
+                raise Refused("--key-partners is read only with --records")
             results = from_needs(_read(args.needs), run, attempt)
         else:
             run_id = own = _run_id(args.run_id)
@@ -923,12 +1012,19 @@ def main(argv: list[str] | None = None) -> int:
                     " --records a planned key is met only by its record"
                 )
             results += read_records(args.records, run_id=own, attempt=attempt)
+            if args.key_partners is not None:
+                by_key = _json_file(args.key_partners, "--key-partners")
+                if not isinstance(by_key, dict):
+                    raise Refused(
+                        "--key-partners must be a mapping of each planned key to its partners"
+                    )
+                key_partners = by_key
+        verdict = decide(planned, results, candidate, run_id=run_id, key_partners=key_partners)
     except Refused as exc:
         reason = _printable(str(exc))
         print(f"verdict: unreadable input: {reason}", file=sys.stderr)
         _to_summary(f"### Verdict: unreadable input\n\n{reason}\n")
         return 2
-    verdict = decide(planned, results, candidate, run_id=run_id)
     print(_printable(summary(verdict)), end="")
     _to_summary(_printable(summary(verdict, budget=SUMMARY_TESTS_BYTES)))
     return 0 if verdict.green else 1

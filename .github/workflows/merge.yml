@@ -9,8 +9,9 @@
 # use the output of the stage before. Each entry uploads its job's record under the name
 # tools/ci/verdict.py's record_artifact gives it, and `results` judges the plan's keys against
 # those records with main's verdict.py. A planned entry with no record, a cancelled, skipped or
-# red one, a record of another head, run or later attempt, and a failed job of this run each
-# read red: nothing missing can read as a pass.
+# red one, a record of another head, run or later attempt or of another partner head than the
+# one `changes` read, and a failed job of this run each read red: nothing missing can read as a
+# pass.
 #
 # DISPATCH ONLY, BESIDE ci.yml. ci.yml stays the check every pull request and every push to main
 # runs, so no check a pull request reports today moves. This runs when it is dispatched, to time
@@ -63,6 +64,8 @@ jobs:
       actions: read   # main's recent CI runs and their telemetry, for the rails floor
     outputs:
       keys: ${{ steps.plan.outputs.keys }}
+      key-partners: ${{ steps.plan.outputs.key-partners }}
+      apps-partner: ${{ steps.partners.outputs.apps-partner }}
       build: ${{ steps.plan.outputs.build }}
       test: ${{ steps.plan.outputs.test }}
       test-2: ${{ steps.plan.outputs.test-2 }}
@@ -75,6 +78,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The partner head the run tests against, read once here: every entry that reads the apps
+      # repository checks out this commit, and `results` judges each record's partners against
+      # it, so no entry tests a partner head the run did not name. A head that cannot be read
+      # fails this job, which `results` reads in `needs`, so the verdict is red.
+      - name: the partner heads the run tests against
+        id: partners
+        run: |
+          set -uo pipefail
+          apps=$(git ls-remote https://github.com/PersonalClaw/PersonalClawApps refs/heads/main | cut -f1) || apps=""
+          if ! [[ "$apps" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=no partner::the apps repository's main could not be read, so no entry can check it out and the verdict is red. Re-run the job."
+            exit 1
+          fi
+          echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"
       - name: plan the tier with main's planner, as a matrix per stage job
         id: plan
         env:
@@ -124,6 +141,9 @@ jobs:
           keys = json.loads(lines.pop("keys", "null"))
           if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
               sys.exit("no plan: the keys are not a list of job keys")
+          partners = json.loads(lines.pop("key-partners", "null"))
+          if not isinstance(partners, dict) or list(partners) != keys or not all(isinstance(v, list) and all(isinstance(n, str) and n for n in v) for v in partners.values()):
+              sys.exit("no plan: the key partners are not each key's list of partner names")
           runs = sys.argv[2].split()
           extra = sorted(set(lines) - {"full", "jobs", "matrix"} - {f"matrix-{job}" for job in runs})
           if extra:
@@ -143,6 +163,7 @@ jobs:
           if sorted(ran) != sorted(keys):
               sys.exit("the stage jobs run other entries than the plan's keys")
           print(f"keys={json.dumps(keys, separators=(',', ':'))}")
+          print(f"key-partners={json.dumps(partners, separators=(',', ':'))}")
           EOF
           then
             echo "::error title=no plan::the planner answered no plan this workflow can run, so nothing runs and the verdict is red. The lines above, and the summary, say why."
@@ -230,6 +251,7 @@ jobs:
         with:
           persist-credentials: false
           repository: PersonalClaw/PersonalClawApps
+          ref: ${{ needs.changes.outputs.apps-partner }}
           path: .ci-apps
       - name: Set up the toolchain
         uses: ./.github/actions/setup
@@ -329,6 +351,7 @@ jobs:
         with:
           persist-credentials: false
           repository: PersonalClaw/PersonalClawApps
+          ref: ${{ needs.changes.outputs.apps-partner }}
           path: .ci-apps
       - name: Set up the toolchain
         uses: ./.github/actions/setup
@@ -428,6 +451,7 @@ jobs:
         with:
           persist-credentials: false
           repository: PersonalClaw/PersonalClawApps
+          ref: ${{ needs.changes.outputs.apps-partner }}
           path: .ci-apps
       - name: Set up the toolchain
         uses: ./.github/actions/setup
@@ -527,6 +551,7 @@ jobs:
         with:
           persist-credentials: false
           repository: PersonalClaw/PersonalClawApps
+          ref: ${{ needs.changes.outputs.apps-partner }}
           path: .ci-apps
       - name: Set up the toolchain
         uses: ./.github/actions/setup
@@ -629,6 +654,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEEDS: ${{ toJSON(needs) }}
           KEYS: ${{ needs.changes.outputs.keys }}
+          KEY_PARTNERS: ${{ needs.changes.outputs.key-partners }}
+          APPS_PARTNER: ${{ needs.changes.outputs.apps-partner }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -u
@@ -640,7 +667,10 @@ jobs:
           fi
           printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
           printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
+          printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
           mkdir -p "$RUNNER_TEMP/records"
           python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
-            --head "$HEAD_SHA" --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+            --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
+            --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+            --key-partners "$RUNNER_TEMP/key-partners.json" \
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
