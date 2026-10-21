@@ -1,8 +1,9 @@
 import type { UiDoc } from './uiDoc'
 
-// TopBar.tsx exports the page top bar plus the ThemeControl that lives in the shell
-// corner, so its doc default-exports an array. The shell-corner clearance contract
-// and the keepCornerPadding / contentAligned rules were all source comments.
+// TopBar.tsx exports the page top bar, the ThemeControl that lives in the shell
+// corner and the CornersClearedAbove context, so its doc default-exports an array.
+// The shell-corner clearance contract and the keepCornerPadding / contentAligned
+// rules were all source comments.
 const docs: UiDoc[] = [
   {
     name: 'TopBar',
@@ -38,6 +39,20 @@ const docs: UiDoc[] = [
       { guidance: false, description: "Do not duplicate it per page — it's shell chrome, mounted once in ShellCornerRight." },
     ],
     anatomy: ['IconButton (mode-reflecting icon, next-state tooltip)'],
+  },
+  {
+    name: 'CornersClearedAbove',
+    keywords: ['topbar', 'corner', 'shell', 'clearance', 'tabs', 'destination', 'context', 'provider'],
+    description:
+      "Whether a bar above this one already clears the shell corners. A destination that draws its own bar over its tabs' pages (the Capabilities and Library tab strips, through DestinationTabs) provides `true` around the page: the page's own TopBar then has no corner floating over it, so it pads to the page's edges and never moves its row below corners that are not there. Usage: `<CornersClearedAbove.Provider value>`. Defaults to false, so a TopBar with no provider above it clears the corners as usual.",
+    // Empty by contract, as FieldLabelProvider's: this is React's own context, so it declares no
+    // props of its own and the extractor derives none. `value` is described above instead.
+    props: [],
+    bestPractices: [
+      { guidance: true, description: 'Provide it only where a bar above the page really clears both shell corners, as a destination tab strip does; the page then pads to its own edges.' },
+      { guidance: false, description: 'Do not provide it to pull a lone page bar out from under the corners: with no bar above, its actions would slide under the floating corner cluster.' },
+    ],
+    anatomy: ['React context carrying one boolean (no DOM of its own)'],
   },
 ]
 
