@@ -17,6 +17,7 @@ import pytest
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.sdk import features
 from personalclaw.sdk.features import (
+    ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
     CHAT_TRUST,
     CLOSING_STREAMS,
@@ -43,6 +44,7 @@ pytestmark = pytest.mark.security
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
 OFFERED_ONCE = {
+    "adaptive-thinking",
     "approval-answers",
     "chat-trust",
     "closing-streams",
@@ -64,6 +66,7 @@ OFFERED_ONCE = {
 
 def test_the_sdk_publishes_the_names_and_the_question():
     assert set(features.__all__) == {
+        "ADAPTIVE_THINKING",
         "APPROVAL_ANSWERS",
         "CHAT_TRUST",
         "CLOSING_STREAMS",
@@ -83,6 +86,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "TURNS_NAME_WHO_ASKED",
         "core_has",
     }
+    assert ADAPTIVE_THINKING == "adaptive-thinking"
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
     assert CLOSING_STREAMS == "closing-streams"
@@ -100,6 +104,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
     for name in (
+        ADAPTIVE_THINKING,
         APPROVAL_ANSWERS,
         CHAT_TRUST,
         CLOSING_STREAMS,
@@ -850,8 +855,26 @@ def _model_efforts_hold() -> None:
     }
 
 
+def _adaptive_thinking_holds() -> None:
+    """The SDK says which models think adaptively, as core's Anthropic-compatible wire asks them:
+    a Claude line that takes adaptive thinking in each form a listing names it by, and no older
+    Claude, other vendor's model or empty id."""
+    from personalclaw.sdk.model import thinks_adaptively
+
+    for model_id in (
+        "claude-opus-4-7",
+        "claude-sonnet-4.6",
+        "us.anthropic.claude-opus-4-6-v1:0",
+        "global.anthropic.claude-sonnet-5-20251101-v1:0",
+    ):
+        assert thinks_adaptively(model_id) is True, model_id
+    for model_id in ("claude-sonnet-4-5", "claude-3-7-sonnet-20250219", "amazon.nova-pro-v1:0", ""):
+        assert thinks_adaptively(model_id) is False, model_id
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
+    ADAPTIVE_THINKING: _adaptive_thinking_holds,
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
     CLOSING_STREAMS: _closing_streams_hold,

@@ -515,6 +515,14 @@ def thinking_shape(model_id: str) -> ThinkingShape:
     return _BUDGET_SHAPE
 
 
+def thinks_adaptively(model_id: str) -> bool:
+    """Whether ``model_id`` takes adaptive thinking (:func:`thinking_shape`), which is when core's
+    Anthropic-compatible wire asks it for ``thinking: {type: adaptive}``, in any spelling of its id
+    (dated, dotted, with a vendor or an inference-profile prefix). False for an older Claude, which
+    takes a thinking budget, and for an id this does not recognise."""
+    return thinking_shape(model_id).adaptive
+
+
 def returns_thinking(model_id: str) -> bool:
     """Whether a request to ``model_id`` may carry back the thinking blocks that model wrote.
 

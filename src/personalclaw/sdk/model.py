@@ -69,6 +69,7 @@ from personalclaw.llm.catalog import (  # noqa: F401
     PullProgress,
     infer_capabilities,
     openai_compatible_list_models,
+    thinks_adaptively,
 )
 from personalclaw.llm.credentials import Credential  # noqa: F401
 
@@ -244,6 +245,10 @@ __all__ = [
     # The reasoning-effort levels core's own wire for a protocol sends a model, which an app with a
     # catalog of its own on that wire declares on the model's ``ModelInfo.efforts``.
     "wire_efforts",
+    # Whether a model takes adaptive thinking, as core's Anthropic-compatible wire asks it: a wire
+    # of an app's own that asks only in that shape declares levels for these models alone
+    # (`bedrock-models`).
+    "thinks_adaptively",
     # Media-model catalog contribution (stt/tts/image vendor catalogs).
     "MediaCatalog",
     "MediaModel",

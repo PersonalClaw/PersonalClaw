@@ -160,9 +160,16 @@ MESSAGE_INSTRUCTIONS = "message-instructions"
 #: without it has no ``wire_efforts``, so an app that imports it does not load.
 MODEL_EFFORTS = "model-efforts"
 
+#: A model app on a wire of its own can ask which models take adaptive thinking:
+#: ``personalclaw.sdk.model.thinks_adaptively(model_id)`` answers by the rule core's
+#: Anthropic-compatible wire asks a model by, in any spelling of its id. A core without it has no
+#: ``thinks_adaptively``, so an app that imports it does not load.
+ADAPTIVE_THINKING = "adaptive-thinking"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
+        ADAPTIVE_THINKING,
         APPROVAL_ANSWERS,
         CHAT_TRUST,
         CLOSING_STREAMS,

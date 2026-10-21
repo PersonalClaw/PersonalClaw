@@ -11,6 +11,10 @@ app relies on, and a build offers the name exactly when it offers the contract.
 * Ask :func:`core_has` about a feature your app can do without, and say so when it is missing rather
   than quietly doing less.
 
+``ADAPTIVE_THINKING``: a model app on a wire of its own asks which models take adaptive thinking
+(``personalclaw.sdk.model.thinks_adaptively``), by the rule PersonalClaw's own Anthropic-compatible
+wire asks a model by. A model app that imports it declares it.
+
 ``APPROVAL_ANSWERS``: a channel's approval prompt offers the answers PersonalClaw hands it in the
 approval brief (``personalclaw.sdk.channel.approval_brief_for(event)["answers"]``). A channel app
 whose prompt offers them declares it.
@@ -91,6 +95,7 @@ unless that sender is the owner. A channel app that runs a conversation's turns 
 """
 
 from personalclaw.apps.core_features import (
+    ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
     CHAT_TRUST,
     CLOSING_STREAMS,
@@ -112,6 +117,7 @@ from personalclaw.apps.core_features import (
 )
 
 __all__ = [
+    "ADAPTIVE_THINKING",
     "APPROVAL_ANSWERS",
     "CHAT_TRUST",
     "CLOSING_STREAMS",
