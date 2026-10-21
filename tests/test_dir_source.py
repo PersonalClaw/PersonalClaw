@@ -6,9 +6,9 @@ Covers its guarantees as COUNTING claims, not liveness ones:
   as `len(queue.enqueued) == 3`, and three edits to the SAME file collapse to exactly one;
 * a create yields a NEW item while a modify re-enqueues the EXISTING item (item count
   unchanged, same id);
-* a deleted file ARCHIVES its item with `source_deleted_at` and the row **survives** — plus a
-  structural rail that neither the provider nor the engine contains a `DELETE FROM items`,
-  so the dangerous direction stays unreachable rather than merely unused;
+* a deleted file ARCHIVES its item with `source_deleted_at` and the row **survives**, and no
+  change a folder shows (a file deleted, renamed or moved, a subfolder or the folder removed)
+  removes an item or asks the store's removal doors at all;
 * the first pass SEEDS only (no startup ingestion storm);
 * one unreadable file does not abort the cycle.
 
@@ -514,27 +514,95 @@ async def test_delete_then_restore_revives_the_same_item(store, watched):
     assert "source_deleted_at" not in revived["file_metadata"]
 
 
-def test_neither_provider_nor_engine_can_hard_delete_an_item():
-    """Structural rail: the dangerous direction must be UNREACHABLE, not merely unused.
+def _change_rows():
+    """What a folder can do to the files it held: (name, change, guids archived after it, guid
+    made after it). Each change runs on a folder holding a.md, b.md and sub/c.md, all taken in."""
+    import shutil
 
-    An archive-on-delete implementation that also carried a `DELETE FROM items` one branch
-    away would pass every behavioural test above and still be one edit from data loss.
+    def _rename(watched):
+        (watched / "a.md").rename(watched / "renamed.md")
 
-    The folder's one removal is not a change it observes: `_withdraw` forgets a note an earlier
-    scan took in through a link out of the folder, and only the scan's `outside` paths reach it.
+    def _into_sub(watched):
+        (watched / "b.md").rename(watched / "sub" / "b.md")
+
+    def _empty(watched):
+        for rel in ("a.md", "b.md", "sub/c.md"):
+            (watched / rel).unlink()
+
+    return [
+        ("a file deleted", lambda w: (w / "a.md").unlink(), {"a.md"}, set()),
+        ("a file renamed", _rename, {"a.md"}, {"renamed.md"}),
+        ("a file moved into a subfolder", _into_sub, {"b.md"}, {"sub/b.md"}),
+        ("a subfolder removed", lambda w: shutil.rmtree(w / "sub"), {"sub/c.md"}, set()),
+        ("every file deleted", _empty, {"a.md", "b.md", "sub/c.md"}, set()),
+        ("the folder itself removed", shutil.rmtree, set(), set()),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_change_a_folder_shows_removes_an_item(tmp_path, subtests):
+    """The dangerous direction: a change the folder shows its engine never removes an item.
+
+    Each row takes in a folder of three notes through the real provider and engine, then makes
+    one change to the folder and polls past its window. Every item the source made is still in
+    the store afterwards: a gone file's item is archived, not deleted, and the store's two
+    removal doors (``delete_item``, ``forget_source_item``) are never asked by the provider or the
+    engine. A removed folder archives nothing at all, so remounting it loses nothing.
+
+    The folder's one removal is not a change it observes: ``_withdraw`` forgets a note an earlier
+    scan took in through a link out of the folder, and only the scan's ``outside`` paths reach it.
     """
+    from table_rows import row
+
+    for index, (name, change, archived, made) in enumerate(_change_rows()):
+        with row(subtests, name=name):
+            base = tmp_path / f"row{index}"
+            watched = base / "notes"
+            (watched / "sub").mkdir(parents=True)
+            store = KnowledgeStore(str(base / "knowledge.db"))
+            removals: list[tuple[str, tuple]] = []
+            for door in ("delete_item", "forget_source_item"):
+                real = getattr(store, door)
+
+                def _spy(*args, _door=door, _real=real, **kwargs):
+                    removals.append((_door, args))
+                    return _real(*args, **kwargs)
+
+                setattr(store, door, _spy)
+            clock = _Clock()
+            for rel in ("a.md", "b.md", "sub/c.md"):
+                _write(watched / rel, f"note {rel}", mtime=clock.t - 3600)
+            sid, _prov, engine, _queue = _setup(store, watched, clock)
+            assert await _poll(engine, store, sid) == 3, name
+            before = {r["guid"]: r["id"] for r in _items(store, sid)}
+            for item_id in before.values():
+                await _ingest(store, item_id)
+
+            change(watched)
+            for _ in range(3):
+                clock.advance(11)
+                await _poll(engine, store, sid)
+
+            after = {r["guid"]: r for r in _items(store, sid)}
+            assert removals == [], f"{name}: the store was asked to remove {removals}"
+            for guid, item_id in before.items():
+                kept = store.get_item(item_id)
+                assert kept is not None, f"{name}: {guid}'s item is gone"
+                assert bool(kept["is_archived"]) is (guid in archived), f"{name}: {guid}"
+                assert after[guid]["id"] == item_id, f"{name}: {guid} is another item"
+                assert kept["content"] == f"note {guid}", f"{name}: {guid} lost its text"
+            assert set(after) == set(before) | made, f"{name}: {sorted(after)}"
+
+
+def test_the_folders_one_removal_is_the_withdrawal_of_a_link_out_of_it():
+    """Where the provider's one removal is reached: ``_withdraw`` is the only caller of
+    ``forget_source_item``, ``poll`` the only caller of ``_withdraw``, and only over the scan's
+    ``outside`` paths. The changes the folder shows its engine never remove an item
+    (:func:`test_no_change_a_folder_shows_removes_an_item`)."""
     import ast
     from pathlib import Path
 
-    import personalclaw.knowledge.source_engine as engine_mod
     import personalclaw.knowledge_providers.dir_source as dir_mod
-
-    for mod in (dir_mod, engine_mod):
-        src = Path(mod.__file__).read_text(encoding="utf-8")
-        assert "DELETE FROM items" not in src, f"{mod.__name__} must never hard-delete an item"
-        assert "delete_item" not in src, f"{mod.__name__} must not reach a delete path"
-    engine_src = Path(engine_mod.__file__).read_text(encoding="utf-8")
-    assert "forget_source_item" not in engine_src
 
     tree = ast.parse(Path(dir_mod.__file__).read_text(encoding="utf-8"))
     forgets, withdraws = [], []

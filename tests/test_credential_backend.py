@@ -373,15 +373,102 @@ def test_load_credentials_unions_both_backends_with_the_keychain_winning(
     assert creds[_KEY] == "fresh-keychain-copy", "a partly-migrated key resolves to keychain"
 
 
-def test_the_app_setup_context_reads_through_the_shared_chokepoint() -> None:
-    """`app_cli` used to parse `.env` itself — a second read path that keychain-stored
-    secrets would have been invisible to. It must now hold the loader's function."""
-    import personalclaw.app_cli as app_cli
+def _install_setup_app(home: Path, name: str, key: str) -> None:
+    """An installed, enabled app whose `cli.setup` step prints what its context reads for *key*."""
+    app = home / "apps" / name
+    app.mkdir(parents=True)
+    (app / "installed.json").write_text(
+        json.dumps({"name": name, "version": "1.0.0", "enabled": True}), encoding="utf-8"
+    )
+    manifest = {"name": name, "version": "1.0.0", "displayName": name, "description": name}
+    manifest["cli"] = {"setup": "cli_setup:run"}
+    (app / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (app / "cli_setup.py").write_text(
+        f"def run(ctx):\n    ctx.print('seen=' + repr(ctx.get_credential({key!r})))\n",
+        encoding="utf-8",
+    )
 
-    src = Path(inspect.getsourcefile(app_cli) or "").read_text()
-    assert "get_credential=get_credential" in src
-    assert "from personalclaw.config.credentials import get_credential" in src
-    assert "def _get_credential" not in src, "the ad-hoc .env parser must be gone, not shadowed"
+
+def _credential_door_in_every_name(monkeypatch, answer: str, asked: list[str]) -> None:
+    """Put a stand-in for `config.credentials.get_credential` under every product module name
+    that holds it: it records the key it is asked for and answers *answer*."""
+    from every_name import put_in_every_name
+
+    def _stand_in(key: str) -> str:
+        asked.append(key)
+        return answer
+
+    put_in_every_name(monkeypatch, get_credential, _stand_in)
+
+
+def test_the_app_setup_context_reads_through_the_shared_chokepoint(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, subtests
+) -> None:
+    """`app_cli` used to parse `.env` itself — a second read path that keychain-stored
+    secrets would have been invisible to. Each row runs an installed app's real setup step
+    (`run_app_setup_steps`) in its own credential home, and the step's context answers what the
+    store holds, from either backend: a key held only in the keychain (nothing in `.env` and
+    nothing in the process environment) reads as the keychain's, and a key in both as the
+    keychain's copy. With a stand-in for the shared read under every name that holds it, the
+    step reads the stand-in's answer, asked for its key once."""
+    from table_rows import row
+
+    from personalclaw import app_cli
+    from personalclaw.apps import manager
+
+    def _dotenv(value: str):
+        def _store(m: pytest.MonkeyPatch) -> None:
+            m.setenv(CREDENTIAL_BACKEND_ENV, "dotenv")
+            save_credential(_KEY, value)
+
+        return _store
+
+    def _keychain(*, stale: str = ""):
+        def _store(m: pytest.MonkeyPatch) -> None:
+            if stale:
+                m.setenv(CREDENTIAL_BACKEND_ENV, "dotenv")
+                save_credential(_KEY, stale)
+            _install_stub_keyring(m)
+            m.setenv(CREDENTIAL_BACKEND_ENV, "keychain")
+            save_credential(_KEY, "in-the-keychain")
+
+        return _store
+
+    rows = [
+        ("a key in .env", _dotenv("in-the-env-file"), None, "in-the-env-file", "in-the-env-file"),
+        ("a key only in the keychain", _keychain(), None, "in-the-keychain", ""),
+        (
+            "a key in both reads as the keychain's",
+            _keychain(stale="a-stale-env-copy"),
+            None,
+            "in-the-keychain",
+            "a-stale-env-copy",
+        ),
+        ("a key stored nowhere", lambda m: None, None, "", ""),
+        ("the shared read stood in", _dotenv("in-the-env-file"), "stood-in", "stood-in", None),
+    ]
+    for index, (name, store, stand_in, seen, in_env) in enumerate(rows):
+        with row(subtests, name=name), monkeypatch.context() as m:
+            row_home = home / f"row{index}"
+            row_home.mkdir()
+            m.setattr(loader, "config_dir", lambda row_home=row_home: row_home)
+            m.setattr(manager, "config_dir", lambda row_home=row_home: row_home)
+            store(m)
+            m.delenv(_KEY, raising=False)  # a setup run is a fresh process: no mirror of the key
+            if in_env is not None:
+                env = loader.env_path()
+                held = env.read_text(encoding="utf-8") if env.exists() else ""
+                assert (f"{_KEY}=" in held) is bool(in_env), f"{name}: .env holds {held!r}"
+                assert in_env in held, f"{name}: .env holds {held!r}"
+            asked: list[str] = []
+            if stand_in is not None:
+                _credential_door_in_every_name(m, stand_in, asked)
+            _install_setup_app(row_home, "setup-reader", _KEY)
+            capsys.readouterr()
+            assert app_cli.run_app_setup_steps(only_app="setup-reader") == [], name
+            assert f"seen={seen!r}" in capsys.readouterr().out, name
+            if stand_in is not None:
+                assert asked == [_KEY], f"{name}: the shared read was asked {asked}"
 
 
 # ── doctor reports the ACTIVE backend ────────────────────────────────────────

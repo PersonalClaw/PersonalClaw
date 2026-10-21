@@ -168,15 +168,78 @@ def test_the_arbiter_imports_no_model_layer_at_all():
     assert offenders == [], f"the arbiter reached the model layer: {offenders}"
 
 
-def test_the_arbiter_holds_no_second_mention_parser():
+def _parser_in_every_name(monkeypatch, answers: dict[str, list[str]], asked: list[str]) -> None:
+    """Put a stand-in for ``rooms.turn.mentions_in_order`` under every product module name that
+    holds it. The stand-in records each text it is handed and answers from *answers* (a text it
+    has no answer for names nobody), whatever the text itself says."""
+    from every_name import put_in_every_name
+
+    from personalclaw.rooms.turn import mentions_in_order
+
+    def _stand_in(content: str) -> list[str]:
+        asked.append(content)
+        return list(answers.get(content, []))
+
+    put_in_every_name(monkeypatch, mentions_in_order, _stand_in)
+
+
+def test_who_speaks_is_what_the_one_mention_parser_says(enabled, monkeypatch, subtests):
     """One parser, in ``rooms.turn``. Two would be two answers to "who was named".
 
-    ``_MENTION_RE`` lives in ``turn`` so that the arbiter imports it; a regex here that
-    disagreed by one character would feed one member and enqueue another.
+    Each row runs a real round (the human's message queued, then drained through the shipped
+    turn path) with a stand-in for ``mentions_in_order`` under every name that holds it, and the
+    stand-in answers names the text does not say, or none it does. Who speaks, and in which
+    order, is the stand-in's answer and the members' listen policies, never the ``@`` names in
+    the text, and the stand-in is handed the human's message and each reply as written. A regex
+    of the arbiter's own, or a read of ``turn._MENTION_RE``, would find the written names.
     """
-    source = Path(arbiter.__file__).read_text(encoding="utf-8")
-    assert "re.compile" not in source and "import re\n" not in source
-    assert "mentions_in_order" in source, "it uses the shipped parser rather than its own"
+    from table_rows import row
+
+    policies = {"analyst": "mention", "skeptic": "mention", "closer": "mention"}
+    rows = [
+        (
+            "the human's message names whom the parser says, in its order",
+            policies,
+            "@skeptic first, please",
+            {"@skeptic first, please": ["closer", "analyst"]},
+            {"closer": "agreed", "analyst": "noted"},
+            ["closer", "analyst"],
+        ),
+        (
+            "the human's message names nobody when the parser finds no one",
+            {"skeptic": "mention", "analyst": "all"},
+            "@skeptic what do you think?",
+            {},
+            {"analyst": "here", "skeptic": "never asked"},
+            ["analyst"],
+        ),
+        (
+            "a reply summons whom the parser says",
+            {"analyst": "all", "skeptic": "mention", "closer": "mention"},
+            "discuss",
+            {"@skeptic you are wrong": ["closer"]},
+            {"analyst": "@skeptic you are wrong", "closer": "settled", "skeptic": "not asked"},
+            ["analyst", "closer"],
+        ),
+        (
+            "a reply summons nobody when the parser finds no one",
+            {"analyst": "all", "skeptic": "mention"},
+            "discuss",
+            {},
+            {"analyst": "@skeptic you are wrong", "skeptic": "not asked"},
+            ["analyst"],
+        ),
+    ]
+    for name, roster, message, answers, replies, speakers in rows:
+        with row(subtests, name=name), monkeypatch.context() as m:
+            asked: list[str] = []
+            _parser_in_every_name(m, answers, asked)
+            room = _room_with(roster, title=name)
+            spoke = _round(None, _replies(room.id, replies), room.id, message)
+            assert spoke == speakers, f"{name}: {spoke}"
+            assert _spoken(room.id) == speakers, name
+            said = [replies[s] for s in speakers]
+            assert asked == [message, *said], f"{name}: the parser was handed {asked}"
 
 
 # ── the queue: pure decisions over (roster, text) ───────────────────────────

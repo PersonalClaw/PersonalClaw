@@ -693,22 +693,90 @@ async def test_incident_mode_is_503_not_404(monkeypatch):
 # ── 6b. The injected turn runner ──────────────────────────────────────────────
 
 
-def test_the_dialect_does_not_import_the_http_surface():
-    """The ``core-must-not-import-the-http-surface`` inversion, pinned at the source.
+#: Run in a process of its own (``sys.argv[1]`` is ``tests/``): every import of the dashboard
+#: package refused, then the dialect imported, mounted on a bare app with this file's scripted
+#: runner and driven through its routes. Prints each route's status and the dashboard modules
+#: loaded.
+_WITHOUT_THE_HTTP_SURFACE = """
+import asyncio, json, sys
+
+
+class _Refuse:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "personalclaw.dashboard" or fullname.startswith("personalclaw.dashboard."):
+            raise ImportError("the dialect reached the HTTP surface: " + fullname)
+        return None
+
+
+sys.meta_path.insert(0, _Refuse())
+sys.path.insert(0, sys.argv[1])
+import pytest
+
+import test_openai_dialect as t
+
+
+async def main():
+    seen = {}
+    with pytest.MonkeyPatch.context() as mp:
+        t._enable(mp)
+        token = t._token()
+        client, _state = await t._client(mp)
+        try:
+            for name, method, route, body in (
+                ("chat", "post", t.dialect.ROUTE_CHAT, t._body()),
+                ("chat, streamed", "post", t.dialect.ROUTE_CHAT, t._body(stream=True)),
+                ("an unknown agent", "post", t.dialect.ROUTE_CHAT, t._body("nobody")),
+                ("models", "get", t.dialect.ROUTE_MODELS, None),
+            ):
+                resp = await getattr(client, method)(route, data=body, headers=t._auth(token))
+                await resp.read()
+                seen[name] = resp.status
+        finally:
+            await client.close()
+    seen["loaded"] = sorted(m for m in sys.modules if m.startswith("personalclaw.dashboard"))
+    print(json.dumps(seen))
+
+
+asyncio.run(main())
+"""
+
+
+def test_the_dialect_does_not_import_the_http_surface(tmp_path):
+    """The ``core-must-not-import-the-http-surface`` inversion.
 
     ``scripts/gate_report.py`` caught this on the first draft: the dialect imported
     ``chat_handlers._run_chat_scoped`` directly, an ``inbound/`` -> ``dashboard/`` edge.
     The gate is shrink-only and would grandfather the edge once a baseline was
-    regenerated, so this assertion is the one that stays specific to THIS module.
+    regenerated, so this test is the one that stays specific to THIS module. In a process
+    that refuses every import of the dashboard package, the dialect imports, mounts and
+    answers a chat turn (whole and streamed), an unknown agent and its model list, with the
+    turn runner handed in, and no dashboard module is loaded.
     """
-    source = _dialect_source()
-    assert "personalclaw.dashboard" not in source, (
-        "the dialect must not import the HTTP surface — the composition root injects "
-        "the turn runner (see register_routes)"
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PERSONALCLAW_INBOUND_")}
+    env["PERSONALCLAW_HOME"] = str(tmp_path)
+    done = subprocess.run(
+        [sys.executable, "-c", _WITHOUT_THE_HTTP_SURFACE, str(Path(__file__).parent)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
+    assert done.returncode == 0, done.stderr[-2000:]
+    seen = json.loads(done.stdout.strip().splitlines()[-1])
+    assert seen == {
+        "chat": 200,
+        "chat, streamed": 200,
+        "an unknown agent": 404,
+        "models": 200,
+        "loaded": [],
+    }, "the dialect must not import the HTTP surface — the composition root injects the runner"
 
 
-def test_the_composition_root_actually_injects_the_runner():
+@pytest.mark.asyncio
+async def test_the_composition_root_actually_injects_the_runner(monkeypatch):
     """The call site, not the parameter.
 
     A required keyword argument proves the dialect ASKS for a runner; it does not prove
@@ -716,14 +784,58 @@ def test_the_composition_root_actually_injects_the_runner():
     every `/v1` chat turn would 503 in production while the whole suite above stayed
     green on its own injected fake. The same holds for the change of a session's agent,
     which must be the one every dashboard door makes.
-    """
-    from personalclaw.dashboard import routes as routes_module
 
-    source = Path(routes_module.__file__).read_text(encoding="utf-8")
-    assert (
-        "_register_openai(app, turn_runner=_run_chat_scoped, agent_mover=move_to_agent)" in source
-    ), "dashboard/routes.py must inject the turn runner and the agent move into the /v1 dialect"
-    assert "from personalclaw.dashboard.running_turn import move_to_agent" in source
+    The dashboard's own route table (``register_dashboard_routes``, as the gateway builds it)
+    is served with stand-ins for the dashboard's turn runner and its move to another agent,
+    each under every name that holds it. A `/v1` chat turn runs on the stand-in runner, once,
+    with the message it was sent, and answers what it wrote; a second request that names
+    another agent for the same conversation is moved by the stand-in move, once, to that agent.
+    """
+    from every_name import put_in_every_name
+
+    from personalclaw.dashboard import chat_handlers, running_turn
+    from personalclaw.dashboard.routes import register_dashboard_routes
+
+    _enable(monkeypatch)
+    token = _token()
+    ran: list[tuple] = []
+    moved: list[tuple] = []
+
+    async def _runner(state, session, message):  # noqa: ANN001
+        ran.append((state, session.key, message))
+        session.append("chunk", "from the dashboard's runner", "chunk")
+        session.append("done", "", "done")
+
+    async def _move(state, session, agent):  # noqa: ANN001
+        moved.append((state, session.key, agent))
+        session.agent = agent
+        return False
+
+    put_in_every_name(monkeypatch, chat_handlers._run_chat_scoped, _runner)
+    put_in_every_name(monkeypatch, running_turn.move_to_agent, _move)
+    app = web.Application()
+    register_dashboard_routes(app)
+    state = _FakeState()
+    app["state"] = state
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        first = await client.post(
+            dialect.ROUTE_CHAT, data=_body("researcher"), headers=_auth(token)
+        )
+        assert first.status == 200, await first.text()
+        answer = (await first.json())["choices"][0]["message"]["content"]
+        after_first = (list(ran), list(moved))
+        again = await client.post(dialect.ROUTE_CHAT, data=_body("writer"), headers=_auth(token))
+        assert again.status == 200, await again.text()
+    finally:
+        await client.close()
+    key = dialect.session_key_for(dialect.OPENAI_SURFACE, dialect.DEFAULT_SESSION_TAG)
+    assert answer == "from the dashboard's runner"
+    assert after_first == ([(state, key, "hi")], []), "dashboard/routes.py must inject the runner"
+    assert moved == [(state, key, "writer")], "dashboard/routes.py must inject the agent move"
+    assert ran == [(state, key, "hi"), (state, key, "hi")]
+    assert state._sessions[key].agent == "writer"
 
 
 @pytest.mark.asyncio

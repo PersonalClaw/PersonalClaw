@@ -91,6 +91,31 @@ def _oversized_package() -> bytes:
     return out.getvalue()
 
 
+def _claiming(parts: dict[str, tuple[bytes, int]]) -> bytes:
+    """A ZIP of *parts* (``name -> (bytes, claimed size)``) whose headers claim each part's
+    decompressed size as given, whatever it holds: the uncompressed-size field of its local
+    header and of its central directory entry, written over."""
+    import struct
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for name, (data, _claim) in parts.items():
+            dst.writestr(name, data)
+    raw = bytearray(out.getvalue())
+    for signature, name_at, size_at, header in (
+        (b"PK\x03\x04", 26, 22, 30),
+        (b"PK\x01\x02", 28, 24, 46),
+    ):
+        at = 0
+        for _ in parts:
+            at = raw.index(signature, at)
+            (length,) = struct.unpack_from("<H", raw, at + name_at)
+            name = bytes(raw[at + header : at + header + length]).decode()
+            struct.pack_into("<I", raw, at + size_at, parts[name][1])
+            at += header
+    return bytes(raw)
+
+
 # ── archive caps: a refusal, before the library ──────────────────────────────
 
 
@@ -101,21 +126,61 @@ class TestArchiveCaps:
         assert "[Content_Types].xml" in str(excinfo.value)
         assert "50 MB" in str(excinfo.value)
 
-    def test_the_check_never_consults_the_declared_size(self):
+    def test_the_check_never_consults_the_declared_size(self, subtests):
         """``ZipInfo.file_size`` is the header's CLAIM and a hostile archive is free to lie
         in it — the reason ``doc_parser._read_zip_entry`` reads bytes rather than trusting
         the declaration, and the posture this module was told to reuse.
 
-        Asserted on the SOURCE rather than by forging a central directory: the property is
-        "this code does not read the declaration", and a forged-header fixture proves only
-        that one forgery is caught. The name appearing anywhere in the enforcement path is
-        the regression worth catching.
+        Each row writes the claim into the archive's headers apart from what its parts hold,
+        and the verdict is the bytes': parts that claim more than the caps but hold a few
+        bytes pass, whether one part or three that claim past the total between them; a part
+        that claims a few bytes but holds more than the cap is not waved through (Python's
+        reader stops at the claim and fails its checksum); and a part over the cap is
+        refused, naming it, whatever it claims.
         """
-        source = Path(limits.__file__).read_text(encoding="utf-8")
-        code = "\n".join(
-            line for line in source.splitlines() if not line.strip().startswith("#")
-        ).split('"""')[-1]
-        assert "file_size" not in code, "the cap must measure decompressed bytes, not the header"
+        from table_rows import row
+
+        over = b"<a>" + b"x" * (MAX_XML_PART_BYTES + 1) + b"</a>"
+        rows = [
+            (
+                "one part claims past the cap, holds a few bytes",
+                {"word/document.xml": (b"<a/>", MAX_XML_PART_BYTES + 1)},
+                None,
+            ),
+            (
+                "three parts claim past the total, hold a few bytes",
+                {f"ppt/slides/slide{i}.xml": (b"<a/>", 40 * 1024 * 1024) for i in (1, 2, 3)},
+                None,
+            ),
+            (
+                "a part claims a few bytes, holds past the cap",
+                {"word/document.xml": (over, 10)},
+                (DocumentTooLarge, zipfile.BadZipFile),
+            ),
+            (
+                "a part claims what it holds, past the cap",
+                {"word/document.xml": (over, len(over))},
+                DocumentTooLarge,
+            ),
+            (
+                "a part claims past the cap and holds past it",
+                {"word/document.xml": (over, len(over) + 1)},
+                DocumentTooLarge,
+            ),
+        ]
+        for name, parts, refused in rows:
+            with row(subtests, name=name):
+                archive = _claiming(parts)
+                with zipfile.ZipFile(io.BytesIO(archive)) as forged:
+                    claims = {i.filename: i.file_size for i in forged.infolist()}
+                assert claims == {n: claim for n, (_, claim) in parts.items()}, name
+                if refused is None:
+                    assert_archive_within_limits(archive)  # must not raise
+                    continue
+                with pytest.raises(refused) as excinfo:
+                    assert_archive_within_limits(archive)
+                if excinfo.type is DocumentTooLarge:
+                    assert "word/document.xml" in str(excinfo.value), name
 
     def test_too_many_parts_is_refused(self):
         out = io.BytesIO()
@@ -139,17 +204,48 @@ class TestArchiveCaps:
         Pre-empting it here would report a corrupt upload as an oversized one."""
         assert_archive_within_limits(b"not a zip at all")  # must not raise
 
-    def test_the_guard_reads_in_bounded_chunks(self):
+    def test_the_guard_reads_in_bounded_chunks(self, monkeypatch):
         """A guard that has to decompress the whole bomb to decide IS the bomb.
 
         ``_actual_size`` stops one byte past the cap and reads a chunk at a time, so peak
         memory is one chunk rather than the whole part — measured at 0.04 s for a
-        32,768-part archive. Pinned on the source because the alternative (`part.read()`
-        with no argument) is a silent one-word regression that no size fixture detects.
+        32,768-part archive. Driven on a part that decompresses to twice the cap: the guard
+        refuses it, every read but the last stays within the cap (it stops at the first read
+        past it, rather than at the end of the part), and what it allocates while it decides
+        peaks at a few MiB, where reading the part whole holds all of it.
         """
-        source = Path(limits.__file__).read_text(encoding="utf-8")
-        assert "part.read(1 << 20)" in source
-        assert "part.read()" not in source
+        import tracemalloc
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+            with dst.open("xl/worksheets/sheet1.xml", "w") as part:
+                chunk = b"\0" * (1 << 20)
+                for _ in range(2 * MAX_XML_PART_BYTES // len(chunk)):
+                    part.write(chunk)
+        bomb = out.getvalue()
+        pulled: list[int] = []
+        for method in ("read", "read1"):
+            real = getattr(zipfile.ZipExtFile, method)
+
+            def _counted(self, *args, _real=real, **kwargs):
+                data = _real(self, *args, **kwargs)
+                pulled.append(len(data))
+                return data
+
+            monkeypatch.setattr(zipfile.ZipExtFile, method, _counted)
+
+        tracemalloc.start()
+        try:
+            with pytest.raises(DocumentTooLarge, match="sheet1.xml"):
+                assert_archive_within_limits(bomb)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert sum(pulled) > MAX_XML_PART_BYTES, "it read past the cap to know"
+        assert (
+            sum(pulled[:-1]) <= MAX_XML_PART_BYTES
+        ), f"it read {sum(pulled)} bytes of a {2 * MAX_XML_PART_BYTES}-byte part"
+        assert peak < 16 * 1024 * 1024, f"the guard held {peak} bytes at once"
 
 
 # ── structural caps: truncate, and say what was dropped ─────────────────────

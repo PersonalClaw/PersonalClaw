@@ -40,6 +40,7 @@ import json
 from pathlib import Path
 
 import pytest
+from every_name import put_in_every_name
 from table_rows import row
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
@@ -363,23 +364,6 @@ def _reports():
     }
 
 
-def _in_every_name(monkeypatch, original, stand_in) -> None:
-    """Put *stand_in* under every product module name that holds *original*, wherever a
-    wrapper imports it from."""
-    import sys
-
-    held = [
-        (module, name)
-        for module in list(sys.modules.values())
-        if getattr(module, "__name__", "").startswith("personalclaw")
-        for name, value in list(vars(module).items())
-        if value is original
-    ]
-    assert held, f"no product module holds {original!r}"
-    for module, name in held:
-        monkeypatch.setattr(module, name, stand_in)
-
-
 def _no_copy(monkeypatch, refused: list[str]) -> None:
     """The pieces a wrapper would need to sample, judge or derive on its own: each one records
     that it was reached, and refuses."""
@@ -406,7 +390,7 @@ def _no_copy(monkeypatch, refused: list[str]) -> None:
             refused.append(_name)
             raise AssertionError(f"the wrapper reached {_name} itself")
 
-        _in_every_name(monkeypatch, getattr(module, name), _refuse)
+        put_in_every_name(monkeypatch, getattr(module, name), _refuse)
 
 
 def test_each_template_node_returns_what_its_core_returns(tmp_path, monkeypatch, subtests):
@@ -440,7 +424,7 @@ def test_each_template_node_returns_what_its_core_returns(tmp_path, monkeypatch,
                     calls.append((prompt, n, criteria))
                     return json.loads(json.dumps(_answer))
 
-                _in_every_name(m, sampling.best_of_n, _core)
+                put_in_every_name(m, sampling.best_of_n, _core)
                 inputs = {"prompt": PROMPT, "n": 3, "criteria": CRITERIA}
                 wanted_calls = [(PROMPT, 3, CRITERIA)]
                 expected = answer
@@ -451,7 +435,7 @@ def test_each_template_node_returns_what_its_core_returns(tmp_path, monkeypatch,
                     calls.append((text, str(root), max_checks))
                     return _r
 
-                _in_every_name(m, check_work.derive_and_run, _core)
+                put_in_every_name(m, check_work.derive_and_run, _core)
                 inputs = {"claims": claims, "root": str(ws)}
                 wanted_calls = [(claims, str(ws), check_work.MAX_CHECKS)]
                 expected = {
