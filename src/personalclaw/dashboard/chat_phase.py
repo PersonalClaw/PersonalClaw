@@ -239,6 +239,13 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
     payload["seq"] = state.next_stream_seq()
     run.sent = payload
     state.broadcast_ws("work_phase", payload)
+    # The running list moved with it, unless this says again what it said (`running_now`).
+    try:
+        from personalclaw import running_now
+
+        running_now.chat_said(state, session, again=again)
+    except Exception:
+        logger.debug("could not ring the running list for %s", session.key, exc_info=True)
     if previous is None or _coarse(previous) != _coarse(payload):
         state.push_sessions_update()
     # A running loop's worker is a chat: what its turn does, its loop does (`work_phases`). Only

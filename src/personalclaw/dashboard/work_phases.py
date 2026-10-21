@@ -134,6 +134,13 @@ def _send(state: Any, work: str, held: _Work) -> None:
     }
     held.sent = payload
     state.broadcast_ws("work_phase", payload)
+    # The running list moved with it (`running_now`).
+    try:
+        from personalclaw import running_now
+
+        running_now.changed(state, work, held.session)
+    except Exception:
+        logger.debug("could not ring the running list for %s", work, exc_info=True)
 
 
 def _say(

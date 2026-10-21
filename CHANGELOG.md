@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **`GET /api/running` lists everything running now (chats, helpers with queued ones marked, goal loops, workflow runs, automations' fires and webhook turns), each with its phase, what it is doing, which agent is doing it and what waits on you for it, with a short just-finished tail and a count at `/api/running/count`; an app that declares the route reads only the work of chats it started.**
+- **A `running_changed` frame says the running list moved, at most once every 150 ms, naming the work that moved and nothing to render, and never for a streamed chunk or a running turn's liveness re-send; an app hears it only for work in chats it started.**
 
 ### Changed
 

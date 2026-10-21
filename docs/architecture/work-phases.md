@@ -257,3 +257,14 @@ reading, and neither read opens a loop's findings. An app reads a row only when 
 would hear that work's phase frame (`ws_state.WORK_FRAMES`), an agent only its own chat's
 work, and the owner everything; the count is cut the same way. Neither route has a
 `ROUTE_AUTHZ` row: an app reaches them only when its manifest declares `/api/running`.
+
+The list says it moved in one `running_changed` frame per 150 ms window
+(`running_now.changed`): a doorbell naming the work that moved,
+`{"changed": [{"work", "session"}, ...]}`, never a payload to render, so a reader reads the
+list again. It rings when a row is added or removed or its phase or line changes (every
+`work_phase` frame but a liveness re-send, and a loop worker's, whose loop's frame rings),
+when an approval or an agent's question a row waits on is asked or answered, when a
+webhook's turn starts or ends, and when a trigger's claim is written or released. A
+streamed chunk, a liveness re-send of an unchanged phase and a command's output ring
+nothing. An app's socket hears a ring cut to the work whose phase frame it may hear
+(`ws_state.RUNNING_LIST_FRAMES`), and none when that is nothing.
