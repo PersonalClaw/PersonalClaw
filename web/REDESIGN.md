@@ -179,7 +179,8 @@ new chrome.
    its command teaches itself.
 9. **Threads in one dense sidebar.** Projects list their threads in rows about 32 px high, each with
    a static status pip. Far more threads fit, and running, waiting and failed read at a glance with
-   nothing moving.
+   nothing moving. A project's threads come in one order for every kind: pinned first, then the
+   latest activity, newest first, ties broken by the thread's key. Status never moves a row.
 10. **Tools inside the work.** The terminal is a drawer at the bottom of any page, and a thread's
     workspace files are a toggle beside its conversation. Stored files live in Library. The owner
     opens them without leaving the work they belong to.
@@ -254,8 +255,12 @@ overview.
 - An approval's answer is one request: the prompt stays decided once its request landed (the caller
   resolves `true`), a second press of Allow while the confirmation is asked only asks again, and
   every choice, Deny included, goes through the same guard.
-- ⌘1 to ⌘9 open the chats in the chat list's order (pinned first, then the most recent) until
-  threads replace the list. ⇧Esc is not bound yet: it waits for the record of what has been seen.
+- ⌘1 to ⌘9 open the thread rows the sidebar shows, top to bottom: the projects in their order,
+  each project's threads in the sidebar's order, a closed project's threads skipped, and only the
+  matches while its search is typed (`threadNumberRoute`, `web/src/app/threadRail.tsx`). With the
+  rail collapsed to icons they open the same rows, read when the key is pressed. Their keymap ids
+  (`new-chat`, `chat-1` to `chat-9`) keep the names they had, since the desktop app's Go menu
+  sends them. ⇧Esc is not bound yet: it waits for the record of what has been seen.
 - ⌘⇧E shows and hides a chat's working folder (`web/src/pages/chat/panes`). Its runner is the open
   chat's, so the shell's palette reaches it through `useBoundRunner(id)`: a row whose runner a page
   gave it runs from the palette while that page is mounted, and is listed dimmed elsewhere.

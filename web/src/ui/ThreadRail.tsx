@@ -1,10 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ChevronRight, Edit3 } from 'lucide-react'
 import type { Thread, ThreadPip } from '../lib/useThreads'
 import type { PhaseFamily } from '../lib/workPhase'
+import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
 import { Button } from './Button'
 import { Eyebrow } from './Eyebrow'
+import { ResultAnnouncement } from './ListControls'
+import { SearchField } from './SearchField'
 import { StateMark } from './StateMark'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
@@ -31,7 +34,9 @@ const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   failed: { family: 'blocked', word: 'failed' },
 }
 
-function readOpen(): Record<string, boolean> {
+/** Which groups the owner opened or closed, as stored: what the rail starts from, and what ⌘1 to ⌘9
+ *  count by while no rail is mounted. */
+export function readGroupsOpen(): Record<string, boolean> {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) ?? '{}')
     if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
@@ -60,7 +65,45 @@ function reveal(el: HTMLElement) {
 
 const countLabel = (n: number) => (n === 0 ? 'no threads' : `${n} thread${n === 1 ? '' : 's'}`)
 
-/** The sidebar's threads: each project a disclosure group, each thread a dense row that opens it.
+/** A group as the rail draws it: the threads it shows (all of them, or a search's matches) and
+ *  whether it is open. */
+export interface RailSection {
+  group: ThreadRailGroup
+  threads: Thread[]
+  open: boolean
+}
+
+/** The search's words, as rows are matched against them: trimmed, in any case. */
+const searchWords = (query: string) => query.trim().toLocaleLowerCase()
+
+/** The groups the rail draws, in order. With no search, every group with all its threads, open as
+ *  the owner left it (`open`), or, never toggled, while it holds a thread. While a search is typed,
+ *  only the groups holding a thread whose name matches, each with just its matches and open unless
+ *  closed during this search (`searchOpen`): the stored disclosure is left as it was. */
+export function railSections(
+  groups: readonly ThreadRailGroup[], open: Record<string, boolean>, query: string, searchOpen: Record<string, boolean> = {},
+): RailSection[] {
+  const words = searchWords(query)
+  if (words === '') return groups.map((g) => ({ group: g, threads: g.threads, open: open[g.projectId] ?? g.threads.length > 0 }))
+  return groups.flatMap((g) => {
+    const threads = g.threads.filter((t) => t.title.toLocaleLowerCase().includes(words))
+    return threads.length > 0 ? [{ group: g, threads, open: searchOpen[g.projectId] ?? true }] : []
+  })
+}
+
+/** The thread rows the rail shows, top to bottom: the threads of every open section. What ⌘1 to ⌘9
+ *  count. */
+export function shownThreads(sections: readonly RailSection[]): Thread[] {
+  return sections.flatMap((s) => (s.open ? s.threads : []))
+}
+
+/** The sidebar's threads: New thread and a search at the top, then each project a disclosure
+ *  group and each thread a dense row that opens it.
+ *
+ *  New thread and the search sit above every project whatever the read says, so they never move
+ *  with the list. The search filters the rows by name as the owner types, over what the rail has
+ *  read (`railSections`), and nothing matching has a row of its own. The rail says which rows it
+ *  shows, top to bottom (`onShown`): the threads ⌘1 to ⌘9 open.
  *
  *  A row says its state in words beside one static mark (running, waiting on you, failed) and in
  *  its accessible name; nothing in the rail moves. The open thread (`selectedKey`, which the shell
@@ -69,7 +112,7 @@ const countLabel = (n: number) => (n === 0 ? 'no threads' : `${n} thread${n === 
  *  and tooltip, and wraps while the row has keyboard focus. Loading, a failed read and an empty
  *  project each have a row of their own. A group's rows window past the shared threshold
  *  (`WindowedList`), so hundreds of threads keep the rail fast and keep their keyboard order. */
-export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry }: {
+export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown }: {
   /** The groups in the order they show, each with its threads in order. */
   groups: ThreadRailGroup[]
   /** The key of the open thread, or '' when the page is no thread. */
@@ -81,12 +124,31 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   onOpen: (route: string) => void
   /** Reads the threads again after a failed read. */
   onRetry: () => void
+  /** Opens a new thread, from New thread at the top. */
+  onNewThread: () => void
+  /** Told the rows the rail shows, top to bottom, whenever they change; `null` while it shows none it
+   *  has read (loading, or a failed first read). Keep it stable. */
+  onShown?: (threads: Thread[] | null) => void
 }) {
   const base = useId()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState<Record<string, boolean>>(readOpen)
-  const isOpen = (g: ThreadRailGroup) => open[g.projectId] ?? g.threads.length > 0
-  const toggle = (g: ThreadRailGroup) => setOpen((prev) => writeOpen({ ...prev, [g.projectId]: !(prev[g.projectId] ?? g.threads.length > 0) }))
+  const [open, setOpen] = useState<Record<string, boolean>>(readGroupsOpen)
+  const [query, setQuery] = useState('')
+  // The groups closed during this search, which the next change of the search forgets.
+  const [searchOpen, setSearchOpen] = useState<Record<string, boolean>>({})
+  const searching = searchWords(query) !== ''
+  const changeQuery = (v: string) => { setQuery(v); setSearchOpen({}) }
+  const sections = useMemo(() => railSections(groups, open, query, searchOpen), [groups, open, query, searchOpen])
+  const toggle = (s: RailSection) => {
+    const id = s.group.projectId
+    if (searching) setSearchOpen((prev) => ({ ...prev, [id]: !s.open }))
+    else setOpen((prev) => writeOpen({ ...prev, [id]: !(prev[id] ?? s.group.threads.length > 0) }))
+  }
+
+  // What the rail draws: nothing while loading; the last good read's groups after a failed one.
+  const knows = status === 'ready' || (status === 'failed' && groups.length > 0)
+  const shown = useMemo(() => (knows ? shownThreads(sections) : null), [knows, sections])
+  useEffect(() => { onShown?.(shown) }, [shown, onShown])
 
   // The open thread's group opens when the open thread changes (an arrival, a reload, Back), so its
   // row can be seen. Only then: closing that group afterwards keeps it closed.
@@ -97,7 +159,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
     setOpen((prev) => (prev[selectedProject] === false ? writeOpen({ ...prev, [selectedProject]: true }) : prev))
   }, [selectedKey, selectedProject])
 
-  const selectedShown = selectedGroup !== undefined && isOpen(selectedGroup)
+  const selectedShown = sections.some((s) => s.open && s.threads.some((t) => t.key === selectedKey))
   useEffect(() => {
     if (!selectedKey || !selectedShown) return
     const rows = rootRef.current?.querySelectorAll<HTMLElement>('[data-thread-key]') ?? []
@@ -105,10 +167,25 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
     if (row) reveal(row)
   }, [selectedKey, selectedShown])
 
+  const matches = sections.reduce((n, sec) => n + sec.threads.length, 0)
+  const noMatch = `No threads match “${query.trim()}”`
   const headingId = `${base}-heading`
   return (
     <div ref={rootRef} role="group" aria-labelledby={headingId} className="flex flex-col">
       <Eyebrow id={headingId} className="px-s pt-l pb-1">Threads</Eyebrow>
+      <button
+        type="button" onClick={onNewThread} title={`New thread (${bindingLabel('new-chat')})`}
+        data-type="body-m"
+        className="flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
+        style={withWeight({ minHeight: 32 }, 400)}>
+        <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">New thread</span>
+      </button>
+      <div className="py-1">
+        <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
+          placeholder="Search threads" ariaLabel="Search threads" name="thread-search" />
+      </div>
+      <ResultAnnouncement count={matches} noun="threads" active={searching && status !== 'loading'} empty={noMatch} />
       {status === 'loading' && (
         <div role="status" data-type="body-s" className="px-s py-1 text-on-surface-low">Loading threads…</div>
       )}
@@ -121,33 +198,39 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
       {status === 'ready' && groups.length === 0 && (
         <div data-type="body-s" className="px-s py-1 text-on-surface-low">No threads yet</div>
       )}
-      {status !== 'loading' && groups.map((g, i) => {
-        const opened = isOpen(g)
+      {status !== 'loading' && searching && groups.length > 0 && sections.length === 0 && (
+        // Said aloud by the announcement above; this is the row a sighted owner reads.
+        <div data-type="body-s" className="px-s py-1 text-on-surface-low">{noMatch}</div>
+      )}
+      {status !== 'loading' && sections.map((section, i) => {
+        const { group: g, threads, open: opened } = section
         const listId = `${base}-group-${i}`
+        const total = g.threads.length
         return (
           <div key={`project:${g.projectId}`} className="flex flex-col">
             <button
-              type="button" onClick={() => toggle(g)}
+              type="button" onClick={() => toggle(section)}
               aria-expanded={opened} aria-controls={opened ? listId : undefined}
-              aria-label={`${g.name}, ${countLabel(g.threads.length)}`} title={g.name}
+              aria-label={searching ? `${g.name}, ${threads.length} of ${total} thread${total === 1 ? '' : 's'}` : `${g.name}, ${countLabel(total)}`}
+              title={g.name}
               data-type="body-s"
               className="group flex w-full items-center gap-xs rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
               style={withWeight({ minHeight: 32 }, 470)}>
               <ChevronRight size={16} strokeWidth={2} aria-hidden className={cx('shrink-0', opened && 'rotate-90')} />
               <span className="min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words">{g.name}</span>
-              <span data-type="caption" className="shrink-0 tabular-nums">{g.threads.length}</span>
+              <span data-type="caption" className="shrink-0 tabular-nums">{threads.length}</span>
             </button>
             {opened && (
               <div id={listId}>
-                {g.threads.length === 0
+                {threads.length === 0
                   ? <div data-type="body-s" className="py-1 pl-3xl pr-s text-on-surface-low">No threads yet</div>
                   : (
                     <WindowedList
-                      items={g.threads} rowKey={(t) => t.key}
+                      items={threads} rowKey={(t) => t.key}
                       // Variable: a row is 32 px, and grows while it has focus to show its whole name.
                       rowHeights="variable" estimateRowHeight={32}
                       noun={`threads in ${g.name}`}
-                      findHint="use Search chats on the Chat history page, which searches every chat."
+                      findHint="use Search threads at the top of the threads, which searches every thread by name."
                       className="flex flex-col">
                       {(t) => <ThreadRow thread={t} selected={t.key === selectedKey} onOpen={onOpen} />}
                     </WindowedList>

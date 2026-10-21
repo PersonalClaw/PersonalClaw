@@ -65,9 +65,13 @@ export const KEYMAP: readonly KeyBinding[] = [
     keywords: 'files file tree explorer workspace directory folder', disabledReason: 'Open a chat to see its working folder',
   },
   { id: 'next-needs-you', label: 'Go to the next chat that needs you', keywords: 'approval waiting attention your turn', scope: 'global', chords: ['mod+alt+a'] },
-  { id: 'new-chat', label: 'New chat', keywords: 'thread start', scope: 'global', chords: ['mod+n'] },
+  // A new thread, and the sidebar's threads by number: ⌘n opens the nth thread row the sidebar shows,
+  // top to bottom (`threadRail.tsx`, `threadNumberRoute`). The ids keep the names they had when the
+  // keys counted the chat list, since the desktop app's Go menu sends them (`desktop/goMenu.js`), and
+  // an app built before the rename would send the old ones.
+  { id: 'new-chat', label: 'New thread', keywords: 'chat start conversation', scope: 'global', chords: ['mod+n'] },
   ...THREAD_NUMBERS.map((n): KeyBinding => ({
-    id: `chat-${n}`, label: `Open chat ${n} in the list`, keywords: 'thread switch recent', scope: 'global', chords: [`mod+${n}`],
+    id: `chat-${n}`, label: `Open thread ${n} in the sidebar`, keywords: 'chat switch recent jump', scope: 'global', chords: [`mod+${n}`],
   })),
   {
     id: 'approve-focused', label: 'Approve the focused request', keywords: 'allow permission approval', scope: 'focused',

@@ -1,8 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo } from 'react'
 import { api, type ProjectItem } from '../lib/api'
 import { useQuery } from '../lib/data'
-import { NO_PROJECT, useThreads, type ProjectThreads, type Thread } from '../lib/useThreads'
-import { ThreadRail, type ThreadRailGroup, type ThreadRailStatus } from '../ui/ThreadRail'
+import { NO_PROJECT, readThreads, toThreads, useThreads, type ProjectThreads, type Thread, type ThreadSources } from '../lib/useThreads'
+import { ThreadRail, railSections, readGroupsOpen, shownThreads, type ThreadRailGroup, type ThreadRailStatus } from '../ui/ThreadRail'
 
 /** ── The sidebar's threads, and which one is open (#3814) ───────────────────────────────────────
  *
@@ -15,6 +15,9 @@ import { ThreadRail, type ThreadRailGroup, type ThreadRailStatus } from '../ui/T
  *    only while a thread of it is, and a project the list does not hold (deleted since, or made
  *    since it was read) comes after the listed ones, named by its id.
  *  · **"No project" comes last**, after every project, and only when a thread is in it.
+ *  · **Threads within a group follow one named order** (`byRailOrder`): pinned first, then the
+ *    latest activity, newest first, ties broken by the thread's key. Status never moves a row.
+ *  · **⌘1 to ⌘9 open the rows the rail shows**, top to bottom (`threadNumberRoute`).
  *  · **The open thread is the address.** A thread keeps the address of its kind (`#/chat/<key>`,
  *    `#/loops/<id>`, `#/code/<id>`, a run-backed loop's `#/workflows/runs/<run>`), the issue's
  *    default for the thread address, so every address that opened a thread before still opens it
@@ -29,8 +32,19 @@ export const NO_PROJECT_LABEL = 'No project'
 /** The project list's fields the groups read. */
 export type RailProject = Pick<ProjectItem, 'id' | 'name' | 'status'>
 
+/** The sidebar's one order for the threads of a group, chats, goal loops and code sessions alike:
+ *  pinned first, then the latest activity, newest first (`Thread.activeAt`), with ties broken by the
+ *  thread's key. Status never moves a row: the pips say what needs the owner and ⌘⌥A jumps to it,
+ *  so a row does not jump when a turn starts or a run fails. The loops page's "running first" and the
+ *  code section's status tiers do not carry into the sidebar. */
+export function byRailOrder(a: Thread, b: Thread): number {
+  return Number(b.pinned) - Number(a.pinned)
+    || b.activeAt - a.activeAt
+    || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+}
+
 export function railGroups(groups: readonly ProjectThreads[], projects: readonly RailProject[] | undefined): ThreadRailGroup[] {
-  const byProject = new Map(groups.map((g) => [g.projectId, g.threads]))
+  const byProject = new Map(groups.map((g) => [g.projectId, [...g.threads].sort(byRailOrder)]))
   const out: ThreadRailGroup[] = []
   const listed = new Set<string>()
   for (const p of projects ?? []) {
@@ -43,7 +57,7 @@ export function railGroups(groups: readonly ProjectThreads[], projects: readonly
   for (const g of groups) {
     if (g.projectId === NO_PROJECT || listed.has(g.projectId)) continue
     listed.add(g.projectId)
-    out.push({ projectId: g.projectId, name: g.projectId, threads: g.threads })
+    out.push({ projectId: g.projectId, name: g.projectId, threads: byProject.get(g.projectId) ?? [] })
   }
   const loose = byProject.get(NO_PROJECT) ?? []
   if (loose.length > 0) out.push({ projectId: NO_PROJECT, name: NO_PROJECT_LABEL, threads: loose })
@@ -70,6 +84,29 @@ export function threadAt(route: string, sub: string, groups: readonly { threads:
   if (exact) return exact.key
   const within = all.find((t) => t.kind !== 'chat' && path.startsWith(`${decoded(t.route)}/`))
   return within ? within.key : ''
+}
+
+/** The threads ⌘1 to ⌘9 count while no rail shows them, as the expanded rail would with no search:
+ *  the groups in their order, each group's threads in the named order, the threads of a group the
+ *  owner closed (`open`, as stored) left out. Pure, over the lists the rail reads. */
+export function numberedThreads(src: ThreadSources, projects: readonly RailProject[] | undefined, open: Record<string, boolean>): Thread[] {
+  return shownThreads(railSections(railGroups(toThreads(src), projects), open, ''))
+}
+
+/** The rows the mounted rail shows, top to bottom, or null while no rail shows any it has read. */
+let shownByTheRail: readonly Thread[] | null = null
+
+/** The route of thread *n* (1 to 9) of the sidebar, or null when it shows fewer. The rows the rail
+ *  shows when one is mounted (its closed groups and its search applied), so ⌘n opens the nth row
+ *  the owner sees; else, with the rail collapsed to icons or not up, the same rows read fresh. A
+ *  failed read rejects. */
+export async function threadNumberRoute(n: number): Promise<string | null> {
+  let rows = shownByTheRail
+  if (rows === null) {
+    const [lists, projects] = await Promise.all([readThreads(), api.projects()])
+    rows = numberedThreads(lists, projects, readGroupsOpen())
+  }
+  return rows[n - 1]?.route ?? null
 }
 
 export interface ThreadRailRead {
@@ -115,8 +152,11 @@ export function ShellThreadRail({ route, sub, onOpen, onLit }: {
   const lit = rail.selectedKey !== ''
   useLayoutEffect(() => { onLit(lit) }, [lit, onLit])
   useLayoutEffect(() => () => onLit(false), [onLit])
+  const onShown = useCallback((rows: Thread[] | null) => { shownByTheRail = rows }, [])
+  useLayoutEffect(() => () => { shownByTheRail = null }, [])
   return (
     <ThreadRail groups={rail.groups} selectedKey={rail.selectedKey} status={rail.status}
-      failure={rail.failure} onOpen={onOpen} onRetry={rail.retry} />
+      failure={rail.failure} onOpen={onOpen} onRetry={rail.retry}
+      onNewThread={() => onOpen('chat/new')} onShown={onShown} />
   )
 }

@@ -3,6 +3,7 @@ import { api, type ChatSessionSummary, type InboxItem, type Loop, type PendingAp
 import { useQuery } from './data'
 import { loopApprovalSession } from '../app/approvalDestination'
 import { loopTitle, toLanes, type ActivityInput, type ApprovalInput, type AttentionInput, type Lane, type LaneCard, type LoopInput } from './attentionLanes'
+import { sessionRecencyMs } from './epoch'
 import { loopRoute } from './loopKind'
 import { sessionTitle } from './sessionTitle'
 import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
@@ -29,7 +30,8 @@ import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
  *    waits or runs. A chat's failed and unread pips need the gateway's seen record, and come with
  *    it: without it a chat would read failed until its next turn.
  *  · **Order is not decided here.** Groups come in the order their first thread does, and threads
- *    in their list's order, chats before loops. The sidebar sorts them by its named order.
+ *    in their list's order, chats before loops. Each thread carries what the sidebar's named order
+ *    reads (`pinned`, `activeAt`), and the sidebar sorts by it (`byRailOrder`, `app/threadRail.tsx`).
  */
 
 /** The group a thread with no project goes under, shown as "No project". */
@@ -54,6 +56,13 @@ export interface Thread {
   /** The route that opens it, without the leading `#/`. */
   route: string
   pip: ThreadPip | null
+  /** The owner pinned it. Only a chat can be pinned; a loop never is. */
+  pinned: boolean
+  /** When it last did something, in epoch ms, 0 when nothing says. A chat's is its list row's
+   *  activity (`sessionRecencyMs`). A loop's is its newest cycle's, which its workers' latest activity
+   *  is (each cycle is a worker's turn; the loop list carries no cycle time), else when it
+   *  completed, started or was created: the newest of these. Its status never changes it. */
+  activeAt: number
 }
 
 export interface ProjectThreads {
@@ -62,9 +71,9 @@ export interface ProjectThreads {
 }
 
 /** The chat list's fields the join reads. */
-export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id'>
+export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned'>
 /** The loop list's fields the join reads. */
-export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'>
+export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at'>>
 
 export interface ThreadSources {
   sessions: ThreadChat[]
@@ -91,6 +100,11 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
+/** An epoch-seconds field of a loop row as ms, 0 when it holds no number. */
+function ms(secs: unknown): number {
+  return typeof secs === 'number' && Number.isFinite(secs) ? secs * 1000 : 0
+}
+
 function rows<T>(list: T[] | unknown): T[] {
   return (Array.isArray(list) ? list : []).filter((r): r is T => r !== null && typeof r === 'object')
 }
@@ -114,6 +128,8 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       projectId: str(l.project_id),
       route: loopRoute(l),
       pip: l.status === 'failed' ? 'failed' : null,
+      pinned: false,
+      activeAt: Math.max(ms(l.completed_at), ms(l.started_at), ms(l.created_at)),
     })
     if (str(l.session_key) !== '') loopBySession.set(str(l.session_key), `loop:${id}`)
   }
@@ -129,12 +145,15 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
 
   const chatThreads: Thread[] = []
   const sessionThread = new Map<string, string>()
+  /** The latest activity of each loop's listed workers, by the loop's thread key. */
+  const workerActivity = new Map<string, number>()
   for (const s of sessions) {
     const key = str(s.key)
     if (key === '') continue
     const owner = loopOfSession(key, s.origin, s.source_id)
     if (owner !== '') {
       sessionThread.set(key, owner)
+      workerActivity.set(owner, Math.max(workerActivity.get(owner) ?? 0, sessionRecencyMs(s)))
       continue
     }
     sessionThread.set(key, `chat:${key}`)
@@ -146,8 +165,11 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       projectId: str(s.project_id),
       route: `chat/${encodeURIComponent(key)}`,
       pip: null,
+      pinned: s.pinned === true,
+      activeAt: sessionRecencyMs(s),
     })
   }
+  for (const t of loopThreads) t.activeAt = Math.max(t.activeAt, workerActivity.get(t.key) ?? 0)
 
   /** The thread whose work a session key is: a listed chat or loop worker, else a loop worker's
    *  key shape (`loopApprovalSession`), since an approval can name a worker the list has not
@@ -196,16 +218,17 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
 // approvals.
 const THREADS_KEY = 'dashboard:threads'
 
-interface Read {
+/** What `readThreads` reads: the four lists `toThreads` joins. */
+export interface ThreadLists {
   sessions: ChatSessionSummary[]
   loops: Loop[]
   items: InboxItem[]
   approvals: PendingApproval[]
 }
 
-/** Deliberately no `.catch(() => [])` on any leg: a swallowed failure would list no threads, which
- *  reads as "you have none". The error reaches the caller instead. */
-async function readThreads(): Promise<Read> {
+/** The four lists, read together. Deliberately no `.catch(() => [])` on any leg: a swallowed failure
+ *  would list no threads, which reads as "you have none". The error reaches the caller instead. */
+export async function readThreads(): Promise<ThreadLists> {
   const [sessions, loops, items, approvals] = await Promise.all([
     api.chatSessions(), api.uLoops(), api.inboxOpen(), api.approvals(),
   ])
@@ -233,7 +256,7 @@ export interface ThreadsRead {
 /** Every thread under its project, kept current by the socket's frames (debounced like Home's,
  *  since a running turn sends one every few seconds). */
 export function useThreads(): ThreadsRead {
-  const { data, error, loading, refresh } = useQuery<Read>(THREADS_KEY, readThreads)
+  const { data, error, loading, refresh } = useQuery<ThreadLists>(THREADS_KEY, readThreads)
 
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {

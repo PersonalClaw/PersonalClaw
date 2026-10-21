@@ -11,7 +11,7 @@ import { NO_PROJECT_LABEL, railGroups, type RailProject } from './threadRail'
 // failed to load. An archived project is listed only while a thread of it is.
 
 function thread(key: string, projectId: string): Thread {
-  return { key, kind: 'chat', id: key.split(':')[1], title: key, projectId, route: `chat/${key.split(':')[1]}`, pip: null }
+  return { key, kind: 'chat', id: key.split(':')[1], title: key, projectId, route: `chat/${key.split(':')[1]}`, pip: null, pinned: false, activeAt: 0 }
 }
 
 function group(projectId: string, ...keys: string[]): ProjectThreads {
@@ -36,7 +36,9 @@ describe('the rail groups', () => {
     expect(shape(railGroups(threads, PROJECTS))).toEqual([
       ['Personal', []],
       ['Repeatable', []],
-      ['Garden', ['chat:seeds', 'chat:fence']],
+      // Within a group, the named order (theSidebarShowsThreadsInItsNamedOrder.test.ts): here a
+      // tie, broken by key.
+      ['Garden', ['chat:fence', 'chat:seeds']],
       ['House move', ['chat:boxes']],
       [NO_PROJECT_LABEL, ['chat:loose']],
     ])
