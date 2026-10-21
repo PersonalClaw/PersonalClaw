@@ -24,6 +24,13 @@ Same harness as ``test_apps_cannot_change_your_models.py``: the real token middl
 the token you minted for it, sent both ways an app sends one. The route matrix answers with a
 stand-in at each real template, so no case there changes anything; the switch and overview cases run
 the real handlers on a scratch home.
+
+The app is installed once for the module (``shared_app_rows.SharedApp``), and each route and each
+case on the real handlers is a row on that install: the home is put back to what the install left
+before every row and checked by digest, every session is signed out, and the fenced registries are
+read around it. A refused row also reads the home before and after the app's two requests, so a
+refusal that wrote anything fails its own row. Both families' end-to-end refusal stays its own
+test, on an app installed for it alone.
 """
 
 from __future__ import annotations
@@ -37,6 +44,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
+from shared_app_rows import (
+    RecordedRows,
+    Row,
+    RowBody,
+    SharedApp,
+    home_files,
+    planted_rows,
+    written_since,
+)
+from table_rows import row
 from test_apps_cannot_change_your_models import _gateway, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
@@ -111,24 +128,29 @@ def _bundle(root: Path) -> Path:
     return d
 
 
+def _this_machine(root: Path, mp: pytest.MonkeyPatch, pc: Path) -> SimpleNamespace:
+    """A scratch ``HOME`` and a workspace for the platform's own tools under *root*, and an empty
+    MCP client registry, so the tool list starts no server, beside the PersonalClaw home *pc*."""
+    user = root / "user"
+    user.mkdir()
+    mp.setenv("HOME", str(user))
+    workspace = root / "workspace"
+    workspace.mkdir()
+    mp.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
+    mp.setattr(mcp_client, "get_mcp_client_registry", lambda: _NoServers())
+    return SimpleNamespace(pc=pc, prefs=pc / "tool_prefs.json")
+
+
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """A scratch PersonalClaw home and ``HOME``, a workspace for the platform's own tools, and an
-    empty MCP client registry, so the tool list starts no server."""
+    """A scratch PersonalClaw home of this test's own, on :func:`_this_machine`."""
     import personalclaw.config.loader as loader
 
-    user = tmp_path / "user"
-    user.mkdir()
-    monkeypatch.setenv("HOME", str(user))
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
     pc = tmp_path / "pc-home"
     pc.mkdir()
     monkeypatch.setattr(loader, "config_dir", lambda: pc)
     monkeypatch.setattr(manager, "config_dir", lambda: pc)
-    monkeypatch.setattr(mcp_client, "get_mcp_client_registry", lambda: _NoServers())
-    return SimpleNamespace(pc=pc, prefs=pc / "tool_prefs.json")
+    return _this_machine(tmp_path, monkeypatch, pc)
 
 
 class _NoServers:
@@ -166,10 +188,30 @@ class _ReadingList(ToolProvider):
 
 
 @pytest.fixture
-def reading_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tool_registry, "_providers", {})
-    monkeypatch.setattr(tool_registry, "_provider_app", {})
-    tool_registry.register_provider(_ReadingList(), app="reading-list")
+def reading_list(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The reading list's provider registered for the whole test, alone, so a table's rows each
+    read the registry with it, as the table's first reading did; and taken off when the test
+    ends, with the names it held."""
+    for held in ("_providers", "_provider_app", "_registrations", "_claims"):
+        monkeypatch.setattr(tool_registry, held, {})
+    provider = _ReadingList()
+    tool_registry.register_provider(provider, app="reading-list")
+    yield
+    tool_registry.unregister_provider(provider)
+
+
+def _claims_put_back(case: RowBody) -> RowBody:
+    """*case*, with the tool names it claimed put back when the row ends: reading the tool list
+    claims each tool's name for the provider that serves it (``tool_registry._claims``), a
+    registry the conftest's fences put back once per test, and every row reads it as the table's
+    first reading did."""
+
+    async def run(r: Row) -> None:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(tool_registry, "_claims", dict(tool_registry._claims))
+            await case(r)
+
+    return run
 
 
 @pytest.fixture(autouse=True)
@@ -249,141 +291,250 @@ async def _row(gw: _Gateway, token: str = "") -> dict:
     """The fixture tool's row in the tool list, read by you or, with *token*, by the app."""
     status, text = await gw.call("GET", TOOLS, app_token=token, as_backend=bool(token))
     assert status == 200, text
-    [row] = [t for t in json.loads(text)["tools"] if t["name"] == TOOL]
-    return row
+    [tool] = [t for t in json.loads(text)["tools"] if t["name"] == TOOL]
+    return tool
+
+
+def _your_garden() -> str:
+    """Your garden project, with the overview you wrote for it: its id."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    project = HierarchyStore().create_project("Garden", brief="Plant a vegetable garden.")
+    assert project_context.write_overview(project.id, YOUR_OVERVIEW)
+    return project.id
+
+
+#: The fixture app, installed once for the module.
+SHARED = SharedApp(APP, _bundle, _gateway)
+
+
+async def _shared_machine(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mp: pytest.MonkeyPatch
+) -> SimpleNamespace:
+    """The module's home, with the app installed, on a :func:`_this_machine` of this test's."""
+    return _this_machine(tmp_path, mp, await SHARED.home(tmp_path_factory, mp))
 
 
 # ── 1. Every switch and every overview is yours; what you granted stays the app's ───────────────
 
 
-class TestAnAppCannotChangeYourTools:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "body"),
-        YOUR_CHANGES,
-        ids=[f"{m} {t}" for m, t, _ in YOUR_CHANGES],
-    )
-    async def test_an_app_is_refused_in_the_registrys_words_and_you_are_not(
-        self, home, sel_rows, method, template, body
-    ) -> None:
-        reached: list[tuple[str, str]] = []
-        async with _gateway(_stand_ins(reached)) as gw:
-            token = await _installed(gw, home)
-            as_sdk = await gw.call(method, template, body, app_token=token)
-            as_backend = await gw.call(method, template, body, app_token=token, as_backend=True)
-            yours = await gw.call(method, template, body)
-        capability = _capability(method, template)
-        for status, text in (as_sdk, as_backend):
-            assert status == 403, text
-            assert capability and f"{OWNER_ONLY}{capability}" in text, text
-        assert len(_denials(sel_rows, template)) == 2, "each refusal leaves an SEL row for the app"
-        assert yours[0] == 200, yours
-        assert reached == [("", method)], "only your request reached the handler"
+def _change_rows(reached: list[tuple[str, str]]) -> list[tuple[str, RowBody]]:
+    """A row per route of :data:`YOUR_CHANGES`: the app refused both ways it sends its token, in
+    the registry's words, each refusal an SEL row naming it, the home as it was after both, and
+    only your request reaching the stand-in."""
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "body"),
-        STILL_THE_APPS,
-        ids=[f"{m} {t}" for m, t, _ in STILL_THE_APPS],
-    )
-    async def test_an_app_still_reaches_what_you_granted(
-        self, home, sel_rows, method, template, body
-    ) -> None:
-        reached: list[tuple[str, str]] = []
-        async with _gateway(_stand_ins(reached)) as gw:
-            token = await _installed(gw, home)
-            as_sdk = await gw.call(method, template, body, app_token=token)
-            as_backend = await gw.call(method, template, body, app_token=token, as_backend=True)
-            yours = await gw.call(method, template, body)
-        assert [as_sdk[0], as_backend[0], yours[0]] == [200, 200, 200], (as_sdk, as_backend)
-        assert reached == [(APP, method), (APP, method), ("", method)]
-        assert not _denials(sel_rows, template)
+    def refused(method: str, template: str, body: Any) -> RowBody:
+        async def case(r: Row) -> None:
+            reached.clear()
+            before = home_files(r.home)
+            as_sdk = await r.gw.call(method, template, body, app_token=r.token)
+            as_backend = await r.gw.call(method, template, body, app_token=r.token, as_backend=True)
+            written = written_since(r.home, before)
+            yours = await r.gw.call(method, template, body)
+            capability = _capability(method, template)
+            for status, text in (as_sdk, as_backend):
+                assert status == 403, text
+                assert capability and f"{OWNER_ONLY}{capability}" in text, text
+            assert not written, f"a refusal changed your home: {written}"
+            assert len(r.denials(template)) == 2, "each refusal leaves an SEL row for the app"
+            assert yours[0] == 200, yours
+            assert reached == [("", method)], "only your request reached the handler"
+
+        return case
+
+    return [(f"{m} {t}", refused(m, t, b)) for m, t, b in YOUR_CHANGES]
+
+
+def _granted_rows(reached: list[tuple[str, str]]) -> list[tuple[str, RowBody]]:
+    """A row per route of :data:`STILL_THE_APPS`: the app reaches it both ways, as you do, and
+    no request leaves a refusal."""
+
+    def granted(method: str, template: str, body: Any) -> RowBody:
+        async def case(r: Row) -> None:
+            reached.clear()
+            as_sdk = await r.gw.call(method, template, body, app_token=r.token)
+            as_backend = await r.gw.call(method, template, body, app_token=r.token, as_backend=True)
+            yours = await r.gw.call(method, template, body)
+            assert [as_sdk[0], as_backend[0], yours[0]] == [200, 200, 200], (as_sdk, as_backend)
+            assert reached == [(APP, method), (APP, method), ("", method)]
+            assert not r.denials(template)
+
+        return case
+
+    return [(f"{m} {t}", granted(m, t, b)) for m, t, b in STILL_THE_APPS]
+
+
+@pytest.mark.asyncio
+async def test_an_app_is_refused_every_change_and_you_are_not(
+    subtests, tmp_path, tmp_path_factory, monkeypatch
+) -> None:
+    await _shared_machine(tmp_path, tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _change_rows(reached)
+    assert len(rows) == len(YOUR_CHANGES), "a change was left out of the table"
+    await SHARED.run(subtests, rows, _stand_ins(reached), label="route")
+
+
+@pytest.mark.asyncio
+async def test_an_app_still_reaches_what_you_granted(
+    subtests, tmp_path, tmp_path_factory, monkeypatch
+) -> None:
+    await _shared_machine(tmp_path, tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _granted_rows(reached)
+    assert len(rows) == len(STILL_THE_APPS), "a read was left out of the table"
+    await SHARED.run(subtests, rows, _stand_ins(reached), label="route")
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path, tmp_path_factory, monkeypatch
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await _shared_machine(tmp_path, tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    probe = _change_rows(reached)[0]
+    failed = await planted_rows(SHARED, _stand_ins(reached), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
+
+
+#: The route the planted refusal below answers: a whole provider's switch, between two neighbours.
+PLANTED = "POST /api/tools/provider-toggle"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+    tmp_path, tmp_path_factory, monkeypatch
+) -> None:
+    """A handler the app reaches, which switches the provider on in your tool switches and then
+    answers as a refusal does: a 403 in the registry's words, and an SEL row naming the app. Only
+    your home tells it from a refusal, so its row fails on that, and the rows either side of it,
+    the home put back before each, pass."""
+    from personalclaw.apps import permissions
+
+    machine = await _shared_machine(tmp_path, tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _change_rows(reached)
+    at = [name for name, _ in rows].index(PLANTED)
+    method, template = PLANTED.split(" ", 1)
+
+    async def switches_then_refuses(request: web.Request) -> web.Response:
+        from personalclaw import sel
+
+        app = request.get("app", "")
+        if not app:
+            reached.append(("", request.method))
+            return web.json_response({"reached": True})
+        machine.prefs.write_text(json.dumps({"disabledProviders": []}), encoding="utf-8")
+        sel.sel().log_api_access(
+            caller=f"app:{app}", outcome="denied", source="app_permissions", resources=request.path
+        )
+        refusal = permissions.owner_only_refusal(_capability(method, template))
+        raise web.HTTPForbidden(
+            text=f"app {app!r} not permitted to access {request.path}: {refusal}"
+        )
+
+    decide = permissions.app_request_denial
+
+    def lets_the_planted_route_through(app: str, path: str, *, method: str = "", route: str = ""):
+        return (
+            "" if f"{method} {route}" == PLANTED else decide(app, path, method=method, route=route)
+        )
+
+    monkeypatch.setattr(permissions, "app_request_denial", lets_the_planted_route_through)
+    routes = [
+        (m, t, switches_then_refuses if (m, t) == (method, template) else handler)
+        for m, t, handler in _stand_ins(reached)
+    ]
+    recorded = RecordedRows()
+    await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="route")
+    assert list(recorded.failed) == [PLANTED], recorded.failed
+    assert "a refusal changed your home: ['tool_prefs.json']" in recorded.failed[PLANTED]
 
 
 # ── 2. What a refusal keeps from an app, measured on the real handlers ──────────────────────────
 
 
-class TestWhatAnAppNoLongerDoes:
-    @pytest.mark.asyncio
-    async def test_a_tool_you_switched_off_stays_off_and_you_still_switch_it(
-        self, home, sel_rows, reading_list
-    ) -> None:
+def _real_rows(machine: SimpleNamespace) -> list[tuple[str, RowBody]]:
+    """A switch you made and an overview you wrote, each refused to the app and still yours to
+    change, read through the real tool and always-on handlers."""
+
+    async def a_tool_you_switched_off_stays_off_and_you_still_switch_it(r: Row) -> None:
         on = {"provider": PROVIDER, "name": TOOL, "enabled": True}
-        async with _gateway(_tool_routes()) as gw:
-            token = await _installed(gw, home)
-            await gw.ok("POST", "/api/tools/toggle", {**on, "enabled": False})
-            switched_off = home.prefs.read_bytes()
-            as_sdk = await gw.call("POST", "/api/tools/toggle", on, app_token=token)
-            as_backend = await gw.call(
-                "POST", "/api/tools/toggle", on, app_token=token, as_backend=True
-            )
-            after_the_app = home.prefs.read_bytes()
-            seen_by_the_app = await _row(gw, token)
-            yours = await gw.ok("POST", "/api/tools/toggle", on)
-            seen_by_you = await _row(gw)
+        path = "/api/tools/toggle"
+        await r.gw.ok("POST", path, {**on, "enabled": False})
+        switched_off = machine.prefs.read_bytes()
+        before = home_files(r.home)
+        as_sdk = await r.gw.call("POST", path, on, app_token=r.token)
+        as_backend = await r.gw.call("POST", path, on, app_token=r.token, as_backend=True)
+        written = written_since(r.home, before)
+        seen_by_the_app = await _row(r.gw, r.token)
+        yours = await r.gw.ok("POST", path, on)
+        seen_by_you = await _row(r.gw)
         for status, text in (as_sdk, as_backend):
             assert status == 403, text
             assert "switching one of your tools on or off" in text, text
-        assert after_the_app == switched_off, "the app's request changed your tool switches"
+        assert not written, f"the app's request changed your home: {written}"
         assert f"{PROVIDER}:{TOOL}" in json.loads(switched_off)["disabled"]
-        assert len(_denials(sel_rows, "/api/tools/toggle")) == 2
+        assert len(r.denials(path)) == 2
         assert seen_by_the_app["disabled"] is True, "the app still reads the tool, switched off"
         assert yours["ok"] is True and seen_by_you["disabled"] is False, (yours, seen_by_you)
 
-    @pytest.mark.asyncio
-    async def test_a_provider_you_switched_off_stays_off_and_you_still_switch_it(
-        self, home, sel_rows, reading_list
-    ) -> None:
+    async def a_provider_you_switched_off_stays_off_and_you_still_switch_it(r: Row) -> None:
         on = {"provider": PROVIDER, "enabled": True}
         path = "/api/tools/provider-toggle"
-        async with _gateway(_tool_routes()) as gw:
-            token = await _installed(gw, home)
-            await gw.ok("POST", path, {**on, "enabled": False})
-            switched_off = home.prefs.read_bytes()
-            as_sdk = await gw.call("POST", path, on, app_token=token)
-            as_backend = await gw.call("POST", path, on, app_token=token, as_backend=True)
-            after_the_app = home.prefs.read_bytes()
-            seen_by_the_app = await _row(gw, token)
-            yours = await gw.ok("POST", path, on)
-            seen_by_you = await _row(gw)
+        await r.gw.ok("POST", path, {**on, "enabled": False})
+        switched_off = machine.prefs.read_bytes()
+        before = home_files(r.home)
+        as_sdk = await r.gw.call("POST", path, on, app_token=r.token)
+        as_backend = await r.gw.call("POST", path, on, app_token=r.token, as_backend=True)
+        written = written_since(r.home, before)
+        seen_by_the_app = await _row(r.gw, r.token)
+        yours = await r.gw.ok("POST", path, on)
+        seen_by_you = await _row(r.gw)
         for status, text in (as_sdk, as_backend):
             assert status == 403, text
             assert "switching one of your tool providers on or off" in text, text
-        assert after_the_app == switched_off, "the app's request changed your tool switches"
+        assert not written, f"the app's request changed your home: {written}"
         assert json.loads(switched_off)["disabledProviders"] == [PROVIDER]
-        assert len(_denials(sel_rows, path)) == 2
+        assert len(r.denials(path)) == 2
         assert seen_by_the_app["providerDisabled"] is True and seen_by_the_app["disabled"] is True
         assert yours["ok"] is True and seen_by_you["providerDisabled"] is False, yours
 
-    @pytest.mark.asyncio
-    async def test_it_cannot_write_a_project_overview_and_you_still_can(
-        self, home, sel_rows
-    ) -> None:
+    async def it_cannot_write_a_project_overview_and_you_still_can(r: Row) -> None:
         from personalclaw.dashboard.chat_utils import _project_context_preamble
-        from personalclaw.tasks.hierarchy import HierarchyStore
 
-        project = HierarchyStore().create_project("Garden", brief="Plant a vegetable garden.")
-        assert project_context.write_overview(project.id, YOUR_OVERVIEW)
-        doc = f"/api/legibility/always-on/doc?id={OVERVIEW_ID}&project_id={project.id}"
+        project_id = _your_garden()
+        doc = f"/api/legibility/always-on/doc?id={OVERVIEW_ID}&project_id={project_id}"
         path = "/api/legibility/always-on/doc"
-        theirs = {"id": OVERVIEW_ID, "project_id": project.id, "body": THE_APPS_TEXT}
-        async with _gateway(_overview_routes()) as gw:
-            token = await _installed(gw, home)
-            read = await gw.call("GET", doc, app_token=token, as_backend=True)
-            inventory = await gw.call(
-                "GET", f"/api/legibility/always-on?project_id={project.id}", app_token=token
-            )
-            assert read[0] == 200, read
-            # The app names the revision it read, so its write is refused for being the app's and
-            # for nothing else.
-            names_it = {"If-Match": json.loads(read[1])["revision"]}
-            as_sdk = await gw.call("PUT", path, theirs, app_token=token, headers=names_it)
-            as_backend = await gw.call(
-                "PUT", path, theirs, app_token=token, as_backend=True, headers=names_it
-            )
-            after_the_app = project_context.read_overview(project.id)
-            preamble_after_the_app = _project_context_preamble(project.id)
-            yours = await gw.call("PUT", path, {**theirs, "body": YOUR_EDIT}, headers=names_it)
+        theirs = {"id": OVERVIEW_ID, "project_id": project_id, "body": THE_APPS_TEXT}
+        read = await r.gw.call("GET", doc, app_token=r.token, as_backend=True)
+        inventory = await r.gw.call(
+            "GET", f"/api/legibility/always-on?project_id={project_id}", app_token=r.token
+        )
+        assert read[0] == 200, read
+        # The app names the revision it read, so its write is refused for being the app's and for
+        # nothing else.
+        names_it = {"If-Match": json.loads(read[1])["revision"]}
+        before = home_files(r.home)
+        as_sdk = await r.gw.call("PUT", path, theirs, app_token=r.token, headers=names_it)
+        as_backend = await r.gw.call(
+            "PUT", path, theirs, app_token=r.token, as_backend=True, headers=names_it
+        )
+        written = written_since(r.home, before)
+        after_the_app = project_context.read_overview(project_id)
+        preamble_after_the_app = _project_context_preamble(project_id)
+        yours = await r.gw.call("PUT", path, {**theirs, "body": YOUR_EDIT}, headers=names_it)
         assert json.loads(read[1])["body"] == YOUR_OVERVIEW, "the app still reads the overview"
         assert inventory[0] == 200, inventory
         listed = [i["id"] for i in json.loads(inventory[1])["items"]]
@@ -391,12 +542,77 @@ class TestWhatAnAppNoLongerDoes:
         for status, text in (as_sdk, as_backend):
             assert status == 403, text
             assert "writing a project's overview" in text, text
+        assert not written, f"the app's request changed your home: {written}"
         assert after_the_app == YOUR_OVERVIEW, "the app's request rewrote your overview"
         assert YOUR_OVERVIEW in preamble_after_the_app
         assert THE_APPS_TEXT not in preamble_after_the_app
-        assert len(_denials(sel_rows, path)) == 2
+        assert len(r.denials(path)) == 2
         assert yours[0] == 200, yours
-        assert project_context.read_overview(project.id) == YOUR_EDIT
+        assert project_context.read_overview(project_id) == YOUR_EDIT
+
+    return [
+        (
+            "a tool you switched off stays off and you still switch it",
+            _claims_put_back(a_tool_you_switched_off_stays_off_and_you_still_switch_it),
+        ),
+        (
+            "a provider you switched off stays off and you still switch it",
+            _claims_put_back(a_provider_you_switched_off_stays_off_and_you_still_switch_it),
+        ),
+        (
+            "it cannot write a project overview and you still can",
+            it_cannot_write_a_project_overview_and_you_still_can,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_what_an_app_no_longer_does(
+    subtests, tmp_path, tmp_path_factory, monkeypatch, reading_list
+) -> None:
+    machine = await _shared_machine(tmp_path, tmp_path_factory, monkeypatch)
+    await SHARED.run(subtests, _real_rows(machine), [*_tool_routes(), *_overview_routes()])
+
+
+@pytest.mark.asyncio
+async def test_each_family_refuses_an_app_installed_for_this_test_alone(
+    home, sel_rows, reading_list
+) -> None:
+    """Both families' end-to-end refusal, on an app installed for this test alone and the real
+    handlers: the app's switch of a tool you switched off, and its write of your overview."""
+    switch = "/api/tools/toggle"
+    on = {"provider": PROVIDER, "name": TOOL, "enabled": True}
+    doc = "/api/legibility/always-on/doc"
+    async with _gateway([*_tool_routes(), *_overview_routes()]) as gw:
+        token = await _installed(gw, home)
+        await gw.ok("POST", switch, {**on, "enabled": False})
+        switched_off = home.prefs.read_bytes()
+        project_id = _your_garden()
+        read = await gw.call("GET", f"{doc}?id={OVERVIEW_ID}&project_id={project_id}")
+        names_it = {"If-Match": json.loads(read[1])["revision"]}
+        theirs = {"id": OVERVIEW_ID, "project_id": project_id, "body": THE_APPS_TEXT}
+        answers = []
+        for as_backend in (False, True):
+            answers.append(
+                (
+                    "switching one of your tools",
+                    await gw.call("POST", switch, on, app_token=token, as_backend=as_backend),
+                )
+            )
+            answers.append(
+                (
+                    "writing a project's overview",
+                    await gw.call(
+                        "PUT", doc, theirs, app_token=token, as_backend=as_backend, headers=names_it
+                    ),
+                )
+            )
+    for why, (status, text) in answers:
+        assert status == 403, text
+        assert f"{OWNER_ONLY}{why}" in text, text
+    assert home.prefs.read_bytes() == switched_off, "the app's request changed your tool switches"
+    assert project_context.read_overview(project_id) == YOUR_OVERVIEW, "it rewrote your overview"
+    assert len(_denials(sel_rows, switch)) == 2 and len(_denials(sel_rows, doc)) == 2
 
 
 # ── 3. The route table declares both families ───────────────────────────────────────────────────
@@ -412,23 +628,25 @@ def _census() -> set[str]:
     }
 
 
-class TestTheRouteTableDeclaresBothFamilies:
-    def test_both_are_families_whose_reads_stay_the_allowlists(self) -> None:
-        from personalclaw.apps.permissions import READ_DECLARED_FAMILIES, SECURITY_ROUTE_FAMILIES
+def test_the_route_table_declares_both_families(subtests) -> None:
+    from personalclaw.apps.permissions import (
+        READ_DECLARED_FAMILIES,
+        SECURITY_ROUTE_FAMILIES,
+        AppMay,
+        OwnerOnly,
+        route_authz,
+    )
 
+    with row(subtests, check="both are families whose reads stay the allowlists"):
         for family in FAMILIES:
             assert family in SECURITY_ROUTE_FAMILIES, family
             assert family not in READ_DECLARED_FAMILIES, f"{family}: an app keeps its reads"
-
-    def test_every_route_in_both_families_is_driven_here(self) -> None:
+    with row(subtests, check="every route in both families is driven here"):
         census = _census()
         assert len(census) >= 12, f"only {len(census)} routes in the two families — vacuous"
         driven = {f"{m} {t}" for m, t, _body in YOUR_CHANGES + STILL_THE_APPS}
         assert census == driven, census ^ driven
-
-    def test_each_change_is_yours_and_each_write_an_app_keeps_says_why(self) -> None:
-        from personalclaw.apps.permissions import AppMay, OwnerOnly, route_authz
-
+    with row(subtests, check="each change is yours and each write an app keeps says why"):
         for method, template, _body in YOUR_CHANGES:
             assert isinstance(route_authz(method, template), OwnerOnly), f"{method} {template}"
         for method, template, _body in STILL_THE_APPS:
