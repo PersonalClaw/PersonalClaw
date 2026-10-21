@@ -18,8 +18,8 @@ import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutc
 import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/ComposerNotice'
 import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
-import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 import { LoopRuntimePill } from './LoopRuntimePill'
+import { LoopBoundary } from './LoopBoundary'
 import { ON_PERSONALCLAW, runtimeFields, type LoopRuntime } from './loopRuntime'
 
 /** The ONE Loop front door — a single composer with a kind slider (General / Goal /
@@ -320,11 +320,6 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         <Segmented ariaLabel="Project kind" disabled={busy} collapse="menu" value={projectKind} onChange={(v) => setProjectKind(v as 'greenfield' | 'brownfield')}
           options={[{ key: 'greenfield', label: 'Fresh start' }, { key: 'brownfield', label: 'Existing codebase' }]} />
       )}
-      <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
-        options={[
-          { key: 'unattended', label: loopModeLabel(false), title: loopModeMeaning(false, kind) },
-          { key: 'attended', label: loopModeLabel(true), title: loopModeMeaning(true, kind) },
-        ]} />
       {/* The qualifier is the widest thing in this row and the least load-bearing — the title
           already explains it in full. It drops below `lg`, where the header is fighting for
           room. The checkbox carries an EXPLICIT aria-label so its accessible name is the same
@@ -376,7 +371,14 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
               onTranscribe={transcribe}
               onMicError={notice.showError}
               onFocusChange={setFocused}
-              hostPills={<LoopRuntimePill value={runtime} onChange={setRuntime} />}
+              hostPills={<>
+                <LoopRuntimePill value={runtime} onChange={setRuntime} />
+                {/* The loop's Mode is its permission mode, so it sits by the input, as a chat's does,
+                    with where the loop may act once it runs. */}
+                <LoopBoundary attended={attended} onAttended={setAttended} kind={kind} runtime={runtime.provider}
+                  folder={kind === 'code' ? (inheritedWs || (projectKind === 'brownfield' ? brownfieldWs.trim() : '')) : ''}
+                  projectId={projectId} disabled={busy} />
+              </>}
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}
             {kind === 'code' && inheritedWs && (

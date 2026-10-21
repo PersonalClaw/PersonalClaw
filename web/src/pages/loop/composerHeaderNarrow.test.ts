@@ -21,7 +21,9 @@ import { join } from 'node:path'
 // even fully collapsed. A hit-test at the Granularity pill's centre returns
 // `BUTTON[aria-label="2 degraded"]` — the corner is ON TOP of the control and steals the click,
 // which is what axe means by "partially obscured (smallest space is 19px by 32px)". No amount of
-// collapsing fixes that; the knobs have to move, or shed a member, at narrow widths.
+// collapsing fixes that; the knobs have to move, or shed a member, at narrow widths. The Mode has
+// since moved: it is the loop's permission mode, so it sits beside the input as the loop's
+// Execution Boundary control (#3808), and the header sheds it.
 //
 // ⚠️ The accessible name is DELIBERATELY not responsive. The visible qualifier hides below `lg`,
 // but the checkbox carries the full sentence as an explicit `aria-label` at every viewport —
@@ -57,8 +59,13 @@ describe('every dial in the composer header can collapse', () => {
   const tags = segmentedTags()
 
   it('finds the header dials (not vacuously green)', () => {
-    // Granularity, Project kind, Mode.
-    expect(tags.length, 'the matcher must find the Segmented dials').toBeGreaterThanOrEqual(3)
+    // Granularity and Project kind.
+    expect(tags.length, 'the matcher must find the Segmented dials').toBeGreaterThanOrEqual(2)
+  })
+
+  it('holds no Mode dial: the loop’s Mode sits beside the input', () => {
+    expect(HEADER).not.toMatch(/ariaLabel="Mode"/)
+    expect(SRC).toMatch(/<LoopBoundary\b/)
   })
 
   it('gives each one a collapse strategy', () => {
@@ -69,7 +76,7 @@ describe('every dial in the composer header can collapse', () => {
     ).toEqual([])
   })
 
-  it.each(['Granularity', 'Mode', 'Project kind'])('%s collapses to a menu', (label) => {
+  it.each(['Granularity', 'Project kind'])('%s collapses to a menu', (label) => {
     const tag = tags.find((t) => t.includes(`ariaLabel="${label}"`))
     expect(tag, `${label} dial must exist`).toBeTruthy()
     expect(tag!).toMatch(/collapse="menu"/)

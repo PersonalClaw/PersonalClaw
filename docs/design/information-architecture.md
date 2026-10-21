@@ -152,7 +152,7 @@ Top to bottom:
 | Working, this thread | the orb and its status line at the turn head | none |
 | Working, another thread | a static pip on its sidebar row; Home's Running Now | none |
 | A loop waiting for input | Needs You; its sidebar pip | the buddy while the owner is away |
-| Permission mode | the Execution Boundary control beside the composer, wherever the agent can act | the approval card itself |
+| Permission mode | the Execution Boundary control beside the composer, wherever the agent can act (a new loop's Mode, beside the loop composer) | the approval card itself |
 | Task mode (autonomy) | the composer's footer, beside the Execution Boundary control | the plan review, while a plan waits |
 | Memory mode (temporary or incognito) | the Execution Boundary control, on the control itself, plus a subtle tint on the thread | none |
 | Context, tokens and cost | collapsed: opened from the composer, or pinned to the status line by the owner | a composer warning near the limit; one ask, with both prices, before a mid-chat switch of a long chat to a model that may cost more |

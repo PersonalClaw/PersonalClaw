@@ -229,7 +229,15 @@ def profile_for_session(session_key: str) -> SafetyProfile:
     denylist, the tool-approval pick, egress), so one call site makes the ceiling live
     everywhere at once and leaves no seam that reads a profile the ceiling never bounded.
     A corrupt ceiling raises out of here, which fails the dispatch CLOSED."""
-    base = HEADLESS if is_unattended_session(session_key) else INTERACTIVE
+    return profile_for_posture(is_unattended_session(session_key))
+
+
+def profile_for_posture(unattended: bool) -> SafetyProfile:
+    """The safety profile every session of one posture resolves to (:func:`profile_for_session`):
+    ``HEADLESS`` for work nobody watches, ``INTERACTIVE`` otherwise, layered with the operator's
+    config and bounded by the ceiling. Asked directly for work not started yet, whose posture is
+    known before its sessions are: a loop whose Mode is chosen in the composer."""
+    base = HEADLESS if unattended else INTERACTIVE
     layered = safety_profile_for(base)
     from personalclaw.guardrails.ceiling import active_ceiling, resolve
 
