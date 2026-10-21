@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /api/running` lists everything running now (chats, helpers with queued ones marked, goal loops, workflow runs, automations' fires and webhook turns), each with its phase, what it is doing, which agent is doing it and what waits on you for it, with a short just-finished tail and a count at `/api/running/count`; an app that declares the route reads only the work of chats it started.**
+
 ### Changed
 
 - **Settings stays at the foot of the sidebar while the rest of it scrolls, so in a short window it no longer sits in the sidebar's edge with its focus ring cut off.**

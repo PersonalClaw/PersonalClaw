@@ -720,6 +720,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?, profile_narrowing?}.
 - `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.
 - `POST /api/rooms/{room_id}/messages` — {content} — the human speaks, then the room answers.
+- `GET /api/running` — everything running now, with what each is doing, and what just finished.
+- `GET /api/running/count` — how much is running, blocked, waiting on you and just finished.
 - `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers.
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

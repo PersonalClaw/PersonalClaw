@@ -104,7 +104,7 @@ phase is its own.
 | `loop` | its status, and its worker's turn while it runs (`work_phases`) |
 | `workflow` | its run's events (`work_phases`) |
 | `trigger` | none of its own: a fire is over once it has started its work, a helper or a run, which says its own |
-| `webhook` | none yet: its turn runs outside the chat runner, and nothing keeps a list of the turns webhooks run |
+| `webhook` | none yet: its turn runs outside the chat runner; the running list holds it while it runs, and nothing says its steps |
 
 ## How a chat turn says its phases
 
@@ -236,3 +236,24 @@ phase.
   as a doorbell and reads the phase from the chat list
   ([agent-activity-feed.md](agent-activity-feed.md)). A helper's, a loop's and a workflow
   run's frame rings it too, and is read the same way: as a signal, never as a payload.
+
+## The running list
+
+`GET /api/running` lists every piece of live work once (`src/personalclaw/running_now.py`):
+a chat with a turn running, a helper that has not ended (a queued one included), a loop or
+a workflow run that has started and not ended, a trigger's fire whose work has no row of
+its own, and a webhook's turn. Each row is the work's last frame with the row's own fields
+beside it (`name`, `agent`, `started_at`, `route`, `blocked`, `waiting`), so a chat's row
+is its `run_state`. Work no producer has said anything of yet reads its phase from its
+status, by the tables above. A loop's workers and planner are their loop, and a loop
+backed by a run is one row, a loop, named by its run. `blocked` is true in `queued`,
+`waiting_model` and `retrying`; `waiting` names the approvals and the owner's questions
+that wait on her for the work. Rows are ordered by when the work began (a chat's turn, a
+helper, a loop's or a run's creation, a fire, a webhook's turn), so a row never moves as its
+phase does. `finished` is the last 20 endings, each kept 10 minutes, newest first.
+
+`GET /api/running/count` answers `{live, blocked, waiting, finished}` from the same
+reading, and neither read opens a loop's findings. An app reads a row only when its socket
+would hear that work's phase frame (`ws_state.WORK_FRAMES`), an agent only its own chat's
+work, and the owner everything; the count is cut the same way. Neither route has a
+`ROUTE_AUTHZ` row: an app reaches them only when its manifest declares `/api/running`.

@@ -348,6 +348,14 @@ def end(state: DashboardState, session: _ChatSession, *, unsaid: str = "stopped"
     run.last_outcome = outcome
     run.phase, run.line = ENDINGS[ending], _clip(_ending_line(session, ending, turn))
     _send(state, session, run)
+    # Its ending joins what just finished (`running_now`). Only read from the frame, so a failure
+    # there never stops the chat's own.
+    try:
+        from personalclaw import running_now
+
+        running_now.chat_ended(state, session)
+    except Exception:
+        logger.debug("could not keep the ending of %s", session.key, exc_info=True)
 
 
 def _stop_saying(run: ChatRun) -> None:

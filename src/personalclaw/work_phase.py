@@ -196,8 +196,8 @@ NO_PHASE_OF_ITS_OWN: Mapping[str, str] = MappingProxyType(
             "started, which its history row names (ActionResult.work_id), says its own phases."
         ),
         "webhook": (
-            "Its agent turn runs outside the chat runner, in a session nobody watches, and "
-            "nothing yet keeps a list of the turns webhooks run to say their phases from."
+            "Its agent turn runs outside the chat runner, in a session nobody watches: the "
+            "running list holds it while it runs (running_now), and nothing yet says its steps."
         ),
     }
 )

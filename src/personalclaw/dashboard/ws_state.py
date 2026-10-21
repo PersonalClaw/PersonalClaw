@@ -94,7 +94,8 @@ APPROVAL_REGISTRY_ROUTE = "/api/approvals"
 #: chat started (a loop, a workflow run, a helper no chat started: ``work_phases.chat_of``) and
 #: reaches no app's socket, only the owner's. That is the stricter of the two reaches such work
 #: could have: an app the permission middleware lets read the loops (``GET /api/loops``) still
-#: hears none of their phases, until a list of the work that runs says which apps may hear of it.
+#: hears none of their phases. The running list (``running_now``, ``GET /api/running``) reads an
+#: app the rows of exactly the work this rule lets its socket hear of, by this same rule.
 WORK_FRAMES: frozenset[str] = frozenset({"work_phase"})
 
 #: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,

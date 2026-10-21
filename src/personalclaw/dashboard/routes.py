@@ -1265,6 +1265,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     register_secrets_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
+    # Everything running now, and its count (`running_now`).
+    from personalclaw.dashboard.handlers.running import register_running_routes
+
+    register_running_routes(app)
 
     # Local token bootstrap (file-based secret auth in handler, bypasses middleware)
     app.router.add_get("/api/token/local", handlers.api_token_local)

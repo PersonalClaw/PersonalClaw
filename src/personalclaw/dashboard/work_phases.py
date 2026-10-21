@@ -28,8 +28,9 @@ carry.
 **Sent on a change, never per chunk.** A frame goes out when the phase or its line changes; a wait
 on the owner is said over the step it interrupts, which is said again when the wait ends.
 
-**Ended work is forgotten.** Its last frame says how it ended, and nothing is kept of it after:
-:func:`current` answers only for work that has not ended.
+**Ended work is forgotten here.** Its last frame says how it ended, and nothing is kept of it
+after: :func:`current` answers only for work that has not ended. The running list keeps that last
+frame a while, in its just-finished tail (``running_now.ended``).
 """
 
 from __future__ import annotations
@@ -154,6 +155,15 @@ def _say(
         held.asks.clear()
         book.pop(work, None)
     _send(state, work, held)
+    if phase in _ENDINGS and held.sent is not None:
+        # Its ending joins what just finished (`running_now`). Only read from the frame, so a
+        # failure there never stops the frame.
+        try:
+            from personalclaw import running_now
+
+            running_now.ended(state, held.sent)
+        except Exception:
+            logger.debug("could not keep the ending of %s", work, exc_info=True)
     return held
 
 

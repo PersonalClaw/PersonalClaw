@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **935 registrations** over **759 distinct paths** — 928 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **937 registrations** over **761 distinct paths** — 930 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 128 families the surface divides into, largest first.
+The 129 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -95,6 +95,7 @@ The 128 families the surface divides into, largest first.
 | `/api/computer-use` | 2 | 2 |
 | `/api/guardrails` | 2 | 1 |
 | `/api/heartbeat` | 2 | 2 |
+| `/api/running` | 2 | 2 |
 | `/api/session` | 2 | 2 |
 | `/api/stt` | 2 | 2 |
 | `/api/system` | 2 | 2 |
@@ -155,7 +156,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 928 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 930 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -873,6 +874,8 @@ The 928 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/rooms/{room_id}/members` | {name, role_blurb?, listen_policy?, profile_narrowing?}. |
 | `DELETE` | `/api/rooms/{room_id}/members/{name}` | remove a member. |
 | `POST` | `/api/rooms/{room_id}/messages` | {content} — the human speaks, then the room answers. |
+| `GET` | `/api/running` | everything running now, with what each is doing, and what just finished. |
+| `GET` | `/api/running/count` | how much is running, blocked, waiting on you and just finished. |
 | `GET` | `/api/sandbox/providers` | the sandbox tiers the terminal picker offers. |
 | `POST` | `/api/screenshot` | capture screen region and return file path. |
 | `GET` | `/api/search/active` | bound provider name per use-case. |
