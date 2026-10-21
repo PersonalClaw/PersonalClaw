@@ -621,6 +621,13 @@ async def _run_hook_agent(
 
     result_text = ""
     outcome = "completed"
+    # Listed as running work while it runs, then as just finished (`running_now`).
+    try:
+        from personalclaw import running_now
+
+        running_now.webhook_started(state, session_key, name=name, agent=agent or "")
+    except Exception:
+        logger.debug("could not list the webhook turn %s", session_key, exc_info=True)
     try:
         # The callback's own work: one registered for a turn someone other than you asked for is
         # held to them in everything it does, as its registration says (`lasting_work`).
@@ -645,6 +652,10 @@ async def _run_hook_agent(
         outcome = "refused_not_headless"
         result_text = f"Hook agent not run: {exc}"
         logger.info("Hook agent refused: %s — %s", session_key, exc)
+    except asyncio.CancelledError:
+        # Stopped from outside (a shutdown): said so as it ends, then let it stop.
+        outcome = "cancelled"
+        raise
     except Exception:
         outcome = "error"
         result_text = f"Hook agent error: internal failure (session {session_key})"
@@ -661,6 +672,12 @@ async def _run_hook_agent(
             logger.exception("Hook session reset failed: %s", session_key)
         finally:
             _hook_semaphore.release()
+            try:
+                from personalclaw import running_now
+
+                running_now.webhook_ended(state, session_key, outcome=outcome, said=result_text)
+            except Exception:
+                logger.debug("could not end the webhook turn %s", session_key, exc_info=True)
 
     _sel().log_tool_invocation(
         session_key=session_key,
