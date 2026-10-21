@@ -15,18 +15,15 @@ import type { InboxItem, PendingApproval } from '../../lib/api'
 
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
-const chatSessions = vi.fn()
-const uLoops = vi.fn()
-const workflowRuns = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
-    chatSessions: (...a: unknown[]) => chatSessions(...a),
-    uLoops: (...a: unknown[]) => uLoops(...a),
-    workflowRuns: (...a: unknown[]) => workflowRuns(...a),
+    // Nothing is running in these scenarios: the Working lane is the running list.
+    running: () => Promise.resolve({ running: [], finished: [] }),
+    status: () => Promise.resolve({}),
     // No skill proposals waiting: this suite is about the other sources.
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
   },
@@ -63,9 +60,6 @@ function card(lane: string, title: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks()
   resetDataStore()
-  chatSessions.mockResolvedValue([])
-  uLoops.mockResolvedValue([])
-  workflowRuns.mockResolvedValue({ runs: [], total: 0, limit: 200, offset: 0 })
   inboxOpen.mockResolvedValue([
     onThePair('gate', 'Ship the release to production?', {
       workflow: 'run-1', workflow_name: 'release', workflow_node: 'approve', resume_token: 't1',

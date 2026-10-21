@@ -23,9 +23,9 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: () => Promise.resolve([]),
     approvals: (...a: unknown[]) => approvals(...a),
-    chatSessions: () => Promise.resolve([]),
-    uLoops: () => Promise.resolve([]),
-    workflowRuns: () => Promise.resolve({ runs: [], total: 0, limit: 200, offset: 0 }),
+    // Nothing is running in these scenarios: the Working lane is the running list.
+    running: () => Promise.resolve({ running: [], finished: [] }),
+    status: () => Promise.resolve({}),
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
   },

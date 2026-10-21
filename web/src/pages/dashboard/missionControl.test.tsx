@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
-import type { InboxItem, PendingApproval } from '../../lib/api'
+import type { InboxItem, PendingApproval, RunningRow } from '../../lib/api'
 import type { LaneCard } from '../../lib/attentionLanes'
 
 // ── Mission Control is a CONTROL surface ─────────────────────────────────────────────────────
@@ -24,9 +24,7 @@ import type { LaneCard } from '../../lib/attentionLanes'
 
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
-const chatSessions = vi.fn()
-const uLoops = vi.fn()
-const workflowRuns = vi.fn()
+const running = vi.fn()
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
 const answerTriggerPark = vi.fn()
@@ -38,9 +36,9 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
-    chatSessions: (...a: unknown[]) => chatSessions(...a),
-    uLoops: (...a: unknown[]) => uLoops(...a),
-    workflowRuns: (...a: unknown[]) => workflowRuns(...a),
+    // The Working lane is the running list (`GET /api/running`).
+    running: (...a: unknown[]) => running(...a),
+    status: () => Promise.resolve({}),
     // No skill proposals waiting: this suite is about the other sources.
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
@@ -70,7 +68,6 @@ const LANES_FIXTURE = ['needs-approval', 'your-turn', 'working', 'idle'] as cons
 import { MissionControl, LANE_REFS, MISSION_CONTROL_VIEW_ID, questionOf } from './MissionControl'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { runningState } from '../../test/runState'
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
@@ -79,9 +76,10 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'chat', ...over,
 })
 
-/** A live session row, shaped the way `ChatSession.to_dict()` sends it: its turn running. */
-const session = (over: Record<string, unknown> = {}) => ({
-  key: 'chat-1', title: 'nightly sweep', messages: 4, run_state: runningState({ session: 'chat-1' }), ...over,
+/** A running list row (`running_now`): a chat with its turn running. */
+const runningRow = (over: Partial<RunningRow> = {}): RunningRow => ({
+  work: 'chat:chat-1', kind: 'chat', session: 'chat-1', phase: 'tool', line: 'Running shell', since: null,
+  name: 'nightly sweep', agent: '', started_at: null, route: '#/chat/chat-1', blocked: false, waiting: [], ...over,
 })
 
 /** A parked run's inbox row, shaped the way `workflows/needs_input.card_refs()` writes it. */
@@ -113,7 +111,7 @@ const questionCard = (item: InboxItem): LaneCard => ({
 })
 const sessionCard = (key: string, title: string): LaneCard => ({
   key: `session:${key}`, lane: 'working', origin: 'session', id: key, title, at: null,
-  session: { key, title, run_state: runningState({ session: key }) },
+  session: { key, title, run_state: { work: `chat:${key}`, session: key, kind: 'chat', phase: 'tool', line: '', since: null, turn: null, last_step_at: null, stopping: false, steerable: false, last_outcome: null, queued_messages: 0, seq: 0 } },
 })
 
 /** All four keys, always — `toLanes`' own contract. */
@@ -128,9 +126,7 @@ beforeEach(() => {
   resetDataStore()
   inboxOpen.mockResolvedValue([])
   approvals.mockResolvedValue([])
-  chatSessions.mockResolvedValue([])
-  uLoops.mockResolvedValue([])
-  workflowRuns.mockResolvedValue({ runs: [], total: 0, limit: 200, offset: 0 })
+  running.mockResolvedValue({ running: [], finished: [] })
   toLanes.mockReturnValue(lanes())
 })
 
@@ -379,66 +375,46 @@ describe('a failed read', () => {
 
 // ── The vacuity floor ───────────────────────────────────────────────────────────────────────
 describe('the lane split comes from lib/attentionLanes, not from this view', () => {
-  it('consults the mocked toLanes with the items, the approvals AND the session activity', async () => {
+  it('consults the mocked toLanes with the items and the approvals, and none of the work that runs', async () => {
     // Without this, a component that classified items itself — ignoring the sibling entirely —
     // would pass every test above, because the fixtures would still be on screen.
     const item = questionItem()
     const appr = approval()
     inboxOpen.mockResolvedValue([item])
     approvals.mockResolvedValue([appr])
-    chatSessions.mockResolvedValue([session()])
+    running.mockResolvedValue({ running: [runningRow()], finished: [] })
     render(<MissionControl />)
 
-    await waitFor(() =>
-      expect(toLanes).toHaveBeenCalledWith(
-        [item],
-        [appr],
-        [{ key: 'chat-1', title: 'nightly sweep', run_state: runningState({ session: 'chat-1' }) }],
-        [],
-        [],
-        [],
-      ),
-    )
+    await waitFor(() => expect(toLanes).toHaveBeenCalledWith([item], [appr], [], [], []))
   })
 
-  it('🔑 hands the running workflow runs to the Working lane — a run is not a chat or a loop', async () => {
-    // A run started from Workflows was working while this lane said "Nothing is running
-    // right now". Neither a chat session nor the loop listing carries it; the run list does.
-    const run = { id: 'run-5', workflow_name: 'paper-ingest', status: 'running', started_at: '2026-09-26T09:00:00Z', created_at: '2026-09-26T09:00:00Z', spec_version: 1 }
-    workflowRuns.mockResolvedValue({ runs: [run], total: 1, limit: 200, offset: 0 })
+  it('🔑 Working is the running list, never a lane the sibling derived', async () => {
+    // A run, a helper, a loop: the list names each once, and this view derives none of them. A
+    // Working card the sibling returned is not painted: it used to fold the chat, loop and run
+    // lists itself, and skipped every helper.
+    running.mockResolvedValue({
+      running: [runningRow({ work: 'workflow:run-5', kind: 'workflow', session: '', name: 'paper-ingest', route: '#/workflows/runs/run-5' })],
+      finished: [],
+    })
+    toLanes.mockReturnValue(lanes({ working: [sessionCard('w1', 'derived elsewhere')] }))
     render(<MissionControl />)
 
-    await waitFor(() => expect(toLanes).toHaveBeenCalled())
-    expect(workflowRuns).toHaveBeenCalledWith({ status: 'running', limit: 200 })
-    expect(toLanes.mock.calls[toLanes.mock.calls.length - 1][4]).toEqual([run])
+    expect(await screen.findByText('paper-ingest')).toBeTruthy()
+    expect(screen.queryByText('derived elsewhere')).toBeNull()
   })
 
-  it('a working run or loop opens from its card', async () => {
-    const runCard: LaneCard = {
-      key: 'run:run-5', lane: 'working', origin: 'run', id: 'run-5', title: 'paper-ingest', subtitle: 'running',
-      at: null, refs: { link: '#/workflows/runs/run-5' },
-      run: { id: 'run-5', workflow_name: 'paper-ingest', status: 'running', started_at: '2026-09-26T09:00:00Z', created_at: '2026-09-26T09:00:00Z' },
-    }
-    toLanes.mockReturnValue(lanes({ working: [runCard] }))
+  it('a working run opens from its card, at the route the list gives it', async () => {
+    running.mockResolvedValue({
+      running: [runningRow({ work: 'workflow:run-5', kind: 'workflow', session: '', name: 'paper-ingest', route: '#/workflows/runs/run-5' })],
+      finished: [],
+    })
     render(<MissionControl />)
 
-    const link = await screen.findByRole('link', { name: /Open the run: paper-ingest/ })
+    const link = await screen.findByRole('link', { name: 'Open paper-ingest — workflow run' })
     expect(link.getAttribute('href')).toBe('#/workflows/runs/run-5')
   })
 
-  it('hands the loop listing to the Working lane — a run-backed loop has no chat session', async () => {
-    // A General loop ran while this lane said "Nothing is running right now".
-    // It is a workflow run, so no chat session carries it; `GET /api/loops` lists it (with
-    // `run_id`), and that listing is the lane's second source of in-flight evidence.
-    const loop = { id: 'r1', run_id: 'r1', kind: 'general', name: 'Weekly checklist', status: 'running' }
-    uLoops.mockResolvedValue([loop])
-    render(<MissionControl />)
-
-    await waitFor(() => expect(toLanes).toHaveBeenCalled())
-    expect(toLanes.mock.calls[toLanes.mock.calls.length - 1][3]).toEqual([loop])
-  })
-
-  it('hands the three lists over UNMERGED — a mirrored approval is on the wire twice', async () => {
+  it('hands the two lists over UNMERGED — a mirrored approval is on the wire twice', async () => {
     // The pending-approval registry raises an `agent_request` row carrying `refs.approval` equal to
     // the PendingApproval id, so concatenating the lists here would double-count every mirrored
     // approval. Suppressing the duplicate is the sibling's job; this view must not pre-merge.
@@ -458,12 +434,11 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     expect(gotApprovals).toEqual([appr])
   })
 
-  it('feeds the Working lane from the session activity, not from the attention store', async () => {
-    // `laneFor` never returns 'working' — the attention store has no in-flight status — so this
-    // argument is the ONLY path to that lane. Without it the lane renders permanently empty while
-    // wearing a confident label, and the change's four lanes are really three.
-    chatSessions.mockResolvedValue([session()])
-    toLanes.mockReturnValue(lanes({ working: [sessionCard('chat-1', 'nightly sweep')] }))
+  it('feeds the Working lane from the running list, not from the attention store', async () => {
+    // `laneFor` never returns 'working' — the attention store has no in-flight status — so the list
+    // is the ONLY path to that lane. Without it the lane renders permanently empty while wearing a
+    // confident label, and the change's four lanes are really three.
+    running.mockResolvedValue({ running: [runningRow()], finished: [] })
     render(<MissionControl />)
 
     expect(await screen.findByText('nightly sweep')).toBeTruthy()
@@ -471,7 +446,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
   })
 
   it('renders the lanes the sibling returned, in the sibling’s declared order', async () => {
-    toLanes.mockReturnValue(lanes({ working: [sessionCard('w1', 'nightly sweep')] }))
+    running.mockResolvedValue({ running: [runningRow()], finished: [] })
     render(<MissionControl />)
     await screen.findByText('nightly sweep')
 

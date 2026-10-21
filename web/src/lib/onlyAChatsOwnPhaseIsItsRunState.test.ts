@@ -16,12 +16,11 @@ import { isAChatsPhase } from './workPhase'
 
 const SRC = join(process.cwd(), 'src')
 
-/** The readers that take a `work_phase` frame as a signal only, never its payload. */
+/** The readers that take a `work_phase` frame as a signal only, never its payload. Agent World's
+ *  feed and Mission Control read the running list, rung by `running_changed`, and no phase frame. */
 const SIGNALS = [
-  'lib/useAgentActivity.ts',
   'lib/useThreads.ts',
   'pages/dashboard/DashboardLive.tsx',
-  'pages/dashboard/MissionControl.tsx',
 ]
 
 const READS_THE_FRAME = /'work_phase'/
@@ -46,7 +45,7 @@ describe('only a chat’s own phase is taken as its run state', () => {
 
   it('every reader that takes a frame’s payload asks whose phase it is', () => {
     const { readers, unasked } = readersOf(nonTestSources(), (path) => readSource(join(SRC, path)))
-    expect(readers.length, 'found too few readers of work_phase frames — parser drift?').toBeGreaterThan(8)
+    expect(readers.length, 'found too few readers of work_phase frames — parser drift?').toBeGreaterThan(6)
     for (const signal of SIGNALS) expect(readers, `${signal} no longer reads work_phase: drop it from SIGNALS`).toContain(signal)
     expect(unasked).toEqual([])
   })

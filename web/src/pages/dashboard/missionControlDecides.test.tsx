@@ -21,7 +21,6 @@ import type { WsMessage } from '../../lib/useChatSocket'
 
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
-const chatSessions = vi.fn()
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
 const socket: { onMessage: ((m: WsMessage) => void) | null } = { onMessage: null }
@@ -31,10 +30,9 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
-    chatSessions: (...a: unknown[]) => chatSessions(...a),
-    uLoops: () => Promise.resolve([]),
-    // The Working lane's third source: nothing is running in these scenarios.
-    workflowRuns: () => Promise.resolve({ runs: [], total: 0, limit: 200, offset: 0 }),
+    // Nothing is running in these scenarios: the Working lane is the running list.
+    running: () => Promise.resolve({ running: [], finished: [] }),
+    status: () => Promise.resolve({}),
     // No skill proposals waiting: this suite is about the other sources.
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
@@ -85,7 +83,6 @@ beforeEach(() => {
   socket.onMessage = null
   inboxOpen.mockResolvedValue([MIRROR, QUESTION])
   approvals.mockResolvedValue([PENDING])
-  chatSessions.mockResolvedValue([])
 })
 
 const approveButtons = () => screen.queryAllByRole('button', { name: /^Allow subagent_run/ })

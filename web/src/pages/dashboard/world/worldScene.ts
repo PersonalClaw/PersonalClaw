@@ -33,18 +33,22 @@ export const STATE_VISUAL: Record<AgentActivityState, {
   waiting_approval: { tone: '--color-warn', ring: 0.32, pulse: 0.80, speed: 0.40 },
   error: { tone: '--color-danger', ring: 0.46, pulse: 0.30, speed: 0.15 },
   working: { tone: '--color-ok', ring: 0.62, pulse: 0.55, speed: 1.00 },
+  // Live and held up (queued for a slot, retrying, waiting on a busy model): a ring of its own just
+  // outside working's, slow and barely breathing, so a stalled helper never reads as one at work.
+  blocked: { tone: '--color-on-surface-var', ring: 0.71, pulse: 0.20, speed: 0.25 },
   idle: { tone: '--color-on-surface-low', ring: 0.80, pulse: 0.00, speed: 0.10 },
 }
 
-/** Node size by kind, 0..1 of the scene's base node radius. A loop is a whole run,
- *  a session is a conversation, a subagent is one delegated errand — the visual
- *  weight follows that nesting so a glance reads structure, not just count. */
+/** Node size by kind, 0..1 of the scene's base node radius. A loop and a workflow run are whole
+ *  runs, a session is a conversation, a trigger's fire and a webhook's turn are one piece of
+ *  automation, a subagent is one delegated errand — the visual weight follows that nesting so a
+ *  glance reads structure, not just count. */
 export const KIND_SCALE: Record<AgentActivityKind, number> = {
-  loop: 1.0, session: 0.72, subagent: 0.5,
+  loop: 1.0, run: 1.0, session: 0.72, trigger: 0.6, webhook: 0.6, subagent: 0.5,
 }
 
 /** Paint order — furthest/least salient first so attention states land on top. */
-const RING_ORDER: AgentActivityState[] = ['idle', 'working', 'error', 'waiting_approval', 'needs_input']
+const RING_ORDER: AgentActivityState[] = ['idle', 'blocked', 'working', 'error', 'waiting_approval', 'needs_input']
 
 /** Time constant of the state ease, in ms. A node covers ~63% of the distance to
  *  its target in one TAU. Tuned so a state change reads as a deliberate glide
@@ -192,6 +196,7 @@ export function sceneSummary(entities: AgentActivityEntity[], truncated: number)
   say(n('needs_input'), 'waiting on you')
   say(n('waiting_approval'), 'waiting for approval')
   say(n('working'), 'working')
+  say(n('blocked'), 'blocked')
   say(n('error'), 'in error')
   say(n('idle'), 'idle')
   const tail = truncated > 0 ? `, and ${truncated} more not shown` : ''

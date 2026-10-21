@@ -108,8 +108,9 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-/** The api calls that would start, send, approve, answer or run something. */
-const ACTS = /^(send|create|start|approve|answer|run|resolve|decide|steer|submit|cancel|delete)/i
+/** The api calls that would start, send, approve, answer or run something. `running` reads the list
+ *  of live work, and runs nothing. */
+const ACTS = /^(send|create|start|approve|answer|run(?!ning)|resolve|decide|steer|submit|cancel|delete)/i
 const acted = () => h.calls.filter((c) => ACTS.test(c))
 const posted = () => requests.filter((r) => !r.startsWith('GET '))
 

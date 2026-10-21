@@ -2,35 +2,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { resetDataStore } from '../../lib/data'
-import type { InboxItem, WorkflowRunSummary } from '../../lib/api'
+import type { InboxItem, RunningList, RunningRow } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
 
 // ── Mission Control follows a workflow run while it is open ────────────────────────────────────
 //
 // #3698 added running workflow runs to the Working lane and left one thing undone: the page read
-// them once. A run that finished or failed kept its "running" card until a reload, and one that
-// parked on a question sat in Working while its question also waited in "Your turn".
+// them once. A run that finished or failed kept its "running" card until a reload.
 //
-// The page already re-reads on the socket's frames for its other sources (approvals, the Inbox,
-// chat sessions). A run changing status reaches the socket as the gateway's listing hint —
-// `refresh` naming `workflow_runs` (`workflows/watchdog._raw_publish`) — and the loop listing's
-// is `refresh` naming `loops`. These drive the page through that frame with the REAL lane
+// Working is the running list now (`GET /api/running`), and the list says it moved in one
+// `running_changed` frame per window. These drive the page through that frame with the REAL lane
 // derivation, so what is asserted is the card a user sees.
 
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
-const chatSessions = vi.fn()
-const uLoops = vi.fn()
-const workflowRuns = vi.fn()
+const running = vi.fn<() => Promise<RunningList>>()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
-    chatSessions: (...a: unknown[]) => chatSessions(...a),
-    uLoops: (...a: unknown[]) => uLoops(...a),
-    workflowRuns: (...a: unknown[]) => workflowRuns(...a),
+    running: () => running(),
+    status: () => Promise.resolve({ start_time: 1 }),
     // No skill proposals waiting: this suite is about the other sources.
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
   },
@@ -45,14 +39,15 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({
 
 import { MissionControl } from './MissionControl'
 
-function run(over: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary {
+function run(over: Partial<RunningRow> = {}): RunningRow {
   return {
-    id: 'run-1', workflow: 'paper-ingest', workflow_name: 'paper-ingest', status: 'running', spec_version: 1,
-    started_at: '2026-09-26T09:00:00Z', created_at: '2026-09-26T08:59:58Z', title: '', parent_run_id: '',
-    ...over,
-  } as WorkflowRunSummary
+    work: 'workflow:run-1', kind: 'workflow', session: '', phase: 'tool', line: 'Fetching the paper',
+    since: '2026-09-26T09:00:05Z', name: 'paper-ingest', agent: '', started_at: '2026-09-26T09:00:00Z',
+    route: '#/workflows/runs/run-1', blocked: false, waiting: [], ...over,
+  }
 }
-const runs = (...rows: WorkflowRunSummary[]) => ({ runs: rows, total: rows.length, limit: 200, offset: 0 })
+const list = (live: RunningRow[] = [], finished: RunningRow[] = []): RunningList => ({ running: live, finished })
+const RING: WsMessage = { type: 'running_changed', data: { changed: [{ work: 'workflow:run-1', session: '' }] } }
 
 /** The question a parked run raises, as `workflows/needs_input.card_refs()` writes it. */
 const question: InboxItem = {
@@ -76,65 +71,57 @@ beforeEach(() => {
   frame = null
   inboxOpen.mockResolvedValue([])
   approvals.mockResolvedValue([])
-  chatSessions.mockResolvedValue([])
-  uLoops.mockResolvedValue([])
-  workflowRuns.mockResolvedValue(runs(run()))
+  running.mockResolvedValue(list([run()]))
 })
 
 describe('Mission Control, while a workflow run changes', () => {
-  it('🔑 a run that finishes leaves the Working lane without a reload', async () => {
+  it('🔑 a run that finishes leaves the Working lane for its tail without a reload', async () => {
     render(<MissionControl />)
-    expect(await within(lane('Working')).findByText('paper-ingest')).toBeTruthy()
+    expect(await within(lane('Working')).findByText('Fetching the paper')).toBeTruthy()
 
-    workflowRuns.mockResolvedValue(runs())
-    send({ type: 'refresh', data: { kinds: ['workflow_runs'] } })
+    running.mockResolvedValue(list([], [run({ phase: 'done', line: 'Done in 2 minutes', since: '2026-09-26T09:02:00Z' })]))
+    send(RING)
 
-    await waitFor(() => expect(within(lane('Working')).queryByText('paper-ingest')).toBeNull())
-    expect(within(lane('Working')).getByText('Nothing is running right now.')).toBeTruthy()
+    expect(await within(lane('Working')).findByText('Nothing is running right now.')).toBeTruthy()
+    const tail = within(lane('Working')).getByRole('list', { name: 'Just finished' })
+    expect(within(tail).getByText('Done in 2 minutes')).toBeTruthy()
   })
 
-  it('🔑 a run that parks on a question moves from Working to Your turn', async () => {
+  it('🔑 a run that parks on a question says it waits on you, and its question is your turn', async () => {
     render(<MissionControl />)
-    expect(await within(lane('Working')).findByText('paper-ingest')).toBeTruthy()
+    expect(await within(lane('Working')).findByText('Fetching the paper')).toBeTruthy()
 
-    // It is `needs_input` now, so the running list no longer has it, and its question is open.
-    workflowRuns.mockResolvedValue(runs())
+    // Still live, as the list counts a run waiting on you, and never said to be running.
+    running.mockResolvedValue(list([run({ phase: 'input', line: 'Needs your answer', waiting: ['q-1'] })]))
     inboxOpen.mockResolvedValue([question])
-    send({ type: 'refresh', data: { kinds: ['workflow_runs'] } })
+    send(RING)
 
     await waitFor(() => expect(within(lane('Your turn')).getByText('Which paper next?')).toBeTruthy())
-    expect(within(lane('Working')).queryByText('paper-ingest')).toBeNull()
+    expect(within(lane('Working')).getByText('Waiting for your answer')).toBeTruthy()
+    expect(within(lane('Working')).getByText('1 waiting on you')).toBeTruthy()
+    expect(within(lane('Working')).queryByText('Fetching the paper')).toBeNull()
   })
 
   it('a run that starts while the page is open appears', async () => {
-    workflowRuns.mockResolvedValue(runs())
+    running.mockResolvedValue(list())
     render(<MissionControl />)
     expect(await within(lane('Working')).findByText('Nothing is running right now.')).toBeTruthy()
 
-    workflowRuns.mockResolvedValue(runs(run({ id: 'run-2', workflow_name: 'nightly-digest' })))
-    send({ type: 'refresh', data: { kinds: ['workflow_runs'] } })
+    running.mockResolvedValue(list([run({ work: 'workflow:run-2', name: 'nightly-digest' })]))
+    send(RING)
 
     expect(await within(lane('Working')).findByText('nightly-digest')).toBeTruthy()
   })
 
-  it('a loop changing is read the same way — the Working lane’s other list', async () => {
+  it('a listing hint reads nothing: the list rings for itself', async () => {
     render(<MissionControl />)
     await within(lane('Working')).findByText('paper-ingest')
-    const before = uLoops.mock.calls.length
+    const before = running.mock.calls.length
 
-    send({ type: 'refresh', data: { kinds: ['loops'] } })
-
-    await waitFor(() => expect(uLoops.mock.calls.length).toBeGreaterThan(before))
-  })
-
-  it('a hint for a listing this page does not show reads nothing', async () => {
-    render(<MissionControl />)
-    await within(lane('Working')).findByText('paper-ingest')
-    const before = workflowRuns.mock.calls.length
-
-    send({ type: 'refresh', data: { kinds: ['crons', 'history'] } })
+    send({ type: 'refresh', data: { kinds: ['workflow_runs', 'loops'] } })
+    send({ type: 'work_phase', data: { work: 'workflow:run-1', phase: 'done' } })
     await new Promise((resolve) => setTimeout(resolve, 450))
 
-    expect(workflowRuns.mock.calls.length).toBe(before)
+    expect(running.mock.calls.length).toBe(before)
   })
 })

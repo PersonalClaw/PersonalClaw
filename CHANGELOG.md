@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Settings stays at the foot of the sidebar while the rest of it scrolls, so in a short window it no longer sits in the sidebar's edge with its focus ring cut off.**
 - **A new loop's Mode (Attended or Unattended) sits beside the loop composer's input as its Execution Boundary control, with where the loop will work, the sandbox its commands run in and the network its work reaches; it left the page's header.**
+- **Mission Control's Working lane and Agent World show one list of everything running now, the one `GET /api/running` serves: each Working row has the work's name, its exact phase as text, what it is doing, the agent doing it, its last update and a link that opens it, says when it is blocked (queued for a slot, retrying, or waiting on a busy model) and how much waits on you for it, and under the rows sits what just finished or failed and what a gateway restart interrupted; a long list shows its first 25 rows and the rest a press away, and the lane says when it is reconnecting. Agent World paints helpers, workflow runs, automations' fires and webhook turns too, paints a blocked one apart from one at work, and paints a loop's workers as their loop, never as chats of their own.**
 
 ### Fixed
 

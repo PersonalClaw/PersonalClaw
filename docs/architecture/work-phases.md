@@ -232,10 +232,10 @@ phase.
   way (a step's, which its row says, and in the code cockpit the writing, whose words
   it shows), nor for the thinking said after each step's result
   (`workPhase.phaseFeedLine`).
-- **Every ambient surface** (Mission Control, Home, the agent worlds) treats the frame
-  as a doorbell and reads the phase from the chat list
-  ([agent-activity-feed.md](agent-activity-feed.md)). A helper's, a loop's and a workflow
-  run's frame rings it too, and is read the same way: as a signal, never as a payload.
+- **Every ambient surface** treats a frame as a doorbell, never as a payload. Mission
+  Control's Working lane and the agent worlds read the running list below, rung by its
+  `running_changed` frame ([agent-activity-feed.md](agent-activity-feed.md)); Home reads the
+  phase from the chat list, rung by `work_phase`.
 
 ## The running list
 

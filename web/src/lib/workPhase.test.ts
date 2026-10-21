@@ -18,7 +18,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // its own — the way "working" came to be green in Agent World and coral in the chat.
 
 const FAMILIES = ['quiet', 'active', 'waiting', 'blocked']
-const WORLDS = ['working', 'needs_input', 'waiting_approval', 'idle', 'error']
+const WORLDS = ['working', 'blocked', 'needs_input', 'waiting_approval', 'idle', 'error']
 
 /** The families the owner settled. */
 const SETTLED: Record<string, string> = {
@@ -56,6 +56,11 @@ describe('every phase has its look on every surface', () => {
   it('reads each phase as the family the owner settled', () => {
     const families = Object.fromEntries(WORK_PHASES.map((p) => [p, phaseFamily(p)]))
     expect(families).toEqual(SETTLED)
+  })
+
+  it('shows live work held up as blocked in a world, apart from working (#3889)', () => {
+    const worlds = Object.fromEntries(WORK_PHASES.map((p) => [p, phaseWorld(p)]))
+    expect(Object.keys(worlds).filter((p) => worlds[p] === 'blocked').sort()).toEqual(['queued', 'retrying', 'waiting_model'])
   })
 
   it('reads the gateway\'s own states as their settled families', () => {
