@@ -1,5 +1,5 @@
-import { useRef, type ReactNode } from 'react'
-import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion } from 'framer-motion'
+import { memo, useRef, type ReactNode } from 'react'
+import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion, type MotionValue } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
 import { spring, physics, exprHeavy } from '../design/motion'
@@ -174,7 +174,6 @@ export function Button({
   // the highlight follows the cursor with no per-move React re-render.
   const mx = useMotionValue(50)
   const my = useMotionValue(50)
-  const sheen = useMotionTemplate`radial-gradient(circle at ${mx}% ${my}%, color-mix(in srgb, var(--color-on-primary) 22%, transparent), transparent 60%)`
 
   const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (reduce) return
@@ -243,9 +242,7 @@ export function Button({
       )}
     >
       {/* Liquid pointer-tracking sheen (the decorative light's: solid buttons, bold intensity only). */}
-      {showSheen && (
-        <motion.span aria-hidden className="pointer-events-none absolute inset-0" style={{ background: sheen, opacity: 0.9 }} />
-      )}
+      {showSheen && <Sheen mx={mx} my={my} />}
       {/* Label — cross-fades out under a spinner while loading; width preserved. */}
       <motion.span
         className="relative inline-flex items-center gap-s"
@@ -288,3 +285,14 @@ export function Button({
     </button>
   )
 }
+
+/** The sheen's own layer, for the buttons that draw one. The template re-subscribes to its motion
+ *  values every time it renders, and each dropped subscription asks the motion library for a
+ *  frame, so it lives here rather than in Button: a button without the sheen holds no template,
+ *  and `memo` keeps a button's re-render (a poll answering, a new label) from re-rendering it, as
+ *  `mx` and `my` are the same values for the button's life. Rail:
+ *  `aButtonReRenderedAtRestAsksNoFrame.test.tsx`. */
+const Sheen = memo(function Sheen({ mx, my }: { mx: MotionValue<number>; my: MotionValue<number> }) {
+  const background = useMotionTemplate`radial-gradient(circle at ${mx}% ${my}%, color-mix(in srgb, var(--color-on-primary) 22%, transparent), transparent 60%)`
+  return <motion.span aria-hidden className="pointer-events-none absolute inset-0" style={{ background, opacity: 0.9 }} />
+})

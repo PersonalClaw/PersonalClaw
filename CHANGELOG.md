@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**
+- **Home no longer asks for an animation frame each time one of its reads answers while you leave it be, from its buttons or its Discover deck: each button re-made its pointer sheen's subscription on every render, whether or not it drew the sheen, and the deck's cards measured themselves on every render rather than when one moves.**
 
 ## [0.2.4] — 2026-10-21
 
