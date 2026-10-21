@@ -373,6 +373,17 @@ the same words (`ChannelDelivery.request_approval`'s `source`), for a chat's app
 channel and for a background one the gateway asks alike; a loop's worker asks on the chat path,
 and its prompt names the loop. The approval's Inbox row keeps the words in `refs.source_label`.
 
+It says where it is answered too, read from its `session` once, by the gateway
+(`approval_place.place_of`): `work` is the work the session runs (`chat:<key>`, `loop:<id>` for a
+loop's workers and its planner, `workflow:<run>` for a run's steps, `""` for work no page answers),
+`step` the run's step and `room` the room a member asks in. Its Inbox row and the note it leaves
+when nobody answered it carry the same three in their `refs`, under keys of their own
+(`place_work`, `place_step`, `place_room`, `approval_place.place_refs`: a room's pause row is
+closed on its `room`, which a member's approval row must not carry), and so does an agent's
+question's row. A row kept from before is read the same way when it is served
+(`inbox.redact_item`). Every surface links to an approval and claims it on a loop's, a run's or a
+room's page from them (`app/approvalDestination.ts`), so none reads a session key's shape.
+
 A room member's call asks the same way (`rooms.posture.registry_approver`, bound by the round):
 its `session` is the member's own key (`room:<room>:<member>`), its `source` is `room`, and its
 Inbox row reads "talk-editor in the room “…” is waiting for your decision on …". The room's view

@@ -1,5 +1,5 @@
 import { blastRadiusLine, type BlastRadius } from '../pages/chat/approvalMeta'
-import { approvalDestination } from './approvalDestination'
+import { approvalDestination, type ApprovalPlace } from './approvalDestination'
 
 /** The COMPACT form of the approval brief.
  *
@@ -23,7 +23,8 @@ export function approvalToastMessage(input: {
   /** Where the call came from, from the start of a sentence: `Loop “Fix the README”`. */
   who: string
   tool: string
-  session: string
+  /** Where it is answered, as the approval carries it. */
+  place: ApprovalPlace
   /** What the call can touch, off the same `approval` frame the card reads: the radius the
    *  backend composed, so the toast and the card cannot describe one call differently. */
   blastRadius?: BlastRadius
@@ -34,5 +35,5 @@ export function approvalToastMessage(input: {
   // openable prose only for a chat; a workflow stage's `workflow:<run>:<node>` named a 404 and
   // sent the one person who was notified nowhere (#258). Same call the nudge builds its LINK
   // from, so the sentence cannot name one place while the link goes to another.
-  return `${input.who} needs approval to run ${input.tool}${touches} — open ${approvalDestination(input.session).label} to respond.`
+  return `${input.who} needs approval to run ${input.tool}${touches} — open ${approvalDestination(input.place).label} to respond.`
 }

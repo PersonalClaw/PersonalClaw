@@ -10,8 +10,8 @@ import { PendingApprovalCard } from '../../app/PendingApprovalCard'
  *  A member's call that asks is listed where every approval is (Home, the Inbox, the phone, the
  *  channel approvals go to), but its session is no chat anyone opened, so without this the one place
  *  you are watching the member from could not answer it, and the room read "Answering: <member>"
- *  with nothing to answer. Every member's asks land here, claimed out of `/api/approvals` by the same
- *  parse the nudge links with (`roomApprovalOf`), each as the one approval card the queue surfaces
+ *  with nothing to answer. Every member's asks land here, claimed out of `/api/approvals` by the room
+ *  each carries, which the nudge links with (`roomApprovalOf`), each as the one approval card the queue surfaces
  *  render (`PendingApprovalCard`): the tool and its risk, what it can touch, its whole input, and the
  *  member and room that asked. Answered through the queue (`POST /api/approvals/{id}/{action}`), for
  *  this call alone: no standing answer covers a room member's call.
@@ -24,7 +24,7 @@ export function RoomApprovals({ roomId, onCount }: { roomId: string; onCount?: (
   const load = useCallback(async () => {
     try {
       const all = await api.approvals()
-      setPending(all.filter((a) => roomApprovalOf(a.session, roomId)))
+      setPending(all.filter((a) => roomApprovalOf(a, roomId)))
     } catch {
       /* A failed read keeps the last-good cards: blanking one would leave a member waiting on you
          with nothing in the room to answer it. */

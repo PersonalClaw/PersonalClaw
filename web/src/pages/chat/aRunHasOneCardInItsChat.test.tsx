@@ -67,7 +67,7 @@ const run = (): WorkflowRunDetailData => ({
 
 const ask = (over: Partial<PendingApproval>): PendingApproval => ({
   id: 'subagent:ab12cd34:1', request_id: 'subagent:ab12cd34:1', source: 'subagent', tool: 'bash',
-  session: 'workflow:a1b2c3d4:find_the_retry_callers_0', ts: 0, session_title: '', agent: '', risk: 'caution',
+  session: 'workflow:a1b2c3d4:find_the_retry_callers_0', work: 'workflow:a1b2c3d4', step: 'find_the_retry_callers_0', room: '', ts: 0, session_title: '', agent: '', risk: 'caution',
   grant_agent: '', source_label: '', ...over,
 })
 
@@ -90,7 +90,7 @@ describe('a step that waits says why', () => {
   it('🔴 names the step and what it waits on her answer for, with where to answer it', async () => {
     approvals.mockResolvedValue([
       ask({}),
-      ask({ id: 'spawn:ef56ab78', tool: 'subagent_run', session: 'workflow:a1b2c3d4:find_the_retry_tests_1' }),
+      ask({ id: 'spawn:ef56ab78', tool: 'subagent_run', session: 'workflow:a1b2c3d4:find_the_retry_tests_1', work: 'workflow:a1b2c3d4', step: 'find_the_retry_tests_1', room: '' }),
     ])
     await mount({ runId: 'a1b2c3d4', created: true })
     expect(await screen.findByText('Find the retry callers waits for your answer on bash')).toBeTruthy()
@@ -101,8 +101,8 @@ describe('a step that waits says why', () => {
 
   it('the control: another run’s asks, and a chat’s own, are not this run’s', async () => {
     approvals.mockResolvedValue([
-      ask({ session: 'workflow:deadbeef:find_the_retry_callers_0' }),
-      ask({ id: 'chat-a:1', session: 'chat-a' }),
+      ask({ session: 'workflow:deadbeef:find_the_retry_callers_0', work: 'workflow:deadbeef', step: 'find_the_retry_callers_0', room: '' }),
+      ask({ id: 'chat-a:1', session: 'chat-a', work: 'chat:chat-a', step: '', room: '' }),
     ])
     await mount({ runId: 'a1b2c3d4', created: true })
     expect(screen.queryByText(/waits for your/)).toBeNull()

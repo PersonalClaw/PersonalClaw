@@ -39,7 +39,7 @@ describe('a denied call in the Inbox', () => {
   it('🔑 an expired approval in a chat offers to ask the chat to try again, and says what it will send', async () => {
     sendChat.mockResolvedValue({ ok: true })
     const navigate = vi.fn()
-    render(<InboxDetail item={note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', chat: 'chat-a' })} onChanged={() => {}} navigate={navigate} />)
+    render(<InboxDetail item={note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', place_work: 'chat:chat-a', place_step: '', place_room: '', chat: 'chat-a' })} onChanged={() => {}} navigate={navigate} />)
 
     expect(screen.getByText(/please try that again/)).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Ask it to try again' }))
@@ -53,7 +53,7 @@ describe('a denied call in the Inbox', () => {
   it('a failed ask says so and stays put', async () => {
     sendChat.mockRejectedValue(new Error('the chat is busy'))
     const navigate = vi.fn()
-    render(<InboxDetail item={note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', chat: 'chat-a' })} onChanged={() => {}} navigate={navigate} />)
+    render(<InboxDetail item={note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', place_work: 'chat:chat-a', place_step: '', place_room: '', chat: 'chat-a' })} onChanged={() => {}} navigate={navigate} />)
     await userEvent.click(screen.getByRole('button', { name: 'Ask it to try again' }))
     expect(await screen.findByText(/the chat is busy/)).toBeTruthy()
     expect(navigate).not.toHaveBeenCalled()
@@ -61,14 +61,14 @@ describe('a denied call in the Inbox', () => {
 
   it('🔑 a workflow step’s denial opens the step, not a chat that does not exist', async () => {
     const navigate = vi.fn()
-    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'workflow:run-7:write' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={navigate} />)
+    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'workflow:run-7:write', place_work: 'workflow:run-7', place_step: 'write', place_room: '' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={navigate} />)
     expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: /Open the workflow run/ }))
     expect(navigate).toHaveBeenCalledWith('workflows/runs/run-7?node=write')
   })
 
   it('an unattended denial has nobody to ask again, so it only says where it happened', () => {
-    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'cron:nightly' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
+    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'cron:nightly', place_work: '', place_step: '', place_room: '' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()
   })
 
@@ -78,7 +78,7 @@ describe('a denied call in the Inbox', () => {
   ])('🔑 asked again and answered (%s), the note says how it ended and offers nothing more', (retry, said) => {
     // The gateway marks the note handled with the answer once the same call is asked again there
     // and answered (`auto_denials.settle_retried`); the retry offer would be a second retry.
-    const handled = { ...note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', chat: 'chat-a', retry }), status: 'handled' } as InboxItem
+    const handled = { ...note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', place_work: 'chat:chat-a', place_step: '', place_room: '', chat: 'chat-a', retry }), status: 'handled' } as InboxItem
     render(<InboxDetail item={handled} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.getByText(said)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()

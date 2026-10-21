@@ -13,8 +13,8 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  An Attended loop's worker asks the way a chat does (the bell, the Inbox row, a phone push, the
  *  channel approvals go to), but its session is no chat anyone opened, so without this the one
  *  place you watch the loop from could not answer it. Every worker's asks land here, the stage
- *  worker's and each per-task worker's, claimed out of `/api/approvals` by the same parse the
- *  nudge links with (`loopApprovalOf`), and each is the chat's own card (`ApprovalCard`) with the
+ *  worker's and each per-task worker's, claimed out of `/api/approvals` by the loop each carries,
+ *  which the nudge links with (`loopApprovalOf`), and each is the chat's own card (`ApprovalCard`) with the
  *  loop's words for its scopes. Answered through the worker session's approve route, the one the
  *  chat card posts to, so the answer is the same answer from wherever it is given. */
 export function LoopApprovals({ loopId, className = '' }: { loopId: string; className?: string }) {
@@ -23,7 +23,7 @@ export function LoopApprovals({ loopId, className = '' }: { loopId: string; clas
   const load = useCallback(async () => {
     try {
       const all = await api.approvals()
-      setPending(all.filter((a) => loopApprovalOf(a.session, loopId)))
+      setPending(all.filter((a) => loopApprovalOf(a, loopId)))
     } catch {
       /* A failed read keeps the last-good cards: blanking one would leave a waiting worker with
          nothing on the page that watches it. */

@@ -184,25 +184,11 @@ def _row(
 
 def work_of_session(key: str) -> str:
     """The work a session key runs, as the running list names it: a chat's own, a loop's (its
-    workers' and its planner's), a workflow run's (its steps'), or ``""`` for any other kind."""
-    name = str(key or "").removeprefix(session_keys.DASHBOARD.prefix)
-    if not name:
-        return ""
-    kind = session_keys.kind_of(name)
-    if kind is None or kind is session_keys.CHAT:
-        return work_ref("chat", name)
-    if kind is session_keys.LOOP:
-        from personalclaw.loop.manager import worker_ids
-        from personalclaw.loop.plan_walkthrough import planner_loop_id
+    workers' and its planner's), a workflow run's (its steps'), or ``""`` for any other kind. The
+    work an approval asked under it is answered in (``approval_place.place_of``)."""
+    from personalclaw.approval_place import place_of
 
-        loop_id = worker_ids(name)[0] or planner_loop_id(name)
-        return work_ref("loop", loop_id) if loop_id else ""
-    if kind is session_keys.WORKFLOW_STEP:
-        from personalclaw.workflows import ownership
-
-        step = ownership.parse_owned(name)
-        return work_ref("workflow", step[0]) if step is not None else ""
-    return ""
+    return place_of(key)["work"]
 
 
 def approval_work(entry: Mapping[str, Any]) -> tuple[str, ...]:

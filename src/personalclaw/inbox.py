@@ -904,6 +904,15 @@ def redact_item(item: dict) -> dict:
         for record in item.get("attachments") or []
         if isinstance(record, dict)
     ]
+    # A pending approval's row, the note an unanswered one leaves and an agent's question name where
+    # they are answered (`approval_place.place_refs`); one written before they did is read the same
+    # way here, so no surface reads its session key's shape.
+    refs = item.get("refs")
+    if isinstance(refs, dict) and any(refs.get(k) for k in ("approval", "auto_denied", "question")):
+        if "place_work" not in refs:
+            from personalclaw.approval_place import place_refs
+
+            refs.update(place_refs(str(refs.get("session") or "")))
     # Feedback producer meta (additive): each machine judgment on the item names the artifact
     # that produced it, so the thumbs attribute a verdict without a second lookup, and a field
     # nobody's prompt wrote gets no thumbs at all.

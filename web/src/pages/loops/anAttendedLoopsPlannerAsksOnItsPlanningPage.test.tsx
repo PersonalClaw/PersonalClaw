@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { PendingApproval, PlanSession } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
-import { approvalDestination, loopApprovalOf, loopApprovalSession } from '../../app/approvalDestination'
+import { approvalDestination, loopApprovalOf } from '../../app/approvalDestination'
 
 // ── An Attended loop's planner asks for its tool calls, and its planning page answers them ──────
 //
@@ -43,7 +43,7 @@ function plannerAsk(over: Partial<PendingApproval> = {}): PendingApproval {
   return {
     id: `chat:${PLANNER}:call-1`, request_id: 'call-1', source: '', tool: 'bash',
     tool_input: '{"command": "uv run pytest -q"}', tool_purpose: '', session: PLANNER, ts: 0,
-    session_title: '', agent: 'personalclaw-code-planner', risk: 'destructive', grant_agent: '',
+    work: `loop:${LOOP_ID}`, step: '', room: '', session_title: '', agent: 'personalclaw-code-planner', risk: 'destructive', grant_agent: '',
     source_label: 'loop “Fix the digest titles”', ...over,
   }
 }
@@ -60,17 +60,16 @@ afterEach(() => cleanup())
 
 describe('where the planner’s ask is answered', () => {
   it('the nudge and the Inbox row lead to the loop, which is planning', () => {
-    expect(approvalDestination(PLANNER).href).toBe(`#/loops/${LOOP_ID}`)
-    expect(loopApprovalOf(PLANNER, LOOP_ID)).toBe(true)
-    expect(loopApprovalSession(PLANNER)).toEqual({ loopId: LOOP_ID, taskId: '', planner: true })
-    expect(loopApprovalSession(`loop-${LOOP_ID}`)).toEqual({ loopId: LOOP_ID, taskId: '', planner: false })
+    const ask = plannerAsk()
+    expect(approvalDestination(ask).href).toBe(`#/loops/${LOOP_ID}`)
+    expect(loopApprovalOf(ask, LOOP_ID)).toBe(true)
   })
 
   it.each([
     ['a Code loop', (p: { onBack: () => void }) => <CodePlanningView projectId={LOOP_ID} onReady={() => {}} onBack={p.onBack} onCancel={noop} onStop={noop} />],
     ['any other loop', (p: { onBack: () => void }) => <LoopPlanningView loopId={LOOP_ID} onReady={() => {}} onBack={p.onBack} onCancel={noop} onStop={noop} />],
   ])('the planning walkthrough of %s carries the planner’s card, and Deny answers it', async (_name, view) => {
-    STORE.pending = [plannerAsk(), plannerAsk({ id: 'other', session: 'loop-plan-99999999' })]
+    STORE.pending = [plannerAsk(), plannerAsk({ id: 'other', session: 'loop-plan-99999999', work: 'loop:99999999' })]
     render(view({ onBack: () => {} }))
 
     await waitFor(() => expect(screen.queryAllByText('Permission needed')).toHaveLength(1))

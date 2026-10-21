@@ -455,6 +455,7 @@ class OwnerQuestions:
     def _publish(self, asked: _Asked) -> None:
         self._broadcast(QUESTION_CARD, self._card(asked))
         try:
+            from personalclaw.approval_place import place_refs
             from personalclaw.inbox import ItemKind, emit_attention_item
 
             first = asked.shown[0]
@@ -471,6 +472,8 @@ class OwnerQuestions:
                     "question": asked.id,
                     "session": asked.session,
                     "source_label": asked.asked_by,
+                    # The work it is asked in, as an approval's row names it (`approval_place`).
+                    **place_refs(asked.session),
                 },
                 dedup_key=f"question:{asked.id}",
             )

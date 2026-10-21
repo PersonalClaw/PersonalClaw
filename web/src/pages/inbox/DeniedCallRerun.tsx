@@ -3,7 +3,7 @@ import { Check, ExternalLink, Play, RotateCcw } from 'lucide-react'
 import { ApiError, api, type InboxItem, type Trigger, type TriggerRunResult } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { ConsentDeclined } from '../../lib/securityConsent'
-import { workflowApprovalSession } from '../../app/approvalDestination'
+import { placeOfRefs, workflowApprovalStep } from '../../app/approvalDestination'
 import { Button } from '../../ui/Button'
 import { FieldError } from '../../ui/forms'
 import { InlineLoadError } from '../../ui/ListScaffold'
@@ -96,7 +96,7 @@ export function DeniedCallRerun({ item, navigate, onChanged }: {
   }
   if (!isOpen(item.status)) return null
   const trigger = typeof refs.trigger === 'string' ? refs.trigger : ''
-  const step = typeof refs.session === 'string' ? workflowApprovalSession(refs.session) : null
+  const step = workflowApprovalStep(placeOfRefs(refs))
   if (denied === 'unattended') {
     if (!trigger && !step) return null
     return (

@@ -32,7 +32,7 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
       seg={approvalSegmentOf(approval)}
       answers="once"
       source={source}
-      sourceHref={opensSource && approval.session ? approvalDestination(approval.session).href : undefined}
+      sourceHref={opensSource && approval.session ? approvalDestination(approval).href : undefined}
       subject={subject}
       busy={busy}
       onAct={(_id, action) => onDecide(action === 'rejected' ? 'reject' : 'approve')}

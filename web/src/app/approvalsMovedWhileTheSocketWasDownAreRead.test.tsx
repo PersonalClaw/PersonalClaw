@@ -52,7 +52,7 @@ const latest = () => FakeSocket.all[FakeSocket.all.length - 1]
 const asked: PendingApproval = {
   id: 'spawn:5c0ffee1', source: 'subagent',
   tool: 'subagent_run(Judge the draft in two sentences.)', tool_purpose: '',
-  session: 'workflow:df5827ca:judge', ts: 0, request_id: 'spawn:5c0ffee1',
+  session: 'workflow:df5827ca:judge', work: 'workflow:df5827ca', step: 'judge', room: '', ts: 0, request_id: 'spawn:5c0ffee1',
   session_title: '', agent: '', risk: '', grant_agent: '',
   source_label: 'workflow “research” · step “judge”',
 }
@@ -64,7 +64,7 @@ const row = {
   message: 'Approval needed: subagent_run\n\nA workflow step is waiting for your decision.',
   sender_id: 'system', sender_name: 'system', classification: 'needs_reply', confidence: 'high',
   draft: '', created_at: 1000, source: 'system', can_reply: false,
-  refs: { approval: asked.id, session: asked.session },
+  refs: { approval: asked.id, session: asked.session, place_work: asked.work, place_step: asked.step, place_room: asked.room },
 } as unknown as InboxItem
 
 /** Let the reads the reopen started land, and the renders they cause. */
@@ -139,7 +139,7 @@ describe('an approval raised while the socket was down', () => {
   it("is on the page of the loop whose worker asked", async () => {
     const workerAsked: PendingApproval = {
       ...asked, id: 'loop-0c0ffee1:7', request_id: '7', source: '',
-      tool: 'write_file', session: 'loop-0c0ffee1',
+      tool: 'write_file', session: 'loop-0c0ffee1', work: 'loop:0c0ffee1', step: '', room: '',
     }
     approvals.mockResolvedValue([])
     const { LoopApprovals } = await import('../pages/loops/LoopApprovals')

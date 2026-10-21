@@ -46,7 +46,7 @@ function ask(over: Partial<PendingApproval> = {}): PendingApproval {
   return {
     id: `chat:loop-${LOOP_ID}:req-1`, request_id: 'req-1', source: '', tool: 'bash',
     tool_input: '{"command": "sed -i s/escape/plain/ src/feedsmith/digest.py"}', tool_purpose: '',
-    session: `loop-${LOOP_ID}`, ts: 0, session_title: '', agent: 'personalclaw-coder',
+    session: `loop-${LOOP_ID}`, work: `loop:${LOOP_ID}`, step: '', room: '', ts: 0, session_title: '', agent: 'personalclaw-coder',
     confirms: [],
     risk: 'caution', grant_agent: '', source_label: 'loop “Digest titles”', ...over,
   }
@@ -74,20 +74,21 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('where a loop worker’s ask is answered', () => {
-  it('the nudge, the Inbox row and the link lead to the loop, for every worker of it and its planner', () => {
-    for (const session of [`loop-${LOOP_ID}`, `loop-${LOOP_ID}-t-1a2b3c4d`, `loop-plan-${LOOP_ID}`]) {
-      const dest = approvalDestination(session)
-      expect(dest.href, session).toBe(`#/loops/${LOOP_ID}`)
-      expect(dest.linkLabel, session).toBe('Open the loop')
-      expect(loopApprovalOf(session, LOOP_ID), session).toBe(true)
-    }
+  it('the nudge, the Inbox row and the link lead to the loop its worker or planner asked for', () => {
+    // Each of its workers and its planner names the loop (`approval_place.place_of`).
+    const place = { session: `loop-${LOOP_ID}-t-1a2b3c4d`, work: `loop:${LOOP_ID}` }
+    const dest = approvalDestination(place)
+    expect(dest.href).toBe(`#/loops/${LOOP_ID}`)
+    expect(dest.linkLabel).toBe('Open the loop')
+    expect(loopApprovalOf(place, LOOP_ID)).toBe(true)
   })
 
   it('🪤 VACUITY: a chat and another loop keep their own places', () => {
-    expect(approvalDestination('main').href).toBe('#/chat/main')
-    expect(approvalDestination('loop-plan-notaloop').href).toBe('#/chat/loop-plan-notaloop')
-    expect(loopApprovalOf('loop-99999999', LOOP_ID)).toBe(false)
-    expect(loopApprovalOf('loop-plan-99999999', LOOP_ID)).toBe(false)
+    expect(approvalDestination({ session: 'main', work: 'chat:main' }).href).toBe('#/chat/main')
+    // Shaped like a loop's key, and no loop's: the gateway names no work for it.
+    expect(approvalDestination({ session: 'loop-plan-notaloop', work: '' }).href).toBe('#/chat/loop-plan-notaloop')
+    expect(loopApprovalOf({ session: `loop-${LOOP_ID}`, work: 'loop:99999999' }, LOOP_ID)).toBe(false)
+    expect(loopApprovalOf({ session: `loop-${LOOP_ID}`, work: '' }, LOOP_ID)).toBe(false)
   })
 
   it('the nudge names the loop that is asking, and links to it', async () => {
@@ -105,7 +106,7 @@ describe('where a loop worker’s ask is answered', () => {
     window.addEventListener('ne:toast', onToast)
     try {
       renderHook(() => useApprovalToasts(''))
-      act(() => onMessage!({ type: 'approval', data: { session: `loop-${LOOP_ID}-t-1a2b3c4d`, id: 'ap-1', tool: 'bash', source_label: 'loop “Digest titles”' } }))
+      act(() => onMessage!({ type: 'approval', data: { session: `loop-${LOOP_ID}-t-1a2b3c4d`, work: `loop:${LOOP_ID}`, step: '', room: '', id: 'ap-1', tool: 'bash', source_label: 'loop “Digest titles”' } }))
     } finally {
       window.removeEventListener('ne:toast', onToast)
     }
@@ -120,9 +121,9 @@ describe('the loop’s page answers its workers’ asks', () => {
   it('shows every worker’s ask of this loop, and nobody else’s', async () => {
     STORE.pending = [
       ask(),
-      ask({ id: 'x2', request_id: 'req-2', session: `loop-${LOOP_ID}-t-1a2b3c4d`, tool: 'edit_file' }),
-      ask({ id: 'x3', session: 'loop-99999999' }),
-      ask({ id: 'x4', session: 'main' }),
+      ask({ id: 'x2', request_id: 'req-2', session: `loop-${LOOP_ID}-t-1a2b3c4d`, work: `loop:${LOOP_ID}`, step: '', room: '', tool: 'edit_file' }),
+      ask({ id: 'x3', session: 'loop-99999999', work: 'loop:99999999', step: '', room: '' }),
+      ask({ id: 'x4', session: 'main', work: 'chat:main', step: '', room: '' }),
     ]
     render(<LoopApprovals loopId={LOOP_ID} />)
 
@@ -132,7 +133,7 @@ describe('the loop’s page answers its workers’ asks', () => {
   })
 
   it('“This loop” says how far it reaches, and posts the grant to the asking worker', async () => {
-    STORE.pending = [ask({ session: `loop-${LOOP_ID}-t-1a2b3c4d`, request_id: 'req-7' })]
+    STORE.pending = [ask({ session: `loop-${LOOP_ID}-t-1a2b3c4d`, work: `loop:${LOOP_ID}`, step: '', room: '', request_id: 'req-7' })]
     render(<LoopApprovals loopId={LOOP_ID} />)
 
     fireEvent.click(await screen.findByRole('radio', { name: 'This loop' }))

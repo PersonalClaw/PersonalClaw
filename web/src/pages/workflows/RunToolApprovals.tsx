@@ -16,9 +16,10 @@ import { PendingApprovalCard } from '../../app/PendingApprovalCard'
  *
  *  So this is the other half of the same fix as the nudge's destination: `approvalDestination`
  *  sends the toast to `#/workflows/runs/<run>?node=<node>`, and this is what makes that address
- *  a place where the question can be answered rather than a nicer dead end. Both read
- *  `workflowApprovalOf` — ONE parse of the `workflow:<run>:<node>` session key — so a link that
- *  arrives here and a row that appears here cannot disagree about which run owns an approval.
+ *  a place where the question can be answered rather than a nicer dead end. Both read the run
+ *  the approval carries (`work`, which the gateway read from its `workflow:<run>:<node>` session
+ *  key), through `workflowApprovalOf`, so a link that arrives here and a row that appears here
+ *  cannot disagree about which run owns an approval.
  *
  *  Each is the one approval card (`PendingApprovalCard`): the tool and its risk, what it can touch,
  *  the whole command or question a click away, and the step that asked. It used to say "This step
@@ -32,7 +33,7 @@ export function RunToolApprovals({ runId }: { runId: string }) {
   const load = useCallback(async () => {
     try {
       const all = await api.approvals()
-      setPending(all.filter((a) => workflowApprovalOf(a.session, runId)))
+      setPending(all.filter((a) => workflowApprovalOf(a, runId)))
     } catch {
       /* A failed read keeps the last-good rows: blanking a pending approval would put the user
          back where this fix started — a blocked run with nothing on screen. */

@@ -15,12 +15,14 @@ A tool call that needs a person's approval ends one of four ways
   to the run's transcript and the security log.
 
 Each now leaves ONE Inbox item, ``system/auto_denied`` with item kind ``system``: what was denied,
-who asked, when, why, and that it did not run. ``refs.session`` is where it happened, so the Inbox
-opens the chat or the workflow step; ``refs.chat`` is set only when that is a chat a person can
-answer in, which is what lets the Inbox offer to ask it to try again. ``refs.trigger`` is the
-trigger whose run it was, when a trigger started the work, which is what lets the Inbox offer to
-run that trigger again. Deduplicated per approval, and per ``(session, tool)`` for the unattended
-case, so a run that retries a declined call is one item and not twenty.
+who asked, when, why, and that it did not run. ``refs.session`` is where it happened, and
+``refs.place_work``, ``refs.place_step`` and ``refs.place_room`` the place it is answered
+(``approval_place.place_refs``), so the Inbox opens the chat, the loop, the workflow step or the
+room; ``refs.chat`` is set only when that is a chat a person can answer in, which is what lets the
+Inbox offer to ask it to try again. ``refs.trigger`` is the trigger whose run it was, when a
+trigger started the work, which is what lets the Inbox offer to run that trigger again.
+Deduplicated per approval, and per ``(session, tool)`` for the unattended case, so a run that
+retries a declined call is one item and not twenty.
 
 **When a note is done.** An expired note stands for one call, ``refs.call``, asked in one place
 (its session, or its trigger's run). :func:`settle_retried` moves it to HANDLED, with the answer on
@@ -43,6 +45,7 @@ import time
 from typing import Any
 
 from personalclaw import notification_kinds
+from personalclaw.approval_place import place_refs
 from personalclaw.textfmt import clip_words
 from personalclaw.workflows import ownership
 
@@ -160,6 +163,7 @@ def note_expired(state: Any, entry: dict[str, Any], *, who: str, window_secs: fl
             "denied_approval": str(entry.get("id") or ""),
             "call": _call_of(entry),
             **_asked_in(entry),
+            **place_refs(session),
             **({"chat": answerable_chat(session)} if answerable_chat(session) else {}),
         },
         dedup_key=f"auto_denied:{entry.get('id') or ''}",
@@ -205,6 +209,7 @@ def note_unattended(
             "auto_denied": UNATTENDED,
             "tool": tool,
             **({"session": session_key} if session_key else {}),
+            **place_refs(session_key),
             **({"trigger": trigger} if trigger else {}),
         },
         dedup_key=f"auto_denied:{f'trigger:{trigger}' if trigger else session_key}:{tool}",

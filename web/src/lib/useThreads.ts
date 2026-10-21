@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { api, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from './api'
 import { useQuery } from './data'
-import { loopApprovalSession } from '../app/approvalDestination'
+import { loopApprovalId, placeOfRefs, type ApprovalPlace } from '../app/approvalDestination'
 import { loopTitle, toLanes, type ActivityInput, type ApprovalInput, type AttentionInput, type Lane, type LaneCard, type LoopInput } from './attentionLanes'
 import { sessionRecencyMs } from './epoch'
 import { loopRoute } from './loopKind'
@@ -179,25 +179,27 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
     if (!cycleTimed.has(t.key)) t.activeAt = Math.max(t.activeAt, workerActivity.get(t.key) ?? 0)
   }
 
-  /** The thread whose work a session key is: a listed chat or loop worker, else a loop worker's
-   *  key shape (`loopApprovalSession`), since an approval can name a worker the list has not
-   *  caught up with. */
+  /** The thread whose work a session key is: a listed chat or loop worker. */
   const threadOfSession = (session: string): string => {
     if (session === '') return ''
-    const listed = sessionThread.get(session) ?? loopBySession.get(session)
-    if (listed) return listed
-    const parsed = loopApprovalSession(session)
-    return parsed ? `loop:${parsed.loopId}` : ''
+    return sessionThread.get(session) ?? loopBySession.get(session) ?? ''
+  }
+
+  /** The thread an approval or a question waits in: the loop it names (`loopApprovalId`), since it
+   *  can name a worker the list has not caught up with, else its session's. */
+  const threadOfPlace = (place: ApprovalPlace): string => {
+    const loop = loopApprovalId(place)
+    return loop !== '' ? `loop:${loop}` : threadOfSession(str(place.session))
   }
 
   const threadOfCard = (card: LaneCard): string => {
     switch (card.origin) {
-      case 'approval': return threadOfSession(str(card.approval.session))
+      case 'approval': return threadOfPlace(card.approval)
       case 'loop': return `loop:${card.id}`
       case 'session': return threadOfSession(card.id)
       case 'inbox': {
         const loop = str(card.item.refs?.loop)
-        return loop !== '' ? `loop:${loop}` : threadOfSession(str(card.item.refs?.session))
+        return loop !== '' ? `loop:${loop}` : threadOfPlace(placeOfRefs(card.item.refs ?? {}))
       }
       default: return ''
     }
