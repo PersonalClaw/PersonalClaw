@@ -5,7 +5,7 @@ import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
 import { Bell, Blocks, BookOpen, Brain, Compass, Database, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Radar, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
-import { ShellThreadRail } from './threadRail'
+import { ShellThreadRail, threadNumberRoute } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
 import { DisconnectedBanner } from './DisconnectedBanner'
@@ -33,7 +33,7 @@ import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
-import { chatRoute, nextNeedsYouRoute } from './globalKeys'
+import { nextNeedsYouRoute } from './globalKeys'
 import { notify } from './appSdk'
 import { TerminalDrawer, fullTerminalRoute } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
@@ -583,8 +583,9 @@ function AppInner() {
   }, [active, navMode, navPinned, pinNav])
 
   // The keymap's global rows (`keymap.ts`), each run where the thing it moves lives. Hooks, so
-  // they sit above every early return (React #310). ⌘⌥A and ⌘1 to
-  // ⌘9 read the lists fresh when pressed, so they follow what Home and the chat list show now.
+  // they sit above every early return (React #310). ⌘⌥A reads the lists fresh when pressed, so it
+  // follows what Home shows now; ⌘1 to ⌘9 open the rows the sidebar shows (`threadNumberRoute`),
+  // read fresh while no rail shows them.
   const toggleDrawer = () => setTermDrawer((v) => !v)
   const goNeedsYou = () => {
     Promise.all([api.inboxOpen(), api.approvals()])
@@ -595,14 +596,13 @@ function AppInner() {
       })
       .catch(() => notify("Couldn't read what is waiting on you.", 'error'))
   }
-  const goChat = (n: number) => {
-    api.chatSessions()
-      .then((sessions) => {
-        const to = chatRoute(sessions, n)
-        if (to) navigate(to)
-        else notify(`There is no chat ${n} in the list.`, 'info')
+  const goThread = (n: number) => {
+    threadNumberRoute(n)
+      .then((to) => {
+        if (to) onNavSelect(to)
+        else notify(`There is no thread ${n} in the sidebar.`, 'info')
       })
-      .catch(() => notify("Couldn't read the chat list.", 'error'))
+      .catch(() => notify("Couldn't read your threads.", 'error'))
   }
   // Persist the embed flag at mount-time so in-page navigation (which strips the
   // query param from the hash) doesn't lose it. MUST be before any early return so
@@ -621,7 +621,7 @@ function AppInner() {
     'workspace-tree': chatTree,
     'next-needs-you': goNeedsYou,
     'new-chat': () => navigate('chat/new'),
-    ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goChat(n)])),
+    ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goThread(n)])),
   }
   useKeyBinding('sidebar', () => keyRunners.sidebar?.())
   useKeyBinding('drawer', () => keyRunners.drawer?.())
@@ -629,15 +629,15 @@ function AppInner() {
   useKeyBinding('reading-mode', keyRunners['reading-mode'])
   useKeyBinding('next-needs-you', () => keyRunners['next-needs-you']?.())
   useKeyBinding('new-chat', () => keyRunners['new-chat']?.())
-  useKeyBinding('chat-1', () => goChat(1))
-  useKeyBinding('chat-2', () => goChat(2))
-  useKeyBinding('chat-3', () => goChat(3))
-  useKeyBinding('chat-4', () => goChat(4))
-  useKeyBinding('chat-5', () => goChat(5))
-  useKeyBinding('chat-6', () => goChat(6))
-  useKeyBinding('chat-7', () => goChat(7))
-  useKeyBinding('chat-8', () => goChat(8))
-  useKeyBinding('chat-9', () => goChat(9))
+  useKeyBinding('chat-1', () => goThread(1))
+  useKeyBinding('chat-2', () => goThread(2))
+  useKeyBinding('chat-3', () => goThread(3))
+  useKeyBinding('chat-4', () => goThread(4))
+  useKeyBinding('chat-5', () => goThread(5))
+  useKeyBinding('chat-6', () => goThread(6))
+  useKeyBinding('chat-7', () => goThread(7))
+  useKeyBinding('chat-8', () => goThread(8))
+  useKeyBinding('chat-9', () => goThread(9))
 
 
   // Wait for the server identity before deciding — don't flash onboarding. `PageFallback` rather
@@ -842,7 +842,7 @@ function AppInner() {
     { id: 'act:start-loop', label: 'Start a loop', hint: 'Action', icon: Repeat, keywords: 'loop goal code design autonomous plan run new', run: () => navigate('loop') },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
     // Every keyboard shortcut, from the keymap: the drawer, the sidebar, focus and reading mode, the
-    // chats, what needs you, and the keys a focused control handles, listed with why they don't run
+    // threads, what needs you, and the keys a focused control handles, listed with why they don't run
     // from here.
     ...keymapCommands(keyRunners),
   ]

@@ -71,7 +71,13 @@ test.describe('the keymap, in the built app', () => {
     await expect(page).toHaveURL(/#\/chat\/new$/)
   })
 
-  test('⌘1 opens the first chat in the list', async ({ page }) => {
+  test('⌘1 opens the first thread in the sidebar', async ({ page }) => {
+    // Two chats with no project and no loop: the sidebar's only threads are the two, under No
+    // project, the newest first.
+    await page.route('**/api/loops', (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ loops: [] }) })
+        : route.fallback())
     await page.route('**/api/chat/sessions', (route) =>
       route.request().method() === 'GET'
         ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([

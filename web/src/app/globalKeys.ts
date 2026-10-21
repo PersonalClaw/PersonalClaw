@@ -1,9 +1,7 @@
-/** Where the global keys go: the next chat that needs the owner (⌘⌥A) and the nth chat in the list
- *  (⌘1 to ⌘9). Pure, so the order each one follows is tested without the shell. */
+/** Where ⌘⌥A goes: the next chat that needs the owner. Pure, so the order it follows is tested
+ *  without the shell. ⌘1 to ⌘9 open the sidebar's threads (`threadNumberRoute`, `threadRail.tsx`). */
 import { approvalDestination } from './approvalDestination'
 import { toLanes, type ApprovalInput, type AttentionInput, type LaneCard } from '../lib/attentionLanes'
-import { sessionRecencyMs } from '../lib/epoch'
-import type { ChatSessionSummary } from '../lib/api'
 
 /** The route of *card*'s work: where its approval is answered or its question waits. */
 function routeOf(card: LaneCard): string | null {
@@ -21,19 +19,4 @@ export function nextNeedsYouRoute(items: AttentionInput[], approvals: ApprovalIn
   const lanes = toLanes(items, approvals)
   const card = lanes['needs-approval'][0] ?? lanes['your-turn'][0]
   return card ? routeOf(card) : null
-}
-
-/** The chats ⌘1 to ⌘9 count, in the chat list's own order: the owner's own chats, pinned first,
- *  then the most recent. */
-export function chatsInListOrder(sessions: ChatSessionSummary[]): ChatSessionSummary[] {
-  return sessions
-    .filter((s) => (s.origin ?? 'manual') === 'manual')
-    .slice()
-    .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || (sessionRecencyMs(b) - sessionRecencyMs(a)))
-}
-
-/** The route of chat *n* (1 to 9) in the list, or `null` when the list is shorter. */
-export function chatRoute(sessions: ChatSessionSummary[], n: number): string | null {
-  const s = chatsInListOrder(sessions)[n - 1]
-  return s ? `chat/${encodeURIComponent(s.key)}` : null
 }

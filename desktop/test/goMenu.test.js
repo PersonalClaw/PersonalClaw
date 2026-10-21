@@ -34,6 +34,13 @@ describe("the Go menu", () => {
     }
   });
 
+  it("names its items as the page's keymap names those rows: a new thread, and the sidebar's threads", () => {
+    const labels = goMenuTemplate(() => {}).submenu.filter((i) => i.accelerator).map((i) => i.label);
+    assert.deepEqual(labels, ["New Thread", ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Thread ${n}`)]);
+    assert.match(KEYMAP, /id: 'new-chat', label: 'New thread',/);
+    assert.match(KEYMAP, /id: `chat-\$\{n\}`, label: `Open thread \$\{n\} in the sidebar`,/);
+  });
+
   it("keeps ⌘T for tabs", () => {
     const menu = goMenuTemplate(() => {});
     assert.ok(!menu.submenu.some((i) => i.accelerator === "CmdOrCtrl+T"));

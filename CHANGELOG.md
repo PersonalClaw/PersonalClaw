@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **⌘K has Start a loop, so every top-level page is one search away, and a link to an address the app has retired, such as an artifact's link from before artifacts had their own page, opens the new page straight away instead of passing through the old one.**
 - **The sidebar lists your chats, goal loops and code sessions under their projects, with chats that have no project under No project, last; each row says when it is running, waiting on you or failed. The thread the address opens is the one lit, so a reload, Back or a copied address shows the same one, and on a phone the sidebar's drawer holds them too.**
 - **A model app on a wire of its own can ask whether a model takes adaptive thinking, by the rule PersonalClaw's built-in Anthropic-compatible client uses: `personalclaw.sdk.model.thinks_adaptively` and the `adaptive-thinking` core feature (an SDK addition no app has to change for; `bedrock-models` can use it in place of its own copy of the rule).**
+- **The sidebar's threads start with New thread and a search that narrows them by name; within a project, pinned threads come first and then the most recently active, and a thread starting, waiting or failing never moves its row; ⌘1 to ⌘9 open the threads the sidebar shows, top to bottom, where they opened the chat list's.**
 
 ### Changed
 

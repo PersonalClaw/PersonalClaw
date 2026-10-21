@@ -14,7 +14,7 @@ import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 
 function thread(over: Partial<Thread> & Pick<Thread, 'key' | 'title'>): Thread {
   const id = over.key.split(':')[1]
-  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, ...over }
+  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, ...over }
 }
 
 const GARDEN: ThreadRailGroup = {
@@ -38,7 +38,7 @@ function rail(props: Partial<Parameters<typeof ThreadRail>[0]> = {}) {
   const onOpen = vi.fn()
   const onRetry = vi.fn()
   const utils = render(
-    <ThreadRail groups={[GARDEN, EMPTY, LOOSE]} selectedKey="" status="ready" onOpen={onOpen} onRetry={onRetry} {...props} />,
+    <ThreadRail groups={[GARDEN, EMPTY, LOOSE]} selectedKey="" status="ready" onOpen={onOpen} onRetry={onRetry} onNewThread={vi.fn()} {...props} />,
   )
   return { ...utils, onOpen, onRetry }
 }
@@ -51,7 +51,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks() })
 describe('the thread rail', () => {
   it('lists each project as a group with its threads beneath, in the order it is given', () => {
     rail()
-    const toggles = screen.getAllByRole('button', { name: /threads?$/ })
+    const toggles = screen.getAllByRole('button', { name: /, (\d+ threads?|no threads)$/ })
     expect(toggles.map((b) => b.getAttribute('aria-label'))).toEqual(['Garden, 4 threads', 'House move, no threads', 'No project, 1 thread'])
     const garden = within(document.getElementById(groupToggle(/^Garden/).getAttribute('aria-controls')!)!)
     expect(garden.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
@@ -134,7 +134,7 @@ describe('the thread rail', () => {
 
   it('says it is loading, rather than showing no threads', () => {
     rail({ groups: [], status: 'loading' })
-    expect(screen.getByRole('status')).toHaveTextContent('Loading threads')
+    expect(screen.getByText('Loading threads…')).toHaveAttribute('role', 'status')
     expect(screen.queryByText('No threads yet')).toBeNull()
   })
 

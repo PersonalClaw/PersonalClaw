@@ -14,11 +14,11 @@ import { threadAt } from './threadRail'
 // chat key with a `:` or a `/` in it must still match.
 
 function chat(key: string): Thread {
-  return { key: `chat:${key}`, kind: 'chat', id: key, title: key, projectId: '', route: `chat/${encodeURIComponent(key)}`, pip: null }
+  return { key: `chat:${key}`, kind: 'chat', id: key, title: key, projectId: '', route: `chat/${encodeURIComponent(key)}`, pip: null, pinned: false, activeAt: 0 }
 }
 
 function loop(id: string, kind: 'loop' | 'code' = 'loop', route = kind === 'code' ? `code/${id}` : `loops/${id}`): Thread {
-  return { key: `loop:${id}`, kind, id, title: id, projectId: '', route, pip: null }
+  return { key: `loop:${id}`, kind, id, title: id, projectId: '', route, pip: null, pinned: false, activeAt: 0 }
 }
 
 const GROUPS = [{

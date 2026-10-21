@@ -22,10 +22,10 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import * as manifest from '../../e2e/routes'
 import { approvalDestination } from './approvalDestination'
-import { chatRoute } from './globalKeys'
+import { numberedThreads } from './threadRail'
 import { chatFindPath } from '../pages/chat/searchDeepLink'
 import { DEFAULT_NOTIFICATION_ROUTE, NOTIFICATION_SOURCE_ROUTES } from '../lib/nativeNotifications'
-import type { ChatSessionSummary } from '../lib/api'
+import type { ThreadChat, ThreadLoop } from '../lib/useThreads'
 import { RELEASES, SAMPLE, SHIPPED_ROUTES, UNRELEASED, type RouteSource, type ShippedRoute } from './shippedRoutes'
 
 const REPO = join(import.meta.dirname, '..', '..', '..')
@@ -176,17 +176,24 @@ function routerRoutes(app: string): string[] {
 
 /** Where the palette's rows go: a "Go to" row per `NAV` entry, every literal `navigate('…')` in the
  *  rows and in the keymap's runners, and the rows built from the owner's data with the sample's
- *  shape: a pinned app's tile, ⌘1 to ⌘9's chats and a content search's hit. */
+ *  shape: a pinned app's tile, ⌘1 to ⌘9's threads (a chat, a goal loop, a code session and a
+ *  run-backed loop) and a content search's hit. */
 function paletteAddresses(app: string): string[] {
   const nav = app.slice(app.indexOf('const NAV: NavItem[] = ['), app.indexOf('const ROUTABLE'))
   const rows = app.slice(app.indexOf('const commands: Command[] = ['), app.indexOf('...keymapCommands(keyRunners)'))
   const keys = app.slice(app.indexOf('const keyRunners'), app.indexOf("useKeyBinding('sidebar'"))
-  const chat = { key: SAMPLE.chat, origin: 'manual' } as ChatSessionSummary
+  const chat = { key: SAMPLE.chat, origin: 'manual' } as ThreadChat
+  const loops = [
+    { id: SAMPLE.loop, kind: 'goal' },
+    { id: SAMPLE.code, kind: 'code' },
+    { id: SAMPLE.run, kind: 'general', run_id: SAMPLE.run },
+  ] as ThreadLoop[]
+  const threads = numberedThreads({ sessions: [chat], loops, items: [], approvals: [] }, [], {})
   return [
     ...[...nav.matchAll(/id: '([^']+)'/g)].map((m) => m[1]),
     ...[...(rows + keys).matchAll(/navigate\('([^']+)'\)/g)].map((m) => m[1]),
     `app/${SAMPLE.app}`,
-    chatRoute([chat], 1) ?? '',
+    ...threads.map((t) => t.route),
     chatFindPath(SAMPLE.chat, 'report'),
   ]
 }
@@ -212,6 +219,10 @@ describe('the router\'s tables and the palette\'s rows are catalogued', () => {
   it('🔑 every palette destination is an entry, and every entry naming the palette is one', () => {
     expect(palette.length, 'vacuity floor').toBeGreaterThanOrEqual(22)
     expect(palette).toEqual(expect.arrayContaining(['mission-control', 'notifications', 'discover', 'settings', 'chat/new']))
+    // ⌘1 to ⌘9 open a thread of every kind at the address it has always had.
+    expect(palette).toEqual(expect.arrayContaining([
+      `chat/${SAMPLE.chat}`, `loops/${SAMPLE.loop}`, `code/${SAMPLE.code}`, `workflows/runs/${SAMPLE.run}`,
+    ]))
     expect(uncatalogued(palette)).toEqual([])
     expect(misattributed('palette', palette)).toEqual([])
     expect(unattributed('palette', palette)).toEqual([])
