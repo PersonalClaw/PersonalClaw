@@ -498,8 +498,11 @@ Installable content (apps, skills) from arbitrary sources:
 
 Data leaving the running system:
 
-- **Tamper-evident audit** (`sel.py::SecurityEventLog`): HMAC-chained,
-  append-only events (caller, operation, outcome).
+- **Tamper-evident audit entries** (`sel.py::SecurityEventLog`): append-only events (caller,
+  operation, outcome), each with an HMAC over its own record, so an entry of the live file edited
+  in place fails `verify_integrity`. A deleted entry is not reported: the check allows breaks in
+  the `prev_hash` chain, because several processes write to one log. A rotated file in
+  `sel_archive/` is not checked again.
 - **Redacted archive reads** (`security.py`: `redact_credentials`,
   `redact_exfiltration_urls`).
 - **Every read masks the same way, and a masked value is never saved back over the real one.**
@@ -859,7 +862,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned)* | in progress |
 | **ASI08** Cascading failures / denial-of-wallet | Circuit breakers, budgets, spend caps | *(owned)* | in progress |
 | **ASI09** Trust exploitation / social engineering | Approval surfaces, expiring YOLO with `on_disable` callbacks, consent-gated installs | `trust_mode.py`; `apps/app_manager.py::install` | enforced |
-| **ASI10** Rogue / runaway agents | Tamper-evident audit log + YOLO kill/disable (auto-approve is revocable, firing disable callbacks) | `sel.py::SecurityEventLog`; `trust_mode.py` (`on_disable`) | enforced *(incident-flag on breaker trip: in progress)* |
+| **ASI10** Rogue / runaway agents | Audit log with tamper-evident entries (an edited entry is caught, a deleted one is not) + YOLO kill/disable (auto-approve is revocable, firing disable callbacks) | `sel.py::SecurityEventLog`; `trust_mode.py` (`on_disable`) | enforced *(incident-flag on breaker trip: in progress)* |
 
 ## What we deliberately don't defend against
 

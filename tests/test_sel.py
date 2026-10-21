@@ -554,8 +554,8 @@ class TestLogHashAndCallbackExtras:
 
 class TestVerifyIntegrityExtras:
     def test_detects_chain_break(self, tmp_path: Path) -> None:
-        # Distinct from a tampered HMAC: here the prev_hash linkage is
-        # broken but the entry's own HMAC may still verify in isolation.
+        # An edit to `prev_hash` is caught because `prev_hash` is inside the entry's own HMAC:
+        # it is an entry edited in place. The links between entries are never followed (below).
         log = SecurityEventLog(base_dir=tmp_path)
         log.log(_make_event(event_id="e0"))
         log.log(_make_event(event_id="e1"))
@@ -567,7 +567,23 @@ class TestVerifyIntegrityExtras:
         path.write_text("\n".join(lines) + "\n")
         total, valid = log.verify_integrity()
         assert total == 2
-        assert valid == 1  # entry 1 fails the chain check
+        assert valid == 1  # entry 1 fails its own HMAC
+
+    def test_a_deleted_entry_is_not_reported(self, tmp_path: Path) -> None:
+        # What the security documents say: the check allows breaks in the `prev_hash` chain,
+        # since the gateway, channel and MCP processes append to one log without coordinating,
+        # so an entry removed from the file leaves every remaining entry valid. Pinned so a
+        # check that starts to follow the links has to change the documents with it
+        # (`tests/rails/test_sel_docs_say_what_the_check_catches_tree.py`).
+        log = SecurityEventLog(base_dir=tmp_path)
+        for i in range(3):
+            log.log(_make_event(event_id=f"e{i}"))
+        path = tmp_path / "security_events.jsonl"
+        lines = path.read_text().splitlines()
+        assert json.loads(lines[2])["prev_hash"] == json.loads(lines[1])["entry_hash"]
+        path.write_text("\n".join([lines[0], lines[2]]) + "\n")
+        assert log.verify_integrity() == (2, 2)
+        assert log.verify_integrity(max_entries=None) == (2, 2)
 
     def test_skips_blank_lines(self, tmp_path: Path) -> None:
         log = SecurityEventLog(base_dir=tmp_path)

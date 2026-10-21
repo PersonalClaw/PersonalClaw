@@ -113,6 +113,7 @@ tests/rails/test_sandbox_providers_tree.py
 tests/rails/test_screen_context_tree.py
 tests/rails/test_scripted_provider_binding_tree.py
 tests/rails/test_seed_demo_home_tree.py
+tests/rails/test_sel_docs_say_what_the_check_catches_tree.py
 tests/rails/test_sel_subject_census_tree.py
 tests/rails/test_service_keeps_its_environment_tree.py
 tests/rails/test_session_acquisition_census.py
