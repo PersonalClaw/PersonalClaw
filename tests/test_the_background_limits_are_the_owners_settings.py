@@ -17,12 +17,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from table_rows import row
 
 import personalclaw.agents.native.runtime as runtime_mod
 from personalclaw.config.loader import AppConfig
@@ -600,4 +600,73 @@ def test_the_three_constants_are_gone():
     assert not hasattr(model_call, "_BACKGROUND_CALL_SECS")
     assert not hasattr(local_queue, "ATTENDED_WAIT_SECS")
     for module in (provider_bridge, chores):
-        assert "DEFAULT_OUTPUT_TOKENS" not in Path(module.__file__).read_text(encoding="utf-8")
+        assert not hasattr(module, "DEFAULT_OUTPUT_TOKENS"), module.__name__
+
+
+async def _a_chores_model(builds: list[Any]) -> object:
+    """The output limit the next chore's model is built with."""
+    await _title()
+    return builds[-1] if builds else None
+
+
+async def _a_background_runtimes_model(builds: list[Any]) -> object:
+    """The output limit the next Background runtime's model is built with: a heartbeat task's
+    session, acquired as the gateway acquires one (``get_or_create(..., model_axis="background")``)
+    from the session manager over the real resolution seam."""
+    from unittest.mock import MagicMock
+
+    from personalclaw.action_providers.heartbeat_tasks_provider import task_session_key
+    from personalclaw.providers.provider_bridge import create_provider_factory
+    from personalclaw.session import SessionManager
+
+    cfg = MagicMock()
+    cfg.default_agent = ""
+    cfg.model = "auto"
+    cfg.session.pool_size = 0
+    cfg.session.pool_agent = ""
+    cfg.session.pool_ttl_secs = 0
+    cfg.session.timeout_secs = 3600
+    sessions = SessionManager(cfg, provider_factory=create_provider_factory("chat"))
+    key = task_session_key()
+    try:
+        await sessions.get_or_create(key, model_axis="background")
+        sessions.release(key)
+    finally:
+        await sessions.close_all()
+    return builds[-1] if builds else None
+
+
+async def _the_clause_for_a_model_out_of_room(_builds: list[Any]) -> object:
+    """Which limit a chore whose model stopped at its own 2,048-token cap is told to raise."""
+    from personalclaw.chores import room_for
+    from personalclaw.guardrails.failure import OutOfOutputRoom
+
+    room = room_for(OutOfOutputRoom(f"{ENTRY}:m", output_cap=2048, wrote=True))
+    return "the model's own" if "that model's own output limit" in room else "Background's"
+
+
+#: Each reader of ``background.max_output_tokens``, and what it answers at 8,192 and at 1,024.
+_OUTPUT_LIMIT_READERS = (
+    ("a chore's model", _a_chores_model, 8192, 1024),
+    ("a Background runtime's model", _a_background_runtimes_model, 8192, 1024),
+    ("the clause for a model out of room", _the_clause_for_a_model_out_of_room)
+    + ("the model's own", "Background's"),
+)
+
+
+@pytest.mark.asyncio
+async def test_every_reader_of_the_output_limit_reads_the_setting_at_each_call(
+    builds, roomy, subtests
+):
+    """The code keeps no number of its own: each place that reads the Background output limit
+    answers the setting as it is when it is asked, set to 8,192 and then to 1,024, neither of
+    them the 4,096 it shipped at. A reader holding a constant answers the same both times."""
+    assert len(_OUTPUT_LIMIT_READERS) == 3, "a reader was dropped from the table"
+    for reader, read, at_8192, at_1024 in _OUTPUT_LIMIT_READERS:
+        with row(subtests, reader=reader):
+            answers = []
+            for limit in (8192, 1024):
+                _write(max_output_tokens=limit)
+                builds.clear()
+                answers.append(await read(builds))
+            assert answers == [at_8192, at_1024], f"{reader} answered {answers}"

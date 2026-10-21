@@ -45,6 +45,7 @@ tests/rails/test_cli_commands_in_copy_parse_tree.py
 tests/rails/test_companion_discovery_tree.py
 tests/rails/test_computer_use_approval_ladder_tree.py
 tests/rails/test_computer_use_live_view_tree.py
+tests/rails/test_computer_use_macos_driver_tree.py
 tests/rails/test_config_roundtrip_tree.py
 tests/rails/test_container_host_tree.py
 tests/rails/test_control_bridge_tree.py

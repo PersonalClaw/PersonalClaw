@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
@@ -250,25 +249,8 @@ def test_the_export_merge_does_not_write_into_the_transcripts_cached_metadata(en
     assert after == before, "exporting overwrote the transcript log's own cached metadata"
 
 
-def test_the_store_never_imports_the_http_surface(enabled):
-    """`rooms/` is domain code: an import of ``dashboard/`` inverts the dependency.
-
-    A domain module that reaches up into the HTTP surface can no longer be exercised
-    without standing up the web app, which is how a feature ends up reachable only through
-    one route. ``scripts/generate_structural_baseline.py``'s
-    ``core-must-not-import-the-http-surface`` rule is the census; this is the local rail, so
-    the failure names ``rooms/`` instead of arriving as a whole-tree counter that rose.
-    Deferred imports count — the census resolves them, and hiding one inside a function
-    body would satisfy a naive grep while leaving the edge in place.
-    """
-    import personalclaw.rooms.turn as turn_module
-
-    for module in (store, turn_module):
-        source = Path(module.__file__).read_text(encoding="utf-8")
-        for line in source.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(("import ", "from ")):
-                assert "personalclaw.dashboard" not in stripped, f"{module.__name__}: {stripped}"
+# That the rooms package imports nothing of the HTTP surface reads the package, so it is a rail:
+# tests/rails/test_rooms_store_tree.py.
 
 
 # ── members ────────────────────────────────────────────────────────────────

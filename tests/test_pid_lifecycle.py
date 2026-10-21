@@ -1,7 +1,7 @@
 """Tests for PID tracking and orphan cleanup in session_pid.py."""
 
-import ast
 import os
+import shutil
 import signal
 import time
 from collections import deque
@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from table_rows import row
 
 
 @pytest.fixture()
@@ -448,41 +449,44 @@ class TestStaleSessionWorkspacesAreReaped:
         assert not stale.exists(), "a workspace past the age budget must be reaped"
         assert (fresh / "history.jsonl").exists(), "a live workspace must survive"
 
-    def test_the_age_budget_has_exactly_one_owner(self) -> None:
+    def test_the_sweep_reaps_by_the_owners_age_budget_whatever_it_is(
+        self, sessions: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch, subtests
+    ) -> None:
         """The sweep must DELEGATE, not re-derive the budget.
 
-        An outcome test alone passes just as well if the sweep grows a second,
-        hand-rolled age comparison — and two budgets drift. So pin the shape:
-        ``cleanup_orphaned_sessions`` *calls* the ``context_management`` owner and
-        ``session_pid`` defines no age of its own.
-
-        Asserted over the AST, not the raw text: a substring census is satisfied by
-        the name appearing in a docstring, which is exactly what a revert of the
-        call site leaves behind.
+        An outcome test at the shipped seven days passes just as well if the sweep grows a
+        second, hand-rolled age comparison, and two budgets drift. So the owner's budget
+        (``context_management.SESSION_MAX_AGE_SECS``) is moved, both ways, and the real
+        startup sweep runs over workspaces aged around it: what goes is exactly what is older
+        than the budget as the owner has it now. A sweep that kept a seven-day number of its
+        own keeps the three-hour-old workspace when the budget is two hours, and reaps the
+        eight-day-old one when the budget is thirty days.
         """
-        from personalclaw import session_pid
+        import personalclaw.context_management as context_management
+        from personalclaw.session_pid import cleanup_orphaned_sessions
 
-        src = Path(session_pid.__file__).read_text(encoding="utf-8")
-        sweep = next(
-            n
-            for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.FunctionDef) and n.name == "cleanup_orphaned_sessions"
+        hour, day = 3600, 86400
+        ages = {"dashboard:hour": hour, "dashboard:hours": 3 * hour, "dashboard:days": 8 * day}
+        budgets = (
+            (2 * hour, {"dashboard:hour"}),
+            (30 * day, {"dashboard:hour", "dashboard:hours", "dashboard:days"}),
         )
-        called = {
-            n.func.id
-            for n in ast.walk(sweep)
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-        }
-        assert "cleanup_stale_sessions" in called, "the sweep must CALL the age reaper"
-        assigned = {
-            t.id
-            for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.Assign)
-            for t in n.targets
-            if isinstance(t, ast.Name)
-        }
-        assert "SESSION_MAX_AGE_SECS" not in assigned, "no second definition of the budget"
-        assert "86400" not in src, "the age budget lives in context_management, not here"
+        assert len(budgets) == 2, "a budget was dropped from the table"
+        for budget, kept in budgets:
+            with row(subtests, budget=budget):
+                for name, age in ages.items():
+                    self._workspace(sessions, name, age)
+                session_pid_file.write_text("")
+                monkeypatch.setattr(context_management, "SESSION_MAX_AGE_SECS", budget)
+                with (
+                    patch("personalclaw.session_pid._cleanup_orphaned_mcp_servers", return_value=0),
+                    patch("os.kill", side_effect=ProcessLookupError),
+                ):
+                    cleanup_orphaned_sessions()
+                left = {d.name for d in sessions.iterdir()}
+                for d in sessions.iterdir():
+                    shutil.rmtree(d)
+                assert left == kept, f"under a budget of {budget}s the sweep left {sorted(left)}"
 
 
 class TestTransportTeardownUntracksParentPid:

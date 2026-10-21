@@ -737,16 +737,8 @@ def test_only_one_function_warps_the_real_cursor():
     assert warpers == ["click_global"], warpers
 
 
-def test_no_other_module_in_the_package_warps_the_cursor():
-    """The pointer boundary is drawn in one file, so it can be audited in one file."""
-    package = pathlib.Path(inspect.getsourcefile(macos_driver)).parent
-    offenders = [
-        path.name
-        for path in sorted(package.glob("*.py"))
-        if "CGWarpMouseCursorPosition" in path.read_text(encoding="utf-8")
-        and path.name != "macos_ffi.py"
-    ]
-    assert not offenders, offenders
+# That no module of the package but macos_ffi.py binds the call reads the package, so it is a
+# rail: tests/rails/test_computer_use_macos_driver_tree.py.
 
 
 # ---------------------------------------------------------------------------

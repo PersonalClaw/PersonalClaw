@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 from personalclaw.resilience import doctor
 from personalclaw.resilience.doctor import (
@@ -191,12 +192,10 @@ def test_doctor_error_codes_ride_the_registry():
     ``{"error": {...}}`` payloads — codes the append-only rail could not see, so
     nothing protected them from being reworded or dropped. Both must be
     registered, and the handlers must emit them via ``json_error`` (asserted
-    against the handler source: any reintroduced literal envelope dict reds this).
+    by every door, in the test below).
     """
     import json
-    from pathlib import Path
 
-    import personalclaw.dashboard.handlers.doctor as doctor_handlers
     from personalclaw.http_errors import HTTP_ERROR_CODES, json_error
 
     assert "doctor_disabled" in HTTP_ERROR_CODES
@@ -209,8 +208,76 @@ def test_doctor_error_codes_ride_the_registry():
     assert body["error"]["code"] == "unknown_capability"
     assert body["error"]["message"] == "No such capability: nope."
 
-    source = Path(doctor_handlers.__file__).read_text(encoding="utf-8")
-    assert '"error": {' not in source, "doctor handlers must emit errors via json_error only"
+
+#: Every refusal a Doctor door answers: (method, path, body, doctor on, the code, the status).
+_DOCTOR_REFUSALS = (
+    ("GET", "/api/doctor/memory", None, False, "doctor_disabled", 404),
+    ("POST", "/api/doctor/fix/x", {"confirm": True}, False, "doctor_disabled", 404),
+    ("POST", "/api/doctor/simulate/surfacing", {"text": "x"}, False, "doctor_disabled", 404),
+    ("POST", "/api/doctor/simulate/automation", {"trigger_id": "t"}, False, "doctor_disabled", 404),
+    ("POST", "/api/doctor/remediation/run", {"confirm": True}, False, "doctor_disabled", 404),
+    ("GET", "/api/doctor/crash/x.json", None, False, "doctor_disabled", 404),
+    ("GET", "/api/doctor/nope", None, True, "unknown_capability", 404),
+    ("POST", "/api/doctor/fix/x", {}, True, "confirm_required", 400),
+    ("POST", "/api/doctor/fix/nope", {"confirm": True}, True, "unknown_fix", 404),
+    ("POST", "/api/doctor/simulate/surfacing", {}, True, "text_required", 400),
+    ("POST", "/api/doctor/simulate/automation", {}, True, "trigger_id_required", 400),
+    (
+        "POST",
+        "/api/doctor/simulate/automation",
+        {"trigger_id": "nope"},
+        True,
+        "unknown_trigger",
+        404,
+    ),
+    ("POST", "/api/doctor/remediation/run", {}, True, "confirm_required", 400),
+    ("GET", "/api/doctor/crash/nope.json", None, True, "not_found", 404),
+)
+
+
+@pytest.mark.asyncio
+async def test_every_doctor_refusal_is_built_by_the_registry(monkeypatch, subtests):
+    """Each Doctor door's refusal, driven through the handler the gateway's route table runs for
+    it, with ``json_error`` replaced under every name that holds it by a stand-in that records
+    the code it is asked for and builds the same response. Every refusal is the stand-in's: a
+    door that built its own ``{"error": {...}}`` answers on the wire without asking it, so the
+    append-only rail could not see its code."""
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+    from every_name import put_in_every_name
+    from gateway_routes_shared import gateway_app
+
+    import personalclaw.dashboard.handlers.doctor as doctor_handlers
+    from personalclaw import http_errors
+
+    original = http_errors.json_error
+    asked: list[str] = []
+
+    def _registry(code, *args, **kwargs):
+        asked.append(code)
+        return original(code, *args, **kwargs)
+
+    put_in_every_name(monkeypatch, original, _registry)
+    on = SimpleNamespace(doctor_enabled=True)
+    off = SimpleNamespace(doctor_enabled=False)
+    assert len(_DOCTOR_REFUSALS) == 14, "a refusal was dropped from the table"
+    for method, path, body, enabled, code, status in _DOCTOR_REFUSALS:
+        with row(subtests, method=method, path=path, enabled=enabled, code=code):
+            gateway = gateway_app()
+            match = await gateway.router.resolve(make_mocked_request(method, path, app=gateway))
+            assert match.http_exception is None, f"the gateway serves no {method} {path}"
+            app = web.Application()
+            app.router.add_route(method, match.route.resource.canonical, match.handler)
+            monkeypatch.setattr(doctor_handlers, "_resilience_cfg", lambda: on if enabled else off)
+            asked.clear()
+            async with TestClient(TestServer(app)) as client:
+                answer = await client.request(method, path, json=body)
+                said = await answer.json()
+            assert answer.status == status, (answer.status, said)
+            assert said["error"]["code"] == code, said
+            assert asked == [code], f"the refusal was built without the registry: {asked}"
 
 
 @pytest.mark.asyncio

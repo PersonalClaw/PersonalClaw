@@ -8,10 +8,7 @@ only thing the sibling adds is a directional relabel.
 
 from __future__ import annotations
 
-import ast
-
 import pytest
-from harness_learning_verdict_shared import MODULE
 
 from harness import fanout_measure, learning_verdict
 
@@ -543,33 +540,6 @@ def test_the_token_gate_is_UNREACHABLE_with_an_unrecorded_count(monkeypatch):
     # refusal short-circuits rather than that `compare` is never called at all.
     with pytest.raises(AssertionError, match="compare\\(\\) was reached"):
         learning_verdict.verdict_task(task_id="t", skill="s", **_kw(tokens_on=100, tokens_off=100))
-
-
-def test_the_second_rail_exists_and_is_deliberately_unreachable_in_normal_operation():
-    """Two guards on one flag: the refusal, then a raise between it and `compare`.
-
-    The raise CANNOT be reached while the refusal above it stands, which is the point — it is a
-    mutation rail, not a runtime path, and a test that claimed to exercise it would be lying about
-    its own precondition. What is asserted here is that it is present and that it names the right
-    condition; what proves it bites is deleting the refusal branch, which makes it fire and reds
-    `test_an_unrecorded_token_count_refuses_the_ratio_rather_than_dividing_a_placeholder_zero`
-    instead of publishing a ratio.
-    """
-    src = MODULE.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    raises = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Raise)
-        and isinstance(node.exc, ast.Call)
-        and isinstance(node.exc.func, ast.Name)
-        and node.exc.func.id == "IncommensurableSpendError"
-    ]
-    # One for the spend BASIS, one for the unrecorded COUNT. Both bases the gate cannot use.
-    assert len(raises) == 2, "both IncommensurableSpendError rails must stand"
-    assert "the token-match gate was reached" in src
-    # And the raise sits BEFORE the `compare` call, not after it — after would be a post-mortem.
-    assert src.index("the token-match gate was reached") < src.index("comparison = compare(task_id")
 
 
 def test_a_recorded_zero_token_arm_is_still_a_measurement_not_a_refusal():

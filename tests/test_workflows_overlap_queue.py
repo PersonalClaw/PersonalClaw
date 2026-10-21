@@ -32,6 +32,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from table_rows import row
 
 from personalclaw.action_providers.run_workflow_provider import RunWorkflowActionProvider
 from personalclaw.workflows import defs as defs_mod
@@ -439,17 +440,76 @@ class TestExhaustiveness:
         }
         assert named == {member.name for member in OverlapPolicy}
 
-    def test_the_provider_refuses_an_action_it_has_no_branch_for(self) -> None:
-        """The call site's dangerous default is "fall through and launch". Every member of
-        `OverlapAction` is named in the provider, so a new one cannot silently launch."""
-        source = Path(
-            inspect.getsourcefile(
-                inspect.getmodule(RunWorkflowActionProvider) or RunWorkflowActionProvider
-            )
-            or ""
-        ).read_text(encoding="utf-8")
-        for member in OverlapAction:
-            assert f"Act.{member.name}" in source, f"OverlapAction.{member.name} has no call site"
+    async def test_the_provider_acts_on_every_action_and_refuses_one_it_has_no_branch_for(
+        self, harness, monkeypatch, subtests
+    ) -> None:
+        """The call site's dangerous default is "fall through and launch". The real provider is
+        fired with `overlap.decide` answering each member of `OverlapAction` in turn (a stand-in
+        under every name that holds it), over a def with a run in flight and a start queued
+        behind it: each member does its own thing, and an action the provider has no branch for
+        is refused before any run exists, so a new member cannot silently launch."""
+        from enum import Enum
+
+        from every_name import put_in_every_name
+
+        class _Later(str, Enum):
+            FUTURE = "future"
+
+        decided: list[Any] = []
+        put_in_every_name(
+            monkeypatch, overlap_mod.decide, lambda _policy, *, active, queued: decided[-1]
+        )
+        #: (what `decide` answers, the outcome, runs created, the new run started, prior cancelled)
+        actions = (
+            (OverlapAction.START, "launched", 1, True, False),
+            (OverlapAction.SKIP, "skip", 0, False, False),
+            (OverlapAction.CANCEL_THEN_START, "launched", 1, True, True),
+            (OverlapAction.QUEUE, "queued", 1, False, False),
+            (OverlapAction.DROP, "skip", 0, False, False),
+            (_Later.FUTURE, None, 0, False, False),
+        )
+        assert {a for a, *_ in actions} >= set(OverlapAction), "a member has no row"
+        assert len(actions) == len(OverlapAction) + 1, "a row was dropped from the table"
+        for action, outcome, created, started, cancelled in actions:
+            with row(subtests, action=action.name):
+                spec = harness.install("queue")
+                prior = _busy_prior(spec)
+                behind = store.create(
+                    WorkflowRun(
+                        id="",
+                        workflow_name=NAME,
+                        status=RunStatus.DRAFT,
+                        extra=overlap_mod.queued_extra(),
+                    )
+                )
+                store.write_spec(behind.id, spec)
+                decided.append(action)
+                try:
+                    if outcome is None:
+                        with pytest.raises(
+                            AssertionError, match="no branch for OverlapAction.FUTURE"
+                        ):
+                            await _fire()
+                    else:
+                        result = await _fire()
+                        assert result.outcome == outcome, (result.outcome, result.stdout)
+                    made = [
+                        r
+                        for r in store.list_runs(workflow_name=NAME, limit=50)[0]
+                        if r.id not in (prior.id, behind.id)
+                    ]
+                    assert len(made) == created, f"{action.name} created {len(made)} run(s)"
+                    assert [harness.watchdog.controller(r.id) is not None for r in made] == (
+                        [started] * created
+                    ), f"{action.name}: started is not {started}"
+                    assert store.cancel_requested(prior.id) is cancelled
+                finally:
+                    for run in store.list_runs(workflow_name=NAME, limit=50)[0]:
+                        controller = harness.watchdog.controller(run.id)
+                        if controller is not None:
+                            await controller.stop()
+                            harness.watchdog.forget(run.id)
+                        store.delete(run.id)
 
 
 class TestDecisionTable:

@@ -22,6 +22,7 @@ import asyncio
 import pathlib
 
 import pytest
+from table_rows import row
 
 from personalclaw.action_providers import bash_provider
 from personalclaw.action_providers.base import ActionContext
@@ -132,16 +133,51 @@ def test_the_action_path_inherits_whatever_the_screener_learns():
     assert not security.is_sensitive_bash_command("echo hi")
 
 
-def test_the_screener_is_shared_with_the_interactive_path():
+def test_the_screener_is_shared_with_the_interactive_path(monkeypatch, subtests):
     """Not a second copy of the rules.
 
-    The provider must reach the SAME function `hooks.py` uses, so a pattern added for the
-    interactive path protects actions too — and the guard cannot drift into two vocabularies.
+    The provider must reach the SAME function the interactive path (`hooks.py`) uses, so a
+    pattern added for the interactive path protects actions too, and the guard cannot drift into
+    two vocabularies. So the shared screener is replaced, under every name that holds it, by one
+    that has learnt a new pattern (an `echo` of a marker the real one lets pass), and both doors
+    are driven with it: each refuses the command with the new screener's reason. A door that kept
+    its own copy of the rules would run the command, or refuse it in the old words.
     """
-    hooks_src = pathlib.Path(
-        pathlib.Path(bash_provider.__file__).parent.parent / "hooks.py"
-    ).read_text()
-    assert "is_sensitive_bash_command" in hooks_src, "the interactive path changed; re-derive this"
+    from every_name import put_in_every_name
+
+    from personalclaw import security
+    from personalclaw.hooks import HookManager
+
+    command = "echo shared-screener-probe"
+    reason = "Blocked: the shared screener's newest pattern"
+    assert security.is_sensitive_bash_command(command) is None, "premise: the real one lets it run"
+    original = security.is_sensitive_bash_command
+    asked: list[str] = []
+
+    def _learnt(text, *args, **kwargs):
+        asked.append(text)
+        return reason if "shared-screener-probe" in text else original(text, *args, **kwargs)
+
+    put_in_every_name(monkeypatch, original, _learnt)
+
+    def _interactive() -> str:
+        result = HookManager().on_tool_call(f"Running: {command}")
+        assert result.action == "deny", result
+        return result.reason
+
+    def _action() -> str:
+        result = _run(command)
+        assert result.success is False, "the action ran a command the screener refuses"
+        return result.error or ""
+
+    doors = (("the interactive path", _interactive), ("a bash action", _action))
+    assert len(doors) == 2, "a door was dropped from the table"
+    for door, refuse in doors:
+        with row(subtests, door=door):
+            asked.clear()
+            said = refuse()
+            assert reason in said, f"{door} refused in other words: {said!r}"
+            assert command in asked, f"{door} never asked the shared screener"
 
 
 def test_an_imported_cron_cannot_smuggle_an_unscreened_command(tmp_path, monkeypatch):
