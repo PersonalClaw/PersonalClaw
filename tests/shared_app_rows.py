@@ -9,7 +9,8 @@ table on that copy. Nothing one row did reaches the next:
   copy's before the row runs, so a row never sees another row's grant, install, setting or file;
 - **sessions** are all signed out before every row, and the row gets a gateway of its own, an
   owner token of its own and an app token minted for it;
-- **the Security Event Log rows** are read from a recorder made for the row, empty when it starts;
+- **the Security Event Log rows** are read from a recorder made for the row, empty when it starts:
+  every row the row's requests write, the token middleware's included (:func:`recording_sel`);
 - **the fenced registries** (:func:`state_leak_guard.fenced_state`, what the conftest's fences put
   back once per test) are read before and after every row against the table's first reading. A
   row that changed one fails, and so does the row after it, each by name.
@@ -43,6 +44,22 @@ RESETS = frozenset({"home", "sel"})
 
 #: A gateway factory: the routes it serves, and the gateway it yields.
 Gateway = Callable[[list[tuple[str, str, Any]]], AbstractAsyncContextManager[Any]]
+
+
+@contextmanager
+def recording_sel(recorder: MagicMock) -> Iterator[None]:
+    """Every Security Event Log row written in the block sent to *recorder*, not the home's log.
+
+    Two seams: ``personalclaw.sel.sel``, which every writer but one asks for the log when it
+    writes, and the token middleware's own name for it, bound when ``token_auth`` was imported.
+    That one writes a request's success row after the handler answers, so a refusal a handler
+    answers (rather than raises) would otherwise be seen writing the home's log.
+    """
+    with (
+        patch("personalclaw.sel.sel", return_value=recorder),
+        patch("personalclaw.dashboard.token_auth._sel_fn", return_value=recorder),
+    ):
+        yield
 
 
 def digest(home: Path) -> str:
@@ -201,7 +218,7 @@ class SharedApp:
                 assert (
                     not sel.log_api_access.call_args_list
                 ), f"{name} would start with Security Event Log rows a row before it wrote"
-                with patch("personalclaw.sel.sel", return_value=sel):
+                with recording_sel(sel):
                     async with self.gateway(routes) as gw:
                         token = str((await gw.ok("POST", f"/api/apps/{self.name}/token"))["token"])
                         await body(Row(gw, token, self._home, sel.log_api_access, self.name))

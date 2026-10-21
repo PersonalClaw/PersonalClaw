@@ -14,15 +14,50 @@ These drive the real config PATCH handler on an isolated home.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from test_apps_cannot_relax_security import _config_app, _patch, _seed
+from signed_in_sessions import without_sign_in
 
 CAP = "guardrails.budgets.max_dollars_per_day"
 CAP_SENTENCE = "The agent may spend more money per day — 0 removes the limit."
+
+
+def _config_app() -> web.Application:
+    """The config PATCH handler, reached by you: the user ``token_auth`` hands it."""
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+
+    @web.middleware
+    async def owner(request: web.Request, handler: Any) -> web.StreamResponse:
+        request["user"] = "owner"
+        return await handler(request)
+
+    app = without_sign_in(web.Application(middlewares=[owner]))
+    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
+    return app
+
+
+def _seed(path, data: dict) -> str:
+    text = json.dumps(data)
+    path.write_text(text, encoding="utf-8")
+    return text
+
+
+async def _patch(client: TestClient, field: str, value: Any, *, confirm: bool = False):
+    """Your write, as the SPA sends it: a field holding a whole list or object names the revision
+    of the value it replaces (`personalclaw/stale_write.py`), read from what is stored."""
+    from personalclaw.dashboard.handlers.core import _DOCUMENT_PATHS, _value_in_effect
+    from personalclaw.stale_write import revision_of
+
+    body: dict[str, Any] = {"path": field, "value": value}
+    if confirm:
+        body["confirm"] = True
+    headers = {"If-Match": revision_of(_value_in_effect(field))} if field in _DOCUMENT_PATHS else {}
+    return await client.patch("/api/config/personalclaw", json=body, headers=headers)
 
 
 @pytest.fixture
