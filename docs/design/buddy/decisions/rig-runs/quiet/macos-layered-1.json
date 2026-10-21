@@ -1,0 +1,5154 @@
+{
+ "candidate": "layered",
+ "fps": 30,
+ "versions": {
+  "electron": "44.7.2",
+  "chrome": "152.0.7977.149",
+  "node": "24.21.0"
+ },
+ "window": {
+  "width": 420,
+  "height": 600,
+  "scaleFactor": 2,
+  "refreshHz": 120.00000762939453
+ },
+ "start": {
+  "phase": "idle",
+  "card": false,
+  "looping": null,
+  "view": "layered",
+  "size": 48,
+  "fps": 30,
+  "dials": {
+   "bounciness": 1,
+   "expressiveness": 0.8
+  },
+  "scheme": "coral",
+  "mode": "dark",
+  "reduced": false
+ },
+ "resources": {
+  "baseline": [
+   "/assets/index-zmd0kg9I.js",
+   "/assets/preload-helper-BLdHbfdN.js",
+   "/assets/rolldown-runtime-COiEfhsA.js",
+   "/assets/jsx-runtime-DePvh3-m.js",
+   "/assets/react-B8SKf8RM.js",
+   "/assets/theme-BjD3LF2p.js",
+   "/assets/use-combine-values-BVlFSfFn.js",
+   "/assets/loader-circle-D6ebn-QV.js",
+   "/assets/motion-Cjvb5aHE.js",
+   "/assets/errText-DgTRAvrO.js",
+   "/assets/dialog-DD7oVQCO.js",
+   "/assets/personality-BOMQFdQ6.js",
+   "/assets/Surface-CUUldZOF.js",
+   "/assets/triangle-alert-D2qTjOFC.js",
+   "/assets/target-tSlfmuTL.js",
+   "/assets/appSdk-CJVOIO6L.js",
+   "/assets/activity-xKloc2B5.js",
+   "/assets/archive-C2_n-X5V.js",
+   "/assets/file-box-D5I9uVXh.js",
+   "/assets/anchor-C415QKKw.js",
+   "/assets/arrow-left-right-DqgWH-26.js",
+   "/assets/trending-up-BT2-NV_s.js",
+   "/assets/arrow-up-right-KsyKSxDJ.js",
+   "/assets/share-2-XqtgX-RW.js",
+   "/assets/editor.api-B8xKZlHV.js",
+   "/assets/slash-DHiTK5aB.js",
+   "/assets/user-check-BSgmmthx.js",
+   "/assets/ban-Bar84hEi.js",
+   "/assets/sticky-note-ByayK4i_.js",
+   "/assets/webhook-DRj6zI-N.js",
+   "/assets/panel-top-C5gvDy9C.js",
+   "/assets/orbit-DqlsQvRl.js",
+   "/assets/book-bookmark-D0tx0zwT.js",
+   "/assets/wifi-off-BVSTb5Em.js",
+   "/assets/bookmark-B2kASeOc.js",
+   "/assets/file-plus-corner-OdWmUJMJ.js",
+   "/assets/feather-sguUiEQ3.js",
+   "/assets/boxes-BO2mbyTz.js",
+   "/assets/bot-vZs_EKG_.js",
+   "/assets/box-DaVriGht.js",
+   "/assets/braces-Yt9jaG6Z.js",
+   "/assets/brain-Dj4u9BhN.js",
+   "/assets/calendar-days-DyUbr-B5.js",
+   "/assets/calendar-clock-BKw8nX7Y.js",
+   "/assets/chart-column-Cce39v1V.js",
+   "/assets/sunrise-7NFsr70T.js",
+   "/assets/chevron-up-CECD1yI5.js",
+   "/assets/message-circle-B-NWvupm.js",
+   "/assets/circle-play-CSrDjKpv.js",
+   "/assets/circle-alert-_nluwIr0.js",
+   "/assets/circle-slash-CHhTW05T.js",
+   "/assets/tags-DIRA2Vyg.js",
+   "/assets/circle-pause-CGNajvqM.js",
+   "/assets/circle-dot-CHl9fi-c.js",
+   "/assets/circle-x-COOmjiD_.js",
+   "/assets/circle-question-mark-DwVOWwUC.js",
+   "/assets/circle-stop-CVowAuIP.js",
+   "/assets/circle-Ci-MDeFd.js",
+   "/assets/code-xml-CqUQR6be.js",
+   "/assets/split-CO205gyO.js",
+   "/assets/compass-DAaCInUa.js",
+   "/assets/cog-fcusiz9F.js",
+   "/assets/contrast-CnSbLqMo.js",
+   "/assets/text-wrap-DUs38VkU.js",
+   "/assets/corner-down-left-CBqjDQh7.js",
+   "/assets/copy-CtlXNOR1.js",
+   "/assets/cpu-BLPKbttf.js",
+   "/assets/corner-down-right-DFdvVWPT.js",
+   "/assets/sliders-vertical-DTTQ4HAY.js",
+   "/assets/folder-tree-Ct2V0t45.js",
+   "/assets/dollar-sign-XTip0MiD.js",
+   "/assets/ellipsis-C0LmoCdM.js",
+   "/assets/database-BEA-D33D.js",
+   "/assets/file-code-corner-CNQU_KNp.js",
+   "/assets/store-Bp_pTnX3.js",
+   "/assets/table-BdD0y1Ej.js",
+   "/assets/file-exclamation-point-pN_PP-D7.js",
+   "/assets/sparkle-DnokJdXI.js",
+   "/assets/file-pen-CZLLUEPf.js",
+   "/assets/files-BC4IB58L.js",
+   "/assets/file-jVSEhn_E.js",
+   "/assets/flask-conical-Ca8YdVeu.js",
+   "/assets/folder-open-DpLfchoi.js",
+   "/assets/folder-lock-itjBAvBr.js",
+   "/assets/folder-git-2-DKg7JnEN.js",
+   "/assets/folder-CdlqWl3c.js",
+   "/assets/funnel-D_LbEG2C.js",
+   "/assets/folder-plus-Cta3b89j.js",
+   "/assets/git-merge-DOxhv5mZ.js",
+   "/assets/gavel-Cu6DfV1J.js",
+   "/assets/globe-DXWKLzSM.js",
+   "/assets/gauge-DGEF9fp8.js",
+   "/assets/graduation-cap-DZwqpFKo.js",
+   "/assets/grip-vertical-vOCKkVwm.js",
+   "/assets/hash-CUFJ13AN.js",
+   "/assets/heart-pulse-Cpds8cxp.js",
+   "/assets/panel-right-open-Bopttc8b.js",
+   "/assets/image-BTRe23F2.js",
+   "/assets/hand-tr3T0tQ_.js",
+   "/assets/info-DjmdisZ2.js",
+   "/assets/key-round-D0WnwAej.js",
+   "/assets/layers-B2lXIxKz.js",
+   "/assets/link-BCha7bbH.js",
+   "/assets/layout-grid-ndjlxwtU.js",
+   "/assets/smartphone-eepDPB-G.js",
+   "/assets/list-plus-3-ooT5n9.js",
+   "/assets/list-todo-BYzUDldF.js",
+   "/assets/maximize-2-D0iPssAk.js",
+   "/assets/list-CQkAn62C.js",
+   "/assets/message-circle-question-mark-Cuiw4xVM.js",
+   "/assets/message-square-plus-Eo6qIT0t.js",
+   "/assets/messages-square-LRSsFcxO.js",
+   "/assets/octagon-alert-edDHEHn7.js",
+   "/assets/minus-CT3KH-7f.js",
+   "/assets/minimize-2-CxXTF8VZ.js",
+   "/assets/package-D_lHdINe.js",
+   "/assets/PageTitle-2HQ3EgES.js",
+   "/assets/palette-DPlV3s6k.js",
+   "/assets/panel-right-close-CzNiGofK.js",
+   "/assets/pencil-line-CRyaoQBP.js",
+   "/assets/panel-right-NEuPUI3X.js",
+   "/assets/paperclip-CBx7NaGn.js",
+   "/assets/pause-CaOHOQr3.js",
+   "/assets/pin-RDf7-kwp.js",
+   "/assets/pin-off-C4S5h7pN.js",
+   "/assets/plug-SJFtyoMu.js",
+   "/assets/power-off-CA0YqS9p.js",
+   "/assets/user-plus-DXmAHnxf.js",
+   "/assets/repeat-CphqK7ul.js",
+   "/assets/rocket-ZNb8WUcB.js",
+   "/assets/rotate-ccw-clock-DUa1UInb.js",
+   "/assets/route-DGZ0QpjW.js",
+   "/assets/rotate-cw-DycjWJuA.js",
+   "/assets/save-Cm1rropn.js",
+   "/assets/type-6JQwHKsC.js",
+   "/assets/scale-BmXn1LOq.js",
+   "/assets/scissors-_NUL7AEE.js",
+   "/assets/scroll-text-c4Cu3QBt.js",
+   "/assets/server-BuXiwq6T.js",
+   "/assets/settings-RiRnNW9Y.js",
+   "/assets/shield-alert-Ce9n-ILs.js",
+   "/assets/settings-2-iwz_cCpm.js",
+   "/assets/shield-off-C4qwLnbf.js",
+   "/assets/shield-question-mark-Dsj5k5pD.js",
+   "/assets/sliders-horizontal-bto9Lt76.js",
+   "/assets/square-function-B22XOP4F.js",
+   "/assets/terminal-BkFcLhbr.js",
+   "/assets/shield-x-Dj10XPab.js",
+   "/assets/square-terminal-CG2uHJLD.js",
+   "/assets/square-Dq1mP79E.js",
+   "/assets/telescope-_ib3dlrP.js",
+   "/assets/tag-CnBSDkK6.js",
+   "/assets/thumbs-down-Q5fgYrec.js",
+   "/assets/undo-2-Bo_6dMmV.js",
+   "/assets/user-round-BNcTVWlT.js",
+   "/assets/user-6VsjzZgu.js",
+   "/assets/wand-sparkles-C0tCgul3.js",
+   "/assets/volume-x-_QfyRGzJ.js",
+   "/assets/upload-Bj6TAFzH.js",
+   "/assets/workflow-Dxk7gW3v.js",
+   "/assets/data-GsCQxqnM.js",
+   "/assets/TextLink-DWNqAF5N.js",
+   "/assets/wrench-CFLBogmE.js",
+   "/assets/useMenuCursor-BpEoH_C8.js",
+   "/assets/approvalMeta-CIr0SraB.js",
+   "/assets/Segmented-BnOty_H4.js",
+   "/assets/appIcon-map1IrI0.js",
+   "/assets/Modal-NYQwBaef.js",
+   "/assets/reportingWrite-HMouRAdH.js",
+   "/assets/agentMeta-DQ_dh7Br.js",
+   "/assets/widgetStyles-B40Ap6z0.js",
+   "/assets/katex-0lCm1UqL.js",
+   "/assets/Toggle-CN4Jdf1C.js",
+   "/assets/QuietButton-CT8DxvM3.js",
+   "/assets/Combobox-Ch9kb-Tf.js",
+   "/assets/editor-B8GMDV7_.css",
+   "/assets/index-CdNxvWqe.css",
+   "/assets/tailwindcss-CEFBKf7v.js",
+   "/assets/lib-Du2jb7_Y.js",
+   "/assets/BuddyRigHarness-YPhzcl7y.js"
+  ],
+  "loaded": [
+   "/assets/index-zmd0kg9I.js",
+   "/assets/rolldown-runtime-COiEfhsA.js",
+   "/assets/react-B8SKf8RM.js",
+   "/assets/preload-helper-BLdHbfdN.js",
+   "/assets/jsx-runtime-DePvh3-m.js",
+   "/assets/theme-BjD3LF2p.js",
+   "/assets/motion-Cjvb5aHE.js",
+   "/assets/loader-circle-D6ebn-QV.js",
+   "/assets/use-combine-values-BVlFSfFn.js",
+   "/assets/errText-DgTRAvrO.js",
+   "/assets/dialog-DD7oVQCO.js",
+   "/assets/personality-BOMQFdQ6.js",
+   "/assets/triangle-alert-D2qTjOFC.js",
+   "/assets/Surface-CUUldZOF.js",
+   "/assets/target-tSlfmuTL.js",
+   "/assets/appSdk-CJVOIO6L.js",
+   "/assets/activity-xKloc2B5.js",
+   "/assets/anchor-C415QKKw.js",
+   "/assets/editor.api-B8xKZlHV.js",
+   "/assets/file-box-D5I9uVXh.js",
+   "/assets/arrow-left-right-DqgWH-26.js",
+   "/assets/archive-C2_n-X5V.js",
+   "/assets/share-2-XqtgX-RW.js",
+   "/assets/trending-up-BT2-NV_s.js",
+   "/assets/arrow-up-right-KsyKSxDJ.js",
+   "/assets/ban-Bar84hEi.js",
+   "/assets/slash-DHiTK5aB.js",
+   "/assets/user-check-BSgmmthx.js",
+   "/assets/sticky-note-ByayK4i_.js",
+   "/assets/webhook-DRj6zI-N.js",
+   "/assets/orbit-DqlsQvRl.js",
+   "/assets/panel-top-C5gvDy9C.js",
+   "/assets/book-bookmark-D0tx0zwT.js",
+   "/assets/wifi-off-BVSTb5Em.js",
+   "/assets/feather-sguUiEQ3.js",
+   "/assets/boxes-BO2mbyTz.js",
+   "/assets/file-plus-corner-OdWmUJMJ.js",
+   "/assets/bot-vZs_EKG_.js",
+   "/assets/box-DaVriGht.js",
+   "/assets/bookmark-B2kASeOc.js",
+   "/assets/braces-Yt9jaG6Z.js",
+   "/assets/sunrise-7NFsr70T.js",
+   "/assets/calendar-clock-BKw8nX7Y.js",
+   "/assets/brain-Dj4u9BhN.js",
+   "/assets/chart-column-Cce39v1V.js",
+   "/assets/calendar-days-DyUbr-B5.js",
+   "/assets/message-circle-B-NWvupm.js",
+   "/assets/circle-play-CSrDjKpv.js",
+   "/assets/chevron-up-CECD1yI5.js",
+   "/assets/tags-DIRA2Vyg.js",
+   "/assets/circle-alert-_nluwIr0.js",
+   "/assets/circle-slash-CHhTW05T.js",
+   "/assets/circle-dot-CHl9fi-c.js",
+   "/assets/circle-pause-CGNajvqM.js",
+   "/assets/circle-question-mark-DwVOWwUC.js",
+   "/assets/circle-stop-CVowAuIP.js",
+   "/assets/circle-x-COOmjiD_.js",
+   "/assets/circle-Ci-MDeFd.js",
+   "/assets/split-CO205gyO.js",
+   "/assets/code-xml-CqUQR6be.js",
+   "/assets/cog-fcusiz9F.js",
+   "/assets/text-wrap-DUs38VkU.js",
+   "/assets/compass-DAaCInUa.js",
+   "/assets/contrast-CnSbLqMo.js",
+   "/assets/corner-down-right-DFdvVWPT.js",
+   "/assets/copy-CtlXNOR1.js",
+   "/assets/corner-down-left-CBqjDQh7.js",
+   "/assets/folder-tree-Ct2V0t45.js",
+   "/assets/sliders-vertical-DTTQ4HAY.js",
+   "/assets/cpu-BLPKbttf.js",
+   "/assets/database-BEA-D33D.js",
+   "/assets/dollar-sign-XTip0MiD.js",
+   "/assets/table-BdD0y1Ej.js",
+   "/assets/ellipsis-C0LmoCdM.js",
+   "/assets/file-code-corner-CNQU_KNp.js",
+   "/assets/store-Bp_pTnX3.js",
+   "/assets/sparkle-DnokJdXI.js",
+   "/assets/file-pen-CZLLUEPf.js",
+   "/assets/file-exclamation-point-pN_PP-D7.js",
+   "/assets/file-jVSEhn_E.js",
+   "/assets/files-BC4IB58L.js",
+   "/assets/flask-conical-Ca8YdVeu.js",
+   "/assets/folder-lock-itjBAvBr.js",
+   "/assets/folder-git-2-DKg7JnEN.js",
+   "/assets/folder-plus-Cta3b89j.js",
+   "/assets/folder-open-DpLfchoi.js",
+   "/assets/folder-CdlqWl3c.js",
+   "/assets/funnel-D_LbEG2C.js",
+   "/assets/gauge-DGEF9fp8.js",
+   "/assets/gavel-Cu6DfV1J.js",
+   "/assets/globe-DXWKLzSM.js",
+   "/assets/git-merge-DOxhv5mZ.js",
+   "/assets/graduation-cap-DZwqpFKo.js",
+   "/assets/grip-vertical-vOCKkVwm.js",
+   "/assets/image-BTRe23F2.js",
+   "/assets/heart-pulse-Cpds8cxp.js",
+   "/assets/hand-tr3T0tQ_.js",
+   "/assets/panel-right-open-Bopttc8b.js",
+   "/assets/hash-CUFJ13AN.js",
+   "/assets/info-DjmdisZ2.js",
+   "/assets/smartphone-eepDPB-G.js",
+   "/assets/layers-B2lXIxKz.js",
+   "/assets/key-round-D0WnwAej.js",
+   "/assets/list-plus-3-ooT5n9.js",
+   "/assets/link-BCha7bbH.js",
+   "/assets/layout-grid-ndjlxwtU.js",
+   "/assets/list-todo-BYzUDldF.js",
+   "/assets/maximize-2-D0iPssAk.js",
+   "/assets/message-square-plus-Eo6qIT0t.js",
+   "/assets/list-CQkAn62C.js",
+   "/assets/message-circle-question-mark-Cuiw4xVM.js",
+   "/assets/messages-square-LRSsFcxO.js",
+   "/assets/PageTitle-2HQ3EgES.js",
+   "/assets/minimize-2-CxXTF8VZ.js",
+   "/assets/minus-CT3KH-7f.js",
+   "/assets/octagon-alert-edDHEHn7.js",
+   "/assets/package-D_lHdINe.js",
+   "/assets/palette-DPlV3s6k.js",
+   "/assets/panel-right-close-CzNiGofK.js",
+   "/assets/panel-right-NEuPUI3X.js",
+   "/assets/paperclip-CBx7NaGn.js",
+   "/assets/pause-CaOHOQr3.js",
+   "/assets/pencil-line-CRyaoQBP.js",
+   "/assets/pin-RDf7-kwp.js",
+   "/assets/pin-off-C4S5h7pN.js",
+   "/assets/power-off-CA0YqS9p.js",
+   "/assets/plug-SJFtyoMu.js",
+   "/assets/user-plus-DXmAHnxf.js",
+   "/assets/repeat-CphqK7ul.js",
+   "/assets/rocket-ZNb8WUcB.js",
+   "/assets/rotate-ccw-clock-DUa1UInb.js",
+   "/assets/rotate-cw-DycjWJuA.js",
+   "/assets/type-6JQwHKsC.js",
+   "/assets/route-DGZ0QpjW.js",
+   "/assets/save-Cm1rropn.js",
+   "/assets/scale-BmXn1LOq.js",
+   "/assets/scissors-_NUL7AEE.js",
+   "/assets/scroll-text-c4Cu3QBt.js",
+   "/assets/server-BuXiwq6T.js",
+   "/assets/settings-2-iwz_cCpm.js",
+   "/assets/settings-RiRnNW9Y.js",
+   "/assets/shield-alert-Ce9n-ILs.js",
+   "/assets/shield-off-C4qwLnbf.js",
+   "/assets/shield-question-mark-Dsj5k5pD.js",
+   "/assets/shield-x-Dj10XPab.js",
+   "/assets/terminal-BkFcLhbr.js",
+   "/assets/sliders-horizontal-bto9Lt76.js",
+   "/assets/square-function-B22XOP4F.js",
+   "/assets/square-Dq1mP79E.js",
+   "/assets/square-terminal-CG2uHJLD.js",
+   "/assets/tag-CnBSDkK6.js",
+   "/assets/thumbs-down-Q5fgYrec.js",
+   "/assets/telescope-_ib3dlrP.js",
+   "/assets/upload-Bj6TAFzH.js",
+   "/assets/undo-2-Bo_6dMmV.js",
+   "/assets/user-round-BNcTVWlT.js",
+   "/assets/user-6VsjzZgu.js",
+   "/assets/wand-sparkles-C0tCgul3.js",
+   "/assets/volume-x-_QfyRGzJ.js",
+   "/assets/workflow-Dxk7gW3v.js",
+   "/assets/data-GsCQxqnM.js",
+   "/assets/TextLink-DWNqAF5N.js",
+   "/assets/wrench-CFLBogmE.js",
+   "/assets/appIcon-map1IrI0.js",
+   "/assets/useMenuCursor-BpEoH_C8.js",
+   "/assets/approvalMeta-CIr0SraB.js",
+   "/assets/Modal-NYQwBaef.js",
+   "/assets/Segmented-BnOty_H4.js",
+   "/assets/reportingWrite-HMouRAdH.js",
+   "/assets/katex-0lCm1UqL.js",
+   "/assets/widgetStyles-B40Ap6z0.js",
+   "/assets/agentMeta-DQ_dh7Br.js",
+   "/assets/Combobox-Ch9kb-Tf.js",
+   "/assets/Toggle-CN4Jdf1C.js",
+   "/assets/QuietButton-CT8DxvM3.js",
+   "/assets/editor-B8GMDV7_.css",
+   "/assets/index-CdNxvWqe.css",
+   "/assets/lib-Du2jb7_Y.js",
+   "/assets/tailwindcss-CEFBKf7v.js",
+   "/assets/BuddyRigHarness-YPhzcl7y.js",
+   "/assets/CandidateLayered-LeafEVXW.js",
+   "/assets/usePose-iVl1kMa3.js"
+  ]
+ },
+ "harness": {
+  "rows": [
+   {
+    "t": 1,
+    "renderer": {
+     "cpu": 0.049950049950055544,
+     "reportedCpu": 0.002774320973844368,
+     "idleWakeups": 1,
+     "workingSetKb": 146944
+    },
+    "gpu": {
+     "cpu": 0.1890109890109895,
+     "reportedCpu": 0.01049798862532945,
+     "idleWakeups": 31,
+     "workingSetKb": 66096
+    },
+    "browser": {
+     "cpu": 0.2806193806193757,
+     "reportedCpu": 0.015585932866077163,
+     "idleWakeups": 6,
+     "workingSetKb": 139968
+    },
+    "load": [
+     22.57861328125,
+     27.251953125,
+     24.5703125
+    ]
+   },
+   {
+    "t": 2,
+    "renderer": {
+     "cpu": 0.008891108891109466,
+     "reportedCpu": 0.0004938286401302021,
+     "idleWakeups": 1,
+     "workingSetKb": 136816
+    },
+    "gpu": {
+     "cpu": 0.008191808191808068,
+     "reportedCpu": 0.0004549895485571505,
+     "idleWakeups": 2,
+     "workingSetKb": 65232
+    },
+    "browser": {
+     "cpu": 0.27152847152847137,
+     "reportedCpu": 0.015081660700588084,
+     "idleWakeups": 5,
+     "workingSetKb": 133024
+    },
+    "load": [
+     22.57861328125,
+     27.251953125,
+     24.5703125
+    ]
+   },
+   {
+    "t": 3,
+    "renderer": {
+     "cpu": 0.10499500499499632,
+     "reportedCpu": 0.005836560101408427,
+     "idleWakeups": 3,
+     "workingSetKb": 96592
+    },
+    "gpu": {
+     "cpu": 0.08241758241758167,
+     "reportedCpu": 0.004581445777672932,
+     "idleWakeups": 1,
+     "workingSetKb": 63648
+    },
+    "browser": {
+     "cpu": 0.10169830169829805,
+     "reportedCpu": 0.005653113410562193,
+     "idleWakeups": 2,
+     "workingSetKb": 127376
+    },
+    "load": [
+     22.57861328125,
+     27.251953125,
+     24.5703125
+    ]
+   },
+   {
+    "t": 4,
+    "renderer": {
+     "cpu": 0.013486513486513113,
+     "reportedCpu": 0.0007493046452891716,
+     "idleWakeups": 1,
+     "workingSetKb": 93152
+    },
+    "gpu": {
+     "cpu": 0.01018981018980929,
+     "reportedCpu": 0.0005661390250952779,
+     "idleWakeups": 5,
+     "workingSetKb": 60544
+    },
+    "browser": {
+     "cpu": 0.0852147852147845,
+     "reportedCpu": 0.004734457436728111,
+     "idleWakeups": 2,
+     "workingSetKb": 127152
+    },
+    "load": [
+     21.9716796875,
+     27.04833984375,
+     24.51416015625
+    ]
+   },
+   {
+    "t": 5,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 60544
+    },
+    "browser": {
+     "cpu": 0.13306693306693307,
+     "reportedCpu": 0.007391381648997269,
+     "idleWakeups": 2,
+     "workingSetKb": 127680
+    },
+    "load": [
+     21.9716796875,
+     27.04833984375,
+     24.51416015625
+    ]
+   },
+   {
+    "t": 6,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 90704
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 58864
+    },
+    "browser": {
+     "cpu": 0.5194805194805289,
+     "reportedCpu": 0.02885331275426288,
+     "idleWakeups": 6,
+     "workingSetKb": 125888
+    },
+    "load": [
+     21.9716796875,
+     27.04833984375,
+     24.51416015625
+    ]
+   },
+   {
+    "t": 7,
+    "renderer": {
+     "cpu": 0.14425574425574436,
+     "reportedCpu": 0.008011390821831107,
+     "idleWakeups": 7,
+     "workingSetKb": 93184
+    },
+    "gpu": {
+     "cpu": 0.008791208791209265,
+     "reportedCpu": 0.0004882297786876606,
+     "idleWakeups": 1,
+     "workingSetKb": 58752
+    },
+    "browser": {
+     "cpu": 0.29350649350649316,
+     "reportedCpu": 0.016300412270604154,
+     "idleWakeups": 5,
+     "workingSetKb": 127232
+    },
+    "load": [
+     21.9716796875,
+     27.04833984375,
+     24.51416015625
+    ]
+   },
+   {
+    "t": 8,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 92448
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 58752
+    },
+    "browser": {
+     "cpu": 0.1537387836490461,
+     "reportedCpu": 0.008547179098322491,
+     "idleWakeups": 4,
+     "workingSetKb": 125936
+    },
+    "load": [
+     21.9716796875,
+     27.04833984375,
+     24.51416015625
+    ]
+   },
+   {
+    "t": 9,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 92448
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 58752
+    },
+    "browser": {
+     "cpu": 0.17784431137725162,
+     "reportedCpu": 0.00987835652086279,
+     "idleWakeups": 2,
+     "workingSetKb": 125824
+    },
+    "load": [
+     21.2529296875,
+     26.81494140625,
+     24.4462890625
+    ]
+   },
+   {
+    "t": 10,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 92448
+    },
+    "gpu": {
+     "cpu": 0.009790209790211264,
+     "reportedCpu": 0.00054389293700632,
+     "idleWakeups": 1,
+     "workingSetKb": 58736
+    },
+    "browser": {
+     "cpu": 0.09820179820179382,
+     "reportedCpu": 0.0054556936073590035,
+     "idleWakeups": 2,
+     "workingSetKb": 125552
+    },
+    "load": [
+     21.2529296875,
+     26.81494140625,
+     24.4462890625
+    ]
+   }
+  ],
+  "callbacks": 0,
+  "frames": 0
+ },
+ "rest": {
+  "rows": [
+   {
+    "t": 1,
+    "renderer": {
+     "cpu": 0.3620517928286907,
+     "reportedCpu": 0.020103055952086262,
+     "idleWakeups": 4,
+     "workingSetKb": 103808
+    },
+    "gpu": {
+     "cpu": 0.10717131474103246,
+     "reportedCpu": 0.005950565840190586,
+     "idleWakeups": 0,
+     "workingSetKb": 62544
+    },
+    "browser": {
+     "cpu": 0.28366533864542554,
+     "reportedCpu": 0.015749381333554534,
+     "idleWakeups": 2,
+     "workingSetKb": 124912
+    },
+    "load": [
+     20.271484375,
+     26.51904296875,
+     24.35546875
+    ]
+   },
+   {
+    "t": 2,
+    "renderer": {
+     "cpu": 0.016749750747751344,
+     "reportedCpu": 0.0009309324585228032,
+     "idleWakeups": 1,
+     "workingSetKb": 96528
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 60480
+    },
+    "browser": {
+     "cpu": 0.16450648055831799,
+     "reportedCpu": 0.009142074486298522,
+     "idleWakeups": 3,
+     "workingSetKb": 124672
+    },
+    "load": [
+     20.271484375,
+     26.51904296875,
+     24.35546875
+    ]
+   },
+   {
+    "t": 3,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96528
+    },
+    "gpu": {
+     "cpu": 0.006281156530412289,
+     "reportedCpu": 0.0003490136873196347,
+     "idleWakeups": 1,
+     "workingSetKb": 60448
+    },
+    "browser": {
+     "cpu": 0.13678963110668396,
+     "reportedCpu": 0.0076002271648072705,
+     "idleWakeups": 4,
+     "workingSetKb": 124688
+    },
+    "load": [
+     20.08935546875,
+     26.37744140625,
+     24.31787109375
+    ]
+   },
+   {
+    "t": 4,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96528
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 60416
+    },
+    "browser": {
+     "cpu": 0.23768693918244685,
+     "reportedCpu": 0.013205382921761872,
+     "idleWakeups": 2,
+     "workingSetKb": 126304
+    },
+    "load": [
+     20.08935546875,
+     26.37744140625,
+     24.31787109375
+    ]
+   },
+   {
+    "t": 5,
+    "renderer": {
+     "cpu": 0.028115653040888887,
+     "reportedCpu": 0.0015619106487412496,
+     "idleWakeups": 1,
+     "workingSetKb": 96880
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 60416
+    },
+    "browser": {
+     "cpu": 0.18903290129611258,
+     "reportedCpu": 0.01050139858025079,
+     "idleWakeups": 4,
+     "workingSetKb": 125504
+    },
+    "load": [
+     20.08935546875,
+     26.37744140625,
+     24.31787109375
+    ]
+   },
+   {
+    "t": 6,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96528
+    },
+    "gpu": {
+     "cpu": 0.03433133732534485,
+     "reportedCpu": 0.0019075516197885854,
+     "idleWakeups": 6,
+     "workingSetKb": 60496
+    },
+    "browser": {
+     "cpu": 0.2598802395209631,
+     "reportedCpu": 0.014439160066739528,
+     "idleWakeups": 3,
+     "workingSetKb": 125936
+    },
+    "load": [
+     20.08935546875,
+     26.37744140625,
+     24.31787109375
+    ]
+   },
+   {
+    "t": 7,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96544
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59408
+    },
+    "browser": {
+     "cpu": 0.07992007992008222,
+     "reportedCpu": 0.004440168562119123,
+     "idleWakeups": 2,
+     "workingSetKb": 126656
+    },
+    "load": [
+     20.08935546875,
+     26.37744140625,
+     24.31787109375
+    ]
+   },
+   {
+    "t": 8,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96544
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59408
+    },
+    "browser": {
+     "cpu": 0.04989999999999162,
+     "reportedCpu": 0.0027707315686382947,
+     "idleWakeups": 2,
+     "workingSetKb": 126112
+    },
+    "load": [
+     19.28125,
+     26.10546875,
+     24.23388671875
+    ]
+   },
+   {
+    "t": 9,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 96544
+    },
+    "gpu": {
+     "cpu": 0.007592407592409641,
+     "reportedCpu": 0.0004220150128509124,
+     "idleWakeups": 1,
+     "workingSetKb": 59584
+    },
+    "browser": {
+     "cpu": 0.05304695304695897,
+     "reportedCpu": 0.0029483872321839954,
+     "idleWakeups": 2,
+     "workingSetKb": 125696
+    },
+    "load": [
+     19.28125,
+     26.10546875,
+     24.23388671875
+    ]
+   },
+   {
+    "t": 10,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93776
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59584
+    },
+    "browser": {
+     "cpu": 0.10689310689310844,
+     "reportedCpu": 0.005938529668894226,
+     "idleWakeups": 3,
+     "workingSetKb": 126624
+    },
+    "load": [
+     19.28125,
+     26.10546875,
+     24.23388671875
+    ]
+   },
+   {
+    "t": 11,
+    "renderer": {
+     "cpu": 11.272899999999986,
+     "reportedCpu": 0.6260837710071491,
+     "idleWakeups": 3,
+     "workingSetKb": 138144
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59392
+    },
+    "browser": {
+     "cpu": 2.060699999999993,
+     "reportedCpu": 0.11445174465180943,
+     "idleWakeups": 21,
+     "workingSetKb": 135888
+    },
+    "load": [
+     19.28125,
+     26.10546875,
+     24.23388671875
+    ]
+   },
+   {
+    "t": 12,
+    "renderer": {
+     "cpu": 4.110889110889113,
+     "reportedCpu": 0.2284964059153416,
+     "idleWakeups": 2,
+     "workingSetKb": 138528
+    },
+    "gpu": {
+     "cpu": 0.007592407592409641,
+     "reportedCpu": 0.0004220053114921153,
+     "idleWakeups": 1,
+     "workingSetKb": 59552
+    },
+    "browser": {
+     "cpu": 0.055044955044962963,
+     "reportedCpu": 0.0030595415662876056,
+     "idleWakeups": 3,
+     "workingSetKb": 136016
+    },
+    "load": [
+     19.28125,
+     26.10546875,
+     24.23388671875
+    ]
+   },
+   {
+    "t": 13,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 136176
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59552
+    },
+    "browser": {
+     "cpu": 0.04830339321356576,
+     "reportedCpu": 0.002682244968102898,
+     "idleWakeups": 2,
+     "workingSetKb": 134528
+    },
+    "load": [
+     17.89697265625,
+     25.705078125,
+     24.103515625
+    ]
+   },
+   {
+    "t": 14,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 131504
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59392
+    },
+    "browser": {
+     "cpu": 0.0629740518962124,
+     "reportedCpu": 0.003497860262977006,
+     "idleWakeups": 2,
+     "workingSetKb": 132768
+    },
+    "load": [
+     17.89697265625,
+     25.705078125,
+     24.103515625
+    ]
+   },
+   {
+    "t": 15,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 131504
+    },
+    "gpu": {
+     "cpu": 0.009790209790208492,
+     "reportedCpu": 0.0005427229273189886,
+     "idleWakeups": 1,
+     "workingSetKb": 59552
+    },
+    "browser": {
+     "cpu": 0.11118881118881425,
+     "reportedCpu": 0.006164525366440324,
+     "idleWakeups": 4,
+     "workingSetKb": 132272
+    },
+    "load": [
+     17.89697265625,
+     25.705078125,
+     24.103515625
+    ]
+   },
+   {
+    "t": 16,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 130960
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59264
+    },
+    "browser": {
+     "cpu": 0.07158524426719806,
+     "reportedCpu": 0.003985760067236109,
+     "idleWakeups": 2,
+     "workingSetKb": 132096
+    },
+    "load": [
+     17.89697265625,
+     25.705078125,
+     24.103515625
+    ]
+   },
+   {
+    "t": 17,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 130944
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59264
+    },
+    "browser": {
+     "cpu": 0.059040959040959864,
+     "reportedCpu": 0.003281371073431421,
+     "idleWakeups": 2,
+     "workingSetKb": 131936
+    },
+    "load": [
+     17.89697265625,
+     25.705078125,
+     24.103515625
+    ]
+   },
+   {
+    "t": 18,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93472
+    },
+    "gpu": {
+     "cpu": 0.008891108891109466,
+     "reportedCpu": 0.0004938039806815005,
+     "idleWakeups": 1,
+     "workingSetKb": 59520
+    },
+    "browser": {
+     "cpu": 0.05184815184814548,
+     "reportedCpu": 0.0028797739327524516,
+     "idleWakeups": 2,
+     "workingSetKb": 125472
+    },
+    "load": [
+     17.42431640625,
+     25.4775390625,
+     24.0322265625
+    ]
+   },
+   {
+    "t": 19,
+    "renderer": {
+     "cpu": 0.026719840478557823,
+     "reportedCpu": 0.0014850455908996406,
+     "idleWakeups": 1,
+     "workingSetKb": 94544
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.07158524426719806,
+     "reportedCpu": 0.0039784772140197995,
+     "idleWakeups": 4,
+     "workingSetKb": 125472
+    },
+    "load": [
+     17.42431640625,
+     25.4775390625,
+     24.0322265625
+    ]
+   },
+   {
+    "t": 20,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93472
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.10339999999999794,
+     "reportedCpu": 0.005741688433996126,
+     "idleWakeups": 3,
+     "workingSetKb": 126000
+    },
+    "load": [
+     17.42431640625,
+     25.4775390625,
+     24.0322265625
+    ]
+   },
+   {
+    "t": 21,
+    "renderer": {
+     "cpu": 0.020679320679327498,
+     "reportedCpu": 0.0011488511488511489,
+     "idleWakeups": 1,
+     "workingSetKb": 94368
+    },
+    "gpu": {
+     "cpu": 0.008891108891109466,
+     "reportedCpu": 0.0004940092223195808,
+     "idleWakeups": 1,
+     "workingSetKb": 59504
+    },
+    "browser": {
+     "cpu": 0.07032967032967412,
+     "reportedCpu": 0.003908179976129014,
+     "idleWakeups": 2,
+     "workingSetKb": 124832
+    },
+    "load": [
+     17.42431640625,
+     25.4775390625,
+     24.0322265625
+    ]
+   },
+   {
+    "t": 22,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93456
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.20338983050847875,
+     "reportedCpu": 0.011292488402780475,
+     "idleWakeups": 2,
+     "workingSetKb": 126512
+    },
+    "load": [
+     17.42431640625,
+     25.4775390625,
+     24.0322265625
+    ]
+   },
+   {
+    "t": 23,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93440
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59248
+    },
+    "browser": {
+     "cpu": 0.16484063745019542,
+     "reportedCpu": 0.009162741359341123,
+     "idleWakeups": 2,
+     "workingSetKb": 125680
+    },
+    "load": [
+     16.66943359375,
+     25.18701171875,
+     23.93798828125
+    ]
+   },
+   {
+    "t": 24,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93440
+    },
+    "gpu": {
+     "cpu": 0.008782435129738222,
+     "reportedCpu": 0.000487749992656037,
+     "idleWakeups": 1,
+     "workingSetKb": 59248
+    },
+    "browser": {
+     "cpu": 0.14241516966067425,
+     "reportedCpu": 0.007911906493352112,
+     "idleWakeups": 2,
+     "workingSetKb": 125664
+    },
+    "load": [
+     16.66943359375,
+     25.18701171875,
+     23.93798828125
+    ]
+   },
+   {
+    "t": 25,
+    "renderer": {
+     "cpu": 2.5083665338645513,
+     "reportedCpu": 0.13945245199649464,
+     "idleWakeups": 3,
+     "workingSetKb": 109568
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59248
+    },
+    "browser": {
+     "cpu": 2.1589641434262976,
+     "reportedCpu": 0.11999001817674958,
+     "idleWakeups": 5,
+     "workingSetKb": 131760
+    },
+    "load": [
+     16.66943359375,
+     25.18701171875,
+     23.93798828125
+    ]
+   },
+   {
+    "t": 26,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.11198801198801585,
+     "reportedCpu": 0.006218822673128473,
+     "idleWakeups": 2,
+     "workingSetKb": 130688
+    },
+    "load": [
+     16.66943359375,
+     25.18701171875,
+     23.93798828125
+    ]
+   },
+   {
+    "t": 27,
+    "renderer": {
+     "cpu": 0.005594405594389008,
+     "reportedCpu": 0.00031084875476209187,
+     "idleWakeups": 1,
+     "workingSetKb": 105200
+    },
+    "gpu": {
+     "cpu": 0.01018981018980929,
+     "reportedCpu": 0.0005661825805602876,
+     "idleWakeups": 1,
+     "workingSetKb": 59504
+    },
+    "browser": {
+     "cpu": 0.08091908091907868,
+     "reportedCpu": 0.0044960120373228945,
+     "idleWakeups": 2,
+     "workingSetKb": 131376
+    },
+    "load": [
+     16.66943359375,
+     25.18701171875,
+     23.93798828125
+    ]
+   },
+   {
+    "t": 28,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.06783216783216636,
+     "reportedCpu": 0.0037696400188093377,
+     "idleWakeups": 3,
+     "workingSetKb": 131552
+    },
+    "load": [
+     15.89501953125,
+     24.884765625,
+     23.83837890625
+    ]
+   },
+   {
+    "t": 29,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59280
+    },
+    "browser": {
+     "cpu": 0.04710578842315648,
+     "reportedCpu": 0.0026157691198036665,
+     "idleWakeups": 2,
+     "workingSetKb": 130032
+    },
+    "load": [
+     15.89501953125,
+     24.884765625,
+     23.83837890625
+    ]
+   },
+   {
+    "t": 30,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0.009190809190812839,
+     "reportedCpu": 0.0005108607893243422,
+     "idleWakeups": 1,
+     "workingSetKb": 59504
+    },
+    "browser": {
+     "cpu": 0.06083916083915792,
+     "reportedCpu": 0.003381696592182717,
+     "idleWakeups": 3,
+     "workingSetKb": 130256
+    },
+    "load": [
+     15.89501953125,
+     24.884765625,
+     23.83837890625
+    ]
+   },
+   {
+    "t": 31,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0.01728271728271516,
+     "reportedCpu": 0.0009595575873771475,
+     "idleWakeups": 1,
+     "workingSetKb": 59328
+    },
+    "browser": {
+     "cpu": 0.06353646353646053,
+     "reportedCpu": 0.0035276150693059885,
+     "idleWakeups": 2,
+     "workingSetKb": 130048
+    },
+    "load": [
+     15.89501953125,
+     24.884765625,
+     23.83837890625
+    ]
+   },
+   {
+    "t": 32,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59328
+    },
+    "browser": {
+     "cpu": 0.04645354645355133,
+     "reportedCpu": 0.0025821068325878544,
+     "idleWakeups": 2,
+     "workingSetKb": 129984
+    },
+    "load": [
+     15.89501953125,
+     24.884765625,
+     23.83837890625
+    ]
+   },
+   {
+    "t": 33,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0.010399999999999299,
+     "reportedCpu": 0.0005774105446713668,
+     "idleWakeups": 1,
+     "workingSetKb": 59520
+    },
+    "browser": {
+     "cpu": 0.06019999999999914,
+     "reportedCpu": 0.0033423087091792787,
+     "idleWakeups": 2,
+     "workingSetKb": 129984
+    },
+    "load": [
+     15.1025390625,
+     24.57080078125,
+     23.7333984375
+    ]
+   },
+   {
+    "t": 34,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59536
+    },
+    "browser": {
+     "cpu": 0.04325674325674493,
+     "reportedCpu": 0.0024045119973487065,
+     "idleWakeups": 2,
+     "workingSetKb": 129808
+    },
+    "load": [
+     15.1025390625,
+     24.57080078125,
+     23.7333984375
+    ]
+   },
+   {
+    "t": 35,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59536
+    },
+    "browser": {
+     "cpu": 0.06869999999999932,
+     "reportedCpu": 0.003814995698550701,
+     "idleWakeups": 3,
+     "workingSetKb": 130016
+    },
+    "load": [
+     15.1025390625,
+     24.57080078125,
+     23.7333984375
+    ]
+   },
+   {
+    "t": 36,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 105152
+    },
+    "gpu": {
+     "cpu": 0.007192807192808841,
+     "reportedCpu": 0.0003998284735848321,
+     "idleWakeups": 1,
+     "workingSetKb": 59552
+    },
+    "browser": {
+     "cpu": 0.04215784215784551,
+     "reportedCpu": 0.0023434320817851133,
+     "idleWakeups": 2,
+     "workingSetKb": 130016
+    },
+    "load": [
+     15.1025390625,
+     24.57080078125,
+     23.7333984375
+    ]
+   },
+   {
+    "t": 37,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 94352
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59552
+    },
+    "browser": {
+     "cpu": 0.04245754245754333,
+     "reportedCpu": 0.002358613339584491,
+     "idleWakeups": 2,
+     "workingSetKb": 126240
+    },
+    "load": [
+     15.1025390625,
+     24.57080078125,
+     23.7333984375
+    ]
+   },
+   {
+    "t": 38,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 94352
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 59536
+    },
+    "browser": {
+     "cpu": 0.048951048951047994,
+     "reportedCpu": 0.002720459364553991,
+     "idleWakeups": 2,
+     "workingSetKb": 126288
+    },
+    "load": [
+     14.13330078125,
+     24.21240234375,
+     23.61181640625
+    ]
+   },
+   {
+    "t": 39,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93696
+    },
+    "gpu": {
+     "cpu": 0.004399999999998849,
+     "reportedCpu": 0.0002442268383314911,
+     "idleWakeups": 1,
+     "workingSetKb": 59520
+    },
+    "browser": {
+     "cpu": 0.07789999999999742,
+     "reportedCpu": 0.004324188701155818,
+     "idleWakeups": 2,
+     "workingSetKb": 125168
+    },
+    "load": [
+     14.13330078125,
+     24.21240234375,
+     23.61181640625
+    ]
+   },
+   {
+    "t": 40,
+    "renderer": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 93696
+    },
+    "gpu": {
+     "cpu": 0.1141575274177475,
+     "reportedCpu": 0.006340611912797039,
+     "idleWakeups": 1,
+     "workingSetKb": 63008
+    },
+    "browser": {
+     "cpu": 0.5654037886340959,
+     "reportedCpu": 0.0314043393697668,
+     "idleWakeups": 5,
+     "workingSetKb": 134704
+    },
+    "load": [
+     14.13330078125,
+     24.21240234375,
+     23.61181640625
+    ]
+   },
+   {
+    "t": 41,
+    "renderer": {
+     "cpu": 0.2294117647058932,
+     "reportedCpu": 0.012748593416273987,
+     "idleWakeups": 2,
+     "workingSetKb": 95408
+    },
+    "gpu": {
+     "cpu": 0.052043868394812266,
+     "reportedCpu": 0.0028921045545660345,
+     "idleWakeups": 3,
+     "workingSetKb": 61088
+    },
+    "browser": {
+     "cpu": 0.25044865403788225,
+     "reportedCpu": 0.013917199753036187,
+     "idleWakeups": 16,
+     "workingSetKb": 127472
+    },
+    "load": [
+     14.13330078125,
+     24.21240234375,
+     23.61181640625
+    ]
+   },
+   {
+    "t": 42,
+    "renderer": {
+     "cpu": 0.03190428713857188,
+     "reportedCpu": 0.0017726035480211042,
+     "idleWakeups": 1,
+     "workingSetKb": 96688
+    },
+    "gpu": {
+     "cpu": 0.026420737786641602,
+     "reportedCpu": 0.0014680192830149503,
+     "idleWakeups": 3,
+     "workingSetKb": 61504
+    },
+    "browser": {
+     "cpu": 0.09631106679960344,
+     "reportedCpu": 0.005351479168785653,
+     "idleWakeups": 4,
+     "workingSetKb": 128496
+    },
+    "load": [
+     14.13330078125,
+     24.21240234375,
+     23.61181640625
+    ]
+   },
+   {
+    "t": 43,
+    "renderer": {
+     "cpu": 0.009081836327351623,
+     "reportedCpu": 0.0005045147416435449,
+     "idleWakeups": 1,
+     "workingSetKb": 96688
+    },
+    "gpu": {
+     "cpu": 0.009880239520959656,
+     "reportedCpu": 0.0005488255134013212,
+     "idleWakeups": 1,
+     "workingSetKb": 61504
+    },
+    "browser": {
+     "cpu": 0.07614770459082526,
+     "reportedCpu": 0.0042294994002204,
+     "idleWakeups": 2,
+     "workingSetKb": 128496
+    },
+    "load": [
+     13.96240234375,
+     24.00927734375,
+     23.54345703125
+    ]
+   },
+   {
+    "t": 44,
+    "renderer": {
+     "cpu": 0.008091908091907869,
+     "reportedCpu": 0.00044972117287281886,
+     "idleWakeups": 1,
+     "workingSetKb": 95792
+    },
+    "gpu": {
+     "cpu": 0.060339660339659686,
+     "reportedCpu": 0.003353633923317495,
+     "idleWakeups": 1,
+     "workingSetKb": 62112
+    },
+    "browser": {
+     "cpu": 0.16793206793206122,
+     "reportedCpu": 0.009333867268298544,
+     "idleWakeups": 3,
+     "workingSetKb": 130336
+    },
+    "load": [
+     13.96240234375,
+     24.00927734375,
+     23.54345703125
+    ]
+   },
+   {
+    "t": 45,
+    "renderer": {
+     "cpu": 0.007784431137726796,
+     "reportedCpu": 0.0004322936670640443,
+     "idleWakeups": 1,
+     "workingSetKb": 95792
+    },
+    "gpu": {
+     "cpu": 0.0029940119760453582,
+     "reportedCpu": 0.00016626546809216027,
+     "idleWakeups": 1,
+     "workingSetKb": 62112
+    },
+    "browser": {
+     "cpu": 0.07734530938123454,
+     "reportedCpu": 0.004295191259047474,
+     "idleWakeups": 3,
+     "workingSetKb": 130448
+    },
+    "load": [
+     13.96240234375,
+     24.00927734375,
+     23.54345703125
+    ]
+   },
+   {
+    "t": 46,
+    "renderer": {
+     "cpu": 0.006779661016944864,
+     "reportedCpu": 0.00037681313614923575,
+     "idleWakeups": 1,
+     "workingSetKb": 95792
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 62112
+    },
+    "browser": {
+     "cpu": 0.05782652043868644,
+     "reportedCpu": 0.0032139751619566417,
+     "idleWakeups": 2,
+     "workingSetKb": 130480
+    },
+    "load": [
+     13.96240234375,
+     24.00927734375,
+     23.54345703125
+    ]
+   },
+   {
+    "t": 47,
+    "renderer": {
+     "cpu": 0.006986027944113223,
+     "reportedCpu": 0.0003879450186584928,
+     "idleWakeups": 1,
+     "workingSetKb": 95792
+    },
+    "gpu": {
+     "cpu": 0.005089820359283757,
+     "reportedCpu": 0.0002826380437457189,
+     "idleWakeups": 1,
+     "workingSetKb": 61728
+    },
+    "browser": {
+     "cpu": 0.052295409181633626,
+     "reportedCpu": 0.0029038601722609757,
+     "idleWakeups": 3,
+     "workingSetKb": 128192
+    },
+    "load": [
+     13.96240234375,
+     24.00927734375,
+     23.54345703125
+    ]
+   },
+   {
+    "t": 48,
+    "renderer": {
+     "cpu": 0.005694305694303072,
+     "reportedCpu": 0.0003165109432825716,
+     "idleWakeups": 1,
+     "workingSetKb": 95792
+    },
+    "gpu": {
+     "cpu": 0.09500499500499297,
+     "reportedCpu": 0.005280909395920606,
+     "idleWakeups": 2,
+     "workingSetKb": 62720
+    },
+    "browser": {
+     "cpu": 0.2572427572427678,
+     "reportedCpu": 0.014299349637812745,
+     "idleWakeups": 3,
+     "workingSetKb": 132848
+    },
+    "load": [
+     13.40478515625,
+     23.7265625,
+     23.4462890625
+    ]
+   },
+   {
+    "t": 49,
+    "renderer": {
+     "cpu": 0.011788211788218032,
+     "reportedCpu": 0.0006547560983594586,
+     "idleWakeups": 1,
+     "workingSetKb": 95888
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 62704
+    },
+    "browser": {
+     "cpu": 0.09530469530468526,
+     "reportedCpu": 0.005293198240261265,
+     "idleWakeups": 2,
+     "workingSetKb": 132864
+    },
+    "load": [
+     13.40478515625,
+     23.7265625,
+     23.4462890625
+    ]
+   },
+   {
+    "t": 50,
+    "renderer": {
+     "cpu": 0.00739260739259815,
+     "reportedCpu": 0.00041088676693636387,
+     "idleWakeups": 1,
+     "workingSetKb": 95888
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 62704
+    },
+    "browser": {
+     "cpu": 0.09410589410589396,
+     "reportedCpu": 0.005230995078533229,
+     "idleWakeups": 3,
+     "workingSetKb": 133216
+    },
+    "load": [
+     13.40478515625,
+     23.7265625,
+     23.4462890625
+    ]
+   },
+   {
+    "t": 51,
+    "renderer": {
+     "cpu": 0.007584830339340023,
+     "reportedCpu": 0.0004211915664590968,
+     "idleWakeups": 1,
+     "workingSetKb": 95888
+    },
+    "gpu": {
+     "cpu": 0.0020958083832383987,
+     "reportedCpu": 0.00011637549517773197,
+     "idleWakeups": 1,
+     "workingSetKb": 62704
+    },
+    "browser": {
+     "cpu": 0.0561876247505081,
+     "reportedCpu": 0.0031198253429785255,
+     "idleWakeups": 2,
+     "workingSetKb": 128992
+    },
+    "load": [
+     13.40478515625,
+     23.7265625,
+     23.4462890625
+    ]
+   },
+   {
+    "t": 52,
+    "renderer": {
+     "cpu": 0.005494505494497127,
+     "reportedCpu": 0.0003051917669693281,
+     "idleWakeups": 1,
+     "workingSetKb": 95824
+    },
+    "gpu": {
+     "cpu": 0.01608391608391276,
+     "reportedCpu": 0.0008933920286347129,
+     "idleWakeups": 1,
+     "workingSetKb": 60992
+    },
+    "browser": {
+     "cpu": 0.2853146853146823,
+     "reportedCpu": 0.01584821933935566,
+     "idleWakeups": 4,
+     "workingSetKb": 131712
+    },
+    "load": [
+     13.40478515625,
+     23.7265625,
+     23.4462890625
+    ]
+   },
+   {
+    "t": 53,
+    "renderer": {
+     "cpu": 0.0066799601196449905,
+     "reportedCpu": 0.0003712950983616133,
+     "idleWakeups": 1,
+     "workingSetKb": 95824
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 60992
+    },
+    "browser": {
+     "cpu": 0.049252243270188886,
+     "reportedCpu": 0.002737627751343599,
+     "idleWakeups": 2,
+     "workingSetKb": 131264
+    },
+    "load": [
+     13.2119140625,
+     23.51513671875,
+     23.373046875
+    ]
+   },
+   {
+    "t": 54,
+    "renderer": {
+     "cpu": 0.008999999999992347,
+     "reportedCpu": 0.0005000385029647283,
+     "idleWakeups": 1,
+     "workingSetKb": 95904
+    },
+    "gpu": {
+     "cpu": 0.005300000000002525,
+     "reportedCpu": 0.0002944668239230626,
+     "idleWakeups": 1,
+     "workingSetKb": 60784
+    },
+    "browser": {
+     "cpu": 0.08049999999999446,
+     "reportedCpu": 0.004472588974518132,
+     "idleWakeups": 2,
+     "workingSetKb": 128720
+    },
+    "load": [
+     13.2119140625,
+     23.51513671875,
+     23.373046875
+    ]
+   },
+   {
+    "t": 55,
+    "renderer": {
+     "cpu": 0.0289421157684754,
+     "reportedCpu": 0.0016079932122725147,
+     "idleWakeups": 1,
+     "workingSetKb": 95696
+    },
+    "gpu": {
+     "cpu": 0.03153692614770289,
+     "reportedCpu": 0.0017521738600057445,
+     "idleWakeups": 2,
+     "workingSetKb": 61008
+    },
+    "browser": {
+     "cpu": 0.17155688622754753,
+     "reportedCpu": 0.009531936979423991,
+     "idleWakeups": 7,
+     "workingSetKb": 129280
+    },
+    "load": [
+     13.2119140625,
+     23.51513671875,
+     23.373046875
+    ]
+   },
+   {
+    "t": 56,
+    "renderer": {
+     "cpu": 0.007299999999998974,
+     "reportedCpu": 0.0004053443711381926,
+     "idleWakeups": 1,
+     "workingSetKb": 95696
+    },
+    "gpu": {
+     "cpu": 0.08750000000000147,
+     "reportedCpu": 0.004858502095485835,
+     "idleWakeups": 2,
+     "workingSetKb": 62288
+    },
+    "browser": {
+     "cpu": 0.17810000000000326,
+     "reportedCpu": 0.00988861016444742,
+     "idleWakeups": 4,
+     "workingSetKb": 131536
+    },
+    "load": [
+     13.2119140625,
+     23.51513671875,
+     23.373046875
+    ]
+   },
+   {
+    "t": 57,
+    "renderer": {
+     "cpu": 0.005894105894109016,
+     "reportedCpu": 0.0003275809016558826,
+     "idleWakeups": 1,
+     "workingSetKb": 95648
+    },
+    "gpu": {
+     "cpu": 0.005094905094901872,
+     "reportedCpu": 0.0002831648502474361,
+     "idleWakeups": 1,
+     "workingSetKb": 62272
+    },
+    "browser": {
+     "cpu": 0.06013986013985929,
+     "reportedCpu": 0.003342479066753194,
+     "idleWakeups": 5,
+     "workingSetKb": 131744
+    },
+    "load": [
+     13.2119140625,
+     23.51513671875,
+     23.373046875
+    ]
+   },
+   {
+    "t": 58,
+    "renderer": {
+     "cpu": 0.0060939060938927795,
+     "reportedCpu": 0.0003383867229919688,
+     "idleWakeups": 1,
+     "workingSetKb": 95648
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 61264
+    },
+    "browser": {
+     "cpu": 0.049350649350648805,
+     "reportedCpu": 0.002740361306098358,
+     "idleWakeups": 2,
+     "workingSetKb": 129264
+    },
+    "load": [
+     12.47412109375,
+     23.19091796875,
+     23.25927734375
+    ]
+   },
+   {
+    "t": 59,
+    "renderer": {
+     "cpu": 0.006593406593418733,
+     "reportedCpu": 0.00036644569990962117,
+     "idleWakeups": 1,
+     "workingSetKb": 95648
+    },
+    "gpu": {
+     "cpu": 0,
+     "reportedCpu": 0,
+     "idleWakeups": 0,
+     "workingSetKb": 61264
+    },
+    "browser": {
+     "cpu": 0.054745254745254046,
+     "reportedCpu": 0.0030425094084606634,
+     "idleWakeups": 2,
+     "workingSetKb": 129072
+    },
+    "load": [
+     12.47412109375,
+     23.19091796875,
+     23.25927734375
+    ]
+   },
+   {
+    "t": 60,
+    "renderer": {
+     "cpu": 0.0060939060938927795,
+     "reportedCpu": 0.0003384732437455693,
+     "idleWakeups": 1,
+     "workingSetKb": 95648
+    },
+    "gpu": {
+     "cpu": 0.019180819180821727,
+     "reportedCpu": 0.001065353086311245,
+     "idleWakeups": 2,
+     "workingSetKb": 61648
+    },
+    "browser": {
+     "cpu": 0.24365634365634056,
+     "reportedCpu": 0.013533759488613663,
+     "idleWakeups": 4,
+     "workingSetKb": 130752
+    },
+    "load": [
+     12.47412109375,
+     23.19091796875,
+     23.25927734375
+    ]
+   }
+  ],
+  "callbacks": 0,
+  "frames": 0
+ },
+ "loop": {
+  "rows": [
+   {
+    "t": 1,
+    "renderer": {
+     "cpu": 10.386870681145131,
+     "reportedCpu": 0.5771514949857773,
+     "idleWakeups": 49,
+     "workingSetKb": 136944
+    },
+    "gpu": {
+     "cpu": 6.691707798617966,
+     "reportedCpu": 0.3718290829177703,
+     "idleWakeups": 249,
+     "workingSetKb": 74064
+    },
+    "browser": {
+     "cpu": 0.15370187561697135,
+     "reportedCpu": 0.008540713035991453,
+     "idleWakeups": 2,
+     "workingSetKb": 130320
+    },
+    "load": [
+     12.47412109375,
+     23.19091796875,
+     23.25927734375
+    ]
+   },
+   {
+    "t": 2,
+    "renderer": {
+     "cpu": 3.270329670329658,
+     "reportedCpu": 0.18167499954214972,
+     "idleWakeups": 91,
+     "workingSetKb": 141280
+    },
+    "gpu": {
+     "cpu": 3.4526473526473542,
+     "reportedCpu": 0.1918060772352309,
+     "idleWakeups": 253,
+     "workingSetKb": 76544
+    },
+    "browser": {
+     "cpu": 0.26403596403597024,
+     "reportedCpu": 0.01466815179622424,
+     "idleWakeups": 4,
+     "workingSetKb": 130992
+    },
+    "load": [
+     12.47412109375,
+     23.19091796875,
+     23.25927734375
+    ]
+   },
+   {
+    "t": 3,
+    "renderer": {
+     "cpu": 9.58481518481519,
+     "reportedCpu": 0.5326839679026041,
+     "idleWakeups": 37,
+     "workingSetKb": 147424
+    },
+    "gpu": {
+     "cpu": 5.361038961038961,
+     "reportedCpu": 0.29794056578726896,
+     "idleWakeups": 186,
+     "workingSetKb": 72832
+    },
+    "browser": {
+     "cpu": 0.29410589410588883,
+     "reportedCpu": 0.01634471900685401,
+     "idleWakeups": 2,
+     "workingSetKb": 129824
+    },
+    "load": [
+     12.91650390625,
+     23.1044921875,
+     23.22802734375
+    ]
+   },
+   {
+    "t": 4,
+    "renderer": {
+     "cpu": 5.140999999999996,
+     "reportedCpu": 0.2854698035583497,
+     "idleWakeups": 80,
+     "workingSetKb": 147440
+    },
+    "gpu": {
+     "cpu": 4.166000000000003,
+     "reportedCpu": 0.23132785520542093,
+     "idleWakeups": 151,
+     "workingSetKb": 72864
+    },
+    "browser": {
+     "cpu": 0.12079999999999869,
+     "reportedCpu": 0.0067077304149819605,
+     "idleWakeups": 3,
+     "workingSetKb": 131936
+    },
+    "load": [
+     12.91650390625,
+     23.1044921875,
+     23.22802734375
+    ]
+   },
+   {
+    "t": 5,
+    "renderer": {
+     "cpu": 7.118781218781216,
+     "reportedCpu": 0.3957092212759719,
+     "idleWakeups": 79,
+     "workingSetKb": 147680
+    },
+    "gpu": {
+     "cpu": 5.769930069930071,
+     "reportedCpu": 0.3207304593591854,
+     "idleWakeups": 254,
+     "workingSetKb": 72992
+    },
+    "browser": {
+     "cpu": 0.06333666333666568,
+     "reportedCpu": 0.0035206484923461434,
+     "idleWakeups": 3,
+     "workingSetKb": 130240
+    },
+    "load": [
+     12.91650390625,
+     23.1044921875,
+     23.22802734375
+    ]
+   },
+   {
+    "t": 6,
+    "renderer": {
+     "cpu": 2.1694305694305767,
+     "reportedCpu": 0.12054836739563012,
+     "idleWakeups": 80,
+     "workingSetKb": 148400
+    },
+    "gpu": {
+     "cpu": 5.421178821178815,
+     "reportedCpu": 0.3012419053658763,
+     "idleWakeups": 127,
+     "workingSetKb": 79280
+    },
+    "browser": {
+     "cpu": 0.3938061938061939,
+     "reportedCpu": 0.021883128108228553,
+     "idleWakeups": 2,
+     "workingSetKb": 130592
+    },
+    "load": [
+     12.91650390625,
+     23.1044921875,
+     23.22802734375
+    ]
+   },
+   {
+    "t": 7,
+    "renderer": {
+     "cpu": 2.3222000000000076,
+     "reportedCpu": 0.12894805551196575,
+     "idleWakeups": 59,
+     "workingSetKb": 147840
+    },
+    "gpu": {
+     "cpu": 5.870500000000001,
+     "reportedCpu": 0.3259791591009294,
+     "idleWakeups": 189,
+     "workingSetKb": 76464
+    },
+    "browser": {
+     "cpu": 0.13330000000000286,
+     "reportedCpu": 0.007401847230093279,
+     "idleWakeups": 3,
+     "workingSetKb": 129776
+    },
+    "load": [
+     12.91650390625,
+     23.1044921875,
+     23.22802734375
+    ]
+   },
+   {
+    "t": 8,
+    "renderer": {
+     "cpu": 5.345854145854147,
+     "reportedCpu": 0.29715249589327386,
+     "idleWakeups": 97,
+     "workingSetKb": 150288
+    },
+    "gpu": {
+     "cpu": 3.8985014985015045,
+     "reportedCpu": 0.21669836846518983,
+     "idleWakeups": 215,
+     "workingSetKb": 76720
+    },
+    "browser": {
+     "cpu": 0.08011988011987707,
+     "reportedCpu": 0.004453444622804346,
+     "idleWakeups": 3,
+     "workingSetKb": 130704
+    },
+    "load": [
+     12.3623046875,
+     22.8203125,
+     23.126953125
+    ]
+   },
+   {
+    "t": 9,
+    "renderer": {
+     "cpu": 12.064199999999992,
+     "reportedCpu": 0.6698997232711443,
+     "idleWakeups": 74,
+     "workingSetKb": 171200
+    },
+    "gpu": {
+     "cpu": 6.040400000000002,
+     "reportedCpu": 0.33541174896204157,
+     "idleWakeups": 263,
+     "workingSetKb": 77088
+    },
+    "browser": {
+     "cpu": 0.04469999999999752,
+     "reportedCpu": 0.0024821146150573402,
+     "idleWakeups": 2,
+     "workingSetKb": 130704
+    },
+    "load": [
+     12.3623046875,
+     22.8203125,
+     23.126953125
+    ]
+   },
+   {
+    "t": 10,
+    "renderer": {
+     "cpu": 4.8298701298701445,
+     "reportedCpu": 0.26840119558362424,
+     "idleWakeups": 93,
+     "workingSetKb": 171360
+    },
+    "gpu": {
+     "cpu": 4.507992007992005,
+     "reportedCpu": 0.2505118213266973,
+     "idleWakeups": 178,
+     "workingSetKb": 76976
+    },
+    "browser": {
+     "cpu": 0.08171828171828027,
+     "reportedCpu": 0.0045410885799838365,
+     "idleWakeups": 3,
+     "workingSetKb": 131152
+    },
+    "load": [
+     12.3623046875,
+     22.8203125,
+     23.126953125
+    ]
+   },
+   {
+    "t": 11,
+    "renderer": {
+     "cpu": 5.023299999999997,
+     "reportedCpu": 0.2789380530187202,
+     "idleWakeups": 72,
+     "workingSetKb": 172352
+    },
+    "gpu": {
+     "cpu": 4.116200000000003,
+     "reportedCpu": 0.22856737973336655,
+     "idleWakeups": 176,
+     "workingSetKb": 76976
+    },
+    "browser": {
+     "cpu": 0.05950000000000122,
+     "reportedCpu": 0.003303953138283488,
+     "idleWakeups": 3,
+     "workingSetKb": 131408
+    },
+    "load": [
+     12.3623046875,
+     22.8203125,
+     23.126953125
+    ]
+   },
+   {
+    "t": 12,
+    "renderer": {
+     "cpu": 5.796806387225551,
+     "reportedCpu": 0.3222422611149835,
+     "idleWakeups": 56,
+     "workingSetKb": 174208
+    },
+    "gpu": {
+     "cpu": 4.482834331337326,
+     "reportedCpu": 0.249202538561538,
+     "idleWakeups": 210,
+     "workingSetKb": 76976
+    },
+    "browser": {
+     "cpu": 0.32764471057884587,
+     "reportedCpu": 0.01821477253005909,
+     "idleWakeups": 6,
+     "workingSetKb": 133792
+    },
+    "load": [
+     12.3623046875,
+     22.8203125,
+     23.126953125
+    ]
+   },
+   {
+    "t": 13,
+    "renderer": {
+     "cpu": 3.241516966067871,
+     "reportedCpu": 0.17999876749612403,
+     "idleWakeups": 64,
+     "workingSetKb": 177360
+    },
+    "gpu": {
+     "cpu": 3.812075848303386,
+     "reportedCpu": 0.21167932076413593,
+     "idleWakeups": 128,
+     "workingSetKb": 77312
+    },
+    "browser": {
+     "cpu": 0.06207584830339436,
+     "reportedCpu": 0.00344683850098656,
+     "idleWakeups": 2,
+     "workingSetKb": 133904
+    },
+    "load": [
+     11.8525390625,
+     22.541015625,
+     23.0263671875
+    ]
+   },
+   {
+    "t": 14,
+    "renderer": {
+     "cpu": 2.463010967098688,
+     "reportedCpu": 0.13691024653265824,
+     "idleWakeups": 50,
+     "workingSetKb": 161296
+    },
+    "gpu": {
+     "cpu": 6.848554336989039,
+     "reportedCpu": 0.3806896872781444,
+     "idleWakeups": 240,
+     "workingSetKb": 77200
+    },
+    "browser": {
+     "cpu": 0.042671984047854834,
+     "reportedCpu": 0.0023720137842819728,
+     "idleWakeups": 2,
+     "workingSetKb": 133744
+    },
+    "load": [
+     11.8525390625,
+     22.541015625,
+     23.0263671875
+    ]
+   },
+   {
+    "t": 15,
+    "renderer": {
+     "cpu": 4.3340659340659435,
+     "reportedCpu": 0.24074825071291095,
+     "idleWakeups": 107,
+     "workingSetKb": 159648
+    },
+    "gpu": {
+     "cpu": 3.0826173826173853,
+     "reportedCpu": 0.1712325726449625,
+     "idleWakeups": 157,
+     "workingSetKb": 76960
+    },
+    "browser": {
+     "cpu": 0.061838161838165456,
+     "reportedCpu": 0.003434928416424751,
+     "idleWakeups": 3,
+     "workingSetKb": 133024
+    },
+    "load": [
+     11.8525390625,
+     22.541015625,
+     23.0263671875
+    ]
+   },
+   {
+    "t": 16,
+    "renderer": {
+     "cpu": 9.78441558441556,
+     "reportedCpu": 0.5435645250195521,
+     "idleWakeups": 73,
+     "workingSetKb": 151760
+    },
+    "gpu": {
+     "cpu": 4.6073926073926135,
+     "reportedCpu": 0.25596446600495526,
+     "idleWakeups": 260,
+     "workingSetKb": 75392
+    },
+    "browser": {
+     "cpu": 0.148851148851148,
+     "reportedCpu": 0.008269846994510043,
+     "idleWakeups": 3,
+     "workingSetKb": 131696
+    },
+    "load": [
+     11.8525390625,
+     22.541015625,
+     23.0263671875
+    ]
+   },
+   {
+    "t": 17,
+    "renderer": {
+     "cpu": 6.421078921078951,
+     "reportedCpu": 0.35660975557792585,
+     "idleWakeups": 67,
+     "workingSetKb": 153680
+    },
+    "gpu": {
+     "cpu": 5.5238761238761205,
+     "reportedCpu": 0.30677780662800735,
+     "idleWakeups": 174,
+     "workingSetKb": 73392
+    },
+    "browser": {
+     "cpu": 0.06783216783216636,
+     "reportedCpu": 0.0037670914436759356,
+     "idleWakeups": 3,
+     "workingSetKb": 128480
+    },
+    "load": [
+     11.8525390625,
+     22.541015625,
+     23.0263671875
+    ]
+   },
+   {
+    "t": 18,
+    "renderer": {
+     "cpu": 5.428271728271715,
+     "reportedCpu": 0.3017397584682546,
+     "idleWakeups": 84,
+     "workingSetKb": 151648
+    },
+    "gpu": {
+     "cpu": 5.584315684315677,
+     "reportedCpu": 0.31041093590071644,
+     "idleWakeups": 176,
+     "workingSetKb": 73232
+    },
+    "browser": {
+     "cpu": 0.06113886113885574,
+     "reportedCpu": 0.003398416337986498,
+     "idleWakeups": 3,
+     "workingSetKb": 128720
+    },
+    "load": [
+     11.4638671875,
+     22.28271484375,
+     22.93212890625
+    ]
+   },
+   {
+    "t": 19,
+    "renderer": {
+     "cpu": 4.274399999999989,
+     "reportedCpu": 0.23735700772909585,
+     "idleWakeups": 88,
+     "workingSetKb": 151856
+    },
+    "gpu": {
+     "cpu": 3.5673999999999984,
+     "reportedCpu": 0.19809736790491683,
+     "idleWakeups": 200,
+     "workingSetKb": 73536
+    },
+    "browser": {
+     "cpu": 0.043400000000004546,
+     "reportedCpu": 0.002409990465544633,
+     "idleWakeups": 2,
+     "workingSetKb": 128400
+    },
+    "load": [
+     11.4638671875,
+     22.28271484375,
+     22.93212890625
+    ]
+   },
+   {
+    "t": 20,
+    "renderer": {
+     "cpu": 2.9583250249252386,
+     "reportedCpu": 0.16443992223574452,
+     "idleWakeups": 62,
+     "workingSetKb": 150464
+    },
+    "gpu": {
+     "cpu": 2.247956131605194,
+     "reportedCpu": 0.12495335100757944,
+     "idleWakeups": 139,
+     "workingSetKb": 71392
+    },
+    "browser": {
+     "cpu": 0.09062811565304574,
+     "reportedCpu": 0.005037612510835854,
+     "idleWakeups": 4,
+     "workingSetKb": 128656
+    },
+    "load": [
+     11.4638671875,
+     22.28271484375,
+     22.93212890625
+    ]
+   },
+   {
+    "t": 21,
+    "renderer": {
+     "cpu": 3.387824351297386,
+     "reportedCpu": 0.1882150937127753,
+     "idleWakeups": 30,
+     "workingSetKb": 146272
+    },
+    "gpu": {
+     "cpu": 8.971257485029927,
+     "reportedCpu": 0.4984106548501225,
+     "idleWakeups": 251,
+     "workingSetKb": 71632
+    },
+    "browser": {
+     "cpu": 0.08133732534930241,
+     "reportedCpu": 0.004518749316643125,
+     "idleWakeups": 2,
+     "workingSetKb": 126784
+    },
+    "load": [
+     11.4638671875,
+     22.28271484375,
+     22.93212890625
+    ]
+   },
+   {
+    "t": 22,
+    "renderer": {
+     "cpu": 4.20708582834333,
+     "reportedCpu": 0.23349442814885416,
+     "idleWakeups": 110,
+     "workingSetKb": 140448
+    },
+    "gpu": {
+     "cpu": 3.0542914171656763,
+     "reportedCpu": 0.16951925858200942,
+     "idleWakeups": 141,
+     "workingSetKb": 70944
+    },
+    "browser": {
+     "cpu": 0.09261477045907474,
+     "reportedCpu": 0.005140698935631581,
+     "idleWakeups": 3,
+     "workingSetKb": 125408
+    },
+    "load": [
+     11.4638671875,
+     22.28271484375,
+     22.93212890625
+    ]
+   },
+   {
+    "t": 23,
+    "renderer": {
+     "cpu": 9.976123876123854,
+     "reportedCpu": 0.554337645866057,
+     "idleWakeups": 87,
+     "workingSetKb": 165888
+    },
+    "gpu": {
+     "cpu": 4.2017982017982005,
+     "reportedCpu": 0.2334738172935822,
+     "idleWakeups": 260,
+     "workingSetKb": 70848
+    },
+    "browser": {
+     "cpu": 0.0848151848151837,
+     "reportedCpu": 0.004712665613560753,
+     "idleWakeups": 2,
+     "workingSetKb": 126432
+    },
+    "load": [
+     11.10595703125,
+     22.02880859375,
+     22.83837890625
+    ]
+   },
+   {
+    "t": 24,
+    "renderer": {
+     "cpu": 4.268231768231804,
+     "reportedCpu": 0.23718511975225492,
+     "idleWakeups": 65,
+     "workingSetKb": 149344
+    },
+    "gpu": {
+     "cpu": 4.0892107892108,
+     "reportedCpu": 0.22723694574181513,
+     "idleWakeups": 184,
+     "workingSetKb": 71056
+    },
+    "browser": {
+     "cpu": 0.08301698301698564,
+     "reportedCpu": 0.00461311917801877,
+     "idleWakeups": 3,
+     "workingSetKb": 126432
+    },
+    "load": [
+     11.10595703125,
+     22.02880859375,
+     22.83837890625
+    ]
+   },
+   {
+    "t": 25,
+    "renderer": {
+     "cpu": 7.095114656031906,
+     "reportedCpu": 0.3943865478075923,
+     "idleWakeups": 63,
+     "workingSetKb": 150128
+    },
+    "gpu": {
+     "cpu": 6.464307078763691,
+     "reportedCpu": 0.3593194737333292,
+     "idleWakeups": 179,
+     "workingSetKb": 70784
+    },
+    "browser": {
+     "cpu": 0.06759720837487104,
+     "reportedCpu": 0.0037573484425291945,
+     "idleWakeups": 3,
+     "workingSetKb": 126704
+    },
+    "load": [
+     11.10595703125,
+     22.02880859375,
+     22.83837890625
+    ]
+   },
+   {
+    "t": 26,
+    "renderer": {
+     "cpu": 5.928871128871125,
+     "reportedCpu": 0.32908617646200977,
+     "idleWakeups": 97,
+     "workingSetKb": 150080
+    },
+    "gpu": {
+     "cpu": 5.631168831168852,
+     "reportedCpu": 0.312565432019902,
+     "idleWakeups": 203,
+     "workingSetKb": 70720
+    },
+    "browser": {
+     "cpu": 0.047652347652353724,
+     "reportedCpu": 0.0026450220684671446,
+     "idleWakeups": 2,
+     "workingSetKb": 126160
+    },
+    "load": [
+     11.10595703125,
+     22.02880859375,
+     22.83837890625
+    ]
+   },
+   {
+    "t": 27,
+    "renderer": {
+     "cpu": 4.0645354645354645,
+     "reportedCpu": 0.22585739042619135,
+     "idleWakeups": 97,
+     "workingSetKb": 149024
+    },
+    "gpu": {
+     "cpu": 3.13746253746252,
+     "reportedCpu": 0.17434266221456152,
+     "idleWakeups": 188,
+     "workingSetKb": 70672
+    },
+    "browser": {
+     "cpu": 0.059840159840161465,
+     "reportedCpu": 0.003325204069827731,
+     "idleWakeups": 3,
+     "workingSetKb": 125712
+    },
+    "load": [
+     11.10595703125,
+     22.02880859375,
+     22.83837890625
+    ]
+   },
+   {
+    "t": 28,
+    "renderer": {
+     "cpu": 2.7571286141575344,
+     "reportedCpu": 0.15325357098443393,
+     "idleWakeups": 46,
+     "workingSetKb": 150304
+    },
+    "gpu": {
+     "cpu": 8.129710867397815,
+     "reportedCpu": 0.45187902115581413,
+     "idleWakeups": 207,
+     "workingSetKb": 71824
+    },
+    "browser": {
+     "cpu": 0.23559322033898347,
+     "reportedCpu": 0.01309488343060011,
+     "idleWakeups": 3,
+     "workingSetKb": 127696
+    },
+    "load": [
+     11.01708984375,
+     21.8291015625,
+     22.7626953125
+    ]
+   },
+   {
+    "t": 29,
+    "renderer": {
+     "cpu": 3.666666666666666,
+     "reportedCpu": 0.20362708951932368,
+     "idleWakeups": 91,
+     "workingSetKb": 148880
+    },
+    "gpu": {
+     "cpu": 3.8573852295409177,
+     "reportedCpu": 0.214223495668973,
+     "idleWakeups": 136,
+     "workingSetKb": 71600
+    },
+    "browser": {
+     "cpu": 0.06127744510978078,
+     "reportedCpu": 0.0034032767679911956,
+     "idleWakeups": 2,
+     "workingSetKb": 125664
+    },
+    "load": [
+     11.01708984375,
+     21.8291015625,
+     22.7626953125
+    ]
+   },
+   {
+    "t": 30,
+    "renderer": {
+     "cpu": 6.155988023952089,
+     "reportedCpu": 0.3421608537097186,
+     "idleWakeups": 79,
+     "workingSetKb": 148464
+    },
+    "gpu": {
+     "cpu": 4.791516966067866,
+     "reportedCpu": 0.2663200417937915,
+     "idleWakeups": 261,
+     "workingSetKb": 71232
+    },
+    "browser": {
+     "cpu": 0.16297405189620714,
+     "reportedCpu": 0.009058905630944733,
+     "idleWakeups": 3,
+     "workingSetKb": 126176
+    },
+    "load": [
+     11.01708984375,
+     21.8291015625,
+     22.7626953125
+    ]
+   },
+   {
+    "t": 31,
+    "renderer": {
+     "cpu": 11.131700000000011,
+     "reportedCpu": 0.6181051269015352,
+     "idleWakeups": 75,
+     "workingSetKb": 166752
+    },
+    "gpu": {
+     "cpu": 4.845799999999989,
+     "reportedCpu": 0.26906608449157016,
+     "idleWakeups": 233,
+     "workingSetKb": 71264
+    },
+    "browser": {
+     "cpu": 0.08810000000000207,
+     "reportedCpu": 0.004891304227130627,
+     "idleWakeups": 2,
+     "workingSetKb": 127056
+    },
+    "load": [
+     11.01708984375,
+     21.8291015625,
+     22.7626953125
+    ]
+   },
+   {
+    "t": 32,
+    "renderer": {
+     "cpu": 4.189830508474539,
+     "reportedCpu": 0.23288979863544668,
+     "idleWakeups": 72,
+     "workingSetKb": 153280
+    },
+    "gpu": {
+     "cpu": 4.149551345962113,
+     "reportedCpu": 0.23065274060566684,
+     "idleWakeups": 131,
+     "workingSetKb": 71616
+    },
+    "browser": {
+     "cpu": 0.08145563310069359,
+     "reportedCpu": 0.004527737072479372,
+     "idleWakeups": 4,
+     "workingSetKb": 127776
+    },
+    "load": [
+     11.01708984375,
+     21.8291015625,
+     22.7626953125
+    ]
+   },
+   {
+    "t": 33,
+    "renderer": {
+     "cpu": 7.8051896207584885,
+     "reportedCpu": 0.4334027815184038,
+     "idleWakeups": 66,
+     "workingSetKb": 157488
+    },
+    "gpu": {
+     "cpu": 6.895808383233537,
+     "reportedCpu": 0.38290595562400603,
+     "idleWakeups": 199,
+     "workingSetKb": 71504
+    },
+    "browser": {
+     "cpu": 0.05029940119759969,
+     "reportedCpu": 0.0027929895961137543,
+     "idleWakeups": 2,
+     "workingSetKb": 127264
+    },
+    "load": [
+     10.935546875,
+     21.63232421875,
+     22.6875
+    ]
+   },
+   {
+    "t": 34,
+    "renderer": {
+     "cpu": 4.515784215784248,
+     "reportedCpu": 0.2508297919848997,
+     "idleWakeups": 108,
+     "workingSetKb": 157632
+    },
+    "gpu": {
+     "cpu": 3.6660339660339645,
+     "reportedCpu": 0.203629699250415,
+     "idleWakeups": 237,
+     "workingSetKb": 71712
+    },
+    "browser": {
+     "cpu": 0.05074925074925714,
+     "reportedCpu": 0.0028188649540619344,
+     "idleWakeups": 2,
+     "workingSetKb": 127280
+    },
+    "load": [
+     10.935546875,
+     21.63232421875,
+     22.6875
+    ]
+   },
+   {
+    "t": 35,
+    "renderer": {
+     "cpu": 1.637724550898163,
+     "reportedCpu": 0.09104339391131075,
+     "idleWakeups": 47,
+     "workingSetKb": 158176
+    },
+    "gpu": {
+     "cpu": 5.20059880239522,
+     "reportedCpu": 0.28910825830999,
+     "idleWakeups": 150,
+     "workingSetKb": 72992
+    },
+    "browser": {
+     "cpu": 0.08842315369260903,
+     "reportedCpu": 0.004915527274074932,
+     "idleWakeups": 3,
+     "workingSetKb": 128160
+    },
+    "load": [
+     10.935546875,
+     21.63232421875,
+     22.6875
+    ]
+   },
+   {
+    "t": 36,
+    "renderer": {
+     "cpu": 1.6136726546906288,
+     "reportedCpu": 0.08958955914002446,
+     "idleWakeups": 77,
+     "workingSetKb": 158288
+    },
+    "gpu": {
+     "cpu": 3.335429141716581,
+     "reportedCpu": 0.1852021790916875,
+     "idleWakeups": 141,
+     "workingSetKb": 73056
+    },
+    "browser": {
+     "cpu": 0.0767465069860299,
+     "reportedCpu": 0.0042615640505318415,
+     "idleWakeups": 3,
+     "workingSetKb": 128240
+    },
+    "load": [
+     10.935546875,
+     21.63232421875,
+     22.6875
+    ]
+   },
+   {
+    "t": 37,
+    "renderer": {
+     "cpu": 8.481555333998005,
+     "reportedCpu": 0.4713967929724141,
+     "idleWakeups": 71,
+     "workingSetKb": 158576
+    },
+    "gpu": {
+     "cpu": 6.280857427716826,
+     "reportedCpu": 0.34905275867869595,
+     "idleWakeups": 259,
+     "workingSetKb": 73184
+    },
+    "browser": {
+     "cpu": 0.06819541375872563,
+     "reportedCpu": 0.0037898545593446345,
+     "idleWakeups": 3,
+     "workingSetKb": 128336
+    },
+    "load": [
+     10.935546875,
+     21.63232421875,
+     22.6875
+    ]
+   },
+   {
+    "t": 38,
+    "renderer": {
+     "cpu": 10.841217564870268,
+     "reportedCpu": 0.6019642513175951,
+     "idleWakeups": 76,
+     "workingSetKb": 172192
+    },
+    "gpu": {
+     "cpu": 5.226347305389218,
+     "reportedCpu": 0.29019478759889417,
+     "idleWakeups": 263,
+     "workingSetKb": 73200
+    },
+    "browser": {
+     "cpu": 0.05429141716566756,
+     "reportedCpu": 0.003014544178200346,
+     "idleWakeups": 2,
+     "workingSetKb": 128336
+    },
+    "load": [
+     10.5400390625,
+     21.37255859375,
+     22.58935546875
+    ]
+   },
+   {
+    "t": 39,
+    "renderer": {
+     "cpu": 3.917946161515445,
+     "reportedCpu": 0.21778592237384162,
+     "idleWakeups": 84,
+     "workingSetKb": 172480
+    },
+    "gpu": {
+     "cpu": 3.739481555334016,
+     "reportedCpu": 0.20785818892102054,
+     "idleWakeups": 152,
+     "workingSetKb": 73168
+    },
+    "browser": {
+     "cpu": 0.049850448654043464,
+     "reportedCpu": 0.0027708589429971137,
+     "idleWakeups": 2,
+     "workingSetKb": 128336
+    },
+    "load": [
+     10.5400390625,
+     21.37255859375,
+     22.58935546875
+    ]
+   },
+   {
+    "t": 40,
+    "renderer": {
+     "cpu": 6.397800000000009,
+     "reportedCpu": 0.3552517996637052,
+     "idleWakeups": 47,
+     "workingSetKb": 172512
+    },
+    "gpu": {
+     "cpu": 5.977199999999971,
+     "reportedCpu": 0.3319066876432226,
+     "idleWakeups": 156,
+     "workingSetKb": 73568
+    },
+    "browser": {
+     "cpu": 0.14819999999999833,
+     "reportedCpu": 0.00822956419293297,
+     "idleWakeups": 6,
+     "workingSetKb": 128960
+    },
+    "load": [
+     10.5400390625,
+     21.37255859375,
+     22.58935546875
+    ]
+   },
+   {
+    "t": 41,
+    "renderer": {
+     "cpu": 7.4389610389610255,
+     "reportedCpu": 0.413383398557355,
+     "idleWakeups": 75,
+     "workingSetKb": 172752
+    },
+    "gpu": {
+     "cpu": 5.934965034965041,
+     "reportedCpu": 0.32980034114175566,
+     "idleWakeups": 253,
+     "workingSetKb": 72848
+    },
+    "browser": {
+     "cpu": 0.09730269730268926,
+     "reportedCpu": 0.00540690994208611,
+     "idleWakeups": 3,
+     "workingSetKb": 129936
+    },
+    "load": [
+     10.5400390625,
+     21.37255859375,
+     22.58935546875
+    ]
+   },
+   {
+    "t": 42,
+    "renderer": {
+     "cpu": 1.5301397205589167,
+     "reportedCpu": 0.08500487785621823,
+     "idleWakeups": 80,
+     "workingSetKb": 167712
+    },
+    "gpu": {
+     "cpu": 4.1768463073852296,
+     "reportedCpu": 0.23203937506161085,
+     "idleWakeups": 131,
+     "workingSetKb": 72720
+    },
+    "browser": {
+     "cpu": 0.10019960079840368,
+     "reportedCpu": 0.005566455607072991,
+     "idleWakeups": 3,
+     "workingSetKb": 129568
+    },
+    "load": [
+     10.5400390625,
+     21.37255859375,
+     22.58935546875
+    ]
+   },
+   {
+    "t": 43,
+    "renderer": {
+     "cpu": 2.0885114885114535,
+     "reportedCpu": 0.1160937114925222,
+     "idleWakeups": 60,
+     "workingSetKb": 159056
+    },
+    "gpu": {
+     "cpu": 5.419580419580433,
+     "reportedCpu": 0.3012542282488616,
+     "idleWakeups": 190,
+     "workingSetKb": 72592
+    },
+    "browser": {
+     "cpu": 0.1301698301698356,
+     "reportedCpu": 0.007235618389376891,
+     "idleWakeups": 2,
+     "workingSetKb": 130496
+    },
+    "load": [
+     10.33642578125,
+     21.150390625,
+     22.50341796875
+    ]
+   },
+   {
+    "t": 44,
+    "renderer": {
+     "cpu": 9.469100000000008,
+     "reportedCpu": 0.5257908546118406,
+     "idleWakeups": 84,
+     "workingSetKb": 171072
+    },
+    "gpu": {
+     "cpu": 3.8005000000000067,
+     "reportedCpu": 0.21103189571776,
+     "idleWakeups": 204,
+     "workingSetKb": 72768
+    },
+    "browser": {
+     "cpu": 0.11360000000000259,
+     "reportedCpu": 0.006307957132544838,
+     "idleWakeups": 4,
+     "workingSetKb": 131440
+    },
+    "load": [
+     10.33642578125,
+     21.150390625,
+     22.50341796875
+    ]
+   },
+   {
+    "t": 45,
+    "renderer": {
+     "cpu": 7.949250749250771,
+     "reportedCpu": 0.44180114417901506,
+     "idleWakeups": 89,
+     "workingSetKb": 167312
+    },
+    "gpu": {
+     "cpu": 6.313486513486501,
+     "reportedCpu": 0.3508880636095798,
+     "idleWakeups": 263,
+     "workingSetKb": 72352
+    },
+    "browser": {
+     "cpu": 0.06023976023976226,
+     "reportedCpu": 0.0033479744754423574,
+     "idleWakeups": 3,
+     "workingSetKb": 129536
+    },
+    "load": [
+     10.33642578125,
+     21.150390625,
+     22.50341796875
+    ]
+   },
+   {
+    "t": 46,
+    "renderer": {
+     "cpu": 5.586513486513498,
+     "reportedCpu": 0.31037240248142517,
+     "idleWakeups": 67,
+     "workingSetKb": 162352
+    },
+    "gpu": {
+     "cpu": 4.953146853146886,
+     "reportedCpu": 0.27518967057163923,
+     "idleWakeups": 178,
+     "workingSetKb": 71232
+    },
+    "browser": {
+     "cpu": 0.08401598401598209,
+     "reportedCpu": 0.004667997684317914,
+     "idleWakeups": 2,
+     "workingSetKb": 129248
+    },
+    "load": [
+     10.33642578125,
+     21.150390625,
+     22.50341796875
+    ]
+   },
+   {
+    "t": 47,
+    "renderer": {
+     "cpu": 5.675024975024981,
+     "reportedCpu": 0.31525617456913174,
+     "idleWakeups": 73,
+     "workingSetKb": 146768
+    },
+    "gpu": {
+     "cpu": 5.553446553446513,
+     "reportedCpu": 0.3085020021829888,
+     "idleWakeups": 170,
+     "workingSetKb": 70656
+    },
+    "browser": {
+     "cpu": 0.08651348651347877,
+     "reportedCpu": 0.0048058727098573666,
+     "idleWakeups": 3,
+     "workingSetKb": 128992
+    },
+    "load": [
+     10.33642578125,
+     21.150390625,
+     22.50341796875
+    ]
+   },
+   {
+    "t": 48,
+    "renderer": {
+     "cpu": 5.6878364905284275,
+     "reportedCpu": 0.31608167538524407,
+     "idleWakeups": 65,
+     "workingSetKb": 143760
+    },
+    "gpu": {
+     "cpu": 4.751445663010974,
+     "reportedCpu": 0.2640458110090875,
+     "idleWakeups": 214,
+     "workingSetKb": 70832
+    },
+    "browser": {
+     "cpu": 0.12103688933200883,
+     "reportedCpu": 0.0067263170200753414,
+     "idleWakeups": 4,
+     "workingSetKb": 127824
+    },
+    "load": [
+     10.86962890625,
+     21.0810546875,
+     22.470703125
+    ]
+   },
+   {
+    "t": 49,
+    "renderer": {
+     "cpu": 3.7439121756486853,
+     "reportedCpu": 0.20780929539165688,
+     "idleWakeups": 72,
+     "workingSetKb": 146096
+    },
+    "gpu": {
+     "cpu": 4.441117764471079,
+     "reportedCpu": 0.24651226689356875,
+     "idleWakeups": 131,
+     "workingSetKb": 72000
+    },
+    "browser": {
+     "cpu": 0.1245508982035955,
+     "reportedCpu": 0.006913712218058483,
+     "idleWakeups": 2,
+     "workingSetKb": 127344
+    },
+    "load": [
+     10.86962890625,
+     21.0810546875,
+     22.470703125
+    ]
+   },
+   {
+    "t": 50,
+    "renderer": {
+     "cpu": 2.9966101694915337,
+     "reportedCpu": 0.16652184097718226,
+     "idleWakeups": 49,
+     "workingSetKb": 137280
+    },
+    "gpu": {
+     "cpu": 7.749152542372872,
+     "reportedCpu": 0.43061408879944635,
+     "idleWakeups": 243,
+     "workingSetKb": 71792
+    },
+    "browser": {
+     "cpu": 0.10697906281156438,
+     "reportedCpu": 0.005944389543325736,
+     "idleWakeups": 3,
+     "workingSetKb": 126112
+    },
+    "load": [
+     10.86962890625,
+     21.0810546875,
+     22.470703125
+    ]
+   },
+   {
+    "t": 51,
+    "renderer": {
+     "cpu": 4.266933066933054,
+     "reportedCpu": 0.2371736225083498,
+     "idleWakeups": 110,
+     "workingSetKb": 146352
+    },
+    "gpu": {
+     "cpu": 2.865734265734265,
+     "reportedCpu": 0.15928590871095022,
+     "idleWakeups": 159,
+     "workingSetKb": 71680
+    },
+    "browser": {
+     "cpu": 0.09450549450549475,
+     "reportedCpu": 0.005252535347730611,
+     "idleWakeups": 2,
+     "workingSetKb": 127088
+    },
+    "load": [
+     10.86962890625,
+     21.0810546875,
+     22.470703125
+    ]
+   },
+   {
+    "t": 52,
+    "renderer": {
+     "cpu": 9.833999999999943,
+     "reportedCpu": 0.5460062755742644,
+     "idleWakeups": 75,
+     "workingSetKb": 171424
+    },
+    "gpu": {
+     "cpu": 4.576499999999983,
+     "reportedCpu": 0.25409957305275277,
+     "idleWakeups": 256,
+     "workingSetKb": 71872
+    },
+    "browser": {
+     "cpu": 0.13379999999999503,
+     "reportedCpu": 0.007429314074419073,
+     "idleWakeups": 4,
+     "workingSetKb": 131136
+    },
+    "load": [
+     10.86962890625,
+     21.0810546875,
+     22.470703125
+    ]
+   },
+   {
+    "t": 53,
+    "renderer": {
+     "cpu": 6.516983016983055,
+     "reportedCpu": 0.3621465053736579,
+     "idleWakeups": 70,
+     "workingSetKb": 176400
+    },
+    "gpu": {
+     "cpu": 5.586513486513498,
+     "reportedCpu": 0.3104378416517751,
+     "idleWakeups": 176,
+     "workingSetKb": 71824
+    },
+    "browser": {
+     "cpu": 0.04945054945055177,
+     "reportedCpu": 0.00274788687499313,
+     "idleWakeups": 2,
+     "workingSetKb": 130592
+    },
+    "load": [
+     10.6396484375,
+     20.86376953125,
+     22.3857421875
+    ]
+   },
+   {
+    "t": 54,
+    "renderer": {
+     "cpu": 5.978921078921061,
+     "reportedCpu": 0.33227182232348773,
+     "idleWakeups": 95,
+     "workingSetKb": 151616
+    },
+    "gpu": {
+     "cpu": 6.001098901098922,
+     "reportedCpu": 0.3335043298767604,
+     "idleWakeups": 174,
+     "workingSetKb": 71392
+    },
+    "browser": {
+     "cpu": 0.12877122877122726,
+     "reportedCpu": 0.007156352136940046,
+     "idleWakeups": 2,
+     "workingSetKb": 127776
+    },
+    "load": [
+     10.6396484375,
+     20.86376953125,
+     22.3857421875
+    ]
+   },
+   {
+    "t": 55,
+    "renderer": {
+     "cpu": 5.0244755244755455,
+     "reportedCpu": 0.27915286720715593,
+     "idleWakeups": 69,
+     "workingSetKb": 152704
+    },
+    "gpu": {
+     "cpu": 4.0045954045954115,
+     "reportedCpu": 0.2224928591481331,
+     "idleWakeups": 199,
+     "workingSetKb": 71456
+    },
+    "browser": {
+     "cpu": 0.082317682317687,
+     "reportedCpu": 0.004573725457022855,
+     "idleWakeups": 3,
+     "workingSetKb": 127248
+    },
+    "load": [
+     10.6396484375,
+     20.86376953125,
+     22.3857421875
+    ]
+   },
+   {
+    "t": 56,
+    "renderer": {
+     "cpu": 3.190700000000035,
+     "reportedCpu": 0.1771250790504004,
+     "idleWakeups": 64,
+     "workingSetKb": 145168
+    },
+    "gpu": {
+     "cpu": 2.434499999999984,
+     "reportedCpu": 0.1351455325033749,
+     "idleWakeups": 132,
+     "workingSetKb": 71168
+    },
+    "browser": {
+     "cpu": 0.14849999999999586,
+     "reportedCpu": 0.008243281725393804,
+     "idleWakeups": 3,
+     "workingSetKb": 128720
+    },
+    "load": [
+     10.6396484375,
+     20.86376953125,
+     22.3857421875
+    ]
+   },
+   {
+    "t": 57,
+    "renderer": {
+     "cpu": 3.3791417165668305,
+     "reportedCpu": 0.1879069379221718,
+     "idleWakeups": 39,
+     "workingSetKb": 147360
+    },
+    "gpu": {
+     "cpu": 9.90399201596808,
+     "reportedCpu": 0.5507444912509,
+     "idleWakeups": 263,
+     "workingSetKb": 71760
+    },
+    "browser": {
+     "cpu": 0.0994011976047901,
+     "reportedCpu": 0.005527584645302219,
+     "idleWakeups": 3,
+     "workingSetKb": 127920
+    },
+    "load": [
+     10.6396484375,
+     20.86376953125,
+     22.3857421875
+    ]
+   },
+   {
+    "t": 58,
+    "renderer": {
+     "cpu": 3.3920159680638626,
+     "reportedCpu": 0.1883389444906592,
+     "idleWakeups": 113,
+     "workingSetKb": 147472
+    },
+    "gpu": {
+     "cpu": 2.712974051896173,
+     "reportedCpu": 0.15063554078901684,
+     "idleWakeups": 137,
+     "workingSetKb": 72000
+    },
+    "browser": {
+     "cpu": 0.054690618762474344,
+     "reportedCpu": 0.0030367160022187977,
+     "idleWakeups": 2,
+     "workingSetKb": 127552
+    },
+    "load": [
+     11.06884765625,
+     20.78271484375,
+     22.34814453125
+    ]
+   },
+   {
+    "t": 59,
+    "renderer": {
+     "cpu": 11.380319680319664,
+     "reportedCpu": 0.6320859073534746,
+     "idleWakeups": 74,
+     "workingSetKb": 160144
+    },
+    "gpu": {
+     "cpu": 4.85084915084917,
+     "reportedCpu": 0.2694235234362455,
+     "idleWakeups": 259,
+     "workingSetKb": 71136
+    },
+    "browser": {
+     "cpu": 0.1592407592407577,
+     "reportedCpu": 0.008844332098123037,
+     "idleWakeups": 3,
+     "workingSetKb": 127200
+    },
+    "load": [
+     11.06884765625,
+     20.78271484375,
+     22.34814453125
+    ]
+   },
+   {
+    "t": 60,
+    "renderer": {
+     "cpu": 5.950149850149892,
+     "reportedCpu": 0.3306917304137008,
+     "idleWakeups": 67,
+     "workingSetKb": 150832
+    },
+    "gpu": {
+     "cpu": 4.657242757242776,
+     "reportedCpu": 0.25883551943551103,
+     "idleWakeups": 188,
+     "workingSetKb": 70976
+    },
+    "browser": {
+     "cpu": 0.14585414585414755,
+     "reportedCpu": 0.008106133944868962,
+     "idleWakeups": 4,
+     "workingSetKb": 128768
+    },
+    "load": [
+     11.06884765625,
+     20.78271484375,
+     22.34814453125
+    ]
+   }
+  ],
+  "callbacks": 3539,
+  "frames": 3027
+ },
+ "hold": {
+  "rows": [
+   {
+    "t": 1,
+    "renderer": {
+     "cpu": 8.914870259481031,
+     "reportedCpu": 0.4954896337513602,
+     "idleWakeups": 94,
+     "workingSetKb": 168864
+    },
+    "gpu": {
+     "cpu": 4.079640718562894,
+     "reportedCpu": 0.2267483133659694,
+     "idleWakeups": 263,
+     "workingSetKb": 70080
+    },
+    "browser": {
+     "cpu": 0.11826347305390246,
+     "reportedCpu": 0.006573020264538273,
+     "idleWakeups": 4,
+     "workingSetKb": 128080
+    },
+    "load": [
+     11.06884765625,
+     20.78271484375,
+     22.34814453125
+    ]
+   },
+   {
+    "t": 2,
+    "renderer": {
+     "cpu": 4.1163836163835885,
+     "reportedCpu": 0.22864914716448423,
+     "idleWakeups": 99,
+     "workingSetKb": 167968
+    },
+    "gpu": {
+     "cpu": 4.092507492507499,
+     "reportedCpu": 0.2273208775742289,
+     "idleWakeups": 266,
+     "workingSetKb": 70288
+    },
+    "browser": {
+     "cpu": 0.07142857142856246,
+     "reportedCpu": 0.003967643561552191,
+     "idleWakeups": 2,
+     "workingSetKb": 128000
+    },
+    "load": [
+     11.22314453125,
+     20.6533203125,
+     22.29296875
+    ]
+   },
+   {
+    "t": 3,
+    "renderer": {
+     "cpu": 4.150149850149839,
+     "reportedCpu": 0.2306389937626484,
+     "idleWakeups": 101,
+     "workingSetKb": 157840
+    },
+    "gpu": {
+     "cpu": 4.056743256743233,
+     "reportedCpu": 0.22544917450225802,
+     "idleWakeups": 262,
+     "workingSetKb": 70288
+    },
+    "browser": {
+     "cpu": 0.09840159840159977,
+     "reportedCpu": 0.005468459921796027,
+     "idleWakeups": 3,
+     "workingSetKb": 128000
+    },
+    "load": [
+     11.22314453125,
+     20.6533203125,
+     22.29296875
+    ]
+   },
+   {
+    "t": 4,
+    "renderer": {
+     "cpu": 4.152247752247768,
+     "reportedCpu": 0.2305915112764819,
+     "idleWakeups": 95,
+     "workingSetKb": 157472
+    },
+    "gpu": {
+     "cpu": 4.05434565434565,
+     "reportedCpu": 0.22515280365836687,
+     "idleWakeups": 264,
+     "workingSetKb": 69600
+    },
+    "browser": {
+     "cpu": 0.0748251748251748,
+     "reportedCpu": 0.004155306148421766,
+     "idleWakeups": 3,
+     "workingSetKb": 128192
+    },
+    "load": [
+     11.22314453125,
+     20.6533203125,
+     22.29296875
+    ]
+   },
+   {
+    "t": 5,
+    "renderer": {
+     "cpu": 9.874025974025965,
+     "reportedCpu": 0.5482864156505736,
+     "idleWakeups": 98,
+     "workingSetKb": 173488
+    },
+    "gpu": {
+     "cpu": 4.084415584415614,
+     "reportedCpu": 0.22680004961476444,
+     "idleWakeups": 256,
+     "workingSetKb": 69616
+    },
+    "browser": {
+     "cpu": 0.052547452547455194,
+     "reportedCpu": 0.0029178600214900944,
+     "idleWakeups": 2,
+     "workingSetKb": 127760
+    },
+    "load": [
+     11.22314453125,
+     20.6533203125,
+     22.29296875
+    ]
+   },
+   {
+    "t": 6,
+    "renderer": {
+     "cpu": 4.174225774225845,
+     "reportedCpu": 0.23197582175036485,
+     "idleWakeups": 82,
+     "workingSetKb": 161424
+    },
+    "gpu": {
+     "cpu": 4.014485514485484,
+     "reportedCpu": 0.22309896200272414,
+     "idleWakeups": 254,
+     "workingSetKb": 68928
+    },
+    "browser": {
+     "cpu": 0.05354645354645165,
+     "reportedCpu": 0.0029757691336125894,
+     "idleWakeups": 3,
+     "workingSetKb": 126128
+    },
+    "load": [
+     11.22314453125,
+     20.6533203125,
+     22.29296875
+    ]
+   },
+   {
+    "t": 7,
+    "renderer": {
+     "cpu": 4.005383848454586,
+     "reportedCpu": 0.22264052527513625,
+     "idleWakeups": 109,
+     "workingSetKb": 163696
+    },
+    "gpu": {
+     "cpu": 3.9125623130608536,
+     "reportedCpu": 0.21748187872687727,
+     "idleWakeups": 257,
+     "workingSetKb": 69376
+    },
+    "browser": {
+     "cpu": 0.06979062811565642,
+     "reportedCpu": 0.003879345698470651,
+     "idleWakeups": 3,
+     "workingSetKb": 126560
+    },
+    "load": [
+     11.044921875,
+     20.45947265625,
+     22.21484375
+    ]
+   },
+   {
+    "t": 8,
+    "renderer": {
+     "cpu": 3.951397205588821,
+     "reportedCpu": 0.21932725534316935,
+     "idleWakeups": 83,
+     "workingSetKb": 166160
+    },
+    "gpu": {
+     "cpu": 3.9169660678642444,
+     "reportedCpu": 0.21741567830279276,
+     "idleWakeups": 265,
+     "workingSetKb": 69296
+    },
+    "browser": {
+     "cpu": 0.08003992015967759,
+     "reportedCpu": 0.0044429198913844585,
+     "idleWakeups": 2,
+     "workingSetKb": 126400
+    },
+    "load": [
+     11.044921875,
+     20.45947265625,
+     22.21484375
+    ]
+   },
+   {
+    "t": 9,
+    "renderer": {
+     "cpu": 9.465134865134845,
+     "reportedCpu": 0.5260631282416712,
+     "idleWakeups": 92,
+     "workingSetKb": 162560
+    },
+    "gpu": {
+     "cpu": 3.8877122877122834,
+     "reportedCpu": 0.21607532453774173,
+     "idleWakeups": 259,
+     "workingSetKb": 68912
+    },
+    "browser": {
+     "cpu": 0.27852147852147985,
+     "reportedCpu": 0.01547930719773349,
+     "idleWakeups": 4,
+     "workingSetKb": 128528
+    },
+    "load": [
+     11.044921875,
+     20.45947265625,
+     22.21484375
+    ]
+   },
+   {
+    "t": 10,
+    "renderer": {
+     "cpu": 3.8594405594405514,
+     "reportedCpu": 0.21451279891755798,
+     "idleWakeups": 92,
+     "workingSetKb": 161056
+    },
+    "gpu": {
+     "cpu": 3.8759240759241096,
+     "reportedCpu": 0.21542940514209855,
+     "idleWakeups": 261,
+     "workingSetKb": 68784
+    },
+    "browser": {
+     "cpu": 0.08951048951049032,
+     "reportedCpu": 0.004975096200925479,
+     "idleWakeups": 2,
+     "workingSetKb": 127408
+    },
+    "load": [
+     11.044921875,
+     20.45947265625,
+     22.21484375
+    ]
+   },
+   {
+    "t": 11,
+    "renderer": {
+     "cpu": 3.802797202797263,
+     "reportedCpu": 0.21118992590876412,
+     "idleWakeups": 95,
+     "workingSetKb": 161792
+    },
+    "gpu": {
+     "cpu": 3.954945054945043,
+     "reportedCpu": 0.21963623016372327,
+     "idleWakeups": 259,
+     "workingSetKb": 69184
+    },
+    "browser": {
+     "cpu": 0.08501498501498964,
+     "reportedCpu": 0.00472130486880265,
+     "idleWakeups": 4,
+     "workingSetKb": 128064
+    },
+    "load": [
+     11.044921875,
+     20.45947265625,
+     22.21484375
+    ]
+   },
+   {
+    "t": 12,
+    "renderer": {
+     "cpu": 9.167432567432547,
+     "reportedCpu": 0.5093745770985376,
+     "idleWakeups": 79,
+     "workingSetKb": 171760
+    },
+    "gpu": {
+     "cpu": 3.814485514485523,
+     "reportedCpu": 0.2119469869978686,
+     "idleWakeups": 258,
+     "workingSetKb": 68640
+    },
+    "browser": {
+     "cpu": 0.04965034965034663,
+     "reportedCpu": 0.002758752377828068,
+     "idleWakeups": 2,
+     "workingSetKb": 126992
+    },
+    "load": [
+     10.720703125,
+     20.23583984375,
+     22.12548828125
+    ]
+   },
+   {
+    "t": 13,
+    "renderer": {
+     "cpu": 4.131368631368657,
+     "reportedCpu": 0.2295580894372305,
+     "idleWakeups": 79,
+     "workingSetKb": 151568
+    },
+    "gpu": {
+     "cpu": 3.939260739260709,
+     "reportedCpu": 0.21888892885643524,
+     "idleWakeups": 257,
+     "workingSetKb": 68624
+    },
+    "browser": {
+     "cpu": 0.07502497502496965,
+     "reportedCpu": 0.004168970425290496,
+     "idleWakeups": 2,
+     "workingSetKb": 126944
+    },
+    "load": [
+     10.720703125,
+     20.23583984375,
+     22.12548828125
+    ]
+   },
+   {
+    "t": 14,
+    "renderer": {
+     "cpu": 4.133366633366584,
+     "reportedCpu": 0.22964937438792546,
+     "idleWakeups": 96,
+     "workingSetKb": 144512
+    },
+    "gpu": {
+     "cpu": 3.865534465534467,
+     "reportedCpu": 0.21476285671564352,
+     "idleWakeups": 256,
+     "workingSetKb": 68640
+    },
+    "browser": {
+     "cpu": 0.0951048951049015,
+     "reportedCpu": 0.005283705573721069,
+     "idleWakeups": 3,
+     "workingSetKb": 127024
+    },
+    "load": [
+     10.720703125,
+     20.23583984375,
+     22.12548828125
+    ]
+   },
+   {
+    "t": 15,
+    "renderer": {
+     "cpu": 3.885214785214831,
+     "reportedCpu": 0.2158618706045431,
+     "idleWakeups": 76,
+     "workingSetKb": 140208
+    },
+    "gpu": {
+     "cpu": 3.996003996004,
+     "reportedCpu": 0.22201974021914236,
+     "idleWakeups": 257,
+     "workingSetKb": 68672
+    },
+    "browser": {
+     "cpu": 0.178221778221779,
+     "reportedCpu": 0.009902209025197457,
+     "idleWakeups": 4,
+     "workingSetKb": 127104
+    },
+    "load": [
+     10.720703125,
+     20.23583984375,
+     22.12548828125
+    ]
+   },
+   {
+    "t": 16,
+    "renderer": {
+     "cpu": 10.517699999999941,
+     "reportedCpu": 0.583924269557524,
+     "idleWakeups": 96,
+     "workingSetKb": 152352
+    },
+    "gpu": {
+     "cpu": 4.1162000000000365,
+     "reportedCpu": 0.22852192582436556,
+     "idleWakeups": 267,
+     "workingSetKb": 68688
+    },
+    "browser": {
+     "cpu": 0.1514999999999933,
+     "reportedCpu": 0.008410846360984865,
+     "idleWakeups": 3,
+     "workingSetKb": 126912
+    },
+    "load": [
+     10.720703125,
+     20.23583984375,
+     22.12548828125
+    ]
+   },
+   {
+    "t": 17,
+    "renderer": {
+     "cpu": 4.297302697302759,
+     "reportedCpu": 0.2387547808124989,
+     "idleWakeups": 88,
+     "workingSetKb": 150960
+    },
+    "gpu": {
+     "cpu": 3.9964035964035673,
+     "reportedCpu": 0.2220372836587908,
+     "idleWakeups": 263,
+     "workingSetKb": 68656
+    },
+    "browser": {
+     "cpu": 0.11608391608391574,
+     "reportedCpu": 0.006449654122033894,
+     "idleWakeups": 2,
+     "workingSetKb": 127104
+    },
+    "load": [
+     10.98291015625,
+     20.1318359375,
+     22.07763671875
+    ]
+   },
+   {
+    "t": 18,
+    "renderer": {
+     "cpu": 4.154445554445522,
+     "reportedCpu": 0.23073891048355633,
+     "idleWakeups": 100,
+     "workingSetKb": 153520
+    },
+    "gpu": {
+     "cpu": 4.140659340659334,
+     "reportedCpu": 0.2299759770316986,
+     "idleWakeups": 261,
+     "workingSetKb": 68640
+    },
+    "browser": {
+     "cpu": 0.059640359640366604,
+     "reportedCpu": 0.0033124267604133376,
+     "idleWakeups": 2,
+     "workingSetKb": 127056
+    },
+    "load": [
+     10.98291015625,
+     20.1318359375,
+     22.07763671875
+    ]
+   },
+   {
+    "t": 19,
+    "renderer": {
+     "cpu": 9.452342971086772,
+     "reportedCpu": 0.5255273232967244,
+     "idleWakeups": 98,
+     "workingSetKb": 170000
+    },
+    "gpu": {
+     "cpu": 4.190927218344992,
+     "reportedCpu": 0.23300305489814713,
+     "idleWakeups": 258,
+     "workingSetKb": 69072
+    },
+    "browser": {
+     "cpu": 0.18783649052841445,
+     "reportedCpu": 0.010443138276130545,
+     "idleWakeups": 4,
+     "workingSetKb": 128272
+    },
+    "load": [
+     10.98291015625,
+     20.1318359375,
+     22.07763671875
+    ]
+   },
+   {
+    "t": 20,
+    "renderer": {
+     "cpu": 4.140799999999967,
+     "reportedCpu": 0.22991477251274725,
+     "idleWakeups": 86,
+     "workingSetKb": 165360
+    },
+    "gpu": {
+     "cpu": 3.976399999999991,
+     "reportedCpu": 0.2207874701278395,
+     "idleWakeups": 259,
+     "workingSetKb": 68624
+    },
+    "browser": {
+     "cpu": 0.05330000000000057,
+     "reportedCpu": 0.002959436070295324,
+     "idleWakeups": 2,
+     "workingSetKb": 127040
+    },
+    "load": [
+     10.98291015625,
+     20.1318359375,
+     22.07763671875
+    ]
+   }
+  ],
+  "callbacks": 574,
+  "frames": 574
+ },
+ "retint": {
+  "moving": {
+   "from": "coral",
+   "to": "jade",
+   "before": {
+    "layered": 5.910576698575767
+   },
+   "after": {
+    "layered": 172.42190932885012
+   },
+   "expected": {
+    "layered": 172.45508982035926
+   },
+   "framesToFollow": {
+    "layered": 1
+   }
+  },
+  "still": {
+   "from": "coral",
+   "to": "jade",
+   "before": {
+    "layered": 5.872897343185059
+   },
+   "after": {
+    "layered": 172.4500164197268
+   },
+   "expected": {
+    "layered": 172.45508982035926
+   },
+   "framesToFollow": {
+    "layered": 1
+   }
+  }
+ },
+ "dials": [
+  {
+   "bounciness": 0,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "approval",
+   "key": "spread",
+   "start": 1,
+   "target": 0.909,
+   "frames": 181,
+   "amplitude": 0.09099999999999997,
+   "overshoot": 0.0016135584705449658
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "input",
+   "key": "lift",
+   "start": 0,
+   "target": -0.041999999999999996,
+   "frames": 181,
+   "amplitude": 0.041999999999999996,
+   "overshoot": 0
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "error",
+   "key": "sink",
+   "start": 0,
+   "target": 0.24499999999999997,
+   "frames": 181,
+   "amplitude": 0.24499999999999997,
+   "overshoot": 0
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "done",
+   "key": "swirl",
+   "start": 6.96,
+   "target": 7.31,
+   "frames": 180,
+   "amplitude": 0.34999999999999964,
+   "overshoot": 0.00911142287409105
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "approval",
+   "key": "spread",
+   "start": 1,
+   "target": 0.74,
+   "frames": 180,
+   "amplitude": 0.26,
+   "overshoot": 0.002800572376262437
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "input",
+   "key": "lift",
+   "start": 0,
+   "target": -0.12,
+   "frames": 181,
+   "amplitude": 0.12,
+   "overshoot": 0.0018315261157105431
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "error",
+   "key": "sink",
+   "start": 0,
+   "target": 0.7,
+   "frames": 181,
+   "amplitude": 0.7,
+   "overshoot": 0
+  },
+  {
+   "bounciness": 0,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "done",
+   "key": "swirl",
+   "start": 8.309999999999999,
+   "target": 9.309999999999999,
+   "frames": 181,
+   "amplitude": 1,
+   "overshoot": 0.009407445872179565
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "approval",
+   "key": "spread",
+   "start": 1,
+   "target": 0.909,
+   "frames": 181,
+   "amplitude": 0.09099999999999997,
+   "overshoot": 0.06427228623737706
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "input",
+   "key": "lift",
+   "start": 0,
+   "target": -0.041999999999999996,
+   "frames": 181,
+   "amplitude": 0.041999999999999996,
+   "overshoot": 0.06217378935934115
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "error",
+   "key": "sink",
+   "start": 0,
+   "target": 0.24499999999999997,
+   "frames": 181,
+   "amplitude": 0.24499999999999997,
+   "overshoot": 0
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 0,
+   "from": "idle",
+   "to": "done",
+   "key": "swirl",
+   "start": 9.659999999999998,
+   "target": 10.009999999999998,
+   "frames": 181,
+   "amplitude": 0.34999999999999964,
+   "overshoot": 0.3187134116540391
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "approval",
+   "key": "spread",
+   "start": 1,
+   "target": 0.74,
+   "frames": 181,
+   "amplitude": 0.26,
+   "overshoot": 0.06417975404016801
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "input",
+   "key": "lift",
+   "start": 0,
+   "target": -0.12,
+   "frames": 180,
+   "amplitude": 0.12,
+   "overshoot": 0.0642722862373768
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "error",
+   "key": "sink",
+   "start": 0,
+   "target": 0.7,
+   "frames": 181,
+   "amplitude": 0.7,
+   "overshoot": 0
+  },
+  {
+   "bounciness": 1,
+   "expressiveness": 1,
+   "from": "idle",
+   "to": "done",
+   "key": "swirl",
+   "start": 11.009999999999998,
+   "target": 12.009999999999998,
+   "frames": 181,
+   "amplitude": 1,
+   "overshoot": 0.3189687646244934
+  }
+ ],
+ "reduced": {
+  "setting": true,
+  "rows": [
+   {
+    "t": 1,
+    "renderer": {
+     "cpu": 7.932039800995073,
+     "reportedCpu": 0.4406302952798384,
+     "idleWakeups": 9,
+     "workingSetKb": 174128
+    },
+    "gpu": {
+     "cpu": 0.7892537313432224,
+     "reportedCpu": 0.04384210739260176,
+     "idleWakeups": 68,
+     "workingSetKb": 75168
+    },
+    "browser": {
+     "cpu": 0.17233830845769602,
+     "reportedCpu": 0.009572331231841862,
+     "idleWakeups": 3,
+     "workingSetKb": 130080
+    },
+    "load": [
+     11.5849609375,
+     19.2255859375,
+     21.66552734375
+    ]
+   },
+   {
+    "t": 2,
+    "renderer": {
+     "cpu": 0.7750249750248795,
+     "reportedCpu": 0.04307032454638754,
+     "idleWakeups": 15,
+     "workingSetKb": 154768
+    },
+    "gpu": {
+     "cpu": 0.4549450549451163,
+     "reportedCpu": 0.025282403447200747,
+     "idleWakeups": 38,
+     "workingSetKb": 70528
+    },
+    "browser": {
+     "cpu": 0.07922077922078359,
+     "reportedCpu": 0.004402469424488988,
+     "idleWakeups": 3,
+     "workingSetKb": 129264
+    },
+    "load": [
+     11.5849609375,
+     19.2255859375,
+     21.66552734375
+    ]
+   },
+   {
+    "t": 3,
+    "renderer": {
+     "cpu": 0.8480000000000487,
+     "reportedCpu": 0.04708064993060601,
+     "idleWakeups": 24,
+     "workingSetKb": 151712
+    },
+    "gpu": {
+     "cpu": 0.5147999999999264,
+     "reportedCpu": 0.028581679143668905,
+     "idleWakeups": 37,
+     "workingSetKb": 70416
+    },
+    "browser": {
+     "cpu": 0.09620000000001294,
+     "reportedCpu": 0.005341020850079543,
+     "idleWakeups": 3,
+     "workingSetKb": 129760
+    },
+    "load": [
+     11.5849609375,
+     19.2255859375,
+     21.66552734375
+    ]
+   },
+   {
+    "t": 4,
+    "renderer": {
+     "cpu": 1.2357926221335707,
+     "reportedCpu": 0.06868274203005904,
+     "idleWakeups": 7,
+     "workingSetKb": 153520
+    },
+    "gpu": {
+     "cpu": 0.5482552342971451,
+     "reportedCpu": 0.030470684807446215,
+     "idleWakeups": 36,
+     "workingSetKb": 69904
+    },
+    "browser": {
+     "cpu": 0.06350947158524414,
+     "reportedCpu": 0.0035297574064783294,
+     "idleWakeups": 3,
+     "workingSetKb": 128064
+    },
+    "load": [
+     11.5849609375,
+     19.2255859375,
+     21.66552734375
+    ]
+   },
+   {
+    "t": 5,
+    "renderer": {
+     "cpu": 0.7392215568862882,
+     "reportedCpu": 0.04104615323232222,
+     "idleWakeups": 14,
+     "workingSetKb": 155440
+    },
+    "gpu": {
+     "cpu": 0.6740518962075775,
+     "reportedCpu": 0.03742730657275372,
+     "idleWakeups": 72,
+     "workingSetKb": 70064
+    },
+    "browser": {
+     "cpu": 0.056287425149701496,
+     "reportedCpu": 0.0031253231301507567,
+     "idleWakeups": 2,
+     "workingSetKb": 128128
+    },
+    "load": [
+     11.7783203125,
+     19.138671875,
+     21.62060546875
+    ]
+   },
+   {
+    "t": 6,
+    "renderer": {
+     "cpu": 0.7878121878121052,
+     "reportedCpu": 0.043767387491007594,
+     "idleWakeups": 10,
+     "workingSetKb": 157360
+    },
+    "gpu": {
+     "cpu": 0.9771228771229034,
+     "reportedCpu": 0.054284983899876314,
+     "idleWakeups": 38,
+     "workingSetKb": 70688
+    },
+    "browser": {
+     "cpu": 0.2045954045953874,
+     "reportedCpu": 0.011367013216261978,
+     "idleWakeups": 3,
+     "workingSetKb": 129360
+    },
+    "load": [
+     11.7783203125,
+     19.138671875,
+     21.62060546875
+    ]
+   },
+   {
+    "t": 7,
+    "renderer": {
+     "cpu": 0.5695304695304874,
+     "reportedCpu": 0.031648169613316096,
+     "idleWakeups": 8,
+     "workingSetKb": 157664
+    },
+    "gpu": {
+     "cpu": 0.5275724275724367,
+     "reportedCpu": 0.029316901212979155,
+     "idleWakeups": 38,
+     "workingSetKb": 70992
+    },
+    "browser": {
+     "cpu": 0.11318681318681827,
+     "reportedCpu": 0.006289406629734028,
+     "idleWakeups": 4,
+     "workingSetKb": 129792
+    },
+    "load": [
+     11.7783203125,
+     19.138671875,
+     21.62060546875
+    ]
+   },
+   {
+    "t": 8,
+    "renderer": {
+     "cpu": 0.8008991008991616,
+     "reportedCpu": 0.04451538476573258,
+     "idleWakeups": 8,
+     "workingSetKb": 159680
+    },
+    "gpu": {
+     "cpu": 0.3720279720279781,
+     "reportedCpu": 0.020677743585096522,
+     "idleWakeups": 36,
+     "workingSetKb": 70976
+    },
+    "browser": {
+     "cpu": 0.046253746253756466,
+     "reportedCpu": 0.002570818555291033,
+     "idleWakeups": 2,
+     "workingSetKb": 129792
+    },
+    "load": [
+     11.7783203125,
+     19.138671875,
+     21.62060546875
+    ]
+   },
+   {
+    "t": 9,
+    "renderer": {
+     "cpu": 1.3250499001996434,
+     "reportedCpu": 0.07357826911236688,
+     "idleWakeups": 12,
+     "workingSetKb": 160576
+    },
+    "gpu": {
+     "cpu": 0.753193612774426,
+     "reportedCpu": 0.04182430444857201,
+     "idleWakeups": 70,
+     "workingSetKb": 70848
+    },
+    "browser": {
+     "cpu": 0.11566866267464172,
+     "reportedCpu": 0.006423030426765206,
+     "idleWakeups": 3,
+     "workingSetKb": 129936
+    },
+    "load": [
+     11.7783203125,
+     19.138671875,
+     21.62060546875
+    ]
+   },
+   {
+    "t": 10,
+    "renderer": {
+     "cpu": 0.42087912087912316,
+     "reportedCpu": 0.023387593883453062,
+     "idleWakeups": 11,
+     "workingSetKb": 156352
+    },
+    "gpu": {
+     "cpu": 0.4061938061937965,
+     "reportedCpu": 0.02257135094920136,
+     "idleWakeups": 39,
+     "workingSetKb": 69728
+    },
+    "browser": {
+     "cpu": 0.04985014985015257,
+     "reportedCpu": 0.002770103093355805,
+     "idleWakeups": 2,
+     "workingSetKb": 128288
+    },
+    "load": [
+     11.7958984375,
+     19.02001953125,
+     21.56396484375
+    ]
+   },
+   {
+    "t": 11,
+    "renderer": {
+     "cpu": 0.7898101898102089,
+     "reportedCpu": 0.043867256549765365,
+     "idleWakeups": 7,
+     "workingSetKb": 155840
+    },
+    "gpu": {
+     "cpu": 0.4363636363636735,
+     "reportedCpu": 0.0242364438212216,
+     "idleWakeups": 39,
+     "workingSetKb": 69856
+    },
+    "browser": {
+     "cpu": 0.1468531468531551,
+     "reportedCpu": 0.00815649551675727,
+     "idleWakeups": 3,
+     "workingSetKb": 131424
+    },
+    "load": [
+     11.7958984375,
+     19.02001953125,
+     21.56396484375
+    ]
+   },
+   {
+    "t": 12,
+    "renderer": {
+     "cpu": 0.9848454636090451,
+     "reportedCpu": 0.054735192601052036,
+     "idleWakeups": 11,
+     "workingSetKb": 153584
+    },
+    "gpu": {
+     "cpu": 0.5233300099700956,
+     "reportedCpu": 0.02908525676147718,
+     "idleWakeups": 36,
+     "workingSetKb": 69760
+    },
+    "browser": {
+     "cpu": 0.07716849451643375,
+     "reportedCpu": 0.004288793382890507,
+     "idleWakeups": 3,
+     "workingSetKb": 128208
+    },
+    "load": [
+     11.7958984375,
+     19.02001953125,
+     21.56396484375
+    ]
+   },
+   {
+    "t": 13,
+    "renderer": {
+     "cpu": 0.7556443556443905,
+     "reportedCpu": 0.041974245659433494,
+     "idleWakeups": 21,
+     "workingSetKb": 147184
+    },
+    "gpu": {
+     "cpu": 0.7304695304695069,
+     "reportedCpu": 0.04057547927010306,
+     "idleWakeups": 68,
+     "workingSetKb": 70464
+    },
+    "browser": {
+     "cpu": 0.06893106893107688,
+     "reportedCpu": 0.0038288803454915262,
+     "idleWakeups": 2,
+     "workingSetKb": 127584
+    },
+    "load": [
+     11.7958984375,
+     19.02001953125,
+     21.56396484375
+    ]
+   },
+   {
+    "t": 14,
+    "renderer": {
+     "cpu": 0.6994011976048694,
+     "reportedCpu": 0.038851589588838414,
+     "idleWakeups": 10,
+     "workingSetKb": 141632
+    },
+    "gpu": {
+     "cpu": 0.5386227544910497,
+     "reportedCpu": 0.029920709288791893,
+     "idleWakeups": 37,
+     "workingSetKb": 69152
+    },
+    "browser": {
+     "cpu": 0.05598802395209917,
+     "reportedCpu": 0.003110200559703044,
+     "idleWakeups": 3,
+     "workingSetKb": 126976
+    },
+    "load": [
+     11.7958984375,
+     19.02001953125,
+     21.56396484375
+    ]
+   },
+   {
+    "t": 15,
+    "renderer": {
+     "cpu": 0.7260739260739092,
+     "reportedCpu": 0.04034340519655032,
+     "idleWakeups": 10,
+     "workingSetKb": 144816
+    },
+    "gpu": {
+     "cpu": 0.38591408591408094,
+     "reportedCpu": 0.02144262756614909,
+     "idleWakeups": 36,
+     "workingSetKb": 70272
+    },
+    "browser": {
+     "cpu": 0.09890109890110355,
+     "reportedCpu": 0.005495208178468376,
+     "idleWakeups": 4,
+     "workingSetKb": 128320
+    },
+    "load": [
+     11.65185546875,
+     18.8701171875,
+     21.49609375
+    ]
+   },
+   {
+    "t": 16,
+    "renderer": {
+     "cpu": 1.0941058941058572,
+     "reportedCpu": 0.060771518622097925,
+     "idleWakeups": 6,
+     "workingSetKb": 145184
+    },
+    "gpu": {
+     "cpu": 0.541658341658279,
+     "reportedCpu": 0.030086178979804416,
+     "idleWakeups": 36,
+     "workingSetKb": 69776
+    },
+    "browser": {
+     "cpu": 0.06533466533465859,
+     "reportedCpu": 0.0036290583026528083,
+     "idleWakeups": 2,
+     "workingSetKb": 127072
+    },
+    "load": [
+     11.65185546875,
+     18.8701171875,
+     21.49609375
+    ]
+   },
+   {
+    "t": 17,
+    "renderer": {
+     "cpu": 0.6821178821179321,
+     "reportedCpu": 0.037879620032127775,
+     "idleWakeups": 11,
+     "workingSetKb": 143616
+    },
+    "gpu": {
+     "cpu": 0.6092907092906948,
+     "reportedCpu": 0.03383569267804265,
+     "idleWakeups": 70,
+     "workingSetKb": 69456
+    },
+    "browser": {
+     "cpu": 0.08971028971029625,
+     "reportedCpu": 0.004982212723838944,
+     "idleWakeups": 4,
+     "workingSetKb": 127104
+    },
+    "load": [
+     11.65185546875,
+     18.8701171875,
+     21.49609375
+    ]
+   },
+   {
+    "t": 18,
+    "renderer": {
+     "cpu": 0.583916083915983,
+     "reportedCpu": 0.032448145698114224,
+     "idleWakeups": 14,
+     "workingSetKb": 142880
+    },
+    "gpu": {
+     "cpu": 0.35274725274731444,
+     "reportedCpu": 0.019602454886873684,
+     "idleWakeups": 38,
+     "workingSetKb": 69424
+    },
+    "browser": {
+     "cpu": 0.05714285714285884,
+     "reportedCpu": 0.003175193170536961,
+     "idleWakeups": 2,
+     "workingSetKb": 126256
+    },
+    "load": [
+     11.65185546875,
+     18.8701171875,
+     21.49609375
+    ]
+   },
+   {
+    "t": 19,
+    "renderer": {
+     "cpu": 0.4998001998002311,
+     "reportedCpu": 0.02777497418753898,
+     "idleWakeups": 10,
+     "workingSetKb": 141968
+    },
+    "gpu": {
+     "cpu": 0.4547452547451994,
+     "reportedCpu": 0.02527044146661826,
+     "idleWakeups": 36,
+     "workingSetKb": 69600
+    },
+    "browser": {
+     "cpu": 0.09280719280718859,
+     "reportedCpu": 0.005157335941202152,
+     "idleWakeups": 4,
+     "workingSetKb": 127472
+    },
+    "load": [
+     11.65185546875,
+     18.8701171875,
+     21.49609375
+    ]
+   },
+   {
+    "t": 20,
+    "renderer": {
+     "cpu": 0.7787212787212563,
+     "reportedCpu": 0.043278765999401926,
+     "idleWakeups": 8,
+     "workingSetKb": 141840
+    },
+    "gpu": {
+     "cpu": 0.6674325674326056,
+     "reportedCpu": 0.03709411344569168,
+     "idleWakeups": 38,
+     "workingSetKb": 69680
+    },
+    "browser": {
+     "cpu": 0.0932067932067783,
+     "reportedCpu": 0.005180209666904191,
+     "idleWakeups": 2,
+     "workingSetKb": 127472
+    },
+    "load": [
+     11.439453125,
+     18.7060546875,
+     21.4228515625
+    ]
+   }
+  ],
+  "callbacks": 38,
+  "frames": 38,
+  "valueChanges": {
+   "layered.density": 6,
+   "layered.spread": 6,
+   "layered.sink": 6,
+   "layered.lift": 6,
+   "layered.swirl": 3,
+   "layered.wash": 6
+  },
+  "steps": 25
+ },
+ "size": 48,
+ "env": {
+  "os": "macos",
+  "osVersion": "macOS 27.0.1 (26A434)",
+  "arch": "arm64",
+  "machine": "Mac17,8",
+  "cpu": "Apple M5 Pro",
+  "cores": 18,
+  "memoryGb": 48,
+  "commit": "1cb803e131d2",
+  "webChanged": false
+ },
+ "gate": {
+  "maxLoad": 30,
+  "waited": false,
+  "load": 27.47607421875,
+  "loadAtStart": [
+   23.32568359375,
+   27.47607421875,
+   24.6328125
+  ],
+  "loadAtEnd": [
+   11.439453125,
+   18.7060546875,
+   21.4228515625
+  ]
+ },
+ "bundle": {
+  "candidate": [
+   {
+    "name": "assets/CandidateLayered-LeafEVXW.js",
+    "bytes": 2960,
+    "gzip": 1527
+   },
+   {
+    "name": "assets/usePose-iVl1kMa3.js",
+    "bytes": 1528,
+    "gzip": 835
+   }
+  ],
+  "route": [
+   {
+    "name": "assets/BuddyRigHarness-YPhzcl7y.js",
+    "bytes": 19884,
+    "gzip": 7962
+   },
+   {
+    "name": "assets/CandidateLayered-LeafEVXW.js",
+    "bytes": 2960,
+    "gzip": 1527
+   },
+   {
+    "name": "assets/lib-Du2jb7_Y.js",
+    "bytes": 283262,
+    "gzip": 70355
+   },
+   {
+    "name": "assets/tailwindcss-CEFBKf7v.js",
+    "bytes": 29848,
+    "gzip": 7898
+   },
+   {
+    "name": "assets/usePose-iVl1kMa3.js",
+    "bytes": 1528,
+    "gzip": 835
+   }
+  ]
+ }
+}
