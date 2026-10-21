@@ -97,6 +97,14 @@ describe('a turn that runs in the peeked chat', () => {
     expect(line()).toBe('Terminal ls')
   })
 
+  it('a helper’s phase, though it names this chat, is not the chat’s turn', async () => {
+    await peek(runningState({ session: KEY, phase: 'tool', line: 'Terminal ls', seq: 5 }))
+    await waitFor(() => expect(orb()?.dataset.orbPhase).toBe('tool'))
+    frame({ work: 'subagent:h1', kind: 'subagent', session: KEY, phase: 'done', line: 'Done in 3 seconds', since: null, seq: 9 } as unknown as RunState)
+    expect(orb()!.dataset.orbPhase).toBe('tool')
+    expect(line()).toBe('Terminal ls')
+  })
+
   it('a phase with no line reads the phase’s own word', async () => {
     await peek(runningState({ session: KEY, phase: 'planning', line: '' }))
     await waitFor(() => expect(line()).toBe(phaseLabel('planning')))

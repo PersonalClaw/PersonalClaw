@@ -168,4 +168,16 @@ describe('useChatStream folds the session’s frames', () => {
     frame('work_phase', { ...runningState({ session: SESSION, phase: 'thinking', line: 'Thinking', seq: 4 }) })
     expect(result.current.turnLine, 'a frame older than the state held is not applied').toBe('Reading fetch.py')
   })
+
+  it("takes no helper's phase for the chat's own, though it names the chat it works for", async () => {
+    const { result } = await opened()
+    frame('chat_user_message', { content: 'and the cache?', ts: '2026-10-01T09:01:00Z' })
+    frame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Reading fetch.py', seq: 5 }) })
+    // One frame type for every kind of work: a helper's ending, newer than the chat's, is the helper's.
+    frame('work_phase', { work: 'subagent:h1', kind: 'subagent', phase: 'done', line: 'Done in 3 seconds', since: null, seq: 9 })
+    expect(result.current.turnLine).toBe('Reading fetch.py')
+    expect(result.current.turnPhase).toBe('tool')
+    frame('work_phase', { ...runningState({ session: SESSION, phase: 'streaming', line: 'Writing', seq: 6 }) })
+    expect(result.current.turnLine, "the helper's stamp moved no mark of the chat's").toBe('Writing')
+  })
 })

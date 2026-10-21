@@ -25,20 +25,22 @@ runs it is served idle, with how the last turn ended. A chat that never ran here
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.auth.lifetimes import duration_words
 from personalclaw.instants import utc_iso
 from personalclaw.security import redact_for_display
 from personalclaw.textfmt import clip_words
-from personalclaw.work_phase import ENDINGS, WorkPhase, classify_call, family_of
+from personalclaw.work_phase import ENDINGS, WorkPhase, classify_call, done_in, family_of
 from personalclaw.workref import work_ref
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
+
+logger = logging.getLogger(__name__)
 
 #: How often a running turn says its phase again, in seconds.
 RESEND_SECS = 15.0
@@ -239,6 +241,14 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
     state.broadcast_ws("work_phase", payload)
     if previous is None or _coarse(previous) != _coarse(payload):
         state.push_sessions_update()
+    # A running loop's worker is a chat: what its turn does, its loop does (`work_phases`). Only
+    # read from the chat's frame, so a failure saying the loop's never stops the chat's own.
+    try:
+        from personalclaw.dashboard import work_phases
+
+        work_phases.worker_said(state, session.key, payload)
+    except Exception:
+        logger.debug("could not say the loop phase of %s", session.key, exc_info=True)
 
 
 async def _keep_saying(state: DashboardState, session: _ChatSession, turn: _Turn) -> None:
@@ -316,8 +326,7 @@ def _reason(session: _ChatSession, turn: _Turn) -> str:
 
 def _ending_line(session: _ChatSession, ending: str, turn: _Turn) -> str:
     if ending == "complete":
-        took = max(0.0, _now() - turn.started_at)
-        return f"Done in {duration_words(took)}" if round(took) else "Done in under a second"
+        return done_in(max(0.0, _now() - turn.started_at))
     if ending == "declined":
         return turn.declined
     reason = _reason(session, turn) if ending in ("error", "interrupted") else ""

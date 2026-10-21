@@ -85,7 +85,8 @@ class _World:
         self.session._titled = True
 
     def phases(self) -> list[dict]:
-        return [d for k, d in self.frames if k == "work_phase"]
+        """The chat's own phase frames: a helper's, which can name the chat too, are its own."""
+        return [d for k, d in self.frames if k == "work_phase" and d["kind"] == "chat"]
 
     def said(self) -> list[tuple[str, str]]:
         """The phases said, each with its line, in order."""

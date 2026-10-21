@@ -283,8 +283,15 @@ class WorkflowWatchdog:
             return None
 
         key = registry_key(run_id)
+        state = self._state
 
         def publish(event: str, payload: dict[str, Any]) -> None:
+            # What the run is doing, from each event as it is published, before any batching: its
+            # status, the step it starts, a gate's ask (`dashboard.work_phases`).
+            try:
+                state.say_run(run_id, event, payload)
+            except Exception:  # a broken observer must never kill a run
+                logger.debug("workflow %s: saying its phase failed", run_id, exc_info=True)
             self._coalescer.publish(key, event, payload)
             if event == "workflow_run_update" and payload.get("status") in _TERMINAL_VALUES:
                 # A terminal run publishes nothing further, so any batch still accumulating

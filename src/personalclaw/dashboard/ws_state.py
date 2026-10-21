@@ -88,8 +88,17 @@ def _has_app_view(event_type: str) -> bool:
 APPROVAL_RELAY_FRAMES: frozenset[str] = frozenset({"approval", "approval_resolved"})
 APPROVAL_REGISTRY_ROUTE = "/api/approvals"
 
-#: What a frame is about, when only some apps may hear of it: ``("conversation", name)`` or
-#: ``("inbox_item", source)``.
+#: Frames that say what a piece of work is doing (``work_phase``: a chat's turn, a helper, a loop, a
+#: workflow run). One that names a conversation in ``session`` (a chat's own, or the chat a helper
+#: works for) reaches an app's socket as every chat frame does. One that names none is about work no
+#: chat started (a loop, a workflow run, a helper no chat started: ``work_phases.chat_of``) and
+#: reaches no app's socket, only the owner's. That is the stricter of the two reaches such work
+#: could have: an app the permission middleware lets read the loops (``GET /api/loops``) still
+#: hears none of their phases, until a list of the work that runs says which apps may hear of it.
+WORK_FRAMES: frozenset[str] = frozenset({"work_phase"})
+
+#: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,
+#: ``("inbox_item", source)`` or ``("work", name)``.
 FrameSubject = tuple[str, str]
 
 
@@ -102,13 +111,17 @@ def frame_subject(event_type: str, data: object) -> FrameSubject | None:
     its own view of it (:meth:`DashboardWebSocketState._app_view`), cut to the notes the app raised
     or that are about a conversation it started. Read as a conversation subject, a note with no
     ``session`` reached every app that declared the type, which is how an app read everything
-    that reached you."""
+    that reached you. A phase of work that names no conversation is about that work
+    (:data:`WORK_FRAMES`), which no app hears of."""
     if not isinstance(data, dict) or event_type in NOTIFICATION_FRAMES:
         return None
     if event_type in INBOX_ITEM_FRAMES:
         source = data.get("source")
         return ("inbox_item", source if isinstance(source, str) else "")
     named = data.get(FRAME_CONVERSATION_FIELDS.get(event_type, "session"))
+    if (named is None or named == "") and event_type in WORK_FRAMES:
+        work = data.get("work")
+        return ("work", work if isinstance(work, str) else repr(work))
     if named is None or named == "":
         return None
     return ("conversation", named if isinstance(named, str) else repr(named))
@@ -326,8 +339,11 @@ class DashboardWebSocketState:
     def _app_may_hear_about(self, app: str, event_type: str, subject: FrameSubject) -> bool:
         """Whether *app*'s socket may carry a frame about *subject*: an inbox item it raised, a
         conversation it started, or an approval frame when it holds the approval relay
-        (:data:`APPROVAL_RELAY_FRAMES`)."""
+        (:data:`APPROVAL_RELAY_FRAMES`). Never one about work no chat started (:data:`WORK_FRAMES`).
+        """
         kind, key = subject
+        if kind == "work":
+            return False
         if kind == "inbox_item":
             from personalclaw.proposals_contract import app_source
 

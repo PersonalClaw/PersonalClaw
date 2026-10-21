@@ -26,7 +26,7 @@ from personalclaw.approval_confirms import UNDECLARED, call_confirms
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.dashboard import chat_phase
+from personalclaw.dashboard import chat_phase, work_phases
 from personalclaw.run_bounds import reach_note, session_folder
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
@@ -684,6 +684,8 @@ class DashboardApprovalState:
         # The chat it is asked in waits on the owner's yes now: its phase says so (`chat_phase`).
         state: Any = self  # the DashboardState this registry is mixed into
         chat_phase.waiting_changed(state, str(entry.get("session") or ""))
+        # So does the helper that asked it, when one did: its start or one of its calls.
+        self._say_helper_waits(entry, waiting=True)
         self._push_approval(entry["id"])
         self._raise_approval_row(entry)
         # `ApprovalRequest`: declared, selectable in the hook UI. Emitted alongside
@@ -819,6 +821,17 @@ class DashboardApprovalState:
         # The chat it was asked in waits on it no more: its phase goes back to the step it is on.
         state: Any = self  # the DashboardState this registry is mixed into
         chat_phase.waiting_changed(state, str(entry.get("session") or session))
+        self._say_helper_waits({"id": approval_id}, waiting=False)
+
+    def _say_helper_waits(self, entry: dict[str, Any], *, waiting: bool) -> None:
+        """The helper that asked *entry*, if one did, waits on it (*waiting*) or no longer does: its
+        phase (``work_phases.approval_changed``), which only reads the approval. Best-effort: a
+        failure saying it must not block, end or change the approval it is about."""
+        try:
+            state: Any = self  # the DashboardState this registry is mixed into
+            work_phases.approval_changed(state, entry, waiting=waiting)
+        except Exception:
+            self._log.debug("could not say the phase for %s", entry.get("id"), exc_info=True)
 
     #: How many ended approvals :meth:`ended_as` remembers. It is read by the waiter the moment
     #: its wait returns, so it only has to outlive that hop; the bound keeps a long-lived gateway's

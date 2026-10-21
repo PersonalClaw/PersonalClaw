@@ -41,7 +41,7 @@ import { RepromptNotice } from './RepromptNotice'
 import { NoToolsPause } from './NoToolsPause'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
-import { livePhaseOf, phaseFeedLine } from '../../lib/workPhase'
+import { isAChatsPhase, livePhaseOf, phaseFeedLine } from '../../lib/workPhase'
 import { belongsToLoop } from '../workflows/containerKey'
 import { type SkillUsed, joinedSkillsOf, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -443,6 +443,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     if (refreshKinds(m).includes('incident')) { reloadLoop.current(); return }
     if (!belongsToLoop(m.data?.session as string | undefined, id)) return
     if (m.type === 'work_phase') {
+      if (!isAChatsPhase(m.data)) return  // a helper's, under its worker's key: not the worker's turn
       // The worker's phase, as the gateway measured it: the status line while its turn runs, and
       // a feed line once per change. A step's own phases are its tool line below, and the thinking
       // said after each step's result adds no line after it.

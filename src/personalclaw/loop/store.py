@@ -318,6 +318,7 @@ def create(loop: Loop) -> Loop:
     files.loop_dir(loop.id)
     files.write_status(loop.id, LoopStatus(loop.status))
     _announce()
+    _say_phase(loop)
     return loop
 
 
@@ -451,6 +452,7 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     out = get(loop_id)
     if out is None:
         raise KeyError(loop_id)
+    _say_phase(out)
     return out
 
 
@@ -530,6 +532,25 @@ def _announce() -> None:
             state.push_refresh("loops")
     except Exception:
         logger.debug("loops: could not announce a change", exc_info=True)
+
+
+def _say_phase(loop: Loop | None, *, deleted: str = "") -> None:
+    """Say what *loop* is doing now, from the status it was written with: its ``work_phase``
+    (``dashboard.work_phases``); or, for the loop *deleted*, that it stopped, when it had not ended.
+    Here, beside :func:`_announce`, because every status a loop moves to is written here.
+    Best-effort, and a no-op headless."""
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+        if state is None:
+            return
+        if loop is not None:
+            state.say_loop(loop)
+        else:
+            state.say_loop_deleted(deleted)
+    except Exception:
+        logger.debug("loops: could not say a loop's phase", exc_info=True)
 
 
 def _resolve_attention_rows(loop_id: str) -> int:
@@ -838,6 +859,7 @@ def delete(loop_id: str) -> bool:
     forget_loop(loop_id)
     if deleted:
         _announce()
+        _say_phase(None, deleted=loop_id)
     return deleted
 
 

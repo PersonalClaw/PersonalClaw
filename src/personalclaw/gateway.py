@@ -4767,6 +4767,14 @@ class GatewayOrchestrator:
                 base = {**base, "session": chat, "run": run_id}
                 if etype == "subagent_spawn":
                     extra = {**extra, "title": step}
+            # What the helper itself is doing, said for the chat it works for (`work_phases`). Only
+            # read from its event, so a failure saying it never stops the event's own frame.
+            try:
+                self.dashboard_state.say_helper(etype, info, extra, base["session"])
+            except Exception:
+                logger.debug("could not say the phase of subagent %s", info.id, exc_info=True)
+            if etype == "subagent_queued":
+                return  # waiting for a slot: said in its phase, and no frame of its own
             if etype in ("subagent_spawn", "subagent_done"):
                 # While the chat's turn runs it is handing off to every helper still at work for
                 # it, its own and its batches' tasks alike, this one's ending not counted (its
@@ -4913,9 +4921,14 @@ class GatewayOrchestrator:
         state = self.dashboard_state
         if state is None:
             return
-        self._incident_watch_task = asyncio.create_task(
-            incident.watch(lambda _st: state.push_refresh("incident", "loops"))
-        )
+
+        def moved(_st: object) -> None:
+            state.push_refresh("incident", "loops")
+            # A running loop the switch holds writes no status: its phase says it is held, or runs
+            # again (`work_phases`). After the hint, so a failure saying it never costs the pages.
+            state.say_incident_changed()
+
+        self._incident_watch_task = asyncio.create_task(incident.watch(moved))
 
     # ------------------------------------------------------------------
     # Shutdown
