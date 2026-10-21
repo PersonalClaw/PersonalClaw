@@ -98,12 +98,11 @@ const NAV: NavItem[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox, section: 'Platform' },
   { id: 'triggers', label: 'Triggers', icon: Zap, section: 'Platform' },
   { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
-  // Capabilities is one destination (#3817): Agents, Skills, Tools, Prompts, Apps and the Store
-  // are its tabs, each still at its own address (ROUTABLE below). It has no section of its own: a
-  // "Capabilities" header over a "Capabilities" row groups nothing. Learning and Workflows keep
-  // their rows beside it until their own moves (#3815, #3816).
+  // Capabilities is one destination (#3817): Agents, Skills, Learning, Tools, Prompts, Apps and the
+  // Store are its tabs, each still at its own address (ROUTABLE below). It has no section of its
+  // own: a "Capabilities" header over a "Capabilities" row groups nothing. Workflows keeps its row
+  // beside it until its own move (#3816).
   { id: 'capabilities', label: 'Capabilities', icon: Puzzle, section: 'Platform' },
-  { id: 'learning', label: 'Learning', icon: Brain, section: 'Platform' },
   { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Platform' },
   // The app pages the owner pinned (`navApps`) follow, under their own Apps header: an app's own
   // page is a working surface, not configuration (see appNavItems).
@@ -120,9 +119,9 @@ const NAV: NavItem[] = [
 // until a rail is built from `/api/dashboard/views`, the command palette below is how a user
 // reaches it. That is the palette's stated job (see its comment: the always-open door to a
 // surface the rail is holding back), not a workaround.
-// The five pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
+// The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`).
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'agents', 'skills', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
  *  destination) and every bit as real as the ones inside it.
@@ -840,6 +839,7 @@ function AppInner() {
     // Capabilities' tabs, each a row of its own: they left the sidebar for the one Capabilities row.
     { id: 'go:agents', label: 'Agents', hint: 'Go to', icon: Users, keywords: 'Capabilities', run: () => navigate('agents') },
     { id: 'go:skills', label: 'Skills', hint: 'Go to', icon: Sparkles, keywords: 'Capabilities', run: () => navigate('skills') },
+    { id: 'go:learning', label: 'Learning', hint: 'Go to', icon: Brain, keywords: 'Capabilities proposals lessons evals', run: () => navigate('learning') },
     { id: 'go:tools', label: 'Tools', hint: 'Go to', icon: Wrench, keywords: 'Capabilities tool servers mcp', run: () => navigate('tools') },
     { id: 'go:prompts', label: 'Prompts', hint: 'Go to', icon: FileText, keywords: 'Capabilities', run: () => navigate('prompts') },
     { id: 'go:apps', label: 'Apps', hint: 'Go to', icon: Blocks, keywords: 'Capabilities library installed', run: () => navigate('apps') },

@@ -38,12 +38,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **After a reload, a finished turn's folded steps say the time the gateway measured for the turn, as the live page does, where they counted from the turn's first step to its last, and they no longer list the tools the turn used.**
 - **Agents, skills, tools, prompts and apps are tabs of one Capabilities destination, with the Store a tab of its own: one sidebar row in place of five, each tab still at its own address, so a bookmark, a reload or a copied link opens the tab it did, and ⌘K goes to each tab, the Store and Add a tool server.**
 - **The composer's effort row names Xhigh as Extra high.**
-- **The sidebar no longer draws a Capabilities header over the Capabilities row: Capabilities, Learning and Workflows follow Terminal under Platform, in the same order, each at the address it had.**
+- **The sidebar no longer draws a Capabilities header over the Capabilities row: Capabilities and Workflows follow Terminal under Platform, in the same order, each at the address it had.**
 - **Each Capabilities tab shows its list beside the selected item's detail, where Permissions says what the item may do; in a window under 840 px wide the detail shows in place of the list, with Back to it. A tab's header holds only its Add (Install on the Store): syncing and exporting agents, Re-probe MCP servers and Manage Sources are in the list's More menu, and Proposals is a view of Skills. Every list is in name order, tool servers included, and a sort control names the order it shows.**
 - **Knowledge, Memory, Files and Artifacts are tabs of one Library: one sidebar row in place of three, and Memory leaves Settings for its tab at `#/memory`, where an old Settings → Memory link still lands on the view and the record it named. Knowledge's item list is called All items, and ⌘K goes to Library and each tab.**
 - **A Capabilities tab puts the selected item's detail beside its list only when the page has 840 px beside the sidebar, so with the sidebar expanded in a window about 840 px wide the detail shows in place of the list, with Back to it, and collapsing or expanding the sidebar switches the layout at once.**
 - **While the agent works, the orb at the head of its reply paints at most 30 frames a second, as the buddy's dots do, rather than every frame the display draws: the same drawing for less CPU.**
 - **Notifications are a filter of the Inbox: Show › Notifications lists the feed, with its unread and per-kind narrowing, and the bell, ⌘K's Notifications and an old `#/notifications` link open it there.**
+- **Learning is a tab of Capabilities, beside Skills, whose proposals it links to, and keeps its page as it was: its own sidebar row goes, and `#/learning`, a bookmark of it and ⌘K's Learning still open it.**
 
 ### Fixed
 

@@ -87,7 +87,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
 | Library | find and curate what the agent knows or made | tabs for Knowledge, Memory, Files and Artifacts, each a fixed-width list beside a flexible detail; the graph is a view toggle | Add, View, overflow | the item's detail |
 | Automations | trust what runs without you | one list, with each item's next run, last result and the thread it reports to | New, overflow | detail and run history |
-| Capabilities | configure what the agent can do | tabs for Agents, Skills, Tools, Prompts, Apps and the Store, each a list beside a detail | Add (Install on the Store tab) | detail and permissions |
+| Capabilities | configure what the agent can do | tabs for Agents, Skills, Tools, Prompts, Apps and the Store, each a list beside a detail, and Learning, beside Skills, the page of what the agent learned and the proposals it links to | Add (Install on the Store tab) | detail and permissions |
 | Settings | configure the system | a section list beside the form, search on top | none | none |
 
 A list beside a detail shows both from 840 px of content up: the room the page has beside the

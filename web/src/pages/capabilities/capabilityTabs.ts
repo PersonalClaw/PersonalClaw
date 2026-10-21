@@ -1,17 +1,17 @@
-import { Blocks, FileText, Sparkles, Store, Users, Wrench, type LucideIcon } from 'lucide-react'
+import { Blocks, Brain, FileText, Sparkles, Store, Users, Wrench, type LucideIcon } from 'lucide-react'
 
 /** Capabilities' tabs (#3817): what configures what the agent can do, in one destination.
  *
- *  Agents, Skills, Tools, Prompts and Apps were five sidebar rows, and the Store a view of Apps.
- *  Each is a tab here, and each keeps the address its page always had, so a bookmark, a reload,
- *  Back and a copied link open the tab they did before. No address is retired, so none of them is
- *  a row of `routeRedirects.ts`. `#/capabilities`, the sidebar row's own address, opens the first
- *  tab.
+ *  Agents, Skills, Learning, Tools, Prompts and Apps were six sidebar rows, and the Store a view of
+ *  Apps. Each is a tab here, Learning beside the Skills whose proposals it links to, and each keeps
+ *  the address its page always had, so a bookmark, a reload, Back and a copied link open the tab
+ *  they did before. No address is retired, so none of them is a row of `routeRedirects.ts`.
+ *  `#/capabilities`, the sidebar row's own address, opens the first tab.
  *
  *  Pure data and two functions, so the shell can read which routes are Capabilities' without
  *  loading a page. */
 
-export type CapabilityTabId = 'agents' | 'skills' | 'tools' | 'prompts' | 'apps' | 'store'
+export type CapabilityTabId = 'agents' | 'skills' | 'learning' | 'tools' | 'prompts' | 'apps' | 'store'
 
 export interface CapabilityTab {
   readonly id: CapabilityTabId
@@ -25,6 +25,7 @@ export interface CapabilityTab {
 export const CAPABILITY_TABS: readonly CapabilityTab[] = [
   { id: 'agents', label: 'Agents', icon: Users, address: 'agents' },
   { id: 'skills', label: 'Skills', icon: Sparkles, address: 'skills' },
+  { id: 'learning', label: 'Learning', icon: Brain, address: 'learning' },
   { id: 'tools', label: 'Tools', icon: Wrench, address: 'tools' },
   { id: 'prompts', label: 'Prompts', icon: FileText, address: 'prompts' },
   { id: 'apps', label: 'Apps', icon: Blocks, address: 'apps' },
@@ -33,7 +34,7 @@ export const CAPABILITY_TABS: readonly CapabilityTab[] = [
 ]
 
 /** Every route Capabilities draws: its own, and each tab page's. */
-export const CAPABILITY_ROUTES: ReadonlySet<string> = new Set(['capabilities', 'agents', 'skills', 'tools', 'prompts', 'apps'])
+export const CAPABILITY_ROUTES: ReadonlySet<string> = new Set(['capabilities', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps'])
 
 /** Whether the shell draws `route` inside Capabilities. */
 export const isCapabilityRoute = (route: string): boolean => CAPABILITY_ROUTES.has(route)
