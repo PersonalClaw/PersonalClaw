@@ -301,7 +301,9 @@ describe('fitLine', () => {
     }
   })
 
-  it.each([1, 40, 200])('still fits every surface with the state whole when the words run 40%% longer (%i-character name)', (n) => {
+  // A lone `%` before a space is printed as it is; vitest's `%%` would take the case's number.
+  it.each([1, 40, 200])('still fits every surface with the state whole when the words run 40% longer (%i-character name)', (n) => {
+    expect(expect.getState().currentTestName).toContain(`40% longer (${n}-character name)`)
     for (const surface of BUDDY_SURFACES) {
       for (const [state, parts] of Object.entries(lines(workName(n)))) {
         expectFitted(pseudoLocalized(parts), SURFACE_LIMITS[surface], `pseudo-localized ${state} on ${surface}`)
@@ -383,10 +385,6 @@ describe('the approval words are the app\'s own', () => {
     const words = approvalAnswers(ROW)
     expect(controls(group)).toEqual(asShown(words))
     expect(within(group).getByText(words.denyEffect).tagName).toBe('P')
-    // Allow carries the primary style, as the phone's does, and Deny the danger edge.
-    expect([words.allow.tone, words.deny.tone]).toEqual(['primary', 'danger'])
-    expect(within(group).getByRole('button', { name: words.allow.name }).style.background).toContain('--color-primary')
-    expect(within(group).getByRole('button', { name: words.deny.name }).style.background).toContain('--color-danger')
   })
 
   it('matches the chat card answering the same row once: labels, names and what a Deny does', () => {
@@ -395,6 +393,17 @@ describe('the approval words are the app\'s own', () => {
     const words = approvalAnswers(ROW)
     expect(controls(group)).toEqual(asShown(words))
     expect(within(group).getByText(words.denyEffect).tagName).toBe('P')
+  })
+
+  it('argues for neither answer, as the chat card does: Allow is not the primary, Deny keeps its danger edge', () => {
+    render(createElement(ApprovalCard, { seg: approvalSegmentOf(ROW), answers: 'once', onAct: () => {} }))
+    const group = screen.getByRole('group', { name: 'Permission needed to run Bash' })
+    const words = approvalAnswers(ROW)
+    expect([words.allow.tone, words.deny.tone]).toEqual(['neutral', 'danger'])
+    const allow = within(group).getByRole('button', { name: words.allow.name }).style.background
+    expect(allow).toContain('--color-surface-high')
+    expect(allow).not.toContain('--color-primary')
+    expect(within(group).getByRole('button', { name: words.deny.name }).style.background).toContain('--color-danger')
   })
 
   it('reads Allow and Deny, named for the tool, and says the settled expired and recovery lines', () => {

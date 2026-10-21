@@ -73,8 +73,8 @@ loses sight of it.
 
 So the v0.3.0 card shows the focused work, its exact phase, the current step, the other running
 work, the waiting decisions and Open in PersonalClaw, with no drop target and no ask field
-([#3893]). Which of Allow and Deny carries the primary style is still open: the chat's approval
-card styles neither, so it never argues for an answer, and the phone styles Allow ([#3899]).
+([#3893]). Neither Allow nor Deny carries the primary style: the buddy styles them as the chat's
+approval card does, so it never argues for an answer ([#3899]).
 
 ## Compact layouts
 
