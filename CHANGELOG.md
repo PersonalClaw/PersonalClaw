@@ -45,6 +45,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **While the agent works, the orb at the head of its reply paints at most 30 frames a second, as the buddy's dots do, rather than every frame the display draws: the same drawing for less CPU.**
 - **Notifications are a filter of the Inbox: Show › Notifications lists the feed, with its unread and per-kind narrowing, and the bell, ⌘K's Notifications and an old `#/notifications` link open it there.**
 - **Learning is a tab of Capabilities, beside Skills, whose proposals it links to, and keeps its page as it was: its own sidebar row goes, and `#/learning`, a bookmark of it and ⌘K's Learning still open it.**
+- **On Knowledge's All items view, the shelf row's first chip says No shelf, so it no longer shares the view's name.**
 
 ### Fixed
 
