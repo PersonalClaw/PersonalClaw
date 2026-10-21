@@ -29,7 +29,7 @@ select node", but the shipped core does not decompose — its pieces are private
 concurrency proof, fail-open tiers, tie-break and outcome record span the whole call.
 The template therefore calls ``best_of_n`` WHOLE from one action node (the engine sees
 fan-out → judge → select as one metered action; the parallelism is the core's own
-``asyncio.gather``), and `test_the_template_providers_call_the_cores_not_copies` pins
+``asyncio.gather``), and `test_each_template_node_returns_what_its_core_returns` holds
 that the wrappers stay wrappers.
 """
 
@@ -40,6 +40,7 @@ import json
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.workflows.models import InstanceState, Node, walk
@@ -319,16 +320,163 @@ class TestCheckWorkParity:
 # ── the wrappers stay wrappers ────────────────────────────────────────────────
 
 
-def test_the_template_providers_call_the_cores_not_copies():
-    """The whole contract is CALLING the cores (no reimplementation).
-    Pin it at the source level: each provider imports its core's entry point, and
-    neither imports the pieces a reimplementation would need."""
-    from personalclaw.action_providers import best_of_n_provider, check_work_provider
+#: What the stand-in for each core hands back in the table below: nothing the real core would make
+#: of these inputs, so a node that answers with it can only have taken it from the stand-in.
+_PICKED = {
+    "winner": "the core's pick",
+    "winner_idx": 2,
+    "candidates": [{"idx": 2, "temperature": 0.4, "text": "the core's pick"}],
+    "judgments": [{"idx": 2, "score": 9.5, "reason": "the core judged it"}],
+    "judged": True,
+    "n": 3,
+    "note": "from the core",
+}
+_NOTHING = {
+    "winner": None,
+    "winner_idx": None,
+    "candidates": [],
+    "judgments": [],
+    "judged": False,
+    "n": 3,
+    "note": "the core sampled nothing",
+    "failure": {"class": "auth", "fix": "sign in to the provider again", "retry_at": None},
+}
 
-    sampling_src = Path(best_of_n_provider.__file__).read_text(encoding="utf-8")
-    assert "from personalclaw.sampling import best_of_n" in sampling_src
-    assert "LLMJudge" not in sampling_src, "judging belongs to the core, not the wrapper"
 
-    check_src = Path(check_work_provider.__file__).read_text(encoding="utf-8")
-    assert "derive_and_run" in check_src and "from personalclaw.check_work import" in check_src
-    assert "reconstruct_claims" not in check_src, "derivation belongs to the core, not the wrapper"
+def _reports():
+    from personalclaw.check_work import CheckResult, CheckWorkReport, DerivedCheck
+
+    found = DerivedCheck(kind="file_exists", target="from/the/core.txt", claim="the core's claim")
+    missing = DerivedCheck(
+        kind="file_contains", target="core.md", claim="the core's other claim", needle="core"
+    )
+    return {
+        "pass": CheckWorkReport(
+            results=[CheckResult(found, "pass", "the core looked")], note="the core's note"
+        ),
+        "fail": CheckWorkReport(
+            results=[
+                CheckResult(found, "pass", "the core looked"),
+                CheckResult(missing, "fail", "the core found no such line"),
+            ]
+        ),
+    }
+
+
+def _in_every_name(monkeypatch, original, stand_in) -> None:
+    """Put *stand_in* under every product module name that holds *original*, wherever a
+    wrapper imports it from."""
+    import sys
+
+    held = [
+        (module, name)
+        for module in list(sys.modules.values())
+        if getattr(module, "__name__", "").startswith("personalclaw")
+        for name, value in list(vars(module).items())
+        if value is original
+    ]
+    assert held, f"no product module holds {original!r}"
+    for module, name in held:
+        monkeypatch.setattr(module, name, stand_in)
+
+
+def _no_copy(monkeypatch, refused: list[str]) -> None:
+    """The pieces a wrapper would need to sample, judge or derive on its own: each one records
+    that it was reached, and refuses."""
+    import personalclaw.check_work as check_work
+    import personalclaw.eval.judge as judge
+    import personalclaw.llm_helpers as llm_helpers
+    import personalclaw.sampling as sampling
+    from personalclaw.providers import provider_bridge
+
+    pieces = [
+        (llm_helpers, "one_shot_completion"),
+        (provider_bridge, "resolve_metered_model"),
+        (judge, "LLMJudge"),
+        (sampling, "_sample_one"),
+        (sampling, "_judge_candidates"),
+        (sampling, "_select_winner"),
+        (check_work, "reconstruct_claims"),
+        (check_work, "derive_checks"),
+        (check_work, "run_checks"),
+    ]
+    for module, name in pieces:
+
+        def _refuse(*_a, _name=f"{module.__name__}.{name}", **_kw):
+            refused.append(_name)
+            raise AssertionError(f"the wrapper reached {_name} itself")
+
+        _in_every_name(monkeypatch, getattr(module, name), _refuse)
+
+
+def test_each_template_node_returns_what_its_core_returns(tmp_path, monkeypatch, subtests):
+    """The whole contract is CALLING the cores (no reimplementation). Each row puts a stand-in in
+    the core entry point's place, under every name that holds it, and dispatches the bundled
+    template's own action node: the node hands the core its inputs once, and its output and
+    state are the core's answer as the provider renders it (the envelope verbatim for best-of-n,
+    the report's checks and render_report for check-work). The pieces a copy would need (the
+    sampling and judging seams, LLMJudge, the core's private steps, reconstruct_claims and the
+    derivation behind it) refuse if the wrapper reaches them, so neither provider samples,
+    judges or derives on its own."""
+    import personalclaw.check_work as check_work
+    import personalclaw.sampling as sampling
+    from personalclaw.check_work import render_report
+
+    ws, claims = _workspace(tmp_path)
+    reports = _reports()
+    rows = [
+        ("best-of-n, the core picks", "best-of-n", "sample", _PICKED, InstanceState.DONE),
+        ("best-of-n, the core has nothing", "best-of-n", "sample", _NOTHING, InstanceState.FAILED),
+        ("check-work, the core passes", "check-work", "check", "pass", InstanceState.DONE),
+        ("check-work, the core fails", "check-work", "check", "fail", InstanceState.FAILED),
+    ]
+    for name, template, node_id, answer, state in rows:
+        with row(subtests, name=name), monkeypatch.context() as m:
+            calls: list[tuple] = []
+            refused: list[str] = []
+            if template == "best-of-n":
+
+                async def _core(prompt, n=3, criteria="", *_a, _answer=answer, **_kw):
+                    calls.append((prompt, n, criteria))
+                    return json.loads(json.dumps(_answer))
+
+                _in_every_name(m, sampling.best_of_n, _core)
+                inputs = {"prompt": PROMPT, "n": 3, "criteria": CRITERIA}
+                wanted_calls = [(PROMPT, 3, CRITERIA)]
+                expected = answer
+            else:
+                report = reports[answer]
+
+                def _core(text, *, root, max_checks=check_work.MAX_CHECKS, _r=report, **_kw):
+                    calls.append((text, str(root), max_checks))
+                    return _r
+
+                _in_every_name(m, check_work.derive_and_run, _core)
+                inputs = {"claims": claims, "root": str(ws)}
+                wanted_calls = [(claims, str(ws), check_work.MAX_CHECKS)]
+                expected = {
+                    "verdict": report.verdict,
+                    "note": report.note,
+                    "checks": [
+                        {
+                            "kind": r.check.kind,
+                            "target": r.check.target,
+                            "needle": r.check.needle,
+                            "claim": r.check.claim,
+                            "label": r.check.label,
+                            "how": r.check.how,
+                            "status": r.status,
+                            "evidence": r.evidence,
+                        }
+                        for r in report.results
+                    ],
+                    "report": render_report(report),
+                }
+            _no_copy(m, refused)
+
+            result = _dispatch(_template_action_node(template, node_id), inputs)
+
+            assert refused == [], f"{name}: the wrapper did the core's work itself: {refused}"
+            assert calls == wanted_calls, f"{name}: the core was handed {calls}"
+            assert result.state is state, f"{name}: {result.state} ({result.failure})"
+            assert result.output == expected, f"{name}: the node answered {result.output}"
