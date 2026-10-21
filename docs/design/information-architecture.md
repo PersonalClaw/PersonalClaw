@@ -89,8 +89,10 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 | Capabilities | configure what the agent can do | tabs for Agents, Skills, Tools, Prompts, Apps and the Store, each a list beside a detail | Add (Install on the Store tab) | detail and permissions |
 | Settings | configure the system | a section list beside the form, search on top | none | none |
 
-A list beside a detail shows both from the 840 px width class up. Below it they show one at a time,
-the detail in place of the list, and Back returns to the list.
+A list beside a detail shows both from 840 px of content up: the room the page has beside the
+sidebar, not the window, so a collapsed and an expanded sidebar at one window width each get the
+layout their room allows. Below it they show one at a time, the detail in place of the list, and
+Back returns to the list.
 
 ## Inside a thread
 

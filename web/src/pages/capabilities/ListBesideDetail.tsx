@@ -1,11 +1,13 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ArrowLeft, X } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
 import { useFocusReturn } from '../../ui/useFocusReturn'
 
-/** The windows below the 840 px width class, where a list and its detail show one at a time
- *  (`docs/design/information-architecture.md`, "A list beside a detail"). */
-export const COMPACT_WINDOW = '(max-width: 839px)'
+/** The room, in px, from which a list and its detail sit side by side; below it they show one at a
+ *  time (`docs/design/information-architecture.md`, "A list beside a detail"). It is the tab's own
+ *  width, beside the sidebar, not the window's: an expanded sidebar at an 840 px window leaves the
+ *  tab about 630 px, where a detail beside the list would get under 270. */
+export const BESIDE_FROM = 840
 
 /** The list's width while a detail sits beside it. The detail takes the rest. */
 export const LIST_WIDTH = '22.5rem'
@@ -18,36 +20,43 @@ export interface CapabilityDetail {
   /** What the detail is, which names its pane. */
   title: string
   icon?: ReactNode
-  /** Clears the selection. Close, Escape and the compact window's Back all call it. */
+  /** Clears the selection. Close, Escape and the narrow layout's Back all call it. */
   onClose: () => void
   body: ReactNode
 }
 
-/** Whether the window is below the 840 px width class. A test window matches no media query, so
- *  it is a wide one. */
-function useCompactWindow(): boolean {
-  const query = () => typeof window.matchMedia === 'function' && window.matchMedia(COMPACT_WINDOW).matches
-  const [compact, setCompact] = useState(query)
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const mq = window.matchMedia(COMPACT_WINDOW)
-    const onChange = () => setCompact(mq.matches)
-    mq.addEventListener('change', onChange)
-    onChange()
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-  return compact
+/** Whether `box` is narrower than `BESIDE_FROM`. It is read before the first paint and again
+ *  whenever the box changes size: the window resizing, or the sidebar beside it collapsing or
+ *  expanding. A box with no width (not laid out yet, or hidden while a page loads) has no room to
+ *  read, so it keeps the last reading, which starts wide. */
+function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): boolean {
+  const [narrow, setNarrow] = useState(false)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const read = () => {
+      const width = el.getBoundingClientRect().width
+      if (width > 0) setNarrow(width < BESIDE_FROM)
+    }
+    read()
+    if (typeof ResizeObserver !== 'function') return
+    const watch = new ResizeObserver(read)
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [box])
+  return narrow
 }
 
 /** A Capabilities tab (#3817): its header, its list, and the selected item's detail beside the
  *  list, where the item's permissions are.
  *
- *  With nothing selected the list takes the whole width, and no pane is open. From the 840 px width
- *  class up a selection opens the detail to the right of the list, which keeps a fixed width while
- *  the detail takes the rest. Below it the two show one at a time: the detail in place of the list,
- *  and its Back returns to the list. The list stays mounted under a detail, so its scroll, its
- *  search and the row that opened the detail are where they were when it closes, and the focus goes
- *  back to that row.
+ *  With nothing selected the list takes the whole width, and no pane is open. With `BESIDE_FROM` of
+ *  room or more a selection opens the detail to the right of the list, which keeps a fixed width
+ *  while the detail takes the rest. With less the two show one at a time: the detail in place of the
+ *  list, and its Back returns to the list. The room is the tab's own width, so a collapsed and an
+ *  expanded sidebar at one window width each get the layout the room they leave allows. The list
+ *  stays mounted under a detail, so its scroll, its search and the row that opened the detail are
+ *  where they were when it closes, and the focus goes back to that row.
  *
  *  `controls` is the list's own bar (search, filter, sort, its More menu); it sits over the list,
  *  never over the detail. */
@@ -61,10 +70,11 @@ export function ListBesideDetail({ header, controls, detail, noun, children }: {
   /** The list. */
   children: ReactNode
 }) {
-  const compact = useCompactWindow()
+  const box = useRef<HTMLDivElement>(null)
+  const compact = useNarrowerThanBeside(box)
   const beside = detail !== null && !compact
   return (
-    <div className="flex h-full flex-col">
+    <div ref={box} data-capability-layout className="flex h-full flex-col">
       {header}
       <div className="flex min-h-0 flex-1">
         <div data-capability-list hidden={detail !== null && compact}
@@ -79,15 +89,15 @@ export function ListBesideDetail({ header, controls, detail, noun, children }: {
   )
 }
 
-/** The detail's pane: a region named by its title, with Close (or, below the width class, Back to
- *  the list) and the page's body under it. */
+/** The detail's pane: a region named by its title, with Close (or, with less room than
+ *  `BESIDE_FROM`, Back to the list) and the page's body under it. */
 function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compact: boolean; noun: string }) {
   const titleId = useId()
   const focusReturnRef = useFocusReturn<HTMLElement>()
   const headingRef = useRef<HTMLHeadingElement>(null)
   const close = useRef(detail.onClose)
   close.current = detail.onClose
-  // Below the width class the list leaves the screen as the detail takes its place, and with it the
+  // With less room the list leaves the screen as the detail takes its place, and with it the
   // row just chosen. The focus follows the choice to the detail's heading, so it is not left on a row
   // no one can see; a detail opened by an address, with nothing chosen, takes no focus. Back returns
   // it to the row (`useFocusReturn`).

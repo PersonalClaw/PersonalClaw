@@ -35,7 +35,9 @@ export function compareSkills(a: { name: string; key: string }, b: { name: strin
   return byName(a.name, b.name) || byId(a.key, b.key)
 }
 
-/** A provider's tools: by name, A–Z, case-insensitive; equal names by the tool's full name. */
+/** A provider's tools: by name, A–Z, case-insensitive. The name is the tool's full name and its id,
+ *  so two names equal A–Z differ only in case, and the tie goes by the same name in code-point
+ *  order, capitals first, whatever order the tools were read in. */
 export function compareTools(a: { name: string }, b: { name: string }): number {
   return byName(a.name, b.name) || byId(a.name, b.name)
 }

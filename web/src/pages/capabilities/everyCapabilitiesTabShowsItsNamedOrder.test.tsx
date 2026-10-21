@@ -179,6 +179,23 @@ describe('Tools: built-in providers by label, then servers by name, each provide
       'agent_run', 'Read_file', 'read_file', 'write_file', 'web_fetch', 'mcp/Alpha/x', 'mcp/zulu/a', 'mcp/zulu/b',
     ])
   })
+
+  it.each([
+    ['as read', ['read_file', 'READ_FILE', 'Read_file']],
+    ['the other way round', ['Read_file', 'READ_FILE', 'read_file']],
+  ] as const)('names that differ only in case keep one order whatever the order they are read in (%s)', async (_order, names) => {
+    Object.assign(answers, {
+      toolsIndex: { tools: names.map((name) => ({ name, provider: 'Core', description: `${name} tool`, risk_level: 'safe' })), load_failures: [] },
+      importableMcp: { servers: [], unreadable: [], tools: [] },
+      mcpPoolStats: null,
+      toolGroups: null,
+      mcpElicitationServers: [],
+      mcpServers: [],
+    })
+    await open('tools')
+    // Equal names, A–Z, are told apart by case, in code-point order: capitals first.
+    expect(titledOrder(names)).toEqual(['READ_FILE', 'Read_file', 'read_file'])
+  })
 })
 
 describe('Prompts: by title, or name, A–Z; equal titles by name', () => {
