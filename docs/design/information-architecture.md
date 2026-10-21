@@ -105,6 +105,13 @@ Top to bottom:
 - **The reading column**, around 720 to 780 px whatever the window's width (`--reading-width`,
   768 px, in `web/src/design/tokens.css`), holds the turns. Code, tables, diffs and artifacts open
   beside it in an adjustable split that remembers its size; a compact window stacks them under it.
+  A reply's code block, diff or table opens there from its own Open beside, in the chat's pane host
+  (`web/src/ui/PaneHost.tsx`, `pane-host-chat-w`), and the address names it: `?beside=<block>` is
+  the split, its absence is the thread read in its column alone
+  (`web/src/pages/chat/beside/blockBeside.tsx`). A block's address is its kind and a fingerprint of
+  its content (`web/src/ui/OpenBeside.tsx`), so a reply names it the same live and after a reload.
+  The pane host stacks the block under the thread where its own box is narrower than the pane's
+  smallest width beside the work's 12rem.
 - **Each turn** opens with the agent orb and one status line at its head
   ([`agent-orb.md`](agent-orb.md)). Its tool calls are dense rows (an icon, the tool's own label, a
   status pip) that fold, once the turn ends, into one line: "Worked for 12s · 6 steps", with any

@@ -13,8 +13,9 @@ import type { ChatStream } from '../useChatStream'
 // What the panels beside the chat keep: the Activity rail (`?activity`) with the files and links
 // the transcript touched, the subagents a fan-out started and the side chat; the open file
 // (`?file`); the chat's working folder (`?tree`, ⌘⇧E); the new chat's history panel (`?history`);
-// and a tool's full result (`?result`), fetched when a card asks for it. Each rides the URL, so
-// Back closes it and a reload reopens it. `ChatPanes.tsx` draws them.
+// a block of a reply open beside the reading (`?beside`, `beside/blockBeside`); and a tool's full
+// result (`?result`), fetched when a card asks for it. Each rides the URL, so Back closes it and a
+// reload reopens it. `ChatPanes.tsx` draws them, and the chat page the block beside the reading.
 //
 // Focus mode (`app/viewModes.tsx`) gives the window to the transcript: entering it closes the docked
 // panes, and leaving it opens again the ones it closed. While it is on, a pane opens only when
@@ -22,7 +23,7 @@ import type { ChatStream } from '../useChatStream'
 // in focus mode keeps the pane its address names: the address is an ask too.
 
 /** The panes docked beside the chat on every form, by their URL key. */
-const DOCKED_PANES = ['activity', 'history', 'file', 'tree']
+const DOCKED_PANES = ['activity', 'history', 'file', 'tree', 'beside']
 
 export function useChatPanes({ query, setQuery, stream, focus = false }: {
   query: Record<string, string>
@@ -81,6 +82,12 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   const treeOpen = query.tree === '1'
   const setTreeOpen = (on: boolean) => setQuery({ ...(on ? alone('tree') : {}), tree: on ? '1' : null })
   useKeyBinding('workspace-tree', turns.length > 0 ? () => setTreeOpen(!treeOpen) : undefined)
+
+  // A block of a reply open beside the reading (`beside/blockBeside`). URL-backed (?beside=<block>,
+  // push → Back closes it; refresh and a copied link reopen the same block). Its absence is the
+  // thread read in its column alone.
+  const beside = query.beside || null
+  const setBeside = (address: string | null) => setQuery({ ...(address ? alone('beside') : {}), beside: address || null })
 
   // "Show full result": a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -156,7 +163,7 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
     }
   }
   return {
-    activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile, treeOpen, setTreeOpen,
+    activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile, treeOpen, setTreeOpen, beside, setBeside,
     resultRef, setResultRef, resultToolRef, resultBody, activity, killFanout, openSide, askSide,
   }
 }

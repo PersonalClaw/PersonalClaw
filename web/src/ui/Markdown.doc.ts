@@ -18,6 +18,7 @@ const doc: UiDoc = {
     { name: 'messageTs', description: 'Stable per-message timestamp → derived widget slugs survive a refresh (with `widgets`).' },
     { name: 'onFileClick', description: 'When supplied, file mentions become clickable — path-like inline code AND bare paths in prose linkify to fire this with the path.' },
     { name: 'streaming', description: 'True while the message is still streaming → an unclosed trailing `<widget>` renders progressively (with `widgets`).' },
+    { name: 'beside', description: 'Under an `OpenBesideProvider`, each code block, diff and table offers an Open beside and registers under its address, its kind and a fingerprint of its parsed content (a fence\'s language and text, a table\'s cells), so the same block has the same address wherever it sits and however the text around it is split. Not while `streaming`: a block still arriving has no end, so it neither offers nor registers. Absent → no block offers it.' },
     { name: 'widgets', description: 'Runs `<widget>` blocks in their sandboxed frames. Only the agent\'s own chat replies pass it — the dashboard chat is where the model is given the widget contract. Without it a widget tag is embedded HTML like any other and is shown as text.' },
   ],
   bestPractices: [

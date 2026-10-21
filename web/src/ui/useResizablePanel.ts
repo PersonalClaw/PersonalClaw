@@ -113,6 +113,13 @@ export function useResizablePanel(
   // 200ms debounce window) doesn't lose the final size. Unmount-only (empty dep) so it
   // doesn't reintroduce the per-frame write; reads the live width via a ref.
   useEffect(() => () => { localStorage.setItem(wKey, String(widthRef.current)) }, [wKey])
+  // And as the page goes away: a reload inside that window is not an unmount (no cleanup runs), so
+  // a size chosen just before it would come back as the old one.
+  useEffect(() => {
+    const flush = () => localStorage.setItem(wKey, String(widthRef.current))
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [wKey])
   // Only a collapsible panel persists (or writes) its collapsed flag; a width-only
   // consumer must not litter localStorage with a `${key}-collapsed` key nothing reads.
   useEffect(() => {
@@ -150,12 +157,14 @@ export function useResizablePanel(
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
       document.body.style.userSelect = ''
+      // The drag has settled: its size is the one to keep, now rather than after the debounce.
+      localStorage.setItem(wKey, String(widthRef.current))
     }
     document.body.style.userSelect = 'none'
     handle.addEventListener('pointermove', move)
     handle.addEventListener('pointerup', up)
     handle.addEventListener('pointercancel', up)
-  }, [width, min, side])
+  }, [width, min, side, wKey])
 
   // Keyboard resize (WAI-ARIA window-splitter pattern): arrows step the inner edge,
   // Home/End jump to min/max. Left/Right map to the visual direction the panel grows
