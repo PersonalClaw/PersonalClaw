@@ -65,10 +65,21 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** Put `address` in the bar with the router's own `navigate`, as a copied link or a reload leaves it
+ *  there before the page draws. The URL-navigation doctrine keeps every history write in
+ *  `useHashRoute.ts`, so the test borrows the router for one render rather than writing the bar. */
+function putInTheBar(address: string) {
+  let go: ReturnType<typeof useHashRoute>['navigate'] | undefined
+  function Bar() { go = useHashRoute('capabilities').navigate; return null }
+  render(<Bar />)
+  act(() => go?.(address, { replace: true }))
+  cleanup()
+}
+
 async function open(address: string) {
   cleanup()
   resetDataStore()
-  history.replaceState(null, '', `#/${address}`)
+  putInTheBar(address)
   render(<Capabilities />)
   await settle()
 }
