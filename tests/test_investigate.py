@@ -7,6 +7,7 @@ happens ONCE, fenced, with the user-visible message untouched.
 from __future__ import annotations
 
 import pytest
+from table_rows import row
 
 from personalclaw import investigate as inv
 
@@ -621,22 +622,73 @@ class TestDoctorResolver:
         assert await inv.resolve("doctor_finding", "nosuchcap", None) is None
 
 
-def test_back_links_use_real_frontend_routes():
+@pytest.mark.asyncio
+async def test_each_back_link_is_the_address_its_record_opens_at(tmp_path, monkeypatch, subtests):
     """Every back_link must name a route the SPA actually matches. Hand-written
     hashes rot silently — as-a-user validation caught two here:
       * knowledge items live at #/knowledge/item/<id> (a bare #/knowledge/<id>
         falls through to the list);
-      * triggers open a detail via the ?open= QUERY param, not a path segment.
-    This asserts the literal route SHAPES present in investigate.py, so a
-    hand-edited back_link can't quietly regress to the broken form."""
-    from pathlib import Path
+      * triggers open a detail via the ?open= QUERY param, not a path segment, under the
+        Triggers page's namespaced id (schedule:<job id>, lifecycle:<hook id>, an event
+        trigger's store id).
+    Each row resolves a real record of its kind, by each address the resolver takes, and the
+    link it hands back is exactly that record's address as the dashboard ships it
+    (web/src/app/shippedRoutes.ts: knowledge/item/<id>, triggers?open=<id>)."""
+    from types import SimpleNamespace
 
-    src = Path(inv.__file__).read_text(encoding="utf-8")
-    # The broken forms must never come back.
-    assert '#/knowledge/{entity_id}"' not in src
-    assert "#/triggers/schedule:" not in src
-    assert "#/triggers/lifecycle:" not in src
-    assert "#/triggers/event:" not in src
-    # The correct forms are present.
-    assert "#/knowledge/item/{entity_id}" in src
-    assert "#/triggers?open=schedule:{job_id}" in src
+    import personalclaw.hooks as hooks
+    from personalclaw.event_triggers import MEMORY_KEY_PATTERN, event_spec
+    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    knowledge = KnowledgeStore(str(tmp_path / "k.db"))
+    item_id = knowledge.create_typed_item(item_type="note", title="Rate limits", content="429")
+    state = SimpleNamespace(knowledge_store=knowledge)
+    # A clock schedule's store id holds a colon of its own, as every store id does.
+    job = "clock:pack-the-soccer-bag"
+    TriggerStore(base_dir=home).upsert(
+        Trigger(
+            id="event:acme-watch",
+            name="Acme watch",
+            kind="event",
+            spec=event_spec(MEMORY_KEY_PATTERN, "project.acme.*"),
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    runs = ScheduleRunStore(home)
+    await runs.append(ScheduleRun(run_id="fire-1", job_id=job, job_name="Soccer bag"))
+    await runs.append(ScheduleRun(run_id="fire-2", job_id="event:acme-watch", status="success"))
+    hook = SimpleNamespace(
+        id="h1",
+        name="On stop",
+        event="Stop",
+        matcher="",
+        provider="bash",
+        enabled=True,
+        last_run=0.0,
+        last_status="ok",
+        run_count=1,
+    )
+    monkeypatch.setattr(
+        hooks,
+        "get_global_hook_store",
+        lambda: SimpleNamespace(get=lambda i: hook if i == "h1" else None),
+    )
+
+    rows = [
+        ("knowledge_item", item_id, f"#/knowledge/item/{item_id}"),
+        ("schedule_run", f"{job}:fire-1", f"#/triggers?open=schedule:{job}"),
+        ("schedule_run", job, f"#/triggers?open=schedule:{job}"),
+        ("trigger_run", "lifecycle:h1", "#/triggers?open=lifecycle:h1"),
+        ("trigger_run", "event:acme-watch", "#/triggers?open=event:acme-watch"),
+    ]
+    for kind, entity_id, link in rows:
+        with row(subtests, name=f"{kind} {entity_id}"):
+            ctx = await inv.resolve(kind, entity_id, state)
+            assert ctx is not None, f"{kind} {entity_id}: the record did not resolve"
+            assert ctx.back_link == link, f"{kind} {entity_id}: links to {ctx.back_link}"
