@@ -30,6 +30,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => { reads.approvals++; return Promise.resolve(world.approvals.map((a) => ({ ...a }))) },
+      running: () => Promise.resolve({ running: [], finished: [] }),
+      status: () => Promise.resolve({}),
       uLoops: () => { reads.loops++; return Promise.resolve(world.loops.map((l) => ({ ...l }))) },
       tasks: (o: { status: string }) => {
         reads.tasks++

@@ -12,7 +12,7 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { qget, type RouteProps } from '../../app/useQueryState'
-import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from './CompanionSections'
+import { InboxSection, RecentSection, RunningSection, TasksSection } from './CompanionSections'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** `#/companion` — the phone control surface, approvals first.
@@ -20,7 +20,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  A run that is blocked on a permission decision is the one thing that genuinely cannot wait
  *  until the owner is back at a desk, so the phone route ships that decision FIRST and by
  *  itself and stays at the TOP of the column. The rest of the attention path sits
- *  underneath it — running loops, tasks, inbox, recent notifications — in
+ *  underneath it — what is running, tasks, inbox, recent notifications — in
  *  `CompanionSections.tsx`; the ordering is the priority order and is not negotiable, because
  *  a blocked run is the only row on this page that another person is waiting on.
  *
@@ -193,7 +193,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
         {/* The rest of the attention path. The "Not on the phone yet" stub list that
             stood here earlier is DELETED, not hidden — the sections it named
             are what these four are. */}
-        <RunningLoopsSection />
+        <RunningSection />
         <TasksSection />
         <InboxSection />
         <RecentSection />
