@@ -2,9 +2,10 @@
 
 Every ``*.sites.jsonl`` in the repository is registered, every registered file exists, and,
 against the gate's base commit, no list grew through its file. And the repository's
-``.gitattributes`` merges every baseline with git's union driver, so two branches that each add a
-line to one merge without a conflict. ``tests/test_site_baseline.py`` holds the checks themselves,
-on repositories of its own.
+``.gitattributes`` merges every baseline with the ``sites-set`` driver, a three-way merge of two
+sets of lines, so two branches that each add a line to one merge without a conflict and neither
+brings back a line the other deleted. ``tests/test_site_baseline.py`` holds the checks and the
+driver themselves, on repositories of its own.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import git_helper_guard
 from rails_repo import REPO
-from site_baseline import UNION_ATTRIBUTE, attribute_problems, check_registry
+from site_baseline import DRIVER, SITES_ATTRIBUTE, attribute_problems, check_registry
 from table_rows import row
 
 from personalclaw.sdk.testing import neutral_git_env
@@ -46,27 +47,34 @@ def _planted(tmp_path: Path, attributes: str) -> Path:
     return repo
 
 
-#: ``.gitattributes`` that fail to merge a baseline with the union driver, and what is said.
+#: ``.gitattributes`` that fail to merge a baseline with the driver, and what is said.
 PLANTED = [
-    ("no union line", "*.png binary\n", f"does not hold the line `{UNION_ATTRIBUTE}`"),
+    ("no line for the driver", "*.png binary\n", f"does not hold the line `{SITES_ATTRIBUTE}`"),
+    (
+        "git's union driver",
+        "*.sites.jsonl merge=union\n",
+        f"git merges tests/rails/baselines/probe.sites.jsonl with merge=union, not {DRIVER}",
+    ),
     (
         "a changed glob",
-        "tests/rails/baselines/*.sites.jsonl merge=union\n",
-        "git merges web/src/probe.sites.jsonl with merge=unspecified, not union",
+        f"tests/rails/baselines/*.sites.jsonl merge={DRIVER}\n",
+        f"git merges web/src/probe.sites.jsonl with merge=unspecified, not {DRIVER}",
     ),
     (
         "a later line that overrides it",
-        f"{UNION_ATTRIBUTE}\n*.jsonl -merge\n",
-        "git merges tests/rails/baselines/probe.sites.jsonl with merge=unset, not union",
+        f"{SITES_ATTRIBUTE}\n*.jsonl -merge\n",
+        f"git merges tests/rails/baselines/probe.sites.jsonl with merge=unset, not {DRIVER}",
     ),
 ]
 
 
-def test_the_repository_merges_every_site_baseline_with_the_union_driver(tmp_path: Path, subtests):
-    """The real ``.gitattributes`` holds the line exactly and git answers ``union`` for a
+def test_the_repository_merges_every_site_baseline_with_the_sites_set_driver(
+    tmp_path: Path, subtests
+):
+    """The real ``.gitattributes`` holds the line exactly and git answers ``sites-set`` for a
     baseline; each planted file that breaks it fails, by what it broke."""
     assert attribute_problems(REPO) == []
-    assert len(PLANTED) == 3, "a planted case was dropped from the table"
+    assert len(PLANTED) == 4, "a planted case was dropped from the table"
     for name, attributes, message in PLANTED:
         with row(subtests, case=name):
             problems = attribute_problems(_planted(tmp_path / name.replace(" ", "-"), attributes))

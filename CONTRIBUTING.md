@@ -272,8 +272,9 @@ make web-build
 # run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
 make serve
 
-# git hooks (DCO sign-off, pre-commit lint, pre-push gates) install with npm install;
-# this re-runs it explicitly. Then the browser the render smoke needs.
+# git hooks (DCO sign-off, pre-commit lint, pre-push gates) and the site baselines' merge
+# driver (tests/README.md) install with npm install; this re-runs it explicitly. Then the
+# browser the render smoke needs.
 npm run hooks:install
 npx playwright install chromium
 ```
