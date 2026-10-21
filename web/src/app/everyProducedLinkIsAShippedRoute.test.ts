@@ -245,14 +245,14 @@ describe('the router\'s tables and the palette\'s rows are catalogued', () => {
 /** Where a notification's tap lands, every source and the fallback. */
 const notificationAddresses = [...Object.values(NOTIFICATION_SOURCE_ROUTES), DEFAULT_NOTIFICATION_ROUTE]
 
-/** Where an approval is answered, for a session of each shape `approvalDestination` reads. */
+/** Where an approval is answered, for each place `approvalDestination` reads (`approval_place`). */
 const approvalAddresses = [
-  `workflow:${SAMPLE.run}:${SAMPLE.node}`,
-  `loop-${SAMPLE.loop}`,
-  `loop-plan-${SAMPLE.loop}`,
-  `room:${SAMPLE.room}:writer`,
-  SAMPLE.chat,
-].map((session) => approvalDestination(session).href)
+  { work: `workflow:${SAMPLE.run}`, step: SAMPLE.node },
+  { work: `loop:${SAMPLE.loop}` },
+  { room: SAMPLE.room },
+  { work: `chat:${SAMPLE.chat}` },
+  { session: SAMPLE.chat, work: '' },
+].map((place) => approvalDestination(place).href)
 
 describe('the notification taps and the approval links are catalogued', () => {
   it('🔑 every tap\'s route is an entry naming notifications, and every such entry is one', () => {

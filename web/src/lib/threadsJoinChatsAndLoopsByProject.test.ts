@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NO_PROJECT, toThreads, type ThreadChat, type ThreadLoop, type ThreadSources } from './useThreads'
 import { runState, runningState } from '../test/runState'
+import type { ApprovalInput, AttentionInput } from './attentionLanes'
 
 // ── Every chat, goal loop and code session is a thread, under its project (#3814) ──────────────
 //
@@ -118,5 +119,36 @@ describe('the threads join', () => {
 
   it('nothing to list is no groups at all', () => {
     expect(toThreads(sources())).toEqual([])
+  })
+})
+
+describe('an approval marks the thread it waits in', () => {
+  function asked(over: Partial<ApprovalInput> = {}): ApprovalInput {
+    return {
+      id: 'loop-a1b2c3d4-t-9:1', request_id: '1', tool: 'bash', risk: 'caution', grant_agent: '',
+      session: 'loop-a1b2c3d4-t-9', work: 'loop:a1b2c3d4', step: '', room: '',
+      source_label: 'loop “Find a seed supplier”', ts: 0, ...over,
+    }
+  }
+  const pips = (src: ThreadSources) =>
+    Object.fromEntries(toThreads(src).flatMap((g) => g.threads.map((t) => [t.key, t.pip])))
+
+  it("a loop worker's ask is its loop's, though the list holds no row for that worker", () => {
+    // The gateway names the loop on the ask (`approval_place`), so a worker the chat list has not
+    // caught up with still marks it.
+    expect(pips(sources({ loops: [loop()], approvals: [asked()] }))['loop:a1b2c3d4']).toBe('waiting')
+  })
+
+  it('🪤 VACUITY: an ask that names no loop marks none, whatever its key looks like', () => {
+    expect(pips(sources({ loops: [loop()], approvals: [asked({ work: '' })] }))['loop:a1b2c3d4']).toBeNull()
+  })
+
+  it("a loop worker's question is its loop's too, by the place its Inbox row keeps", () => {
+    const question = (place_work: string): AttentionInput => ({
+      id: 'q1', item_kind: 'needs_input', status: 'pending', message: 'Which supplier?', sender_name: '', channel_name: '',
+      refs: { question: 'q1', session: 'loop-a1b2c3d4-t-9', place_work, place_step: '', place_room: '' },
+    })
+    expect(pips(sources({ loops: [loop()], items: [question('loop:a1b2c3d4')] }))['loop:a1b2c3d4']).toBe('waiting')
+    expect(pips(sources({ loops: [loop()], items: [question('')] }))['loop:a1b2c3d4']).toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff, CircleDashed, CircleAlert } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import { isOpenStatus } from '../../lib/attentionLanes'
-import { approvalDestination } from '../../app/approvalDestination'
+import { approvalDestination, placeOfRefs } from '../../app/approvalDestination'
 import { notificationLink } from '../notifications/notificationMeta'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
@@ -185,9 +185,10 @@ export function isOpenWithVerdict(it: Pick<InboxItem, 'item_kind' | 'classificat
 export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   const refs = it.refs || {}
   if (refs.loop) return refs.loop_kind === 'code' ? `code/${refs.loop}` : `loops/${refs.loop}`
-  // A pending approval's row goes where the approval is ANSWERED, derived by the one parser of an
-  // approval's session key — a workflow stage's `workflow:<run>:<node>` is not a chat, and
-  // spelling `chat/<session>` for it is the 404 `approvalDestination` exists to prevent (#258).
+  // A pending approval's row goes where the approval is ANSWERED, by the place the row carries
+  // (`refs.work`, `refs.step`, `refs.room`) — a workflow stage's `workflow:<run>:<node>` is not a
+  // chat, and spelling `chat/<session>` for it is the 404 `approvalDestination` exists to prevent
+  // (#258).
   // The router path is its href without the leading `#/`, which `navigate` owns.
   // …and so does the note a call denied without an answer leaves: it names the same
   // session, and the place it happened is where the approval would have been answered. Work a
@@ -197,7 +198,7 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
     return `triggers?open=${encodeURIComponent(refs.trigger)}`
   }
   if ((refs.approval || refs.auto_denied) && typeof refs.session === 'string' && refs.session) {
-    return approvalDestination(refs.session).href.replace(/^#\//, '')
+    return approvalDestination(placeOfRefs(refs)).href.replace(/^#\//, '')
   }
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
   // A run opens at `workflows/runs/<id>`: `workflows/<id>` is no route of the Workflows section,
@@ -234,7 +235,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.loop) return 'Go to loop'
   if (refs.auto_denied && typeof refs.trigger === 'string' && refs.trigger) return 'Open the trigger'
   if ((refs.approval || refs.auto_denied) && typeof refs.session === 'string' && refs.session) {
-    return approvalDestination(refs.session).linkLabel
+    return approvalDestination(placeOfRefs(refs)).linkLabel
   }
   if (refs.session) return 'Go to chat'
   if (refs.workflow) return 'Open the workflow run'

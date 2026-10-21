@@ -28,7 +28,7 @@ const ROOM = 'is-the-live-crash-demo-worth-the-risk'
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: `room:${ROOM}:talk-editor:c1`, request_id: `room:${ROOM}:talk-editor:c1`, source: 'room',
   tool: 'edit_file', tool_input: '{"path": "~/Notes/Talks/incident-notes.md"}',
-  session: `room:${ROOM}:talk-editor`, ts: 0, session_title: '', agent: '', risk: 'caution',
+  session: `room:${ROOM}:talk-editor`, work: '', step: '', room: ROOM, ts: 0, session_title: '', agent: '', risk: 'caution',
   confirms: [],
   grant_agent: '', source_label: 'room “Is the live crash demo worth the risk?” · member “talk-editor”',
   ...over,
@@ -94,13 +94,13 @@ describe("a room member's call that asks is answered in its room", () => {
 
 describe('🪤 VACUITY: it claims ONLY its own members\' asks', () => {
   it("another room's member's ask is not shown here", async () => {
-    await mountFor(ROOM, [approval({ session: 'room:another-room:talk-editor' })])
+    await mountFor(ROOM, [approval({ session: 'room:another-room:talk-editor', work: '', step: '', room: 'another-room' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })
 
   it("a chat's ask is not shown here, even one whose key starts with the word", async () => {
-    await mountFor(ROOM, [approval({ session: 'room-planning' }), approval({ id: 'x', session: `room:${ROOM}` })])
+    await mountFor(ROOM, [approval({ session: 'room-planning', work: 'chat:room-planning', step: '', room: '' }), approval({ id: 'x', session: `room:${ROOM}`, work: '', step: '', room: '' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })

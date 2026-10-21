@@ -5849,6 +5849,11 @@ export interface PendingApproval {
   source: string; tool: string
   tool_input?: unknown; tool_purpose?: string
   session: string; ts: number
+  /** Where it is answered, read by the gateway from `session` (`approval_place.place_of`), so no
+   *  surface reads the key's shape: the work its session runs (`chat:<key>`, `loop:<id>` for a
+   *  loop's workers and its planner, `workflow:<run>` for a run's steps, "" for work no page
+   *  answers), the run's step, and the room a member asks in. Read through `approvalDestination`. */
+  work?: string; step?: string; room?: string
   /** The chat's name, when it has one ("" until it is titled, and for a background origin). */
   session_title: string
   /** Which agent is asking — a chat names it; "" for a background origin. */

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
 import type { NodeInspect, PendingApproval, WorkflowNodeState, WorkflowRunDetailData } from '../lib/api'
 import type { WsMessage } from '../lib/useChatSocket'
-import { approvalDestination } from './approvalDestination'
+import { approvalDestination, type ApprovalPlace } from './approvalDestination'
 
 // ── #258: the approval nudge must point somewhere that RESOLVES ──────────────────────────────────
 //
@@ -41,11 +41,16 @@ const INSPECT: NodeInspect = {
   output: '', attempts: [], ledger_events: [], cached: false,
 }
 
+/** Where the blocked step's approval is answered, as the gateway reads it from its session key. */
+const STEP: ApprovalPlace = {
+  session: 'workflow:11b9a34c:synthesize', work: 'workflow:11b9a34c', step: 'synthesize', room: '',
+}
+
 /** The approval the nudge fires for — the one from #258, verbatim off `GET /api/approvals`. */
 const PENDING: PendingApproval = {
   id: 'spawn:b961a327', request_id: 'spawn:b961a327', source: 'subagent',
   tool: 'subagent_run(Write ONE consolidated article)',
-  session: 'workflow:11b9a34c:synthesize', ts: 0,
+  ...STEP, session: 'workflow:11b9a34c:synthesize', ts: 0,
   session_title: '', agent: '', risk: '', grant_agent: '',
   source_label: 'workflow “research” · step “synthesize”',
 }
@@ -80,7 +85,8 @@ async function mockApi() {
 }
 
 /** Drive one `approval` frame through the shell hook and return the toast detail it dispatched. */
-async function nudgeFor(session: string): Promise<{ message: string; href: string; hrefLabel: string }> {
+async function nudgeFor(place: ApprovalPlace): Promise<{ message: string; href: string; hrefLabel: string }> {
+  const session = place.session ?? ''
   let onMessage: ((m: WsMessage) => void) | null = null
   vi.resetModules()
   vi.doMock('../lib/useChatSocket', () => ({
@@ -98,7 +104,7 @@ async function nudgeFor(session: string): Promise<{ message: string; href: strin
     expect(onMessage, 'the socket handler must be captured or nothing is driven').not.toBeNull()
     act(() => onMessage!({
       type: 'approval',
-      data: { session, id: `ap-${session}`, tool: 'subagent_run(Write ONE consolidated article)', source: 'subagent' },
+      data: { ...place, id: `ap-${session}`, tool: 'subagent_run(Write ONE consolidated article)', source: 'subagent' },
     }))
   } finally {
     window.removeEventListener('ne:toast', onToast)
@@ -134,18 +140,18 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
     // The shipped sentence was *"open workflow:11b9a34c:synthesize to respond."* — the one
     // instruction the user got, naming a thing with no route. Asserted on its own leg so the
     // sentence defect is visible independently of the link mechanism below.
-    const nudge = await nudgeFor('workflow:11b9a34c:synthesize')
+    const nudge = await nudgeFor(STEP)
     expect(nudge.message).not.toContain('workflow:11b9a34c:synthesize')
     expect(nudge.message).toContain('open the synthesize step of workflow run 11b9a34c to respond.')
   })
 
   it('links to the run and carries the blocked node', async () => {
-    const nudge = await nudgeFor('workflow:11b9a34c:synthesize')
+    const nudge = await nudgeFor(STEP)
     expect(nudge.href).toBe('#/workflows/runs/11b9a34c?node=synthesize')
   })
 
   it('the href the nudge emits opens the run ON the blocked node', async () => {
-    const nudge = await nudgeFor('workflow:11b9a34c:synthesize')
+    const nudge = await nudgeFor(STEP)
     await mountRouteAt(nudge.href)
     // The drawer asked the endpoint for the deep-linked node — RESOLUTION, not mere rendering.
     await waitFor(() => expect(workflowRunNodeInspect).toHaveBeenCalledWith('11b9a34c', 'synthesize'))
@@ -160,7 +166,7 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
     // The point of the whole change. A link that resolves to a page with no control is a nicer
     // dead end, so the destination is required to carry the pair — for THIS approval, named, on
     // the surface the nudge sent the user to.
-    const nudge = await nudgeFor('workflow:11b9a34c:synthesize')
+    const nudge = await nudgeFor(STEP)
     await mountRouteAt(nudge.href)
     expect(await screen.findByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /^Deny subagent_run/ })).toBeTruthy()
@@ -176,28 +182,34 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
   })
 
   it('🪤 VACUITY: a CHAT session keeps its own destination, not the workflow view', async () => {
-    // The fix must be a parse of the key's shape, not a blanket re-route: an ordinary
+    // The fix must follow the place the approval carries, not be a blanket re-route: an ordinary
     // chat/subagent approval is answered on the chat page and its sentence already worked.
-    const nudge = await nudgeFor('main')
+    const nudge = await nudgeFor({ session: 'main', work: 'chat:main', step: '', room: '' })
     expect(nudge.href).toBe('#/chat/main')
     expect(nudge.message).toContain('open main to respond.')
   })
 })
 
 describe('the sentence and the link cannot name different places', () => {
-  it('every destination the grammar produces is a hash route, and the label describes it', () => {
-    for (const session of ['main', 'dashboard:abc', 'workflow:r1:root.draft']) {
-      const dest = approvalDestination(session)
-      expect(dest.href, session).toMatch(/^#\//)
+  it('every destination a place produces is a hash route, and the label describes it', () => {
+    const places: ApprovalPlace[] = [
+      { session: 'main', work: 'chat:main' },
+      { session: 'dashboard:abc', work: 'chat:abc' },
+      { session: 'workflow:r1:root.draft', work: 'workflow:r1', step: 'root.draft' },
+      { session: 'hook:deploy', work: '' },
+    ]
+    for (const place of places) {
+      const dest = approvalDestination(place)
+      expect(dest.href, place.session).toMatch(/^#\//)
       // The link must say where it goes; a bare "Open" is what the raw key was.
-      expect(dest.linkLabel.toLowerCase(), session).toMatch(/workflow run|chat/)
-      expect(dest.label, session).not.toBe('')
+      expect(dest.linkLabel.toLowerCase(), place.session).toMatch(/workflow run|chat/)
+      expect(dest.label, place.session).not.toBe('')
     }
   })
 
   it('an instance path with a dot survives the round trip into the run view', () => {
     // `root.draft` is what the engine broadcasts for a nested node; a destination that dropped
     // or mangled it would open the run on the wrong step.
-    expect(approvalDestination('workflow:r1:root.draft').href).toBe('#/workflows/runs/r1?node=root.draft')
+    expect(approvalDestination({ work: 'workflow:r1', step: 'root.draft' }).href).toBe('#/workflows/runs/r1?node=root.draft')
   })
 })

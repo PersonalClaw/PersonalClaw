@@ -15,8 +15,8 @@ import { blastRadiusOf } from '../pages/chat/approvalMeta'
  *  The chat page renders the inline approval card for the session in view; this
  *  only fires the out-of-context nudge (never for the active session, to avoid
  *  double-signalling). The nudge names the surface that ANSWERS the approval and links
- *  to it — see `approvalDestination`, which owns that derivation because the session key
- *  is only an openable thing for a chat.
+ *  to it — see `approvalDestination`, which reads the place the approval carries because the
+ *  session key is only an openable thing for a chat.
  *
  *  `activeSession` is the chat key currently on screen ("" when not on a chat).
  */
@@ -48,14 +48,15 @@ export function useApprovalToasts(activeSession: string) {
     // WHERE TO ANSWER. The sentence used to end in the raw session key, which is openable only
     // for a chat — a workflow stage's `workflow:<run>:<node>` is not in `/api/chat/sessions` and
     // has no route, so the one notification the user got led to a 404 (#258). `approvalDestination`
-    // owns the key's grammar and both halves of the nudge read the same call, so the place the
-    // sentence names is the place the link goes.
-    const dest = approvalDestination(session)
+    // reads the place the approval carries (`work`, `step`, `room`) and both halves of the nudge
+    // read the same call, so the place the sentence names is the place the link goes.
+    const place = { session, work: String(d.work ?? ''), step: String(d.step ?? ''), room: String(d.room ?? '') }
+    const dest = approvalDestination(place)
     window.dispatchEvent(new CustomEvent('ne:toast', {
       detail: {
         level: 'info',
         message: approvalToastMessage({
-          who, tool, session, blastRadius: blastRadiusOf(d.blast_radius),
+          who, tool, place, blastRadius: blastRadiusOf(d.blast_radius),
         }),
         href: dest.href,
         hrefLabel: dest.linkLabel,

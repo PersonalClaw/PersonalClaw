@@ -26,7 +26,7 @@ vi.mock('../../lib/api', async (orig) => {
 const pending: PendingApproval = {
   id: 'spawn:207dceb3', source: 'subagent',
   tool: 'subagent_run(Advance one round of deep research)', tool_purpose: '',
-  session: 'workflow:df5827ca:sweep', ts: 0, request_id: 'spawn:207dceb3',
+  session: 'workflow:df5827ca:sweep', work: 'workflow:df5827ca', step: 'sweep', room: '', ts: 0, request_id: 'spawn:207dceb3',
   session_title: '', agent: '', risk: '', grant_agent: '',
   source_label: 'workflow “deep-research” · step “sweep”',
 }
@@ -50,7 +50,7 @@ describe('the run page drops an approval the moment it ends', () => {
     await act(async () => {
       socket.handler?.({
         type: 'approval_resolved',
-        data: { id: 'spawn:207dceb3', request_id: 'spawn:207dceb3', session: 'workflow:df5827ca:sweep',
+        data: { id: 'spawn:207dceb3', request_id: 'spawn:207dceb3', session: 'workflow:df5827ca:sweep', work: 'workflow:df5827ca', step: 'sweep', room: '',
           approved: false, outcome: 'cancelled' },
       } as WsMessage)
     })

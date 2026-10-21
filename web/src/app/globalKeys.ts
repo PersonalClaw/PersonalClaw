@@ -6,7 +6,7 @@ import { toLanes, type ApprovalInput, type AttentionInput, type LaneCard } from 
 /** The route of *card*'s work: where its approval is answered or its question waits. */
 function routeOf(card: LaneCard): string | null {
   if (card.origin === 'approval') {
-    const href = approvalDestination(card.approval.session || '').href
+    const href = approvalDestination(card.approval).href
     return card.approval.session ? href.replace(/^#\//, '') : 'mission-control'
   }
   const session = typeof card.refs?.session === 'string' ? card.refs.session : ''

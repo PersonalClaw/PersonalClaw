@@ -132,8 +132,8 @@ export function ActionCenter({ navigate }: RouteProps) {
 
   const icon = { inbox: Inbox, proposal: Sparkles }
   const tone = { inbox: 'var(--color-secondary)', proposal: 'var(--color-primary)' }
-  // An approval opens where it came from through its card's source link, by the one parse of its
-  // session key (`approvalDestination`): a workflow step's run, a loop, a chat.
+  // An approval opens where it came from through its card's source link, by the place it carries
+  // (`approvalDestination`): a workflow step's run, a loop, a room, a chat.
   const routeFor = (e: Row) => {
     // 🔑 THE ITEM, NOT THE LIST — the same defect #258 names, on the lane that was left behind.
     // `?open=<id>` is the inbox's own deep link: `InboxPage` reads the `open` param, and its

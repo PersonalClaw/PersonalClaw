@@ -28,7 +28,7 @@ const COMMAND = 'cd /home/user/projects/feedsmith && git log --oneline -20 && ca
 const asked = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: 'subagent:9f2c:call', request_id: 'subagent:9f2c:call', source: 'subagent', tool: 'bash',
   tool_input: `{"command": "${COMMAND}"}`, tool_purpose: '',
-  session: 'workflow:4e60549e:sweep', ts: 0, session_title: '', agent: '', risk: 'destructive',
+  session: 'workflow:4e60549e:sweep', work: 'workflow:4e60549e', step: 'sweep', room: '', ts: 0, session_title: '', agent: '', risk: 'destructive',
   confirms: [],
   is_read_only: false, grant_agent: '', source_label: 'workflow “deep-research” · step “sweep”',
   blast_radius: { writes: false, network: false, shell: true, saysReadOnly: false, readOnly: false },

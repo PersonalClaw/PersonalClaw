@@ -623,6 +623,7 @@ class DashboardApprovalState:
         naming them (``approval_grants.asked_for_line``), and why none of her switches answers it;
         "" for her own work. Its card answers this call alone.
         """
+        from personalclaw.approval_place import place_of
         from personalclaw.approval_source import approval_source_label, live_chat_name, whose_work
         from personalclaw.triggers.store import trigger_name
 
@@ -639,6 +640,9 @@ class DashboardApprovalState:
             "tool_input": redact_field(tool_input),
             "tool_purpose": redact_field(tool_purpose),
             "session": session,
+            # Where it is answered (`approval_place`): the work its session runs, the run's step
+            # and the room, read from the key here so no surface reads its shape.
+            **place_of(session),
             "session_title": title,
             "agent": agent,
             "risk": risk,
@@ -724,11 +728,13 @@ class DashboardApprovalState:
         bookkeeping failure is strictly worse than losing the row.
         """
         try:
+            from personalclaw.approval_place import place_refs
             from personalclaw.inbox import ItemKind, emit_attention_item
 
             refs = {"approval": str(entry["id"]), "source_label": str(entry["source_label"])}
             if entry.get("session"):
                 refs["session"] = str(entry["session"])
+            refs.update(place_refs(str(entry.get("session") or "")))
             emit_attention_item(
                 self,
                 source="system",

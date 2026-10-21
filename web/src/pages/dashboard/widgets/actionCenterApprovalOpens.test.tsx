@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
+import type { ApprovalPlace } from '../../../app/approvalDestination'
 
 // ── #258's THIRD 404: the one widget that could resolve the approval also opened nowhere ──────────
 //
@@ -38,14 +39,14 @@ function mockApi() {
 }
 
 /** Mount the real Action Center over one pending approval. */
-async function mountWith(session: string, sourceLabel: string) {
+async function mountWith(place: ApprovalPlace, sourceLabel: string) {
   cleanup()
   approvals.mockReset()
   approvals.mockResolvedValue([{
     id: 'spawn:b961a327', source: 'subagent',
     tool: 'subagent_run(Write ONE consolidated article)',
     tool_purpose: 'Consolidate the recalled material into one article',
-    session, ts: 0, source_label: sourceLabel,
+    ...place, ts: 0, source_label: sourceLabel,
   }])
   mockApi()
   const { DashboardLiveProvider } = await import('../DashboardLive')
@@ -73,7 +74,7 @@ beforeEach(() => { cleanup() })
 describe('opening an Action Center approval row lands where it can be answered', () => {
   it('a workflow stage approval opens the RUN, on the blocked node', async () => {
     const step = 'workflow “knowledge-synthesis” · step “synthesize”'
-    await mountWith('workflow:11b9a34c:synthesize', step)
+    await mountWith({ session: 'workflow:11b9a34c:synthesize', work: 'workflow:11b9a34c', step: 'synthesize' }, step)
     // The same destination the nudge links to — one parse, so the widget and the toast cannot
     // disagree about where a given approval is answered.
     expect(await whereItOpens(step)).toBe('#/workflows/runs/11b9a34c?node=synthesize')
@@ -82,14 +83,14 @@ describe('opening an Action Center approval row lands where it can be answered',
   it('🪤 VACUITY: an ordinary chat approval still opens its chat', async () => {
     // Without this leg, hard-coding the run route would pass the test above and send every
     // chat/subagent approval in the widget to a workflow run that does not exist.
-    await mountWith('main', 'chat “Main”')
+    await mountWith({ session: 'main', work: 'chat:main' }, 'chat “Main”')
     expect(await whereItOpens('chat “Main”')).toBe('#/chat/main')
   })
 
   it('🪤 and it never navigates to a chat route for a workflow session', async () => {
     // The defect stated directly: the shipped call was `chat/workflow%3A11b9a34c%3Asynthesize`.
     const step = 'workflow “knowledge-synthesis” · step “synthesize”'
-    await mountWith('workflow:11b9a34c:synthesize', step)
+    await mountWith({ session: 'workflow:11b9a34c:synthesize', work: 'workflow:11b9a34c', step: 'synthesize' }, step)
     expect(await whereItOpens(step)).not.toMatch(/^#?\/?chat\//)
   })
 })

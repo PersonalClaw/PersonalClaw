@@ -33,7 +33,7 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: 'spawn:b961a327', source: 'subagent',
   tool: 'subagent_run(Write ONE consolidated article)',
   tool_purpose: 'Consolidate the recalled material into one article',
-  session: 'workflow:11b9a34c:synthesize', ts: 0,
+  session: 'workflow:11b9a34c:synthesize', work: 'workflow:11b9a34c', step: 'synthesize', room: '', ts: 0,
   request_id: 'spawn:b961a327', session_title: '', agent: '', risk: '', grant_agent: '',
   confirms: [],
   source_label: 'workflow “research” · step “synthesize”', ...over,
@@ -92,13 +92,13 @@ describe('a run view can answer the approval its own stage raised', () => {
 
 describe('🪤 VACUITY: it claims ONLY its own run\'s approvals', () => {
   it('another run\'s approval is not shown here', async () => {
-    await mountFor('11b9a34c', [approval({ session: 'workflow:deadbeef:synthesize' })])
+    await mountFor('11b9a34c', [approval({ session: 'workflow:deadbeef:synthesize', work: 'workflow:deadbeef', step: 'synthesize', room: '' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })
 
   it('a CHAT approval is not shown here — the chat card owns that one', async () => {
-    await mountFor('11b9a34c', [approval({ session: 'main' })])
+    await mountFor('11b9a34c', [approval({ session: 'main', work: 'chat:main', step: '', room: '' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })

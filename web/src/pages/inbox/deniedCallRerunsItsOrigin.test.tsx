@@ -162,7 +162,7 @@ describe('a trigger’s denied call', () => {
   })
 
   it('a call its unattended run declined without asking offers no re-run: it would be declined again', () => {
-    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', trigger: 'nightly', session: 'subagent:ab12' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
+    render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', trigger: 'nightly', session: 'subagent:ab12', place_work: '', place_step: '', place_room: '' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.getByText(/ran with nobody there to ask, so running it again would be declined the same way/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /run it again/i })).toBeNull()
     expect(triggers).not.toHaveBeenCalled()
@@ -170,7 +170,7 @@ describe('a trigger’s denied call', () => {
 })
 
 describe('a workflow step’s denied call', () => {
-  const fromStep = note({ auto_denied: 'expired', tool: 'write_file', session: 'workflow:run-7:write' })
+  const fromStep = note({ auto_denied: 'expired', tool: 'write_file', session: 'workflow:run-7:write', place_work: 'workflow:run-7', place_step: 'write', place_room: '' })
 
   it('🔑 re-runs that step while the run is live', async () => {
     const onChanged = vi.fn()

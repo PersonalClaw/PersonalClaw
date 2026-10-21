@@ -13,7 +13,8 @@ export function approvalInputText(raw: unknown): string {
 export type ApprovalCardInput = Pick<
   PendingApproval,
   'id' | 'request_id' | 'tool' | 'tool_input' | 'tool_purpose' | 'risk' | 'blast_radius' | 'grant_agent'
-  | 'session' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for' | 'confirms'
+  | 'session' | 'work' | 'step' | 'room' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for'
+  | 'confirms'
 >
 
 /** A registry row (`GET /api/approvals`, the `approval` frame) as the card's segment, so every

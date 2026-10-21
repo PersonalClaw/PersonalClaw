@@ -143,27 +143,27 @@ describe('refTarget', () => {
   })
 
   it('sends the Inbox row of a pending approval to where the approval is ANSWERED', () => {
-    // Derived by `approvalDestination`, the one parser of an approval's session key: a chat
+    // Read by `approvalDestination` from the place the row carries (`approval_place`): a chat
     // opens the chat, and a workflow stage's synthetic key opens its run at the node — never a
     // `chat/workflow:…` route that 404s (#258). The label says where it goes.
-    const chat = { refs: { approval: 'chat-a:1', session: 'chat-a' } }
+    const chat = { refs: { approval: 'chat-a:1', session: 'chat-a', place_work: 'chat:chat-a', place_step: '', place_room: '' } }
     expect(refTarget(chat)).toBe('chat/chat-a')
     expect(refLabel(chat)).toBe('Open the chat')
-    const stage = { refs: { approval: 'spawn:1', session: 'workflow:11b9a34c:synthesize' } }
+    const stage = { refs: { approval: 'spawn:1', session: 'workflow:11b9a34c:synthesize', place_work: 'workflow:11b9a34c', place_step: 'synthesize', place_room: '' } }
     expect(refTarget(stage)).toBe('workflows/runs/11b9a34c?node=synthesize')
     expect(refLabel(stage)).toBe('Open the workflow run')
   })
 
   it("sends a room member's approval row to its room, never to a chat route that 404s", () => {
     // A member asks under its own session (`room:<room>:<member>`), which no chat route renders.
-    const member = { refs: { approval: 'room:demo-room:talk-editor:c1', session: 'room:demo-room:talk-editor' } }
+    const member = { refs: { approval: 'room:demo-room:talk-editor:c1', session: 'room:demo-room:talk-editor', place_work: '', place_step: '', place_room: 'demo-room' } }
     expect(refTarget(member)).toBe('chat/room/demo-room')
     expect(refLabel(member)).toBe('Open the room')
-    // An unanswered ask's note names the same session, so it goes to the same room.
-    const note = { refs: { auto_denied: 'x', session: 'room:demo-room:talk-editor' } }
+    // An unanswered ask's note names the same room, so it goes there too.
+    const note = { refs: { auto_denied: 'x', session: 'room:demo-room:talk-editor', place_work: '', place_step: '', place_room: 'demo-room' } }
     expect(refTarget(note)).toBe('chat/room/demo-room')
-    // A chat whose key merely starts with the word is still a chat.
-    expect(refTarget({ refs: { approval: 'c:1', session: 'room-notes' } })).toBe('chat/room-notes')
+    // A chat whose key merely starts with the word is still a chat, as the gateway reads it.
+    expect(refTarget({ refs: { approval: 'c:1', session: 'room-notes', place_work: 'chat:room-notes', place_step: '', place_room: '' } })).toBe('chat/room-notes')
   })
 
   it('sends the review item for triggers an upgrade brought over to the Triggers page', () => {

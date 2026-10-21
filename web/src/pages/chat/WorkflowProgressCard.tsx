@@ -8,7 +8,7 @@ import { accentChip } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
 import { Button } from '../../ui/Button'
-import { workflowApprovalSession } from '../../app/approvalDestination'
+import { workflowApprovalStep } from '../../app/approvalDestination'
 import { attentionLine, readAttention, stoppedAtBudget } from '../workflows/attentionMeta'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
@@ -142,7 +142,7 @@ function useWaitingSteps(runId: string, live: boolean): PendingApproval[] {
     if (!live) { setWaiting([]); return }
     try {
       const all = await api.approvals()
-      setWaiting(all.filter((a) => workflowApprovalSession(a.session)?.runId === runId))
+      setWaiting(all.filter((a) => workflowApprovalStep(a)?.runId === runId))
     } catch {
       /* A failed read keeps what the card has: the next frame or poll reads again. */
     }
@@ -381,7 +381,7 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       {vm && !isTerminal(vm.status) && waiting.length > 0 && (
         <div className="flex flex-col gap-xs">
           {waiting.slice(0, FAILED_STEPS_SHOWN).map((ask) => {
-            const nodeId = workflowApprovalSession(ask.session)?.nodeId ?? ''
+            const nodeId = workflowApprovalStep(ask)?.nodeId ?? ''
             const node = vm.nodes.find((n) => n.node_id === nodeId)
             const line = `${node ? nodeLabel(node) : nodeId || 'A step'} waits for ${waitingFor(ask)}`
             return (
