@@ -74,7 +74,8 @@ describe('the top of the thread rail', () => {
       </div>,
     )
     const scroller = document.querySelector<HTMLElement>('[data-test-scroller]')!
-    expect(scroller.style.scrollPaddingTop, 'the room the browser leaves when focus moves to a row').toBe('72px')
+    // The bar's 72 px and a focus ring's 4 px reach, so the ring is not under the bar either.
+    expect(scroller.style.scrollPaddingTop, 'the room the browser leaves when focus moves to a row').toBe('76px')
     unmount()
     expect(scroller.style.scrollPaddingTop, 'and gives it back when the rail goes').toBe('')
   })
@@ -95,8 +96,8 @@ describe('the top of the thread rail', () => {
         <ThreadRail groups={[GARDEN]} selectedKey="chat:chat-12" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />
       </div>,
     )
-    // The row's top was 20 px above the scroll area, so 92 px above the 72 px the bar covers: the
-    // rail scrolls up by 92, so the row starts where the bar ends.
-    expect(scrollTop).toBe(308)
+    // The row's top was 20 px above the scroll area, so 96 px above the 72 px the bar covers and the
+    // 4 px its ring reaches: the rail scrolls up by 96, so the row's ring starts where the bar ends.
+    expect(scrollTop).toBe(304)
   })
 })

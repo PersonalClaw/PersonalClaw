@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings stays at the foot of the sidebar while the rest of it scrolls, so in a short window it no longer sits in the sidebar's edge with its focus ring cut off.**
+
 ### Fixed
 
 - **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**

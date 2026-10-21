@@ -4,8 +4,9 @@ import { idleRunState } from '../src/lib/workPhase'
 
 // ── NEW THREAD AND THE SEARCH STAY PINNED AT THE TOP OF THE SIDEBAR WHILE THE THREADS SCROLL ─────
 //
-// The sidebar is one scroll area: the wordmark, the leading destinations, the threads under their
-// projects, then the Platform rows. New thread and the search are one bar at the top of the threads
+// The sidebar is a scroll area (the wordmark, the leading destinations, the threads under their
+// projects, then the Platform rows) over a foot that never scrolls (Settings). New thread and the
+// search are one bar at the top of the threads
 // (#3814), and while the threads scroll under it the bar stays at the top of the sidebar, on the
 // rail's solid surface, so no row shows through it. Once the threads have scrolled past, the bar
 // goes with them: it is the threads' bar, and the rows below are never under it.
@@ -16,8 +17,16 @@ import { idleRunState } from '../src/lib/workPhase'
 // topmost thing everywhere on it while a row passes under it, and it paints opaque; scrolled past the
 // threads in a window too short to hold the rows below them, the bar leaves with the threads and a
 // Platform row shows whole where it was. Focus moved up a row by the keyboard, and a thread the
-// address opens above the bar, each land below the bar, whole and topmost (WCAG 2.4.11). The threads
-// and projects are route stubs, so the layout is the only variable.
+// address opens above the bar, each land below the bar, whole and topmost, the ring clear of it too
+// (WCAG 2.4.11); focus moved down to a row at the scroll area's fold lands with its ring clear of the
+// fold. In a 720 px window Settings, in the foot, keeps its whole ring. The threads and projects are
+// route stubs, so the layout is the only variable.
+
+/** How far a focus ring reaches past its control (`RING_REACH`, `ui/NavRail.tsx`). */
+const RING = 4
+
+/** The sidebar's scroll area: everything but the rows pinned to its foot. */
+const SCROLLER = 'nav[data-tour="rail"] [data-rail-scroll]'
 
 const COUNT = 40
 const key = (i: number) => `e2e-rail-${String(i).padStart(2, '0')}`
@@ -54,7 +63,7 @@ async function stubThreads(page: Page): Promise<void> {
 }
 
 interface RailGeometry {
-  navTop: number
+  areaTop: number
   barTop: number
   barBottom: number
   groupBottom: number
@@ -68,13 +77,13 @@ interface RailGeometry {
 
 /** Read the sidebar in one evaluate, so every number shares a layout pass. */
 async function readRail(page: Page): Promise<RailGeometry> {
-  return page.evaluate(() => {
-    const nav = document.querySelector<HTMLElement>('nav[data-tour="rail"]')
+  return page.evaluate((scroller) => {
+    const area = document.querySelector<HTMLElement>(scroller)
     const newThread = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New thread')
     const bar = newThread?.parentElement
     const group = bar?.closest('[role="group"]')
-    if (!nav || !bar || !group) throw new Error('no sidebar, New thread bar or Threads group')
-    const n = nav.getBoundingClientRect()
+    if (!area || !bar || !group) throw new Error('no sidebar scroll area, New thread bar or Threads group')
+    const n = area.getBoundingClientRect()
     const b = bar.getBoundingClientRect()
     const rows = [...group.querySelectorAll('[data-thread-key]')].map((r) => r.getBoundingClientRect())
     const shownThrough: string[] = []
@@ -88,7 +97,7 @@ async function readRail(page: Page): Promise<RailGeometry> {
       }
     }
     return {
-      navTop: n.top,
+      areaTop: n.top,
       barTop: b.top,
       barBottom: b.bottom,
       groupBottom: group.getBoundingClientRect().bottom,
@@ -96,12 +105,12 @@ async function readRail(page: Page): Promise<RailGeometry> {
       shownThrough,
       barBackground: getComputedStyle(bar).backgroundColor,
     }
-  })
+  }, SCROLLER)
 }
 
 /** Scroll the sidebar by *dy* and let it paint. */
 async function scrollRail(page: Page, dy: number): Promise<void> {
-  await page.evaluate((d) => { document.querySelector('nav[data-tour="rail"]')!.scrollTop += d }, dy)
+  await page.evaluate(([sel, d]) => { document.querySelector(sel as string)!.scrollTop += d as number }, [SCROLLER, dy] as const)
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
 }
 
@@ -119,11 +128,11 @@ test.describe('the top of the thread rail', () => {
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
 
     const before = await readRail(page)
-    expect(before.barTop, 'the bar starts below the destinations above it').toBeGreaterThan(before.navTop)
+    expect(before.barTop, 'the bar starts below the destinations above it').toBeGreaterThan(before.areaTop)
     // Scroll the threads well past where the bar sat: it stays at the sidebar's top.
-    await scrollRail(page, before.barTop - before.navTop + 300)
+    await scrollRail(page, before.barTop - before.areaTop + 300)
     const scrolled = await readRail(page)
-    expect(Math.abs(scrolled.barTop - scrolled.navTop), 'the bar is pinned to the top of the sidebar').toBeLessThanOrEqual(1)
+    expect(Math.abs(scrolled.barTop - scrolled.areaTop), 'the bar is pinned to the top of the sidebar').toBeLessThanOrEqual(1)
     expect(scrolled.rowsUnderBar, 'a thread row is scrolled under the bar').toBeGreaterThan(0)
     expect(scrolled.shownThrough, 'the bar is the topmost thing everywhere on it').toEqual([])
     expect(opaque(scrolled.barBackground), `the bar paints opaque, not ${scrolled.barBackground}`).toBe(true)
@@ -138,7 +147,7 @@ test.describe('the top of the thread rail', () => {
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
     await scrollRail(page, 100_000)
     const past = await readRail(page)
-    expect(past.groupBottom, 'the threads end within a bar\'s height of the sidebar\'s top').toBeLessThan(past.navTop + (past.barBottom - past.barTop))
+    expect(past.groupBottom, 'the threads end within a bar\'s height of the sidebar\'s top').toBeLessThan(past.areaTop + (past.barBottom - past.barTop))
     expect(Math.abs(past.barBottom - past.groupBottom), 'the bar sits at the threads\' end, inside them').toBeLessThanOrEqual(1)
     const below = await page.evaluate(() => {
       const group = document.querySelector('nav[data-tour="rail"] [role="group"]')!
@@ -149,6 +158,53 @@ test.describe('the top of the thread rail', () => {
       return { name: row.getAttribute('aria-label') ?? row.textContent, mine: !!hit && row.contains(hit) }
     })
     expect(below.mine, `the first row below the threads (${below.name}) is the topmost thing at its centre`).toBe(true)
+  })
+
+  test('in a 720 px window the rows pinned to the foot stay whole, ring and all', async ({ page }) => {
+    // The sidebar a fresh home draws: two empty projects and no thread. With Settings at the foot of
+    // the one scroller, that overflowed a 720 px window, and Settings sat in the rail's own bottom
+    // padding with the bottom of its ring cut off by the scroller (the surface matrix measured 14 px
+    // and 2 px). Forty threads would hide that: focus would scroll Settings into view, clear of the
+    // edge.
+    await page.setViewportSize({ width: 1280, height: 720 })
+    const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    await page.route('**/api/loops', (route) => route.request().method() === 'GET' ? route.fulfill(json({ loops: [] })) : route.fallback())
+    await page.route('**/api/chat/sessions', (route) => route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback())
+    await page.route('**/api/projects', (route) => route.request().method() === 'GET'
+      ? route.fulfill(json({ projects: [
+        { id: 'e2e-rail-p1', name: 'Personal', status: 'active' },
+        { id: 'e2e-rail-p2', name: 'Repeatable', status: 'active' },
+      ] }))
+      : route.fallback())
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /^Repeatable/ })).toBeAttached()
+    const settings = page.locator('nav[data-tour="rail"] button[aria-label="Settings"]')
+    await settings.focus()
+    const geo = await settings.evaluate((el, sel) => {
+      const nav = el.closest('nav')!
+      const area = document.querySelector<HTMLElement>(sel)!
+      const r = el.getBoundingClientRect()
+      // Its focus ring: 2 px out and 2 px wide, as the global :focus-visible outline draws it.
+      const ring = { top: r.top - 4, bottom: r.bottom + 4, left: r.left - 4, right: r.right + 4 }
+      const cut: string[] = []
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        const cs = getComputedStyle(a)
+        if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue
+        const ar = a.getBoundingClientRect()
+        if (ring.top < ar.top || ring.bottom > ar.bottom || ring.left < ar.left || ring.right > ar.right) cut.push(`${a.tagName}.${a.className}`.slice(0, 60))
+      }
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return {
+        cut, mine: !!hit && el.contains(hit), inWindow: ring.bottom <= innerHeight && ring.top >= 0,
+        navScrolls: nav.scrollHeight > nav.clientHeight + 1, inArea: area.contains(el),
+      }
+    }, SCROLLER)
+    // Soft, so a run names every one of them that fails.
+    expect.soft(geo.cut, 'no ancestor cuts Settings\' focus ring').toEqual([])
+    expect.soft(geo.inWindow, 'and the ring is inside the window').toBe(true)
+    expect.soft(geo.mine, 'Settings is the topmost thing at its centre').toBe(true)
+    expect.soft(geo.inArea, 'Settings is not in the scroll area').toBe(false)
+    expect.soft(geo.navScrolls, 'the rail itself does not overflow').toBe(false)
   })
 
   test('focus moved up a row by the keyboard lands below the bar, never behind it', async ({ page }) => {
@@ -166,8 +222,8 @@ test.describe('the top of the thread rail', () => {
     })
     for (const keyName of ['ArrowUp', 'Shift+Tab']) {
       // The same place each time: scrolled into the threads, the bar stuck, a row under it.
-      await page.evaluate(() => { document.querySelector('nav[data-tour="rail"]')!.scrollTop = 0 })
-      await scrollRail(page, before.barTop - before.navTop + 300)
+      await page.evaluate((sel) => { document.querySelector(sel)!.scrollTop = 0 }, SCROLLER)
+      await scrollRail(page, before.barTop - before.areaTop + 300)
       // The first row whole below the bar, then up one: the row above it is under the bar.
       const first = await page.evaluate(() => {
         const bar = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New thread')!.parentElement!
@@ -179,8 +235,38 @@ test.describe('the top of the thread rail', () => {
       await page.keyboard.press(keyName)
       const now = await focused()
       expect(now.key, `${keyName} moved the focus to the thread above`).not.toBe(first)
-      expect(now.top, `after ${keyName} the focused row starts at or below the bar`).toBeGreaterThanOrEqual(now.barBottom - 1)
+      expect(now.top - RING, `after ${keyName} the focused row and its ring start at or below the bar`).toBeGreaterThanOrEqual(now.barBottom - 1)
       expect(now.mine, `after ${keyName} the focused row is the topmost thing at its centre`).toBe(true)
+    }
+  })
+
+  test('focus moved down to a row at the fold lands with its ring clear of the fold', async ({ page }) => {
+    await stubThreads(page)
+    await gotoRoute(page, 'dashboard')
+    await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+    // A row wholly in view with its bottom 2 px above the scroll area's fold, so its ring would cross
+    // it: the browser scrolls a row the focus moves to only when the room it keeps clear says so.
+    const target = key(10)
+    await page.evaluate(([sel, k]) => {
+      const area = document.querySelector<HTMLElement>(sel)!
+      const row = document.querySelector<HTMLElement>(`[data-thread-key="chat:${k}"]`)!
+      area.scrollTop += row.getBoundingClientRect().bottom - (area.getBoundingClientRect().bottom - 2)
+    }, [SCROLLER, target] as const)
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    for (const keyName of ['ArrowDown', 'Tab']) {
+      await page.locator(`[data-thread-key="chat:${key(9)}"]`).focus()
+      await page.evaluate(([sel, k]) => {
+        const area = document.querySelector<HTMLElement>(sel)!
+        const row = document.querySelector<HTMLElement>(`[data-thread-key="chat:${k}"]`)!
+        area.scrollTop += row.getBoundingClientRect().bottom - (area.getBoundingClientRect().bottom - 2)
+      }, [SCROLLER, target] as const)
+      await page.keyboard.press(keyName)
+      const at = await page.evaluate((sel) => {
+        const row = document.activeElement as HTMLElement
+        return { key: row.dataset.threadKey ?? '', bottom: row.getBoundingClientRect().bottom, fold: document.querySelector(sel)!.getBoundingClientRect().bottom }
+      }, SCROLLER)
+      expect(at.key, `${keyName} moved the focus to the row at the fold`).toBe(`chat:${target}`)
+      expect(at.bottom + RING, `after ${keyName} the row's ring is clear of the fold`).toBeLessThanOrEqual(at.fold + 0.5)
     }
   })
 
@@ -189,7 +275,7 @@ test.describe('the top of the thread rail', () => {
     await gotoRoute(page, 'dashboard')
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
     const before = await readRail(page)
-    await scrollRail(page, before.barTop - before.navTop + 600)
+    await scrollRail(page, before.barTop - before.areaTop + 600)
 
     await page.evaluate((k) => { location.hash = `#/chat/${k}` }, key(0))
     const row = page.locator(`[data-thread-key="chat:${key(0)}"]`)

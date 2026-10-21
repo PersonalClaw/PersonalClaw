@@ -29,8 +29,8 @@ export interface NavItem {
    *  than dropping the signal, and it claims nothing the shell cannot back up. */
   badgeLabel?: string
   section?: string
-  /** Pinned to the bottom of the rail (rendered after the flex spacer, above the
-   *  system widget) instead of inline in scroll order — e.g. Settings. */
+  /** Pinned to the rail's foot (`data-rail-pinned`), under the scroll area and never scrolled,
+   *  instead of inline in scroll order — e.g. Settings. */
   pinBottom?: boolean
 }
 
@@ -61,6 +61,10 @@ const MAX_W = 380
 const COLLAPSED_W = 64
 // Mobile overlay-drawer width — a comfortable touch target, capped under a phone's
 // portrait width so the scrim always shows (tap-to-close affordance stays reachable).
+/** How far a focus ring reaches past its control: the global `:focus-visible` outline is 2 px wide,
+ *  2 px out. A scroll area keeps this much clear at an edge so a focused row's ring is never cut. */
+export const RING_REACH = 4
+
 const OVERLAY_W = 264
 // How far past its own width the CLOSED overlay drawer parks: `shadow-2xl`'s 38px reach
 // (spread −12 + blur 50), rounded up, so none of its shadow is left on screen.
@@ -71,8 +75,9 @@ const DEFAULT_W = 196
 
 /** Side navigation — drag-resizable, persisted. Collapse is CONTROLLED by the
  *  shell (the collapse/expand toggle lives in the main area's top-left, not on
- *  the rail). When collapsed → icon-only 64px rail. Bottom: a live system
- *  health widget. No operator/identity footer (single-user; Settings is in nav). */
+ *  the rail). When collapsed → icon-only 64px rail. Its foot holds the pinned rows (Settings); the
+ *  live system state is the status line's, at the window's bottom left. No operator/identity
+ *  footer (single-user; Settings is in nav). */
 export function NavRail({
   items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure, material = false, threads,
 }: {
@@ -215,62 +220,76 @@ export function NavRail({
     // `data-tour` is the product tour's anchor for its first stop. A
     // literal, not a prop: the rail is the shell's one navigation and the tour points at it
     // by name, so a prop would only let a second rail claim the same anchor.
-    <nav data-tour="rail" className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
+    //
+    // Two parts, top to bottom: what scrolls (the wordmark, the destinations, the threads and the
+    // disclosure control) and the rows pinned under it (Settings, and the phone's Companion), which
+    // never scroll. One scroller with Settings at its foot overflowed a 720 px window by 14 px, which
+    // pushed Settings into the rail's bottom padding and cut its focus ring off at the edge. The foot
+    // never meets the scroll area's edges. A row in the scroll area can sit at its fold while it
+    // scrolls, so the scroll area keeps the ring's reach clear at its bottom (`RING_REACH`, and at its
+    // top the thread rail's pinned bar and the ring): the browser scrolls the row the focus moves to
+    // clear of either edge, ring and all.
+    <nav data-tour="rail" className="flex h-full flex-col"
       style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
-      {/* header — logo (the collapse toggle lives in the main area, not here) */}
-      <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
-        {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
-        {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
-      </div>
+      <div data-rail-scroll className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden px-m pt-l pb-s"
+        style={{ scrollPaddingBottom: RING_REACH }}>
+        {/* header — logo (the collapse toggle lives in the main area, not here) */}
+        <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
+          {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
+          {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
+        </div>
 
-      {/* Section headers belong to the EXPANDED rail. Measured on the starter rail they read as
-          noise: five rows carrying "PLATFORM" over Inbox alone and "APPS" over Store alone —
-          a heading per item, which groups nothing. The starter rail is one curated group by
-          construction (essentials + what you have opened), and the sections it has are
-          "starter" and "everything". Expert keeps Platform / Apps untouched. */}
-      {topRows}
+        {/* Section headers belong to the EXPANDED rail. Measured on the starter rail they read as
+            noise: five rows carrying "PLATFORM" over Inbox alone and "APPS" over Store alone —
+            a heading per item, which groups nothing. The starter rail is one curated group by
+            construction (essentials + what you have opened), and the sections it has are
+            "starter" and "everything". Expert keeps Platform / Apps untouched. */}
+        {topRows}
 
-      {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the
-          rest" rather than as a section of its own. `aria-expanded` because it genuinely
-          reveals adjacent content (the repo's own distinction: a MODE toggle reveals nothing
-          and gets `aria-pressed` instead — see ui/rawToggleState.test.ts).
+        {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the
+            rest" rather than as a section of its own. `aria-expanded` because it genuinely
+            reveals adjacent content (the repo's own distinction: a MODE toggle reveals nothing
+            and gets `aria-pressed` instead — see ui/rawToggleState.test.ts).
 
-          The count rides the accessible NAME, not just the visible `+N`, for the reason the
-          badge comment above spells out: an `aria-label` OVERRIDES the element's text, so
-          anything only in a child span is announced nowhere. */}
-      {disclosure && disclosure.moreCount > 0 && (
-        <button
-          type="button" onClick={disclosure.onToggle}
-          aria-expanded={disclosure.expanded}
-          aria-label={disclosure.expanded
-            ? `Show fewer, hide ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'}`
-            : `Everything, show ${disclosure.moreCount} more surface${disclosure.moreCount === 1 ? '' : 's'}`}
-          title={disclosure.expanded
-            ? `Hide the ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'} you have not opened yet`
-            : `Show all ${disclosure.moreCount} remaining surface${disclosure.moreCount === 1 ? '' : 's'}`}
-          data-type="body-m"
-          className={rowCls('mt-1 text-on-surface-low hover:bg-surface-low/60 hover:text-on-surface-var')}
-          style={withWeight({ height: 32 }, 400)}>
-          <span className="relative z-10 shrink-0 inline-flex">
-            <ChevronDown size={18} strokeWidth={2}
-              className={cx('transition-transform', disclosure.expanded && 'rotate-180')} />
-          </span>
-          {!collapsed && (
-            <span className="relative z-10 flex-1 truncate">
-              {disclosure.expanded ? 'Show fewer' : 'Everything'}
+            The count rides the accessible NAME, not just the visible `+N`, for the reason the
+            badge comment above spells out: an `aria-label` OVERRIDES the element's text, so
+            anything only in a child span is announced nowhere. */}
+        {disclosure && disclosure.moreCount > 0 && (
+          <button
+            type="button" onClick={disclosure.onToggle}
+            aria-expanded={disclosure.expanded}
+            aria-label={disclosure.expanded
+              ? `Show fewer, hide ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'}`
+              : `Everything, show ${disclosure.moreCount} more surface${disclosure.moreCount === 1 ? '' : 's'}`}
+            title={disclosure.expanded
+              ? `Hide the ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'} you have not opened yet`
+              : `Show all ${disclosure.moreCount} remaining surface${disclosure.moreCount === 1 ? '' : 's'}`}
+            data-type="body-m"
+            className={rowCls('mt-1 text-on-surface-low hover:bg-surface-low/60 hover:text-on-surface-var')}
+            style={withWeight({ height: 32 }, 400)}>
+            <span className="relative z-10 shrink-0 inline-flex">
+              <ChevronDown size={18} strokeWidth={2}
+                className={cx('transition-transform', disclosure.expanded && 'rotate-180')} />
             </span>
-          )}
-          {!collapsed && !disclosure.expanded && (
-            <span data-type="caption" className="relative z-10 tabular-nums">+{disclosure.moreCount}</span>
-          )}
-        </button>
+            {!collapsed && (
+              <span className="relative z-10 flex-1 truncate">
+                {disclosure.expanded ? 'Show fewer' : 'Everything'}
+              </span>
+            )}
+            {!collapsed && !disclosure.expanded && (
+              <span data-type="caption" className="relative z-10 tabular-nums">+{disclosure.moreCount}</span>
+            )}
+          </button>
+        )}
+      </div>
+      {/* The pinned rows, under the scroller at the rail's foot. The live system widget lives in the
+          status line at the window's bottom left (app/StatusLine), collapsed to the gateway
+          connection. */}
+      {pinnedItems.length > 0 && (
+        <div data-rail-pinned className="flex shrink-0 flex-col gap-1 px-m pt-xs pb-l">
+          {pinnedItems.map((item) => renderItem(item, false))}
+        </div>
       )}
-
-      {/* flex spacer pushes pinned items (e.g. Settings) to the bottom. The live
-          system widget lives in the status line at the window's bottom left
-          (app/StatusLine), collapsed to the gateway connection. */}
-      <div className="mt-auto" />
-      {pinnedItems.map((item) => renderItem(item, false))}
     </nav>
   )
 
