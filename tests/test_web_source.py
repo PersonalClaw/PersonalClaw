@@ -1642,7 +1642,10 @@ async def test_the_model_seams_really_do_raise_when_patched(store, monkeypatch):
 def test_the_provider_imports_no_model_and_owns_no_socket():
     """Structural rails. The zero-token property and the one-fetch-seam property are both
     kept by ABSENCE, so they are asserted against the source text: a future edit that reaches
-    for a completion or an HTTP client reds here rather than at review time."""
+    for a completion or an HTTP client reds here rather than at review time. That bytes enter
+    through the two seams the provider IS allowed is driven by
+    test_a_production_provider_takes_its_bytes_through_the_two_seams."""
+    import ast
     from pathlib import Path
 
     import personalclaw.knowledge_providers.html_dom as dom_mod
@@ -1651,15 +1654,93 @@ def test_the_provider_imports_no_model_and_owns_no_socket():
     for module in (mod, dom_mod):
         src = Path(module.__file__).read_text(encoding="utf-8")
         body = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
+        # Vacuity floor: what the rails scan is the module's whole code, only its comments gone,
+        # so they measure absence-of-the-wrong-thing rather than an empty or a cut file.
+        assert ast.dump(ast.parse(body)) == ast.dump(ast.parse(src)), module.__name__
         for forbidden in ("one_shot_completion", "llm_helpers", "get_active_embed_fn"):
             assert forbidden not in body, f"{module.__name__} reaches for {forbidden}"
         for forbidden in ("aiohttp", "httpx", "urllib.request", "requests."):
             assert forbidden not in body, f"{module.__name__} owns a socket via {forbidden}"
-    # Vacuity floor: the two names the provider IS allowed to route through must be present,
-    # so the rail above is measuring absence-of-the-wrong-thing rather than an empty file.
-    src = Path(mod.__file__).read_text(encoding="utf-8")
-    assert "from personalclaw.net.client import fetch" in src
-    assert "from personalclaw.web.render import render_url" in src
+
+
+#: A provider built as production builds it (no seam handed in), polled by the engine: (the page
+#: the fetch answers, the source's budget, items stored, renders asked, health). Tier 1 is the
+#: guarded `net.client.fetch` and tier 2 core's `web.render.render_url`, each under the engine's
+#: SOURCE egress profile: a page that already lists its entries is fetched once and never
+#: rendered; a JavaScript shell is rendered once when its budget allows it, and its entries come
+#: from the render; one whose budget does not is never rendered.
+_PRODUCTION_SEAMS = {
+    "listing page": (_changelog, {"max_requests": 5, "allow_render": True}, 3, 0, HEALTH_OK),
+    "shell, render allowed": (
+        _js_shell,
+        {"max_requests": 5, "allow_render": True},
+        3,
+        1,
+        HEALTH_OK,
+    ),
+    "shell, render not allowed": (_js_shell, {"max_requests": 5}, 0, 0, HEALTH_NEEDS_RENDER),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("page", "budget", "stored", "renders", "health"),
+    _PRODUCTION_SEAMS.values(),
+    ids=list(_PRODUCTION_SEAMS),
+)
+async def test_a_production_provider_takes_its_bytes_through_the_two_seams(
+    store, monkeypatch, page, budget, stored, renders, health
+):
+    """With stand-ins for `net.client.fetch` and `web.render.render_url` under every name that
+    holds them, and every model seam raising, a poll stores exactly what the stand-ins answered,
+    each asked as ``_PRODUCTION_SEAMS`` says, with the SOURCE profile, and no model is called."""
+    from every_name import put_in_every_name
+
+    from personalclaw.net import client
+    from personalclaw.web import render
+
+    calls = _forbid_model_calls(monkeypatch)
+    fetched: list[tuple[str, str]] = []
+    rendered: list[tuple[str, str]] = []
+
+    async def fetch(url, *, policy=None, headers=None, **_kw):
+        fetched.append((url, getattr(policy, "name", "")))
+        return _Resp(page())
+
+    async def render_url(url, *, policy=None, **_kw):
+        rendered.append((url, getattr(policy, "name", "")))
+        return _Render(_changelog())
+
+    put_in_every_name(monkeypatch, client.fetch, fetch)
+    put_in_every_name(monkeypatch, render.render_url, render_url)
+    sid = store.create_source(
+        name="page",
+        provider="watched-page",
+        kind="web_page",
+        spec={"url": PAGE_URL},
+        budget=budget,
+        item_type="bookmark",
+    )
+    provider = WebSourceProvider(store)
+    engine = SourceEngine(
+        store, _FakeQueue(), providers_lister=lambda: [provider], config_loader=_cfg
+    )
+
+    assert await _poll(engine, store, sid) == stored
+    titles = sorted(row["title"] for row in _items(store, sid))
+    assert titles == (
+        [
+            "Version 2.0.8 released today",
+            "Version 2.0.9 released today",
+            "Version 2.1.0 released today",
+        ]
+        if stored
+        else []
+    )
+    assert fetched == [(PAGE_URL, "source")]
+    assert rendered == [(PAGE_URL, "source")] * renders
+    assert store.get_source(sid)["health_status"] == health
+    assert calls == [], f"the poll reached a model: {calls}"
 
 
 @pytest.mark.asyncio

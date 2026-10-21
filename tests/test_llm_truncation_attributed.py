@@ -137,15 +137,70 @@ class TestTheCallSiteAttributesIt:
         assert NativeAgentRuntime._unrunnable_result(prep, []) is None
 
 
-def test_the_overflow_correction_note_now_has_a_writer() -> None:
-    """It had none. A taxonomy entry with a correction note and no writer is an inert control, and
-    the issue's framing is right: this closes one rather than adding a control."""
-    import subprocess
+#: One model turn that calls `read_file` with these arguments, cut or not, then answers: (the
+#: provider's stop reason, the arguments as they reached the runtime, the note the model is told,
+#: or None when the call runs). A call cut at the token limit, in either wire's spelling, is
+#: answered with the failure taxonomy's own correction note for TOKEN_OVERFLOW; a call whose
+#: complete arguments are not JSON is told so, and not that it was cut; a readable call runs.
+_CALLS = {
+    "cut, OpenAI's spelling": ("length", '{"path": "notes/q3-recon', "TOKEN_OVERFLOW"),
+    "cut, Anthropic's spelling": ("max_tokens", '{"path": "notes/q3', "TOKEN_OVERFLOW"),
+    "malformed, not cut": ("stop", "{'path': 'a.md'}", "not valid JSON"),
+    "readable": ("tool_calls", '{"path": "a.md"}', None),
+}
 
-    from personalclaw.agents.native import runtime as runtime_mod
 
-    src = open(runtime_mod.__file__, encoding="utf-8").read()
-    assert "FailureMode.TOKEN_OVERFLOW" in src, "the runtime no longer writes the overflow mode"
-    # And it is reachable from the argument branch specifically, not merely imported somewhere.
-    assert "correction_note(FailureMode.TOKEN_OVERFLOW)" in src
-    del subprocess
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("stop_reason", "raw", "told"), _CALLS.values(), ids=list(_CALLS))
+async def test_the_model_is_told_its_call_was_cut_in_the_taxonomys_words(
+    monkeypatch, stop_reason, raw, told
+) -> None:
+    """It had no writer. A taxonomy entry with a correction note and no writer is an inert
+    control, and the issue's framing is right: this closes one rather than adding a control.
+    Driven through the real native loop, with a stand-in for `correction_note` under every name
+    that holds it, the next request the model receives answers its call with what the stand-in
+    says for TOKEN_OVERFLOW, asked for that mode alone, and the tool never runs on a cut call."""
+    from every_name import put_in_every_name
+    from test_native_runtime import _defn, _ScriptedModel, _Tool
+
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.guardrails import failure
+    from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
+
+    asked: list[FailureMode] = []
+
+    def note(mode: FailureMode) -> str:
+        asked.append(mode)
+        return f"<the taxonomy's note for {mode.name}>"
+
+    put_in_every_name(monkeypatch, failure.correction_note, note)
+    call = AgentEvent(kind="tool_call", tool_call_id="tc-1", title="read_file", tool_input=raw)
+    call.stop_reason = stop_reason
+    model = _ScriptedModel(
+        [
+            [call, AgentEvent(kind=EVENT_COMPLETE)],
+            [AgentEvent(kind=EVENT_TEXT_CHUNK, text="done"), AgentEvent(kind=EVENT_COMPLETE)],
+        ]
+    )
+    tool = _Tool(name="read_file")
+    runtime = NativeAgentRuntime(definition=_defn(), model_provider=model, tool_providers=[tool])
+    await runtime.start()
+    async for _event in runtime.stream("read my notes"):
+        pass
+
+    answered = [
+        str(m.get("content") or "")
+        for m in model.seen_messages[-1]
+        if m.get("role") == "tool" and m.get("tool_call_id") == "tc-1"
+    ]
+    assert len(answered) == 1, model.seen_messages[-1]
+    if told is None:
+        assert tool.invoked == [{"path": "a.md"}] and asked == []
+        return
+    assert tool.invoked == [], "a call whose arguments could not be read was run"
+    assert answered[0].startswith("Error: read_file was not run."), answered[0]
+    if told == "TOKEN_OVERFLOW":
+        assert asked == [FailureMode.TOKEN_OVERFLOW]
+        assert answered[0].endswith("<the taxonomy's note for TOKEN_OVERFLOW>"), answered[0]
+    else:
+        assert asked == [] and told in answered[0] and "cut off" not in answered[0]

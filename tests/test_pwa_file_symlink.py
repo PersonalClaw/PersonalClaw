@@ -121,39 +121,77 @@ async def test_pwa_root_files_serve_through_symlinked_dist(tmp_path) -> None:
         assert isinstance(await core.service_worker(req), web.FileResponse)
 
 
-def test_icons_and_pwa_roots_are_excluded_from_the_spa_fallback() -> None:
-    """``/icons/`` must 404 rather than fall back to index.html.
+#: What the booted gateway answers for a path it has no route for: (method, path, status, the
+#: wire error code, or "" for the dashboard's index.html, or None for neither). A missing icon,
+#: build chunk, sprite or vendor shim is a plain 404: a manifest icon that resolves to HTML is an
+#: invalid icon, and the only symptom is an install prompt that never appears. Any other page a
+#: browser GETs is the dashboard (the client-side router owns it), a path that merely starts with
+#: "api" included, and a request that is no GET is no page. An unmatched ``/api/`` route, by any
+#: method, answers in the coded JSON envelope, never aiohttp's text/plain default and never the
+#: dashboard's HTML: a JSON client cannot parse either, so it could not tell "route gone" from
+#: "server broke".
+_UNROUTED = (
+    ("GET", "/icons/claw-192.png", 404, None),
+    ("GET", "/assets/index-0f3a9c.js", 404, None),
+    ("GET", "/sprites/brand.svg", 404, None),
+    ("GET", "/vendor/react.js", 404, None),
+    ("GET", "/settings/models", 200, ""),
+    ("GET", "/apiary", 200, ""),
+    ("POST", "/settings/models", 404, None),
+    ("GET", "/api/no-such-route", 404, "not_found"),
+    ("POST", "/api/no-such-route", 404, "not_found"),
+    ("DELETE", "/api/v1/nothing-here", 404, "not_found"),
+)
 
-    A manifest icon that resolves to HTML is an invalid icon, and the only symptom
-    is an install prompt that never appears. Asserted against the source of the fallback
-    (``dashboard/fallbacks.py``).
-    """
-    from pathlib import Path
 
-    import personalclaw.dashboard.fallbacks as fallbacks_mod
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "folders",
+    [("assets", "icons", "sprites", "vendor"), ()],
+    ids=["a build with each folder", "a build with only its index"],
+)
+async def test_the_gateway_answers_a_path_it_has_no_route_for(
+    tmp_path, monkeypatch, folders
+) -> None:
+    """The real gateway (``start_dashboard``) answers each path it has no route for as
+    ``_UNROUTED`` says (``dashboard/fallbacks.py``): over a build that ships its asset, icon,
+    sprite and vendor folders, where each folder's mount answers a file it lacks, and over one
+    that ships only its index.html, where no mount does and the fallback answers alone."""
+    import json
 
-    source = Path(fallbacks_mod.__file__).read_text(encoding="utf-8")
-    assert '("/assets/", "/icons/", "/sprites/", "/vendor/")' in source
+    import aiohttp
 
+    import personalclaw.dashboard.handlers.core as handlers_core_mod
+    import personalclaw.dashboard.server as server_mod
 
-def test_unmatched_api_routes_answer_in_the_wire_envelope() -> None:
-    """An unmatched ``/api/*`` route must return the coded JSON envelope, never
-    aiohttp's text/plain default — a JSON client cannot parse plaintext, so it
-    cannot tell "route gone" from "server broke". Asserted against the source
-    (same closure as above): the ``/api/`` branch must precede the HTML fallback
-    and answer via ``json_error("not_found", …)``.
-    """
-    from pathlib import Path
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
+    dist = _dist_with_index(tmp_path)
+    for folder in folders:
+        (dist / folder).mkdir()
+    monkeypatch.setattr(server_mod, "_DIST_DIR", dist)
+    monkeypatch.setattr(handlers_core_mod, "_DIST_DIR", dist)
 
-    import personalclaw.dashboard.fallbacks as fallbacks_mod
-
-    source = Path(fallbacks_mod.__file__).read_text(encoding="utf-8")
-    api_branch = source.find('if request.path.startswith("/api/"):')
-    html_fallback = source.find("return await handlers.index(request)")
-    assert api_branch != -1, "the spa_fallback /api branch is gone"
-    assert html_fallback != -1
-    assert api_branch < html_fallback, "the /api branch must precede the HTML fallback"
-    assert 'return json_error("not_found", status=404)' in source
+    runner, _state = await server_mod.start_dashboard(sessions=MagicMock(count=0), port=0)
+    try:
+        port = runner.addresses[0][1]
+        async with aiohttp.ClientSession() as http:
+            for method, path, status, code in _UNROUTED:
+                async with http.request(method, f"http://127.0.0.1:{port}{path}") as resp:
+                    body = await resp.read()
+                    where = (method, path, resp.status, resp.content_type, body[:80])
+                    assert resp.status == status, where
+                    if code == "":
+                        assert resp.content_type == "text/html", where
+                        assert body == (dist / "index.html").read_bytes(), where
+                    elif code is None:
+                        assert resp.content_type != "text/html", where
+                        assert b"<!doctype" not in body.lower(), where
+                    else:
+                        assert resp.content_type == "application/json", where
+                        assert json.loads(body)["error"]["code"] == code, where
+    finally:
+        await runner.cleanup()
 
 
 def test_the_pwa_files_are_served_at_the_origin_root() -> None:

@@ -586,14 +586,73 @@ def test_the_suite_excludes_a_case_whose_provenance_was_stripped(home):
 # ── the CALL SITE: `personalclaw eval-harvest` ────────────────────────────────
 
 
-def test_the_cli_command_is_wired_to_the_dispatch(home):
-    """A module with no production importer is not done. This is the importer."""
-    from personalclaw import cli, cli_commands
+#: `personalclaw eval-harvest <argv>` over a home with one terminal run each of two workflows:
+#: (argv, harvest the library first, exit code, the workflows the library holds after, what stdout
+#: says, what stderr says). Every flag reaches the harvest it names: `--dry-run` writes nothing,
+#: `--workflow` and `--limit` narrow what is considered, `--list` reads the installed suite
+#: (narrowed by `--workflow` too) and refuses an empty one with exit 1.
+_COMMAND = {
+    "harvest": (
+        [],
+        False,
+        0,
+        {"daily_digest", "weekly_review"},
+        "harvested 2 case(s); wrote 2",
+        "",
+    ),
+    "dry-run": (["--dry-run"], False, 0, set(), "2 case(s) (--dry-run: nothing written)", ""),
+    "workflow": (["--workflow", "weekly_review"], False, 0, {"weekly_review"}, "Considered 1 ", ""),
+    "limit": (["--limit", "1"], False, 0, None, "Considered 1 terminal run(s); harvested 1 ", ""),
+    "list-empty": (["--list"], False, 1, set(), "", "Refusing:"),
+    "list": (["--list"], True, 0, {"daily_digest", "weekly_review"}, "Harvested suite: 2 case", ""),
+    "list-workflow": (
+        ["--list", "--workflow", "weekly_review"],
+        True,
+        0,
+        {"daily_digest", "weekly_review"},
+        "Harvested suite: 1 case(s)",
+        "",
+    ),
+}
 
-    assert cli._eval_harvest is cli_commands._eval_harvest
-    source = __import__("pathlib").Path(cli.__file__).read_text(encoding="utf-8")  # noqa: PLC2701
-    assert 'sub.add_parser(\n        "eval-harvest"' in source
-    assert 'args.command == "eval-harvest"' in source
+
+@pytest.mark.parametrize(
+    ("argv", "harvested", "code", "after", "out", "err"), _COMMAND.values(), ids=_COMMAND
+)
+def test_the_command_a_user_types_runs_the_harvest_it_names(
+    home, monkeypatch, capsys, argv, harvested, code, after, out, err
+):
+    """A module with no production importer is not done. This is the importer: the command line
+    a user types, through the CLI's own parser and dispatch (`cli.main`), runs the real harvest
+    with every flag it was given."""
+    import sys
+
+    from personalclaw import cli
+
+    _run("daily_digest", journal_inputs={"q": "1"})
+    _run("weekly_review", journal_inputs={"q": "2"})
+    if harvested:
+        hv.harvest()
+    capsys.readouterr()
+
+    monkeypatch.setattr(sys, "argv", ["personalclaw", "eval-harvest", *argv])
+    exit_code = 0
+    try:
+        cli.main()
+    except SystemExit as exc:
+        exit_code = exc.code
+    stdout, stderr = capsys.readouterr()
+
+    assert exit_code == code, (stdout, stderr)
+    assert out in stdout and err in stderr, (stdout, stderr)
+    library = [
+        json.loads(path.read_text(encoding="utf-8"))["harvest"]["workflow_name"]
+        for path in sc.installed_dir().glob(f"{hv.HARVEST_PREFIX}*.json")
+    ]
+    if after is None:  # `--limit 1`: one of the two, whichever run is the more recent
+        assert len(library) == 1 and set(library) <= {"daily_digest", "weekly_review"}, library
+    else:
+        assert sorted(library) == sorted(after), library
 
 
 def _cli(**kwargs) -> argparse.Namespace:

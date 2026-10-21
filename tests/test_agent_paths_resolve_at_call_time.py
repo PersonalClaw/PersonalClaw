@@ -84,33 +84,76 @@ def test_the_config_write_lands_in_the_isolated_home(tmp_path: Path, monkeypatch
     assert json.loads(written.read_text(encoding="utf-8")), "the written config is empty"
 
 
-@pytest.mark.parametrize(
-    "module,symbol",
-    [
-        ("personalclaw.session", "agents_dir"),
-        ("personalclaw.cli_doctor", "agents_dir"),
-        ("personalclaw.dashboard.chat_persistence", "agents_dir"),
-    ],
-)
-def test_every_consumer_resolves_per_call(module: str, symbol: str) -> None:
+def _session_reads(_capsys) -> str:
+    from personalclaw.session import SessionManager
+
+    # Its answers are kept for the process, and a process serves one home: each read starts
+    # clean, and what the process kept before is put back after.
+    kept = SessionManager.__dict__.get("_agent_model_cache")
+    SessionManager._agent_model_cache = {}  # type: ignore[attr-defined]
+    try:
+        return SessionManager._resolve_agent_model("helper")
+    finally:
+        if kept is None:
+            del SessionManager._agent_model_cache  # type: ignore[attr-defined]
+        else:
+            SessionManager._agent_model_cache = kept  # type: ignore[attr-defined]
+
+
+def _chat_persistence_reads(_capsys) -> str:
+    from personalclaw.dashboard.chat_persistence import _build_agent_model_map
+
+    return _build_agent_model_map().get("helper", "")
+
+
+def _doctor_reads(capsys) -> str:
+    from test_cli_doctor_reads_only import _run_doctor, _section
+
+    _code, out = _run_doctor(capsys)
+    return _section(out, "Agent").splitlines()[0]
+
+
+#: The three consumers that imported ``AGENTS_DIR``, at their own module top level
+#: (``cli_doctor``, ``chat_persistence``) or inside a function (``session``), and what each reads
+#: of the agents folder: the model an agent's file names, or the doctor's agent-config row.
+_CONSUMERS = {
+    "session": (_session_reads, "model-{home}"),
+    "chat_persistence": (_chat_persistence_reads, "model-{home}"),
+    "cli_doctor": (_doctor_reads, "  config:      ✅ {path}"),
+}
+
+
+@pytest.mark.parametrize(("read", "expected"), _CONSUMERS.values(), ids=list(_CONSUMERS))
+def test_every_consumer_resolves_per_call(tmp_path: Path, monkeypatch, capsys, read, expected):
     """A resolver nobody calls fixes nothing.
 
-    Three consumers imported ``AGENTS_DIR`` at their own **module top level**
-    (``cli_doctor``, ``chat_persistence``) or inside a function (``session``), and a top-level
-    ``from personalclaw.agent import AGENTS_DIR`` re-freezes the value in a second module even
-    after the first is fixed. This asserts each now holds the resolver, not a path.
+    A top-level ``from personalclaw.agent import AGENTS_DIR`` re-freezes the value in a second
+    module even after the first is fixed. So each consumer reads two homes, both established
+    after every module was imported, by each isolation seam in turn, each home's agents folder
+    naming its own model: each read is that home's answer.
     """
-    import importlib
+    user = tmp_path / "user"
+    user.mkdir()
+    monkeypatch.setenv("HOME", str(user))
+    for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME"):
+        monkeypatch.setenv(var, str(user / var.lower()))
+    for name in ("first", "second"):
+        agents = tmp_path / name / "agents"
+        agents.mkdir(parents=True)
+        (agents / "personalclaw.json").write_text(
+            json.dumps({"name": "helper", "model": f"model-{name}"}), encoding="utf-8"
+        )
 
-    mod = importlib.import_module(module)
-    found = getattr(mod, symbol, None)
-    if found is None:
-        # a function-local import — assert the source names the resolver and not the constant
-        source = Path(mod.__file__).read_text(encoding="utf-8")
-        assert "agents_dir" in source, f"{module} does not reach the resolver"
-        assert "AGENTS_DIR" not in source, f"{module} still imports the frozen constant"
-        return
-    assert callable(found), f"{module}.{symbol} must be the resolver, not a frozen Path"
+    answers = []
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "first"))
+    answers.append(read(capsys))
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path / "second")
+    answers.append(read(capsys))
+
+    assert answers == [
+        expected.format(home=name, path=tmp_path / name / "agents" / "personalclaw.json")
+        for name in ("first", "second")
+    ]
 
 
 def _frozen_home_constants(source: str) -> list[str]:

@@ -19,7 +19,7 @@ ephemeral-vs-stable session-key fallback) are gone with the mechanism they descr
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -355,13 +355,82 @@ def test_the_legacy_reaper_is_gone(home):
         from personalclaw.schedule import ScheduleService  # noqa: F401
 
 
-def test_boot_starts_the_new_reaper_and_not_the_old_one():
-    """Source-level, like the `test_triggers_loop.py` check: the wiring is the whole point of the
-    change, and a boot test that mocks `ScheduleService` cannot see which loop was armed."""
-    import pathlib
+_REAPER_LOOP = "GatewayOrchestrator._trigger_reaper_loop"
 
-    import personalclaw.gateway as G
 
-    src = pathlib.Path(G.__file__).read_text()
-    assert "self._trigger_reaper_loop()" in src
-    assert "cron_svc.start_reaper" not in src
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automations", [True, False], ids=["automations-on", "no-crons"])
+async def test_boot_starts_the_one_reaper_that_frees_a_run_past_its_deadline(
+    tmp_path, monkeypatch, automations
+):
+    """The wiring is the whole point of the change: a reaper nothing starts bounds nothing, which
+    is how the one it replaced stayed inert. The real boot (`_init_cron`) with automations on
+    starts one reaper, held where the stop cancels it and still running, and that reaper frees a
+    run in the gateway's own home that blew its deadline after the boot, recording why. With
+    `--no-crons` (automations off) the boot starts none, and the run stays claimed."""
+    import time
+    import types
+
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    # The reaper's cadence, shortened so a sweep comes within the test; the sweep is the real one.
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(
+        reaper,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=lambda _secs: real_sleep(0.01),
+            to_thread=asyncio.to_thread,
+            CancelledError=asyncio.CancelledError,
+        ),
+    )
+
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=not automations, no_open=True)
+    before = asyncio.all_tasks()
+    with patch.object(ScheduleRunStore, "rotate_all", AsyncMock()):
+        await orch._init_cron()
+    started = asyncio.all_tasks() - before
+    try:
+        store = TriggerStore(base_dir=tmp_path)
+        _trigger(store)
+        claims.write_claim(
+            Claim(trigger_id="clock:nightly", holder="tick:1", claimed_at=time.time() - OVER),
+            base_dir=tmp_path,
+        )
+        # The sweep releases the claim first and records why after, so wait for the record. With
+        # no reaper, thirty of its cadences pass.
+        for _ in range(300 if automations else 30):
+            degraded = (
+                store.get("clock:nightly").trigger.health_status == TriggerHealth.DEGRADED.value
+            )
+            if degraded and not claims.is_running("clock:nightly", base_dir=tmp_path):
+                break
+            await real_sleep(0.01)
+
+        reapers = [task for task in started if "reaper" in task.get_coro().__qualname__.lower()]
+        row = store.get("clock:nightly")
+        if not automations:
+            assert reapers == [] and orch._reaper_task is None, reapers
+            assert claims.is_running("clock:nightly", base_dir=tmp_path), "freed with crons off"
+            assert row.trigger.health_status != TriggerHealth.DEGRADED.value
+            return
+        loop = orch._reaper_task
+        assert loop is not None, "the boot holds no reaper where the stop cancels it"
+        assert loop.get_coro().__qualname__ == _REAPER_LOOP, loop
+        assert reapers == [loop], f"the boot started {len(reapers)} reapers: {reapers}"
+        assert not loop.done(), "the reaper stopped at boot"
+        assert not claims.is_running("clock:nightly", base_dir=tmp_path), "the run is still held"
+        assert row.trigger.health_status == TriggerHealth.DEGRADED.value
+        assert "Reaped after" in row.trigger.last_error_summary
+    finally:
+        for task in started:
+            task.cancel()
+        if started:
+            await asyncio.wait(started, timeout=5.0)

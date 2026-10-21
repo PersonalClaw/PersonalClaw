@@ -209,18 +209,97 @@ def test_strength_alone_cannot_win_a_rank():
     assert 0.7 * (math.log1p(9) / math.log(10)) > 0.5 * 1.0
 
 
-def test_memory_ranking_modules_never_import_the_eviction_verdict():
-    """A source-level rail: `evaluate`/`DecayVerdict` may not reach a ranking path.
+#: Two records, written fresh-and-unused first, so the order a ranking answers is its own: one
+#: idle 400 days with nine uses (the kernel would prune it), one fresh and never used.
+_FRESH_THEN_USED = (("fresh-and-unused", 0, 0.0), ("decayed-and-used", 9, 400.0))
 
-    `heat` legitimately uses `strength`; the VERDICT is a different object with a
-    different job, and importing it here is how the doctrine would quietly break.
-    """
-    from pathlib import Path
 
-    import personalclaw.memory_service as ms
-    import personalclaw.memory_vault as mv
+def _rank_priors(svc) -> list[str]:
+    names = {}
+    for tool, visits, days in _FRESH_THEN_USED:
+        key = svc.record_procedural(tool=tool, task_shape="shape", outcome="success")
+        names[key] = tool
+        svc._vs.db.execute(
+            "UPDATE semantic_memory SET scope=?, recall_count=?, updated_at=? WHERE key=?",
+            (MemoryScope.GLOBAL.value, visits, _stamp(days), key),
+        )
+    svc._vs.db.commit()
+    return [names[prior["key"]] for prior in svc.procedural_priors()]
 
-    for module in (ms, mv):
-        src = Path(module.__file__).read_text()
-        assert "DecayVerdict" not in src, f"{module.__name__} imports the eviction verdict"
-        assert "evaluate_decay" not in src
+
+def _rank_persona(svc) -> list[str]:
+    for trait, visits, days in _FRESH_THEN_USED:
+        key = svc.record_persona(agent="claw", trait=trait)
+        svc._vs.db.execute(
+            "UPDATE semantic_memory SET recall_count=?, updated_at=? WHERE key=?",
+            (visits, _stamp(days), key),
+        )
+    svc._vs.db.commit()
+    block = svc.persona_block(agent="claw")
+    return [line[2:] for line in block.splitlines() if line.startswith("- ")]
+
+
+def _rank_vault_index(_svc) -> list[str]:
+    from personalclaw import memory_vault
+
+    records = [
+        MemoryRecord(
+            id=f"semantic.{name}",
+            kind=MemoryKind.SEMANTIC,
+            text=name,
+            scope=MemoryScope.GLOBAL,
+            recall_count=visits,
+            last_accessed_at=_stamp(days),
+        )
+        for name, visits, days in _FRESH_THEN_USED
+    ]
+    page = memory_vault.render_index(records).content
+    facts = page.split("## Most-recalled facts", 1)[1].split("\n\n", 2)[1]
+    return [line.rsplit(" — ", 1)[1] for line in facts.splitlines() if line.startswith("- ")]
+
+
+#: The ranking paths of `memory_service` and `memory_vault`: the learned how-to-work priors, the
+#: agent's self-persona block, and the vault index's most-recalled facts.
+_RANKINGS = {
+    "procedural priors": _rank_priors,
+    "self-persona block": _rank_persona,
+    "vault index": _rank_vault_index,
+}
+
+
+@pytest.mark.parametrize("rank", _RANKINGS.values(), ids=list(_RANKINGS))
+def test_no_memory_ranking_asks_the_eviction_verdict(svc, monkeypatch, rank):
+    """`evaluate`/`DecayVerdict` may not reach a ranking path. `heat` legitimately uses
+    `strength`; the VERDICT is a different object with a different job, and consulting it here is
+    how the doctrine would quietly break. With the kernel's verdict watched under every name that
+    holds it (the function and the class it builds), each ranking path puts the used record first
+    and neither is asked; the curator, whose job the verdict is, asks it for each candidate."""
+    from every_name import put_in_every_name
+
+    from personalclaw.learning import curator, decay
+
+    asked: list[dict] = []
+    built: list[decay.DecayVerdict] = []
+    real_evaluate = decay.evaluate
+
+    class _Watched(decay.DecayVerdict):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            built.append(self)
+
+    def watched(**kwargs):
+        asked.append(kwargs)
+        return real_evaluate(**kwargs)
+
+    put_in_every_name(monkeypatch, decay.DecayVerdict, _Watched)
+    put_in_every_name(monkeypatch, decay.evaluate, watched)
+
+    assert rank(svc) == ["decayed-and-used", "fresh-and-unused"]
+    assert asked == [] and built == [], "a ranking path asked the eviction verdict"
+
+    # The control: the stand-ins are where the verdict's own caller reads it.
+    candidates = [
+        curator.Candidate(kind="skill", entity=f"s{i}", created_at=_stamp(9)) for i in "ab"
+    ]
+    curator.run_aging(candidates, now=_now(), dry_run=True)
+    assert len(asked) == 2 and len(built) == 2
