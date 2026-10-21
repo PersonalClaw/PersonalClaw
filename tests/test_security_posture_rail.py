@@ -29,6 +29,7 @@ from __future__ import annotations
 import functools
 
 import pytest
+import route_census
 from fenced_rows import fences_unchanged
 from table_rows import row
 from test_apps_cannot_relax_security import LOOSENING_WRITES
@@ -208,14 +209,11 @@ def test_an_agent_profiles_approval_mode_is_the_same_control() -> None:
 # ── routes: every write in a security family declares who may reach it ───────────────
 
 
-@functools.cache
 def _registered_routes() -> tuple[dict, ...]:
     """Every route the source registers, from the same AST census the published route reference
-    is rendered from, so no boot. Read once: it is a scan of the whole package, and every route
-    test below reads the same answer."""
-    from personalclaw.manifest_reference import _routes_from_ast
-
-    return tuple(_routes_from_ast())
+    is rendered from, so no boot. Read once per process for every module that asks
+    (``tests/route_census.py``), and again when a route is planted."""
+    return route_census.routes()
 
 
 def _family_write_routes() -> list[tuple[str, str]]:

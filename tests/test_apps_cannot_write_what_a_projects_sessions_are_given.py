@@ -613,11 +613,11 @@ class TestTheExplorerKeepsAnAppOutOfAProjectsContext:
 
 
 def _census() -> set[str]:
-    from personalclaw.manifest_reference import _routes_from_ast
+    from route_census import routes
 
     return {
         f"{r['method']} {r['path']}"
-        for r in _routes_from_ast()
+        for r in routes()
         if r["path"] == PROJECTS or r["path"].startswith(PROJECTS + "/")
     }
 

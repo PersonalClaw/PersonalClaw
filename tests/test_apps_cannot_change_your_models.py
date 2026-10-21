@@ -739,11 +739,11 @@ async def test_you_still_set_up_your_models(
 
 
 def _census() -> set[str]:
-    from personalclaw.manifest_reference import _routes_from_ast
+    from route_census import routes
 
     return {
         f"{r['method']} {r['path']}"
-        for r in _routes_from_ast()
+        for r in routes()
         if any(r["path"] == f or r["path"].startswith(f + "/") for f in FAMILIES)
     }
 

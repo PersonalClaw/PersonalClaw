@@ -1321,10 +1321,11 @@ async def test_reveal_reaches_only_the_apps_own_files(subtests, tmp_path) -> Non
 
 
 def _census() -> set[tuple[str, str]]:
-    from personalclaw.apps.permissions import WRITE_METHODS
-    from personalclaw.manifest_reference import _routes_from_ast
+    from route_census import routes
 
-    return {(r["method"], r["path"]) for r in _routes_from_ast() if r["method"] in WRITE_METHODS}
+    from personalclaw.apps.permissions import WRITE_METHODS
+
+    return {(r["method"], r["path"]) for r in routes() if r["method"] in WRITE_METHODS}
 
 
 def test_the_route_table_declares_your_conversations(subtests) -> None:
