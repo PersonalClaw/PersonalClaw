@@ -271,12 +271,15 @@ describe('the sidebar holds one Capabilities row', () => {
 /** The sidebar top to bottom: each section header with the rows under it, the rows above the first
  *  header, and the rows pinned to the bottom, under ''. A destination is a row of the rail, its
  *  button, with its section's header line just above it where a section starts; the threads are a
- *  group of their own and no row here. */
+ *  group of their own and no row here. The scroll area holds the sections, and the foot under it
+ *  the pinned rows. */
 function railGroups(): { header: string, rows: string[] }[] {
   const groups = [{ header: '', rows: [] as string[] }]
-  for (const item of rail().children) {
-    // The spacer that pins Settings to the bottom ends every section.
-    if (item.tagName === 'DIV' && item.children.length === 0) { groups.push({ header: '', rows: [] }); continue }
+  const area = rail().querySelector('[data-rail-scroll]')!
+  const foot = rail().querySelector('[data-rail-pinned]')
+  for (const item of [...area.children, ...(foot ? [null, ...foot.children] : [])]) {
+    // The foot's pinned rows end every section.
+    if (item === null) { groups.push({ header: '', rows: [] }); continue }
     const button = item.lastElementChild
     if (item.tagName !== 'DIV' || item.getAttribute('role') === 'group' || !(button instanceof HTMLButtonElement)) continue
     const header = item.children.length === 2 ? item.firstElementChild : null

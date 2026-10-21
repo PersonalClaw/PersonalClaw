@@ -171,8 +171,8 @@ async function firstVisible(loc, what) {
 async function glide(loc, what, { xFrac = 0.5, yFrac = 0.5 } = {}) {
   // The scroll-into-view is load-bearing, not defensive: `page.mouse` fires at raw
   // viewport coordinates and does NOT auto-scroll the way `locator.click()` does, so
-  // a target parked just past the fold (the nav rail's own Settings row sits at
-  // y=814 in an 810px viewport) would silently receive nothing at all.
+  // a target parked just past the fold (a row at the foot of the nav rail's scroll
+  // area, in a short viewport) would silently receive nothing at all.
   const el = await firstVisible(loc, what);
   await el.scrollIntoViewIfNeeded();
   await page.waitForTimeout(140);

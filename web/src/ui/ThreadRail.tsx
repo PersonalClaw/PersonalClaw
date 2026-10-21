@@ -11,6 +11,7 @@ import { SearchField } from './SearchField'
 import { StateMark } from './StateMark'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
+import { RING_REACH } from './NavRail'
 
 /** One project's group: the project, the name it is shown under, and its threads in order. */
 export interface ThreadRailGroup {
@@ -80,17 +81,18 @@ const ROW_LABEL_Z = 10
  *  threads scroll under it, on the rail's own solid surface and above the rows' labels, so no row
  *  shows through it.
  *
- *  A sticky box sticks inside its scroller's padding, and the sidebar pads its top by `--spacing-l`
- *  (`py-l`), so at `top: 0` the rows passing under the bar showed in that band above it. The bar
- *  sticks that far higher, flush with the sidebar's top edge, and pads its own top by 4 px so New
- *  thread's focus ring (2 px out, 2 px wide) is not cut by that edge.
+ *  A sticky box sticks inside its scroller's padding, and the sidebar's scroll area pads its top by
+ *  `--spacing-l` (`pt-l`), so at `top: 0` the rows passing under the bar showed in that band above it. The bar
+ *  sticks that far higher, flush with the sidebar's top edge, and pads its own top by a focus ring's
+ *  reach (`RING_REACH`) so New thread's ring is not cut by that edge.
  *
- *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height: the top
- *  the browser keeps clear when focus moves to a row (Tab, Shift+Tab, the arrow keys), and that
- *  `reveal` and `WindowedList` keep clear when they scroll one into view, so a row never takes the
- *  focus behind the bar (WCAG 2.4.11). */
+ *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height and a focus
+ *  ring's reach (`RING_REACH`): the top the browser keeps clear when focus moves to a row (Tab,
+ *  Shift+Tab, the arrow keys), and that `reveal` and `WindowedList` keep clear when they scroll one
+ *  into view, so a row never takes the focus behind the bar, nor its ring under it (WCAG 2.4.11). */
 const PINNED_BAR = {
-  position: 'sticky', top: 'calc(-1 * var(--spacing-l))', zIndex: ROW_LABEL_Z + 1, background: 'var(--color-rail)', paddingTop: 4,
+  position: 'sticky', top: 'calc(-1 * var(--spacing-l))', zIndex: ROW_LABEL_Z + 1,
+  background: 'var(--color-rail)', paddingTop: RING_REACH,
 } as const
 
 const countLabel = (n: number) => (n === 0 ? 'no threads' : `${n} thread${n === 1 ? '' : 's'}`)
@@ -196,7 +198,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
     const bar = barRef.current
     const sc = bar && scrollerOf(bar)
     if (!bar || !sc) return
-    const fit = () => { sc.style.scrollPaddingTop = `${bar.offsetHeight}px` }
+    const fit = () => { sc.style.scrollPaddingTop = `${bar.offsetHeight + RING_REACH}px` }
     fit()
     if (typeof ResizeObserver === 'undefined') return () => { sc.style.scrollPaddingTop = '' }
     const watch = new ResizeObserver(fit)
