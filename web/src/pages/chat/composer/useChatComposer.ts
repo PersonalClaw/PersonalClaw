@@ -895,24 +895,39 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
    *  model, never for the mode that decides what runs without asking. A chat not started yet keeps
    *  the pick, and it is set when the chat is made (`ensureSession`). Resolves `null` once taken,
    *  else the gateway's reason. */
-  async function chooseApproval(mode: ApprovalMode): Promise<string | null> {
-    const s = sessionRef.current
-    if (s) {
-      try { await api.setApprovalMode(mode, s) } catch (e) { return failureSentence('change the permission mode', e) }
-    }
-    setSelection((sel) => ({ ...sel, approval: mode }))
-    return null
+  function chooseApproval(mode: ApprovalMode): Promise<string | null> {
+    return afterTheLastPick(async () => {
+      const s = sessionRef.current
+      if (s) {
+        try { await api.setApprovalMode(mode, s) } catch (e) { return failureSentence('change the permission mode', e) }
+      }
+      setSelection((sel) => ({ ...sel, approval: mode }))
+      return null
+    })
   }
 
   /** The task mode, the same way (`POST /api/chat/task-mode`): the gateway refuses to take a chat
    *  out of Plan while its plan waits on her review, and the pill then stays on Plan and says so. */
-  async function chooseTaskMode(mode: TaskMode): Promise<string | null> {
-    const s = sessionRef.current
-    if (s) {
-      try { await api.setTaskMode(mode, s) } catch (e) { return failureSentence('change the task mode', e) }
-    }
-    setSelection((sel) => ({ ...sel, taskMode: mode }))
-    return null
+  function chooseTaskMode(mode: TaskMode): Promise<string | null> {
+    return afterTheLastPick(async () => {
+      const s = sessionRef.current
+      if (s) {
+        try { await api.setTaskMode(mode, s) } catch (e) { return failureSentence('change the task mode', e) }
+      }
+      setSelection((sel) => ({ ...sel, taskMode: mode }))
+      return null
+    })
+  }
+
+  /** The mode picks, one at a time: a pick is sent once the one before it is answered. A pick shown
+   *  only once the gateway takes it must not race the last: two in flight are answered in either
+   *  order, and the composer would end on whichever answer came last, not on the mode the gateway
+   *  was last asked for. */
+  const modePicks = useRef<Promise<unknown>>(Promise.resolve())
+  function afterTheLastPick<T>(pick: () => Promise<T>): Promise<T> {
+    const next = modePicks.current.then(pick)
+    modePicks.current = next.catch(() => undefined)
+    return next
   }
 
   /** Apply a saved starter to the composer.
