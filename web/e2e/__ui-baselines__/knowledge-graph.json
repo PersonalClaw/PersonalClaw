@@ -6,6 +6,7 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Knowledge view\"",
+        "button \"Library\"",
         "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -30,12 +31,16 @@
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ],
       "412": [
@@ -49,39 +54,46 @@
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ],
       "768": [
         "button \"Add knowledge\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
-        "<h#> \"Knowledge\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Knowledge\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -92,6 +104,7 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Knowledge view\"",
+        "button \"Library\"",
         "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -116,12 +129,16 @@
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ],
       "412": [
@@ -135,39 +152,46 @@
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ],
       "768": [
         "button \"Add knowledge\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
-        "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All items\"",
+        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
+        "button[role=radio] \"Files\"",
         "button[role=radio] \"Graph\"",
         "button[role=radio] \"Home\"",
         "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Tags\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
-        "<h#> \"Knowledge\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Knowledge\" clips at #%: #x# in #x#"
       ]
     }
   }

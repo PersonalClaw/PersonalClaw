@@ -56,8 +56,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Workflows\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Workflows\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""
@@ -121,8 +121,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Workflows\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Workflows\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""

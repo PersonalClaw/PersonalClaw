@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,6 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
   - heading "Settings" [level=#]
   - searchbox "Search settings"
   - status
@@ -78,33 +75,6 @@
   - button "Open Updates settings"
   - text: Updates #.#.# <update status> Auto-update
   - switch "Auto-update"
-  - heading "AI & Models" [level=#]
-  - button "Open Providers settings"
-  - text: Providers # enabled #/# runtimes ready native
-  - button "Open Models settings"
-  - text: Models No models bound yet. Set up a model provider and the bindings for chat, embeddings, and voice appear here.
-  - button "Open Routing & Efficiency settings"
-  - text: Routing & Efficiency Per-model success, latency, and cost land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis — showing which is most efficient.
-  - button "Open Search settings"
-  - text: Search No search provider The agent can’t search the web until you install a search provider app from the Store.
-  - button "Open Prompts settings"
-  - text: Prompts chat native:<theme>-chat background native:<theme>-background title native:task-title suggestions native:task-suggestions
-  - button "Open Evaluations settings"
-  - text: Evaluations Evals enabled
-  - switch "Evals enabled"
-  - text: Off — the four eval panels on Learning stay empty
-  - button "Open Memory settings"
-  - text: "Memory # semantic # episodic # events Embedder: none"
-  - button "Open Agent defaults settings"
-  - text: Agent defaults Default agent PersonalClaw Approval
-  - combobox "Approval mode":
-    - option "Ask each time" [selected]
-    - option "Trust reads"
-    - option "Auto"
-  - text: YOLO
-  - switch "YOLO auto-approve all"
-  - button "Open Speech & Transcription settings"
-  - text: Speech & Transcription Speech-to-text No model bound Text-to-speech No model bound
   - heading "Workspace" [level=#]
   - button "Open Inbox settings"
   - text: Inbox # day retention Auto-cleanup
@@ -130,6 +100,31 @@
   - text: Autonomous loops Judge axis reasoning Stagnation window # cycles Check work after gates Off
   - button "Open Ambient surfaces settings"
   - text: Ambient surfaces Composable home On Generative UI On
+  - heading "AI & Models" [level=#]
+  - button "Open Providers settings"
+  - text: Providers # enabled #/# runtimes ready native
+  - button "Open Models settings"
+  - text: Models No models bound yet. Set up a model provider and the bindings for chat, embeddings, and voice appear here.
+  - button "Open Routing & Efficiency settings"
+  - text: Routing & Efficiency Per-model success, latency, and cost land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis — showing which is most efficient.
+  - button "Open Search settings"
+  - text: Search No search provider The agent can’t search the web until you install a search provider app from the Store.
+  - button "Open Prompts settings"
+  - text: Prompts chat native:<theme>-chat background native:<theme>-background title native:task-title suggestions native:task-suggestions
+  - button "Open Evaluations settings"
+  - text: Evaluations Evals enabled
+  - switch "Evals enabled"
+  - text: Off — the four eval panels on Learning stay empty
+  - button "Open Agent defaults settings"
+  - text: Agent defaults Default agent PersonalClaw Approval
+  - combobox "Approval mode":
+    - option "Ask each time" [selected]
+    - option "Trust reads"
+    - option "Auto"
+  - text: YOLO
+  - switch "YOLO auto-approve all"
+  - button "Open Speech & Transcription settings"
+  - text: Speech & Transcription Speech-to-text No model bound Text-to-speech No model bound
   - heading "General" [level=#]
   - button "Open Account settings"
   - text: Account Keyur Display name & onboarding
@@ -148,3 +143,5 @@
   - text: Widget density
   - 'button "Widget density: More" [pressed]': More
   - 'button "Widget density: Less"': Less
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

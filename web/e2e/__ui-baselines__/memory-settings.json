@@ -2,12 +2,12 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
         "button \"Expand sidebar\"",
         "button \"Import from JSON\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Sync now\"",
@@ -33,7 +33,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -45,6 +44,10 @@
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -65,7 +68,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -77,6 +79,10 @@
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -97,7 +103,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -105,11 +110,14 @@
         "button \"Import from JSON\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Settings\"",
         "button \"Sync now\"",
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -133,19 +141,19 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
         "button \"Expand sidebar\"",
         "button \"Import from JSON\"",
+        "button \"Library\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Sync now\"",
@@ -171,7 +179,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "390": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -183,6 +190,10 @@
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -203,7 +214,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "412": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -215,6 +225,10 @@
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -235,7 +249,6 @@
         "select \"Off — no vaultMirror — write memory out, read-onlyTwo-way — \""
       ],
       "768": [
-        "button \"Back to Settings\"",
         "button \"Build / refresh\"",
         "button \"Choose a model\"",
         "button \"Consolidate now\"",
@@ -243,11 +256,14 @@
         "button \"Import from JSON\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Settings\"",
         "button \"Sync now\"",
         "button \"System status — Gateway connected\"",
         "button \"The folder is unchanged\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Artifacts\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Knowledge\"",
+        "button[role=radio] \"Memory\"",
         "button[role=switch] \"Active recall\"",
         "button[role=switch] \"Attribute claims to who said them\"",
         "button[role=switch] \"Entity graph\"",
@@ -271,7 +287,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

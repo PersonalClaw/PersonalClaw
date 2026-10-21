@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,12 +29,19 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills" [checked]
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps"
+    - radio "Store"
   - heading "Skills" [level=#]
   - radiogroup "Skills view":
     - radio "Installed" [checked]
     - radio "Browse"
-  - button "Proposals"
+    - radio "Proposals"
   - button "New skill"
   - searchbox "Search skills"
   - status
@@ -125,3 +130,5 @@
   - img "Integrity verified"
   - paragraph: Verify a built web page or app actually renders and works — drive it in a real browser, check the console and network, confirm the thing you changed is the thing being served, and capture evidence. Use before claiming a frontend change works.
   - text: bundled
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

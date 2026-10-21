@@ -4,6 +4,7 @@
       "320": [
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
+        "button \"Details →\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -12,7 +13,6 @@
         "button \"Theme: dark — switch to light\""
       ],
       "390": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -24,7 +24,6 @@
         "button \"Theme: dark — switch to light\""
       ],
       "412": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -36,7 +35,6 @@
         "button \"Theme: dark — switch to light\""
       ],
       "768": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -51,7 +49,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -60,6 +58,7 @@
       "320": [
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
+        "button \"Details →\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -68,7 +67,6 @@
         "button \"Theme: light — switch to system\""
       ],
       "390": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -80,7 +78,6 @@
         "button \"Theme: light — switch to system\""
       ],
       "412": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -92,7 +89,6 @@
         "button \"Theme: light — switch to system\""
       ],
       "768": [
-        "button \"Apply the available update\"",
         "button \"Back to Settings\"",
         "button \"Choose a model\"",
         "button \"Details →\"",
@@ -107,7 +103,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

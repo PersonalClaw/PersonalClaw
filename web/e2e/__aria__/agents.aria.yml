@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,26 +29,34 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
+  - radiogroup "Capabilities":
+    - radio "Agents" [checked]
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps"
+    - radio "Store"
   - heading "Agents" [level=#]
-  - button "Sync agents"
-  - button "Export to Claude Code"
   - button "New agent"
   - searchbox "Search agents"
+  - button "More actions"
   - status
   - text: Native # Built-ins run the platform — definition fixed, model swappable. Agents you create are fully editable.
   - button "PersonalClaw"
   - text: PersonalClaw default Built-in native agent. Inference governed by Settings → Models.
-  - button "personalclaw-loop"
-  - text: personalclaw-loop built-in Built-in worker for autonomous goal loops.
-  - button "personalclaw-coder"
-  - text: personalclaw-coder built-in Built-in worker for the Code SDLC engine (plans + writes code).
   - button "personalclaw-code-planner"
   - text: personalclaw-code-planner built-in Built-in investigative planner for the Code engine (reads real context, then plans; never executes).
+  - button "personalclaw-coder"
+  - text: personalclaw-coder built-in Built-in worker for the Code SDLC engine (plans + writes code).
   - button "personalclaw-goal-planner"
   - text: personalclaw-goal-planner built-in Built-in intake planner for autonomous goal loops (plans, never executes).
   - button "personalclaw-lite"
   - text: personalclaw-lite built-in Built-in background worker for titles, suggestions, and consolidation.
+  - button "personalclaw-loop"
+  - text: personalclaw-loop built-in Built-in worker for autonomous goal loops.
   - button "personalclaw-template-refiner"
   - text: personalclaw-template-refiner built-in Built-in propose-only refiner for workflow templates (read + propose).
   - img "# tools": "#"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,6 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
   - button "Back to Settings"
   - button "Settings"
   - text: Documents
@@ -42,3 +39,5 @@
   - text: Edit documents in place Opens a generated Word document in a structural editor instead of download-only. Saving RE-CREATES the file from the structure PersonalClaw could parse, so constructs its document model cannot hold (comments, footnotes, embedded objects, exact styling) are not in the saved copy. The editor lists them before your first edit and repeats them in the save confirmation, and the version you started from is always restorable from the document's Details › Versions. With this off, office documents are read-only previews and the server refuses a document save outright.
   - status
   - switch "Edit documents in place"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

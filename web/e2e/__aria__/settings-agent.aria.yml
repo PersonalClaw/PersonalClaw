@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,7 +29,6 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
   - button "Back to Settings"
   - button "Settings"
   - text: Agent defaults
@@ -63,6 +60,10 @@
   - status
   - spinbutton "Approval wait": "#"
   - text: min
+  - heading "Your reply styles" [level=#]
+  - paragraph: "Styles of your own, offered beside the bundled ones in the composer, on an agent and here. Tone guidance only, up to # KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal."
+  - list
+  - button "New style"
   - heading "Runners" [level=#]
   - paragraph: External agent CLIs this install can drive. Nothing here runs one until you press its Check version, which runs only that CLI's version command — and only for a runner an installed agent app set up.
   - list:
@@ -133,3 +134,5 @@
   - text: Propose fix branches On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review.
   - status
   - switch "Propose fix branches"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

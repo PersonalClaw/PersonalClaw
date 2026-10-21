@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,15 +29,21 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps" [checked]
+    - radio "Store"
   - heading "Apps" [level=#]
-  - radiogroup "Native, Library, or Store":
+  - radiogroup "Native or Library":
     - radio "Native"
     - radio "Library" [checked]
-    - radio "Store"
   - button "Install from URL"
   - searchbox "Search apps"
-  - button "Filter & sort"
+  - button "Filter & sort": Sorted by name
   - status
   - text: e#e-fixture #
   - button "E#E UI fixture — details"
@@ -47,3 +51,5 @@
   - button "Actions for E#E UI fixture"
   - paragraph: "Contributes one UI page so the a#y harness can sweep app-AUTHORED DOM, which no other route reaches. Test fixture: seeded into the e#e home by web/playwright.config.ts and never published."
   - button "Open"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

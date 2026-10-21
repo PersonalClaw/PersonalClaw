@@ -57,8 +57,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -120,8 +120,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

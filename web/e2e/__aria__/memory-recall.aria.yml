@@ -4,23 +4,21 @@
   - button "Home"
   - button "Chat"
   - button "Projects"
-  - button "Knowledge"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Tasks"
   - button "Inbox"
   - button "Triggers"
-  - button "Files"
-  - button "Artifacts"
   - button "Terminal"
-  - text: Capabilities
-  - button "Agents"
-  - button "Tools"
-  - button "Skills"
-  - button "Learning"
-  - button "Prompts"
+  - button "Capabilities"
   - button "Workflows"
-  - text: Apps
-  - button "Apps"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -31,10 +29,11 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - button "<theme> status — Gateway connected"
-  - button "Back to Settings"
-  - button "Settings"
-  - text: Memory
+  - radiogroup "Library":
+    - radio "Knowledge"
+    - radio "Memory" [checked]
+    - radio "Files"
+    - radio "Artifacts"
   - heading "Memory" [level=#]
   - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
   - text: # Semantic # Episodic # Events # Embedded · no model bound
@@ -49,3 +48,5 @@
   - textbox "Question for deep memory recall":
     - /placeholder: e.g. what did I decide about the TicTacToe deploy?
   - button "Recall" [disabled]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

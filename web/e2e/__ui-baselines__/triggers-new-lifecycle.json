@@ -95,8 +95,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"New trigger\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"New trigger\" clips at #%: #x# in #x#"
       ],
       "axe (WCAG 2 AA)": [
         "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): button[title=\"Lifecycle event\"] > .gap-#\\.#.z-#.inline-flex"
@@ -199,8 +199,8 @@
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"New trigger\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"New trigger\" clips at #%: #x# in #x#"
       ]
     }
   }

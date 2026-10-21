@@ -19,12 +19,14 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Generate Tags\"",
+        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button \"View\"",
         "button[role=radio] \"Board view (by tag)\"",
         "button[role=radio] \"List view\""
       ],
@@ -32,6 +34,7 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Generate Tags\"",
+        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button \"Notifications, # unread\"",
@@ -57,7 +60,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<span> \"Chat history\" clips at #%: #x# in #x#"
       ]
     }
@@ -82,12 +85,14 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Generate Tags\"",
+        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button \"View\"",
         "button[role=radio] \"Board view (by tag)\"",
         "button[role=radio] \"List view\""
       ],
@@ -95,6 +100,7 @@
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Generate Tags\"",
+        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button \"Notifications, # unread\"",
@@ -120,7 +126,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<span> \"Chat history\" clips at #%: #x# in #x#"
       ]
     }

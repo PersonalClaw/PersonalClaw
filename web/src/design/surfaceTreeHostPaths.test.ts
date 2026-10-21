@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { normalizeTree } from '../../e2e/surfaceChecks'
@@ -49,6 +50,25 @@ describe("the matrix's accessibility tree folds the host's paths", () => {
     vi.stubEnv('PW_E2E_HOME', named)
     const line = `  - text: A setup ${userHomeFor(named)}/.config, ${userHomeFor(named)}/.agents/skills · ${named}/memory-vault`
     expect(normalizeTree(line)).toBe('  - text: A setup ~/.config, ~/.agents/skills · <e2e home>/memory-vault')
+  })
+
+  it('folds a home whose real path holds the path it was handed, as a macOS temp folder does', () => {
+    // macOS hands a run `/var/folders/…` and the gateway prints `/private/var/folders/…`: the path
+    // as given sits inside the real one, so folding the given form first left `/private<e2e home>`
+    // in every tree that prints a folder of the home, a baseline no Linux run reads back. Made here
+    // with a link whose target ends in the link's own path, so the case runs on any machine.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'fold-order-')))
+    try {
+      const real = join(base, 'outer', base.slice(1), 'home')
+      mkdirSync(real, { recursive: true })
+      const given = join(base, 'home')
+      symlinkSync(real, given)
+      vi.stubEnv('PW_E2E_HOME', given)
+      expect(normalizeTree(`  - text: ${real}/workspace`)).toBe('  - text: <e2e home>/workspace')
+      expect(normalizeTree(`  - text: ${given}/workspace`)).toBe('  - text: <e2e home>/workspace')
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 
   it('leaves a path of no one in particular alone', () => {

@@ -39,6 +39,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -49,7 +50,6 @@
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "390": [
@@ -90,6 +90,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -100,7 +101,6 @@
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "412": [
@@ -141,6 +141,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -151,7 +152,6 @@
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "768": [
@@ -200,21 +200,28 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
         "input \"Search apps\""
       ]
     },
     "known": {
       "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Apps\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
         "<p> \"Filesystem-backed inbox for agent approv\" clips at #%: #x# in #x#",
         "<p> \"Filesystem-based skill definitions. Crea\" clips at #%: #x# in #x#"
       ],
       "focus order": [
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\""
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\""
       ]
     }
   },
@@ -258,6 +265,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -268,7 +276,6 @@
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "390": [
@@ -309,6 +316,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -319,7 +327,6 @@
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "412": [
@@ -360,6 +367,7 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
+        "button \"Capabilities\"",
         "button \"Choose a model\"",
         "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
@@ -370,7 +378,6 @@
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
-        "button[role=radio] \"Store\"",
         "input \"Search apps\""
       ],
       "768": [
@@ -419,21 +426,28 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
         "input \"Search apps\""
       ]
     },
     "known": {
       "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Apps\" clips at #%: #x# in #x#",
-        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
         "<p> \"Filesystem-backed inbox for agent approv\" clips at #%: #x# in #x#",
         "<p> \"Filesystem-based skill definitions. Crea\" clips at #%: #x# in #x#"
       ],
       "focus order": [
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\""
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\""
       ]
     }
   }
