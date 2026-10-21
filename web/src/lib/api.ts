@@ -9149,8 +9149,11 @@ export const api = {
   setSessionModel: (session: string, model: string) => post(`/api/chat/sessions/${session}/model`, { model }),
   setReasoningEffort: (session: string, reasoning_effort: ReasoningEffort) =>
     post(`/api/chat/sessions/${session}/reasoning-effort`, { reasoning_effort }),
-  setApprovalMode: (mode: ApprovalMode, session = '') => post('/api/chat/mode', { mode, session }),
-  setTaskMode: (mode: TaskMode, session = '') => post('/api/chat/task-mode', { mode, session }),
+  /** `pick` numbers a chat's pick, increasing for the chat: the gateway refuses one numbered no
+   *  higher than the last it took on that control (`409 stale_pick`), so a pick given up on cannot
+   *  land after a newer one. Without it the request is taken as it always was. */
+  setApprovalMode: (mode: ApprovalMode, session = '', pick?: number) => post('/api/chat/mode', pick === undefined ? { mode, session } : { mode, session, pick }),
+  setTaskMode: (mode: TaskMode, session = '', pick?: number) => post('/api/chat/task-mode', pick === undefined ? { mode, session } : { mode, session, pick }),
   /** The sandbox and the reach of a chat's next turn, as its Execution Boundary control shows them:
    *  an open chat's (`session`), or a new chat's on the agent CLI `runtime` names (none: the built-in
    *  agent). The gateway writes each reading's words; the control shows them as they come. */

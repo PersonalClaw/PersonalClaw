@@ -220,6 +220,7 @@ class _ChatSession(ChatQueue):
         "_agent_floor_seeded",
         "_trust_from_floor",
         "_task_mode",
+        "mode_picks",
         "_investigate_ctx",
         "_suppress_autonudge_rearm",
         "_titled",
@@ -385,6 +386,11 @@ class _ChatSession(ChatQueue):
         #   'build' — scoped to producing an artifact/widget/skill.
         # Complements approval mode: e.g. Plan + Trust is a valid combination.
         self._task_mode: str = "agent"
+        # The number of the last numbered mode pick this chat took, per control (``"mode"``, the
+        # permission mode, and ``"task_mode"``): a pick numbered no higher is refused as stale, so
+        # one the composer gave up on cannot land after a newer one (`chat_handlers.stale_pick`).
+        # Transient: a restarted gateway takes the next pick it is sent.
+        self.mode_picks: dict[str, int] = {}
         # Investigate Anywhere: the staged context envelope (a dict from
         # InvestigateContext.to_dict) consumed + cleared by the FIRST turn's
         # _inject_investigate_context. Transient — never persisted with history.
@@ -975,6 +981,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._notifications_seen = bounded_log.signature(_notifications_path())
         self._notification_rows: list[dict[str, Any]] = _load_notifications()
         self._sessions: dict[str, _ChatSession] = {}
+        # The number of the last numbered permission mode pick any chat took. Every permission
+        # mode turns the gateway-wide YOLO on or off, so a pick older than this one, from any
+        # chat, is refused as stale (`chat_handlers.stale_pick`). Transient, like each chat's.
+        self.last_permission_pick: int = -1
         self._session_counter = 0
         self._folders: list[dict[str, Any]] = []  # project folder definitions
         # Tag vocabulary: list of {id, name, color, order}. User-managed.
