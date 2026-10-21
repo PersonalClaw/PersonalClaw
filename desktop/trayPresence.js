@@ -3,8 +3,8 @@
  *
  * The earlier tray was a static six-item menu (Show / New Tab / Merge All Windows /
  * Quit) built inline in `main.js`. This module replaces it with a LIVE one — pending
- * approvals, running loops, quick capture, open dashboard, an opt-in login item, quit
- * — and pulls the logic out of the Electron glue so it can be tested without
+ * approvals, what is running now, quick capture, open dashboard, an opt-in login item,
+ * quit — and pulls the logic out of the Electron glue so it can be tested without
  * launching an app.
  *
  * Three things this module exists to get right:
@@ -26,43 +26,108 @@
  *
  * 3. **Counts come from the loopback gateway**, whose two shapes are fixed:
  *    `GET /api/approvals` → a bare JSON array of pending approvals;
- *    `GET /api/loops` → `{"loops": [...]}` with a `status` per loop
- *    (`running` is one of `personalclaw.loop.loop.LoopStatus`). `summarizePresence()`
- *    is tolerant of nulls and of either shape, because a failed poll must render as
- *    "0 / not connected", never as a crash in a menu builder.
+ *    `GET /api/running` → `{"running": [row, ...], "finished": [row, ...]}`, the one list of
+ *    live work every reader shares (`personalclaw.running_now`, #3889): a chat's turn, a
+ *    helper, a loop with its workers folded in, a workflow run, an automation's fire and a
+ *    webhook's turn, each with its phase, its line, when it last changed and the route that
+ *    opens it. `summarizePresence()` is tolerant of nulls and of either shape, because a
+ *    failed poll must render as "0 / not connected", never as a crash in a menu builder.
  */
 
 /**
  * SPA deep-link targets. The dashboard is a HASH-routed SPA (`web/src/app/App.tsx`),
  * and these are its real routes — `chat` is where `ApprovalPrompt` renders pending
- * approvals, and `loops/<id>` is a routable loop detail deep-link.
+ * approvals, and Mission Control lists every piece of live work. A running row opens the
+ * route the gateway names for it (`running_now`), which `hashAssignmentScript` checks
+ * against the hash grammar before the window takes it.
  */
 const DEEP_LINKS = {
   dashboard: "#/dashboard",
   approvals: "#/chat",
   inbox: "#/inbox",
   settings: "#/settings",
-  loop: (id) => `#/loops/${encodeURIComponent(String(id))}`,
+  missionControl: "#/mission-control",
 };
 
-/** The loop status that "running loops" means. See `LoopStatus.RUNNING`. */
-const RUNNING_STATUS = "running";
+/** Most rows listed inline before the menu stops growing. */
+const MAX_LISTED_ROWS = 8;
 
-/** Most loops listed inline before the menu stops growing. */
-const MAX_LISTED_LOOPS = 8;
+/** Work a restart cut off is said at most this many times, and for this long: as the gateway
+ *  keeps its own endings (`running_now.TAIL_ROWS`, `TAIL_SECS`). */
+const INTERRUPTED_KEPT = 20;
+const INTERRUPTED_MS = 10 * 60 * 1000;
+
+/** What it says of work a restart cut off. */
+const INTERRUPTED_LINE = "The gateway restarted while it ran.";
+
+/**
+ * What each phase is called, in the dashboard's words (`web/src/lib/workPhase.ts`'s labels;
+ * `test/trayListsWhatIsRunning.test.js` holds the two equal). A row names its phase as text,
+ * whatever else it says.
+ */
+const PHASE_WORDS = Object.freeze({
+  queued: "Waiting to start",
+  thinking: "Thinking",
+  searching: "Searching",
+  tool: "Working",
+  planning: "Planning",
+  delegating: "Handing off",
+  streaming: "Writing",
+  listening: "Listening",
+  approval: "Needs your OK",
+  input: "Waiting for your answer",
+  done: "Done",
+  error: "Stopped",
+  retrying: "Retrying",
+  waiting_model: "Waiting for the model",
+  idle: "Nothing running",
+});
 
 /** An empty presence — what a disconnected or failed poll renders as. */
-const EMPTY_PRESENCE = Object.freeze({ approvals: 0, running: [], connected: false });
+const EMPTY_PRESENCE = Object.freeze({
+  approvals: 0,
+  connected: false,
+  listed: false,
+  stale: false,
+  running: [],
+  finished: [],
+  interrupted: [],
+  /** The rows last read on one start of the gateway (`boot`), which a later start is compared
+   *  with. Replaced only by a poll that read the list and knows which start it read it from. */
+  basis: Object.freeze({ boot: null, rows: [] }),
+});
+
+/** A gateway stamp as the reader's clock time (`14:32`), or `""` for one that names no instant: a
+ *  date-time with no zone is refused, as the dashboard refuses it (`web/src/lib/epoch.ts`). */
+function clockOf(stamp) {
+  if (typeof stamp !== "string" || !/(Z|[+-]\d\d:?\d\d)$/i.test(stamp)) return "";
+  const at = Date.parse(stamp);
+  return Number.isFinite(at) ? new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+/** One row of `GET /api/running` as the menu shows it, or null for one it cannot name. */
+function rowOf(r) {
+  if (!r || typeof r !== "object" || typeof r.work !== "string" || r.work === "") return null;
+  const phase = String(r.phase || "");
+  return {
+    work: r.work,
+    name: truncateLabel(String(r.name || "Work")),
+    phase: PHASE_WORDS[phase] || phase,
+    line: truncateLabel(String(r.line || ""), 60),
+    since: typeof r.since === "string" ? r.since : "",
+    route: typeof r.route === "string" ? r.route : "",
+    blocked: r.blocked === true,
+    waiting: Array.isArray(r.waiting) ? r.waiting.length : 0,
+  };
+}
 
 /**
  * Fold the two gateway payloads into the menu's view model.
  *
  * @param {unknown} approvalsPayload body of `GET /api/approvals` (a bare array)
- * @param {unknown} loopsPayload body of `GET /api/loops` (`{loops: [...]}`)
- * @returns {{approvals: number, running: Array<{id: string, label: string}>,
- *            connected: boolean}}
+ * @param {unknown} runningPayload body of `GET /api/running` (`{running: [...], finished: [...]}`)
  */
-function summarizePresence(approvalsPayload, loopsPayload) {
+function summarizePresence(approvalsPayload, runningPayload) {
   const connected = approvalsPayload !== null && approvalsPayload !== undefined;
 
   // A bare array is the documented shape; the object forms are accepted so a future
@@ -75,27 +140,68 @@ function summarizePresence(approvalsPayload, loopsPayload) {
     else if (Number.isFinite(approvalsPayload.pending)) approvals = Number(approvalsPayload.pending);
   }
 
-  const rows = Array.isArray(loopsPayload)
-    ? loopsPayload
-    : Array.isArray(loopsPayload?.loops)
-      ? loopsPayload.loops
-      : [];
-  const running = rows
-    .filter((l) => l && typeof l === "object" && String(l.status || "").toLowerCase() === RUNNING_STATUS)
-    .map((l) => ({
-      id: String(l.id ?? ""),
-      // Loop rows carry a name or a task; either is a better menu label than an id,
-      // and an id-only row is still clickable.
-      label: truncateLabel(String(l.name || l.task || l.goal || l.id || "Untitled loop")),
-    }))
-    .filter((l) => l.id !== "");
-
-  return { approvals, running, connected };
+  const listed = Boolean(runningPayload && typeof runningPayload === "object" && Array.isArray(runningPayload.running));
+  const rows = (key) => (listed && Array.isArray(runningPayload[key]) ? runningPayload[key] : []).map(rowOf).filter(Boolean);
+  return { ...EMPTY_PRESENCE, approvals, connected, listed, running: rows("running"), finished: rows("finished") };
 }
 
-/** Keep a menu row from growing to the width of a task description. */
+/**
+ * The presence after a poll, from the one before it.
+ *
+ * - **Away.** A poll that could not read the list keeps the rows it last read, said as the last
+ *   known (`stale`), rather than an empty menu that reads as "nothing runs".
+ * - **Interrupted.** `boot` says which start of the gateway this poll read (`main.js` counts the
+ *   ready lines it takes). On a new start, every row that was live on the one before and is now
+ *   neither live nor ended is said as cut off by the restart: the gateway that came back kept no
+ *   ending of it. Said only while it is true: it goes once its work is live or ended again, or
+ *   after as long as the gateway keeps an ending.
+ *
+ * @param {object} prev the presence before this poll
+ * @param {object} next `summarizePresence()` of this poll
+ * @param {{boot?: number|null, now?: number}} [opts]
+ */
+function carryPresence(prev, next, { boot = null, now = Date.now() } = {}) {
+  const was = { ...EMPTY_PRESENCE, ...(prev || {}) };
+  const out = { ...EMPTY_PRESENCE, ...next };
+  if (!out.listed && (was.running.length > 0 || was.finished.length > 0)) {
+    out.running = was.running;
+    out.finished = was.finished;
+    out.stale = true;
+  }
+  let interrupted = was.interrupted;
+  let basis = was.basis;
+  if (out.listed && boot !== null) {
+    if (basis.boot !== null && basis.boot !== boot) {
+      const known = new Set([...out.running, ...out.finished].map((r) => r.work));
+      const cut = basis.rows.filter((r) => !known.has(r.work)).map((row) => ({ row, at: now }));
+      interrupted = [...cut, ...interrupted].slice(0, INTERRUPTED_KEPT);
+    }
+    basis = { boot, rows: out.running };
+  }
+  if (out.listed) {
+    const known = new Set([...out.running, ...out.finished].map((r) => r.work));
+    interrupted = interrupted.filter((i) => !known.has(i.row.work));
+  }
+  out.interrupted = interrupted.filter((i) => now - i.at < INTERRUPTED_MS);
+  out.basis = basis;
+  return out;
+}
+
+/**
+ * Which start of the gateway a poll read: the one it began on (*before*, `main.js`'s count of the
+ * starts it took), or `null` when another start came while its reads were out (*after*), or none
+ * has been taken. A restart moves the gateway to a new port, so the reads already out went to the
+ * start before it, and which one answered cannot be told.
+ */
+function bootRead(before, after) {
+  return before !== null && before > 0 && before === after ? before : null;
+}
+
+/** Keep a menu row from growing to the width of a task description. A name is the work's own
+ *  text, so the controls that reorder text (the bidirectional overrides and isolates) are dropped
+ *  rather than let it turn the rest of the row around. */
 function truncateLabel(text, max = 48) {
-  const clean = text.replace(/\s+/g, " ").trim();
+  const clean = text.replace(/[\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
@@ -114,13 +220,32 @@ function composeTrayTitle({ capturing = false, approvals = 0 } = {}) {
 }
 
 /** Tooltip text — the same facts, spelled out for a hover. */
-function composeTrayTooltip({ capturing = false, approvals = 0, running = [], connected = false } = {}) {
+function composeTrayTooltip({ capturing = false, approvals = 0, running = [], connected = false, listed = true, stale = false } = {}) {
   if (capturing) return "PersonalClaw is listening — press the shortcut again to stop";
   if (!connected) return "PersonalClaw — not connected to the gateway";
   const parts = [];
   parts.push(approvals === 1 ? "1 approval waiting" : `${approvals} approvals waiting`);
-  parts.push(running.length === 1 ? "1 loop running" : `${running.length} loops running`);
+  // A list that could not be read is no zero: a zero looks like good news.
+  parts.push(stale ? `last known ${running.length} running` : listed ? `${running.length} running` : "what is running could not be read");
   return `PersonalClaw — ${parts.join(", ")}`;
+}
+
+/** A live row's menu label: its name, its exact phase (and that it is blocked), what it is doing,
+ *  when it last changed, and what waits on you for it. */
+function runningLabel(r) {
+  const phase = r.blocked ? `Blocked, ${r.phase}` : r.phase;
+  const line = r.line && r.line !== r.phase ? `: ${r.line}` : "";
+  const at = clockOf(r.since);
+  const waits = r.waiting > 0 ? ` · ${r.waiting} waiting on you` : "";
+  return `${r.name} — ${phase}${line}${at ? ` · ${at}` : ""}${waits}`;
+}
+
+/** An ending's menu label: how it ended, in its phase's word and its line, and when. */
+function endedLabel(r, { word, line } = {}) {
+  const said = line ?? r.line;
+  const how = word ?? r.phase;
+  const at = word ? "" : clockOf(r.since);
+  return `${r.name} — ${how}${said && said !== how ? `: ${said}` : ""}${at ? ` · ${at}` : ""}`;
 }
 
 /**
@@ -130,7 +255,7 @@ function composeTrayTooltip({ capturing = false, approvals = 0, running = [], co
  * and calls nothing, so every row and every handler can be asserted in a unit test.
  *
  * @param {object} opts
- * @param {{approvals: number, running: Array, connected: boolean}} opts.presence
+ * @param {object} opts.presence `summarizePresence()`, carried by `carryPresence()`
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
  * @param {object} opts.actions open/deepLink/quickCapture/toggleLoginItem/quit
  * @param {Array<{label: string, click?: Function}>} [opts.tiles] ambient
@@ -138,7 +263,7 @@ function composeTrayTooltip({ capturing = false, approvals = 0, running = [], co
  *        skipped when not, so the menu never depends on them.
  */
 function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, actions = {}, tiles = [] } = {}) {
-  const { approvals, running, connected } = { ...EMPTY_PRESENCE, ...presence };
+  const { approvals, running, finished, interrupted, connected, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
   const open = actions.open || noop;
   const deepLink = actions.deepLink || noop;
@@ -165,16 +290,30 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     },
   ];
 
+  // What is running now: every piece of live work, each opening where it runs (Mission Control
+  // for work no page opens), the first rows inline and the rest in Mission Control.
+  const opens = (route) => () => deepLink(route || DEEP_LINKS.missionControl);
   if (running.length === 0) {
-    template.push({ label: "No loops running", enabled: false });
+    const word = stale ? "Last known: nothing running" : listed ? "Nothing running" : "What is running could not be read";
+    template.push({ label: word, enabled: false });
   } else {
-    template.push({
-      label: running.length === 1 ? "1 loop running" : `${running.length} loops running`,
-      submenu: running.slice(0, MAX_LISTED_LOOPS).map((loop) => ({
-        label: loop.label,
-        click: () => deepLink(DEEP_LINKS.loop(loop.id)),
-      })),
-    });
+    const blocked = running.filter((r) => r.blocked).length;
+    const count = `${running.length} running${blocked > 0 ? `, ${blocked} blocked` : ""}`;
+    const rows = running.slice(0, MAX_LISTED_ROWS).map((r) => ({ label: runningLabel(r), click: opens(r.route) }));
+    if (running.length > MAX_LISTED_ROWS) {
+      rows.push({ label: `${running.length - MAX_LISTED_ROWS} more in Mission Control…`, click: opens(DEEP_LINKS.missionControl) });
+    }
+    template.push({ label: stale ? `Last known: ${count}` : count, submenu: rows });
+  }
+
+  // What just finished, failed or was cut off by a restart: the gateway's last endings, and what
+  // it kept no ending of (`carryPresence` keeps neither of a work that ran or ended again).
+  if (finished.length + interrupted.length > 0) {
+    const rows = [
+      ...interrupted.map((i) => ({ label: endedLabel(i.row, { word: "Interrupted", line: INTERRUPTED_LINE }), click: opens(i.row.route) })),
+      ...finished.map((r) => ({ label: endedLabel(r), click: opens(r.route) })),
+    ];
+    template.push({ label: `Just finished: ${rows.length}`, submenu: rows.slice(0, MAX_LISTED_ROWS) });
   }
 
   template.push(
@@ -329,6 +468,10 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
     get available() {
       return tray !== null;
     },
+    /** What the menu shows now, which the next poll is carried from (`carryPresence`). */
+    get presence() {
+      return presence;
+    },
     start,
     render,
     /** Live counts from the loopback gateway. */
@@ -365,10 +508,14 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
 
 module.exports = {
   DEEP_LINKS,
-  RUNNING_STATUS,
-  MAX_LISTED_LOOPS,
+  MAX_LISTED_ROWS,
+  INTERRUPTED_KEPT,
+  INTERRUPTED_MS,
+  PHASE_WORDS,
   EMPTY_PRESENCE,
   summarizePresence,
+  carryPresence,
+  bootRead,
   composeTrayTitle,
   composeTrayTooltip,
   buildTrayMenuTemplate,

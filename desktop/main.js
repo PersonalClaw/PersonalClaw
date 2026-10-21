@@ -10,6 +10,8 @@ const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./cap
 const { makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
 const {
   DEEP_LINKS,
+  bootRead,
+  carryPresence,
   summarizePresence,
   makeTrayPresence, trayImageFile,
   shouldHideOnClose,
@@ -99,7 +101,7 @@ const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
 const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
-/** How often the menu bar refreshes its approvals/loops counts. */
+/** How often the menu bar refreshes its approvals count and what is running. */
 const PRESENCE_REFRESH_MS = 5000;
 /** How long quit waits for the gateway to stop before escalating. */
 const GATEWAY_GRACE_MS = 8000;
@@ -126,6 +128,13 @@ let startFailure = null;
  * registration call at the one the user typed.
  */
 let localGatewayUrl = null;
+
+/**
+ * How many starts of the gateway this shell has taken a ready line from (`adoptLocalGateway`): the
+ * first, each restart in place, and each start again after one stopped. A new value is a new
+ * start, so what ran on the one before and is gone now was cut off (`carryPresence`).
+ */
+let gatewayStarts = 0;
 
 /**
  * The shell's sign-in to that gateway: the owner session its ready line hands out for this start,
@@ -365,6 +374,7 @@ function originOf(url) {
  */
 async function adoptLocalGateway(ready) {
   localGatewayUrl = ready.url;
+  gatewayStarts += 1;
   try {
     return await localSignIn.adopt(ready);
   } catch (err) {
@@ -1067,9 +1077,10 @@ function showMainWindow() {
  * to change route. `mainWindow.webContents` is the ACTIVE tab's contents (assigned in
  * `setupWindowContents`), so this follows the tab the user is actually looking at.
  *
- * The hash comes from `DEEP_LINKS`, a closed map, and any interpolated id is
- * `encodeURIComponent`-ed there before `hashAssignmentScript` checks and quotes it — a loop name
- * from the gateway never reaches the page as code.
+ * The hash comes from `DEEP_LINKS`, a closed map, or is the route the local gateway names for a
+ * running row (`running_now`). Either way `hashAssignmentScript` checks it against the hash
+ * grammar and quotes it before the page takes it, so neither a name nor a route from the gateway
+ * reaches the page as code, and a route outside the grammar opens nothing.
  */
 function deepLink(hash) {
   showMainWindow();
@@ -1194,14 +1205,19 @@ function getGateway(pathname) {
 }
 
 /**
- * Refresh the live counts. `GET /api/approvals` is a bare array; `GET /api/loops` is
- * `{loops: [...]}` — both shapes are folded by `summarizePresence`, which renders a
- * failed poll as "not connected" rather than as a zero that looks like good news.
+ * Refresh the live counts. `GET /api/approvals` is a bare array; `GET /api/running` is
+ * `{running: [...], finished: [...]}` — both are folded by `summarizePresence`, which renders a
+ * failed poll as "not connected" rather than as a zero that looks like good news, and
+ * `carryPresence` carries the last rows over a poll that could not read them. Which start of the
+ * gateway the poll read (`gatewayStarts`, taken before the reads) is how a restart that cut work
+ * off is told apart: this shell takes every start's ready line, so it needs no read of its own.
  */
 async function refreshPresence() {
   if (!trayPresence.available) return;
-  const [approvals, loops] = await Promise.all([getGateway("/api/approvals"), getGateway("/api/loops")]);
-  trayPresence.setPresence(summarizePresence(approvals, loops));
+  const before = gatewayStarts;
+  const [approvals, running] = await Promise.all([getGateway("/api/approvals"), getGateway("/api/running")]);
+  const boot = bootRead(before, gatewayStarts);
+  trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(approvals, running), { boot }));
 }
 
 /** Start the presence poll. Polling the loopback API (not the WS) is deliberate: the
