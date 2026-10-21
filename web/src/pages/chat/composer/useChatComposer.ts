@@ -21,7 +21,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
 import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText } from '../chatTypes'
-import { writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
+import { readCachedDetail, writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
 import { repliesToSpeak } from '../useChatVoice'
 
 // ── The composer's controller ─────────────────────────────────────────────────────────────────
@@ -205,7 +205,11 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // (pick a smaller file), so it's dismissible-but-persistent, on a line of its own so a
   // later notice cannot replace it.
   const [attachError, setAttachError] = useState<string | null>(null)
-  const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
+  // A chat's memory mode is fixed when it is made, so the copy a chat paints from (seeded by its
+  // first send, or kept from a visit moments ago) already says it. Start there, not at Persistent,
+  // so a private chat never reads as kept (its tint, its notice, its Execution Boundary control)
+  // until its read lands, or for the whole visit when the read fails.
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>(() => ((sessionId && readCachedDetail(sessionId)?.memory_mode) || 'persistent') as MemoryMode)
 
   // In-flight session-creation promise. ensureSession checks a ref then awaits an
   // async create; two sends fired back-to-back on a brand-new chat (send #1, then

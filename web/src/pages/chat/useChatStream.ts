@@ -62,7 +62,7 @@ import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment
 // confident old transcript that is silently replaced.
 export type ChatDetail = Awaited<ReturnType<typeof api.chatSessionDetail>>
 export const detailKey = (key: string) => `chat:detail:${key}`
-const readCachedDetail = (key: string): ChatDetail | null => peekQuery<ChatDetail>(detailKey(key)) ?? null
+export const readCachedDetail = (key: string): ChatDetail | null => peekQuery<ChatDetail>(detailKey(key)) ?? null
 export function writeCachedDetail(key: string, d: ChatDetail): void {
   // Never cache a running turn's partial transcript — it would paint a stale,
   // mid-stream snapshot on revisit. Only settled sessions are safe to seed from.
