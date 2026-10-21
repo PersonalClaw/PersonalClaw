@@ -13,7 +13,7 @@ an include selects it, or an exclude leaves it out by name. Neither a step nor a
 makes a path known, so an override only ever adds and never takes a job out of a plan.
 
 Some jobs are planned whatever the diff: the rails (``catalogue.MERGE_NEEDS_JOB``) and their
-own check (``catalogue.RAILS_CHECKS_JOB``, which holds every rail to one half), every
+own check (``catalogue.RAILS_CHECKS_JOB``, which holds every rail to one leg), every
 ``security`` job and every ``live`` one. Each job ``after`` names comes with the job that
 names it.
 
@@ -24,9 +24,10 @@ therefore runs everything, never nothing.
 
 Every plan reports the rails floor: the median, over the passing CI runs in a folder of
 telemetry history (``tools/ci/telemetry.py``), or, with ``--repo``, over main's newest collected
-CI runs (:func:`rails_floor_from_ci`), of each run's ``rails`` minutes (the slower of its two
-halves, ``rails (1)`` and ``rails (2)``, or the one job a run before the halves had; a run
-missing a half, or naming one twice, measures nothing); "not measured" when there is none,
+CI runs (:func:`rails_floor_from_ci`), of each run's ``rails`` minutes (the slowest of its
+legs, ``rails (1)`` to ``rails (3)``, or the one job a run before the legs had; a run missing a
+leg, or naming one twice, measures nothing, and so does a run of the two halves the rails ran
+in before); "not measured" when there is none,
 never a guessed number. The floor is a report: nothing it reads changes the jobs.
 
 ``--trusted-areas`` names main's areas file. Its overrides, read against main's own catalogue
@@ -83,9 +84,9 @@ NOT_MEASURED: dict[str, Any] = {"minutes": None, "runs": 0}
 #: The workflow and job whose runs the rails floor is measured from.
 FLOOR_WORKFLOW, FLOOR_JOB = "ci.yml", catalogue.MERGE_NEEDS_JOB
 
-#: The rails job's legs as GitHub names them, one per half (``rails_census.HALVES``).
+#: The rails job's legs as GitHub names them, one per list (``rails_census.LEGS``).
 FLOOR_LEGS: tuple[str, ...] = tuple(
-    f"{FLOOR_JOB} ({n})" for n in range(1, len(rails_census.HALVES) + 1)
+    f"{FLOOR_JOB} ({n})" for n in range(1, len(rails_census.LEGS) + 1)
 )
 
 _WILD = frozenset("*?[")
@@ -511,7 +512,7 @@ def stage_jobs(grid: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 def _is_floor_job(name: object) -> bool:
-    """The rails job, or one of its halves: GitHub names a matrix leg ``rails (1)``."""
+    """The rails job, or one of its legs: GitHub names a matrix leg ``rails (1)``."""
     if not isinstance(name, str):
         return False
     if name == FLOOR_JOB:
@@ -521,10 +522,11 @@ def _is_floor_job(name: object) -> bool:
 
 
 def _run_minutes(jobs: list[Any]) -> float | None:
-    """One run's rails minutes: the slower of its rails jobs, which is when the rails ended.
-    Its rails jobs are the one ``rails`` job of a run before the halves, or exactly the halves
-    (:data:`FLOOR_LEGS`), each once: a run missing a half, naming one twice or both kinds says
-    nothing, and so does one with any rails job that is not a passing measurement."""
+    """One run's rails minutes: the slowest of its rails jobs, which is when the rails ended.
+    Its rails jobs are the one ``rails`` job of a run before the legs, or exactly the legs
+    (:data:`FLOOR_LEGS`), each once: a run missing a leg (one of the two halves the rails ran in
+    before is such a run), naming one twice or both kinds says nothing, and so does one with
+    any rails job that is not a passing measurement."""
     legs = [job for job in jobs if isinstance(job, dict) and _is_floor_job(job.get("name"))]
     names = sorted(str(job["name"]) for job in legs)
     if names != [FLOOR_JOB] and names != sorted(FLOOR_LEGS):
@@ -552,8 +554,8 @@ FLOOR_RUNS, FLOOR_SECONDS = 3, 60.0
 
 
 def _rails_minutes(head: object) -> float | None:
-    """One history file's run line's rails minutes, when they are a measurement: the slower
-    half, or the one job a run before the halves had (:func:`_run_minutes`)."""
+    """One history file's run line's rails minutes, when they are a measurement: the slowest
+    leg, or the one job a run before the legs had (:func:`_run_minutes`)."""
     if not isinstance(head, dict) or head.get("kind") != "run":
         return None
     if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):

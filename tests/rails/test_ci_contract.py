@@ -5853,14 +5853,14 @@ EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
 ROWS = (*ROWS, EVERY_RAIL_LIVES_IN_TESTS_RAILS)
 
 
-# ── Each half of the rails runs once, on its own leg ─────────────────────────────────────────
+# ── Each leg's list of the rails runs once, on its own leg ──────────────────────────────────
 #
-# ci.yml's rails job is a matrix with one leg per list in rails_census.HALVES: leg i runs pytest
-# over tests/rails with `--shard-list` naming HALVES[i-1]. `rails check` holds the lists to every
+# ci.yml's rails job is a matrix with one leg per list in rails_census.LEGS: leg i runs pytest
+# over tests/rails with `--shard-list` naming LEGS[i-1]. `rails check` holds the lists to every
 # rail, each once; this row holds the legs to the lists, so no list runs on two legs and none on
-# no leg. fail-fast is off, so a red half never cancels the other half's run and report, and the
-# step that runs a half has no `if:` of its own, so no leg skips it. The catalogue's rails entry,
-# the one a local run of the tier runs, renders the same list for each of its shards.
+# no leg. fail-fast is off, so a red leg never cancels the other legs' runs and reports, and the
+# step that runs a leg's list has no `if:` of its own, so no leg skips it. The catalogue's rails
+# entry, the one a local run of the tier runs, renders the same list for each of its shards.
 
 _MATRIX_SHARD = re.compile(r"\$\{\{\s*matrix\.shard\s*\}\}")
 
@@ -5885,12 +5885,12 @@ def _runs_rails(words: list[str]) -> bool:
 
 
 def rails_legs_violations(root: Path) -> list[str]:
-    """Each half runs once, on its own leg: ci.yml's rails matrix is one list of shards, 1 to
-    len(HALVES), with fail-fast off; each leg runs pytest over tests/rails once, with no if: of
-    its own, and its ``--shard-list`` is its half; and the catalogue's rails entry has as many
-    shards, shard i rendering half i."""
-    halves = rails_census.HALVES
-    want = [str(n) for n in range(1, len(halves) + 1)]
+    """Each list runs once, on its own leg: ci.yml's rails matrix is one list of shards, 1 to
+    len(LEGS), with fail-fast off; each leg runs pytest over tests/rails once, with no if: of
+    its own, and its ``--shard-list`` is its list; and the catalogue's rails entry has as many
+    shards, shard i rendering list i."""
+    named = rails_census.LEGS
+    want = [str(n) for n in range(1, len(named) + 1)]
     workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
     job = (workflow.get("jobs") or {}).get(catalogue.MERGE_NEEDS_JOB)
     if not isinstance(job, dict):
@@ -5909,13 +5909,13 @@ def rails_legs_violations(root: Path) -> list[str]:
         legs = [str(v) for v in matrix["shard"]]
         if sorted(legs) != want:
             bad.append(
-                f"ci.yml's rails legs are {legs}, and rails_census.HALVES makes them {want}:"
-                " one leg per half, each once"
+                f"ci.yml's rails legs are {legs}, and rails_census.LEGS makes them {want}:"
+                " one leg per list, each once"
             )
     if strategy.get("fail-fast") is not False:
         bad.append(
-            "ci.yml's rails job does not set fail-fast: false, so a red half cancels the other"
-            " half's run and its report"
+            "ci.yml's rails job does not set fail-fast: false, so a red leg cancels the other"
+            " legs' runs and their reports"
         )
     for leg in legs:
         runs: list[tuple[dict[str, Any], list[str]]] = []
@@ -5930,23 +5930,23 @@ def rails_legs_violations(root: Path) -> list[str]:
             )
             continue
         step, lists = runs[0]
-        if leg in want and lists != [halves[int(leg) - 1]]:
+        if leg in want and lists != [named[int(leg) - 1]]:
             bad.append(
                 f"leg {leg} of ci.yml's rails job runs {lists or 'every rail'},"
-                f" and its half is {halves[int(leg) - 1]}"
+                f" and its list is {named[int(leg) - 1]}"
             )
         if "if" in step:
             bad.append(
-                f"leg {leg} of ci.yml's rails job runs its half under if: {step['if']!r},"
+                f"leg {leg} of ci.yml's rails job runs its list under if: {step['if']!r},"
                 " so a leg can skip it"
             )
     try:
         entry = catalogue.read(root).job(catalogue.MERGE_NEEDS_JOB)
     except (OSError, KeyError, catalogue.CatalogueError) as exc:
         return [*bad, f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
-    if entry.shards != len(halves):
+    if entry.shards != len(named):
         bad.append(
-            f"rails: shards is {entry.shards}, and rails_census.HALVES names {len(halves)} halves"
+            f"rails: shards is {entry.shards}, and rails_census.LEGS names {len(named)} lists"
         )
     for shard in range(1, entry.shards + 1):
         lists = [
@@ -5955,10 +5955,10 @@ def rails_legs_violations(root: Path) -> list[str]:
             if _runs_rails(list(step.argv))
             for listed in _shard_lists(_pytest_args(list(step.argv)))
         ]
-        if shard <= len(halves) and lists != [halves[shard - 1]]:
+        if shard <= len(named) and lists != [named[shard - 1]]:
             bad.append(
                 f"rails: shard {shard} of the catalogue's entry runs {lists or 'every rail'},"
-                f" and its half is {halves[shard - 1]}"
+                f" and its list is {named[shard - 1]}"
             )
     return bad
 
@@ -5970,37 +5970,37 @@ def _rails_legs_scaffold(root: Path) -> None:
 
 # Anchored on the rails job's own comment: the browser legs' matrix is the same three lines.
 _RAILS_LEGS = (
-    "      # One red half does not cancel the other: both halves' reports land in one push.\n"
-    "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n"
+    "      # One red leg does not cancel the others: every leg's report lands in one push.\n"
+    "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n"
 )
-_RAILS_HALF_STEP = "      - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)\n"
-_RAILS_HALF_LIST = "--shard-list tools/ci/rails-half-${{ matrix.shard }}.txt"
+_RAILS_LEG_STEP = "      - name: the rails, leg ${{ matrix.shard }} of 3 (tests/rails)\n"
+_RAILS_LEG_LIST = "--shard-list tools/ci/rails-leg-${{ matrix.shard }}.txt"
 
-EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
-    name="each half of the rails runs once, on its own leg",
+EACH_RAILS_LIST_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
+    name="each list of the rails runs once, on its own leg",
     check=rails_legs_violations,
     scaffold=_rails_legs_scaffold,
     controls=(
         _plant(
-            "a matrix that runs half 1 on both legs fails",
+            "a matrix that runs list 1 on two legs fails",
             _CI,
             _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2]", "[1, 1]"),
-            expect="ci.yml's rails legs are ['1', '1']",
+            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 1, 3]"),
+            expect="ci.yml's rails legs are ['1', '1', '3']",
         ),
         _plant(
-            "a matrix with one leg fails",
+            "a matrix with two legs, as the halves were, fails",
             _CI,
             _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2]", "[1]"),
-            expect="ci.yml's rails legs are ['1']",
+            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 2]"),
+            expect="ci.yml's rails legs are ['1', '2']",
         ),
         _plant(
-            "a third leg fails",
+            "a fourth leg fails",
             _CI,
             _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2]", "[1, 2, 3]"),
-            expect="ci.yml's rails legs are ['1', '2', '3']",
+            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 2, 3, 4]"),
+            expect="ci.yml's rails legs are ['1', '2', '3', '4']",
         ),
         _plant(
             "a matrix that adds a leg by include fails",
@@ -6010,16 +6010,23 @@ EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
             expect="ci.yml's rails matrix is not one list of shards",
         ),
         _plant(
-            "a leg that reads half 1 whatever its shard fails",
+            "a leg that reads list 1 whatever its shard fails",
             _CI,
-            _RAILS_HALF_LIST,
-            "--shard-list tools/ci/rails-half-1.txt",
-            expect="leg 2 of ci.yml's rails job runs ['tools/ci/rails-half-1.txt']",
+            _RAILS_LEG_LIST,
+            "--shard-list tools/ci/rails-leg-1.txt",
+            expect="leg 3 of ci.yml's rails job runs ['tools/ci/rails-leg-1.txt']",
+        ),
+        _plant(
+            "a leg that reads the old half's list fails",
+            _CI,
+            _RAILS_LEG_LIST,
+            "--shard-list tools/ci/rails-half-${{ matrix.shard }}.txt",
+            expect="leg 2 of ci.yml's rails job runs ['tools/ci/rails-half-2.txt']",
         ),
         _plant(
             "a leg that runs every rail fails",
             _CI,
-            _RAILS_HALF_LIST + " ",
+            _RAILS_LEG_LIST + " ",
             "",
             expect="leg 1 of ci.yml's rails job runs every rail",
         ),
@@ -6031,55 +6038,162 @@ EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
             expect="does not set fail-fast: false",
         ),
         _plant(
-            "the step that runs a half skipped on one leg fails",
+            "the step that runs a leg's list skipped on one leg fails",
             _CI,
-            _RAILS_HALF_STEP,
-            _RAILS_HALF_STEP + "        if: ${{ matrix.shard == 1 }}\n",
-            expect="leg 2 of ci.yml's rails job runs its half under if:",
+            _RAILS_LEG_STEP,
+            _RAILS_LEG_STEP + "        if: ${{ matrix.shard != 3 }}\n",
+            expect="leg 3 of ci.yml's rails job runs its list under if:",
         ),
         _plant(
             "a second run of tests/rails on each leg fails",
             _CI,
-            _RAILS_HALF_STEP,
+            _RAILS_LEG_STEP,
             "      - name: one rail again\n"
-            "        run: uv run pytest -q tests/rails/test_ci_contract.py\n" + _RAILS_HALF_STEP,
+            "        run: uv run pytest -q tests/rails/test_ci_contract.py\n" + _RAILS_LEG_STEP,
             expect="leg 1 of ci.yml's rails job runs pytest over tests/rails 2 times",
         ),
         _plant(
-            "the catalogue's shards reading half 1 fail",
+            "the catalogue's shards reading list 1 fail",
             catalogue.CATALOGUE,
-            '"--shard-list", "tools/ci/rails-half-{shard}.txt"',
-            '"--shard-list", "tools/ci/rails-half-1.txt"',
-            expect="rails: shard 2 of the catalogue's entry runs ['tools/ci/rails-half-1.txt']",
+            '"--shard-list", "tools/ci/rails-leg-{shard}.txt"',
+            '"--shard-list", "tools/ci/rails-leg-1.txt"',
+            expect="rails: shard 2 of the catalogue's entry runs ['tools/ci/rails-leg-1.txt']",
         ),
         _plant(
-            "the catalogue's rails in three shards fail",
+            "the catalogue's rails in two shards fail",
             catalogue.CATALOGUE,
-            "workers = 4\nshards = 2\n",
             "workers = 4\nshards = 3\n",
-            expect="rails: shards is 3, and rails_census.HALVES names 2 halves",
+            "workers = 4\nshards = 2\n",
+            expect="rails: shards is 2, and rails_census.LEGS names 3 lists",
         ),
         _plant(
-            "the legs listed in the other order pass",
+            "the legs listed in another order pass",
             _CI,
             _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2]", "[2, 1]"),
+            _RAILS_LEGS.replace("[1, 2, 3]", "[3, 1, 2]"),
             fails=False,
         ),
         _plant(
             "a list passed as --shard-list=FILE passes",
             _CI,
-            _RAILS_HALF_LIST,
-            _RAILS_HALF_LIST.replace("--shard-list ", "--shard-list="),
+            _RAILS_LEG_LIST,
+            _RAILS_LEG_LIST.replace("--shard-list ", "--shard-list="),
             fails=False,
         ),
     ),
 )
 
-ROWS = (*ROWS, EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG)
+ROWS = (*ROWS, EACH_RAILS_LIST_RUNS_ONCE_ON_ITS_OWN_LEG)
+
+# ── Every rail is in exactly one leg ────────────────────────────────────────────────────────
+#
+# The legs row holds each leg to its list; this row holds the lists to the rails. Together the
+# lists name every module pytest collects under tests/rails once, so moving files between the
+# legs to rebalance them can neither drop a rail nor run one twice. `rails check` runs the same
+# function in `rails-checks`; the row adds the planted proof that each clause bites.
+
+_LEG_1, _LEG_2, _LEG_3 = rails_census.LEGS
+_SCAFFOLD_RAILS = tuple(
+    f"{rails_census.RAILS}/{name}" for name in ("test_a.py", "test_b.py", "c_test.py", "test_d.py")
+)
+#: A helper module beside the rails, which pytest does not collect, so it is in no leg.
+_SCAFFOLD_HELPER = f"{rails_census.RAILS}/rails_helper.py"
 
 
-# ── Each rails half compares the site baselines with the gate's base (#3930) ────────────────
+def _rails_lists_scaffold(root: Path) -> None:
+    for rel in _SCAFFOLD_RAILS:
+        _write(root, rel, "def test_it():\n    pass\n")
+    _write(root, _SCAFFOLD_HELPER, "VALUE = 1\n")
+    _write(root, "tests/test_suite.py", "def test_it():\n    pass\n")
+    # Leg 2 holds two rails, so one can move out of it and no leg is left empty.
+    _write(root, _LEG_1, f"{_SCAFFOLD_RAILS[0]}\n")
+    _write(root, _LEG_2, f"{_SCAFFOLD_RAILS[1]}\n{_SCAFFOLD_RAILS[3]}\n")
+    _write(root, _LEG_3, f"{_SCAFFOLD_RAILS[2]}\n")
+
+
+EVERY_RAIL_IS_IN_EXACTLY_ONE_LEG = Row(
+    name="every rail is in exactly one leg of the rails job",
+    check=rails_census.leg_violations,
+    scaffold=_rails_lists_scaffold,
+    controls=(
+        Control(
+            "a new rail in no leg fails",
+            lambda root: _write(root, f"{rails_census.RAILS}/test_new.py", "def test_it(): ...\n"),
+            expect="tests/rails/test_new.py is in no leg",
+        ),
+        _plant(
+            "a rail dropped from its leg fails",
+            _LEG_2,
+            f"{_SCAFFOLD_RAILS[3]}\n",
+            "",
+            expect="tests/rails/test_d.py is in no leg",
+        ),
+        Control(
+            "a rail listed in two legs fails",
+            _append(_LEG_3, f"{_SCAFFOLD_RAILS[0]}\n"),
+            expect=f"tests/rails/test_a.py is listed 2 times ({_LEG_1}, {_LEG_3})",
+        ),
+        Control(
+            "a rail listed twice in one leg fails",
+            _append(_LEG_2, f"{_SCAFFOLD_RAILS[1]}\n"),
+            expect=f"tests/rails/test_b.py is listed 2 times ({_LEG_2}, {_LEG_2})",
+        ),
+        Control(
+            "a listed rail that is gone fails",
+            _remove(_SCAFFOLD_RAILS[2]),
+            expect=f"tests/rails/c_test.py is listed in {_LEG_3} and is no test module",
+        ),
+        Control(
+            "a suite module listed in a leg fails",
+            _append(_LEG_2, "tests/test_suite.py\n"),
+            expect=f"tests/test_suite.py is listed in {_LEG_2} and is no test module",
+        ),
+        Control(
+            "a helper module beside the rails listed in a leg fails",
+            _append(_LEG_1, f"{_SCAFFOLD_HELPER}\n"),
+            expect=f"{_SCAFFOLD_HELPER} is listed in {_LEG_1} and is no test module",
+        ),
+        Control(
+            "a leg emptied into another fails",
+            lambda root: (
+                _write(root, _LEG_3, ""),
+                _append(_LEG_2, f"{_SCAFFOLD_RAILS[2]}\n")(root),
+            ),
+            expect=f"{_LEG_3} names no file",
+        ),
+        Control(
+            "a missing leg fails",
+            _remove(_LEG_1),
+            expect=f"{_LEG_1} cannot be read",
+        ),
+        Control(
+            "the two halves' lists in place of the legs fail: the census reads only the legs",
+            lambda root: (
+                [(root / leg).unlink() for leg in rails_census.LEGS],
+                _write(root, "tools/ci/rails-half-1.txt", f"{_SCAFFOLD_RAILS[0]}\n"),
+                _write(
+                    root,
+                    "tools/ci/rails-half-2.txt",
+                    "".join(f"{rel}\n" for rel in _SCAFFOLD_RAILS[1:]),
+                ),
+            ),
+            expect="tests/rails/test_a.py is in no leg",
+        ),
+        Control(
+            "a rail moved from one leg to another passes",
+            lambda root: (
+                _write(root, _LEG_2, f"{_SCAFFOLD_RAILS[1]}\n"),
+                _append(_LEG_3, f"{_SCAFFOLD_RAILS[3]}\n")(root),
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_RAIL_IS_IN_EXACTLY_ONE_LEG)
+
+
+# ── Each rails leg compares the site baselines with the gate's base (#3930) ─────────────────
 # A site baseline (tests/site_baseline.py) read against the gate's base commit admits a line the
 # base lacks only with `added` and a reason, and writes each such line to the job summary. With no
 # base it compares the file with the working tree alone, which passes: a rails job that lost its
@@ -6241,7 +6355,7 @@ _RAILS_BASE_HEAD = (
     + "        id: base\n        env:\n"
     + "          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n"
 )
-_RAILS_LATER_STEP = "      # Same argument as `test-shard`'s upload step, one artifact per half.\n"
+_RAILS_LATER_STEP = "      # Same argument as `test-shard`'s upload step, one artifact per leg.\n"
 #: apps-contract's base step, by the name only it has.
 _APPS_BASE_NAME = (
     "      - name: fetch the base commit (its SDK snapshot and CHANGELOG are the baseline)\n"
@@ -6266,7 +6380,7 @@ def _in_both_base_steps(name: str, old: str, new: str, expect: str) -> Control:
 
 
 def _base_step_after_the_rails(root: Path) -> None:
-    """The rails job's base step, unchanged, moved to just after the step that runs a half."""
+    """The rails job's base step, unchanged, moved to just after the step that runs a leg's list."""
     text = (root / _CI).read_text(encoding="utf-8")
     start = text.index(_RAILS_BASE_NAME)
     end = text.index("\n      - ", start) + 1
@@ -6275,15 +6389,15 @@ def _base_step_after_the_rails(root: Path) -> None:
     _write(root, _CI, text.replace(_RAILS_LATER_STEP, block + _RAILS_LATER_STEP, 1))
 
 
-EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE = Row(
-    name="each rails half compares the site baselines with the gate's base",
+EACH_RAILS_LEG_COMPARES_WITH_THE_GATES_BASE = Row(
+    name="each rails leg compares the site baselines with the gate's base",
     check=rails_base_violations,
     scaffold=_rails_legs_scaffold,
     controls=(
         Control(
             "a rails step with no BASE_SHA fails, in ci.yml and the catalogue alike",
             _edits(
-                (_CI, _RAILS_HALF_STEP + _RAILS_BASE_ENV, _RAILS_HALF_STEP),
+                (_CI, _RAILS_LEG_STEP + _RAILS_BASE_ENV, _RAILS_LEG_STEP),
                 (catalogue.CATALOGUE, _RAILS_BASE_TOML, _RAILS_JUNIT_TOML + " },"),
             ),
             expect="takes BASE_SHA from None",
@@ -6291,8 +6405,8 @@ EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE = Row(
         _plant(
             "BASE_SHA taken from the commit under test fails",
             _CI,
-            _RAILS_HALF_STEP + _RAILS_BASE_ENV,
-            _RAILS_HALF_STEP + _RAILS_BASE_ENV.replace("steps.base.outputs.ref", "github.sha"),
+            _RAILS_LEG_STEP + _RAILS_BASE_ENV,
+            _RAILS_LEG_STEP + _RAILS_BASE_ENV.replace("steps.base.outputs.ref", "github.sha"),
             expect="takes BASE_SHA from '${{ github.sha }}'",
         ),
         _plant(
@@ -6371,7 +6485,7 @@ EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE = Row(
     ),
 )
 
-ROWS = (*ROWS, EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE)
+ROWS = (*ROWS, EACH_RAILS_LEG_COMPARES_WITH_THE_GATES_BASE)
 
 
 # ── Every push to main checks the commits it lands, with main's previous check (#3908) ───────
@@ -7908,8 +8022,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "the rails step's BASE_SHA gone from ci.yml alone fails",
             _CI,
-            _RAILS_HALF_STEP + _RAILS_BASE_ENV,
-            _RAILS_HALF_STEP,
+            _RAILS_LEG_STEP + _RAILS_BASE_ENV,
+            _RAILS_LEG_STEP,
             expect="rails: command step 1",
         ),
         # A placeholder's variable is dropped from a step's env only when a command of its run:
@@ -7919,8 +8033,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             _CI,
             (
                 (
-                    _RAILS_HALF_STEP + _RAILS_BASE_ENV,
-                    _RAILS_HALF_STEP + _RAILS_BASE_ENV + "          BEFORE: ${{ github.sha }}\n",
+                    _RAILS_LEG_STEP + _RAILS_BASE_ENV,
+                    _RAILS_LEG_STEP + _RAILS_BASE_ENV + "          BEFORE: ${{ github.sha }}\n",
                 ),
                 (
                     "        run: uv run pytest -n 4 --dist worksteal -q tests/rails ",
@@ -7937,8 +8051,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             _CI,
             (
                 (
-                    _RAILS_HALF_STEP + _RAILS_BASE_ENV,
-                    _RAILS_HALF_STEP + _RAILS_BASE_ENV + "          RUNNER_ARCH: X64\n",
+                    _RAILS_LEG_STEP + _RAILS_BASE_ENV,
+                    _RAILS_LEG_STEP + _RAILS_BASE_ENV + "          RUNNER_ARCH: X64\n",
                 ),
                 (
                     "        run: uv run pytest -n 4 --dist worksteal -q tests/rails ",

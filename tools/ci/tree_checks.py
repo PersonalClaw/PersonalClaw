@@ -154,12 +154,12 @@ CHECKS: Mapping[str, Check] = {
         sources=(),
     ),
     # The census's verdict: every rail in tests/rails, and in exactly one of the rails job's
-    # halves. It reads the tree it is handed, so only the root as its argument is a copy.
+    # legs. It reads the tree it is handed, so only the root as its argument is a copy.
     "rails-census": Check(
         owner="ci.yml rails-checks: python -m tools.ci rails check",
         entries={
             ("tools.ci.rails_census", name): ROOT
-            for name in ("census", "violations", "half_violations")
+            for name in ("census", "violations", "leg_violations")
         },
         sources=(),
     ),

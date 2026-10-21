@@ -279,11 +279,11 @@ def test_a_merge_tier_without_the_rails_job_is_refused() -> None:
     assert any("the merge tier lacks the rails job" in p for p in problems), problems
 
 
-#: The rails in two halves, as ci.yml runs them, and the job that runs `rails check`.
-_HALVED_RAILS = (
+#: The rails in three legs, as ci.yml runs them, and the job that runs `rails check`.
+_RAILS_IN_LEGS = (
     'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
-    'shards = 2\ncommand = [{ argv = ["uv", "run", "pytest", "tests/rails", "--shard-list",'
-    ' "tools/ci/rails-half-{shard}.txt"] }]',
+    'shards = 3\ncommand = [{ argv = ["uv", "run", "pytest", "tests/rails", "--shard-list",'
+    ' "tools/ci/rails-leg-{shard}.txt"] }]',
 )
 _RAILS_CHECKS = """
 [[job]]
@@ -300,16 +300,16 @@ command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] 
 """
 
 
-def test_halved_rails_without_their_check_in_the_merge_tier_are_refused() -> None:
-    """With the rails in halves, `rails check` is what holds every rail to one of them: a merge
-    tier without the job that runs it could pass with a rail in neither half."""
-    halved = _with(*_HALVED_RAILS)
-    problems = _refused(halved)
-    assert any(
-        "lacks rails-checks, so a rail can be in neither half" in p for p in problems
-    ), problems
-    held = halved.replace('jobs = ["rails",', 'jobs = ["rails", "rails-checks",', 1) + _RAILS_CHECKS
-    assert catalogue.load(held).job("rails").shards == 2
+def test_rails_in_legs_without_their_check_in_the_merge_tier_are_refused() -> None:
+    """With the rails in legs, `rails check` is what holds every rail to one of them: a merge
+    tier without the job that runs it could pass with a rail in no leg."""
+    in_legs = _with(*_RAILS_IN_LEGS)
+    problems = _refused(in_legs)
+    assert any("lacks rails-checks, so a rail can be in no leg" in p for p in problems), problems
+    held = (
+        in_legs.replace('jobs = ["rails",', 'jobs = ["rails", "rails-checks",', 1) + _RAILS_CHECKS
+    )
+    assert catalogue.load(held).job("rails").shards == 3
     off_merge = held.replace(
         'id = "rails-checks"\ntiers = ["change", "merge"]',
         'id = "rails-checks"\ntiers = ["change"]',

@@ -388,7 +388,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_planted():
-    assert rails_census.half_violations(REPO) == []
+    assert rails_census.leg_violations(REPO) == []
 """
 
 
@@ -410,7 +410,7 @@ def test_planted():
         "harness scan",
         "the licence sweep on the root",
         "the scanner on the tracked files",
-        "the rails census's halves on the root",
+        "the rails census's legs on the root",
     ],
 )
 def test_a_planted_real_tree_run_is_a_copy(source, check) -> None:
@@ -466,7 +466,7 @@ def test_one_source_left_real_is_still_a_copy() -> None:
         "from harness import scanner\n\ndef test_planted(tmp_path):\n"
         "    assert scanner.scan([tmp_path / 'a.py'], tmp_path) == []\n",
         "from tools.ci import rails_census\n\ndef test_planted(tmp_path):\n"
-        "    assert rails_census.half_violations(tmp_path) == []\n",
+        "    assert rails_census.leg_violations(tmp_path) == []\n",
     ],
     ids=[
         "scan --diff",

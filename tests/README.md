@@ -141,23 +141,28 @@ laptop is not a reason to raise one. `tests/timeout_marks.py` says how a mark's 
 
 A rail checks the source tree rather than running the product: a census, a ratchet, a parity
 or wiring check, a row of the CI contract table. Rails live in `tests/rails/` and run once per
-CI run, in the two halves of `ci.yml`'s `rails` job, and nightly on macOS in `breadth.yml`'s
-`rails-macos` leg. No suite shard runs them. To run every rail, as both halves together do:
+CI run, in the three legs of `ci.yml`'s `rails` job, and nightly on macOS in `breadth.yml`'s
+`rails-macos` leg. No suite shard runs them. To run every rail, as the three legs together do:
 
 ```bash
 python -m pytest tests/rails -n 4 --dist worksteal
 ```
 
-`tools/ci/rails-half-1.txt` and `tools/ci/rails-half-2.txt` name each half's files, balanced by
-their recorded seconds so each half finishes well inside the job's 10-minute cap. A new rail goes
-in the lighter half; `python -m tools.ci rails check` fails on a rail in neither half or in both
-(a rail is any module pytest collects there, `test_*.py` or `*_test.py`), and on a listed file
-that is no module under `tests/rails/`. Leg `i` of the job runs `rails-half-<i>.txt`, and the
-"each half of the rails runs once, on its own leg" row of the contract table holds the matrix to
-the lists. To run one half as CI does:
+`tools/ci/rails-leg-1.txt`, `rails-leg-2.txt` and `rails-leg-3.txt` name each leg's files, balanced
+by the time each file takes on the slowest common runner, so each leg finishes well inside 8 minutes
+and the job's 10-minute cap. Junit counts the time of a test's subtests twice (once in the test,
+once per subtest), so a file whose tests use subtests weighs less than its junit seconds. The legs
+hold about a third of the time each, not a third of the files: leg 3 holds the fewest. A new rail
+goes in the leg whose recent runs took the least time (each leg's step time on main, or its
+`junit-rails-<i>` report); `python -m tools.ci rails check` fails on a rail in no leg or in two (a
+rail is any module pytest collects there, `test_*.py` or `*_test.py`), and on a listed file that is
+no module under `tests/rails/`. The "every rail is in exactly one leg of the rails job" row of the
+contract table plants each of those. Leg `i` of the job runs `rails-leg-<i>.txt`, and the "each list
+of the rails runs once, on its own leg" row holds the matrix to the lists. To run one leg as CI
+does:
 
 ```bash
-python -m pytest tests/rails -n 4 --dist worksteal --shard-list tools/ci/rails-half-1.txt
+python -m pytest tests/rails -n 4 --dist worksteal --shard-list tools/ci/rails-leg-1.txt
 ```
 
 `tools/ci/rails_census.py` decides which modules are rails, from their source: a module is a rail
