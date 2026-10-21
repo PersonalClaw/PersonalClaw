@@ -31,3 +31,5 @@ export function detectorCommand(options?: {
 export function configProblems(read?: (rel: string) => string | undefined): string[]
 export function readRun(run: DetectorRun, webRoot?: string): { findings: Finding[]; problems: string[] }
 export function baselineText(findings: readonly Finding[]): string
+/** The environment the detector's binary runs with: PATH, HOME, temp dirs and locale from *base*, and the telemetry switches; nothing else. */
+export function detectorEnv(command: { env: Record<string, string> }, base?: Record<string, string | undefined>): Record<string, string>

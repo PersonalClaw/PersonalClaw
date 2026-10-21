@@ -155,6 +155,18 @@ export function baselineText(findings) {
     .join('')
 }
 
+/** The variables the detector's binary may see: where to find programs and write temporary files,
+ *  the locale, and the telemetry switches. Nothing else of the caller's environment reaches it, so
+ *  no token (CI's, a developer's credentials, an app session's) is handed to a third-party binary
+ *  that can open connections. */
+const PASSED_THROUGH = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SystemRoot', 'USERPROFILE']
+
+export function detectorEnv(command, base = process.env) {
+  const env = {}
+  for (const name of PASSED_THROUGH) if (typeof base[name] === 'string') env[name] = base[name]
+  return { ...env, ...command.env }
+}
+
 function main(argv) {
   const write = argv.includes('--write')
   const refused = configProblems()
@@ -168,7 +180,7 @@ function main(argv) {
     cwd: command.cwd,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...command.env },
+    env: detectorEnv(command),
   })
   if (result.error) {
     console.error(`design detector: ${command.bin} did not run: ${result.error.message}`)
