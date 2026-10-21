@@ -118,6 +118,10 @@ LIVE_INPUTS = frozenset(k for k, kind in EXTERNAL_INPUT_KINDS.items() if kind ==
 #: The external inputs a tree does not pin: a job that reads one is never reused by tree.
 UNPINNED_INPUTS = frozenset(k for k, kind in EXTERNAL_INPUT_KINDS.items() if kind == "unpinned")
 
+#: The partner checkouts: a job that reads one names its revision in its record, and the verdict
+#: holds the record to exactly the ones its job reads.
+REVISION_INPUTS = frozenset(k for k, kind in EXTERNAL_INPUT_KINDS.items() if kind == "revision")
+
 #: The installs that are a job's toolchain, never one of its steps, each by the start of its
 #: argv and the toolchain word that names it. Whatever runs a job installs its toolchain first.
 INSTALLS: tuple[tuple[tuple[str, ...], str], ...] = (

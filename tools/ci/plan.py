@@ -47,8 +47,9 @@ and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
 shard, keyed as ``run-job`` keys its record, each with the stage it runs in after the planned
 jobs whose output it uses. With ``--outputs`` it adds ``matrix=<JSON>`` (the ``include`` list a
 ``strategy.matrix`` reads), ``keys=<JSON list>`` (every entry's key, the plan a results stage
-judges the uploaded records against), and a ``matrix-<job>=<JSON>`` line for each workflow job
-that runs part of it (:func:`stage_jobs`): ``build``, ``test`` and ``test-<k>``.
+judges the uploaded records against), ``key-partners=<JSON object>`` (each key's partner
+checkouts, which its record must name exactly), and a ``matrix-<job>=<JSON>`` line for each
+workflow job that runs part of it (:func:`stage_jobs`): ``build``, ``test`` and ``test-<k>``.
 
 Standard library only, like every ``tools/ci`` module. Pathspecs are read as git reads them;
 a test holds :func:`reaches` to ``git ls-files`` over the forms the catalogue accepts, and the
@@ -439,7 +440,9 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
     the entry's job uses, and ``stage`` is 1 for an entry that waits for none, else one more than
     the latest stage it waits for: a ``strategy.matrix`` starts every entry at once, so a
     workflow runs one matrix per stage, each after the one before. ``keys`` lists every entry's
-    key: the plan a results stage judges the run's records against. A planned job the catalogue
+    key: the plan a results stage judges the run's records against, and ``partners`` each key's
+    partner checkouts (its job's :data:`catalogue.REVISION_INPUTS`), the partners its record must
+    name, no more and no fewer. A planned job the catalogue
     does not hold, or an ``after`` that makes a cycle, raises ValueError naming it, so the
     command plans nothing and its caller runs everything.
 
@@ -485,7 +488,10 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
                     "external": list(job.external_inputs),
                 }
             )
-    return {"include": include, "keys": [e["key"] for e in include]}
+    partners = {
+        e["key"]: [i for i in e["external"] if i in catalogue.REVISION_INPUTS] for e in include
+    }
+    return {"include": include, "keys": [e["key"] for e in include], "partners": partners}
 
 
 def stage_jobs(grid: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -811,6 +817,7 @@ def main(argv: list[str]) -> int:
             include = {"include": grid["include"]}
             print("matrix=" + json.dumps(include, separators=(",", ":"), sort_keys=True))
             print("keys=" + json.dumps(grid["keys"], separators=(",", ":")))
+            print("key-partners=" + json.dumps(grid["partners"], separators=(",", ":")))
             # One more line per workflow job that runs part of it, each its own `include`.
             for name, entries in stage_jobs(grid).items():
                 part = json.dumps({"include": entries}, separators=(",", ":"), sort_keys=True)

@@ -31,8 +31,13 @@ def _with(**fields) -> str:
 
 def test_a_record_reads_back_as_the_result_it_names() -> None:
     [result] = verdict.from_job_records([_record(attempt=2)])
+    # A record names the partners its own job read, so it is judged against those alone.
     assert result == verdict.JobResult(
-        "rails", verdict.SUCCESS, verdict.Identity(HEAD, {"apps-partner": PARTNER}), 2
+        "rails",
+        verdict.SUCCESS,
+        verdict.Identity(HEAD, {"apps-partner": PARTNER}),
+        2,
+        own_partners=True,
     )
 
 

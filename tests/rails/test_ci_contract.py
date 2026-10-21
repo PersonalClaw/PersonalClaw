@@ -145,6 +145,29 @@ def _planned_pythons(tree: Tree, tier: str) -> list[str]:
     return sorted({j.python for j in cat.tier(tier) if j.python and j.python != "image"})
 
 
+@functools.lru_cache(maxsize=8)
+def _planned_entries(text: str, tier: str) -> tuple[dict[str, Any], ...]:
+    """Every entry the tier's plan can give a stage job: the whole tier's matrix, from the
+    catalogue's ``text``. A plan for a diff holds some of these, each in one of the stage jobs.
+    Read once per catalogue and tier; no caller changes an entry."""
+    cat = catalogue.load(text, catalogue.CATALOGUE)
+    return tuple(ci_plan.matrix(cat, ci_plan.plan(cat, tier, None, overrides=()))["include"])
+
+
+def _literal_matrix(tree: Tree, name: str, job: dict[str, Any]) -> dict[str, Any]:
+    """``job`` with a tier workflow's planned matrix read as the literal entries its tier's plan
+    can give it, so ``${{ matrix.<key> }}`` resolves entry by entry; any other job as it is. A
+    catalogue that cannot be read leaves the matrix an expression, which a row refuses."""
+    tier = _planned_tier(name, job)
+    if tier is None:
+        return job
+    try:
+        entries = _planned_entries(tree.get(catalogue.CATALOGUE, ""), tier)
+    except (catalogue.CatalogueError, ValueError):
+        return job
+    return {**job, "strategy": {**job["strategy"], "matrix": {"include": list(entries)}}}
+
+
 def _action(step: dict[str, Any]) -> str:
     return str(step.get("uses", "")).split("@", 1)[0]
 
@@ -561,7 +584,7 @@ def _plants(name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str
 
 
 def _plant_in_job(
-    name: str, rel: str, job_id: str, old: str, new: str, expect: str = ""
+    name: str, rel: str, job_id: str, old: str, new: str, expect: str = "", fails: bool = True
 ) -> Control:
     """A violation planted by one edit inside one job of a workflow: the first *old* after the
     job's own ``  <job_id>:`` line, so text that every job of a family shares names one."""
@@ -573,7 +596,7 @@ def _plant_in_job(
         assert start >= 0 and at >= 0, f"the plant {name!r} found no {old!r} in {rel}:{job_id}"
         _write(root, rel, text[:at] + new + text[at + len(old) :])
 
-    return Control(name, plant, True, expect)
+    return Control(name, plant, fails, expect)
 
 
 def _plant_job_copy(name: str, rel: str, job_id: str, copy_id: str, expect: str = "") -> Control:
@@ -9286,6 +9309,7 @@ def merge_verdict_violations(tree: Tree) -> list[str]:
             bad.append(f"{name} runs candidate code and names {MERGE_VERDICT} outside its jobs")
         for job_id, job in _trust_jobs(workflow).items():
             where = f"{name}:{job_id}"
+            job = _literal_matrix(tree, name, job)
             unresolved = _unresolved_name(job)
             if unresolved:
                 bad.append(
@@ -9321,6 +9345,20 @@ _REUSABLE = (
     "jobs:\n  merge-verdict:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo green\n"
 )
 _VERDICT_JOB = "  merge-verdict:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo green\n"
+
+#: pr.yml as the flip will run it: on pull_request, one group per pull request.
+_PR_YML_ON_PULL_REQUEST = _both(
+    _plant("", _PR_YML, "on:\n  workflow_dispatch: {}\n",
+           "on:\n  pull_request:\n  workflow_dispatch: {}\n").plant,
+    _plant("", _PR_YML, "  group: pr-${{ github.sha }}\n",
+           "  group: pr-${{ github.event.pull_request.number || github.sha }}\n").plant,
+)  # fmt: skip
+#: A catalogue job of the change tier renamed merge-verdict, which a planned stage job would run
+#: under: the key the plan gives its entry is the job's id.
+_CATALOGUE_JOB_NAMED_MERGE_VERDICT = _both(
+    _plant("", catalogue.CATALOGUE, 'id = "client"\n', 'id = "merge-verdict"\n').plant,
+    _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
+)
 
 NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
     "no workflow that runs candidate code posts the merge-verdict check",
@@ -9573,6 +9611,32 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
                 "permissions:\n  contents: read\njobs:\n" + _VERDICT_JOB,
             ),
             fails=False,
+        ),
+        # A tier workflow's stage job is named from its planned matrix: each entry's key, which
+        # the tree's catalogue gives, so the row reads every key the tier's plan can give it.
+        Control(
+            "pr.yml on pull_request, its stage job named by the planned matrix, passes",
+            _PR_YML_ON_PULL_REQUEST,
+            fails=False,
+        ),
+        Control(
+            "pr.yml on pull_request beside a catalogue job named merge-verdict",
+            _both(_PR_YML_ON_PULL_REQUEST, _CATALOGUE_JOB_NAMED_MERGE_VERDICT),
+            expect="pr.yml:test runs candidate code under the check name merge-verdict",
+        ),
+        Control(
+            "a planned matrix's expression in a workflow that is not a tier workflow",
+            _plant(
+                "",
+                _CI,
+                _JOBS,
+                _ci_adds_job(
+                    "  results:\n    name: ${{ matrix.key }}\n    runs-on: ubuntu-24.04\n"
+                    "    strategy:\n      matrix: ${{ fromJSON(needs.changes.outputs.test) }}\n"
+                    "    steps: []\n"
+                ),
+            ).plant,
+            expect="ci.yml:results runs candidate code under a name the row cannot read",
         ),
     ),
 )
@@ -9865,7 +9929,13 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
             (f"{name}:{job_id}", _concurrency_group(job.get("concurrency")))
             for job_id, job in _trust_jobs(workflow).items()
         ]
-        jobs = {"": {}, **{job_id: job for job_id, job in _trust_jobs(workflow).items()}}
+        jobs = {
+            "": {},
+            **{
+                job_id: _literal_matrix(tree, name, job)
+                for job_id, job in _trust_jobs(workflow).items()
+            },
+        }
         for where, group in groups:
             if group is None:
                 continue
@@ -10084,6 +10154,21 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                               "name: On close\non:\n  pull_request:\n    types: [closed]\n"
                               "concurrency:\n  group: close-lane\npermissions: {}\njobs: {}\n"),
                 fails=False),
+        # A tier workflow's stage job reads its planned matrix: each entry the tier's plan can
+        # give it, from the tree's catalogue.
+        Control("pr.yml on pull_request, a stage job's group keyed on the pull request and entry",
+                _both(_PR_YML_ON_PULL_REQUEST,
+                      _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
+                                    "    needs: [changes]\n    concurrency:\n"
+                                    "      group: pr-${{ github.event.pull_request.number }}"
+                                    "-${{ matrix.key }}\n").plant),
+                fails=False),
+        Control("pr.yml on pull_request, a stage job's group keyed on the entry alone",
+                _both(_PR_YML_ON_PULL_REQUEST,
+                      _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
+                                    "    needs: [changes]\n    concurrency:\n"
+                                    "      group: entry-${{ matrix.key }}\n").plant),
+                expect="pr.yml:test: the group 'entry-"),
     ),
 )  # fmt: skip
 
@@ -11783,6 +11868,15 @@ _RUN_JOB_LINE = (
 _TIER_LINES: dict[str, dict[str, str]] = {
     _PLAN_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
+        "the apps repository's head, read once for the run, or no partner": r"""
+set -uo pipefail
+apps=$(git ls-remote https://github.com/PersonalClaw/PersonalClawApps refs/heads/main | cut -f1) || apps=""
+if ! [[ "$apps" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error title=no partner::the apps repository's main could not be read, so no entry can check it out and the verdict is red. Re-run the job."
+  exit 1
+fi
+echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"
+""",  # noqa: E501
         "the changed paths, against main's tip": r"""
 set -uo pipefail
 listed="$RUNNER_TEMP/changed.json"
@@ -11825,6 +11919,9 @@ for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
 keys = json.loads(lines.pop("keys", "null"))
 if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
     sys.exit("no plan: the keys are not a list of job keys")
+partners = json.loads(lines.pop("key-partners", "null"))
+if not isinstance(partners, dict) or list(partners) != keys or not all(isinstance(v, list) and all(isinstance(n, str) and n for n in v) for v in partners.values()):
+    sys.exit("no plan: the key partners are not each key's list of partner names")
 runs = sys.argv[2].split()
 extra = sorted(set(lines) - {"full", "jobs", "matrix"} - {f"matrix-{job}" for job in runs})
 if extra:
@@ -11844,6 +11941,7 @@ for job in runs:
 if sorted(ran) != sorted(keys):
     sys.exit("the stage jobs run other entries than the plan's keys")
 print(f"keys={json.dumps(keys, separators=(',', ':'))}")
+print(f"key-partners={json.dumps(partners, separators=(',', ':'))}")
 EOF
 then
   echo "::error title=no plan::the planner answered no plan this workflow can run, so nothing runs and the verdict is red. The lines above, and the summary, say why."
@@ -11872,8 +11970,10 @@ fi
         "the runner's identity": _RUNNER_IDENTITY_LINE,
         "one shard plan for the run, as ci.yml's": r"""
 python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:ci.yml:junit-test-shard-:4 --leg test-macos:ci.yml:junit-test-macos-:4 --out "$RUNNER_TEMP/shard-plan/plan.json"
-python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
 """,  # noqa: E501
+        "every file in exactly one shard of each leg": r"""
+python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
+""",
     },
     _RESULTS_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
@@ -11887,12 +11987,41 @@ if ! gh api -H "Accept: application/vnd.github.raw" \
 fi
 printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
 printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
+printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
 mkdir -p "$RUNNER_TEMP/records"
 python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
-  --head "$HEAD_SHA" --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+  --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
+  --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+  --key-partners "$RUNNER_TEMP/key-partners.json" \
   --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 """,  # noqa: E501
     },
+}
+
+#: Each orchestration job's steps, as the blocks of :data:`_TIER_LINES` each one runs, in
+#: order: a step runs exactly its blocks' lines, in that order, so a reorder that keeps every
+#: line (publishing a plan before the check that refuses it) fails as an extra line does.
+_TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
+    _PLAN_JOB: (
+        ("the runner's identity",),
+        ("the apps repository's head, read once for the run, or no partner",),
+        (
+            "the changed paths, against main's tip",
+            "main's tools/ci, archived beside the checkout, or no plan",
+            "main's planner, over this checkout's catalogue, as a matrix",
+            "the keys and the stage jobs' matrices, read back before they are published",
+        ),
+        ("main's check of this run's catalogue (merge.yml's)",),
+    ),
+    _SHARD_PLAN_JOB: (
+        ("the runner's identity",),
+        ("one shard plan for the run, as ci.yml's",),
+        ("every file in exactly one shard of each leg",),
+    ),
+    _RESULTS_JOB: (
+        ("the runner's identity",),
+        ("main's verdict.py, over the plan's keys, needs and the run's records",),
+    ),
 }
 
 
@@ -11910,6 +12039,14 @@ def _spelled(run: str) -> list[str]:
 _TIER_ALLOWED: dict[str, frozenset[str]] = {
     job: frozenset(line for block in blocks.values() for line in _spelled(block))
     for job, blocks in _TIER_LINES.items()
+}
+#: Each orchestration job's steps as their spelled lines, by the blocks each is made of.
+_TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
+    job: {
+        blocks: tuple(line for block in blocks for line in _spelled(_TIER_LINES[job][block]))
+        for blocks in steps
+    }
+    for job, steps in _TIER_STEPS.items()
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -11956,7 +12093,7 @@ def tier_lines_violations(root: Path) -> list[str]:
     every listed line is run, and every stage job runs the same steps."""
     workflows = _tier_workflows(root)
     bad: list[str] = []
-    ran: dict[str, set[str]] = {job: set() for job in _TIER_LINES}
+    ran: dict[str, set[tuple[str, ...]]] = {job: set() for job in _TIER_LINES}
     stage_steps: list[tuple[str, list[Any]]] = []
     for name, workflow in workflows.items():
         if not workflow:
@@ -11983,20 +12120,30 @@ def tier_lines_violations(root: Path) -> list[str]:
             if allowed is None:
                 bad.append(f"{where} is neither a stage job nor orchestration this row lists")
                 continue
+            listed = _TIER_STEP_LINES[job_id]
             for step, run in _run_steps(job):
-                for line in _spelled(run):
-                    ran[job_id].add(line)
-                    if line not in allowed:
-                        bad.append(
-                            f"{where} runs {line!r} ({step!r}), which its closed list of lines"
-                            " does not hold"
-                        )
-    for job_id, allowed in _TIER_ALLOWED.items():
-        for line in sorted(allowed - ran[job_id]):
-            bad.append(
-                f"this row lists {line!r} for the {job_id} job, and no tier workflow's"
-                f" {job_id} runs it"
-            )
+                lines = tuple(_spelled(run))
+                unknown = [line for line in lines if line not in allowed]
+                for line in unknown:
+                    bad.append(
+                        f"{where} runs {line!r} ({step!r}), which its closed list of lines"
+                        " does not hold"
+                    )
+                matched = [blocks for blocks, want in listed.items() if want == lines]
+                if matched:
+                    ran[job_id].update(matched)
+                elif not unknown:
+                    bad.append(
+                        f"{where} step {step!r} runs its listed lines out of their listed order"
+                        " or grouping: each step runs one listed step's lines, in their order"
+                    )
+    for job_id, listed in _TIER_STEP_LINES.items():
+        for blocks in listed:
+            if blocks not in ran[job_id]:
+                bad.append(
+                    f"this row lists the step {' + '.join(blocks)!r} for the {job_id} job, and no"
+                    f" tier workflow's {job_id} runs it"
+                )
     if stage_steps:
         first_where, first = stage_steps[0]
         for where, steps in stage_steps[1:]:
@@ -12027,6 +12174,10 @@ def _cut(rel: str, start: str, end: str) -> Callable[[Path], None]:
 
 #: The plan step's text one plant extends, in both workflows.
 _PLAN_TAIL = '          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"\n'
+_ANSWER_LINE = """          printf '%s\\n' "$answer" > "$RUNNER_TEMP/answer.txt"\n"""
+_NEEDS_LINE = """          printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"\n"""
+_KEYS_LINE = """          printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"\n"""
+_PARTNER_PUBLISH = '          echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"\n'
 _RUN_JOB_STEP = f"        run: {_RUN_JOB_LINE}\n"
 
 THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
@@ -12077,6 +12228,22 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                expect="pr.yml job changes runs '        if extra:'"),
         _plant("a comment line in the plan step passes", _PR_YML, _PLAN_TAIL,
                _PLAN_TAIL + "          # the end\n", fails=False),
+        # Each step runs its listed lines in their listed order, so a reorder that keeps every
+        # line fails as an extra line does.
+        _plants("the plan step publishing before its read-back", _PR_YML, (
+                    ("          fi\n" + _PLAN_TAIL, "          fi\n"),
+                    (_ANSWER_LINE, _ANSWER_LINE + _PLAN_TAIL),
+                ), expect="pr.yml job changes step \"plan the tier with main's planner"),
+        _plants("two lines of the verdict step swapped", _MERGE_YML, (
+                    (_NEEDS_LINE + _KEYS_LINE, _KEYS_LINE + _NEEDS_LINE),
+                ), expect="merge.yml job results step \"the verdict over the plan's keys"),
+        _plants("the partner step's check after its publish", _MERGE_YML, (
+                    (_PARTNER_PUBLISH, ""),
+                    ("      - name: the partner heads the run tests against\n        id: partners\n"
+                     "        run: |\n          set -uo pipefail\n",
+                     "      - name: the partner heads the run tests against\n        id: partners\n"
+                     "        run: |\n          set -uo pipefail\n" + _PARTNER_PUBLISH),
+                ), expect="merge.yml job changes step 'the partner heads the run tests against'"),
     ),
 )  # fmt: skip
 
@@ -12205,6 +12372,7 @@ def tier_shape_violations(root: Path) -> list[str]:
             if set(needs) != set(jobs) - {_RESULTS_JOB}:
                 bad.append(f"{where} needs {sorted(needs)}, not every other job of the run")
             bad += _tier_verdict_violations(where, results)
+        bad += _tier_partner_violations(name, jobs, stages)
         for job_id, job in jobs.items():
             labels = [job_id, str(job.get("name", ""))]
             if job_id in stages:
@@ -12224,6 +12392,17 @@ def tier_shape_violations(root: Path) -> list[str]:
         )
     return bad
 
+
+#: The plan job's output of the partner head, each partner checkout's ref, and the verdict's
+#: partner line.
+_PARTNER_OUTPUT = "      apps-partner: ${{ steps.partners.outputs.apps-partner }}\n"
+_PARTNER_REF = "          ref: ${{ needs.changes.outputs.apps-partner }}\n"
+_VERDICT_PARTNER = '            --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \\\n'
+
+#: The plan job's output of each key's partners, and the verdict's line that holds each record
+#: to its key's.
+_KEY_PARTNERS_OUTPUT = "      key-partners: ${{ steps.plan.outputs.key-partners }}\n"
+_VERDICT_KEY_PARTNERS = '            --key-partners "$RUNNER_TEMP/key-partners.json" \\\n'
 
 #: The verdict step's head, which a plant conditions, and its last line, which one extends.
 _VERDICT_HEAD = (
@@ -12255,6 +12434,72 @@ def _tier_concurrency_violations(
     for job_id, job in jobs.items():
         if "concurrency" in job:
             bad.append(f"{name} job {job_id} has a concurrency group of its own")
+    return bad
+
+
+def _tier_partner_violations(
+    name: str, jobs: dict[str, dict[str, Any]], stages: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Each partner head is read once, in the plan job: it publishes the head, every stage job's
+    checkout of that partner checks the head out, and the verdict names it as the candidate's
+    partner. So every record naming the partner names the head the verdict judges it against."""
+    bad: list[str] = []
+    plan_job = jobs.get(_PLAN_JOB, {})
+    results = jobs.get(_RESULTS_JOB, {})
+    verdict_steps = [s for s in _trust_steps(results) if "--records" in str(s.get("run", ""))]
+    for partner, path in run_jobs.PARTNERS.items():
+        published = f"${{{{ needs.{_PLAN_JOB}.outputs.{partner} }}}}"
+        output = (plan_job.get("outputs") or {}).get(partner)
+        if output != f"${{{{ steps.partners.outputs.{partner} }}}}":
+            bad.append(
+                f"{name}'s {_PLAN_JOB} job does not publish the partner head {partner} from its"
+                f" partners step (it publishes {output!r})"
+            )
+        for job_id, job in stages.items():
+            for step in _step_using(job, "actions/checkout"):
+                given = step.get("with") or {}
+                if given.get("path") == path and given.get("ref") != published:
+                    bad.append(
+                        f"{name} job {job_id} checks out {partner} at {given.get('ref')!r}, not"
+                        f" the head {_PLAN_JOB} published ({published})"
+                    )
+        for step in verdict_steps:
+            named = re.findall(
+                rf'--partner "{re.escape(partner)}=\$(\w+)"', str(step.get("run", ""))
+            )
+            if len(named) != 1:
+                bad.append(
+                    f"{name} job {_RESULTS_JOB} judges no partner {partner} (or names it"
+                    f" {len(named)} times): the verdict names the head every entry checked out"
+                )
+                continue
+            value = (step.get("env") or {}).get(named[0])
+            if value != published:
+                bad.append(
+                    f"{name} job {_RESULTS_JOB} judges {partner} against {value!r}, not the head"
+                    f" {_PLAN_JOB} published ({published})"
+                )
+    # Each record is held to the partners its own key's job reads, as the plan names them: a
+    # verdict given none would hold every record to the candidate's whole set.
+    by_key = f"${{{{ needs.{_PLAN_JOB}.outputs.key-partners }}}}"
+    output = (plan_job.get("outputs") or {}).get("key-partners")
+    if output != "${{ steps.plan.outputs.key-partners }}":
+        bad.append(
+            f"{name}'s {_PLAN_JOB} job does not publish the partners by key from its plan step"
+            f" (it publishes {output!r})"
+        )
+    for step in verdict_steps:
+        if str(step.get("run", "")).count('--key-partners "$RUNNER_TEMP/key-partners.json"') != 1:
+            bad.append(
+                f"{name} job {_RESULTS_JOB} holds no record to its key's partners: the verdict is"
+                " given --key-partners once"
+            )
+        value = (step.get("env") or {}).get("KEY_PARTNERS")
+        if value != by_key:
+            bad.append(
+                f"{name} job {_RESULTS_JOB} reads the partners by key from {value!r}, not what"
+                f" {_PLAN_JOB} published ({by_key})"
+            )
     return bad
 
 
@@ -12388,12 +12633,31 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                'id = "python-suite"\ntiers = ["change", "merge"]\n',
                expect="python-suite is planned in both pr.yml's tier and merge.yml's"),
         Control("a catalogue job named merge-verdict, which a stage job's name would read",
-                _both(
-                    _plant("", catalogue.CATALOGUE, 'id = "client"\n',
-                           'id = "merge-verdict"\n').plant,
-                    _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
-                ),
+                _CATALOGUE_JOB_NAMED_MERGE_VERDICT,
                 expect="pr.yml job test runs under the check name merge-verdict"),
+        # The partner head is read once, in the plan job: every entry checks that commit out,
+        # and the verdict judges each record's partners against it.
+        _plant_in_job("a partner checkout of the apps repository's moving main", _MERGE_YML,
+                      "build", _PARTNER_REF, "",
+                      expect="merge.yml job build checks out apps-partner at None"),
+        _plant("the partner head left unpublished", _PR_YML, _PARTNER_OUTPUT, "",
+               expect="pr.yml's changes job does not publish the partner head apps-partner"),
+        _plant("the verdict judging no partner", _PR_YML, _VERDICT_PARTNER,
+               '            --head "$HEAD_SHA" \\\n',
+               expect="pr.yml job results judges no partner apps-partner"),
+        _plant_in_job("the verdict's partner read from another value", _MERGE_YML, "results",
+                      "          APPS_PARTNER: ${{ needs.changes.outputs.apps-partner }}\n",
+                      "          APPS_PARTNER: ${{ github.sha }}\n",
+                      expect="merge.yml job results judges apps-partner against"),
+        # Each record is held to its own key's partners, which the plan names.
+        _plant("the partners by key left unpublished", _PR_YML, _KEY_PARTNERS_OUTPUT, "",
+               expect="pr.yml's changes job does not publish the partners by key"),
+        _plant("the verdict given no partners by key", _MERGE_YML, _VERDICT_KEY_PARTNERS, "",
+               expect="merge.yml job results holds no record to its key's partners"),
+        _plant_in_job("the partners by key read from another value", _MERGE_YML, "results",
+                      "          KEY_PARTNERS: ${{ needs.changes.outputs.key-partners }}\n",
+                      "          KEY_PARTNERS: ${{ needs.changes.outputs.keys }}\n",
+                      expect="merge.yml job results reads the partners by key from"),
     ),
 )  # fmt: skip
 
@@ -12463,9 +12727,19 @@ THE_CATALOGUE_CHECK_STANDS_IN_FRONT_OF_MERGE_YMLS_VERDICT = Row(
 )  # fmt: skip
 
 
+#: A stage job's checkout of the candidate, whose inputs one plant extends.
+_STAGE_CHECKOUT_DEPTH = "          fetch-depth: ${{ matrix.history && '0' || '1' }}\n"
+
 #: A condition, job or step, that runs only on a push, on main, or against the commit a push
 #: replaced.
-_PUSH_ONLY = re.compile(r"\bpush\b|refs/heads/main|event\.before|\bBEFORE\b")
+_PUSH_ONLY = re.compile(
+    r"\bpush\b|refs/heads/main|event\.before|\bBEFORE\b"
+    # The push event's own fields, which no pull request's or dispatch's event holds.
+    r"|event\.(?:commits|head_commit|pusher|compare|forced)\b"
+)
+#: The keys whose values the row reads as a whole (a condition, an env value, an input), so an
+#: expression elsewhere is read once, on its own.
+_READ_WHOLE = frozenset({"if", "env", "with"})
 
 
 def _env_values(env: object) -> list[object]:
@@ -12475,9 +12749,32 @@ def _env_values(env: object) -> list[object]:
     return list(env.values()) if isinstance(env, dict) else [env]
 
 
+def _with_values(inputs: object) -> list[tuple[str, object]]:
+    """A ``with:`` block's inputs, or the block itself when it is one expression."""
+    if inputs is None:
+        return []
+    return list(inputs.items()) if isinstance(inputs, dict) else [("with", inputs)]
+
+
+def _other_expressions(value: object, where: str = "") -> Iterator[tuple[str, str]]:
+    """Each ``${{ }}`` expression under ``value``, by where it sits, outside the keys the row
+    reads whole (:data:`_READ_WHOLE`) and outside the steps, which it reads one by one."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key) not in _READ_WHOLE and str(key) != "steps":
+                yield from _other_expressions(item, f"{where}.{key}" if where else str(key))
+    elif isinstance(value, list):
+        for n, item in enumerate(value):
+            yield from _other_expressions(item, f"{where}[{n}]")
+    elif value is not None:
+        for expression in _EXPRESSION.findall(str(value)):
+            yield where, expression
+
+
 def pr_push_stage_violations(root: Path) -> list[str]:
     """pr.yml has no push trigger, no job or step that runs only on a push or on main, no
-    workflow, job or step env that reads one, and no tree check."""
+    workflow, job or step env or input that reads one, no other expression that reads one, and
+    no tree check."""
     workflow = _tier_workflows(root)["pr.yml"]
     if not workflow:
         return [f"{_PR_YML} is missing"]
@@ -12498,11 +12795,31 @@ def pr_push_stage_violations(root: Path) -> list[str]:
             for s in _trust_steps(job)
             for v in _env_values(s.get("env"))
         ]
+        conditions += [(f"the job's input {k}", v) for k, v in _with_values(job.get("with"))]
+        conditions += [
+            (f"the input {k} of {s.get('name') or 'a step'!r}", v)
+            for s in _trust_steps(job)
+            for k, v in _with_values(s.get("with"))
+        ]
+        conditions += [
+            (where, f"${{{{{expression}}}}}")
+            for where, expression in (
+                *_other_expressions(job),
+                *(
+                    (f"{s.get('name') or 'a step'!r} {where}", expression)
+                    for s in _trust_steps(job)
+                    for where, expression in _other_expressions(s)
+                ),
+            )
+        ]
         for what, condition in conditions:
             if condition is not None and _PUSH_ONLY.search(str(condition)):
                 bad.append(
                     f"pr.yml job {job_id}: {what} reads {condition!r}, a push stage's condition"
                 )
+    for where, expression in _other_expressions({k: v for k, v in workflow.items() if k != "jobs"}):
+        if _PUSH_ONLY.search(expression):
+            bad.append(f"pr.yml's {where} reads ${{{{{expression}}}}}, a push stage's condition")
     return bad
 
 
@@ -12543,6 +12860,30 @@ PR_YML_CARRIES_NO_PUSH_STAGE = Row(
         _plant("merge.yml's own push trigger is not pr.yml's", _MERGE_YML,
                "on:\n  workflow_dispatch: {}\n",
                "on:\n  workflow_dispatch: {}\n  push:\n    branches: [main]\n", fails=False),
+        # A step's inputs and every other expression are read too: a push stage need not sit in
+        # a condition or an env.
+        _plant_in_job("a checkout of the commit a push replaced", _PR_YML, "test",
+                      _STAGE_CHECKOUT_DEPTH,
+                      _STAGE_CHECKOUT_DEPTH + "          ref: ${{ github.event.before }}\n",
+                      expect="pr.yml job test: the input ref of 'a step' reads"),
+        _plant_in_job("a checkout of main's ref", _PR_YML, "test", _STAGE_CHECKOUT_DEPTH,
+                      _STAGE_CHECKOUT_DEPTH + "          ref: refs/heads/main\n",
+                      expect="pr.yml job test: the input ref of 'a step' reads 'refs/heads/main'"),
+        _plant_in_job("an action handed the pushed commits", _PR_YML, "results",
+                      "          pattern: ci-record-*\n",
+                      "          pattern: ci-record-*\n"
+                      "          commits: ${{ toJSON(github.event.commits) }}\n",
+                      expect="pr.yml job results: the input commits of \"every entry's record\""),
+        _plant_in_job("a runner picked by the event", _PR_YML, "results",
+                      "    runs-on: ubuntu-24.04\n",
+                      "    runs-on: ${{ github.event_name == 'push' && 'ubuntu-24.04'"
+                      " || 'none' }}\n",
+                      expect="pr.yml job results: runs-on reads"),
+        _plant_in_job("an input reading the pull request's head passes", _PR_YML, "test",
+                      _STAGE_CHECKOUT_DEPTH,
+                      _STAGE_CHECKOUT_DEPTH
+                      + "          ref: ${{ github.event.pull_request.head.sha }}\n",
+                      fails=False),
     ),
 )  # fmt: skip
 
