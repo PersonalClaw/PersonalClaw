@@ -157,25 +157,30 @@ def _loop_root(spec: dict[str, Any] | None) -> tuple[str, Node] | None:
     return ("root", root) if root.kind == NodeKind.LOOP else None
 
 
-def _cycles_completed(run_id: str, loop_path: str) -> int:
-    """How many iterations of the loop at ``loop_path`` have finished — the run's cycle count.
+def _cycles(run_id: str, loop_path: str) -> tuple[int, float | None]:
+    """How many iterations of the loop at ``loop_path`` have finished — the run's cycle count —
+    and when the newest of them ended, in epoch seconds (``None`` before the first).
 
     Read off the ledger's ``iteration`` rows, which `loop_iteration.advance_loop` writes as each
     iteration ends. DISTINCT iteration indexes, because a tripped breaker writes a second row for
     the same iteration (``breaker:<reason>`` and then the continue decision), and counting rows
-    would report one iteration as two.
+    would report one iteration as two. A nested loop's rows are steps inside one of these cycles,
+    so neither the count nor the time reads them.
     """
     try:
         rows = journal_mod.ledger(run_id, kinds={journal_mod.ITERATION})
     except Exception:
         logger.debug("loop view: iteration read failed for %s", run_id, exc_info=True)
-        return 0
-    seen = {
-        int(r.get("iteration", -1))
+        return 0, None
+    mine = [
+        r
         for r in rows
-        if str(r.get("instance_path") or "") == loop_path and isinstance(r.get("iteration"), int)
-    }
-    return len({i for i in seen if i >= 0})
+        if str(r.get("instance_path") or "") == loop_path
+        and isinstance(r.get("iteration"), int)
+        and r["iteration"] >= 0
+    ]
+    times = [t for t in (_epoch(r.get("ts")) for r in mine) if t is not None]
+    return len({r["iteration"] for r in mine}), max(times, default=None)
 
 
 def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
@@ -196,6 +201,7 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
     task = str(run.inputs.get(intake.get("task", ""), "") or "")
     criterion = str(run.inputs.get(intake.get("success_criteria", ""), "") or "")
     status, stop_reason, error = loop_ending(run)
+    total_cycles, last_cycle_at = _cycles(run.id, loop[0]) if loop is not None else (0, None)
     return {
         "id": run.id,
         "run_id": run.id,
@@ -212,7 +218,10 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
         # An explicit `attended: false` is the unattended grant; anything else asks per stage.
         "attended": not supervisor_policy.unattended_grant(run.policy_overrides),
         "max_cycles": cap,
-        "total_cycles": _cycles_completed(run.id, loop[0]) if loop is not None else 0,
+        "total_cycles": total_cycles,
+        # When its newest cycle ended, as a loops-table row says it
+        # (`files.findings_and_last_cycle`).
+        "last_cycle_at": last_cycle_at,
         "idle_secs": 0,
         "success_criteria": _redact(criterion) or None,
         "created_at": _epoch(run.created_at) or 0.0,

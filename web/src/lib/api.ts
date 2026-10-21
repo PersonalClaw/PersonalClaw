@@ -7119,6 +7119,9 @@ export interface Loop {
   success_criteria: string | null
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
+  /** When the loop's newest cycle ran, in epoch seconds; `null` before its first. The list and the
+   *  detail carry it, whichever home backs the loop. */
+  last_cycle_at?: number | null
   project_id?: string
   tasks_project_id?: string; task_list_ids?: Record<string, string>; linked_task_ids?: string[]; session_key?: string
   // Attached by the redacted view (detail) — empty for kinds that don't produce them.

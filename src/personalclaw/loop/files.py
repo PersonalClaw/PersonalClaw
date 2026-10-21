@@ -31,6 +31,7 @@ from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED, STEP_SKIPPED
 from personalclaw.security import redact_for_display, redact_values_for_display
+from personalclaw.workflows.models import stamp_epoch
 
 
 def config_dir() -> Path:
@@ -507,14 +508,30 @@ def get_findings(loop_id: str) -> list[dict]:
     """A loop's findings, PROJECTED off the ledger — the `step_completed` events'
     carried finding payloads, in emit order. The old findings/ file glob is gone as a store; the
     worker's files are an ingest source, not the reader's second store."""
-    out: list[dict] = []
+    return findings_and_last_cycle(loop_id)[0]
+
+
+def findings_and_last_cycle(loop_id: str) -> tuple[list[dict], float | None]:
+    """A loop's findings (:func:`get_findings`) and when its newest cycle ran, in epoch seconds
+    (``None`` before its first), from ONE read of its ledger, so a list row pays one scan for both.
+
+    A cycle is a finding its worker filed (`step_completed`) or a cycle its owner ended with a Deny
+    (:func:`record_declined_cycle`). A breaker trip or a judge's verdict is about a cycle, not one
+    of its own. Its time is the stamp the ledger wrote on the event."""
+    findings: list[dict] = []
+    last: float | None = None
     for rec in read_jsonl(loop_id, EVENTS_FILE):
-        if rec.get("kind") != STEP_COMPLETED:
+        kind = rec.get("kind")
+        if kind == STEP_COMPLETED:
+            finding = rec.get("finding")
+            if isinstance(finding, dict):
+                findings.append({k: v for k, v in finding.items() if k != "_source_file"})
+        elif not (kind == STEP_SKIPPED and rec.get("actor") == "user"):
             continue
-        finding = rec.get("finding")
-        if isinstance(finding, dict):
-            out.append({k: v for k, v in finding.items() if k != "_source_file"})
-    return out
+        at = stamp_epoch(rec.get("ts")) or None
+        if at is not None and (last is None or at > last):
+            last = at
+    return findings, last
 
 
 def cycles_completed(loop_id: str) -> int:

@@ -8,8 +8,9 @@ import { railGroups, type RailProject } from './threadRail'
 //
 // One order serves chats, goal loops and code sessions alike: pinned first, then the latest
 // activity, newest first, with ties broken by the thread's key. A chat's activity is the time its
-// list row says it last did something (`sessionRecencyMs`); a loop's is its newest cycle's, as its
-// workers' latest activity says it, else when it completed, started or was created.
+// list row says it last did something (`sessionRecencyMs`); a loop's is its newest cycle's, which
+// its row says (`last_cycle_at`). A row with no cycle time falls back to its workers' latest
+// activity, else when it completed, started or was created.
 //
 // Status never moves a row: the pips say what needs the owner and ⌘⌥A jumps to it, so a row does not
 // jump when a turn starts, an approval arrives or a run fails. The loops page's "running first" and
@@ -99,7 +100,7 @@ describe('the threads of a project', () => {
     expect(order(changed)['p-garden']).toEqual(NAMED_ORDER)
   })
 
-  it("a loop's activity is its newest cycle's, else when it completed, else started, else was created", () => {
+  it("a loop with no cycle time is placed by its workers' activity, else when it completed, else started, else was created", () => {
     const src = sources({
       sessions: [chat('loop-w', '00:06', { origin: 'loop', source_id: 'w', project_id: 'p-garden' })],
       loops: [
@@ -111,6 +112,26 @@ describe('the threads of a project', () => {
       ],
     })
     expect(order(src)['p-garden']).toEqual(['loop:w', 'loop:z', 'loop:y', 'loop:x'])
+  })
+
+  it("a loop whose row says when its newest cycle ran is placed by that time alone", () => {
+    const src = sources({
+      sessions: [
+        // Loop r's worker, mid-turn after r's last cycle: a cycle is a worker's whole turn.
+        chat('loop-r', '00:09', { origin: 'loop', source_id: 'r' }),
+        chat('c', '00:05'),
+      ],
+      loops: [
+        // Its last cycle ran at 00:04. Resumed at 00:08 and its worker busy at 00:09: a status
+        // change and a turn under way move no row.
+        loop('r', { status: 'running', created_at: secs('00:00'), started_at: secs('00:08'), last_cycle_at: secs('00:04') }),
+        // Its last cycle ran at 00:06, a minute before it completed.
+        loop('d', { created_at: secs('00:00'), started_at: secs('00:01'), completed_at: secs('00:07'), last_cycle_at: secs('00:06') }),
+        // No cycle yet: placed as before, here by when it started.
+        loop('n', { created_at: secs('00:00'), started_at: secs('00:03'), last_cycle_at: null }),
+      ],
+    })
+    expect(order(src)['p-garden']).toEqual(['loop:d', 'chat:c', 'loop:r', 'loop:n'])
   })
 
   it('pinned threads come first among themselves by activity, in every group, "No project" included', () => {
