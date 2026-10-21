@@ -306,20 +306,9 @@ class TestRenameSemantics:
 class TestDashboardConfigEndpoint:
     """REGRESSION: the PUT handler carries its own field allowlist, separate from
     the dataclass. Adding the field in four places still left `username` rejected
-    as an unknown field — caught only by driving the real endpoint."""
-
-    def test_username_is_in_the_put_allowlist(self):
-        from pathlib import Path
-
-        import personalclaw.dashboard.handlers.files as files_mod
-
-        src = Path(files_mod.__file__).read_text(encoding="utf-8")
-        allowlist_start = src.index("_allowed = {")
-        allowlist_end = src.index("unknown = set(body.keys())", allowlist_start)
-        assert '"username"' in src[allowlist_start:allowlist_end], (
-            "dashboard.username must be in the PUT /api/dashboard/config allowlist, "
-            "or the endpoint 400s with 'Unknown fields'"
-        )
+    as an unknown field — caught only by driving the real endpoint, which the test below does:
+    its PUT of ``username`` answers 200, where a field missing from the allowlist answers 400
+    with 'Unknown fields'."""
 
     @pytest.mark.asyncio
     async def test_username_is_returned_by_the_get(self):

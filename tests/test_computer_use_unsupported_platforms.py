@@ -48,6 +48,7 @@ import sys
 import computer_use_unsupported_platforms_shared
 import pytest
 from computer_use_unsupported_platforms_shared import PENDING
+from table_rows import row
 
 from personalclaw.computer_use import driver_host, enable_state, macos_driver, service
 from personalclaw.computer_use import tools as ct
@@ -194,7 +195,79 @@ def test_a_pending_driver_imports_no_os_library_at_module_level(module, _system,
     at the top on macOS is the other half of the proof."""
     source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
     assert _offending_imports(source) == []
-    assert "ctypes" not in source
+
+
+#: A process in which no library a desktop driver binds the OS through can be imported: each
+#: pending platform's every operation is run through the real ``run_op``, then the macOS
+#: driver's, which binds the OS through ``ctypes`` and so cannot load there.
+_WITHOUT_AN_OS_LIBRARY = """
+import json, platform, sys
+
+OS_LIBRARIES = {
+    "ctypes", "_ctypes", "comtypes", "pythoncom", "pywinauto", "win32api", "win32con",
+    "win32gui", "gi", "pyatspi", "Xlib", "AppKit", "ApplicationServices", "Foundation",
+    "Quartz", "objc",
+}
+
+
+def _an_os_library(name):
+    return name.split(".")[0] in OS_LIBRARIES
+
+
+class _Refuse:
+    def find_spec(self, fullname, path=None, target=None):
+        if _an_os_library(fullname):
+            raise ImportError("a driver reached an OS library: " + fullname)
+        return None
+
+
+for name in [m for m in sys.modules if _an_os_library(m)]:
+    del sys.modules[name]
+sys.meta_path.insert(0, _Refuse())
+from personalclaw.computer_use import driver_host
+
+seen = {}
+for system in sys.argv[2:]:
+    platform.system = lambda: system
+    seen[system] = {op: driver_host.run_op({"op": op}) for op in json.loads(sys.argv[1])}
+seen["loaded"] = sorted(m for m in sys.modules if _an_os_library(m))
+print(json.dumps(seen))
+"""
+
+
+def test_a_pending_driver_answers_every_operation_where_no_os_library_can_be_imported(subtests):
+    """``resolve_driver`` imports a pending driver inside the GATEWAY's process, so a driver that
+    needed an OS library (``ctypes``, ``comtypes``, ``gi``), at its top or in an operation, would
+    turn "this machine has no desktop capability" into a broken gateway or a broken tool. In a
+    process that refuses every such import, each pending platform's every operation still answers
+    its typed refusal, and no OS library is loaded. The macOS driver, which binds the OS through
+    ``ctypes``, is the control: there it cannot load, and no operation answers the platform code,
+    so the refusal is real."""
+    import os
+    import subprocess
+
+    systems = [system for _module, system, _api in PENDING] + ["Darwin"]
+    done = subprocess.run(
+        [sys.executable, "-c", _WITHOUT_AN_OS_LIBRARY, json.dumps(OPS), *systems],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    seen = json.loads(done.stdout.strip().splitlines()[-1])
+    assert seen["loaded"] == [], f"an OS library was loaded: {seen['loaded']}"
+    assert len(PENDING) == 2, "a pending platform was dropped from the table"
+    for _module, system, api in PENDING:
+        with row(subtests, system=system):
+            for op, answer in seen[system].items():
+                error = answer.get("error") or {}
+                assert error.get("code") == CODE, (system, op, answer)
+                assert api in error["why"], (system, op, error["why"])
+    with row(subtests, system="Darwin"):
+        codes = {op: (a.get("error") or {}).get("code") for op, a in seen["Darwin"].items()}
+        assert CODE not in codes.values(), codes
+        assert set(codes.values()) == {driver_host.ERR_DRIVER_UNAVAILABLE}, codes
 
 
 def test_the_import_scanner_detects_an_os_library():

@@ -10,11 +10,14 @@ it. Two things are pinned:
   silent (a pointer nobody sees, or an instruction a headless user cannot follow).
 * the CALL SITES — a helper that prints the right line is worthless if ``_setup`` never
   calls it, and the gateway's auto-open must ask the shared predicate rather than
-  keeping its own copy. Both are asserted structurally, not by existence.
+  keeping its own copy. The wizard's paths are asserted structurally, not by existence; the
+  gateway's by driving its start announcement with a stand-in predicate.
 """
 
 import ast
 from pathlib import Path
+
+from table_rows import row
 
 from personalclaw import cli_setup, env
 
@@ -126,9 +129,60 @@ def test_setup_prints_the_pointer_on_every_path_that_ends_the_wizard():
     assert len(pointer_calls) == len(done_prints)
 
 
-def test_gateway_asks_the_shared_predicate_instead_of_its_own_copy():
-    """The gateway's auto-open branch is the predicate's other caller, not a second copy."""
-    src = Path(env.__file__).with_name("gateway.py").read_text(encoding="utf-8")
-    assert "browser_available()" in src
-    for leaked in ("SSH_CONNECTION", "SSH_CLIENT", "WAYLAND_DISPLAY"):
-        assert leaked not in src, f"gateway.py re-derives browser availability from {leaked}"
+def test_gateway_asks_the_shared_predicate_instead_of_its_own_copy(monkeypatch, capsys, subtests):
+    """The gateway's auto-open branch is the predicate's other caller, not a second copy.
+
+    The real ``GatewayOrchestrator._announce_dashboard``, for a gateway a person started at a
+    terminal with auto-open on, with a stand-in for ``env.browser_available`` under every name
+    that holds it, answering the opposite of what the shell's own variables suggest: a browser
+    to hand on a headless SSH shell, and none on a local desktop. The gateway opens the dashboard
+    exactly when the stand-in says a browser is there, and asks it once per start. A gateway that
+    re-derived availability from ``SSH_CONNECTION`` or ``DISPLAY`` would do the opposite.
+    """
+    from unittest.mock import patch
+
+    from every_name import put_in_every_name
+
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.gateway import GatewayOrchestrator
+
+    answers: list[bool] = []
+    asked: list[bool] = []
+
+    def _shared() -> bool:
+        asked.append(answers[-1])
+        return answers[-1]
+
+    put_in_every_name(monkeypatch, env.browser_available, _shared)
+    monkeypatch.setattr(env.sys, "platform", "linux")
+    shells = (
+        ("a headless SSH shell", {"SSH_CONNECTION": "10.0.0.2 51000 10.0.0.9 22"}, True),
+        ("a local desktop", {"DISPLAY": ":0"}, False),
+    )
+    assert len(shells) == 2, "a shell was dropped from the table"
+    for shell, variables, available in shells:
+        with row(subtests, shell=shell, available=available):
+            _clear_browser_env(monkeypatch)
+            for name, value in variables.items():
+                monkeypatch.setenv(name, value)
+            answers.append(available)
+            asked.clear()
+            opened: list[str] = []
+            cfg = AppConfig()
+            with patch.object(cfg, "load_credentials", return_value={}):
+                orch = GatewayOrchestrator(cfg, no_open=False)
+            orch._local_only = True
+            orch._configured_host = None
+            orch._dashboard_port = 19703
+            with (
+                patch("personalclaw.gateway.started_at_a_terminal", return_value=True),
+                patch("personalclaw.gateway._shown_at_a_terminal", return_value=False),
+                patch("personalclaw.gateway.resolve_dashboard_host", return_value="127.0.0.1"),
+                patch("personalclaw.gateway._is_wsl", return_value=False),
+                patch("webbrowser.open", lambda url: opened.append(url) or True),
+            ):
+                orch._announce_dashboard()
+            out = capsys.readouterr().out
+            assert asked == [available], f"the gateway asked the shared predicate {asked}"
+            assert len(opened) == (1 if available else 0), f"{shell}: opened {opened}"
+            assert ("skipping browser auto-open" in out) is not available, out

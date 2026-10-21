@@ -4335,19 +4335,20 @@ def test_the_guide_names_every_frame_that_runs_before_it_is_blanked():
 
 
 @pytest.mark.security
-def test_the_code_says_a_frame_navigated_again_is_judged_only_when_it_commits():
+def test_the_residual_list_says_a_frame_navigated_again_is_judged_only_when_it_commits():
     """🔴 Red before: the session's residual list named a frame that moves itself, and the BROWSE
     profile said a denied frame in a process of its own is blanked before its document loads.
     That holds for its first document there: navigated again, by itself or by its page, it is
-    not attached again, so it is not paused, and is judged when it commits."""
-    import inspect
+    not attached again, so it is not paused, and is judged when it commits.
 
+    The residual list is the session's own account of what it does not stop, read as it reads
+    (``cdp.__doc__``). What it describes is driven above: a frame in a process of its own that
+    navigates again is judged at its commit, by itself
+    (``test_a_frame_that_moves_itself_to_a_denied_host_is_blanked``) or on its own session
+    (``test_a_frames_own_commit_on_its_session_is_blanked_by_its_id``). The same sentence in a
+    comment of ``net/policy.py`` is no subject of a test."""
     residual = _flat(cdp.__doc__ or "")
-    source = inspect.getsource(net_policy)
-    comment = source[source.index("THE HEADLESS BYPASS GAP") : source.index("BROWSE = ")]
-    gap = _flat(" ".join(line.strip().lstrip("#") for line in comment.splitlines()))
-    for text in (residual, gap):
-        assert "navigated again, by itself or by its page" in text, text
+    assert "navigated again, by itself or by its page" in residual, residual
 
 
 @pytest.mark.security

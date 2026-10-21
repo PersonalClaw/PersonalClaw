@@ -16,6 +16,7 @@ SkillsLoader (monkeypatched to a tmp home), not hand-built state:
 from __future__ import annotations
 
 import pytest
+from table_rows import row
 
 from personalclaw.learning import project_context_review as pcr
 from personalclaw.learning import proposals as P
@@ -231,19 +232,91 @@ def test_the_trigger_is_a_prompt_only_chat_tool():
     assert "project_context_review" in names
 
 
-def test_nothing_on_a_turn_path_calls_the_review_automatically():
-    """No chat_runner / turn-loop / heartbeat call site invokes the review.
+@pytest.mark.asyncio
+async def test_nothing_on_a_turn_path_calls_the_review_automatically(
+    tmp_path, project, monkeypatch, subtests
+):
+    """No chat turn and no heartbeat pass invokes the review; the agent's own call of the chat
+    tool does.
 
-    The self-model observer is deliberately wired into chat_runner's per-turn path; the project-
-    context review must NOT be, or it would stop being prompt-only. Guard the two turn-driven
-    entry points by source scan.
+    The self-model observer is deliberately wired into the chat's per-turn path; the project-
+    context review must NOT be, or it would stop being prompt-only. So the review and its
+    installer are watched under every name that holds them, and the two turn-driven entry points
+    run: two real chat turns through ``run_chat``, the second a correction, so every per-turn
+    learning path runs, and a heartbeat beat with every pass due plus
+    a pass over an allowed HEARTBEAT.md task. Neither asks the review. The chat tool's handler,
+    driven the same way, does, which shows the watch sees a call.
     """
-    import pathlib
+    from unittest.mock import AsyncMock, MagicMock
 
-    root = pathlib.Path(pcr.__file__).resolve().parents[1]
-    for rel in ("dashboard/chat_runner.py", "heartbeat.py"):
-        text = (root / rel).read_text(encoding="utf-8")
-        assert "project_context_review" not in text, rel
+    from every_name import put_in_every_name
+    from reply_style_shared import FIRST, Conversation
+
+    from personalclaw import heartbeat, mcp_core
+
+    asked: list[str] = []
+    put_in_every_name(
+        monkeypatch,
+        pcr.project_context_review,
+        lambda *_a, **_k: asked.append("review") or [],
+    )
+    put_in_every_name(
+        monkeypatch,
+        pcr.install_accepted_project_context,
+        lambda *_a, **_k: asked.append("install") or False,
+    )
+    monkeypatch.setattr(
+        "personalclaw.embedding_providers.registry.get_active_embed_fn", lambda: None
+    )
+
+    async def _two_chat_turns() -> None:
+        # The second turn corrects the first, so it is a turn worth learning from: the per-turn
+        # learning paths (the review of a correction, the self-model observer) all run.
+        chat = await Conversation(tmp_path).start()
+        await chat.send(FIRST)
+        await chat.send("That's wrong: the nightly backup job only copies the photos.")
+        assert len(chat.model.requests) == 2, "the turns never reached the model"
+
+    async def _a_heartbeat_beat_and_task_pass() -> None:
+        consolidator = MagicMock(_log=None)
+        service = heartbeat.HeartbeatService(
+            interval=1,
+            consolidator=consolidator,
+            on_auto_archive=AsyncMock(),
+            on_due_commitments=AsyncMock(),
+        )
+        await service._beat()  # tick 0: every pass on a cadence is due
+        consolidator.check_idle_sessions.assert_called_once()
+        path = heartbeat.ensure_heartbeat_file()
+        path.write_text(path.read_text(encoding="utf-8") + "- tidy the notes\n", encoding="utf-8")
+        heartbeat.allow("tidy the notes")
+        ran: list[str] = []
+
+        async def _run(task: str, _deliver: str) -> str:
+            ran.append(task)
+            return "done"
+
+        assert (await heartbeat.run_tasks(_run)).ran == 1 and ran == ["tidy the notes"]
+
+    async def _the_agents_call_of_the_chat_tool() -> None:
+        item = {
+            "kind": Kind.PROJECT_INSTRUCTION.value,
+            "body": "Use metric units.",
+            "rationale": "x",
+        }
+        mcp_core._project_context_review({"items": [item], "project_id": project.id})
+
+    paths = (
+        ("two chat turns", _two_chat_turns, []),
+        ("a heartbeat beat and task pass", _a_heartbeat_beat_and_task_pass, []),
+        ("the agent's call of the chat tool", _the_agents_call_of_the_chat_tool, ["review"]),
+    )
+    assert len(paths) == 3, "a path was dropped from the table"
+    for path_name, drive, expected in paths:
+        with row(subtests, path=path_name):
+            asked.clear()
+            await drive()
+            assert asked == expected, f"{path_name} asked {asked}"
 
 
 # ── shared installer, mirroring dashboard/handlers/learning.py::_installer_for ──

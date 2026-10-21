@@ -18,6 +18,7 @@ import json
 
 import pytest
 from signed_in_gateway import signed_in_gateway
+from table_rows import row
 
 from personalclaw.dashboard.handlers.skills import search_marketplaces_counted
 from personalclaw.packs.catalog_marketplace import (
@@ -214,8 +215,58 @@ def test_the_module_owns_no_http_client_of_its_own():
     src = pathlib.Path(mod.__file__).read_text()
     for banned in ("aiohttp", "httpx", "urllib.request", "import requests", "http.client"):
         assert banned not in src, f"{banned} bypasses the egress guard"
-    # And nothing hands a catalog index to a model — browsing must not cost agent budget.
-    assert "personalclaw.llm" not in src
+
+
+def test_browsing_and_installing_a_catalog_skill_reach_no_model(
+    net, tmp_path, monkeypatch, subtests
+):
+    """Nothing hands a catalog index or a skill to a model: browsing must not cost agent budget.
+    Every seam a model is reached through raises (the one-shot and streamed completions, a chore,
+    the use-case resolution, and the registry building a provider or its catalog), and a search,
+    a fetch and a guarded install of a catalog skill each still answer, asking none of them."""
+    from every_name import put_in_every_name
+
+    from personalclaw import chores, llm_helpers
+    from personalclaw.llm.registry import ProviderRegistry
+    from personalclaw.providers import provider_bridge
+
+    asked: list[str] = []
+
+    def _seam(name):
+        def _refuse(*_a, **_kw):
+            asked.append(name)
+            raise AssertionError(f"a catalog reached a model through {name}")
+
+        return _refuse
+
+    for owner, seam in (
+        (llm_helpers, "one_shot_completion"),
+        (llm_helpers, "stream_and_collect"),
+        (chores, "run_chore"),
+        (provider_bridge, "resolve_provider_for_use_case"),
+        (provider_bridge, "resolve_metered_model"),
+    ):
+        put_in_every_name(monkeypatch, getattr(owner, seam), _seam(seam))
+    for seam in ("build", "build_catalog"):
+        monkeypatch.setattr(ProviderRegistry, seam, _seam(seam))
+    mp = _wire_one_skill(net)
+
+    def _install():
+        reg = SkillsRegistry()
+        reg.register("catalog:c", mp)
+        return reg.install_guarded("catalog:c", "demo", tmp_path).tier
+
+    steps = (
+        ("search", lambda: [e.name for e in mp.search("demo")], ["demo"]),
+        ("fetch", lambda: mp.fetch("demo").name, "demo"),
+        ("install", _install, TrustTier.COMMUNITY),
+    )
+    assert len(steps) == 3, "a step was dropped from the table"
+    for step, run, answer in steps:
+        with row(subtests, step=step):
+            asked.clear()
+            assert run() == answer
+            assert asked == [], f"{step} asked {asked}"
 
 
 def test_a_non_2xx_index_raises_instead_of_reading_as_an_empty_catalog(net):

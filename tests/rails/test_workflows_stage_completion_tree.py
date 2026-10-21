@@ -59,3 +59,39 @@ def test_the_poll_delay_and_the_reconciler_read_ONE_predicate():
         assert (
             "RUNNING" not in compared
         ), f"`{name}` re-derives the RUNNING test itself instead of asking the predicate"
+
+
+def test_stage_is_the_ONLY_dispatcher_THAT_CAN_RETURN_RUNNING():
+    """The blast-radius assertion: there is no non-stage RUNNING path to change.
+
+    Parsed with `ast`, not grepped — a text scan counts the string inside comments and
+    docstrings, and this file's whole subject is a claim about which code runs.
+    """
+    from personalclaw.workflows import engine
+
+    # From the imported module, not a cwd-relative path. A scan of the wrong file, or of none,
+    # finds no producer, and the equality below names the one there must be, so an empty scan
+    # fails it rather than passing as a clean one.
+    tree = ast.parse(Path(engine.__file__).read_text(encoding="utf-8"))
+
+    producers: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            for sub in ast.walk(node.value):
+                if (
+                    isinstance(sub, ast.Attribute)
+                    and sub.attr == "RUNNING"
+                    and isinstance(sub.value, ast.Name)
+                    and sub.value.id == "InstanceState"
+                ):
+                    producers.add(fn.name)
+
+    assert producers == {"dispatch_stage"}, (
+        f"the dispatchers that return RUNNING are {sorted(producers)}, not `dispatch_stage` "
+        "alone. Another one means the stage reconciliation would silently claim its completion "
+        "too; none means the scan read no engine."
+    )
