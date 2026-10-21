@@ -251,3 +251,71 @@ async def test_an_unknown_chat_is_not_read_as_a_new_one(tmp_path, backend):
     status, body = await _read(_make_state(tmp_path), "?session=no-such-chat")
     assert status == 404
     assert "sandbox" not in body
+
+
+async def test_only_a_signed_in_owner_reaches_it(tmp_path, backend):
+    """A caller with no credential is refused at the token gate and nothing is read; your cookie
+    reaches it. An app is refused it as every owner-only read
+    (``test_apps_see_only_their_own_conversations``)."""
+    from aiohttp import DummyCookieJar
+
+    from personalclaw.apps.permissions import ROUTE_AUTHZ, OwnerOnly
+    from personalclaw.dashboard.chat import api_chat_boundary
+    from personalclaw.dashboard.server import app_permission_middleware
+    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+
+    assert isinstance(ROUTE_AUTHZ["GET /api/chat/boundary"], OwnerOnly)
+    reached: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        reached.append(request.path)
+        return await api_chat_boundary(request)
+
+    app = web.Application(
+        middlewares=[token_auth_middleware(port=10000, local_only=False), app_permission_middleware]
+    )
+    app["state"] = _make_state(tmp_path)
+    app.router.add_get("/api/chat/boundary", handler)
+    async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
+        resp = await client.get("/api/chat/boundary")
+        assert resp.status == 403
+        assert resp.headers.get("X-Auth-Required") == "true"
+        assert "sandbox" not in await resp.text()
+        assert reached == []
+
+        owner = generate_token("owner", ttl_seconds=600)
+        resp = await client.get("/api/chat/boundary", headers={"Cookie": f"pc_token_10000={owner}"})
+        assert resp.status == 200
+        assert reached == ["/api/chat/boundary"]
+
+
+async def test_it_says_no_path_secret_or_command_and_changes_nothing(tmp_path, backend, agent_cli):
+    """The answer is two readings of fixed words: nothing of the runtime's command, its
+    environment, the chat's folder or the query is said back, and a read writes nothing."""
+    agent_cli["command"] = [str(tmp_path / "bin" / "boundary-test-cli"), "--acp"]
+    agent_cli["env"] = {"BOUNDARY_TEST_KEY": "sk-boundary-test-not-a-real-key"}
+    state = _make_state(tmp_path)
+    chat = state.get_or_create_session()
+    chat.acp_provider = AGENT_CLI
+    chat.workspace_dir = str(tmp_path / "work")
+    before = sorted((p, p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file())
+    attrs = _fields(chat)
+
+    for query in (f"?session={chat.key}", f"?runtime={AGENT_CLI}", "?runtime=acp:<b>" + "x" * 64):
+        status, body = await _read(state, query)
+        assert status == 200
+        assert set(body) == {"sandbox", "reach"}
+        assert set(body["sandbox"]) == {"confined", "label", "said"}
+        assert set(body["reach"]) == {"tier", "label", "said"}
+        said = repr(body)
+        for leak in (str(tmp_path), "boundary-test-cli", "sk-boundary", "BOUNDARY_TEST_KEY", "<b>"):
+            assert leak not in said, (query, leak)
+
+    assert sorted((p, p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()) == before
+    assert _fields(chat) == attrs
+
+
+def _fields(obj: object) -> dict[str, str]:
+    """Every slot of *obj*, as it reads now."""
+    names = [a for cls in type(obj).__mro__ for a in getattr(cls, "__slots__", ())]
+    return {a: repr(getattr(obj, a, None)) for a in names}

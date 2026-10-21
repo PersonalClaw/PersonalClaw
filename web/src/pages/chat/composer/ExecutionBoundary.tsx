@@ -21,8 +21,9 @@ import { MEMORY_MODES } from '../memoryModeCopy'
 // Both change what they change through the calls the chat header's pills made (`POST
 // /api/chat/mode`, `POST /api/chat/task-mode`), and both show only what the gateway took: a pick is
 // shown once the gateway answers it, and one it refuses leaves the control as it was, with the
-// gateway's reason beside it. The sandbox and the network are the gateway's words
-// (`GET /api/chat/boundary`), shown as they come.
+// gateway's reason beside it. Picking the mode the chat is in asks for it again, as the header's
+// pills did: that is how YOLO, which expires, is extended. The sandbox and the network are the
+// gateway's words (`GET /api/chat/boundary`), shown as they come.
 //
 // Each menu is a `role="menu"` of radio items with the shared cursor (`lib/useMenuCursor`): it
 // opens on the checked item, the arrows move without choosing anything, Enter or Space chooses, and
@@ -91,7 +92,6 @@ export function TaskModePill({ value, onChoose }: { value: TaskMode; onChoose: C
   const Icon = cur.icon
   const choose = async (id: TaskMode) => {
     setRefusal('')
-    if (id === value) return
     setRefusal((await onChoose(id)) ?? '')
   }
   return (
@@ -182,7 +182,6 @@ export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMo
   ].join(' · ')
   const choose = async (id: ApprovalMode) => {
     setRefusal('')
-    if (id === approval) return
     setRefusal((await onApproval(id)) ?? '')
   }
   return (

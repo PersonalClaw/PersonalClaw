@@ -310,6 +310,39 @@ describe('keyboard and screen reader', () => {
     expect(document.activeElement).toBe(boundary())
   })
 
+  it('the task mode menu opens on the checked mode, and the arrows move without changing it', async () => {
+    h.detail = chat({ task_mode: 'plan' })
+    const user = await open(SESSION)
+    await waitFor(() => expect(taskMode()).toHaveAccessibleName('Task mode: Plan'))
+    const before = writes().length
+    taskMode().focus()
+    await user.keyboard('{Enter}')
+    await screen.findByRole('menu', { name: 'Task mode' })
+    await waitFor(() => expect(document.activeElement).toHaveAccessibleName(/^Plan\b/))
+    await user.keyboard('{ArrowDown}')
+    expect(document.activeElement).toHaveAccessibleName(/^Build\b/)
+    expect(writes().slice(before)).toEqual([])
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Task mode' })).toBeNull())
+    expect(document.activeElement).toBe(taskMode())
+    expect(taskMode()).toHaveAccessibleName('Task mode: Plan')
+  })
+
+  it('Tab closes either menu and carries on from its pill, never into the page behind it', async () => {
+    const user = await open(SESSION)
+    for (const [pill, name] of [[boundary, 'Execution boundary'], [taskMode, 'Task mode']] as const) {
+      pill().focus()
+      await user.keyboard('{Enter}')
+      const menu = await screen.findByRole('menu', { name })
+      await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true))
+      await user.keyboard('{Tab}')
+      await waitFor(() => expect(screen.queryByRole('menu', { name })).toBeNull())
+      const at = document.activeElement!
+      expect(at, name).not.toBe(document.body)
+      expect(pill().compareDocumentPosition(at) & Node.DOCUMENT_POSITION_FOLLOWING, name).toBeTruthy()
+    }
+  })
+
   it('the trigger says the whole boundary to a reader that does not open it', async () => {
     await open(SESSION)
     await waitFor(() => expect(boundary()).toHaveAccessibleDescription(/Sandboxed/))
