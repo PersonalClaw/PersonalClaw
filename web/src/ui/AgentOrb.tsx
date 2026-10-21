@@ -1,10 +1,13 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
-import { MODE_FRAMES, STATE_TO_MODE, ThinkingOrb, type ModeFrame, type OrbState } from 'thinking-orbs'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { MODE_FRAMES, paintFrame, resolvePreset, type OrbState } from 'thinking-orbs/engine'
 import { useMode } from '../app/theme'
 import { computedToken, onEditorTokensChange } from '../design/editorTheme'
 import { prefersReducedMotion } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, workPhaseOf, type WorkPhase } from '../lib/workPhase'
 import { cx } from './cx'
+import { STILL_AT, runDots, tintOf, useOnScreen } from './orbDots'
+
+export { STILL_AT }
 
 /** AgentOrb — what an agent's turn is doing, as one small orb of dots (`docs/design/agent-orb.md`).
  *
@@ -17,7 +20,8 @@ import { cx } from './cx'
  *  `--color-orb-rest` where nothing is alive.
  *
  *  It asks for animation frames only while it shows live work, on screen, in a visible tab, with
- *  motion allowed; anything else is one painted still. */
+ *  motion allowed, and then through the buddy's capped loop (`orbDots.ts`): at most `ORB_FPS` a
+ *  second, and none between two paints. Anything else is one painted still. */
 
 export type AgentOrbSize = 20 | 64
 
@@ -64,20 +68,6 @@ export function orbLookOf(value: unknown): OrbLook | null {
 }
 
 const BADGE_GLYPHS: Record<OrbBadge, string> = { approval: '!', input: '?', error: '×' }
-
-/** The instant a still frame is drawn at: the one `thinking-orbs` paints under reduced motion. */
-export const STILL_AT = 0.6
-const stills = new Map<OrbState, ModeFrame>()
-/** A drawing held at one instant, kept per drawing so the painter sees the same function each render. */
-function stillOf(drawing: OrbState): ModeFrame {
-  let frame = stills.get(drawing)
-  if (!frame) {
-    const draw = MODE_FRAMES[STATE_TO_MODE[drawing]]
-    frame = (size, _t, opts) => draw(size, STILL_AT, opts)
-    stills.set(drawing, frame)
-  }
-  return frame
-}
 
 type Contrast = 'normal' | 'more' | 'forced'
 const media = (query: string) => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
@@ -142,7 +132,32 @@ export function AgentOrb({ phase, size = 20, className }: {
   const hidden = useSyncExternalStore(onVisibilityChange, visibility, visibility) === 'hidden'
   const token = contrast === 'forced' ? 'CanvasText' : contrast === 'more' ? '--color-on-surface' : look.ink === 'alive' ? '--color-orb-alive' : '--color-orb-rest'
   const ink = useInk(token)
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const onScreen = useOnScreen(canvas)
   const animate = look.moves && motion === 'motion' && !hidden
+  const running = animate && onScreen
+
+  // The drawing `thinking-orbs`' own component paints, at the same pixel density, from the size's
+  // own tuned preset; held at its still instant whenever it does not run.
+  useEffect(() => {
+    const el = canvas.current
+    const ctx = el?.getContext('2d')
+    if (!el || !ctx) return
+    const dpr = Math.min(2, (typeof devicePixelRatio !== 'undefined' && devicePixelRatio) || 1)
+    el.width = Math.round(size * dpr)
+    el.height = Math.round(size * dpr)
+    const preset = resolvePreset(look.drawing, size)
+    const draw = MODE_FRAMES[preset.mode]
+    const dark = mode === 'dark'
+    let tint = tintOf(ink)
+    const paint = (t: number) => {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, size, size)
+      paintFrame(ctx, draw(size, t, preset.opts), dark, tint)
+    }
+    return runDots(paint, { running, speed: preset.speed, retint: () => { tint = tintOf(inkOf(token)) } })
+  }, [look.drawing, size, mode, ink, token, running])
+
   const tone = `var(--color-${WORK_PHASE_LOOKS[phase].tone})`
   const badge = size === 64 ? { box: 22, glyph: 14, edge: 2 } : { box: 10, glyph: 8, edge: 2 }
   return (
@@ -153,10 +168,7 @@ export function AgentOrb({ phase, size = 20, className }: {
       className={cx('relative inline-block shrink-0', className)}
       style={{ width: size, height: size }}
     >
-      <ThinkingOrb
-        state={look.drawing} size={size} theme={mode} color={ink} paused={!animate}
-        frame={animate ? undefined : stillOf(look.drawing)} aria-label={phaseLabel(phase)}
-      />
+      <canvas ref={canvas} role="img" aria-label={phaseLabel(phase)} style={{ width: size, height: size, display: 'block' }} />
       {look.badge && (
         <span
           aria-hidden="true" data-orb-badge={look.badge}

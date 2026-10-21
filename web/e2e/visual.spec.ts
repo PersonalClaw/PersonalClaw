@@ -90,12 +90,15 @@ for (const theme of THEMES) {
 // Settings → Design shows them on request (`pages/settings/AgentOrbStates.tsx`), and this
 // photographs that gallery alone, in both themes, with motion and under reduced motion. The
 // orb is a canvas drawn from the page's clock, so a moving state is a new picture every frame:
-// the clock is installed before the page loads and paused at one instant before the capture,
-// which holds every orb on the same frame each run. Under reduced motion each state is its one
-// painted frame anyway. So the comparison is exact (`maxDiffPixels: 0`), stricter than the routes':
-// measured on Darwin, the unpaused gallery differs from itself by 1,100-1,400 px, under the config's
-// 1% and so invisible to it, and the paused one by none. The titles carry no `(#/`: these are not
-// route scans, so `assert-no-route-skips.mjs` does not count them.
+// the clock is installed before the page loads and paused at one instant before the gallery is
+// shown, so every orb paints its first frame at that instant and, with no timer firing, paints no
+// other. (Paused after the gallery is shown, an orb would keep the frame it last painted: it paints
+// at most 30 a second, on a timer, and the frame a timer due at the pause asks for comes after it.)
+// Under reduced motion each state is its one painted frame anyway. So the comparison is exact
+// (`maxDiffPixels: 0`), stricter than the routes': measured on Darwin, the unpaused gallery differs
+// from itself by 1,100-1,400 px, under the config's 1% and so invisible to it, and the paused one by
+// none. The titles carry no `(#/`: these are not route scans, so `assert-no-route-skips.mjs` does
+// not count them.
 const ORB_CLOCK_START = new Date('2026-01-01T09:00:00Z')
 const ORB_CLOCK_PAUSE = new Date('2026-01-01T09:05:00Z')
 
@@ -110,10 +113,10 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
       await page.clock.install({ time: ORB_CLOCK_START })
       const settle = await gotoRoute(page, 'settings/design', BUDGET)
       expect(settle.exhausted, `settings/design never reached rest: ${settle.exhausted.join(', ')}`).toEqual([])
+      await page.clock.pauseAt(ORB_CLOCK_PAUSE)
       await page.getByRole('button', { name: 'Show its states' }).click()
       const gallery = page.locator('[data-orb-gallery]')
       await expect(gallery.locator('[data-agent-orb]')).toHaveCount(30)
-      await page.clock.pauseAt(ORB_CLOCK_PAUSE)
       await expect(gallery).toHaveScreenshot(`${key}.png`, { animations: 'disabled', maxDiffPixels: 0 })
     })
   })

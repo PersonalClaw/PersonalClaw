@@ -1,13 +1,20 @@
-/** How both rig candidates (#3887) paint the agent orb's dots in a canvas of their own: at most at
- *  the buddy's frame rate, and at once when the scheme moves the ink.
+/** How the agent orb's dots are painted, in chat and in the buddy: into a canvas of their own, at
+ *  most `ORB_FPS` times a second while they move, and at once when the scheme moves the ink.
  *
- *  The agent orb's component paints every frame the display draws and takes no rate, so each
- *  candidate paints the same drawing with the same engine and painter itself (`thinking-orbs`). Only
- *  the candidates import this, so its size is counted with theirs. */
+ *  `thinking-orbs`' own component paints every frame the display draws and takes no rate, so the
+ *  agent orb (`AgentOrb.tsx`) and both buddy rig candidates paint the same drawing with its engine
+ *  and painter themselves, through this one loop. */
 
+import { useEffect, useState, type RefObject } from 'react'
 import { onEditorTokensChange } from '../design/editorTheme'
-import { STILL_AT } from '../ui/AgentOrb'
-import { BUDDY_FPS } from './poses'
+
+/** The instant a still frame is drawn at: the one `thinking-orbs` paints under reduced motion. */
+export const STILL_AT = 0.6
+
+/** The most frames a second the orb's dots are painted at while they move, whatever the display
+ *  offers: at 30 rather than 120 a working orb costs about a third of the CPU and of the GPU time
+ *  (`docs/design/buddy/decisions/rig.md`, "The buddy's frame rate"). */
+export const ORB_FPS = 30
 
 /** An ink as the painter takes it. */
 export function tintOf(ink: string | undefined): { r: number; g: number; b: number } | undefined {
@@ -25,7 +32,7 @@ export function tintOf(ink: string | undefined): { r: number; g: number; b: numb
 export interface DotLoop {
   /** Whether the dots or the pose move now; otherwise one still is painted. */
   running: boolean
-  /** The most frames a second: the buddy's unless set, `null` for every frame the display draws. */
+  /** The most frames a second: `ORB_FPS` unless set, `null` for every frame the display draws. */
   fps?: number | null
   /** The drawing's own speed, which the time it is painted at is scaled by. */
   speed: number
@@ -37,7 +44,7 @@ export interface DotLoop {
  *  waits out the gap on a timer and only then asks for a frame, so the page draws nothing at all
  *  between two paints. A scheme change repaints at once, moving or still, so the new ink shows in
  *  the frame the change lands in rather than at the next capped paint. Returns what stops it. */
-export function runDots(paint: (t: number) => void, { running, fps = BUDDY_FPS, speed, retint }: DotLoop): () => void {
+export function runDots(paint: (t: number) => void, { running, fps = ORB_FPS, speed, retint }: DotLoop): () => void {
   const now = () => (running ? (performance.now() / 1000) * speed : STILL_AT)
   const stopRetint = onEditorTokensChange(() => { retint(); paint(now()) })
   paint(now())
@@ -57,4 +64,18 @@ export function runDots(paint: (t: number) => void, { running, fps = BUDDY_FPS, 
   }
   next()
   return () => { live = false; stopRetint(); cancelAnimationFrame(raf); window.clearTimeout(wait) }
+}
+
+/** Whether `ref`'s element is on screen: an orb scrolled out of view pauses. On screen wherever
+ *  there is no way to tell. */
+export function useOnScreen(ref: RefObject<Element | null>): boolean {
+  const [onScreen, setOnScreen] = useState(true)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(([entry]) => setOnScreen(entry.isIntersecting))
+    io.observe(el)
+    return () => io.disconnect()
+  }, [ref])
+  return onScreen
 }

@@ -11,7 +11,8 @@
  *    painted once, so an orb that drew nothing cannot pass either.
  *
  * Both paint their dots at most at the buddy's 30 frames a second, asking for no frame inside a
- * gap, and every frame the display draws only when told to; the agent orb in chat keeps its own rate.
+ * gap, and every frame the display draws only when told to; the agent orb in chat draws through the
+ * same loop at the same rate.
  *
  * Then the two things the spike's record states for both: the ink follows the scheme without a
  * remount, a moving orb's as soon as the change lands rather than at its next capped paint, and the

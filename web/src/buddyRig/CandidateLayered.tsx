@@ -2,10 +2,10 @@
  *
  *  The drawing is the agent orb's own, given only parameters for its dots' density and arrangement
  *  (its frame, from the pose), painted with the agent orb's engine and painter in a canvas of its
- *  own at most at the buddy's frame rate, since the agent orb's component takes no rate. The badge,
- *  the wash and the whole orb's rise and fall sit in an SVG layer around it, moved by the same
- *  presets through motion values, and painted with the tokens as CSS variables, so a scheme change
- *  reaches them with no reading of styles at all (`docs/design/buddy/rig.md`, "Candidates"). */
+ *  own, through the agent orb's capped loop (`ui/orbDots.ts`). The badge, the wash and the whole
+ *  orb's rise and fall sit in an SVG layer around it, moved by the same presets through motion
+ *  values, and painted with the tokens as CSS variables, so a scheme change reaches them with no
+ *  reading of styles at all (`docs/design/buddy/rig.md`, "Candidates"). */
 
 import { useEffect, useId, useMemo, useRef } from 'react'
 import { motion, useTransform } from 'framer-motion'
@@ -13,8 +13,8 @@ import { paintFrame, resolvePreset } from 'thinking-orbs/engine'
 import { useMode } from '../app/theme'
 import { inkOf } from '../ui/AgentOrb'
 import { modeOf, poseFrame } from './arrange'
-import { useMayMove, useOnScreen, useRigInks, type CandidateProps } from './candidate'
-import { runDots, tintOf } from './dots'
+import { runDots, tintOf, useOnScreen } from '../ui/orbDots'
+import { useMayMove, useRigInks, type CandidateProps } from './candidate'
 import { BADGE_GLYPHS, poseOf, rigLook, tunedDrawingFor } from './poses'
 import { usePose } from './usePose'
 

@@ -42,6 +42,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Each Capabilities tab shows its list beside the selected item's detail, where Permissions says what the item may do; in a window under 840 px wide the detail shows in place of the list, with Back to it. A tab's header holds only its Add (Install on the Store): syncing and exporting agents, Re-probe MCP servers and Manage Sources are in the list's More menu, and Proposals is a view of Skills. Every list is in name order, tool servers included, and a sort control names the order it shows.**
 - **Knowledge, Memory, Files and Artifacts are tabs of one Library: one sidebar row in place of three, and Memory leaves Settings for its tab at `#/memory`, where an old Settings → Memory link still lands on the view and the record it named. Knowledge's item list is called All items, and ⌘K goes to Library and each tab.**
 - **A Capabilities tab puts the selected item's detail beside its list only when the page has 840 px beside the sidebar, so with the sidebar expanded in a window about 840 px wide the detail shows in place of the list, with Back to it, and collapsing or expanding the sidebar switches the layout at once.**
+- **While the agent works, the orb at the head of its reply paints at most 30 frames a second, as the buddy's dots do, rather than every frame the display draws: the same drawing for less CPU.**
 
 ### Fixed
 

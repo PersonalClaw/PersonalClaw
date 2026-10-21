@@ -8,7 +8,7 @@
  *  than the full one with dots hidden. */
 
 import { MODE_FRAMES, STATE_TO_MODE, scaleCounts, type ModeFrame, type ModeKey, type OrbFrame, type OrbState } from 'thinking-orbs'
-import { STILL_AT } from '../ui/AgentOrb'
+import { STILL_AT } from '../ui/orbDots'
 import type { Pose } from './poses'
 
 /** What the frame needs of a pose: everything but the wash, which is not the dots'. */
