@@ -19,6 +19,8 @@ from personalclaw.dashboard.handlers.listening import register_listening_routes
 from personalclaw.dashboard.request_boundary import request_boundary_middleware
 from personalclaw.dashboard.ws_state import OWNER_FRAMES, DashboardWebSocketState, frame_subject
 
+pytestmark = pytest.mark.security
+
 
 class _State:
     def __init__(self) -> None:

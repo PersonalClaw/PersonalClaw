@@ -64,7 +64,10 @@ describe('the knowledge graph is reachable as a harness route', () => {
     // A regex that stopped matching would make every assertion below trivially true, which is
     // exactly how a route manifest rots silently.
     expect(VIEW_ROUTES.length, 'VIEW_ROUTES parsed as empty — the matcher is broken').toBeGreaterThan(0)
-    expect(navRoutes().length, 'the ROUTES matcher must still find the nav routes').toBeGreaterThan(8)
+    // The floor names destinations rather than counting them: the redesign folds the sidebar into
+    // fewer top-level pages (8 since Automations), and a count sized to the old nav read that as a
+    // broken matcher.
+    expect(navRoutes(), 'the ROUTES matcher must still find the nav routes').toEqual(expect.arrayContaining(['dashboard', 'chat', 'settings']))
   })
 
   it('enumerates the graph', () => {
