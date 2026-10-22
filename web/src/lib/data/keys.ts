@@ -48,6 +48,10 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   'app-uninstall': COLLECTION,
   apps: COLLECTION,
   artifacts: COLLECTION,
+  /** Automations' one list (`GET /api/triggers` in its named order). COLLECTION, as the trigger
+   *  reads it replaced: the page polls it every 10 seconds for next-run and running, and a write
+   *  busts it. */
+  automations: COLLECTION,
   autonomy: CONFIG,
   chat: COLLECTION,
   code: COLLECTION,
