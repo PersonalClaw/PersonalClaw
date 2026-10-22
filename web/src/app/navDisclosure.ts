@@ -97,11 +97,14 @@ export function setNavMode(mode: NavMode): void {
   write({ ...readNavDisclosure(), mode })
 }
 
-/** Reveal a surface permanently because it was reached. Idempotent. */
+/** Reveal a surface permanently because it was reached. Idempotent. A page that moved under
+ *  another row pins that row, the id the next read gives back: pinning the page's own id would
+ *  never read as pinned, and the visit would pin it again on every render. */
 export function pinNavSurface(id: string): void {
   const cur = readNavDisclosure()
-  if (cur.pinned.includes(id)) return
-  write({ ...cur, pinned: [...cur.pinned, id] })
+  const row = MOVED_TO.get(id) ?? id
+  if (cur.pinned.includes(row)) return
+  write({ ...cur, pinned: [...cur.pinned, row] })
 }
 
 /** Subscribe to disclosure changes — same contract as `navApps`' (in-tab event plus the
