@@ -9302,9 +9302,11 @@ export const api = {
       `/api/chat/sessions/${encodeURIComponent(session)}/plan/comment`, { step_id: stepId, text }),
   /** Approve a step. When it completes the walkthrough the reply carries the restored
    *  task mode, and `resumed` says whether a parked run was continued server-side. */
-  chatPlanApprove: (session: string, stepId: string) =>
-    post<{ ok: boolean; session: PlanSession; complete: boolean; resumed: boolean; task_mode: TaskMode }>(
-      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, { step_id: stepId }),
+  /** Approve a plan step. `run: 'fresh'` runs the approved plan in a new chat whose only message
+   *  is the plan (`fresh_session` names it); only an approval that completes the plan may. */
+  chatPlanApprove: (session: string, stepId: string, run: 'here' | 'fresh' = 'here') =>
+    post<{ ok: boolean; session: PlanSession; complete: boolean; resumed: boolean; task_mode: TaskMode; fresh_session?: string | null }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, run === 'fresh' ? { step_id: stepId, run } : { step_id: stepId }),
   chatPlanCancel: (session: string) =>
     post<{ ok: boolean; task_mode: TaskMode }>(
       `/api/chat/sessions/${encodeURIComponent(session)}/plan/cancel`),

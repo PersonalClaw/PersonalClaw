@@ -1,6 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, MessageSquarePlus, Pencil, X } from 'lucide-react'
+import { Check, ChevronDown, MessageSquarePlus, Pencil, SquarePen, X } from 'lucide-react'
 import { Button } from '../Button'
+import { IconButton } from '../IconButton'
+import { MenuRow, Popover } from '../Popover'
+import { menuCursorKeydown, useMenuCursor } from '../../lib/useMenuCursor'
 import { Markdown } from '../Markdown'
 import { StaleWriteNotice } from '../StaleWriteNotice'
 import { api, type PlanStep, type TaskMode } from '../../lib/api'
@@ -8,6 +11,58 @@ import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/stale
 import { useLatestRead } from '../../lib/useLatestRead'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { BUSY_REASON } from '../../ui/unavailable'
+
+/** How an approved plan runs, each choice saying what it changes (#3821). The first is what the
+ *  primary button does, named. "Approve, and trust edits until this plan is done" joins them once
+ *  the mode it runs in exists (#4077); until then it is absent, not disabled. */
+const APPROVE_CHOICES = [
+  { how: 'here', label: 'Approve, and ask for each change', hint: 'Runs here, in this chat\'s mode', icon: Check },
+  { how: 'fresh', label: 'Approve, and run it in a fresh chat', hint: 'A new chat starts with only the plan', icon: SquarePen },
+] as const
+
+/** Approve & run it, and the menu of ways to run it. The choice is made each time and never kept:
+ *  Enter on the primary button, or a click, is the first choice. The fresh chat runs the whole plan,
+ *  so it is offered only when this approval completes it. */
+function ApproveSplit({ busy, completes, approve }: {
+  busy: boolean
+  completes: boolean
+  approve: (how: 'here' | 'fresh') => void
+}) {
+  const choices = APPROVE_CHOICES.filter((c) => c.how !== 'fresh' || completes)
+  return (
+    <span className="inline-flex items-center gap-px">
+      <Button size="xs" disabled={busy} disabledReason={BUSY_REASON} onClick={() => approve('here')}>
+        <Check size={14} /> Approve &amp; run it
+      </Button>
+      <Popover portal placement="top" align="left" width={300}
+        trigger={(open, toggle) => (
+          <IconButton icon={ChevronDown} label="More ways to approve" size={28} iconSize={14} onClick={toggle}
+            loading={busy} expanded={open} />
+        )}>
+        {(close) => <ApproveMenu choices={choices} close={close} approve={approve} />}
+      </Popover>
+    </span>
+  )
+}
+
+function ApproveMenu({ choices, close, approve }: {
+  choices: ReadonlyArray<(typeof APPROVE_CHOICES)[number]>
+  close: () => void
+  approve: (how: 'here' | 'fresh') => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const { move, restoreFocus, tabIndexFor } = useMenuCursor({ containerRef: ref, count: choices.length, openKey: 'open' })
+  const dismiss = () => { close(); restoreFocus() }
+  return (
+    <div ref={ref} role="menu" aria-label="Ways to approve" className="flex flex-col gap-0.5"
+      onKeyDown={(e) => { menuCursorKeydown(e.nativeEvent, { move, dismiss }) }}>
+      {choices.map((c, i) => (
+        <MenuRow key={c.how} role="menuitem" tabIndex={tabIndexFor(i)} icon={<c.icon size={16} />}
+          label={c.label} hint={c.hint} onClick={() => { close(); approve(c.how) }} />
+      ))}
+    </div>
+  )
+}
 
 /** A step's plan as the page shows it — the markdown an edit replaces — with the revision the same
  *  read reported. */
@@ -32,17 +87,22 @@ function draftOf(step: PlanStep): Revisioned<string> {
  *  Mounted unconditionally by the host and renders NOTHING until a plan session exists,
  *  which is the state of every chat that never used the composer affordance.
  */
-export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
+export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   /** Chat session key. */
   session: string
   /** Bumped by the host when a turn lands, so the gate picks up the new draft. */
   refreshKey: number
   /** The server-restored task mode after approve/cancel — the host syncs its pill. */
   onTaskMode: (mode: TaskMode) => void
+  /** Opens a chat by its key: the fresh chat an approval ran the plan in. */
+  onOpenChat?: (session: string) => void
 }) {
   const [step, setStep] = useState<PlanStep | null>(null)
   const [awaiting, setAwaiting] = useState('')
   const [parked, setParked] = useState(false)
+  // Whether approving the step on screen completes the plan: every other step is approved. Only
+  // then can the plan run in a fresh chat, which runs the whole of it.
+  const [completes, setCompletes] = useState(false)
   const [comment, setComment] = useState('')
   const [editText, setEditText] = useState<string | null>(null)
   const commentFieldId = useId()
@@ -68,7 +128,9 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
       const steps = d.session?.steps ?? []
       // The step the walkthrough is ON = the first not-yet-approved one, the same
       // definition as planning.session.current_step.
-      setStep(steps.find((s) => s.status !== 'approved') ?? null)
+      const current = steps.find((s) => s.status !== 'approved') ?? null
+      setStep(current)
+      setCompletes(!!current && steps.every((s) => s.id === current.id || s.status === 'approved'))
       setAwaiting(d.awaiting_step_id)
       setParked(!!d.binding?.parked)
     },
@@ -184,10 +246,12 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
               data-type="body-s"
               className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary" />
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="xs" disabled={busy} disabledReason={BUSY_REASON}
-                onClick={() => void run(async () => { const r = await api.chatPlanApprove(session, step.id); if (r.complete) onTaskMode(r.task_mode) })}>
-                <Check size={14} /> Approve &amp; run it
-              </Button>
+              <ApproveSplit busy={busy} completes={completes}
+                approve={(how) => void run(async () => {
+                  const r = await api.chatPlanApprove(session, step.id, how)
+                  if (r.complete) onTaskMode(r.task_mode)
+                  if (r.fresh_session) onOpenChat?.(r.fresh_session)
+                })} />
               <Button size="xs" variant="secondary" disabled={busy || !comment.trim()}
                 disabledReason={!comment.trim() ? 'Write a comment first' : BUSY_REASON}
                 onClick={() => void run(() => api.chatPlanComment(session, step.id, comment.trim()))}>
