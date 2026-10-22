@@ -37,6 +37,11 @@ Each test maps to an acceptance criterion of an implementation task.
   poses and its 18 px scan in `tests/rails/test_buddy_design_matrix.py`
   ([`character.md`](character.md#the-drawn-poses)). The contact sheets stay for the maintainer to
   look at any time; they are not a gate.
+- High contrast, measured: each still the tray and the dock load, from its PNG, holds WCAG's 3:1
+  non-text contrast for at least 90% of its glyph's pixels against a pure white or a pure black
+  bar, each colour still on its own appearance's bar and each macOS template as the system draws it
+  on both; a planted low-contrast still fails it (`desktop/test/buddyStillsContrast.test.js`,
+  [#3896]). macOS draws template images for Increase Contrast itself.
 - Side by side with other products' status indicators and assistant orbs, from public material,
   nothing the buddy adds to the agent orb (its outline, badge, wash, poses, gestures and presence),
   nor the whole orb, shows a drawn form or choreography a viewer would recognise as another
@@ -144,5 +149,6 @@ Later work: play ([#3894]) and drop and quick ask ([#3895]).
 [#3893]: https://github.com/PersonalClaw/PersonalClaw/issues/3893
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
+[#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
