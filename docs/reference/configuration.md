@@ -348,6 +348,24 @@ loads as the nearest end of it; the dashboard and `personalclaw config set` refu
 | `background.max_output_tokens` | integer (512–65536) | `4096` | Settings → Models → Background | Most text a background task may write in one answer: a chat's title, its memory consolidation, suggestions and follow-ups, and heartbeat tasks (every turn of an agent on the Background chain). A one-shot background call keeps its model's own output limit. An answer to a chore or a one-shot call stopped at its limit is not read as one: the chain's next model is asked, and a consolidation none could finish is owed and said in a notice. A heartbeat task's result cut at it says so. A change rebuilds the background session at its next chore. |
 | `background.busy_model_wait_secs` | number (0–300) | `15.0` | Settings → Models → Background | How long a reply waits for a busy local model before asking the next one. A reply, a step it runs or a page's answer goes ahead of background work on a model on this machine; when the call already running holds the model and the chain has another model, it waits this long, then that model answers. `0` asks the next model at once. |
 
+## Buddy (`buddy.*`)
+
+Whether the buddy shows, on which surfaces, and when it steps back (#3901). They are in
+**Settings → Buddy**. Every window and every machine reads them through one answer,
+`GET /api/buddy/policy`, with the notification posture the buddy's alerts follow (mute and quiet
+hours, from **Settings → Notifications**); a change applies at once, in every open window, with no
+restart. Where the buddy sits and whether screen sharing sees it are this machine's, kept by the
+desktop app, not here.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `buddy.show` | boolean | `false` | Settings → Buddy, or the menu bar's Show Buddy | Buddy status: show the buddy at all. Off, no buddy surface shows: its window, its tray and dock faces and its alerts' notifications all go. |
+| `buddy.window` | boolean | `true` | Settings → Buddy | Show the buddy's own window, docked or floating, while Buddy status is on. |
+| `buddy.tray` | boolean | `true` | Settings → Buddy | Show the buddy's state on its menu bar or tray icon, while Buddy status is on. |
+| `buddy.dock` | boolean | `true` | Settings → Buddy | Show the buddy's state on the app's dock icon, while Buddy status is on. |
+| `buddy.notifications` | boolean | `true` | Settings → Buddy | Let the buddy's alerts raise system notifications, under your notification rules, mute and quiet hours, while Buddy status is on. |
+| `buddy.away_after_secs` | integer (30–3600) | `180` | Settings → Buddy | How long you are gone before the buddy steps back: docked it hides, floating it dozes. Alerts still appear. |
+
 ## Top-level keys
 
 | Key | Type | Default | Where to set | Description |

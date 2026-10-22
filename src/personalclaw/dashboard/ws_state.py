@@ -120,8 +120,10 @@ WAITING_LIST_ROUTE = "/api/waiting"
 #: Frames about the owner alone, whatever they carry: whether her microphone is live
 #: (``handlers/listening.py``, #3833), and how far the owner has seen a chat (``chat_seen``: it
 #: names the chat but is about the owner, and an app hearing it of a conversation it started would
-#: read the owner's read receipts). They reach her sockets and never an app's.
-OWNER_FRAMES: frozenset[str] = frozenset({"listening", "chat_seen"})
+#: read the owner's read receipts), and that the buddy's policy may have changed
+#: (``buddy_policy_changed``, #3901: her buddy knobs or notification settings were written). They
+#: reach her sockets and never an app's.
+OWNER_FRAMES: frozenset[str] = frozenset({"listening", "chat_seen", "buddy_policy_changed"})
 
 #: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,
 #: ``("inbox_item", source)``, ``("work", name)``, ``("waiting", "")`` or ``("owner", frame)``.

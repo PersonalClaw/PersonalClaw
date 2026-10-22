@@ -1061,6 +1061,13 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         if state is not None:
             state.push_refresh("voice")
 
+    # Every window reads the buddy's policy once and follows it (#3901), so a buddy knob's write
+    # tells the owner's sockets it may have changed, and each reads it again.
+    if path_key.startswith("buddy."):
+        from personalclaw import buddy_policy
+
+        buddy_policy.announce(request.app.get("state"))
+
     # Log level carries a live side effect — the same one POST /api/logs/level
     # applies — so set every logger + handler now. Without this, the Agent-defaults
     # row only persisted the key and the change took effect at the next restart,
