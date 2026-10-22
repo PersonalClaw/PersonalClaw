@@ -12,12 +12,15 @@ import { LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 // and Stop with its two-step confirm, each offered exactly when the action route would accept it
 // (LOOP_ACTION_SOURCE_STATUSES, the mirror of the route's guard). The header keeps the rest (Rename,
 // the link, Delete and Details), so Pause and Stop have one home. The composer under the strip is the
-// loop's nudge: guidance for its next cycle, sent with `POST /api/loops/{id}/nudge`.
+// loop's nudge: guidance for its next cycle, sent with `POST /api/loops/{id}/nudge`. The strip also
+// says how the loop reports, the choice its start asked for, and changes it while the loop has cycles
+// ahead (`PUT /api/loops/{id} {report}`).
 
-const { STORE, action, nudge } = vi.hoisted(() => ({
+const { STORE, action, nudge, update } = vi.hoisted(() => ({
   STORE: { loops: [] as Loop[] },
   action: vi.fn(),
   nudge: vi.fn(),
+  update: vi.fn(),
 }))
 
 vi.mock('../../lib/api', async (orig) => ({
@@ -34,7 +37,7 @@ vi.mock('../../lib/api', async (orig) => ({
     task: () => Promise.resolve(null),
     project: () => Promise.resolve({ name: 'Test project' }),
     deleteULoop: () => Promise.resolve(),
-    updateULoop: () => Promise.resolve(null),
+    updateULoop: (id: string, body: Record<string, unknown>) => update(id, body),
     uLoopNudge: (id: string, text: string) => nudge(id, text),
   },
 }))
@@ -68,6 +71,7 @@ beforeEach(() => {
   STORE.loops = []
   action.mockReset()
   nudge.mockReset()
+  update.mockReset()
 })
 
 describe('the strip above the composer', () => {
@@ -117,6 +121,43 @@ describe('the strip above the composer', () => {
       expect(offered).toEqual(accepted)
     },
   )
+})
+
+describe('how the loop reports, in the strip', () => {
+  it('shows the choice the loop holds, and a change is saved on the loop', async () => {
+    const loop = fixture('running', { report: 'as_it_goes' })
+    update.mockImplementation((_id: string, body: Record<string, unknown>) => Promise.resolve({ ...loop, ...body }))
+    const { strip } = await mount(loop)
+    fireEvent.click(within(strip()).getByRole('button', { name: 'Reports: As it goes' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Only if it gets stuck/ }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith(loop.id, { report: 'if_stuck' }))
+    expect(await within(strip()).findByRole('button', { name: 'Reports: Only if it gets stuck' })).toBeInTheDocument()
+  })
+
+  it('a loop from a gateway that predates the choice reads as the default', async () => {
+    const { strip } = await mount(fixture('ready'))
+    expect(within(strip()).getByRole('button', { name: 'Reports: Only when it’s done' })).toBeInTheDocument()
+  })
+
+  it('a refused change keeps the choice the loop holds', async () => {
+    const loop = fixture('paused', { report: 'when_done' })
+    update.mockRejectedValue(new Error('refused'))
+    const { strip } = await mount(loop)
+    fireEvent.click(within(strip()).getByRole('button', { name: 'Reports: Only when it’s done' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /As it goes/ }))
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    expect(within(strip()).getByRole('button', { name: 'Reports: Only when it’s done' })).toBeInTheDocument()
+  })
+
+  it.each(['complete', 'stopped'])('a %s loop has nothing left to report, so it is not asked', async (status) => {
+    const { strip } = await mount(fixture(status))
+    expect(within(strip()).queryByRole('button', { name: /^Reports:/ })).toBeNull()
+  })
+
+  it('a general loop reports as its workflow run does, so the strip does not ask it', async () => {
+    const { strip } = await mount(fixture('running', { kind: 'general' }))
+    expect(within(strip()).queryByRole('button', { name: /^Reports:/ })).toBeNull()
+  })
 })
 
 describe('the composer under it is the loop\'s nudge', () => {

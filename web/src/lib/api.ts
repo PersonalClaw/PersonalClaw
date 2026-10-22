@@ -6895,8 +6895,14 @@ export interface LoopCheckJudge { outcome: 'pass' | 'fail' | 'no_answer'; answer
 export interface StageGateCriterion { criterion: string; verdict: 'pass' | 'fail' | 'cant_tell'; reason: string; outside?: boolean }
 export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: number; applied_cycle: number | null }
 export interface RosterMember { role: string; persona: string; role_hint?: string; agent_name?: string }
+/** How a loop reports to its owner (`Loop.report`, #3824): a note each cycle, only its outcome, or only
+ *  a failure. A loop waiting on its owner raises its Inbox item whatever this says. */
+export type LoopReport = 'as_it_goes' | 'when_done' | 'if_stuck'
+
 export interface GoalLoop {
   id: string; name: string; goal: string; sub_goals: string[]; deliverables?: string[]; scope?: string[]
+  /** Carried through from `Loop.kind` by `loopToGoalLoop`'s spread: the cockpit shows every kind but design. */
+  kind?: string
   /** Carried through from `Loop.run_id` by `loopToGoalLoop`'s spread — see there. */
   run_id?: string
   /** Carried through from `Loop.work_dir` — where the worker's own files land. */
@@ -6905,6 +6911,8 @@ export interface GoalLoop {
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
   attended: boolean; granularity: Granularity
+  /** Carried through from `Loop.report`; absent from a gateway that predates it. */
+  report?: LoopReport
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
   /** Carried through from `Loop.held` — why incident mode is holding this running loop. */
@@ -7252,7 +7260,7 @@ export interface Loop {
   strategy_config?: Record<string, unknown>
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
   skill_ids?: string[]; workflow_ids?: string[]
-  workspace_dir?: string; attended: boolean; autopilot?: boolean
+  workspace_dir?: string; attended: boolean; report?: LoopReport; autopilot?: boolean
   /** Detail-only: whether its agent CLI approves its own calls. Absent on the list. */
   agent_cli_self_approval?: LoopAgentCliSelfApproval
   // The loop's own server-local file dir — where brief/findings live and doc
@@ -9546,7 +9554,7 @@ export const api = {
   // A rename, a workspace re-bind or what the loop runs on: the values it names, so no revision. A
   // write carrying the plan, a capability list or `kind_config` replaces those from the caller's
   // copy — `saveULoopSpec`.
-  updateULoop: (id: string, body: { name?: string; workspace_dir?: string; provider?: string; provider_agent?: string }) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
+  updateULoop: (id: string, body: { name?: string; workspace_dir?: string; provider?: string; provider_agent?: string; report?: LoopReport }) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
   // A spec write built from the loop this page read — Plan Review's launch, the design cockpit's
   // token overrides — so it names that read's revision (`Loop.revision`). The planner's finalize or
   // another tab may have written the spec since; that copy is refused with `409 stale_write`.
