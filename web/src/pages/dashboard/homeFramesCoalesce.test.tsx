@@ -4,11 +4,11 @@ import type { WsMessage } from '../../lib/useChatSocket'
 
 // ── Home reads a slice once per burst of its frames, and only on the frames that move it ────────
 //
-// Home no longer polls the slices whose every change arrives as a frame (approvals, the Inbox,
-// notifications), so frames are the whole signal, and they arrive in bursts: "Dismiss all" moves
-// every open row and the gateway says so once per row. One read per frame was 37 reads of the
-// Inbox for a 37-row sweep. And the run feed re-read on `refresh: history`, which is the CHAT
-// history; the trigger runs it shows are `cron_history`.
+// Home does not poll what waits on you (the waiting list and the Inbox under it): every change
+// arrives as a frame, so frames are the whole signal, and they arrive in bursts: "Dismiss all"
+// moves every open row and the gateway says so once per row. One read per frame was 37 reads of
+// the Inbox for a 37-row sweep. And the Overview's run feed re-read on `refresh: history`, which is
+// the CHAT history; the trigger runs it shows are `cron_history`.
 
 const frames: Array<(m: WsMessage) => void> = []
 const inboxOpen = vi.fn(() => Promise.resolve([]))
@@ -19,6 +19,7 @@ function mockApi() {
   vi.doMock('../../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     api: {
+      waiting: () => Promise.resolve({ waiting: [], unreadable: [] }),
       approvals: () => Promise.resolve([]),
       inboxOpen: () => inboxOpen(),
       skillProposals: () => Promise.resolve({ proposals: [] }),
@@ -40,7 +41,10 @@ function mockApi() {
 
 async function mountHome() {
   const { DashboardLiveProvider } = await import('./DashboardLive')
-  render(<DashboardLiveProvider><div /></DashboardLiveProvider>)
+  const { useNeedsYou } = await import('../../lib/useNeedsYou')
+  // Needs You's read, as Home and the toolbar's badge hold it.
+  function NeedsYou() { useNeedsYou(); return null }
+  render(<DashboardLiveProvider><NeedsYou /></DashboardLiveProvider>)
   await act(async () => { await Promise.resolve() })
 }
 
@@ -64,7 +68,15 @@ describe('Home and its frames', () => {
     await mountHome()
     const onMount = inboxOpen.mock.calls.length
     for (let i = 0; i < 37; i++) say({ type: 'inbox_item_updated', data: { id: `row-${i}` } } as WsMessage)
-    act(() => { vi.advanceTimersByTime(200) })
+    await act(async () => { vi.advanceTimersByTime(350) })
+    expect(inboxOpen.mock.calls.length - onMount).toBe(1)
+  })
+
+  it('reads what waits on you again on the waiting list’s own frame, which carries nothing', async () => {
+    await mountHome()
+    const onMount = inboxOpen.mock.calls.length
+    say({ type: 'waiting_changed' } as WsMessage)
+    await act(async () => { vi.advanceTimersByTime(350) })
     expect(inboxOpen.mock.calls.length - onMount).toBe(1)
   })
 

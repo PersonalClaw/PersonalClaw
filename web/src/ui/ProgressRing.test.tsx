@@ -97,7 +97,7 @@ describe('the divergence this primitive resolves', () => {
   })
 
   it('neither page declares its own ProgressRing any more', () => {
-    for (const rel of ['pages/dashboard/widgets/ActiveWork.tsx', 'pages/loops/LoopsListPage.tsx']) {
+    for (const rel of ['pages/loops/LoopsListPage.tsx']) {
       const src = read(rel)
       expect(/function ProgressRing\b/.test(src), `${rel} should not declare its own ring`).toBe(false)
       expect(src).toMatch(/import \{ ProgressRing \} from '.*ui\/ProgressRing'/)
@@ -167,7 +167,7 @@ describe('the ring announces itself, and its abbreviation has a full word', () =
 
   it('every call site names what it is counting', () => {
     const SRC = join(process.cwd(), 'src')
-    const sites = ['pages/loops/LoopsListPage.tsx', 'pages/dashboard/widgets/ActiveWork.tsx']
+    const sites = ['pages/loops/LoopsListPage.tsx']
     for (const rel of sites) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, `${rel} must pass a label`).toMatch(/<ProgressRing[\s\S]{0,220}?label=\{`Cycle progress/)

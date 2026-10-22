@@ -22,17 +22,22 @@
   - button "Collapse sidebar"
   - button "Open terminal"
   - 'button "Content width: Full"'
+  - button "# waiting on you — open Home"
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - heading "Mission Control" [level=#]
-  - region "Mission Control":
-    - paragraph: Everything wanting your attention, in the order it wants it. Approve, reject, and answer from here — you do not have to open the run.
-    - region "Needs approval":
-      - heading "Needs approval" [level=#]
+  - heading "Good <time of day>, Keyur" [level=#]
+  - button "New thread"
+  - radiogroup "View":
+    - radio "Attention" [checked]
+    - radio "Overview"
+  - region "Home":
+    - region "Needs You":
+      - heading "Needs You" [level=#]
       - text: "#"
       - list:
         - listitem:
+          - button "Show the details of bash"
           - group "Permission needed to run bash":
             - alert: Permission needed
             - text: Destructive bash(rm -rf build)
@@ -41,32 +46,29 @@
             - button "Allow bash — automation “Nightly” — Clear the build folder": Allow
             - button "Deny bash — automation “Nightly” — Clear the build folder": Deny
         - listitem:
-          - paragraph: Workflow “release”
+          - button "Show the details of Ship v#.#?"
+          - paragraph: Workflow · release
           - paragraph: Ship v#.#?
-          - button "Approve Ship v#.#? — Workflow “release”": Approve
-          - button "Deny Ship v#.#? — Workflow “release”": Deny
+          - button "Approve Ship v#.#? — Workflow · release": Approve
+          - button "Deny Ship v#.#? — Workflow · release": Deny
         - listitem:
-          - paragraph: Automation “Bank statements”
+          - button "Show the details of Sign in to the bank’s site"
+          - paragraph: Trigger · Bank statements
           - paragraph: Sign in to the bank’s site
-          - button "Approve Sign in to the bank’s site — Automation “Bank statemen…": Approve
-          - button "Deny Sign in to the bank’s site — Automation “Bank statemen…": Deny
-    - region "Your turn":
-      - heading "Your turn" [level=#]
-      - text: "#"
-      - list:
+          - button "Approve Sign in to the bank’s site — Trigger · Bank statements": Approve
+          - button "Deny Sign in to the bank’s site — Trigger · Bank statements": Deny
         - listitem:
-          - paragraph: Loop “Sort the inbox”
+          - button "Show the details of May I archive last year’s mail?"
+          - paragraph: Loop · Sort the inbox
           - paragraph: May I archive last year’s mail?
-          - 'link "Open loop: May I archive last year’s mail? — Loop “Sort the inbox”"':
+          - 'link "Answer it where it asks: May I archive last year’s mail? — Loop · Sort the inbox"':
             - /url: "#/loops/l-e#e"
-            - text: Open it to answer
-    - region "Working":
-      - heading "Working" [level=#]
-      - text: "#"
+            - text: Answer it where it asks
+    - region "Running Now":
+      - heading "Running Now" [level=#]
       - paragraph: Nothing is running right now.
-    - region "Idle":
-      - heading "Idle" [level=#]
-      - text: "#"
-      - paragraph: Nothing is idle.
+    - region "Recent and completed":
+      - heading "Recent and completed" [level=#]
+      - paragraph: Nothing has finished lately, and you have no threads yet.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

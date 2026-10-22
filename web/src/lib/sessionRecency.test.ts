@@ -77,8 +77,8 @@ describe('all three call sites share it now', () => {
   const SRC = join(process.cwd(), 'src')
   const read = (rel: string) => readSource(join(SRC, rel))
 
-  it('the dashboard no longer builds a Date from a `??` chain', () => {
-    const src = read('pages/dashboard/DashboardPage.tsx')
+  it('Home no longer builds a Date from a `??` chain', () => {
+    const src = read('pages/dashboard/Home.tsx')
     expect(src).toContain('.sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))')
     expect(src, 'the breakable spelling must be gone').not.toMatch(/new Date\([^)]*\?\?[^)]*\)\.getTime\(\)/)
   })

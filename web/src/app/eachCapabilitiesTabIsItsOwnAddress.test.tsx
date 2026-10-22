@@ -62,7 +62,7 @@ beforeAll(async () => {
     import('../pages/prompts/PromptsSection'),
     import('../pages/apps/AppsSection'),
     import('../pages/apps/AppHostPage'),
-    import('../pages/dashboard/DashboardPage'),
+    import('../pages/dashboard/Home'),
     import('../pages/learning/LearningPage'),
     import('../pages/workflows/WorkflowsSection'),
   ])

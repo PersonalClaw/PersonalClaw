@@ -155,7 +155,7 @@ const { IdentityProvider } = await import('../identity')
 // `lazy`. `atStop`'s budget then measures the overlay, which is what it claims to measure.
 await Promise.all([
   import('../../pages/inbox/InboxPage'),
-  import('../../pages/dashboard/DashboardPage'),
+  import('../../pages/dashboard/Home'),
   import('../../pages/settings/SettingsPage'),
   import('../../pages/triggers/TriggersSection'),
   import('../../pages/discover/DiscoverPage'),
@@ -307,7 +307,7 @@ describe('it walks all five stops, over the real surfaces', () => {
       rail: 'ui/NavRail.tsx',
       chat: 'pages/chat/composer/ChatComposer.tsx',
       inbox: 'pages/inbox/InboxPage.tsx',
-      approvals: 'pages/dashboard/DashboardPage.tsx',
+      approvals: 'pages/dashboard/Home.tsx',
       settings: 'pages/settings/SettingsHome.tsx',
     }
     for (const stop of PRODUCT_TOUR_STOPS) {

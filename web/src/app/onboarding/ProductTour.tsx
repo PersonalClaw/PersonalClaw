@@ -30,7 +30,7 @@ const STOPS: Stop[] = [
   {
     id: 'approvals', anchor: 'approvals', route: 'dashboard', icon: ShieldCheck,
     title: 'Anything risky waits for you here',
-    body: '"To triage" on your home screen holds every approval, message and skill proposal waiting on a decision. Approve or reject it in one click.',
+    body: '"Needs You" on your home screen holds everything waiting on your answer: approvals, questions, runs stopped at a step and skill proposals. Approve or reject it in one click.',
   },
   {
     id: 'settings', anchor: 'settings', route: 'settings', icon: SlidersHorizontal,

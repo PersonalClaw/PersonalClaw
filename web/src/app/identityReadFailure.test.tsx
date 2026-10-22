@@ -69,7 +69,7 @@ const { IdentityProvider } = await import('./identity')
 const { ApiError } = await import('../lib/api')
 // The dashboard is a lazy route; resolving its chunk once keeps the landing assertions about the
 // app rather than about a module transform.
-await import('../pages/dashboard/DashboardPage')
+await import('../pages/dashboard/Home')
 
 /** `main.tsx`'s provider stack around the real shell. */
 const renderApp = () => render(

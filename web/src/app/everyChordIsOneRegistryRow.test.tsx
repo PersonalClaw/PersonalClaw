@@ -33,7 +33,6 @@ const STILL_READ_MODIFIERS = [
   'pages/chat/transcript/useTranscript.ts',
   'pages/code/cockpit/useCenterEditor.ts',
   'pages/code/cockpit/useCodeCockpit.ts',
-  'pages/dashboard/widgets/ActiveWork.tsx',
   'pages/files/FilesSection.tsx',
   'pages/knowledge/KnowledgeCreatePage.tsx',
   'pages/knowledge/ReadingView.tsx',

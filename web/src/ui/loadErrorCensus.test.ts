@@ -1404,7 +1404,6 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // The cockpit's instant-paint seed, moved out of `CodeCockpitPage` with its state.
   'pages/code/cockpit/useCodeCockpit.ts': 1,
   'pages/companion/CompanionPage.tsx': 1,
-  'pages/dashboard/DashboardPage.tsx': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,
   // A KEEP: the Discover tip under an empty state reads the catalogue for one optional hint, and a
   // failed read draws nothing on purpose, as an unread or empty one does. Nothing waits on it, so
@@ -1760,9 +1759,6 @@ describe('every useQuery list destination adopts LoadError', () => {
 // shared way must leave the list.
 
 const SAYS_IT_ANOTHER_WAY: Record<string, string> = {
-  // An alert block of its own (`role="alert"`, the failure's text and a Try again) over the four
-  // lanes, so a failed read is never four empty lanes.
-  'mission-control': 'its attention board states the failure in an alert of its own',
   // The composer's one read is the workspace a new loop inherits, a prefill left empty for the
   // user when it cannot be read; the design-system preview says "Could not load the default token
   // set." in its modal.

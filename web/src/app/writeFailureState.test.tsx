@@ -358,7 +358,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   'pages/dashboard/PinnedTiles.tsx': 2,
   // (a) A loop nudge. "keep the text so the user can retry" is a correct STATE decision and is kept;
   // `refusedWriteVisible`'s ruling is that a state decision is not a reason to stay quiet.
-  'pages/dashboard/widgets/ActiveWork.tsx': 1,
   // (a) `catch { load() }` on an unpin — reconcile without report, byte-for-byte the
   // `settingsWidgets.mutate()` defect `settingsWriteReported` fixed one directory over.
   'pages/dashboard/widgets/PinnedArtifacts.tsx': 1,
@@ -591,8 +590,9 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
     // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, the
     // Knowledge page's re-embed trigger: 48 → 47, the binding save above: 47 → 46, the chat
-    // card's lifecycle write: 46 → 45, and the chat's title regen: 45 → 44).
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(44)
+    // card's lifecycle write: 46 → 45, the chat's title regen: 45 → 44, and Home's Active work
+    // band, retired with its composer's send when Home became the attention stack: 44 → 43).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(43)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

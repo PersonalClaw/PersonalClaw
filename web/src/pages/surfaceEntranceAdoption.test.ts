@@ -34,7 +34,10 @@ const PAGES = join(process.cwd(), 'src/pages')
  *  layout actually has. The count is a floor, not an exact number: Discover's areas are
  *  server-authored, so its `map` yields one region per area at runtime. */
 const ADOPTERS: { file: string; label: string; minRegions: number }[] = [
-  { file: 'dashboard/DashboardPage.tsx', label: 'the dashboard home column', minRegions: 8 },
+  // Home's Overview (`?view=overview`) since #3813: the bands that left for Home's three groups took
+  // their regions with them (10 to 7). Home's own groups do not stage an entrance: they are read
+  // and answered many times a day, and `highFrequencySurfacesDoNotSpring` keeps them still.
+  { file: 'dashboard/DashboardPage.tsx', label: 'the Overview column', minRegions: 7 },
   { file: 'inbox/InboxPage.tsx', label: 'the inbox body', minRegions: 2 },
   { file: 'discover/DiscoverPage.tsx', label: 'the Discover hub column', minRegions: 2 },
 ]

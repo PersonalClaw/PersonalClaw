@@ -349,9 +349,8 @@ describe('the probe as the browser runs it', () => {
 
   it('probes the routes the issue names: Home and Chat, from the route manifest', () => {
     expect(IDLE_ROUTES.map((r) => r.route)).toEqual(['dashboard', 'chat'])
-    // Home's window must hold an answer of its fastest poll (pages/dashboard/DashboardLive.tsx's
-    // 8 s loops read); Chat polls nothing at rest.
-    expect(IDLE_ROUTES.map((r) => r.holds)).toEqual(['GET /api/loops', undefined])
+    // Neither polls at rest: Home re-reads on the frames that move it (#3813), and Chat polls nothing.
+    expect(IDLE_ROUTES.map((r) => r.holds)).toEqual([undefined, undefined])
     for (const r of IDLE_ROUTES) expect(ROUTES).toContainEqual(expect.objectContaining({ route: r.route, label: r.label }))
   })
 })

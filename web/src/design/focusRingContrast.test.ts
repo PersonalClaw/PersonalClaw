@@ -175,8 +175,9 @@ describe('no focus ring may carry an alpha', () => {
     // into regions spread their hand-drawn rings over the region files (67 by the end of the split,
     // with this floor left at 61), and the chat's auto-nudge settings then left the population (67 → 66)
     // because their three rings were on fields that are a `TextArea` and two `NumberField`s now.
+    // 🔻 66 → 65: Home's launcher composer left with the old Home, its ring with it.
     const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
-    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(66)
+    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(65)
   })
 
   it('is scoped to focus states, and only to them', () => {

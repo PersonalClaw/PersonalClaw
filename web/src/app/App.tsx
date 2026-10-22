@@ -83,8 +83,7 @@ const MemoryPage = lazy(() => import('../pages/library/MemoryPage').then((m) => 
 const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => ({ default: m.AppsSection })))
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
-const DashboardPage = lazy(() => import('../pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
-const MissionControl = lazy(() => import('../pages/dashboard/MissionControl').then((m) => ({ default: m.MissionControl })))
+const Home = lazy(() => import('../pages/dashboard/Home').then((m) => ({ default: m.Home })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
 const PlaygroundPage = lazy(() => import('../pages/buddy/PlaygroundPage').then((m) => ({ default: m.PlaygroundPage })))
@@ -118,12 +117,9 @@ const NAV: NavItem[] = [
 // dedicated nav tile — loops are launched from within Projects (and surfaced as
 // chat-session widgets) — but its detail/history/planning sub-routes
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
-// `mission-control` is routable but NOT in `NAV`: it is a locked DASHBOARD VIEW the server
-// registers (`views_store._mission_control_preset`), not a static rail destination. The registry
-// declares it `nav_pinned` with an icon, and NOTHING on the frontend reads either field yet — so
-// until a rail is built from `/api/dashboard/views`, the command palette below is how a user
-// reaches it. That is the palette's stated job (see its comment: the door to every page the
-// sidebar does not carry), not a workaround.
+// `mission-control` is routable but NOT in `NAV`: it is the locked DASHBOARD VIEW the server
+// registers (`views_store._mission_control_preset`), and Home is that view (#3813), so the address
+// opens Home. It stays routable because every address the app has shipped keeps resolving.
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
@@ -174,8 +170,9 @@ function renderPage(active: string, r: RouteProps) {
   // Every page receives the full RouteProps bundle so its sub-pages, tabs,
   // filters, search, and open-panel state can all be URL-addressable.
   switch (active) {
-    case 'dashboard': return <DashboardPage {...r} />
-    case 'mission-control': return <MissionControl />
+    // Home is the attention stack, and `#/mission-control` opens the same view (#3813).
+    case 'dashboard': return <Home {...r} />
+    case 'mission-control': return <Home {...r} />
     case 'chat': return <ChatPage {...r} />
     case 'loop': return <LoopSection {...r} />
     case 'loops': return <LoopsSection {...r} />
@@ -839,7 +836,7 @@ function AppInner() {
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
-    { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
+    { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'home attention needs you running now recent completed approvals', run: () => navigate('mission-control') },
     // A filter of the Inbox, not a page of its own (#3818).
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed inbox', run: () => navigate('inbox?filter=notifications') },
     // Every project's tasks: a project's own are its Tasks view (#3818).

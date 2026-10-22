@@ -7,16 +7,16 @@ import type { RunningList, RunningRow } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
 import { clockTime } from '../../lib/epoch'
 
-// ── Mission Control's Working lane is the running list (#3889) ──────────────────────────────────
+// ── Home's Running Now is the running list (#3889, #3813) ───────────────────────────────────────
 //
-// Working reads `GET /api/running`, the one list of live work every reader shares, and nothing of
-// its own: each row shows the work's name, its exact phase as text, what it is doing, the agent
+// Running Now reads `GET /api/running`, the one list of live work every reader shares, and nothing
+// of its own: each row shows the work's name, its exact phase as text, what it is doing, the agent
 // doing it, its last update and a route that opens it. A blocked row says so, apart from working,
-// and a row that waits on you says how much does.
+// and a row that waits on you says how much does. The just-finished tail is Recent and completed's.
 //
-// The lane renders every state the list can be in: a large list, an empty one, the socket
+// Home renders every state the list can be in: a large list, an empty one, the socket
 // reconnecting, work a gateway restart interrupted, failed work and the just-finished tail. Each is
-// fed here, and each assertion names what it fed, so an empty lane cannot pass for any of them.
+// fed here, and each assertion names what it fed, so an empty group cannot pass for any of them.
 
 const running = vi.fn<() => Promise<RunningList>>()
 const inboxOpen = vi.fn()
@@ -25,29 +25,33 @@ const status = vi.fn<() => Promise<{ start_time?: number; uptime_secs?: number }
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
+    waiting: () => Promise.resolve({ waiting: [], unreadable: [] }),
     inboxOpen: () => inboxOpen(),
-    approvals: () => Promise.resolve([]),
-    waiting: () => Promise.resolve(waitingList()),
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
+    chatSessions: () => Promise.resolve([]),
     running: () => running(),
     status: () => status(),
   },
 }))
 
-let deliver: (m: WsMessage) => void = () => {}
-let reconnect: () => void = () => {}
-let connected: (up: boolean) => void = () => {}
+// Every reader on the page shares the socket, so a frame, a reconnect and a link change reach each.
+const readers = new Map<string, { onMessage: (m: WsMessage) => void; onReconnect: () => void; onStatus?: (up: boolean) => void }>()
+const deliver = (m: WsMessage) => { for (const r of [...readers.values()]) r.onMessage(m) }
+const reconnect = () => { for (const r of [...readers.values()]) r.onReconnect() }
+const connected = (up: boolean) => { for (const r of [...readers.values()]) r.onStatus?.(up) }
 vi.mock('../../lib/useChatSocket', () => ({
   useChatSocket: (onMessage: (m: WsMessage) => void, onReconnect: () => void, onStatus?: (up: boolean) => void) => {
-    deliver = onMessage
-    reconnect = onReconnect
-    connected = onStatus ?? (() => {})
+    // One entry per call site: a re-render replaces its own, as the real hook keeps the latest.
+    readers.set(onStatus ? 'running' : 'needs', { onMessage, onReconnect, onStatus })
   },
   refreshKinds: () => [],
 }))
+vi.mock('../../app/identity', () => ({ useIdentity: () => ({ name: '' }), firstNameOf: (n: string) => n }))
+vi.mock('./PinnedTiles', () => ({ PinnedTiles: () => null }))
+vi.mock('../../ui/surfaces/SurfaceOverlay', () => ({ SurfaceOverlay: () => null }))
+vi.mock('./widgets/Suggestions', () => ({ Suggestions: () => null }))
 
-import { MissionControl } from './MissionControl'
-import { waitingList } from '../../test/waiting'
+import { HomeHarness } from '../../test/homeHarness'
 
 const UPDATED = '2026-10-21T10:04:00Z'
 
@@ -61,10 +65,11 @@ function row(over: Partial<RunningRow> = {}): RunningRow {
 
 const list = (live: RunningRow[] = [], finished: RunningRow[] = []): RunningList => ({ running: live, finished })
 
-const working = () => screen.getByRole('region', { name: 'Working' })
+const working = () => screen.getByRole('region', { name: 'Running Now' })
+const recent = () => screen.getByRole('region', { name: 'Recent and completed' })
 
 async function mount() {
-  render(<MissionControl />)
+  render(<HomeHarness />)
   await waitFor(() => expect(running).toHaveBeenCalled())
 }
 
@@ -146,10 +151,10 @@ describe('every state of the list', () => {
     await mount()
     await within(working()).findByText('Plan the garden')
     act(() => connected(false))
-    expect(within(working()).getByRole('status').textContent).toMatch(/Reconnecting/)
+    expect(screen.getByRole('status').textContent).toMatch(/Reconnecting/)
     expect(within(working()).getByText('Plan the garden')).toBeTruthy()
     act(() => connected(true))
-    expect(within(working()).queryByText(/Reconnecting/)).toBeNull()
+    expect(screen.queryByText(/Reconnecting/)).toBeNull()
   })
 
   it('failed and just finished: each ending says how it ended, when, and opens the work', async () => {
@@ -159,7 +164,7 @@ describe('every state of the list', () => {
       row({ work: 'subagent:h2', kind: 'subagent', name: 'fetch the page', phase: 'error', line: 'Stopped: the site refused', since: ended }),
     ]))
     await mount()
-    const tail = await within(working()).findByRole('list', { name: 'Just finished' })
+    const tail = await within(recent()).findByRole('list', { name: 'Just finished' })
     const done = within(tail).getByRole('listitem', { name: /nightly/ })
     expect(within(done).getByText('Done')).toBeTruthy()
     expect(within(done).getByText('Done in 12 seconds')).toBeTruthy()
@@ -168,7 +173,7 @@ describe('every state of the list', () => {
     const failed = within(tail).getByRole('listitem', { name: /fetch the page/ })
     expect(within(failed).getByText('Stopped')).toBeTruthy()
     expect(within(failed).getByText('Stopped: the site refused')).toBeTruthy()
-    // Nothing runs, and the lane still says so above its tail.
+    // Nothing runs, and Running Now still says so above Recent and completed's tail.
     expect(within(working()).getByText('Nothing is running right now.')).toBeTruthy()
   })
 
@@ -180,7 +185,7 @@ describe('every state of the list', () => {
     status.mockResolvedValue({ start_time: 200 })
     running.mockResolvedValue(list())
     await act(async () => { reconnect() })
-    const tail = await within(working()).findByRole('list', { name: 'Just finished' })
+    const tail = await within(recent()).findByRole('list', { name: 'Just finished' })
     const cut = within(tail).getByRole('listitem', { name: /Plan the garden/ })
     expect(within(cut).getByText('Interrupted')).toBeTruthy()
     expect(within(cut).getByText('The gateway restarted while it ran.')).toBeTruthy()
@@ -194,7 +199,7 @@ describe('every state of the list', () => {
     running.mockResolvedValue(list())
     await act(async () => { reconnect() })
     await waitFor(() => expect(within(working()).getByText('Nothing is running right now.')).toBeTruthy())
-    expect(within(working()).queryByText('Interrupted')).toBeNull()
+    expect(within(recent()).queryByText('Interrupted')).toBeNull()
   })
 })
 
@@ -206,7 +211,7 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     running.mockResolvedValue(after)
     await act(async () => { reconnect() })
   }
-  const cutRows = () => within(working()).queryAllByText('Interrupted')
+  const cutRows = () => within(recent()).queryAllByText('Interrupted')
 
   it('goes once its work is live again, and two restarts never say it twice', async () => {
     running.mockResolvedValue(list([row()]))
@@ -229,12 +234,18 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     running.mockResolvedValue(list([row()]))
     await mount()
     await within(working()).findByText('Plan the garden')
-    // The page's re-read after the first restart fails, so the rows it last read still hold the chat.
-    inboxOpen.mockRejectedValue(new Error('gateway still starting'))
-    await restart(200, list())
+    // The page's re-reads after each restart fail, so the rows it last read still hold the chat,
+    // while the restart check's own read of the list lands. Both are `api.running()`, so the page's
+    // is told apart by where it is made from.
+    const pageRead = () => !/useCutOff/.test(new Error().stack ?? '')
+    running.mockImplementation(() => (pageRead() ? Promise.reject(new Error('gateway still starting')) : Promise.resolve(list())))
+    status.mockResolvedValue({ start_time: 200 })
+    await act(async () => { reconnect() })
     await waitFor(() => expect(cutRows()).toHaveLength(1))
-    await restart(300, list())
-    await waitFor(() => expect(status).toHaveBeenCalledTimes(3))
+    status.mockResolvedValue({ start_time: 300 })
+    await act(async () => { reconnect() })
+    // Home's own read (its YOLO line) is one of them: mount, then one per reconnect.
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(4))
     await waitFor(() => expect(running).toHaveBeenCalledTimes(5))
     expect(cutRows()).toHaveLength(1)
   })
@@ -271,7 +282,8 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     await mount()
     await within(working()).findByText('Plan the garden')
     await restart(200, list())
-    await waitFor(() => expect(status).toHaveBeenCalledTimes(2))
+    // Home's own read (its YOLO line), the cut-off check's at mount, and the reconnect's.
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(3))
     await within(working()).findByText('Nothing is running right now.')
     expect(cutRows()).toHaveLength(0)
     running.mockResolvedValue(list([row()]))
@@ -289,7 +301,7 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     // The page reads again while the socket is down (an answer pressed, say), from the gateway
     // that has already restarted.
     running.mockResolvedValue(list())
-    act(() => deliver({ type: 'approval', data: {} }))
+    act(() => deliver({ type: 'running_changed', data: { changed: [] } }))
     await within(working()).findByText('Nothing is running right now.')
     act(() => connected(true))
     await restart(200, list())
@@ -300,7 +312,7 @@ describe('what a restart cut off is said once, and only while it is true', () =>
 describe('a list that cannot be read', () => {
   it('says so in the lane, never that nothing runs', async () => {
     running.mockRejectedValue(new Error('gateway down'))
-    render(<MissionControl />)
+    render(<HomeHarness />)
     expect(await within(working()).findByText('Could not read what is running.')).toBeTruthy()
     expect(within(working()).queryByText('Nothing is running right now.')).toBeNull()
   })

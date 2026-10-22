@@ -241,7 +241,7 @@ against core protocols). Paths are relative to
 A row moves between states in exactly one place, `inbox.set_item_status(state, store, items,
 status)`, and `InboxStore.update` refuses a `status`. A move is three writes: the row
 (persisted once per batch); one `inbox_item_updated` frame per moved row, because the Inbox page,
-Home and Mission Control read the Inbox on its frames rather than polling it; and, when a row
+Home (and `#/mission-control`, which opens it) reads the Inbox on its frames rather than polling it; and, when a row
 **closes** (leaves `OPEN_STATUSES`), the bell: every notification that is a view of the row
 (`meta.inbox_item`, stamped by `emit_attention_item` and `notify_inbox_alert`) is marked read
 through `DashboardState.ack_item_notifications`, one rewrite and one `notification_ack` frame for
@@ -321,8 +321,8 @@ reads that entry:
 
 | Surface | Reads |
 |---|---|
-| Home's approvals count and **To triage**, the workflow run view, a loop's cockpit, a room's view, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
-| Mission Control, the phone companion, the desktop tray | `GET /api/waiting` — each entry as an item's brief, beside everything else waiting on you |
+| The workflow run view, a loop's cockpit, a room's view, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| Home's **Needs You** and the toolbar's needs-you badge (`#/mission-control` opens Home), the phone companion, the desktop tray | `GET /api/waiting` — each entry as an item's brief, in the list's order, beside everything else waiting on you |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
@@ -366,8 +366,8 @@ The entry also says where the call came from, in words (`source_label`, from
 job when one started it), `MCP server “…”`, `room “…” · member “…”`. Every surface that answers an
 approval renders the one approval card
 (`pages/chat/ApprovalCard`;
-`app/PendingApprovalCard` for the queue surfaces: the workflow run view, Mission Control, Home's To
-triage, the Inbox row and its notification): the tool and its risk, what it can touch, its whole
+`app/PendingApprovalCard` for the queue surfaces: the workflow run view, Home's Needs You, the
+Inbox row and its notification): the tool and its risk, what it can touch, its whole
 input a click away (Show all), and, away from the work that asked, "From <source_label>", a link
 to that work on a surface that lists approvals from everywhere. A channel's prompt is tagged with
 the same words (`ChannelDelivery.request_approval`'s `source`), for a chat's approval asked on a
@@ -396,7 +396,7 @@ ask as cancelled ("the room that asked for it was archived"), and an answer that
 refused (`dashboard/approval_owner.py`). With no registry to ask through, the call is refused and
 the room says so; an ask nobody answered is refused for that, never as a Deny.
 
-Mission Control labels each card by the work that asked (`attentionLanes.inboxRaisedBy`): an
+Home labels each card by the work that asked (`attentionLanes.inboxRaisedBy`): an
 approval by its `source_label`, and an Inbox row by the refs its emitter stamped (`workflow`,
 `trigger_park`, `loop`, the control bridge). An Inbox row's sender
 is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
@@ -423,10 +423,10 @@ for every door.
 
 **Every surface that announces an approval answers it.** The Inbox row and its notification offer
 Approve and Deny in place (`web/src/app/ApprovalDecision.tsx`, through
-`POST /api/approvals/{id}/{action}`), as To triage, the workflow run view and the phone do. They read
+`POST /api/approvals/{id}/{action}`), as Home's Needs You, the workflow run view and the phone do. They read
 the entry live from `GET /api/approvals`, because a row and its notification outlive the approval
 they name: once it has ended they say so and offer neither. A trigger's run asks with no chat behind
-it, so these and To triage are where its approval is answered.
+it, so these and Home's Needs You are where its approval is answered.
 
 **Only you answer.** Each entry records who asked it (`asked_by`: the chat's agent, the app that
 started the chat, a subagent, the run whose step asked, the trigger), and `resolve_approval` and
@@ -607,8 +607,8 @@ cancelled run's leftover spawn approval started the subagent.
 **Announced once.** The Inbox row is the durable listing, not a second announcement: the chat
 card announces an approval in context and the nudge everywhere else, so the SPA's notification
 toast stands down for a note whose `refs` name an approval (it still lands in the bell), and
-Home's inbox count and To triage recognise the row as the approval they already list
-(`mirroredApprovalId`).
+Home's Needs You lists the approval once, from the waiting list, and never its Inbox row, and the
+sidebar's lanes recognise the row as the approval they already list (`mirroredApprovalId`).
 
 **No model's verdict can hide one.** `system/agent_request`, the kind the row rides, is a
 *decision* (`NotificationKind.decision`): work is parked on the answer. So are
@@ -656,8 +656,8 @@ Where she sees it:
   `question_card` frame; `pending_questions` on session detail for a page that opens or reloads
   while it waits). Nothing is chosen for her and nothing is sent by arriving, focus or Enter.
 - **The Inbox**: a "Needs you" row (`needs_input`, `refs = {question, session, source_label}`, on
-  the `system/agent_request` notification), which Home's To triage and Mission Control's Your turn
-  list by who asks, in which chat, with a link to answer it there.
+  the `system/agent_request` notification), which the Inbox lists by who asks, in which chat, with
+  a link to answer it there. Home's Needs You lists the question once, from the waiting list.
 - The turn waits on her, so it is not running long: its clock stops (`waiting_on_owner`).
 
 Her answer, `POST /api/chat/sessions/{session}/questions/{question}/answer` with
@@ -725,13 +725,15 @@ past answering, an item leaves the list.
   plan written or cleared, and a bridge confirmation minted, taken or expired. An app's socket
   hears it only when its manifest declares `/api/waiting` (`ws_state.WAITING_LIST_FRAMES`), the
   one exception beside the approval relay's (`docs/security/limitations.md`).
-- **Who reads it:** Mission Control's Needs approval and Your turn lanes are its items (an approval
-  on the one approval card, a gate and a park answered in place with the token they carry, every
-  other item opening its own page; an Inbox row that is an item's listing is carded once, as the
-  item, and one whose item is not in the list keeps its own card). The phone companion lists every
+- **Who reads it:** Home's Needs You is its items in its order, then your notes and the skill
+  proposals (an approval on the one approval card; a gate, a park, a browser grant and a bridge
+  confirmation answered in place through their own routes; every other item opening its own
+  page). The toolbar's needs-you badge counts the same rows. The phone companion lists every
   item first, in the list's order, each with its text: an approval answered on its card, every
   other item opening its page. The desktop tray counts every item. A card held past an item's
   `expires_at` keeps no action that could still send (`web/src/lib/waitingList.ts`, `useStaleAt`).
+  Every surface reads the ids it answers with off the item's own route through one parser,
+  `web/src/lib/waitingAnswer.ts`.
 
 ## Notifications
 
@@ -880,8 +882,8 @@ built via `ChannelDelivery.build_thread_link`, never by core string-formatting
 a vendor URL.
 
 A row the platform raises carries its notification pair's source as its sender (`app:<name>`,
-`loop`), which names a delivery rule, not who asked. Home's To triage, Mission Control's Your turn
-and the phone's Inbox name a row by who raised it (`attentionLanes.inboxRaisedBy`): the work its
+`loop`), which names a delivery rule, not who asked. The sidebar's lanes and the phone's Inbox
+name a row by who raised it (`attentionLanes.inboxRaisedBy`): the work its
 refs name (a loop, a workflow, a trigger), an app by the name it goes by (`refs.app_display_name`,
 which the proposal door keeps on the row from `app_manager.display_name_of`), and a channel message
 by its sender.

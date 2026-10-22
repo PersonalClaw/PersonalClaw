@@ -20,7 +20,6 @@ const SRC = join(process.cwd(), 'src')
  *  feed and Mission Control read the running list, rung by `running_changed`, and no phase frame. */
 const SIGNALS = [
   'lib/useThreads.ts',
-  'pages/dashboard/DashboardLive.tsx',
 ]
 
 const READS_THE_FRAME = /'work_phase'/

@@ -11,14 +11,14 @@ file and the app differ.
 
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
-| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 7 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 16 more |
+| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 15 more |
 | `#/projects` | Projects | Projects | Projects | `pages/chat/header/ChatHeader.tsx`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/tasks/TasksSection.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
 | `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/learning/IdentityReportPanel.tsx` and 4 more |
 | `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/dashboard/widgets/TasksWidget.tsx` and 8 more |
-| `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
+| `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/Home.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
 | `#/triggers` | Automations | Automations, its Automations tab | none | `lib/api.ts`, `pages/automations/automationTabs.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx` and 5 more |
 | `#/files` | Files | Library, its Files tab | Files | `pages/artifacts/ArtifactsSection.tsx`, `pages/loops/LoopCockpitPage.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/TopBar.tsx` |
@@ -27,20 +27,20 @@ file and the app differ.
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/settings/PacksPanel.tsx` |
 | `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts`, `pages/chat/inspector/sections.tsx` |
-| `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/MissionControl.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
+| `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/Home.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
 | `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
 | `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
 | `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `design/tokenLintRule.ts`, `lib/data/store.ts` and 34 more |
-| `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
-| `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/DashboardLive.tsx`, `pages/dashboard/widgets/Discover.tsx` |
-| `#/mission-control` | Mission Control | not in the sidebar | Mission Control | `pages/buddy/cardFixtures.ts`, `pages/buddy/stageCard.ts` |
+| `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/Home.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
+| `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/widgets/Discover.tsx` |
+| `#/mission-control` | Mission Control | not in the sidebar | Mission Control | `pages/buddy/cardFixtures.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/Home.tsx` |
 | `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/app` | app | not in the sidebar | none | `pages/apps/AppFrame.tsx`, `pages/apps/AppHostPage.tsx` |
-| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 7 more |
+| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
 | `#/companion` | Companion | Companion, in the phone's drawer only | none | `app/nativePush.ts`, `app/personality.tsx`, `lib/data/keys.ts`, `lib/nativeNotifications.ts` and 2 more |
 | `#/buddy` | buddy | not in the sidebar | none | none |
 

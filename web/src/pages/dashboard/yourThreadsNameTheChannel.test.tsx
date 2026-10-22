@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
-// ── "Jump back in" says which channel a chat came in on ──────────────────────────────────────────
+// ── Your threads say which channel a chat came in on ─────────────────────────────────────────────
 //
-// Home's "Jump back in" links reopen your most recent chats, and a chat that came in on Telegram is
+// Home's Your threads (under Recent and completed) reopen your most recent chats, and a chat that came in on Telegram is
 // one of them. It read as one of yours, opened here; the link now says "From Telegram", in the same
 // words as the chat history's row (`FromChannel`).
 
@@ -39,27 +39,27 @@ vi.mock('../../lib/api', async (orig) => {
   return { ...real, api }
 })
 
-const { DashboardPage } = await import('./DashboardPage')
+const { HomeHarness } = await import('../../test/homeHarness')
 const { AppearanceProvider } = await import('../../app/appearance')
 
 afterEach(cleanup)
 
 const jumpLinks = async () => {
-  render(<AppearanceProvider><DashboardPage sub="" navEpoch={0} navigate={() => {}} query={{}} setQuery={() => {}} /></AppearanceProvider>)
-  const label = await screen.findByText('Jump back in')
-  return label.parentElement as HTMLElement
+  render(<AppearanceProvider><HomeHarness /></AppearanceProvider>)
+  return screen.findByRole('list', { name: 'Your threads' })
 }
 
-describe('"Jump back in"', () => {
+describe('Your threads, on Home', () => {
   it('says "From <channel>" on a chat that came in on one', async () => {
     const links = await jumpLinks()
     const phone = within(links).getByRole('button', { name: /Daily agenda/ })
-    expect(phone.textContent).toContain('From Telegram')
+    expect(phone.closest('li')?.textContent).toContain('From Telegram')
+    expect(phone.getAttribute('aria-label')).toContain('From Telegram')
   })
 
   it('says nothing of a channel on one of yours', async () => {
     const links = await jumpLinks()
     const mine = within(links).getByRole('button', { name: /Weekly review/ })
-    expect(mine.textContent).not.toContain('From ')
+    expect(mine.closest('li')?.textContent).not.toContain('From ')
   })
 })

@@ -309,7 +309,7 @@ export function laneFor(item: AttentionInput): Lane | null {
 }
 
 /** An ISO timestamp as epoch seconds (the unit every other card's `at` is in), or `null`. */
-function isoSeconds(raw: unknown): number | null {
+export function isoSeconds(raw: unknown): number | null {
   if (typeof raw !== 'string' || raw === '') return null
   const ms = Date.parse(raw)
   return Number.isFinite(ms) ? ms / 1000 : null
@@ -321,7 +321,7 @@ export function loopTitle(l: Pick<LoopInput, 'name' | 'task'>): string {
   return firstLine(l.name) || firstLine(l.task) || 'Loop'
 }
 
-function firstLine(text: unknown): string {
+export function firstLine(text: unknown): string {
   if (typeof text !== 'string') return ''
   const trimmed = text.trim()
   if (trimmed === '') return ''
@@ -340,7 +340,7 @@ function firstLine(text: unknown): string {
 // approval says it itself: the registry names where it came from (`source_label`), once, for
 // every surface and every channel, and its Inbox row keeps those words in its refs.
 
-function named(what: string, name: unknown): string {
+export function named(what: string, name: unknown): string {
   const n = firstLine(name)
   return n ? `${what} · ${n}` : what
 }
@@ -351,7 +351,7 @@ function refString(refs: Record<string, unknown> | undefined, key: string): stri
 }
 
 /** A registry label as a card's first line: `loop “Fix the README”` reads `Loop “Fix the README”`. */
-function sentenceStart(label: string): string {
+export function sentenceStart(label: string): string {
   return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''
 }
 

@@ -1,323 +1,104 @@
-import { useState, type ReactNode } from 'react'
-import {
-  MessageSquare, History, type LucideIcon,
-  ListTodo, Sparkles, Compass, Package, Orbit, Monitor, Globe,
-} from 'lucide-react'
+import { type ReactNode } from 'react'
+import { History, type LucideIcon, ListTodo, Compass, Package, Orbit, Monitor, Globe } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
-import { PinnedTiles } from './PinnedTiles'
-import { SurfaceOverlay } from '../../ui/surfaces/SurfaceOverlay'
 import { AgentWorld } from './world/AgentWorld'
-import { HeroPulse } from './widgets/HeroPulse'
-import { ActionCenter } from './widgets/ActionCenter'
-import { ActiveWork } from './widgets/ActiveWork'
 import { TasksWidget } from './widgets/TasksWidget'
-import { Suggestions } from './widgets/Suggestions'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { DesktopLiveView } from './widgets/DesktopLiveView'
 import { BrowseMirror } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
-import { TopBar } from '../../ui/TopBar'
-import { useIdentity, firstNameOf } from '../../app/identity'
-import { api, type ChatSessionSummary } from '../../lib/api'
-import { useQuery } from '../../lib/data'
-import { sessionRecencyMs } from '../../lib/epoch'
-import { sessionTitle } from '../../lib/sessionTitle'
-import { StartedByApp } from '../chat/StartedByApp'
-import { FromChannel } from '../chat/FromChannel'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
-import { ComposerStage } from '../../ui/ComposerStage'
-import { useComposerData } from '../../lib/useComposerData'
 import { WidgetBoundary } from '../../app/ErrorBoundary'
-import type { ComposerValue } from '../../ui/composer/types'
 import type { RouteProps } from '../../app/useQueryState'
 
-/** The dashboard — PersonalClaw's home. Bare and launcher-forward: no bento boxes. An Ask
- *  composer up top with your recent chats under it, then boundary-less bands of the owner's work
- *  under hairline section labels — content owns the space, chrome doesn't.
+/** Home's Overview view (`#/dashboard?view=overview`): the bands that have no place in the
+ *  attention stack, the view Home opens on (`Home.tsx`). Needs You, Running Now and Recent and
+ *  completed took what this page's To triage, Active work and launcher held, the toolbar's needs-you
+ *  badge took its count pills, and its suggestions belong to the stack's empty state. What is left
+ *  here is what a person comes to look at rather than to answer: the Agent world, the desktop and
+ *  browser live views, tasks, Discover, pinned artifacts and recent activity.
  *
- *  Home shows what needs the owner and what the owner can act on, and nothing that repeats
- *  another surface: the header badges only counts that wait on the owner, and only above zero
- *  (`HeroPulse`); the sidebar is the one way to each destination (Home draws no shortcut row of
- *  its own); and the machine's telemetry lives in Settings › System (`settings/SystemPanel.tsx`),
- *  with what is holding memory in Settings › Models. */
-export function DashboardPage(route: RouteProps) {
-  const { name } = useIdentity()
+ *  Boundary-less bands under hairline section labels: content owns the space, chrome doesn't. */
+export function HomeOverview(route: RouteProps) {
   return (
     <DashboardLiveProvider>
-      <div className="flex h-full flex-col overflow-hidden">
-        {/* The greeting is the page title — it lives in the header (no separate
-            "Home" label needed), which reclaims the vertical space it used to
-            take at the top of the launcher below. The Hero Pulse strip (the counts
-            that wait on the owner, each only above zero) sits right-aligned in the
-            same header from `lg` up — full labels at 2xl+, minimized icon+count pills
-            in between (HeroPulse degrades itself). Below `lg` even the minimized
-            row would crush the greeting, so the header slot empties and the
-            strip renders in the body under the launcher instead (same swap,
-            other side, in the scroll area below). With nothing waiting, the strip
-            renders nothing and the header is the greeting alone. */}
-        <TopBar
-          contentAligned
-          left={(
-            <h1 data-type="headline-s" className="min-w-0 truncate text-on-surface">{greetingFor(name)}</h1>
-          )}
-          right={(
-            <div className="hidden lg:block">
-              <WidgetBoundary what="the status strip"><HeroPulse variant="header" {...route} /></WidgetBoundary>
-            </div>
-          )}
-        />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {/* Honor the global content-width preference (Full / narrower presets)
-              set from the shell corner — the same --content-width every other
-              centered page column tracks.
+      {/* The column is the Overview's ENTRANCE GROUP: its bands arrive together rather than as
+          widgets landing one by one. It sits above every band's own loading state on purpose (the
+          replay rule in `ui/motion/Entrance`), so a band's data landing re-renders inside a
+          mounted group instead of remounting it and re-running the entrance. */}
+      <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* Every band renders inside a boundary (in `Section`), so a widget that throws shows
+            "Couldn't show …" with Retry in its place and the other bands keep working. */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Tasks" icon={ListTodo}>
+            <TasksWidget {...route} />
+          </Section>
+        </EntranceRegion>
 
-              This column is also the dashboard's ENTRANCE GROUP: its bands cascade in on arrival rather than all landing at once,
-              which is what makes the home page read as composed rather than as eight
-              widgets appearing simultaneously. The group replaces the plain `div` in
-              place, so the entrance costs no extra DOM and no layout change. It sits
-              above every band's own loading state on purpose — the replay rule in
-              `ui/motion/Entrance` — so a widget's data landing re-renders inside a
-              mounted group instead of remounting it and re-running the cascade. */}
-          <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
-            {/* Every band on Home renders inside a boundary (here, and in `Section`), so a
-                widget that throws shows "Couldn't show …" with Retry in its place and the other
-                bands keep working — it used to swap the WHOLE page for the page-level error. */}
-            <EntranceRegion><WidgetBoundary what="the launcher"><Launcher {...route} /></WidgetBoundary></EntranceRegion>
+        {/* `min-w-0` on each region: the region is the column's flex item, and a flex item
+            defaults to `min-width: auto`, which would let a long widget line push the column wider
+            than the content width instead of truncating. */}
 
-            {/* Live signal strip — the header's Hero Pulse, relocated below the
-                launcher when even the minimized header row won't fit (< lg). No
-                reserved height, and `empty:hidden`: on a day where nothing waits the strip
-                renders nothing, and a region holding nothing is still a flex item that
-                would spend a `gap-2xl` of blank space (the PinnedTiles trap below). */}
-            <EntranceRegion className="lg:hidden empty:hidden"><WidgetBoundary what="the status strip"><HeroPulse {...route} /></WidgetBoundary></EntranceRegion>
+        {/* Agent world: the live picture of the agents at work as a scene you glance at rather
+            than a list you read. It takes its data from `useAgentActivity()` only. */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Agent world" icon={Orbit}>
+            <AgentWorld />
+          </Section>
+        </EntranceRegion>
 
-            {/* Pinned tiles band — the ADDITIVE half of the
-                dashboard-as-views registry. Renders the Overview view's artifact
-                tiles only; an empty registry renders NOTHING, so a fresh install is
-                byte-identical to today's fixed layout below.
+        {/* Discover: a curated spotlight of the parts of PersonalClaw you haven't tried yet, each a
+            deep link. The full grouped list is the Discover hub (the widget's "See all"). */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Discover" icon={Compass}>
+            <Discover {...route} />
+          </Section>
+        </EntranceRegion>
 
-                Deliberately NOT wrapped in an EntranceRegion: it renders `null` on an
-                empty registry, and a region wrapper around nothing is still a flex item,
-                so it would spend a `gap-2xl` of blank vertical space on every install
-                that has pinned no tiles. */}
-            <WidgetBoundary what="your pinned tiles"><PinnedTiles /></WidgetBoundary>
+        {/* Pinned artifacts: a pin is a slug in a list that THIS component renders. */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Pinned artifacts" icon={Package}>
+            <PinnedArtifacts {...route} />
+          </Section>
+        </EntranceRegion>
 
-            {/* The L2 user/agent overlay band — the call site
-                that makes the L2 layer a producer rather than a declared-and-empty layer.
-                Renders whatever `$PERSONALCLAW_HOME/surfaces/*.json` contributes to the
-                `dashboard` surface, and the named refusal for anything that would not load.
-                Same `null`-on-empty property as `PinnedTiles` above, and unwrapped for the
-                same reason. */}
-            <SurfaceOverlay surface="dashboard" />
+        {/* Desktop live view: what the agent is doing on this desktop, the attempt feed, plus the
+            optional live-view mirror and cursor-motion overlay. Observation only; the toggles change
+            what this page draws, never what the agent can do. */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Desktop live view" icon={Monitor}>
+            <DesktopLiveView />
+          </Section>
+        </EntranceRegion>
 
-            {/* Prime signal: what you can clear from here + what's running, side by side
-                on wide screens, stacked on narrow. Bare sections, hairline-labelled.
-                #3471: this section is NOT called "Needs you". That phrase belongs to the
-                `needs_input` work state (`lib/loopStatus`), which is a strictly WIDER set —
-                it also holds blocked tasks and stalled runs, neither of which this card can
-                see. Naming the narrower set with the broader phrase is what let the card
-                say "nothing waiting on you" while a project showed NEEDS YOU · 1. */}
-            <EntranceRegion className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
-              <Section label="To triage" icon={ListTodo} tour="approvals">
-                <ActionCenter {...route} />
-              </Section>
-              <Section label="Active work" icon={Sparkles}>
-                <ActiveWork {...route} />
-              </Section>
-            </EntranceRegion>
+        {/* Browse live view: watch an unattended browse step by step, stop it in one click, and see
+            a persistent banner when a saved session expires. A grant it asks for is answered in
+            Needs You, beside every other ask. */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Browse live view" icon={Globe}>
+            <BrowseMirror />
+          </Section>
+        </EntranceRegion>
 
-            <EntranceRegion className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
-              <Section label="Tasks" icon={ListTodo}>
-                <TasksWidget {...route} />
-              </Section>
-              <Section label="Suggestions" icon={Sparkles}>
-                <Suggestions {...route} />
-              </Section>
-            </EntranceRegion>
-
-            {/* The four single-widget bands below carry `min-w-0` on the region rather
-                than relying on the `<section>` inside it: the region is now the column's
-                flex item, and a flex item defaults to `min-width: auto`, which would let
-                a long widget line push the column wider than the content width instead
-                of truncating. The grid rows above don't need it — a grid track already
-                establishes the constraint. */}
-
-            {/* Agent world — the ambient companion to Active
-                Work above: the same live picture as a scene you glance at rather than a
-                list you read. Sits BELOW the prime-signal bands on purpose (a world is
-                not a control surface) and takes its data from `useAgentActivity()` only,
-                so it never widens the dashboard's request set. */}
-            <EntranceRegion className="min-w-0">
-              <Section label="Agent world" icon={Orbit}>
-                <AgentWorld />
-              </Section>
-            </EntranceRegion>
-
-            {/* Discover — a curated spotlight of the parts of PersonalClaw you
-                haven't tried yet, each a deep link. The full grouped list is the
-                dedicated Discover hub (the widget's "See all" jumps there). */}
-            <EntranceRegion className="min-w-0">
-              <Section label="Discover" icon={Compass}>
-                <Discover {...route} />
-              </Section>
-            </EntranceRegion>
-
-            {/* Pinned artifacts — hard-imported, the established
-                widget pattern. There is no tile registry to register with: the bento grid and
-                per-user layout persistence were deliberately retired, so a pin is a slug in a
-                list that THIS component renders. */}
-            <EntranceRegion className="min-w-0">
-              <Section label="Pinned artifacts" icon={Package}>
-                <PinnedArtifacts {...route} />
-              </Section>
-            </EntranceRegion>
-
-            {/* Desktop live view — what the agent is
-                doing on this desktop: the attempt feed, plus the optional live-view mirror
-                and cursor-motion overlay. Observation only; the toggles change what this
-                page draws, never what the agent can do. */}
-            <EntranceRegion className="min-w-0">
-              <Section label="Desktop live view" icon={Monitor}>
-                <DesktopLiveView />
-              </Section>
-            </EntranceRegion>
-
-            {/* Browse live view — the browser-side sibling of
-                the desktop band above: watch an unattended browse step by step, stop it in one
-                click, and see a persistent banner when a saved session expires. Observation +
-                the one stop; the panel drives nothing else. */}
-            <EntranceRegion className="min-w-0">
-              <Section label="Browse live view" icon={Globe}>
-                <BrowseMirror />
-              </Section>
-            </EntranceRegion>
-
-            <EntranceRegion className="min-w-0">
-              <Section label="Recent activity" icon={History}>
-                <ScheduleWidget {...route} />
-              </Section>
-            </EntranceRegion>
-          </EntranceGroup>
-        </div>
-      </div>
+        <EntranceRegion className="min-w-0">
+          <Section label="Recent activity" icon={History}>
+            <ScheduleWidget {...route} />
+          </Section>
+        </EntranceRegion>
+      </EntranceGroup>
     </DashboardLiveProvider>
-  )
-}
-
-/** Time-of-day greeting, personalised when we know the user's name. Rendered as
- *  the dashboard's page title in the header. */
-function greetingFor(name: string | undefined): string {
-  const h = new Date().getHours()
-  const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
-  return name ? `Good ${part}, ${firstNameOf(name)}` : `Good ${part}`
-}
-
-// ── Launcher hero ───────────────────────────────────────────────────────────
-// The front door: an Ask composer that launches a fresh chat seeded with the
-// typed text, and recent-chat chips. (The greeting moved to the page header.)
-// No shortcut row: every destination it listed is in the sidebar, which is the
-// one path to each, and in the command palette.
-
-/** Dashboard launcher controls — enables the same agent/model/attach/mic/optimize
- *  affordances the new-chat composer has, so users don't wonder why the dashboard
- *  input is limited compared to the chat page. */
-const LAUNCHER_CONTROLS = { agent: true, model: true, approval: false, reasoning: true, attach: true, mic: true, optimize: true, slash: true }
-
-function Launcher({ navigate }: RouteProps) {
-  const [text, setText] = useState('')
-  const data = useComposerData()
-  const [selection, setSelection] = useState<ComposerValue>({ agent: '', model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
-  // `.catch(() => [])` was worse here than elsewhere because this key is PERSISTED: the
-  // fabricated empty array was written to sessionStorage as if it were an answer, so a failed
-  // load poisoned the cache and the next visit painted "no recent chats" instantly from it.
-  // Without the catch, a rejection leaves `data` undefined and nothing is cached.
-  //
-  // The chip row stays hidden on failure rather than growing an error of its own: it is a
-  // shortcut, not the record, and the dashboard has no slot-level error idiom — inventing one
-  // for a single adopter would be speculative API. The authoritative surface (chat history)
-  // announces the failure, which is where a user goes to look for their chats.
-  const { data: sessions } = useQuery<ChatSessionSummary[]>(
-    // 🔴 Named `dashboard:recent-sessions` — after the SURFACE, not the collection — so no bust of
-    // the chat-session keys could ever reach it. Deleting or renaming a chat left this list showing
-    // the old row, and `persist: true` means that survived a hard reload. Same namespace as
-    // `chat:sessions` / `chat:sessions:archived` now, so one prefix bust covers every reader.
-    'chat:sessions:recent', () => api.chatSessions(), { persist: true },
-  )
-
-  const launch = () => {
-    const t = text.trim()
-    if (!t) { navigate('chat/new'); return }
-    // Seed includes selected agent/model so the new chat opens already bound.
-    const params = new URLSearchParams({ seed: t })
-    if (selection.agent) params.set('agent', selection.agent)
-    if (selection.model && selection.model !== 'Auto') params.set('model', selection.model)
-    navigate(`chat/new?${params}`)
-    setText('')
-  }
-
-  // "Jump back in" offers the chats with no turn running (their run state names none).
-  const recent = (sessions ?? [])
-    .filter((s) => s.title && !s.run_state?.turn)
-    .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
-    .slice(0, 4)
-
-  return (
-    <div className="flex flex-col gap-l">
-      {/* The real Composer component — same agent/model picker, file attach, mic,
-          optimize, and slash commands the chat page has. On send it seeds a new chat
-          with the typed text + chosen agent/model instead of an in-place turn. */}
-      <ComposerStage value={text} onChange={setText} onSend={launch}
-        placeholder="Ask anything, or start a task…"
-        controls={LAUNCHER_CONTROLS} data={data}
-        selection={selection} onSelect={(patch) => setSelection((s) => ({ ...s, ...patch }))}
-        onAttach={() => {
-          // Attach goes through the seeded chat: open chat/new and let it handle the files.
-          const t = text.trim()
-          navigate(t ? `chat/new?seed=${encodeURIComponent(t)}` : 'chat/new')
-        }}
-      />
-
-      {/* Recent chats — flow inline, no boxes. */}
-      {recent.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-l gap-y-xs">
-          <span data-type="label-m" className="flex items-center gap-xs text-on-surface-low"><History size={12} /> Jump back in</span>
-          {recent.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => navigate(`chat/${encodeURIComponent(s.key)}`)}
-              // 20px tall with 16px between chips: under SC 2.5.8's 24px minimum, and the spacing
-              // exception needs 24px of clearance. `min-h-6` + `-my-0.5` grows the target and hands
-              // the 4px back, so the row does not reflow — the Toggle fix's shape.
-              className="inline-flex min-h-6 -my-0.5 items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
-              data-type="body-m"
-            >
-              <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{sessionTitle(s)}</span>
-              {/* An app's conversation says so here too: jumping back in to it means speaking under
-                  the APP's permissions, and the title alone cannot tell you that (#3632). A chat that
-                  came in on a chat channel says which one. */}
-              <StartedByApp s={s} />
-              <FromChannel s={s} />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   )
 }
 
 // ── Bare section header ───────────────────────────────────────────────────────
 // A section is a label + hairline, NOT a bordered card. Content flows directly
 // beneath, owning the horizontal space.
-function Section({ label, icon: Icon, children, tour }: {
+function Section({ label, icon: Icon, children }: {
   label: string; icon: LucideIcon; children: ReactNode
-  /** Product-tour anchor for this band — set on the band rather than
-   *  on the widget inside it, so a band whose widget swaps to its empty state still anchors. */
-  tour?: string
 }) {
   return (
-    <section data-tour={tour} className="flex min-w-0 flex-col gap-s">
+    <section className="flex min-w-0 flex-col gap-s">
       <div className="flex items-center gap-s">
         <Icon size={14} className="shrink-0 text-on-surface-low" />
         {/* h2, not h3: this is a top-level section directly under the page's h1 greeting, and
