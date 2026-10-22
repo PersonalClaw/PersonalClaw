@@ -6418,6 +6418,8 @@ export interface DashboardConfig {
   username: string
   // server-stored message display prefs (consistent across browsers)
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
+  /** Pin a one-line banner with the latest question while a reply taller than the window streams. */
+  keep_question_in_view: boolean
   simplified_tool_names: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
   followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'

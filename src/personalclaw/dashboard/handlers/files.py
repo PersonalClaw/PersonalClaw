@@ -3486,6 +3486,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "simplified_tool_names",
             "followup_chips",
             "offer_check_work",
+            "keep_question_in_view",
             "stream_reveal",
             # The screen-context master switch. Writable here (the panel the
             # Settings toggle drives) as well as through the PATCH allowlist.
@@ -3583,6 +3584,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "simplified_tool_names",
             "followup_chips",
             "offer_check_work",
+            "keep_question_in_view",
             "auto_tag_sessions",
             "screen_share_enabled",
             "document_editing",
@@ -3629,6 +3631,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "simplified_tool_names": d.simplified_tool_names,
             "followup_chips": d.followup_chips,
             "offer_check_work": d.offer_check_work,
+            "keep_question_in_view": d.keep_question_in_view,
             "stream_reveal": d.stream_reveal,
             "screen_share_enabled": d.screen_share_enabled,
             "document_editing": d.document_editing,

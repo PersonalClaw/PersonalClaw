@@ -67,6 +67,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/files.py", "api_dashboard_config", "auto_tag_sessions"): "checked",
     ("dashboard/handlers/files.py", "api_dashboard_config", "document_editing"): "checked",
     ("dashboard/handlers/files.py", "api_dashboard_config", "followup_chips"): "checked",
+    ("dashboard/handlers/files.py", "api_dashboard_config", "keep_question_in_view"): "checked",
     ("dashboard/handlers/files.py", "api_dashboard_config", "merge_queued_messages"): "checked",
     ("dashboard/handlers/files.py", "api_dashboard_config", "offer_check_work"): "checked",
     ("dashboard/handlers/files.py", "api_dashboard_config", "restore_sessions"): "checked",
