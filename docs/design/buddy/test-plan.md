@@ -108,6 +108,10 @@ sent.
   dials.
 - **A day** (`?tab=day`): the scripted day (`scriptedDay.ts`) on the playground's clock, played at
   1×, 4× or 16×, paused, or a step at a time. The acceptance run reuses it ([#3902]).
+- **Card** (`?tab=card`): the expanded card ([#3893]) in each state it must be seen in: an approval,
+  a question and an error, five pieces of work in sight, the focused work finished, and the running
+  list's own states (nothing else running, many, reconnecting, could not be read, interrupted and
+  just finished). The stage draws the same card from the machine.
 - **Poses** (`?tab=poses`): every pose of the four status families at 18, 24, 48 and 96 px and the
   focused card's orb for each family, each as its still with its words beside it, in the current
   scheme and mode. The renderer's snapshots are taken from it.
@@ -117,7 +121,9 @@ through the controls and sends every such event from them, and uses every contro
 reaching the network; `playground.test.ts` runs the day through the reducer; and
 `web/e2e/buddyPlayground.spec.ts` steps the day in the browser, saving the stage after every step in
 light and dark, at 320, 390 and 412 px, in high contrast and at 200% text zoom, each with an
-overflow check. The three tabs are in `web/e2e/routes.ts`, so the UI quality check covers them.
+overflow check, and saves every card on the Card tab in light, dark and reduced motion and at the
+three compact widths, with the same check. `BuddyCard.test.tsx` and `steps.test.ts` hold the card
+and its step window. The four tabs are in `web/e2e/routes.ts`, so the UI quality check covers them.
 
 ## Later work
 
@@ -135,6 +141,7 @@ Later work: play ([#3894]) and drop and quick ask ([#3895]).
 [#3832]: https://github.com/PersonalClaw/PersonalClaw/issues/3832
 [#3890]: https://github.com/PersonalClaw/PersonalClaw/issues/3890
 [#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
+[#3893]: https://github.com/PersonalClaw/PersonalClaw/issues/3893
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902

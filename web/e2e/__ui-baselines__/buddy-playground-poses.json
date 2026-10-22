@@ -1,107 +1,19 @@
 {
   "dark": {
     "targets": {
-      "320": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "390": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "412": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "768": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {}
   },
   "light": {
     "targets": {
-      "320": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "390": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "412": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ],
-      "768": [
-        "button[role=radio] \"A day\"",
-        "button[role=radio] \"Coral\"",
-        "button[role=radio] \"Dark\"",
-        "button[role=radio] \"Jade\"",
-        "button[role=radio] \"Light\"",
-        "button[role=radio] \"Mono\"",
-        "button[role=radio] \"Play\"",
-        "button[role=radio] \"Poses\"",
-        "input \"Bounciness\"",
-        "input \"Expressiveness\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {}
   }

@@ -4,6 +4,7 @@
   - radiogroup "Playground view":
     - radio "Play" [checked]
     - radio "A day"
+    - radio "Card"
     - radio "Poses"
   - radiogroup "Screen width":
     - radio "# wide"

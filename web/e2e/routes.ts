@@ -170,6 +170,8 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // snapshots are taken from (#3892).
   { route: 'buddy/playground?tab=day', id: 'buddy-playground-day', label: 'Buddy › Playground › a day' },
   { route: 'buddy/playground?tab=poses', id: 'buddy-playground-poses', label: 'Buddy › Playground › poses' },
+  // The expanded card in each of its states, every alert kind and the running list's own (#3893).
+  { route: 'buddy/playground?tab=card', id: 'buddy-playground-card', label: 'Buddy › Playground › card' },
 ]
 
 // ── Non-nav routable pages — the THIRD axis ─────────────────────────────────
