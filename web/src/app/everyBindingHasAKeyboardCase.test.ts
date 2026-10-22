@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** Every binding has a keyboard e2e case, and the palette and tooltips show it (#3822's Done-when).
  *
  *  The keymap (`keymap.ts`) is the one table of the app's keys. This census holds three things to
@@ -14,10 +15,11 @@
  *  An exemption must still be needed: one that names a row the census already finds covered, or a
  *  row the keymap no longer has, reds too, so the lists only shrink. */
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { KEYMAP, bindingLabel, type CommandId } from './keymap'
 import { keymapCommands } from './CommandPalette'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 const WEB = process.cwd()
 const SPEC = 'e2e/keyboard.spec.ts'
@@ -65,11 +67,7 @@ function pressedIn(spec: string): Set<string> {
 }
 
 function sources(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const path = join(dir, name)
-    if (statSync(path).isDirectory()) return sources(path)
-    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : []
-  })
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 /** The rows some control names in its tooltip, through `bindingLabel('<id>')`. */
@@ -77,7 +75,7 @@ function tippedRows(): Set<string> {
   const out = new Set<string>()
   for (const path of sources(join(WEB, 'src'))) {
     if (relative(WEB, path) === 'src/app/keymap.ts') continue
-    for (const m of readFileSync(path, 'utf8').matchAll(/bindingLabel\(\s*(?:'([^']+)'|([^)]+))\)/g)) {
+    for (const m of readSource(path).matchAll(/bindingLabel\(\s*(?:'([^']+)'|([^)]+))\)/g)) {
       if (m[1]) out.add(m[1])
       // A ternary of two ids (`focusMode ? 'focus-mode' : 'sidebar'`) names both.
       else for (const id of (m[2] ?? '').matchAll(/'([a-z0-9-]+)'/g)) out.add(id[1])

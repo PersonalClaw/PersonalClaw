@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, physics, exprHeavy } from '../design/motion'
+import { spring, physics, exprHeavy, duration, instant } from '../design/motion'
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
  *  A press and a hover show by colour, at once (the `active:` tint is the hover's), plus a
@@ -65,9 +65,9 @@ export function IconButton({
   // When set, the icon cross-fades/scales in whenever iconKey changes (a shape
   // morph, e.g. send arrow → success check). Without it the icon swaps instantly.
   iconKey?: string
-  // A one-shot success bloom: the button pops with a playful overshoot when it
-  // mounts in this state (e.g. the send→check confirmation). Scales with the
-  // user's bounciness setting via the bounce tier.
+  // A one-shot success bloom: the button pops past its size and back when it
+  // mounts in this state (e.g. the send→check confirmation), one `duration.long`
+  // beat. Instant under reduced motion.
   bloom?: boolean
   /** `danger` = a destructive action: hover tints the glyph red, with no fill.
    *
@@ -117,8 +117,11 @@ export function IconButton({
       aria-busy={loading || undefined}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={off ? undefined : onClick}
+      // A tween, not `physics.playful`: the pulse is three keyframes, and motion animates only two
+      // on a spring, so on the spring it threw and never played. The beat is the keyframes' own
+      // overshoot; reduced motion lands it at once.
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
-      transition={bloom ? physics.playful : undefined}
+      transition={bloom ? (reduce ? instant : { duration: duration.long, ease: 'easeOut' }) : undefined}
       className={cx(
         // `shrink-0`: the size below is set via inline `width`/`height`, and an inline width is NOT a
         // floor for a flex child. Measured at 390px on the settings sub-routes, where this button sits in

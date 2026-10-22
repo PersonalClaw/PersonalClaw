@@ -195,8 +195,9 @@ export const physics = {
   get smooth(): Transition { return bouncy(320, 34, 38) },
   /** liquid, generous settle — large surfaces, layout shifts, morphs */
   get fluid(): Transition { return bouncy(180, 26, 34) },
-  /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments (a success
-   *  bloom, a sheet). Never a menu, a list or a count: those repeat too often to bounce. */
+  /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments (the buddy's
+   *  done flourish, a sheet). Never a menu, a list or a count: those repeat too often to bounce.
+   *  Two keyframes at most: motion springs between two values only, and throws on three. */
   get playful(): Transition { return bouncy(420, 14, 41) },
 }
 
