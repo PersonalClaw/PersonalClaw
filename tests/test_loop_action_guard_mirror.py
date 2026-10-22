@@ -79,6 +79,8 @@ def test_no_non_terminal_status_is_actionless():
 _LIFECYCLE_SURFACES = (
     "pages/loops/LoopsListPage.tsx",
     "pages/loops/LoopCockpitPage.tsx",
+    # A goal loop's Start, Pause or Resume and Stop, in the strip above its composer (#3824).
+    "pages/loops/LoopProgressStrip.tsx",
     "pages/loops/DesignCockpitPage.tsx",
     # The code cockpit's run controls, in its header since the page was split into regions.
     "pages/code/cockpit/header/CockpitHeader.tsx",

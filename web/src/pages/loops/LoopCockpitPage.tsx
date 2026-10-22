@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
-  Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
+  ArrowLeft, X, Check, MessageSquarePlus,
+  Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
   FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle,
 } from 'lucide-react'
@@ -36,6 +36,7 @@ import { LoopApprovals } from './LoopApprovals'
 import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
+import { LoopProgressStrip } from './LoopProgressStrip'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { RepromptNotice } from './RepromptNotice'
 import { NoToolsPause } from './NoToolsPause'
@@ -207,19 +208,17 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const setSelected = (s: { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null) =>
     sq({ sel: !s ? null : s.kind === 'cycle' ? `cycle-${s.cycle}` : s.kind })
   // View surfaces are URL-backed (push, Back closes; refresh/deep-link reopens):
-  // ?nudge=1 (the nudge drawer), ?report=1 (report modal), ?prompt=1 (prompt-card
-  // expander). The nudge COMPOSE DRAFT (nudgeText) stays local — a composer draft has
-  // no shareable meaning, so only the drawer's open-state is in the URL.
-  const [nudgeOpen, setNudgeOpen] = useQueryFlag(q, sq, 'nudge')
+  // ?nudge=1 (a link to answer the loop: it puts focus in the composer), ?report=1 (report modal),
+  // ?prompt=1 (prompt-card expander). The nudge COMPOSE DRAFT (nudgeText) stays local — a composer
+  // draft has no shareable meaning.
+  const [nudgeAsked, setNudgeAsked] = useQueryFlag(q, sq, 'nudge')
+  const nudgeBox = useRef<HTMLTextAreaElement>(null)
   const [reportOpen, setReportOpen] = useQueryFlag(q, sq, 'report')
   const [promptOpen, setPromptOpen] = useQueryFlag(q, sq, 'prompt')
   const [nudgeText, setNudgeText] = useState('')
   const [nudgeSending, setNudgeSending] = useState(false)
   const [nudgeError, setNudgeError] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  // Stop is terminal (no resume from 'stopped' — see ACTION_SOURCE_STATES), so it
-  // gets the same two-click arm as delete rather than firing on a stray click.
-  const [confirmStop, setConfirmStop] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   // Set by Escape so commitRename (fired by the unmount blur) skips the save.
@@ -398,11 +397,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     const t = window.setTimeout(() => setConfirmDelete(false), 4000)
     return () => clearTimeout(t)
   }, [confirmDelete])
+  // A link that asks for the nudge (`?nudge=1`, the Inbox row's and a question's) puts focus in the
+  // composer once it is there, and the address drops the ask, so Back does not ask again.
   useEffect(() => {
-    if (!confirmStop) return
-    const t = window.setTimeout(() => setConfirmStop(false), 4000)
-    return () => clearTimeout(t)
-  }, [confirmStop])
+    if (!nudgeAsked || !nudgeBox.current) return
+    nudgeBox.current.focus()
+    setNudgeAsked(false)
+  })
 
   // ── "used N skills" ──────────────────────────────────────────────────────────
   // The turn's skill allocation rides the `meta` of the message that started it — each cycle's
@@ -555,7 +556,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       await api.uLoopNudge(id, t)
       // Only clear + close on success — a failed nudge keeps the text so the
       // user can retry instead of silently losing their guidance.
-      setNudgeText(''); setNudgeOpen(false)
+      setNudgeText('')
     } catch {
       setNudgeError(true)
     } finally {
@@ -733,35 +734,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           </div>
         }
         right={
-          // 4-tier cluster: run-controls are primary (last to shed labels), Details is
-          // a default toggle, Delete is low-priority danger so the cluster's own
-          // overflow menu absorbs it first as the header tightens. Header tenet:
-          // the side-panel opener (Details) is the RIGHTMOST control; Delete sits
-          // LEFTMOST of the right-edge group; everything else in between.
-          //
-          // The four run-controls ask LOOP_ACTION_SOURCE_STATUSES — the mirror of the guard the
-          // action route enforces — so this header cannot offer a press that answers 409, nor
-          // withhold one the backend accepts. It did both: Start was gated on `ready` alone while
-          // the backend also accepts a loop still in `review` (the sibling design cockpit offered
-          // it, so the same loop had a Start button on one page and none here), and Resume's
-          // hand-written list was missing `blocked`, stranding a blocked loop.
-          //
-          // Stop asks the map rather than the `active` flag below it. The two agree today (the
-          // mirror's `stop` row IS the active set, by reference) — but `active` is a BUCKET this
-          // file also uses for Nudge, Delete and the live clock, and reading a lifecycle gate off
-          // a bucket is how these guards drifted in the first place.
+          // The header keeps what is not the run's own control: Delete (low-priority danger, so the
+          // cluster's overflow menu absorbs it first as the header tightens) and Details, the side-panel
+          // opener, rightmost. Start, Pause or Resume and Stop live in the strip above the composer
+          // (`LoopProgressStrip`, #3824), their one home, and the nudge is that composer.
           <HeaderActions className="max-w-[60vw]">
             {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
-            {LOOP_ACTION_SOURCE_STATUSES.start.has(c.status) && <HeaderControl icon={Start} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
-            {LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
-            {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
-            {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
-            {/* `ariaExpanded`, not `active`: this reveals the inline nudge composer below (a
-                height 0 → auto region with a textarea), so the state a screen-reader user needs is
-                "content appeared", not "a mode is on". Its sibling Details is the same case: it shows
-                and hides the Details rail, so it keeps `active` for its look and passes `ariaExpanded`,
-                which makes `HeaderControl` drop `aria-pressed`. */}
-            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen(!nudgeOpen)} />}
             <HeaderControl icon={PanelRight} label="Details" active={railOpen} ariaExpanded={railOpen} onClick={() => { setRailOpen(!railOpen); setSelected(null) }} />
           </HeaderActions>
         }
@@ -880,49 +858,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               {/* A wait after her Deny is the loop's, not a question its agent asked. */}
               <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> {question.declined ? 'Waiting for you after your Deny' : 'The agent needs your input'}</div>
               <div className="text-on-surface">{question.question}</div>
-              {/* Offer the answer inline — the question IS the call to action, so
-                  open the nudge composer right here instead of just naming it. */}
-              {!nudgeOpen && (
-                <Button size="sm" className="mt-2" onClick={() => setNudgeOpen(true)}>
-                  <MessageSquarePlus size={14} /> {question.declined ? 'Steer & resume' : 'Answer & resume'}
-                </Button>
-              )}
+              {/* The question IS the call to action, so its button takes you to the composer that
+                  answers it, at the foot of the thread. */}
+              <Button size="sm" className="mt-2" onClick={() => nudgeBox.current?.focus()}>
+                <MessageSquarePlus size={14} /> {question.declined ? 'Steer & resume' : 'Answer & resume'}
+              </Button>
             </div>
           )}
 
-          <AnimatePresence>
-            {nudgeOpen && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                <div className="rounded-lg bg-surface-container p-m">
-                  {/* Raw: a bare text surface inside the composer card; TextArea draws its own fill, padding and radius. */}
-                  <textarea autoFocus value={nudgeText} onChange={(e) => { setNudgeText(e.target.value); if (nudgeError) setNudgeError(false) }}
-                    onKeyDown={(e) => {
-                      // ⌘/Ctrl+Enter sends (matches every other composer); Esc cancels.
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendNudge() }
-                      else if (e.key === 'Escape') { e.preventDefault(); setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }
-                    }}
-                    placeholder="Guide the next cycle — focus an angle, or answer the agent's question."
-                    // 🔑 `outline-none` with no replacement on either the control or its container.
-                    // `autoFocus` hides half the defect — focus ARRIVES here on open — but Tab to
-                    // Cancel/Send and Shift+Tab back and there was no indicator, which is the state a
-                    // keyboard user actually spends time in.
-                    // 🪤 Element ring, not container ring, for the same reason as the session-peek
-                    // composer: this container also holds the error line and the button row, so
-                    // `focus-within` would light the whole box when Send takes focus.
-                    data-type="body-s" className="w-full bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-primary text-on-surface placeholder:text-on-surface-low min-h-[60px] resize-y" />
-                  {nudgeError && (
-                    <p role="alert" data-type="body-s" className="mt-1" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
-                  )}
-                  <div className="flex items-center justify-end gap-s mt-2">
-                    <span data-type="caption" className="mr-auto text-on-surface-low">⌘↵ to send · Esc to cancel</span>
-                    <Button variant="ghost" size="sm" onClick={() => { setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }}>Cancel</Button>
-                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
-                      disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
         {/* ── body: shell-like — the page/sections don't scroll; only the Outputs
@@ -941,6 +884,36 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             onExpandReport={() => setReportOpen(true)}
             onDownloadReport={() => downloadText(`${safeFilename(c.name || c.goal, c.id)}-deliverable.md`, report, 'text/markdown;charset=utf-8')}
           />
+        </div>
+
+        {/* ── The foot of the thread (#3824): the progress strip, and under it the loop's composer,
+            its nudge, while it has a next cycle to guide. ── */}
+        <div className="shrink-0 px-2xl pb-l flex flex-col gap-s" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
+          <LoopProgressStrip status={c.status} totalCycles={c.total_cycles} maxCycles={c.max_cycles} onAction={act} />
+          {active && (
+            <div className="rounded-lg bg-surface-container p-m">
+              {/* Raw: a bare text surface inside the composer card; TextArea draws its own fill, padding and radius. */}
+              <textarea ref={nudgeBox} aria-label="Nudge this loop" value={nudgeText}
+                onChange={(e) => { setNudgeText(e.target.value); if (nudgeError) setNudgeError(false) }}
+                onKeyDown={(e) => {
+                  // ⌘/Ctrl+Enter sends (matches every other composer); Esc clears the draft.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendNudge() }
+                  else if (e.key === 'Escape') { e.preventDefault(); setNudgeText(''); setNudgeError(false) }
+                }}
+                placeholder="Guide the next cycle — focus an angle, or answer the agent's question."
+                // 🪤 Element ring, not container ring: this container also holds the error line and
+                // the button row, so `focus-within` would light the whole box when Send takes focus.
+                data-type="body-s" className="w-full bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-primary text-on-surface placeholder:text-on-surface-low min-h-[44px] resize-y" />
+              {nudgeError && (
+                <p role="alert" data-type="body-s" className="mt-1" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
+              )}
+              <div className="flex items-center justify-end gap-s mt-2">
+                <span data-type="caption" className="mr-auto text-on-surface-low">⌘↵ to send · Esc to clear</span>
+                <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
+                  disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
+              </div>
+            </div>
+          )}
         </div>
        </div>
 
