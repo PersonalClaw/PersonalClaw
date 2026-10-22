@@ -95,6 +95,8 @@ const PHASE_WORDS = Object.freeze({
 /** An empty presence — what a disconnected or failed poll renders as. */
 const EMPTY_PRESENCE = Object.freeze({
   waiting: 0,
+  /** Each item waiting on you as its menu row, in the list's order (`waitingRowOf`). */
+  waitingRows: Object.freeze([]),
   connected: false,
   listed: false,
   stale: false,
@@ -131,6 +133,70 @@ function rowOf(r) {
   };
 }
 
+// ── What waits on you, one row each (#3896) ─────────────────────────────────────────────────────
+//
+// The tray menu lists everything waiting on the owner, in the list's order, before live work, each
+// in one line (`docs/design/buddy/surfaces.md`, the room budget). A row is the item's kind and its
+// text in the app's own words (`web/src/lib/waitingList.ts`, which a test holds this to), and it
+// opens the item's route.
+
+/** What each kind of waiting item is called on a card, as the app calls it. */
+const WAITING_KIND_LABEL = Object.freeze({
+  approval: "Approval",
+  question: "Question",
+  loop_question: "Loop",
+  gate: "Workflow",
+  park: "Automation",
+  browse_grant: "Browser",
+  plan_review: "Plan",
+  bridge_confirmation: "Control bridge",
+});
+
+const textOf = (value) => (typeof value === "string" ? value.trim() : "");
+const recordOf = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+
+/** An item's text in its source's own words, as the app's `waitingText` reads it: a source that
+ *  said nothing is named by its kind, never left empty. */
+function waitingText(kind, brief) {
+  const b = recordOf(brief);
+  switch (kind) {
+    case "approval":
+      return textOf(b.tool_purpose) || textOf(b.tool) || "A tool call";
+    case "question": {
+      const first = recordOf(Array.isArray(b.questions) ? b.questions[0] : undefined);
+      return textOf(first.question) || textOf(first.header) || "A question";
+    }
+    case "loop_question":
+      return textOf(b.question) || "The loop asks you";
+    case "gate": {
+      const ask = recordOf(b.ask);
+      return textOf(ask.prompt) || textOf(ask.title) || textOf(b.node_id) || "The run waits at a gate";
+    }
+    case "park":
+      return textOf(b.question) || textOf(recordOf(b.card).blocker) || "The action stopped for you";
+    case "browse_grant":
+      return textOf(b.task) || "A task asks to use your browser";
+    case "plan_review": {
+      const step = recordOf(b.step);
+      return textOf(step.title) || (textOf(b.name) ? `Launch “${textOf(b.name)}”` : "A plan waits for your review");
+    }
+    case "bridge_confirmation":
+      return textOf(b.body) || textOf(b.action) || "A control-bridge action waits for you";
+    default:
+      return "";
+  }
+}
+
+/** One waiting item as its menu row: its kind and its text in one line, and the route it opens. A
+ *  kind the shell does not know yet is still listed, as waiting on you. */
+function waitingRowOf(item) {
+  const it = recordOf(item);
+  const kind = textOf(it.kind);
+  const text = waitingText(kind, it.brief);
+  const name = WAITING_KIND_LABEL[kind];
+  return { id: textOf(it.id), kind, text, label: truncateLabel(name ? `${name}: ${text}` : "Waiting on you", ROW_MAX), route: textOf(it.route) };
+}
+
 /**
  * Fold the two gateway payloads into the menu's view model.
  *
@@ -143,16 +209,18 @@ function summarizePresence(waitingPayload, runningPayload) {
   // `{waiting: [...]}` is the documented shape; a bare array and the other envelopes are
   // accepted so a change of envelope degrades to a count rather than to zero.
   let waiting = 0;
-  if (Array.isArray(waitingPayload)) waiting = waitingPayload.length;
+  let items = [];
+  if (Array.isArray(waitingPayload)) items = waitingPayload;
   else if (waitingPayload && typeof waitingPayload === "object") {
     const inner = waitingPayload.waiting ?? waitingPayload.items;
-    if (Array.isArray(inner)) waiting = inner.length;
+    if (Array.isArray(inner)) items = inner;
     else if (Number.isFinite(waitingPayload.pending)) waiting = Number(waitingPayload.pending);
   }
+  if (items.length) waiting = items.length;
 
   const listed = Boolean(runningPayload && typeof runningPayload === "object" && Array.isArray(runningPayload.running));
   const rows = (key) => (listed && Array.isArray(runningPayload[key]) ? runningPayload[key] : []).map(rowOf).filter(Boolean);
-  return { ...EMPTY_PRESENCE, waiting, connected, listed, running: rows("running"), finished: rows("finished") };
+  return { ...EMPTY_PRESENCE, waiting, waitingRows: items.map(waitingRowOf), connected, listed, running: rows("running"), finished: rows("finished") };
 }
 
 /**
@@ -308,6 +376,22 @@ function composeTrayTitle({ capturing = false, waiting = 0, buddyOn = false } = 
 }
 
 /** What is waiting on you, counted: every kind the gateway's list holds. */
+/**
+ * What waits on you, as menu rows: each item in the list's order up to the cap, each opening its
+ * route, then the rest as one row. With no item to list, the count alone. The rows past the cap and
+ * the count open Mission Control, which lists every item with its answer.
+ */
+function waitingMenuRows(waiting, rows, deepLink) {
+  // Click-through even at zero: the row is the way to the surface, and a
+  // disabled row would make the menu a dead end the moment the count cleared.
+  const toList = () => deepLink(DEEP_LINKS.waiting);
+  if (waiting === 0 || !rows || rows.length === 0) return [{ label: waitingWords(waiting), click: toList }];
+  const listed = rows.slice(0, MAX_LISTED_ROWS).map((r) => ({ label: r.label, click: () => deepLink(r.route || DEEP_LINKS.waiting) }));
+  const rest = waiting - listed.length;
+  if (rest > 0) listed.push({ label: `${rest} more waiting on you…`, click: toList });
+  return listed;
+}
+
 function waitingWords(waiting) {
   return waiting === 0 ? "Nothing waiting on you" : `${waiting} waiting on you`;
 }
@@ -357,7 +441,7 @@ function endedLabel(r, { word, line } = {}) {
  * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/hideBuddy/showBuddyNow/toggleLoginItem/quit
  */
 function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, buddy = { enabled: false }, flags = {}, actions = {} } = {}) {
-  const { waiting, running, finished, interrupted, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
+  const { waiting, waitingRows, running, finished, interrupted, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
   const open = actions.open || noop;
   const deepLink = actions.deepLink || noop;
@@ -375,12 +459,7 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
       enabled: false,
     },
     { type: "separator" },
-    {
-      label: waitingWords(waiting),
-      // Click-through even at zero: the row is the way to the surface, and a
-      // disabled row would make the menu a dead end the moment the count cleared.
-      click: () => deepLink(DEEP_LINKS.waiting),
-    },
+    ...waitingMenuRows(waiting, waitingRows, deepLink),
   ];
 
   // What is running now: every piece of live work, each opening where it runs (Mission Control
@@ -704,6 +783,8 @@ module.exports = {
   dockStillFile,
   PHASE_WORDS,
   EMPTY_PRESENCE,
+  WAITING_KIND_LABEL,
+  waitingRowOf,
   summarizePresence,
   carryPresence,
   bootRead,
