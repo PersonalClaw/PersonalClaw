@@ -146,6 +146,11 @@ MASKED: tuple[Masked, ...] = (
         "Detaches the mounted disk image on exit, whatever the check before it concluded.",
     ),
     Masked(
+        ".github/workflows/release-artifacts.yml",
+        "trap 'hdiutil detach \"$MNT\" -quiet || true' EXIT",
+        "The rehearsal's copy of release.yml's desktop-mac check: the same detach on exit.",
+    ),
+    Masked(
         "scripts/smoke_backend_bundle.sh",
         'kill "$GATEWAY_PID" 2>/dev/null || true',
         "Cleanup on exit: the gateway may already have stopped.",
