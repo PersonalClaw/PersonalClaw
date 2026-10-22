@@ -161,6 +161,11 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'triggers/new?kind=run_completed', id: 'triggers-new-run_completed', label: 'Triggers › new › run_completed', needsData: true },
   { route: 'chat/history', id: 'chat-history', label: 'Chat › history', needsData: true },
   { route: 'chat/history?view=board', id: 'chat-history-board', label: 'Chat › history › board', needsData: true },
+  // Where two pages that left the sidebar went (#3818): the notification feed is a filter of the
+  // Inbox, and a project's tasks are its Tasks view. The run's home has no project and its feed holds
+  // whatever other specs raised first, so both reads are fixed for these rows (`surfaces.spec.ts`).
+  { route: 'inbox?filter=notifications', id: 'inbox-notifications', label: 'Inbox › Notifications', needsData: true },
+  { route: 'projects/p-0a1b2c3d?tab=tasks', id: 'project-tasks', label: 'Projects › a project › Tasks', needsData: true },
 ]
 
 // ── Non-nav routable pages — the THIRD axis ─────────────────────────────────
