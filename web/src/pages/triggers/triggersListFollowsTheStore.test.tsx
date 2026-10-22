@@ -31,6 +31,7 @@ function mockApi() {
       actionProviders: () => Promise.resolve([]),
       autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
       triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }),
+      discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     },
   }))
   vi.doMock('../../lib/useChatSocket', async (orig) => ({
