@@ -57,6 +57,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Alert notifications show the buddy's still orb and one line, and are silent: an approval, a question or an error raised as a desktop notification carries that alert's still orb as its icon and the buddy's own line of what changed ("Chat “Release notes” needs your OK: shell.run", at most 120 characters), opens the buddy when clicked (or, with the buddy off, the item it is about), offers no answer buttons, and makes no sound. Every other desktop notification still sounds as before, and whether one is raised at all is decided as before: your rule's Desktop tick, mute and quiet hours.**
 - **The menu bar and the buddy hear a change the moment it happens, over one connection the app holds to its gateway, instead of the menu bar asking every five seconds; a hidden buddy comes back only for something that may interrupt you now.**
 - **A colour scheme, a dial or a personality chosen in one window is the look of every open window at once, the buddy's included, as the light and dark mode already was; the sound-cue switch shows what another window set.**
+- **The phone companion shows everything running and waiting with the buddy's orbs: each row has the buddy's orb for its state, its kind of work's glyph, the one line the buddy would say ("Release notes needs your OK: Bash", at most 48 characters) and its exact phase, with what waits on you first, in the one order, and then what runs.**
 
 ### Fixed
 
