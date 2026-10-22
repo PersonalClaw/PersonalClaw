@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { Check, Sparkles, Volume2 } from 'lucide-react'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY, type Personality } from '../../design/personalities'
 import { prefersReducedMotion } from '../../design/motion'
-import { setSoundCuesEnabled, soundCuesEnabled, type CuePoint } from '../../design/soundCues'
+import { onSoundCuesChange, setSoundCuesEnabled, soundCuesEnabled, type CuePoint } from '../../design/soundCues'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
@@ -47,9 +47,11 @@ const CUE_POINT_LABELS: Record<CuePoint, string> = {
   error: 'a failure',
 }
 
-function SoundCuesToggle() {
+export function SoundCuesToggle() {
   const { personality } = usePersonality()
   const [on, setOn] = useState(soundCuesEnabled)
+  // Set in another window, shown here too.
+  useEffect(() => onSoundCuesChange(setOn), [])
   const flip = (v: boolean) => {
     setSoundCuesEnabled(v)
     setOn(v)

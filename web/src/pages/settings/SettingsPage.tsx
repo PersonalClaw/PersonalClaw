@@ -1,7 +1,7 @@
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, Smile, MonitorSmartphone, Plug2, FileType2,
   FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -39,6 +39,7 @@ import { AmbientPanel } from './AmbientPanel'
 import { WorkflowsPanel } from './WorkflowsPanel'
 import { LoopsPanel } from './LoopsPanel'
 import { CompanionPanel } from './CompanionPanel'
+import { BuddyPanel } from './BuddyPanel'
 import { DevicesPanel } from './DevicesPanel'
 import { SenderTrustPanel } from './SenderTrustPanel'
 import { SourcesPanel } from './SourcesPanel'
@@ -131,6 +132,8 @@ const SUBPAGES: SubPage[] = [
   { id: 'loops', label: 'Autonomous loops', icon: RefreshCcw, render: () => <LoopsPanel /> },
   { id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard, render: () => <AmbientPanel /> },
   { id: 'companion', label: 'Companion apps', icon: Smartphone, render: () => <CompanionPanel /> },
+  // Every buddy setting in one place (#3901): its status, its surfaces, when it steps back.
+  { id: 'buddy', label: 'Buddy', icon: Smile, render: () => <BuddyPanel /> },
   { id: 'sources', label: 'Watched sources', icon: Rss, render: () => <SourcesPanel /> },
   { id: 'packs', label: 'Packs', icon: Package, render: () => <PacksPanel /> },
   { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },

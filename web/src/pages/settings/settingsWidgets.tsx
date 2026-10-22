@@ -1,7 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
+  MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Smile, Rss, Package, FlaskConical, KeyRound,
   MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
@@ -314,6 +314,8 @@ const usePacksInstalled = () => useQuery('settings:packs:installed', () =>
 // showed only `discovery_enabled` would render that disagreement as success. This read is why the
 // companion tile needs no config read at all: the record carries the instance name too.
 const useCompanionDiscovery = () => useQuery('settings:companion:discovery', () => api.companionDiscovery())
+// The same key Settings → Buddy reads, so the card and the panel share one read.
+const useBuddyPolicy = () => useQuery('settings:buddy:policy', () => api.buddyPolicy())
 
 /** Run an async mutation, then invalidate the widget's cache key(s) so its data re-reads the new
  *  value — so a REJECTED write reconciles: the control snaps back to the server's answer.
@@ -1228,6 +1230,23 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               inert" can never read here as "on". State in words as well as tone (1.4.1). */}
           {d && <><StatusPill query={query} label={d.advertising ? 'Advertising' : 'Not advertising'} tone={d.advertising ? 'ok' : 'muted'} />
             <div data-type="caption" className="mt-1.5 text-on-surface-low"><Highlight text={d.detail} query={query} /></div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'buddy', group: 'System', label: 'Buddy', icon: Smile, size: 'sm',
+    description: 'Whether the buddy shows, on which surfaces, and when it steps back.',
+    useSearchText() {
+      const { data: p } = useBuddyPolicy()
+      return `buddy status presence window tray dock menu bar alerts notifications away quiet hours reduced motion ${p ? (p.show ? 'on shown' : 'off hidden') : ''}`
+    },
+    render(query, go) {
+      const { data: p, error: pErr, stale: pStale, status: pStatus, refresh: pRefresh } = useBuddyPolicy()
+      return (
+        <BentoCard icon={Smile} title="Buddy" query={query} onClick={() => go('buddy')} loading={p === undefined} stale={pStale} failed={pStatus === 'error'} error={pErr} onRetry={pRefresh}>
+          {/* Buddy status in words as well as tone (1.4.1), from the policy every window reads. */}
+          {p && <StatusPill query={query} label={p.show ? 'On' : 'Off'} tone={p.show ? 'ok' : 'muted'} />}
         </BentoCard>
       )
     },

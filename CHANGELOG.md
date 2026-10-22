@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The buddy shows what your agents are doing, and asks only when something needs you: `#/buddy` shows the work running, then one request at a time in the waiting list's order, and it never answers without your click or key press, each answer going to the request's own route.**
 - **The buddy's settings have one home, in the gateway's config: Buddy status (`buddy.show`, off until you turn it on), which surfaces show it (its window, its tray and dock faces, its alerts' notifications) and how long you are away before it steps back. `GET /api/buddy/policy` answers all of it with the notification posture its alerts follow (muted, in quiet hours now, whether an alert may interrupt, and when that next changes), so every window and every machine follows one answer; it is yours alone, and a change rings your windows once (`buddy_policy_changed`) to read it again.**
 - **The buddy follows the desktop: drag it to float or dock it, rest the pointer on the top edge to make a docked buddy peek, and over a full-screen PersonalClaw window it shows only requests, as a quiet peek.**
+- **Settings → Buddy: Buddy status, which surfaces show the buddy and when it steps back, each saved as you change it, with the notification posture its alerts follow and whether your system asks for reduced motion, shown with where to change them. It follows a change made in any window.**
 
 ### Changed
 
@@ -55,6 +56,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A loop's page says its Mode, Attended or Unattended, in the strip above its composer, as a chat's composer says its permission mode, with what the Mode means on the word; the loop's detail tile beside a chat says it too.**
 - **Alert notifications show the buddy's still orb and one line, and are silent: an approval, a question or an error raised as a desktop notification carries that alert's still orb as its icon and the buddy's own line of what changed ("Chat “Release notes” needs your OK: shell.run", at most 120 characters), opens the item it is about when clicked, offers no answer buttons, and makes no sound. Every other desktop notification still sounds as before, and whether one is raised at all is decided as before: your rule's Desktop tick, mute and quiet hours.**
 - **The menu bar and the buddy hear a change the moment it happens, over one connection the app holds to its gateway, instead of the menu bar asking every five seconds; a hidden buddy comes back only for something that may interrupt you now.**
+- **A colour scheme, a dial or a personality chosen in one window is the look of every open window at once, the buddy's included, as the light and dark mode already was; the sound-cue switch shows what another window set.**
 
 ### Fixed
 

@@ -530,6 +530,20 @@ main window. Its page can reach the app only through a handful of named calls (w
 is, a drag of the buddy, the room it needs, and opening a route), and the app checks each one; it
 has none of the main window's desktop capabilities.
 
+### Its settings
+
+**Settings → Buddy** holds every buddy setting in one place: Buddy status, which surfaces show it
+(its window, its tray and dock faces, its alerts' notifications), and how long you are away before
+it steps back (docked it hides, floating it dozes; alerts still appear). They are kept by the
+gateway (`buddy.*`, see the configuration reference), so every window and every computer signed in
+to it follows the same answer, `GET /api/buddy/policy`, and a change applies at once, with no
+restart. The page also shows what the buddy follows from elsewhere, without a second copy of it:
+whether your notifications are muted or in quiet hours (changed in Settings → Notifications), and
+whether your system asks for reduced motion (changed in its accessibility settings).
+
+A look you choose in one window, its colour scheme, its dials or its personality, is the look of
+every open window at once, the buddy's included.
+
 ### What it shows, and when it asks
 
 Its page is `#/buddy`, and a browser tab can open it too.

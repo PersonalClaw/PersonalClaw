@@ -50,7 +50,7 @@ export const SETTINGS_PANELS = [
   'external-access', 'audit',
   'system', 'doctor', 'diagnostics', 'tool-output', 'feedback', 'usage', 'routing', 'legibility',
   'workflows', 'loops',
-  'ambient', 'companion', 'sources', 'packs', 'archive', 'portability', 'durability', 'updates',
+  'ambient', 'companion', 'buddy', 'sources', 'packs', 'archive', 'portability', 'durability', 'updates',
 ] as const
 
 /** The settings panels as ROUTES, for the axe scan to iterate alongside ROUTES. */

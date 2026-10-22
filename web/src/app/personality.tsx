@@ -98,6 +98,14 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
   const { applyScheme, setSelect, setScalar, resetToken } = useAppearance()
   const [id, setId] = useState<string>(readStored)
   const personality = useMemo(() => resolvePersonality(id), [id])
+  // Another window chose an identity (#3901): take it here too. Its scheme and dials arrive through
+  // the appearance key on their own; this applies what the identity itself owns (the title, the
+  // favicon, the cue voices).
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === STORAGE_KEY) setId(readStored()) }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
   const isDefault = personality.id === DEFAULT_PERSONALITY
 
   // Apply the document-level behaviors. Each branch restores the PRISTINE value
