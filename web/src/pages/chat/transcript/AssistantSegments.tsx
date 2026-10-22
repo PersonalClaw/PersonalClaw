@@ -142,10 +142,10 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   const renderItem = (seg: Segment, i: number, answer = false): React.ReactNode => {
     if (seg.kind === 'tool') {
       const t = seg as ToolSegment
-      // A Code project / Goal Loop created or started from chat renders as a live
-      // progress widget (status + stages/sub-goals + activity + cockpit link)
-      // instead of a bare tool log line — once its result has landed with an id.
-      const sdlc = t.done ? sdlcRefFromTool(t.tool, t.output) : null
+      // A Code project / Goal Loop created or started from chat renders as a live card instead
+      // of a bare tool log line, once its result has landed with an id: once, where the chat
+      // first names it (`liveLoopCards`); every later call about it keeps its tool card.
+      const sdlc = liveCards.has(seg) ? sdlcRefFromTool(t.tool, t.output) : null
       if (sdlc) return <SdlcProgressCard key={seg.id || i} refObj={sdlc} />
       // A workflow run started or inspected from chat renders as a live progress card for
       // the same reason: a run is a living thing, not the frozen JSON the tool returned. Once,
@@ -226,19 +226,15 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   const unaskedCount = unaskedStepCount(workSegs)
   const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
 
-  // An SDLC create/start/status segment becomes a LIVE progress card that must stay
-  // visible — never buried inside the collapsed "Worked for 12s · N steps" disclosure
-  // (the card is a living, auto-refreshing widget, not a log line). Pull those out of
-  // the work fold + render them at the top level between the work + the final answer.
-  const isSdlc = (s: Segment) => s.kind === 'tool'
-    && !!(s as ToolSegment).done && !!sdlcRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
-  // A workflow card is live too, so it gets the same exemption: burying an auto-refreshing
-  // widget inside a collapsed disclosure hides the one thing the user came back to check. So is
-  // an ask still waiting for work the chat started (`waitsPastItsTurn`).
-  const isWorkflow = (s: Segment) => liveCards.has(s)
+  // A loop's or a workflow run's card is a LIVE, auto-refreshing widget that must stay visible:
+  // never buried inside the collapsed "Worked for 12s · N steps" disclosure, which would hide the
+  // one thing the user came back to check. Pull those out of the work fold and render them at the
+  // top level between the work and the final answer: one per loop or run (`liveCards`). So is an
+  // ask still waiting for work the chat started (`waitsPastItsTurn`).
+  const isCard = (s: Segment) => liveCards.has(s)
   // A question still waiting on her is never folded away either: the agent is halted on it.
   const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
-  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s) || waitsForHer(s)
+  const isLiveCard = (s: Segment) => isCard(s) || waitsPastItsTurn(s) || waitsForHer(s)
   const sdlcNodes = segments.filter(isLiveCard).map((s, i) => renderItem(s, i)).filter(Boolean)
   // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
   // inside the work's span, and was drawn there too, live: a line a reload never showed.

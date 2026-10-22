@@ -113,7 +113,10 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     (`aria-labelledby`), inside the playground's stage and, later, the buddy's window.
     //     Panel-level both. Whether each rung sits right under its surface's outline is the axe
     //     heading-order pass's to measure per surface (#3941), not this file census's.
+    //   · `chat/beside/LoopBeside` JOINED it (#3824): a loop's detail tile, whose title the pane
+    //     host draws as the h2, heads its "Sub-goals" and "Latest cycles" with h3s. Panel-level.
     expect(withH3.sort(), 'files still using h3').toEqual([
+      'pages/chat/beside/LoopBeside.tsx',
       'pages/chat/transcript/SourcesRow.tsx',
       // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
       'pages/code/cockpit/tasks/TaskDetailView.tsx',
