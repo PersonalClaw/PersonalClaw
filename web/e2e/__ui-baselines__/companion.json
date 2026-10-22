@@ -1,0 +1,72 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "390": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "412": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "768": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ]
+    },
+    "known": {}
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "390": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "412": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "768": [
+        "button \"Mark \"Backup restore drill passed\" read\"",
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ]
+    },
+    "known": {
+      "axe (WCAG 2 AA)": [
+        "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): button[title=\"Deny bash\"]"
+      ]
+    }
+  }
+}

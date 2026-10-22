@@ -2,8 +2,8 @@
  * Menu-bar presence.
  *
  * The earlier tray was a static six-item menu (Show / New Tab / Merge All Windows /
- * Quit) built inline in `main.js`. This module replaces it with a LIVE one — pending
- * approvals, what is running now, quick capture, open dashboard, an opt-in login item,
+ * Quit) built inline in `main.js`. This module replaces it with a LIVE one — what is
+ * waiting on you, what is running now, quick capture, open dashboard, an opt-in login item,
  * quit — and pulls the logic out of the Electron glue so it can be tested without
  * launching an app.
  *
@@ -13,7 +13,7 @@
  *    for the "● Listening" push-to-talk indicator. A counts badge that also called
  *    `setTitle` would be a second writer to a single surface, and whichever fired
  *    last would win — so both go through `composeTrayTitle()`, and capture ALWAYS
- *    wins (a live-microphone indicator is a privacy signal; an approvals badge can
+ *    wins (a live-microphone indicator is a privacy signal; a waiting badge can
  *    wait a second).
  *
  * 2. **Presence must degrade.** If `new Tray()` throws, or the icon file is missing
@@ -25,7 +25,10 @@
  *    never leave a phantom hidden window with no way back.
  *
  * 3. **Counts come from the loopback gateway**, whose two shapes are fixed:
- *    `GET /api/approvals` → a bare JSON array of pending approvals;
+ *    `GET /api/waiting` → `{"waiting": [item, ...], "unreadable": [...]}`, the one list of
+ *    everything waiting on you every surface counts (`personalclaw.waiting`, #3888): an
+ *    approval, an agent's question, a loop's question, a workflow's gate, an automation's
+ *    parked action, a browser grant, a plan review and a control-bridge confirmation;
  *    `GET /api/running` → `{"running": [row, ...], "finished": [row, ...]}`, the one list of
  *    live work every reader shares (`personalclaw.running_now`, #3889): a chat's turn, a
  *    helper, a loop with its workers folded in, a workflow run, an automation's fire and a
@@ -36,14 +39,14 @@
 
 /**
  * SPA deep-link targets. The dashboard is a HASH-routed SPA (`web/src/app/App.tsx`),
- * and these are its real routes — `chat` is where `ApprovalPrompt` renders pending
- * approvals, and Mission Control lists every piece of live work. A running row opens the
+ * and these are its real routes — Mission Control lists everything waiting on you, each
+ * answerable there or on its own page, and every piece of live work. A running row opens the
  * route the gateway names for it (`running_now`), which `hashAssignmentScript` checks
  * against the hash grammar before the window takes it.
  */
 const DEEP_LINKS = {
   dashboard: "#/dashboard",
-  approvals: "#/chat",
+  waiting: "#/mission-control",
   inbox: "#/inbox",
   settings: "#/settings",
   missionControl: "#/mission-control",
@@ -85,7 +88,7 @@ const PHASE_WORDS = Object.freeze({
 
 /** An empty presence — what a disconnected or failed poll renders as. */
 const EMPTY_PRESENCE = Object.freeze({
-  approvals: 0,
+  waiting: 0,
   connected: false,
   listed: false,
   stale: false,
@@ -124,25 +127,25 @@ function rowOf(r) {
 /**
  * Fold the two gateway payloads into the menu's view model.
  *
- * @param {unknown} approvalsPayload body of `GET /api/approvals` (a bare array)
+ * @param {unknown} waitingPayload body of `GET /api/waiting` (`{waiting: [...], unreadable: [...]}`)
  * @param {unknown} runningPayload body of `GET /api/running` (`{running: [...], finished: [...]}`)
  */
-function summarizePresence(approvalsPayload, runningPayload) {
-  const connected = approvalsPayload !== null && approvalsPayload !== undefined;
+function summarizePresence(waitingPayload, runningPayload) {
+  const connected = waitingPayload !== null && waitingPayload !== undefined;
 
-  // A bare array is the documented shape; the object forms are accepted so a future
-  // envelope change degrades to a count rather than to zero.
-  let approvals = 0;
-  if (Array.isArray(approvalsPayload)) approvals = approvalsPayload.length;
-  else if (approvalsPayload && typeof approvalsPayload === "object") {
-    const inner = approvalsPayload.approvals ?? approvalsPayload.items;
-    if (Array.isArray(inner)) approvals = inner.length;
-    else if (Number.isFinite(approvalsPayload.pending)) approvals = Number(approvalsPayload.pending);
+  // `{waiting: [...]}` is the documented shape; a bare array and the other envelopes are
+  // accepted so a change of envelope degrades to a count rather than to zero.
+  let waiting = 0;
+  if (Array.isArray(waitingPayload)) waiting = waitingPayload.length;
+  else if (waitingPayload && typeof waitingPayload === "object") {
+    const inner = waitingPayload.waiting ?? waitingPayload.items;
+    if (Array.isArray(inner)) waiting = inner.length;
+    else if (Number.isFinite(waitingPayload.pending)) waiting = Number(waitingPayload.pending);
   }
 
   const listed = Boolean(runningPayload && typeof runningPayload === "object" && Array.isArray(runningPayload.running));
   const rows = (key) => (listed && Array.isArray(runningPayload[key]) ? runningPayload[key] : []).map(rowOf).filter(Boolean);
-  return { ...EMPTY_PRESENCE, approvals, connected, listed, running: rows("running"), finished: rows("finished") };
+  return { ...EMPTY_PRESENCE, waiting, connected, listed, running: rows("running"), finished: rows("finished") };
 }
 
 /**
@@ -211,20 +214,25 @@ function truncateLabel(text, max = 48) {
  * The SINGLE writer for `tray.setTitle`. Capture wins over the badge; with neither,
  * the title is empty so the menu bar stays quiet.
  *
- * @param {{capturing?: boolean, approvals?: number}} state
+ * @param {{capturing?: boolean, waiting?: number}} state
  */
-function composeTrayTitle({ capturing = false, approvals = 0 } = {}) {
+function composeTrayTitle({ capturing = false, waiting = 0 } = {}) {
   if (capturing) return "● Listening";
-  if (Number(approvals) > 0) return `${Number(approvals)}`;
+  if (Number(waiting) > 0) return `${Number(waiting)}`;
   return "";
 }
 
+/** What is waiting on you, counted: every kind the gateway's list holds. */
+function waitingWords(waiting) {
+  return waiting === 0 ? "Nothing waiting on you" : `${waiting} waiting on you`;
+}
+
 /** Tooltip text — the same facts, spelled out for a hover. */
-function composeTrayTooltip({ capturing = false, approvals = 0, running = [], connected = false, listed = true, stale = false } = {}) {
+function composeTrayTooltip({ capturing = false, waiting = 0, running = [], connected = false, listed = true, stale = false } = {}) {
   if (capturing) return "PersonalClaw is listening — press the shortcut again to stop";
   if (!connected) return "PersonalClaw — not connected to the gateway";
   const parts = [];
-  parts.push(approvals === 1 ? "1 approval waiting" : `${approvals} approvals waiting`);
+  parts.push(waitingWords(waiting));
   // A list that could not be read is no zero: a zero looks like good news.
   parts.push(stale ? `last known ${running.length} running` : listed ? `${running.length} running` : "what is running could not be read");
   return `PersonalClaw — ${parts.join(", ")}`;
@@ -263,7 +271,7 @@ function endedLabel(r, { word, line } = {}) {
  *        skipped when not, so the menu never depends on them.
  */
 function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, actions = {}, tiles = [] } = {}) {
-  const { approvals, running, finished, interrupted, connected, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
+  const { waiting, running, finished, interrupted, connected, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
   const open = actions.open || noop;
   const deepLink = actions.deepLink || noop;
@@ -278,15 +286,10 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     },
     { type: "separator" },
     {
-      label:
-        approvals === 0
-          ? "No approvals waiting"
-          : approvals === 1
-            ? "1 approval waiting"
-            : `${approvals} approvals waiting`,
+      label: waitingWords(waiting),
       // Click-through even at zero: the row is the way to the surface, and a
       // disabled row would make the menu a dead end the moment the count cleared.
-      click: () => deepLink(DEEP_LINKS.approvals),
+      click: () => deepLink(DEEP_LINKS.waiting),
     },
   ];
 
@@ -455,7 +458,7 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
     try {
       const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, actions, tiles });
       tray.setContextMenu(MenuCtor.buildFromTemplate(template));
-      tray.setTitle(composeTrayTitle({ capturing, approvals: presence.approvals }));
+      tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting }));
       tray.setToolTip(composeTrayTooltip({ capturing, ...presence }));
     } catch (err) {
       // A tray destroyed mid-render during shutdown is the common case here.

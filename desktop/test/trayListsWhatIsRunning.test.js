@@ -242,7 +242,7 @@ describe("every state of the list", () => {
 
 describe("the tooltip and the poll", () => {
   it("the tooltip counts what runs, not only loops, and a list it could not read is no zero", () => {
-    assert.match(composeTrayTooltip(summarizePresence([1, 2], list([row(), row({ work: "chat:c2" }), row({ work: "chat:c3" })]))), /2 approvals waiting, 3 running/);
+    assert.match(composeTrayTooltip(summarizePresence({ waiting: [1, 2] }, list([row(), row({ work: "chat:c2" }), row({ work: "chat:c3" })]))), /2 waiting on you, 3 running/);
     assert.match(composeTrayTooltip(summarizePresence([], null)), /what is running could not be read/);
     const kept = carryPresence(summarizePresence([], list([row()])), summarizePresence([], null));
     assert.match(composeTrayTooltip(kept), /last known 1 running/);
@@ -252,9 +252,12 @@ describe("the tooltip and the poll", () => {
     const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
     assert.match(main, /getGateway\("\/api\/running"\)/);
     assert.doesNotMatch(main, /getGateway\("\/api\/loops"\)/);
+    // The count is everything waiting on you (#3888), never the approvals alone.
+    assert.match(main, /getGateway\("\/api\/waiting"\)/);
+    assert.doesNotMatch(main, /getGateway\("\/api\/approvals"\)/);
     assert.match(main, /function adoptLocalGateway\(ready\) \{\s+localGatewayUrl = ready\.url;\s+gatewayStarts \+= 1;/);
-    assert.match(main, /const before = gatewayStarts;\s+const \[approvals, running\] = await Promise\.all\([^\n]+\);\s+const boot = bootRead\(before, gatewayStarts\);/);
-    assert.match(main, /carryPresence\(trayPresence\.presence, summarizePresence\(approvals, running\), \{ boot \}\)/);
+    assert.match(main, /const before = gatewayStarts;\s+const \[waiting, running\] = await Promise\.all\([^\n]+\);\s+const boot = bootRead\(before, gatewayStarts\);/);
+    assert.match(main, /carryPresence\(trayPresence\.presence, summarizePresence\(waiting, running\), \{ boot \}\)/);
   });
 
   it("a poll tells which start it read only when no other came while its reads were out", () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { CompanionPage } from './CompanionPage'
+import { waitingApproval, waitingList } from '../../test/waiting'
 import { invalidateKeys } from '../../lib/data'
 import type { PendingApproval, PushStatus } from '../../lib/api'
 
@@ -32,6 +33,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => approvals(),
+      // The phone's first lane is the waiting list, which carries each approval as its brief.
+      waiting: async () => waitingList(...((await approvals()) as PendingApproval[]).map((a) => waitingApproval(a))),
       resolveApproval: vi.fn().mockResolvedValue({ ok: true }),
       pushStatus: () => pushStatus(),
     },
@@ -56,7 +59,7 @@ const routeWith = (query: Record<string, string>) => ({
 beforeEach(() => {
   approvals.mockReset()
   pushStatus.mockReset().mockResolvedValue(OFF)
-  invalidateKeys('companion:approvals')
+  invalidateKeys('companion:waiting')
   invalidateKeys('companion:push')
   sessionStorage.clear()
 })

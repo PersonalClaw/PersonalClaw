@@ -1567,6 +1567,54 @@ export interface RunningList {
 /** `GET /api/running/count`, read from the same list without its rows. */
 export interface RunningCount { live: number; blocked: number; waiting: number; finished: number }
 
+/** The sources of what waits on you (`waiting.py`): an approval (a tool call, a helper's start and a
+ *  tool server's question among them), an agent's question, a loop's question (a Code loop's merge
+ *  and conflict among them), a workflow run's gate, an automation's parked action, a browser grant,
+ *  a plan review and a control-bridge confirmation. */
+export type WaitingKind =
+  | 'approval' | 'question' | 'loop_question' | 'gate' | 'park' | 'browse_grant' | 'plan_review'
+  | 'bridge_confirmation'
+
+/** What answering an item lets happen, most consequential first: the list's first order. */
+export type WaitingConsequence = 'destructive' | 'changes' | 'asks'
+
+/** One thing waiting on you in `GET /api/waiting`. */
+export interface WaitingItem {
+  /** `<kind>:<the source's own id>`, unique across the list. */
+  id: string
+  kind: WaitingKind
+  /** The work it belongs to (`chat:`, `loop:`, `workflow:`, `subagent:`, `trigger:`), "" for none. */
+  work: string
+  /** The chat it is shown in, "" for work no chat started. */
+  session: string
+  /** The source's own words, exactly as its own card shows them: an approval's registry row
+   *  fields, a question's cards, a loop's question and why, a gate's ask and handoff, a park's card,
+   *  a grant's task, a plan's step, a confirmation's action and body. */
+  brief: Record<string, unknown>
+  consequence: WaitingConsequence
+  /** The source's own risk word when it has one (an approval's), else "". */
+  risk: string
+  asked_at: string | null
+  age_secs: number | null
+  /** Until when it can be answered, `null` for an ask that waits until it is answered. A reader
+   *  holding an item past it disables its action itself (`isStale`). */
+  expires_at: string | null
+  current: boolean
+  interrupt: Interrupt
+  /** Your exact action: the source's own route and what it takes. An app or an agent reading the
+   *  list is handed the choices and no route or body: nobody else answers one. */
+  answer: { method: string; path: string; takes: unknown[]; body: Record<string, unknown> }
+  /** The dashboard address that shows it with its card. */
+  route: string
+}
+
+/** `GET /api/waiting`: everything waiting on you, by consequence and then age, and the sources that
+ *  could not be read (never shown as nothing waiting). */
+export interface WaitingList {
+  waiting: WaitingItem[]
+  unreadable: WaitingKind[]
+}
+
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
@@ -9566,6 +9614,9 @@ export const api = {
    *  live work reads, read again when a `running_changed` frame says it moved. */
   running: () => get<RunningList>('/api/running'),
   runningCount: () => get<RunningCount>('/api/running/count'),
+  /** Everything waiting on you (`waiting.py`): one list every surface reads, read again when a
+   *  `waiting_changed` frame says it moved. Each item is answered at its own source's route. */
+  waiting: () => get<WaitingList>('/api/waiting'),
   resolveApproval: (id: string, action: 'approve' | 'reject') =>
     post<{ ok: boolean }>(`/api/approvals/${encodeURIComponent(id)}/${action}`, {}),
   // Content-free push. `pushStatus` carries the VAPID PUBLIC key

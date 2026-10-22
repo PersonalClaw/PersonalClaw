@@ -387,7 +387,7 @@ describe("hashAssignmentScript — the hash reaches the page as data", () => {
     // A running row opens the route the gateway names for it (`running_now`): a chat's, a loop's,
     // a code loop's, a run's at its step, a trigger's.
     const hashes = [
-      DEEP_LINKS.dashboard, DEEP_LINKS.approvals, DEEP_LINKS.inbox, DEEP_LINKS.settings,
+      DEEP_LINKS.dashboard, DEEP_LINKS.waiting, DEEP_LINKS.inbox, DEEP_LINKS.settings,
       DEEP_LINKS.missionControl, `${DEEP_LINKS.inbox}?capture=1`,
       "#/chat/dashboard%3Achat-1", "#/loops/0a1b2c3d", "#/code/0a1b2c3d",
       "#/workflows/runs/r1?node=root.draft", "#/triggers?open=t-1",

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { automationsFrom } from '../test/automationsRead'
+import { waitingApproval, waitingList } from '../test/waiting'
 
 // ── The autonomy ladder is keyed on the ACTION PROVIDER, never on a tool's name ─────────────────
 //
@@ -71,12 +72,13 @@ describe('a tool approval shows no rung, even for a tool named like a provider',
   })
 
   it.each(TOOLS_NAMED_LIKE_PROVIDERS)('the phone queue for %s', async (tool) => {
+    // The phone's first lane is the waiting list, which carries the approval as its brief.
     mockApi({
-      approvals: () => Promise.resolve([{
+      waiting: () => Promise.resolve(waitingList(waitingApproval({
         id: `ap-${tool}`, request_id: `ap-${tool}`, source: 'subagent', tool, tool_input: 'echo hi',
         tool_purpose: '', session: 'dashboard:mine', ts: Math.round(Date.now() / 1000),
-        session_title: '', agent: '', risk: '', grant_agent: '',
-      }]),
+        session_title: '', agent: '', risk: '', grant_agent: '', source_label: '',
+      }))),
       uLoops: () => Promise.resolve([]),
       tasks: () => Promise.resolve({ tasks: [], total: 0 }),
       inboxOpen: () => Promise.resolve([]),

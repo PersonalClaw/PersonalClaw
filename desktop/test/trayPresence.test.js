@@ -29,9 +29,12 @@ function labels(template) {
 }
 
 describe("summarizePresence", () => {
-  it("counts a bare approvals array — the documented GET /api/approvals shape", () => {
-    const p = summarizePresence([{ id: "a" }, { id: "b" }], { running: [], finished: [] });
-    assert.equal(p.approvals, 2);
+  it("counts everything waiting on you — the documented GET /api/waiting shape", () => {
+    // An approval, a workflow's gate and a loop's question: the tray counts every kind the list
+    // holds, where it once counted `GET /api/approvals` alone.
+    const list = { waiting: [{ kind: "approval" }, { kind: "gate" }, { kind: "loop_question" }], unreadable: [] };
+    const p = summarizePresence(list, { running: [], finished: [] });
+    assert.equal(p.waiting, 3);
     assert.equal(p.connected, true);
   });
 
@@ -45,29 +48,30 @@ describe("summarizePresence", () => {
     assert.deepStrictEqual(p.running, []);
   });
 
-  it("tolerates an enveloped approvals payload rather than reporting zero", () => {
-    assert.equal(summarizePresence({ approvals: [1, 2, 3] }, {}).approvals, 3);
-    assert.equal(summarizePresence({ pending: 7 }, {}).approvals, 7);
+  it("tolerates another envelope rather than reporting zero", () => {
+    assert.equal(summarizePresence([1, 2], {}).waiting, 2);
+    assert.equal(summarizePresence({ items: [1, 2, 3] }, {}).waiting, 3);
+    assert.equal(summarizePresence({ pending: 7 }, {}).waiting, 7);
   });
 });
 
 describe("composeTrayTitle — the single writer for the menu-bar title", () => {
-  it("capture beats the approvals badge", () => {
+  it("capture beats the waiting badge", () => {
     // The indicator and the badge both want `tray.setTitle`. The privacy
     // signal wins; without one composer the later caller would silently erase the
     // other's text.
-    assert.equal(composeTrayTitle({ capturing: true, approvals: 4 }), "● Listening");
+    assert.equal(composeTrayTitle({ capturing: true, waiting: 4 }), "● Listening");
   });
 
   it("shows the count when not capturing, and nothing at zero", () => {
-    assert.equal(composeTrayTitle({ capturing: false, approvals: 4 }), "4");
-    assert.equal(composeTrayTitle({ capturing: false, approvals: 0 }), "");
+    assert.equal(composeTrayTitle({ capturing: false, waiting: 4 }), "4");
+    assert.equal(composeTrayTitle({ capturing: false, waiting: 0 }), "");
     assert.equal(composeTrayTitle(), "");
   });
 
   it("tooltip states connectedness, and capture still wins", () => {
     assert.match(composeTrayTooltip({ connected: false }), /not connected/);
-    assert.match(composeTrayTooltip({ connected: true, approvals: 1, running: [{}] }), /1 approval waiting, 1 running/);
+    assert.match(composeTrayTooltip({ connected: true, waiting: 1, running: [{}] }), /1 waiting on you, 1 running/);
     assert.match(composeTrayTooltip({ connected: true, capturing: true }), /listening/);
   });
 });
@@ -88,7 +92,7 @@ describe("buildTrayMenuTemplate", () => {
   it("renders every row the menu promises, and inspects a non-zero number of rows", () => {
     const a = actions();
     const template = buildTrayMenuTemplate({
-      presence: { ...EMPTY_PRESENCE, approvals: 3, running: [{ work: "loop:l1", name: "Loop one", phase: "Thinking", line: "", since: "", route: "#/loops/l1", blocked: false, waiting: 0 }], connected: true, listed: true },
+      presence: { ...EMPTY_PRESENCE, waiting: 3, running: [{ work: "loop:l1", name: "Loop one", phase: "Thinking", line: "", since: "", route: "#/loops/l1", blocked: false, waiting: 0 }], connected: true, listed: true },
       loginItem: { supported: true, enabled: false },
       actions: a,
     });
@@ -99,7 +103,7 @@ describe("buildTrayMenuTemplate", () => {
     assert.ok(clickableRows(template).length >= 5, "at least five rows must actually do something");
 
     const text = labels(template).join(" | ");
-    assert.match(text, /3 approvals waiting/);
+    assert.match(text, /3 waiting on you/);
     assert.match(text, /1 running/);
     assert.match(text, /Quick Capture Note/);
     assert.match(text, /Open Dashboard/);
@@ -107,22 +111,22 @@ describe("buildTrayMenuTemplate", () => {
     assert.match(text, /Quit PersonalClaw/);
   });
 
-  it("the approvals row deep-links to the surface that renders approvals", () => {
+  it("the waiting row deep-links to the surface that lists every kind waiting on you", () => {
     const a = actions();
-    const template = buildTrayMenuTemplate({ presence: { approvals: 2, running: [], connected: true }, actions: a });
-    const row = template.find((r) => /approvals waiting/.test(r.label || ""));
+    const template = buildTrayMenuTemplate({ presence: { waiting: 2, running: [], connected: true }, actions: a });
+    const row = template.find((r) => /2 waiting on you/.test(r.label || ""));
     row.click();
-    assert.deepStrictEqual(a.calls, [["deepLink", DEEP_LINKS.approvals]]);
-    assert.equal(DEEP_LINKS.approvals, "#/chat", "ApprovalPrompt renders on the chat route");
+    assert.deepStrictEqual(a.calls, [["deepLink", DEEP_LINKS.waiting]]);
+    assert.equal(DEEP_LINKS.waiting, "#/mission-control", "Mission Control lists everything waiting on you");
   });
 
-  it("stays click-through at zero approvals instead of becoming a dead end", () => {
+  it("stays click-through at zero instead of becoming a dead end", () => {
     const a = actions();
-    const template = buildTrayMenuTemplate({ presence: { approvals: 0, running: [], connected: true }, actions: a });
-    const row = template.find((r) => /No approvals waiting/.test(r.label || ""));
+    const template = buildTrayMenuTemplate({ presence: { waiting: 0, running: [], connected: true }, actions: a });
+    const row = template.find((r) => /Nothing waiting on you/.test(r.label || ""));
     assert.equal(typeof row.click, "function");
     row.click();
-    assert.deepStrictEqual(a.calls, [["deepLink", "#/chat"]]);
+    assert.deepStrictEqual(a.calls, [["deepLink", "#/mission-control"]]);
   });
 
   it("the login-item row is a checkbox that reflects and reports state", () => {
@@ -348,9 +352,9 @@ describe("makeTrayPresence", () => {
     const { Tray, calls } = fakeTray();
     const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
-    presence.setPresence({ approvals: 2, running: [{ work: "loop:l1", name: "L", phase: "Thinking", line: "", since: "", route: "", blocked: false, waiting: 0 }], connected: true, listed: true });
+    presence.setPresence({ waiting: 2, running: [{ work: "loop:l1", name: "L", phase: "Thinking", line: "", since: "", route: "", blocked: false, waiting: 0 }], connected: true, listed: true });
     assert.equal(calls.titles.at(-1), "2");
-    assert.match(calls.tooltips.at(-1), /2 approvals waiting, 1 running/);
+    assert.match(calls.tooltips.at(-1), /2 waiting on you, 1 running/);
     assert.ok(calls.menus.length >= 2, "a count change must rebuild the menu");
   });
 
@@ -358,7 +362,7 @@ describe("makeTrayPresence", () => {
     const { Tray, calls } = fakeTray();
     const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
-    presence.setPresence({ approvals: 5, connected: true });
+    presence.setPresence({ waiting: 5, connected: true });
     assert.equal(calls.titles.at(-1), "5");
     presence.setCapturing(true);
     assert.equal(calls.titles.at(-1), "● Listening");
@@ -369,7 +373,7 @@ describe("makeTrayPresence", () => {
   it("methods on a tray-less presence are safe no-ops", () => {
     const presence = makeTrayPresence({ TrayCtor: null });
     presence.start();
-    presence.setPresence({ approvals: 3 });
+    presence.setPresence({ waiting: 3 });
     presence.setCapturing(true);
     presence.setLoginItemState({ supported: true, enabled: true });
     presence.setTiles([{ label: "x" }]);

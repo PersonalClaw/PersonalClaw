@@ -105,7 +105,7 @@ const S = SAMPLE
 export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // ── The router's top-level routes ─────────────────────────────────────────────────────────────
   { route: 'dashboard', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.1.0' },
-  { route: 'chat', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
+  { route: 'chat', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'projects', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // Library (#3815): one sidebar row, whose tabs are Knowledge, Memory, Files and Artifacts.
   { route: 'library', from: ['router', 'palette', 'deep-link'], since: UNRELEASED },

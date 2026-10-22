@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
-import { api, type PendingApproval, type PushStatus } from '../../lib/api'
+import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone, ArrowRight } from 'lucide-react'
+import { api, type PendingApproval, type PushStatus, type WaitingItem, type WaitingList } from '../../lib/api'
+import {
+  WAITING_KIND_LABEL, approvalOf, isStale, useStaleAt, waitingRoute, waitingSource, waitingText,
+} from '../../lib/waitingList'
+
+/** The id an item is hidden under while its answer is in flight: an approval's registry id. */
+const approvalKey = (w: WaitingItem) => approvalOf(w)?.id ?? w.id
 import { disablePush, enablePush, pushDeviceId, pushSupported } from '../../app/pushClient'
 import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps } from '../../app/nativePush'
 import { useQuery } from '../../lib/data'
 import { FOLLOWS, useLiveLane } from './useLiveLane'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { approvalRowFields } from '../chat/approvalRow'
+import { approvalRowFields, waitedFor } from '../chat/approvalRow'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -15,11 +21,14 @@ import { qget, type RouteProps } from '../../app/useQueryState'
 import { InboxSection, RecentSection, RunningSection, TasksSection } from './CompanionSections'
 import { BUSY_REASON } from '../../ui/unavailable'
 
-/** `#/companion` — the phone control surface, approvals first.
+/** `#/companion` — the phone control surface, what waits on you first.
  *
- *  A run that is blocked on a permission decision is the one thing that genuinely cannot wait
- *  until the owner is back at a desk, so the phone route ships that decision FIRST and by
- *  itself and stays at the TOP of the column. The rest of the attention path sits
+ *  A run that is blocked on your decision is the one thing that genuinely cannot wait until the
+ *  owner is back at a desk, so the phone route ships what waits on you FIRST and by itself and
+ *  stays at the TOP of the column: everything the gateway's one list holds (`GET /api/waiting`),
+ *  in its order (by consequence, then age), each with its text. An approval is answered here, on
+ *  its own card; every other item opens its own page, where its card is answered with its brief.
+ *  An item past answering keeps no action that could still send. The rest of the attention path sits
  *  underneath it — what is running, tasks, inbox, recent notifications — in
  *  `CompanionSections.tsx`; the ordering is the priority order and is not negotiable, because
  *  a blocked run is the only row on this page that another person is waiting on.
@@ -48,11 +57,11 @@ export function CompanionPage({ navigate, query }: RouteProps) {
     })
   }, [navigate])
   // Live data, never persisted to sessionStorage: a stale approval is a dangerous thing to
-  // paint. The queue re-reads on its frames, a reconnect and the page being shown again, as
-  // every lane below does (`useLiveLane`), and on manual refresh.
-  const { data, loading, error, refresh } = useQuery<PendingApproval[]>(
-    'companion:approvals', () => api.approvals())
-  useLiveLane('companion:approvals', FOLLOWS.approvals)
+  // paint. The list re-reads on its ring, a reconnect and the page being shown again, as every
+  // lane below does (`useLiveLane`), and on manual refresh.
+  const { data, loading, error, refresh } = useQuery<WaitingList>(
+    'companion:waiting', () => api.waiting())
+  useLiveLane('companion:waiting', FOLLOWS.waiting)
   // Optimistically resolved ids — the row leaves immediately, and comes BACK if the POST
   // failed (with the failure announced), because silently dropping a permission prompt would
   // leave the user believing they answered it.
@@ -99,10 +108,12 @@ export function CompanionPage({ navigate, query }: RouteProps) {
     }
   }
 
-  const pending = (data ?? []).filter((a) => !resolved.has(a.id))
+  const pending = (data?.waiting ?? []).filter((w) => !resolved.has(approvalKey(w)))
+  const unreadable = data?.unreadable ?? []
+  const now = useStaleAt(pending)
   // No autonomy rung on a card, as on the chat's: a rung is declared per ACTION PROVIDER, and a
   // tool call dispatches none (`lib/rungs.providerRungIndex`).
-  const focusTarget = focusId ? pending.find((a) => a.id === focusId) : undefined
+  const focusTarget = focusId ? pending.find((w) => w.id === `approval:${focusId}`) : undefined
   // The deep link is honest in BOTH directions. Present-and-found: scroll it into view,
   // move focus to it, ring it. Present-and-missing (answered elsewhere, or it timed out
   // while the phone was locked): say so. Rendering the ordinary queue with no explanation
@@ -123,15 +134,39 @@ export function CompanionPage({ navigate, query }: RouteProps) {
     el.focus?.()
   }, [focusTarget])
 
+  // An approval, on its own card, answered here: the decision the phone exists for. Past
+  // answering, the card keeps no choice that could still send.
+  const approvalCard = (ap: PendingApproval, stale: boolean) => (
+    <div
+      key={ap.id}
+      ref={ap.id === focusId ? focusRef : undefined}
+      tabIndex={ap.id === focusId ? -1 : undefined}
+      className={ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : undefined}
+    >
+      <ApprovalPrompt
+        density="roomy"
+        // The row's own fields, as every surface that shows a waiting-list row shows them.
+        {...approvalRowFields(ap, { stale })}
+        choices={stale ? [] : [
+          // The accessible name carries the tool, because a queue paints one card
+          // per approval and four bare "Allow"s announce identically.
+          { key: 'approve', icon: Check, label: 'Allow', tone: 'primary', approves: true, name: `Allow ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'approve') },
+          // A Deny that ends the agent's turn says so here too, as the card's line does.
+          { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}${ap.deny_effect ? `. ${ap.deny_effect}` : ''}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
+        ]}
+      />
+    </div>
+  )
+
   return (
-    <div className="h-full overflow-y-auto" style={{ background: 'var(--color-canvas)' }}>
+    <div className="h-full overflow-y-auto" data-full-screen="companion" style={{ background: 'var(--color-canvas)' }}>
       <div className="mx-auto flex max-w-[42rem] flex-col gap-xl px-l py-l">
         <header className="flex items-center justify-between gap-s">
           <div className="min-w-0">
             <h1 data-type="headline-s" className="text-on-surface">Companion</h1>
-            <p data-type="body-m" className="text-on-surface-low">Approve what your agent is waiting on.</p>
+            <p data-type="body-m" className="text-on-surface-low">Answer what is waiting on you.</p>
           </div>
-          <IconButton icon={RefreshCw} label="Refresh approvals" onClick={refresh} size={40} iconSize={18} />
+          <IconButton icon={RefreshCw} label="Refresh what is waiting on you" onClick={refresh} size={40} iconSize={18} />
         </header>
 
         <PushRow navigate={navigate} />
@@ -139,42 +174,34 @@ export function CompanionPage({ navigate, query }: RouteProps) {
         <section aria-labelledby="companion-approvals-heading" className="flex flex-col gap-s">
           <h2 id="companion-approvals-heading" data-type="title-m" className="flex items-center gap-s text-on-surface">
             <ShieldCheck size={16} aria-hidden style={{ color: 'var(--color-warn)' }} />
-            Approvals{pending.length > 0 ? ` (${pending.length})` : ''}
+            Waiting on you{pending.length > 0 ? ` (${pending.length})` : ''}
           </h2>
+          {/* A source the gateway could not read is said, never shown as nothing waiting. */}
+          {unreadable.length > 0 ? (
+            <p role="status" data-type="body-m" className="text-warn">
+              Some of what may be waiting on you could not be read: {unreadable.map((k) => WAITING_KIND_LABEL[k] ?? k).join(', ')}.
+            </p>
+          ) : null}
           {/* Order matters: `data === undefined` is true for the loading, error AND empty
               branches, so the error test comes first or it is unreachable. A failed fetch on
-              an APPROVALS surface must never fall through to "all clear" — that would tell
-              the user nothing is waiting on them when the truth is that we could not ask. */}
+              this surface must never fall through to "all clear" — that would tell the user
+              nothing is waiting on them when the truth is that we could not ask. */}
           {data === undefined && error ? (
-            <LoadError what="approvals" error={error} onRetry={refresh} />
+            <LoadError what="list of what waits on you" error={error} onRetry={refresh} />
           ) : data === undefined && loading ? (
-            <ListSkeleton rows={2} what="approvals" />
-          ) : pending.length === 0 ? (
+            <ListSkeleton rows={2} what="list of what waits on you" />
+          ) : pending.length === 0 && unreadable.length === 0 ? (
             <EmptyState icon={CheckCheck} title="Nothing waiting on you"
-              hint="Tool approvals your agent raises will appear here." />
+              hint="Approvals, questions and anything else that waits on your answer appear here." />
           ) : (
             <AnimatePresence initial={false}>
-              {pending.map((ap) => (
-                <div
-                  key={ap.id}
-                  ref={ap.id === focusId ? focusRef : undefined}
-                  tabIndex={ap.id === focusId ? -1 : undefined}
-                  className={ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : undefined}
-                >
-                <ApprovalPrompt
-                  density="roomy"
-                  // The row's own fields, as every surface that shows a waiting-list row shows them.
-                  {...approvalRowFields(ap)}
-                  choices={[
-                    // The accessible name carries the tool, because a queue paints one card
-                    // per approval and four bare "Allow"s announce identically.
-                    { key: 'approve', icon: Check, label: 'Allow', tone: 'primary', approves: true, name: `Allow ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'approve') },
-                    // A Deny that ends the agent's turn says so here too, as the card's line does.
-                    { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}${ap.deny_effect ? `. ${ap.deny_effect}` : ''}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
-                  ]}
-                />
-                </div>
-              ))}
+              {pending.map((w) => {
+                // An approval is answered on its card, under the id its own route names; anything
+                // else, an approval whose route is not an approval's among it, opens its page.
+                const ap = approvalOf(w)
+                return ap ? approvalCard(ap, isStale(w, now))
+                  : <WaitingRow key={w.id} item={w} stale={isStale(w, now)} navigate={navigate} />
+              })}
             </AnimatePresence>
           )}
           {focusMissing ? (
@@ -342,5 +369,46 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
       </div>
       {note ? <p role="alert" data-type="body-m" className="text-warn">{note}</p> : null}
     </div>
+  )
+}
+
+/** One item that is answered on its own page, with its text in its source's own words: its kind,
+ *  where it came from, how long it has waited, and Open, which takes you to its card. Past
+ *  answering it says so, and Open is off: there is nothing left to answer there. */
+function WaitingRow({ item, stale, navigate }: { item: WaitingItem; stale: boolean; navigate: RouteProps['navigate'] }) {
+  const said = waitingText(item)
+  const from = waitingSource(item)
+  const route = waitingRoute(item)
+  const asked = item.asked_at ? Date.parse(item.asked_at) : NaN
+  const waited = Number.isFinite(asked) ? waitedFor(Math.round(asked / 1000)) : ''
+  return (
+    <article
+      aria-label={`${WAITING_KIND_LABEL[item.kind]}: ${said}`}
+      className="flex flex-col gap-s rounded-lg border border-outline-variant bg-surface p-l"
+    >
+      <p data-type="caption" className="text-on-surface-low">
+        {WAITING_KIND_LABEL[item.kind]}{from ? ` · ${from}` : ''}
+      </p>
+      <p data-type="body-l" className="break-words text-on-surface">{said}</p>
+      <p data-type="caption" className="text-on-surface-low">
+        {stale ? 'Expired — it can no longer be answered.' : waited ? `Waiting ${waited}` : 'Waiting'}
+      </p>
+      {route ? (
+        <div>
+          <Button
+            variant="secondary"
+            // A thumb's target on the phone: 44 px or more.
+            size="lg"
+            disabled={stale}
+            disabledReason={stale ? 'It can no longer be answered.' : undefined}
+            // A list paints one Open per item, so each is named for what it opens.
+            ariaLabel={`Open ${WAITING_KIND_LABEL[item.kind].toLowerCase()}: ${said}`}
+            onClick={() => { if (!stale) navigate(route) }}
+          >
+            Open <ArrowRight size={15} aria-hidden />
+          </Button>
+        </div>
+      ) : null}
+    </article>
   )
 }

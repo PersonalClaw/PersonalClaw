@@ -58,10 +58,11 @@
  *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
  *  shown. Neither is a fallthrough — both branches are written out.
  */
-import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal } from './api'
+import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal, WaitingItem } from './api'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
 import { sessionTitle } from './sessionTitle'
+import { approvalOf, staleAt, waitingSource, waitingText } from './waitingList'
 import type { ApprovalCardInput } from '../pages/chat/approvalSegment'
 
 export const LANES = ['needs-approval', 'your-turn', 'working', 'idle'] as const
@@ -114,6 +115,12 @@ interface LaneCardBase {
   raisedBy?: string
   at: number | null
   refs?: Record<string, unknown>
+  /** What answering it lets happen, as the waiting list ranks it (0 destructive, 1 changes, 2
+   *  asks): the lanes that ask you something order by it first, then by age (#3888). */
+  rank?: number
+  /** When it stops being answerable (epoch ms), for a card the waiting list gave; `null` or absent
+   *  for one that waits until it is answered. A view holding it past then sends nothing for it. */
+  expiresAt?: number | null
 }
 
 /** One card, normalised across the four sources so a lane renders uniformly — and carrying the
@@ -131,6 +138,7 @@ export type LaneCard =
   | (LaneCardBase & { origin: 'session'; session: ActivityInput })
   | (LaneCardBase & { origin: 'loop'; loop: LoopInput })
   | (LaneCardBase & { origin: 'proposal'; proposal: ProposalInput })
+  | (LaneCardBase & { origin: 'waiting'; waiting: WaitingItem })
 
 /** Base kind → lane, mirroring `inbox.py`'s two frozensets (fact 1).
  *
@@ -379,12 +387,56 @@ export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' 
 function sortLane(lane: Lane, cards: LaneCard[]): LaneCard[] {
   const ascending = OLDEST_FIRST.has(lane)
   return cards.sort((a, b) => {
+    // The lanes that ask you something keep the waiting list's one order: by consequence, then age.
+    if (ascending && rankOf(a, lane) !== rankOf(b, lane)) return rankOf(a, lane) - rankOf(b, lane)
     if (a.at === null && b.at === null) return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
     if (a.at === null) return 1
     if (b.at === null) return -1
     if (a.at !== b.at) return ascending ? a.at - b.at : b.at - a.at
     return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
   })
+}
+
+/** What answering a card lets happen, as the waiting list ranks it; a card the list did not give
+ *  ranks as its lane does (a decision that changes something, or an ask). */
+function rankOf(card: LaneCard, lane: Lane): number {
+  return card.rank ?? (lane === 'needs-approval' ? 1 : 2)
+}
+
+/** The waiting list's consequence words, ranked. */
+const CONSEQUENCE_RANK: Record<string, number> = { destructive: 0, changes: 1, asks: 2 }
+
+/** The Inbox rows that are the listing of something the waiting list holds, so it is carded ONCE,
+ *  as the list's item: an agent's question (`refs.question`), a trigger's park
+ *  (`refs.trigger_park`), a gate or a park by the token that answers it (`refs.resume_token`, its
+ *  card's `needs_input.resume_token`), a bridge confirmation (`refs.confirmation`), and a loop's
+ *  needs-input row (`refs.loop`, its `needs_input` dedup key). A row whose item is not in this
+ *  snapshot keeps its own card, as an approval's mirror does (fact 2). */
+function waitingMirrors(waiting: readonly WaitingItem[]): (item: AttentionInput) => boolean {
+  const ids = new Set<string>()
+  const tokens = new Set<string>()
+  const confirmations = new Set<string>()
+  for (const w of waiting) {
+    ids.add(w.id)
+    const token = w.answer?.body?.resume_token
+    if (typeof token === 'string' && token !== '') tokens.add(token)
+    if (w.kind === 'bridge_confirmation') {
+      const last = (w.answer?.path ?? '').split('/').pop() ?? ''
+      if (last) confirmations.add(decodeURIComponent(last))
+    }
+  }
+  return (item) => {
+    const refs = (item.refs ?? {}) as Record<string, unknown>
+    if (typeof refs.question === 'string' && ids.has(`question:${refs.question}`)) return true
+    if (typeof refs.trigger_park === 'string' && ids.has(`park:${refs.trigger_park}`)) return true
+    const card = refs.needs_input as Record<string, unknown> | undefined
+    for (const token of [refs.resume_token, card?.resume_token]) {
+      if (typeof token === 'string' && token !== '' && tokens.has(token)) return true
+    }
+    if (refs.source === 'control_bridge' && typeof refs.confirmation === 'string' && confirmations.has(refs.confirmation)) return true
+    return typeof refs.loop === 'string' && ids.has(`loop_question:${refs.loop}`)
+      && /^loop:[^:]+:needs_input(:|$)/.test(String(refs.dedup_key ?? ''))
+  }
 }
 
 function emptyLanes(): Record<Lane, LaneCard[]> {
@@ -408,8 +460,12 @@ export function toLanes(
   activity: ActivityInput[] = [],
   loops: LoopInput[] = [],
   proposals: ProposalInput[] = [],
+  waiting: WaitingItem[] = [],
 ): Record<Lane, LaneCard[]> {
   const out = emptyLanes()
+  const listed = (Array.isArray(waiting) ? waiting : []).filter(
+    (w): w is WaitingItem => w !== null && typeof w === 'object' && typeof w.id === 'string' && w.id !== '',
+  )
 
   // ── Skill proposals: a skill waiting on your yes or no, carded as the proposal — named, with
   // Accept and Reject — rather than as its Inbox row, whose first line is the same "Refine a skill"
@@ -434,12 +490,46 @@ export function toLanes(
     })
   }
 
+  // ── What waits on you, from the waiting list (`GET /api/waiting`, #3888): the Needs-approval and
+  // Your-turn lanes are its items, each once, in its order. An approval is carded as the one
+  // approval card, below; every other item is carded as itself, in Needs approval when answering
+  // it changes something and in Your turn when it only asks.
+  const fromList: ApprovalInput[] = []
+  const expiry = new Map<string, number | null>()
+  for (const w of listed) {
+    const rank = CONSEQUENCE_RANK[w.consequence] ?? 1
+    // An approval on the one approval card, under the id its own route names. One whose route
+    // is not an approval's is carded as itself below, with no verb.
+    const a = approvalOf(w)
+    if (a) {
+      fromList.push(a)
+      expiry.set(a.id, staleAt(w))
+      continue
+    }
+    const lane: Lane = w.consequence === 'asks' ? 'your-turn' : 'needs-approval'
+    const asked = w.asked_at ? Date.parse(w.asked_at) : NaN
+    const from = waitingSource(w)
+    out[lane].push({
+      key: `waiting:${w.id}`,
+      lane,
+      origin: 'waiting',
+      id: w.id,
+      title: waitingText(w),
+      raisedBy: from ? sentenceStart(from) : undefined,
+      at: Number.isFinite(asked) ? asked / 1000 : null,
+      rank,
+      expiresAt: staleAt(w),
+      waiting: w,
+    })
+  }
+  const mirrorsWaiting = waitingMirrors(listed)
+
   // ── Approvals: the authoritative form of a blocked decision, so they go in first and own the id.
   const approvalIds = new Set<string>()
-  for (const a of Array.isArray(approvals) ? approvals : []) {
+  for (const a of [...fromList, ...(Array.isArray(approvals) ? approvals : [])]) {
     if (a === null || typeof a !== 'object') continue
     const id = typeof a.id === 'string' ? a.id : ''
-    if (id === '') continue
+    if (id === '' || approvalIds.has(id)) continue
     approvalIds.add(id)
     const raisedBy = typeof a.source_label === 'string' ? sentenceStart(a.source_label) : ''
     out['needs-approval'].push({
@@ -453,6 +543,8 @@ export function toLanes(
       subtitle: firstLine(a.tool_purpose) || undefined,
       raisedBy: raisedBy || undefined,
       at: typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : null,
+      rank: a.risk === 'destructive' ? 0 : 1,
+      ...(expiry.has(id) ? { expiresAt: expiry.get(id) ?? null } : {}),
       approval: a,
     })
   }
@@ -471,6 +563,7 @@ export function toLanes(
     const mirrored = mirroredApprovalId(item)
     if (mirrored !== '' && approvalIds.has(mirrored)) continue
     if (proposalIds.has(mirroredProposalId(item))) continue
+    if (mirrorsWaiting(item)) continue
 
     out[lane].push({
       key: `inbox:${id}`,

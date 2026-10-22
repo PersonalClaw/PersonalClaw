@@ -321,7 +321,8 @@ reads that entry:
 
 | Surface | Reads |
 |---|---|
-| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, a loop's cockpit, a room's view, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| Home's approvals count and **To triage**, the workflow run view, a loop's cockpit, a room's view, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| Mission Control, the phone companion, the desktop tray | `GET /api/waiting` — each entry as an item's brief, beside everything else waiting on you |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
@@ -724,6 +725,13 @@ past answering, an item leaves the list.
   plan written or cleared, and a bridge confirmation minted, taken or expired. An app's socket
   hears it only when its manifest declares `/api/waiting` (`ws_state.WAITING_LIST_FRAMES`), the
   one exception beside the approval relay's (`docs/security/limitations.md`).
+- **Who reads it:** Mission Control's Needs approval and Your turn lanes are its items (an approval
+  on the one approval card, a gate and a park answered in place with the token they carry, every
+  other item opening its own page; an Inbox row that is an item's listing is carded once, as the
+  item, and one whose item is not in the list keeps its own card). The phone companion lists every
+  item first, in the list's order, each with its text: an approval answered on its card, every
+  other item opening its page. The desktop tray counts every item. A card held past an item's
+  `expires_at` keeps no action that could still send (`web/src/lib/waitingList.ts`, `useStaleAt`).
 
 ## Notifications
 

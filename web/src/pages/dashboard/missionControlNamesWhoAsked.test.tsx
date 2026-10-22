@@ -21,6 +21,8 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
+    // Mission Control's lanes are the waiting list's, which carries each approval as its brief.
+    waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
     // Nothing is running in these scenarios: the Working lane is the running list.
     running: () => Promise.resolve({ running: [], finished: [] }),
     status: () => Promise.resolve({}),
@@ -32,6 +34,7 @@ vi.mock('../../lib/api', async (orig) => ({
 vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 
 import { MissionControl } from './MissionControl'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 function onThePair(id: string, message: string, refs: Record<string, unknown>): InboxItem {
   return {

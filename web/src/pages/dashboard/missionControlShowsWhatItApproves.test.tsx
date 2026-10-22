@@ -23,6 +23,8 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: () => Promise.resolve([]),
     approvals: (...a: unknown[]) => approvals(...a),
+    // Mission Control's lanes are the waiting list's, which carries each approval as its brief.
+    waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
     // Nothing is running in these scenarios: the Working lane is the running list.
     running: () => Promise.resolve({ running: [], finished: [] }),
     status: () => Promise.resolve({}),
@@ -36,6 +38,7 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({
 }))
 
 import { MissionControl } from './MissionControl'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 const CONTENT = '## Storage\\n\\nSQLite by default; set DATABASE_URL for Postgres. See [migrations/](migrations/).'
 // The registry's input is the call's arguments as the gateway serialises them (`tool_input_to_str`).

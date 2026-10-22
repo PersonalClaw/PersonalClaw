@@ -2,7 +2,14 @@
   "dark": {
     "targets": {
       "320": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -10,7 +17,14 @@
         "button \"Theme: dark — switch to light\""
       ],
       "390": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -18,7 +32,14 @@
         "button \"Theme: dark — switch to light\""
       ],
       "412": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -26,7 +47,14 @@
         "button \"Theme: dark — switch to light\""
       ],
       "768": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -44,7 +72,14 @@
   "light": {
     "targets": {
       "320": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -52,7 +87,14 @@
         "button \"Theme: light — switch to system\""
       ],
       "390": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -60,7 +102,14 @@
         "button \"Theme: light — switch to system\""
       ],
       "412": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -68,7 +117,14 @@
         "button \"Theme: light — switch to system\""
       ],
       "768": [
+        "a \"Open loop: May I archive last year’s mail? — Loop “Sort the \"",
+        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
+        "button \"Approve Ship v#.#? — Workflow “release”\"",
+        "button \"Approve Sign in to the bank’s site — Automation “Bank statem\"",
         "button \"Choose a model\"",
+        "button \"Deny Ship v#.#? — Workflow “release”\"",
+        "button \"Deny Sign in to the bank’s site — Automation “Bank statemen…\"",
+        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -80,6 +136,9 @@
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Mission Control\" clips at #%: #x# in #x#"
+      ],
+      "axe (WCAG 2 AA)": [
+        "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): .h-\\[#px\\], .disabled\\:opacity-#.px-#\\.#.h-#:nth-child(#)"
       ]
     }
   }

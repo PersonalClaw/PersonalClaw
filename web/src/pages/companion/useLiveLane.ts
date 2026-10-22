@@ -36,6 +36,9 @@ export const FOLLOWS = {
   running: (m: WsMessage) => m.type === 'running_changed',
   /** The approval registry's two frames: one raised, one answered or ended. */
   approvals: isApprovalFrame,
+  /** The waiting list's own ring: something waiting on you was asked or ended, at most once per
+   *  window (`waiting.changed`), and the approval frames, which an older gateway sends alone. */
+  waiting: (m: WsMessage) => m.type === 'waiting_changed' || isApprovalFrame(m),
   /** The listing hint: a loop was created, moved status, finished a cycle or was deleted (`loops`),
    *  or the run behind a run-backed loop started, moved or ended (`workflow_runs`). */
   loops: (m: WsMessage) => refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs'),
