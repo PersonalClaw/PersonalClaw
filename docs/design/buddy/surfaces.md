@@ -103,20 +103,16 @@ least 44 px ([#3902]).
 
 ## Docking
 
-**The notched layout changes before the window ships.** Settled on 2026-10-14: on a notched display
-the buddy docks as the same pill a screen without a notch has (the orb, the one line and `+N`),
-hung just below the notch and centred on it, with no orbs on both sides of the camera and no group
-of orbs in a wing ([#3831]). The originality record ([#4570]) rewrites the first bullet below when
-it lands.
+The docked buddy is a pill of the app's own: the orb, the one line and `+N`, on the app's raised
+surface, never black, and never joined to the notch, the menu bar or the screen's edge as one shape.
+It hangs a small gap below the menu bar, and when it opens, the card takes its place below where it
+was: the pill's outline never stretches into the card, and nothing grows out of the edge
+([the originality record](decisions/originality.md), [#4570]).
 
-- **macOS with a notch:** docked, the island continues the notch's shape downward from the top
-  edge, centred on it. In compact, the focused orb sits in the left wing beside the camera and the
-  work in sight sits in the right wing as a small cluster of up to four orbs (or `+N`); the one
-  line slides out below the notch when the pointer rests on it, and for `finishedHold` after a
-  change worth telling (done, an alert). Expanded, the island grows down and out from the notch into
-  the card.
-- **Screens without a notch:** a small pill hangs from the top edge at the centre, holding the orb,
-  the one line and `+N`; expanded, it grows into the same card.
+- **macOS with a notch:** the same pill a screen without a notch has, hung just below the notch and
+  centred on it, with no orbs on both sides of the camera and no group of orbs in a wing ([#3831]).
+- **Screens without a notch:** the pill hangs below the menu bar at the top centre; expanded, the
+  card takes its place.
 - **Which display:** docked, it lives on the display with the menu bar. Floating, it stays on the
   display it was dropped on and comes back there.
 - **Drag out:** dragging the orb more than `undockDistance` from the top edge undocks it.
