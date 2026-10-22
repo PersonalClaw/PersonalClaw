@@ -717,6 +717,8 @@ past answering, an item leaves the list.
   way. Every door an item names refuses an app and an agent (`approval_answer`): the chat's
   question, the loop's question, merge, conflict, plan step and launch, the run's gate, the
   trigger's park, the browser grant, the chat's plan step and the bridge confirmation.
+  An app that reads the list names the `waiting-list` core feature in `requiresCoreFeatures`,
+  so a PersonalClaw built before the list refuses to install it rather than answering it nothing.
 - **The list says it moved** in one `waiting_changed` frame per 150 ms window, a doorbell carrying
   nothing (`{}`): a reader reads the list again and renders nothing from the frame. It rings from
   each place an item is asked or ends: an approval asked or answered, a question asked or ended, a

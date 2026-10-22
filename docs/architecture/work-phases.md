@@ -309,7 +309,9 @@ phase does. `finished` is the last 20 endings, each kept 10 minutes, newest firs
 reading, and neither read opens a loop's findings. An app reads a row only when its socket
 would hear that work's phase frame (`ws_state.WORK_FRAMES`), an agent only its own chat's
 work, and the owner everything; the count is cut the same way. Neither route has a
-`ROUTE_AUTHZ` row: an app reaches them only when its manifest declares `/api/running`.
+`ROUTE_AUTHZ` row: an app reaches them only when its manifest declares `/api/running`. An
+app that reads the list names the `running-list` core feature in `requiresCoreFeatures`, so a
+PersonalClaw built before the list refuses to install it rather than answering it nothing.
 
 The list says it moved in one `running_changed` frame per 150 ms window
 (`running_now.changed`): a doorbell naming the work that moved,

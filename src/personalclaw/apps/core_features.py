@@ -166,6 +166,23 @@ MODEL_EFFORTS = "model-efforts"
 #: ``thinks_adaptively``, so an app that imports it does not load.
 ADAPTIVE_THINKING = "adaptive-thinking"
 
+#: An app reads everything waiting on the owner as one list: ``GET /api/waiting`` serves
+#: ``{"waiting": [item, …], "unreadable": [kind, …]}``, each item ``{id, kind, work, session, brief,
+#: consequence, risk, asked_at, age_secs, expires_at, current, interrupt, answer, route}``, by
+#: consequence and then age (``personalclaw.waiting``), and a ``waiting_changed`` frame carrying
+#: nothing says the list moved. An app whose manifest declares ``/api/waiting`` reads all of it,
+#: with nothing that answers an item, and its socket hears the frame. A core without it has no such
+#: route, so an app that reads the list there reads nothing.
+WAITING_LIST = "waiting-list"
+
+#: An app reads the live work as one list: ``GET /api/running`` serves ``{"running": [row, …],
+#: "finished": [row, …]}``, each row ``{work, kind, name, agent, phase, line, since, started_at,
+#: route, session, blocked, waiting}`` (``personalclaw.running_now``), ``GET /api/running/count``
+#: counts it, and a ``running_changed`` frame names the work that moved. An app whose manifest
+#: declares ``/api/running`` reads the rows of the work its socket hears of. A core without it has
+#: no such route, so an app that reads the list there reads nothing.
+RUNNING_LIST = "running-list"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -183,9 +200,11 @@ CORE_FEATURES: frozenset[str] = frozenset(
         MODEL_EFFORTS,
         PAIRED_OWNER,
         PRE_TOOL_HOOKS,
+        RUNNING_LIST,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
+        WAITING_LIST,
     }
 )
 
