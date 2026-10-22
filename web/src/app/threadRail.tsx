@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo } from 'react'
 import { api, type ProjectItem } from '../lib/api'
 import { useQuery } from '../lib/data'
+import { useGatewayConnection } from './gatewayConnection'
 import { NO_PROJECT, readThreads, toThreads, useThreads, type ProjectThreads, type Thread, type ThreadSources } from '../lib/useThreads'
 import { ThreadRail, railSections, readGroupsOpen, shownThreads, type ThreadRailGroup, type ThreadRailStatus } from '../ui/ThreadRail'
 
@@ -130,10 +131,14 @@ export function useThreadRail(route: string, sub: string): ThreadRailRead {
   )
   const groups = useMemo(() => railGroups(threads.groups, projects), [threads.groups, projects])
   const selectedKey = threadAt(route, sub, groups)
+  // The gateway not answering at all is said as itself: a read that fails because the gateway is
+  // away is not a fault of that read, and the threads it last listed stay on screen.
+  const { state: connection, check: checkConnection } = useGatewayConnection()
+  const offline = connection === 'disconnected'
   const failure = threads.error ? "Couldn't load your threads." : projectsError ? "Couldn't load your projects." : ''
-  const status: ThreadRailStatus = failure ? 'failed' : threads.loading || projectsLoading ? 'loading' : 'ready'
+  const status: ThreadRailStatus = offline ? 'offline' : failure ? 'failed' : threads.loading || projectsLoading ? 'loading' : 'ready'
   const { refresh: refreshThreads } = threads
-  const retry = useCallback(() => { refreshThreads(); refreshProjects() }, [refreshThreads, refreshProjects])
+  const retry = useCallback(() => { checkConnection(); refreshThreads(); refreshProjects() }, [checkConnection, refreshThreads, refreshProjects])
   return { groups, selectedKey, status, failure, error: threads.error || projectsError || null, retry }
 }
 

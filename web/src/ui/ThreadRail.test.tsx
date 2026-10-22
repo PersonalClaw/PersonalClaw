@@ -146,6 +146,22 @@ describe('the thread rail', () => {
     expect(screen.getByRole('button', { name: 'Plan the garden' })).toBeInTheDocument()
   })
 
+  it('offline, says so and keeps the threads the gateway last listed, without calling the read failed', () => {
+    const { onRetry } = rail({ status: 'offline' })
+    expect(screen.getByText('Offline. These are the threads from before the gateway stopped answering.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Plan the garden' })).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't load/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('offline before any read answered, says the threads come back with the gateway, not that there are none', () => {
+    rail({ groups: [], status: 'offline' })
+    expect(screen.getByText('Offline. Your threads show when the gateway answers again.')).toBeInTheDocument()
+    expect(screen.queryByText('No threads yet')).toBeNull()
+    expect(screen.queryByText('Loading threads…')).toBeNull()
+  })
+
   it('with no project and no thread at all, says there are none', () => {
     rail({ groups: [] })
     expect(screen.getByText('No threads yet')).toBeInTheDocument()

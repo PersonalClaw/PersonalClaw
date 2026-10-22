@@ -57,6 +57,9 @@ function detail(key: string) {
   }
 }
 
+/** The reads that fail in a case, by api method. */
+const FAILING = new Set<string>()
+
 const READS: Record<string, unknown> = {
   dashboardConfig: { user_name: 'Ada' },
   agents: { agents: [] },
@@ -71,6 +74,7 @@ vi.mock('../lib/api', async (orig) => {
   const real = await orig<typeof import('../lib/api')>()
   const stub = new Proxy({}, {
     get: (_t, prop: string) => (...args: unknown[]) => {
+      if (FAILING.has(prop)) return Promise.reject(new Error(`${prop} failed`))
       const read = READS[prop]
       return Promise.resolve(typeof read === 'function' ? read(...args) : prop in READS ? read : [])
     },
@@ -106,6 +110,7 @@ function setViewport(isMobile: boolean) {
 }
 
 beforeEach(() => {
+  FAILING.clear()
   localStorage.clear()
   sessionStorage.clear()
   location.hash = '#/dashboard'
@@ -190,5 +195,27 @@ describe('the compact path', () => {
     await user.click(await within(drawer() as HTMLElement).findByRole('button', { name: /^Order the soil/ }))
     await waitFor(() => expect(location.hash).toBe('#/chat/chat-2'))
     await waitFor(() => expect(drawer()).toHaveAttribute('inert'))
+  })
+})
+
+describe('a read that fails, and a gateway that is away, each say so', () => {
+  it('a failed projects read says the projects failed, offers a retry, and is not an empty sidebar', async () => {
+    FAILING.add('projects')
+    renderApp()
+    expect(await within(rail()).findByText("Couldn't load your projects.")).toBeInTheDocument()
+    expect(within(rail()).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(within(rail()).queryByText('No threads yet')).toBeNull()
+  })
+
+  it('a gateway that stopped answering is offline, not a failed read and not an empty list', async () => {
+    FAILING.add('system')
+    FAILING.add('chatSessions')
+    FAILING.add('uLoops')
+    FAILING.add('projects')
+    renderApp()
+    expect(await within(rail()).findByText(/^Offline\./)).toBeInTheDocument()
+    expect(within(rail()).queryByText(/Couldn't load/)).toBeNull()
+    expect(within(rail()).queryByText('No threads yet')).toBeNull()
+    expect(within(rail()).queryByText('Loading threads…')).toBeNull()
   })
 })
