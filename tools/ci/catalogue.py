@@ -124,9 +124,9 @@ INSTALLS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("uv", "sync"), "uv-sync"),
     (("npm", "ci"), "npm-ci"),
     (("npx", "playwright", "install"), "chromium"),
-    # Electron's binary, which `npm ci` does not download: its install script fetches the build
-    # the locked package names and checks it against the checksums that package ships.
-    (("node", "node_modules/electron/install.js"), "electron"),
+    # Electron's binary, which `npm ci` does not download (tools/ci/install_electron.sh, which also
+    # gives Chromium's setuid sandbox helper its bit on a Linux runner).
+    (("sh", "tools/ci/install_electron.sh"), "electron"),
 )
 
 #: What a toolchain installs that a job's ``needs_*`` flag says it needs: the two agree.

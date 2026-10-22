@@ -1,10 +1,10 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { electronCommand, electronTier, electronUnavailable, launchDetail } = require("./helpers/electronHost");
+const { electronCommand, electronUnavailable, launchDetail } = require("../helpers/electronHost");
+const { builtPageTier, pageUnbuilt } = require("../helpers/builtPage");
 
 // ── The buddy answers in a real Electron only for the owner's click or focused key (#3832) ──────
 //
@@ -22,23 +22,14 @@ const { electronCommand, electronTier, electronUnavailable, launchDetail } = req
 // The unfocused key is the one an owner typing in another window cannot see land; the focused one
 // after it is its positive control, on the same card with focus where it was.
 //
-// Skips where Electron cannot start, and says why, unless `PCLAW_REQUIRE_ELECTRON=1` says the host
-// must run it (`helpers/electronHost.js`). It also skips, saying why, where the page is not built
-// or was built from older sources than the checkout's (`scripts/spa_dist_freshness.py check`):
-// `make web-build` builds it.
-
-const REPO = path.join(__dirname, "..", "..");
-
-/** Why the built page cannot be the one under test, or null. */
-function pageUnbuilt() {
-  if (!fs.existsSync(path.join(REPO, "web", "dist", "index.html"))) return "the web app is not built: run `make web-build`";
-  const check = spawnSync("python3", ["scripts/spa_dist_freshness.py", "check"], { cwd: REPO, encoding: "utf8", timeout: 30_000 });
-  if (check.status === 1) return `the built web app is older than web/'s sources: run \`make web-build\` (${(check.stdout || "").trim()})`;
-  return null;
-}
+// A built-page leg (`test/built/`, `npm run test:desktop:built`): CI's web-build runs it after its
+// build and stamp. Where Electron cannot start, or the page is not built or was built from older
+// sources than the checkout's (`scripts/spa_dist_freshness.py check`), it skips and says why, unless
+// `PCLAW_REQUIRE_ELECTRON=1` says the host must run it (`helpers/builtPage.js`). `make web-build`
+// builds the page.
 
 function probe() {
-  const { command, args } = electronCommand([path.join(__dirname, "helpers", "buddyAnswerProbe.js")]);
+  const { command, args } = electronCommand([path.join(__dirname, "..", "helpers", "buddyAnswerProbe.js")]);
   const res = spawnSync(command, args, { timeout: 90_000, encoding: "utf8", env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "1" } });
   const line = (res.stdout || "").split("\n").find((l) => l.startsWith("PC_PROBE "));
   if (!line) return { launchFailed: true, detail: launchDetail(res) };
@@ -48,11 +39,14 @@ function probe() {
 const unavailable = electronUnavailable();
 const unbuilt = unavailable ? null : pageUnbuilt();
 const run = unavailable || unbuilt ? null : probe();
-const { skip, fail } = electronTier(unavailable || (run && run.launchFailed ? `electron did not start: ${run.detail}` : null));
+const { skip, fail } = builtPageTier({
+  electron: unavailable || (run && run.launchFailed ? `electron did not start: ${run.detail}` : null),
+  page: unbuilt,
+});
 
 describe("the buddy's answers in a real Electron", () => {
-  if (fail) it("starts a real Electron on this host", () => assert.fail(fail));
-  const skipped = skip || unbuilt || (fail ? "this host cannot start Electron: the test above fails with why" : false);
+  if (fail) it("runs the built page in a real Electron on this host", () => assert.fail(fail));
+  const skipped = skip || (fail ? "this host cannot run the built page: the test above fails with why" : false);
 
   it("loaded the page and drove it without error", { skip: skipped }, () => {
     assert.equal(run.error, undefined, run.error);

@@ -5,8 +5,9 @@
  * buddy's window, built as `buddyWindow.js` builds it with its own preload, against a stand-in
  * gateway on loopback, and answers its approvals the ways an owner can (#3832).
  *
- * Not a test: `buddyAnswer.test.js` spawns it. The stand-in gateway serves the built page and the
- * three lists the buddy reads (`/api/running`, `/api/waiting`, `/api/listening`), and records every
+ * Not a test: `buddyAnswer.test.js` spawns it. The stand-in gateway serves the built page, the
+ * three lists the buddy reads (`/api/running`, `/api/waiting`, `/api/listening`) and Buddy status,
+ * on, as the gateway keeps it (`/api/buddy/policy`, which the page draws from), and records every
  * request that is not a read, so the test sees what reached an answer route and what did not.
  * A second window stands in for the app the owner works in, and takes focus from the buddy.
  *
@@ -49,6 +50,14 @@ function approval(id, input) {
   };
 }
 
+/** Buddy status on, with the window's surface on and nothing muted: the page draws only then. */
+const POLICY = {
+  show: true,
+  surfaces: { window: true, tray: true, dock: true, notifications: true },
+  away_after_secs: 300,
+  notifications: { muted: false, quiet_now: false, may_interrupt: true, changes_at: null },
+};
+
 const RUNNING = {
   running: [{ work: "chat:s1", kind: "chat", session: "s1", phase: "approval", line: "Needs your OK", since: null, name: "Sweep", agent: "", started_at: new Date().toISOString(), route: "#/chat/s1", blocked: false, waiting: [] }],
   finished: [],
@@ -74,6 +83,7 @@ function gateway(state) {
     if (url.pathname === "/api/running") return json(200, RUNNING);
     if (url.pathname === "/api/waiting") return json(200, { waiting: state.waiting, unreadable: [] });
     if (url.pathname === "/api/listening") return json(200, { on: false, sources: [], since: null });
+    if (url.pathname === "/api/buddy/policy") return json(200, POLICY);
     if (url.pathname.startsWith("/api/")) return json(404, { error: "not_found" });
     const file = path.resolve(DIST, `.${url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname)}`);
     if (!file.startsWith(DIST + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {

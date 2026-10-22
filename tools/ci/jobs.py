@@ -108,7 +108,7 @@ INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "uv-sync": ("uv", "sync", "--locked", "--extra", "dev"),
     "npm-ci": ("npm", "ci"),
     "chromium": ("npx", "playwright", "install", "--with-deps", "chromium"),
-    "electron": ("node", "node_modules/electron/install.js"),
+    "electron": ("sh", "tools/ci/install_electron.sh"),
 }
 
 #: Each toolchain word that is a program this machine must already have.

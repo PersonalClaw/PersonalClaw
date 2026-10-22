@@ -7110,9 +7110,7 @@ _NOT_COMMANDS: dict[str, str] = {
         uv sync --locked --extra dev
         npm ci
         npx playwright install --with-deps chromium
-        node node_modules/electron/install.js
-        sudo chown root:root node_modules/electron/dist/chrome-sandbox
-        sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+        sh tools/ci/install_electron.sh
         sudo apt-get update -qq
         sudo apt-get install -y --no-install-recommends tmux
         if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
