@@ -79,6 +79,9 @@ export interface SystemBrowserResult {
   reason?: string
 }
 
+/** Where the buddy's window sits on this machine. */
+export interface BuddyPlace { mode: 'docked' | 'floating'; displayId?: number }
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
   /** Push-to-talk. Note what is NOT here: no `start()`. The shell cannot open
@@ -123,6 +126,17 @@ export interface DesktopBridge {
    *  a shell built before it existed has no such namespace. */
   systemBrowser?: {
     open: (url: string) => Promise<SystemBrowserResult>
+  }
+  /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
+   *  is kept out of screen capture. In the shell's store, not the gateway's config; absent in a
+   *  shell from before them, so Settings shows these rows only when it is here. */
+  buddy?: {
+    getPlace: () => Promise<BuddyPlace>
+    /** Back to the dock; resolves where it is now. */
+    resetPlace: () => Promise<BuddyPlace>
+    getHideFromCapture: () => Promise<boolean>
+    /** Resolves the value that holds after the change. */
+    setHideFromCapture: (on: boolean) => Promise<boolean>
   }
   capabilities: {
     names: () => string[]

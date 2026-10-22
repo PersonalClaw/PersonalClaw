@@ -34,7 +34,7 @@ const {
 } = require("./gatewayLost");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
-const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc } = require("./buddyWindow");
+const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
 const { makeDoorbell, mayRaise, openGatewaySocket } = require("./doorbell");
 const { pushToBridged } = require("./windowPushes");
 const { loadRegistry } = require("./endpointRegistry");
@@ -1854,6 +1854,15 @@ if (!app.requestSingleInstanceLock()) {
     registerNativeNotificationIpc(ipcMain, nativeNotifications, IPC_CHANNELS);
     // A page's request to open a page in the system browser, answered with whether it opened.
     registerSystemBrowserIpc(ipcMain, systemBrowser, IPC_CHANNELS);
+    // This machine's buddy rows in Settings, for the app's own bridged windows only (#3901).
+    registerBuddySettingsIpc({
+      ipcMain,
+      channels: IPC_CHANNELS,
+      buddy: () => buddy,
+      store: () => shellStore,
+      isAppWindow: (sender) => BaseWindow.getAllWindows().some((w) => w._pcBridgeAttached === true && w.webContents === sender),
+      log: (msg) => console.warn(`desktop: ${msg}`),
+    });
 
     // The shell's own storage scope. Opened before any window so the startup decision below
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to

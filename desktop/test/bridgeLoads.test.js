@@ -52,7 +52,7 @@ const {
 const PRELOAD = path.join(ROOT, "preload.js");
 const CONNECT_PRELOAD = path.join(ROOT, "connectPreload.js");
 /** The bridge's top-level surface. Exact, so a new namespace member is a decision. */
-const BRIDGE_KEYS = ["capabilities", "loginItem", "notifications", "onStatus", "pushToTalk", "systemBrowser"];
+const BRIDGE_KEYS = ["buddy", "capabilities", "loginItem", "notifications", "onStatus", "pushToTalk", "systemBrowser"];
 
 // ---------------------------------------------------------------------------------------
 // TIER 1 — execute the preload the way a sandboxed renderer would
@@ -116,6 +116,10 @@ describe("the capability preload loads under a sandboxed require (tier 1)", () =
       [IPC_CHANNELS.notify, () => bridge.notifications.show({ title: "t", body: "b" })],
       [IPC_CHANNELS.notificationActivate, () => bridge.notifications.on(noop)],
       [IPC_CHANNELS.systemBrowserOpen, () => bridge.systemBrowser.open("https://auth.example.com/authorize")],
+      [IPC_CHANNELS.buddyGetPlace, () => bridge.buddy.getPlace()],
+      [IPC_CHANNELS.buddyResetPlace, () => bridge.buddy.resetPlace()],
+      [IPC_CHANNELS.buddyGetHideFromCapture, () => bridge.buddy.getHideFromCapture()],
+      [IPC_CHANNELS.buddySetHideFromCapture, () => bridge.buddy.setHideFromCapture(true)],
     ];
     for (const [, drive] of drives) drive();
     assert.deepStrictEqual(
