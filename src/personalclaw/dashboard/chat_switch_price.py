@@ -79,18 +79,24 @@ def switch_price(session: Any, provider: str, model: str) -> dict[str, Any]:
     """The answer for a switch of *session* to *model* on the provider entry *provider*."""
     tokens = context_tokens(session)
     current = current_model(session)
-    cur = (
-        {"provider": current[0], "model": current[1]} if current else {"provider": "", "model": ""}
-    )
-    nxt = {"provider": provider, "model": model}
+    cur_dollars: float | None = None
+    next_dollars: float | None = None
     if tokens is not None and current is not None:
-        cur["dollars"] = _input_price(current[0], current[1], tokens)
-        nxt["dollars"] = _input_price(provider, model, tokens)
-    else:
-        cur["dollars"] = nxt["dollars"] = None
+        cur_dollars = _input_price(current[0], current[1], tokens)
+        next_dollars = _input_price(provider, model, tokens)
+    cur: dict[str, str | float | None] = {
+        "provider": current[0] if current else "",
+        "model": current[1] if current else "",
+        "dollars": cur_dollars,
+    }
+    nxt: dict[str, str | float | None] = {
+        "provider": provider,
+        "model": model,
+        "dollars": next_dollars,
+    }
     same = current is not None and (current[0], current[1]) == (provider, model)
-    no_dearer = nxt["dollars"] is not None and (
-        nxt["dollars"] == 0 or (cur["dollars"] is not None and nxt["dollars"] <= cur["dollars"])
+    no_dearer = next_dollars is not None and (
+        next_dollars == 0 or (cur_dollars is not None and next_dollars <= cur_dollars)
     )
     ask = (
         not getattr(session, "acp_provider", "")
