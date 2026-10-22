@@ -291,7 +291,8 @@ cannot read fails the row. A setup step inside the action counts at the index of
 of those rows has a plant inside the action.
 
 A change under `.github/actions/` runs the planned jobs, the browser run's (`e2e-shard`,
-`e2e-stateful` and their merge, `e2e`) and `apps-contract`, as a change to `ci.yml` does: each
+`e2e-stateful`, their merge `e2e` and the UI quality check `ui-quality`) and `apps-contract`, as a
+change to `ci.yml` does: each
 sets up its toolchain through the action, so it defines them too.
 The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
 local action `apps-contract` calls, and each one that action calls, plans that job, and that

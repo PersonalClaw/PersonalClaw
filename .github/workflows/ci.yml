@@ -1466,6 +1466,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  ui-quality:
+    # ── The one named UI quality check (#3941 with #3811) ────────────────────────────────────────
+    # Three parts under one name, each its own step, each run whatever the step before it answered,
+    # so one red run names everything that failed:
+    #   · the raw-control ratchet (web/src/design/primitiveAdoption.test.ts): each file's raw
+    #     <button>, <input> and dialog count, exactly as its baseline line says;
+    #   · the design detector (web/scripts/designDetector.mjs), exactly against its baseline;
+    #   · the `@ui-quality` browser matrix, read back from the legs' merged report by
+    #     web/e2e/ui-quality-report.mjs: every route, substate URL and opened surface once per theme,
+    #     and for each one that failed, every check that failed on it, in one line.
+    # The matrix runs in the `e2e-shard` legs, and `e2e` holds the run whole and counts its scans;
+    # this job merges the same blobs (Node only, no browser) and is the matrix's verdict under the
+    # check's name. It runs beside `e2e`, not after it, so the merge tier keeps its stages. The ratchet and the detector also run in the
+    # `web` job, on every tier that job runs on. Making this check required on pull requests is a
+    # branch-protection setting the owner decides (#3907, #4585).
+    needs: [changes, tree-check, e2e-shard, e2e-stateful]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'ui-quality')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          node: "true"
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      # Each leg's blob under a folder named for its leg, merged into web/e2e-report.json as `e2e`
+      # merges them.
+      - name: every leg's blob report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      - name: merge the legs into the run's one report
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 stateful
+      - name: the raw-control ratchet
+        if: ${{ !cancelled() }}
+        run: npm run ui:ratchet
+      - name: the design detector
+        if: ${{ !cancelled() }}
+        run: npm run design:detect
+      - name: the UI matrix, every check that failed on each surface
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/ui-quality-report.mjs e2e-report.json
+
   browse-live:
     # ── The browse behavioural proof, in a real browser, on every diff ────────────────────────
     # Two guarantees of the browse safety script that only a real browser can show (a page's

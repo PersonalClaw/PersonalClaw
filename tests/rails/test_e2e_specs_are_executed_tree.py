@@ -318,15 +318,22 @@ def leg_folders(jobs: dict) -> set[str]:
     return folders
 
 
-def merged_folders(jobs: dict) -> set[str]:
-    """The blob folders the `merge-legs.mjs` lines read: its root joined to each leg it names."""
-    folders = set()
-    for job in jobs.values():
+def merges(jobs: dict) -> dict[str, set[str]]:
+    """Each job's `merge-legs.mjs` lines and the blob folders they read: the root joined to each leg
+    it names. `e2e` and `ui-quality` each merge the whole run."""
+    out: dict[str, set[str]] = {}
+    for name, job in jobs.items():
         for step in job.get("steps") or []:
             words = str(step.get("run", "")).split()
             if len(words) > 2 and words[:2] == ["node", "e2e/merge-legs.mjs"]:
-                folders |= {f"{words[2]}/{leg}" for leg in words[3:]}
-    return folders
+                out.setdefault(name, set()).update(f"{words[2]}/{leg}" for leg in words[3:])
+    return out
+
+
+def merged_folders(jobs: dict) -> set[str]:
+    """The blob folders EVERY merge reads, so one job that drops a leg is not hidden by another."""
+    each = list(merges(jobs).values())
+    return set.intersection(*each) if each else set()
 
 
 def test_a_sharded_browser_run_runs_every_shard():
@@ -346,6 +353,8 @@ def test_the_merge_reads_every_leg_the_browser_steps_write():
         "blob-report/stateful",
     }, written
     assert merged_folders(jobs) == written
+    assert {"e2e", "ui-quality"} <= set(merges(jobs)), sorted(merges(jobs))
+    assert all(f == written for f in merges(jobs).values()), merges(jobs)
 
 
 def test_a_missing_shard_or_an_unmerged_leg_is_named():
@@ -381,6 +390,23 @@ def test_a_missing_shard_or_an_unmerged_leg_is_named():
                     else s
                 )
                 for s in merge["steps"]
+            ],
+        },
+    }
+    assert leg_folders(dropped) - merged_folders(dropped) == {"blob-report/stateful"}
+    # The UI quality check's own merge dropping a leg is named too, though `e2e` still reads it.
+    check = jobs["ui-quality"]
+    dropped = {
+        **jobs,
+        "ui-quality": {
+            **check,
+            "steps": [
+                (
+                    {**s, "run": str(s["run"]).replace(" stateful", "")}
+                    if "merge-legs.mjs" in str(s.get("run", ""))
+                    else s
+                )
+                for s in check["steps"]
             ],
         },
     }

@@ -57,13 +57,21 @@ CI splits that one run over three jobs. Each **`e2e-shard`** leg runs half of `s
 - `assert-one-run.mjs` holds the merged report to one run: no failure, no pass that took a retry (under CI that fails its leg), and no error outside a test (a leg whose gateway never booted leaves only its error); every test ran (a result that passed, failed or timed out, or a skip the test made itself; an interrupted result is not a run), each leg's auth setup included; every test ran once (the setup aside: each leg runs its own), each where its isolation mode allows, the stateful set and its second pass both there under one seed, and each pass started after the one before it had ended, read from the results' own timings. `src/design/e2eMergedRun.test.ts` plants each way the merged report can be wrong.
 - Last, each leg's own result: `e2e` runs after a red leg too, and a leg can fail where its report shows nothing, so a leg that failed, was cancelled or was skipped is red there as well. `tests/rails/test_e2e_specs_are_executed_tree.py` runs that step on every answer.
 
+Beside `e2e`, the **`ui-quality`** job is the one named UI quality check (#3941, #3811). It merges the same blobs (Node only, no browser), then runs three steps, each whatever the one before it answered, so one red run names everything that failed:
+
+- the raw-control ratchet, `npm run ui:ratchet` (`src/design/primitiveAdoption.test.ts`);
+- the design detector, `npm run design:detect`, against `design-detector.baseline.jsonl`;
+- `ui-quality-report.mjs`, the matrix's verdict: one line per surface and theme that failed, naming every step that failed on it (`✗ UI quality: dark theme › Chat (#/chat): axe; 44 px targets at 390px`), and a `::error` annotation for each. A flaky surface passes and is named, and so is each skipped one. A report with no `@ui-quality` test fails, and so does one whose every `@ui-quality` test was skipped, since nothing was measured. `src/design/uiQualityReport.test.ts` plants each case.
+
+Whether the check is required on pull requests is a branch-protection setting the owner decides (#3907, #4585).
+
 ## Commands (run from `web/`)
 
 | Command | What it does |
 |---|---|
 | `npm run e2e` | Everything, as **two** invocations: the non-visual specs, then the visual rail on its own fresh gateway — **must be zero-diff / zero serious-critical** |
 | `npm run e2e:visual` | Visual regression only |
-| `npm run e2e:ui` | The UI quality check only (`surfaces.spec.ts` and its control, and the idle-cost probe); add `--update-snapshots` to rewrite its baselines |
+| `npm run e2e:ui` | The UI quality check's browser matrix only (`surfaces.spec.ts` and its control, and the idle-cost probe); add `--update-snapshots` to rewrite its baselines. Its other two parts are `npm run ui:ratchet` and `npm run design:detect` |
 | `npm run e2e:a11y` | The Session Map axe scans only |
 | `npm run e2e:update` | **Regenerate** the visual baselines — visual-only, INTENTIONALLY, when a real visual change is expected |
 | `npm run e2e:report` | Open the last HTML report |

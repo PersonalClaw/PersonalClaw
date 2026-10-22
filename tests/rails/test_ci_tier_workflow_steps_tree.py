@@ -308,7 +308,7 @@ def test_merge_yml_plans_the_e2e_legs_after_the_build_for_a_web_change(
 
     assert ids("build") == ["web-build"]
     assert {"package", "e2e-shard", "e2e-stateful"} == set(ids("test-2"))
-    assert ids("test-3") == ["e2e"]
+    assert ids("test-3") == ["e2e", "ui-quality"]
     assert "python-suite" in ids("test") and "web-build" not in ids("test")
 
 

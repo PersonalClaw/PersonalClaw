@@ -36,6 +36,7 @@ jobs = [
   "e2e",
   "e2e-shard",
   "e2e-stateful",
+  "ui-quality",
   "browse-live",
   "security",
   "apps-contract",
@@ -759,6 +760,36 @@ command = [
   { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "stateful"], workdir = "web" },
   { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
   { argv = ["node", "e2e/assert-one-run.mjs", "e2e-report.json"], workdir = "web" },
+]
+
+# The one named UI quality check (#3941 with #3811): the raw-control ratchet, the design detector,
+# and the `@ui-quality` browser matrix's verdict, read from the legs' blobs merged as `e2e` merges
+# them, so the three report under one name. Its inputs are e2e's, so one plan schedules both, and
+# it runs beside `e2e` after the legs, so the merge tier keeps its stages.
+[[job]]
+id = "ui-quality"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+timeout_min = 10
+needs_node = true
+after = ["e2e-shard", "e2e-stateful"]
+command = [
+  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "stateful"], workdir = "web" },
+  { argv = ["npm", "run", "ui:ratchet"] },
+  { argv = ["npm", "run", "design:detect"] },
+  { argv = ["node", "e2e/ui-quality-report.mjs", "e2e-report.json"], workdir = "web" },
 ]
 
 # The browser run itself, in the legs `e2e` merges (#3939): two shards of the specs that share a

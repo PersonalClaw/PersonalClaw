@@ -11,6 +11,7 @@
     "audit:consistency": "npm run audit:consistency --workspace=web",
     "docs:feature-map": "npm run docs:feature-map --workspace=web",
     "design:detect": "npm run design:detect --workspace=web",
+    "ui:ratchet": "npm run ui:ratchet --workspace=web",
     "generate:schemes": "npm run generate:schemes --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
     "test:mobile": "npm run test --workspace=mobile",
