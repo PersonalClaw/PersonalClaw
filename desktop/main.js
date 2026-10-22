@@ -508,6 +508,11 @@ const nativeNotifications = makeNativeNotifications({
       /* window may be gone between the tap and the send */
     }
   },
+  // A buddy alert's still orb, from the PNG data URL the renderer painted: never a path or a URL.
+  createIcon: (url) => {
+    const image = nativeImage.createFromDataURL(url);
+    return image.isEmpty() ? null : image;
+  },
   log: (msg) => console.warn(msg),
 });
 

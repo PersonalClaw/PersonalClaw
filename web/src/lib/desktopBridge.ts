@@ -99,7 +99,9 @@ export interface DesktopBridge {
    *  rules engine. `on()` fires when a banner is TAPPED — the shell has already focused the
    *  window, and the payload carries the route because the renderer owns the SPA's IA. */
   notifications?: {
-    show: (note: { title: string; body: string; route: string }) => Promise<NativeNotifyResult>
+    /** A buddy alert (#3897) names its kind and carries its still orb as a PNG data URL; the
+     *  shell raises it silent, with that icon. */
+    show: (note: { title: string; body: string; route: string; alert?: string; icon?: string }) => Promise<NativeNotifyResult>
     on: (cb: (payload: { route: string }) => void) => () => void
   }
   /** "Open at login". Deliberately NOT under `capabilities`: that vocabulary is

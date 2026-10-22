@@ -46,6 +46,26 @@ const ROUTE_RE = /^[a-z0-9][a-z0-9/-]*$/;
 
 const clip = (value, max) => String(value ?? "").trim().slice(0, max);
 
+/** The buddy's alerts (#3897): the only notes raised silent, with the kind's still orb as their
+ * icon. The gateway marks a note with one (`notification_kinds.alert_of`). Any other value is no
+ * alert, and the note sounds as every native note does. */
+const ALERT_KINDS = Object.freeze(["approval", "question", "error"]);
+/** The longest icon accepted, as a data URL: a still orb of 96 px at 2x is a few kilobytes. */
+const MAX_ICON = 48 * 1024;
+const ICON_RE = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * The icon, or "" for anything that is not a bounded PNG data URL.
+ *
+ * A data URL only: the shell never reads a path or fetches a URL for a banner, so a note cannot
+ * name a file on this machine or a host to reach. Anything else is dropped, and the banner shows
+ * without an icon (its line says what changed on its own).
+ */
+function normalizeIcon(raw) {
+  const icon = typeof raw === "string" ? raw : "";
+  return icon.length <= MAX_ICON && ICON_RE.test(icon) ? icon : "";
+}
+
 /**
  * The route, or "" when the caller gave nothing usable.
  *
@@ -62,12 +82,15 @@ function normalizeRoute(raw) {
  * @param {{new (opts: object): object, isSupported?: () => boolean}} deps.Notification
  * @param {() => boolean} [deps.focusWindow]  Raise the app window. False ⇒ no window.
  * @param {(payload: object) => void} [deps.sendToRenderer]  Forward the tap's route.
+ * @param {(dataUrl: string) => object | null} [deps.createIcon]  An alert's icon as an image
+ *   (`nativeImage.createFromDataURL`), or null for one that does not read as an image.
  * @param {(msg: string) => void} [deps.log]
  */
 function makeNativeNotifications({
   Notification,
   focusWindow = () => false,
   sendToRenderer = () => {},
+  createIcon = () => null,
   log = () => {},
 } = {}) {
   const supported =
@@ -77,7 +100,11 @@ function makeNativeNotifications({
   /**
    * Raise one OS notification.
    *
-   * @param {{title?: string, body?: string, route?: string}} note
+   * A buddy alert (`alert` one of {@link ALERT_KINDS}) is silent, and carries its still orb as
+   * its icon when `icon` is a PNG data URL. No banner carries actions: a tap opens, and nothing
+   * on the banner answers.
+   *
+   * @param {{title?: string, body?: string, route?: string, alert?: string, icon?: string}} note
    * @returns {{ok: boolean, route: string, reason?: string}}
    */
   function show(note) {
@@ -85,6 +112,7 @@ function makeNativeNotifications({
     const title = clip(payload.title, MAX_TITLE);
     const body = clip(payload.body, MAX_BODY);
     const route = normalizeRoute(payload.route);
+    const alert = ALERT_KINDS.includes(payload.alert) ? payload.alert : "";
 
     if (!supported) {
       return { ok: false, route, reason: "the OS does not support notifications" };
@@ -95,9 +123,22 @@ function makeNativeNotifications({
       return { ok: false, route, reason: "a notification needs a title" };
     }
 
+    // Silent for a buddy alert, in v0.3.0 always (its sound is later work, #3900); every other
+    // native note keeps the sound it always had.
+    const opts = { title, body, silent: Boolean(alert) };
+    const iconUrl = alert ? normalizeIcon(payload.icon) : "";
+    if (iconUrl) {
+      try {
+        const icon = createIcon(iconUrl);
+        if (icon) opts.icon = icon;
+      } catch (err) {
+        log(`native notification icon unreadable: ${err.message}`);
+      }
+    }
+
     let notification;
     try {
-      notification = new Notification({ title, body, silent: false });
+      notification = new Notification(opts);
     } catch (err) {
       log(`native notification failed: ${err.message}`);
       return { ok: false, route, reason: err.message };
@@ -137,6 +178,9 @@ module.exports = {
   makeNativeNotifications,
   registerNativeNotificationIpc,
   normalizeRoute,
+  normalizeIcon,
+  ALERT_KINDS,
   MAX_TITLE,
   MAX_BODY,
+  MAX_ICON,
 };

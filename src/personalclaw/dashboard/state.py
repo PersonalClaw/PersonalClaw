@@ -1587,6 +1587,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             "escalated_by",
             "badge_only",
             "native",
+            "alert",
             "acked",
             "withheld_reason",
             "routed_to",
@@ -1800,6 +1801,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             native = None
         if native is not None:
             note["native"] = native
+            # Which of the buddy's alerts the banner shows (#3897): an approval, a question or an
+            # error, read off the kind and the row it is a view of. Platform-owned, as `native` is.
+            alert = notification_kinds.alert_of(kind, note)
+            if alert:
+                note["alert"] = alert
 
         self._append_notification(note)
         self._broadcast(note)

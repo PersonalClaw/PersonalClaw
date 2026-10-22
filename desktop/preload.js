@@ -189,6 +189,9 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
         title: String((note && note.title) ?? ""),
         body: String((note && note.body) ?? ""),
         route: String((note && note.route) ?? ""),
+        // A buddy alert's kind and its still orb (a PNG data URL); the main process checks both.
+        alert: String((note && note.alert) ?? ""),
+        icon: String((note && note.icon) ?? ""),
       }),
 
     /** Subscribe to taps. The shell has already focused the window; the payload carries

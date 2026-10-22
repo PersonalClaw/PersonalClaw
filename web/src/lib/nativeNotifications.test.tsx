@@ -30,8 +30,16 @@ vi.mock('./useChatSocket', () => ({
   },
 }))
 
+/** The waiting list an alert's banner reads, and the still orbs it asked to have painted. */
+const waiting = vi.fn()
+vi.mock('./api', async (orig) => ({ ...(await orig<Record<string, unknown>>()), api: { waiting: () => waiting() } }))
+const painted: string[] = []
+vi.mock('../ui/buddy/paintOrb', () => ({
+  stillOrbPng: (state: string) => { painted.push(state); return `data:image/png;base64,${state}` },
+}))
+
 function fakeBridge() {
-  const shown: Array<{ title: string; body: string; route: string }> = []
+  const shown: Array<{ title: string; body: string; route: string; alert?: string; icon?: string }> = []
   const taps: Array<(p: { route: string }) => void> = []
   let unsubscribed = 0
   const bridge = {
@@ -43,7 +51,7 @@ function fakeBridge() {
       on: () => () => {},
     },
     notifications: {
-      show: (note: { title: string; body: string; route: string }) => {
+      show: (note: { title: string; body: string; route: string; alert?: string; icon?: string }) => {
         shown.push(note)
         return Promise.resolve({ ok: true, route: note.route })
       },
@@ -61,7 +69,12 @@ const note = (extra: Record<string, unknown> = {}) => ({
   kind: 'error', title: 'Loop stalled', body: 'needs an answer', ...extra,
 })
 
-beforeEach(() => { deliver = null })
+beforeEach(() => {
+  deliver = null
+  painted.length = 0
+  waiting.mockReset()
+  waiting.mockResolvedValue({ waiting: [], unreadable: [] })
+})
 afterEach(() => {
   delete (window as unknown as { pclawDesktop?: unknown }).pclawDesktop
   vi.restoreAllMocks()
@@ -182,5 +195,74 @@ describe('useNativeNotifications', () => {
     const { unmount } = renderHook(() => useNativeNotifications(vi.fn()))
     unmount()
     expect(bridge.unsubscribedCount()).toBe(1)
+  })
+})
+
+// ── A buddy alert's banner (#3897) ───────────────────────────────────────────────────────────
+
+describe('a buddy alert', () => {
+  const live = { native: { deliver: true, reason: '' } }
+  const approvalItem = {
+    id: 'approval:ap-1', kind: 'approval', work: 'chat:c1', session: 'c1', consequence: 'changes', risk: 'caution',
+    brief: { tool: 'shell.run', source_label: 'chat “Release notes”' }, asked_at: null, age_secs: null, expires_at: null,
+    current: true, interrupt: 'deliver', route: '#/chat/c1',
+    answer: { method: 'POST', path: '/api/approvals/ap-1/{answer}', takes: ['approve', 'reject'], body: {} },
+  }
+
+  it('an approval raises its line, its still orb and the chat it asks in, from the waiting list', async () => {
+    waiting.mockResolvedValue({ waiting: [approvalItem], unreadable: [] })
+    const bridge = fakeBridge()
+    renderHook(() => useNativeNotifications(vi.fn()))
+    deliver!({ type: 'notification', data: { kind: 'agent_request', source: 'system', title: 'Approval needed: shell.run', body: 'ls', approval: 'ap-1', alert: 'approval', ...live } })
+    await vi.waitFor(() => expect(bridge.shown).toHaveLength(1))
+    expect(bridge.shown[0]).toEqual({
+      title: 'PersonalClaw', body: 'Chat “Release notes” needs your OK: shell.run', route: 'chat/c1',
+      alert: 'approval', icon: 'data:image/png;base64,approval',
+    })
+  })
+
+  it('a question and an error each carry their own still orb', async () => {
+    const bridge = fakeBridge()
+    renderHook(() => useNativeNotifications(vi.fn()))
+    deliver!({ type: 'notification', data: { kind: 'needs_input', source: 'loop', title: 'Loop needs your input', body: 'Keep the old page?', alert: 'question', ...live } })
+    deliver!({ type: 'notification', data: { kind: 'error', source: 'loop', title: 'Loop failed', body: 'The model did not answer', alert: 'error', ...live } })
+    await vi.waitFor(() => expect(bridge.shown).toHaveLength(2))
+    expect(painted.sort()).toEqual(['error', 'input'])
+    expect(bridge.shown.map((b) => b.body).sort()).toEqual(['Loop stopped: The model did not answer', 'Your work asks: Keep the old page?'])
+    // No item in the list: the tap opens the note's own source, as every native note's does.
+    expect(bridge.shown.map((b) => b.route)).toEqual(['loops', 'loops'])
+  })
+
+  it('a waiting list that cannot be read still raises the banner, in the note’s words', async () => {
+    waiting.mockRejectedValue(new Error('offline'))
+    const bridge = fakeBridge()
+    renderHook(() => useNativeNotifications(vi.fn()))
+    deliver!({ type: 'notification', data: { kind: 'agent_request', source: 'system', title: 'Approval needed: shell.run', body: '', approval: 'ap-1', source_label: 'loop “Docs”', alert: 'approval', ...live } })
+    await vi.waitFor(() => expect(bridge.shown).toHaveLength(1))
+    expect(bridge.shown[0].body).toBe('Loop “Docs” needs your OK: shell.run')
+  })
+
+  it('a note that is no alert is raised as before, at once, with no icon', () => {
+    const bridge = fakeBridge()
+    renderHook(() => useNativeNotifications(vi.fn()))
+    deliver!({ type: 'notification', data: note({ source: 'loop', ...live }) })
+    expect(bridge.shown).toEqual([{ title: 'Loop stalled', body: 'needs an answer', route: 'loops' }])
+    expect(waiting).not.toHaveBeenCalled()
+    expect(painted).toEqual([])
+  })
+
+  it('a tap opens the item an alert named, and still nothing else', async () => {
+    waiting.mockResolvedValue({ waiting: [{ ...approvalItem, session: 'c7', route: '#/chat/c7' }], unreadable: [] })
+    const bridge = fakeBridge()
+    const navigate = vi.fn()
+    renderHook(() => useNativeNotifications(navigate))
+    bridge.tap({ route: 'chat/c7' })
+    expect(navigate).not.toHaveBeenCalled()
+    deliver!({ type: 'notification', data: { kind: 'agent_request', source: 'system', title: 'Approval needed: shell.run', approval: 'ap-1', alert: 'approval', ...live } })
+    await vi.waitFor(() => expect(bridge.shown).toHaveLength(1))
+    bridge.tap({ route: 'chat/c7' })
+    expect(navigate).toHaveBeenCalledWith('chat/c7')
+    bridge.tap({ route: 'chat/c8' })
+    expect(navigate).toHaveBeenCalledTimes(1)
   })
 })
