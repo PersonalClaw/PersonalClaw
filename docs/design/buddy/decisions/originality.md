@@ -18,8 +18,8 @@ which order, and sounds by pitch contour, timbre and length.
 design now replaces, with what it replaced; `pending`, later work, compared and resolved with the
 task its row names before that feature ships. No row that ships in v0.3.0 reads `pending`.
 
-`tests/test_buddy_originality_record.py` reads the elements from the design files themselves (the
-character's aspects, each surface of [the room budget](../surfaces.md#the-room-budget), both
+`tests/rails/test_buddy_originality_record.py` reads the elements from the design files themselves
+(the character's aspects, each surface of [the room budget](../surfaces.md#the-room-budget), both
 docking shapes, the four families, each row of [the transitions](../motion.md#transitions), the
 notification treatment, and the later play and drop rows, the sound event map, the export and the
 bridges), so an element added to the design without a row here fails it.
