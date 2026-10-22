@@ -1,4 +1,4 @@
-import type { ChatTurn, ToolSegment } from '../chatTypes'
+import type { ChatTurn, Segment, ToolSegment } from '../chatTypes'
 import { coreToolName } from '../coreToolName'
 
 // ── What a chat made (#3820's session inspector, Outputs) ──────────────────────────────────────
@@ -35,6 +35,18 @@ function outputOf(seg: ToolSegment): ChatOutput | null {
   const input = inputOf(seg)
   const path = String(input.path ?? input.file_path ?? '').trim()
   return path ? { kind: 'file', path, name: baseName(path), address: `file:${path}` } : null
+}
+
+/** The artifacts a turn's own calls saved, each once, in the order the turn saved them: the cards
+ *  under its answer (`transcript/TurnArtifacts`). */
+export function turnArtifacts(segments: Segment[]): Extract<ChatOutput, { kind: 'artifact' }>[] {
+  const seen = new Map<string, Extract<ChatOutput, { kind: 'artifact' }>>()
+  for (const seg of segments) {
+    if (seg.kind !== 'tool') continue
+    const out = outputOf(seg as ToolSegment)
+    if (out?.kind === 'artifact') seen.set(out.slug, out)
+  }
+  return [...seen.values()]
 }
 
 /** The chat's outputs, each once (an artifact by its slug, a file by its path), the latest first. */

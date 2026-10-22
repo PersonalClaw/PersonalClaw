@@ -298,6 +298,26 @@ describe('the detail tile', () => {
   })
 })
 
+describe('a turn that made an artifact', () => {
+  it('shows it as a card under its answer, out of the folded steps, and the card opens it in the tile', async () => {
+    await openChat({})
+    const turn = document.querySelector('[data-transcript-turn="assistant"]') as HTMLElement
+    const made = within(turn).getByRole('list', { name: 'What this turn made' })
+    expect(within(made).getAllByRole('listitem').map((li) => li.textContent)).toEqual([expect.stringContaining('Launch plan')])
+    expect(made.closest('[aria-expanded]'), 'the card is not folded away with the steps').toBeNull()
+    expect(within(made).getByRole('link', { name: 'Open Launch plan in the Library' })).toHaveAttribute('href', '#/artifacts/launch-plan')
+    fireEvent.click(within(made).getByRole('button', { name: 'Open Launch plan beside the conversation' }))
+    expect(query.beside).toBe('artifact:launch-plan')
+    expect(await screen.findByRole('region', { name: 'Launch plan' })).toBe(tile())
+  })
+
+  it('shows no card for a save that failed', async () => {
+    h.detail = { ...(h.detail as Record<string, unknown>), messages: MESSAGES.map((m) => (m.meta?.tool_call_id === 'tc-1' ? { ...m, meta: { ...m.meta, ok: false } } : m)) }
+    await openChat({})
+    expect(screen.queryByRole('list', { name: 'What this turn made' })).toBeNull()
+  })
+})
+
 describe('on a phone', () => {
   it('the detail takes the inspector\'s place, and Back to Activity brings the inspector back', async () => {
     atWidth(390)

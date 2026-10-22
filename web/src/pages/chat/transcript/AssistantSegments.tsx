@@ -20,6 +20,8 @@ import { ThinkingBlock } from '../ThinkingBlock'
 import { ContextLedger } from '../ContextLedger'
 import { TurnHelpers, helpersFromTool } from './TurnHelpers'
 import { SourcesRow } from './SourcesRow'
+import { TurnArtifacts } from './TurnArtifacts'
+import { turnArtifacts } from '../inspector/chatOutputs'
 import { sourceKey, turnSources } from '../turnSources'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
@@ -90,6 +92,8 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   // each one's number beside it in the text. One function per set of sources, so the prose keeps its
   // components while the turn re-renders.
   const sources = useMemo(() => turnSources(segments), [segments])
+  // The artifacts the turn's own calls saved, each a card under its answer.
+  const artifacts = useMemo(() => turnArtifacts(segments), [segments])
   const sourceOf = useMemo(() => {
     if (!sources.length) return undefined
     const byKey = new Map(sources.map((src) => [sourceKey(src.url), src.n]))
@@ -256,6 +260,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
           folded into the collapsed work disclosure. */}
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
+      <TurnArtifacts artifacts={artifacts} />
       <SourcesRow sources={sources} />
       {cutOff === 'length' && !streaming && <ReplyCutNote cut="length" />}
       {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}

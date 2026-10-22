@@ -146,6 +146,9 @@ Top to bottom:
   recorded to the last. Helpers the turn started sit inside its folded steps.
 - **Changes and plans** show in their turn as compact cards, and open in place or in the review
   pane on demand.
+- **Artifacts** the turn saved show as cards under its answer, never folded away with the steps:
+  each by the name it was saved under, opening beside the conversation in the detail tile, and
+  in the Library.
 - **Approval and question cards** sit where the agent asked. A card states the action and its
   consequence plainly, so the owner can answer from it alone.
 - **Sources** are the links the answer cites that its own turn retrieved: a result of its web
