@@ -90,6 +90,12 @@ class RunState:
     last_outcome: str | None
     queued_messages: int
     seq: int
+    #: Set only in ``retrying``: ``{attempt, of, next_at, reason}`` — this attempt of how many,
+    #: when it is made (``None`` once it is, or for a fail-over) and why the last one failed.
+    retry: dict[str, Any] | None = None
+    #: Set only in ``waiting_model``: ``{model, behind}`` — the local model it waits for, and how
+    #: many calls are ahead of it there.
+    queue: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +134,9 @@ class ChatRun:
     #: The last payload sent, which the routes serve.
     sent: dict[str, Any] | None = None
     liveness: "asyncio.Task[None] | None" = None
+    #: While ``retrying``, the retry's payload field, and while ``waiting_model``, the queue's.
+    retry: dict[str, Any] | None = None
+    queue: dict[str, Any] | None = None
 
 
 def _run(session: _ChatSession) -> ChatRun:
@@ -231,6 +240,8 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
         last_outcome=run.last_outcome,
         queued_messages=session.queue_depth,
         seq=0,
+        retry=run.retry if phase is WorkPhase.RETRYING else None,
+        queue=run.queue if phase is WorkPhase.WAITING_MODEL else None,
     ).as_dict()
     previous = run.sent
     if not again and previous is not None:
@@ -387,6 +398,10 @@ def say(
     if run.turn is None:
         return
     run.phase, run.line = phase, _clip(_LINES.get(phase, "") if line is None else line)
+    if phase is not WorkPhase.RETRYING:
+        run.retry = None
+    if phase is not WorkPhase.WAITING_MODEL:
+        run.queue = None
     _send(state, session, run)
 
 
@@ -442,3 +457,71 @@ def helpers_at_work(state: DashboardState, key: str, count: int) -> None:
 
 def _s(count: int) -> str:
     return "" if count == 1 else "s"
+
+
+# ── Retries and waits, from what was measured (#3833) ───────────────────────────────────────────
+
+
+def retrying(
+    state: DashboardState,
+    session: _ChatSession,
+    *,
+    attempt: int,
+    of: int,
+    reason: str = "",
+    next_in: float | None = None,
+    model: str = "",
+) -> None:
+    """The running turn's model call failed and is tried again: this *attempt* of *of*, in
+    *next_in* seconds, after *reason* (the provider's failure in its sentence); or, for a fail-over,
+    on the next *model* of its chain. A retry is not a failure until it fails, so it is live work,
+    said as ``retrying`` until the retry starts (:func:`retry_started`)."""
+    run = _run(session)
+    if run.turn is None:
+        return
+    next_at = _now() + next_in if next_in is not None else None
+    if model:
+        line = f"Trying {model}"
+    else:
+        line = f"Retrying ({attempt} of {of})"
+        # A retry a moment away needs no time; one a minute or more away says when.
+        if next_at is not None and next_in is not None and next_in >= 60:
+            line += f" · next try {time.strftime('%H:%M', time.localtime(next_at))}"
+    # Set before it is said, so the one frame carries it.
+    run.retry = {
+        "attempt": attempt,
+        "of": of,
+        "next_at": utc_iso(next_at) if next_at is not None else None,
+        "reason": _clip(reason),
+    }
+    say(state, session, WorkPhase.RETRYING, line)
+
+
+def retry_started(state: DashboardState, session: _ChatSession) -> None:
+    """The retry's call is made, or the next model answers: the turn is thinking again."""
+    run = session._run
+    if run is not None and run.turn is not None and run.phase is WorkPhase.RETRYING:
+        say(state, session, thinking(session))
+
+
+def model_waits_changed(state: DashboardState, waits: list[dict[str, Any]]) -> None:
+    """The local model queue's waits changed (``guardrails.local_queue.waits``): each running chat
+    whose call waits behind other calls on a local model says ``waiting_model``, with the model and
+    how many are ahead, and goes back to thinking when the model takes its call."""
+    waiting: dict[str, dict[str, Any]] = {}
+    for row in waits:
+        key = str(row.get("session") or "").removeprefix("dashboard:")
+        if key and key not in waiting:
+            waiting[key] = row
+    for key, session in list(getattr(state, "_sessions", {}).items()):
+        run = session._run
+        if run is None or run.turn is None:
+            continue
+        row = waiting.get(key)
+        if row is not None:
+            model = str(row.get("model") or "").partition(":")[2] or str(row.get("model") or "")
+            behind = int(row.get("ahead") or 0)
+            run.queue = {"model": str(row.get("model") or ""), "behind": behind}
+            say(state, session, WorkPhase.WAITING_MODEL, f"Waiting for {model} · {behind} ahead")
+        elif run.phase is WorkPhase.WAITING_MODEL:
+            say(state, session, thinking(session))

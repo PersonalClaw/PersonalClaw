@@ -364,19 +364,23 @@ async def take_turn(key: str, *, provider: str, model: str, within: float | None
 
 
 def waits() -> list[dict]:
-    """Every wait somebody is watching, oldest first: what waits, on which model, what holds it,
-    what is tried next and in how long (``left_secs``, ``None`` when it waits as long as it takes).
+    """Every wait somebody is watching, oldest first: what waits, on which model, how many calls
+    are ahead of it (``ahead``), what holds it, what is tried next and in how long (``left_secs``,
+    ``None`` when it waits as long as it takes).
     """
     now, mono = time.time(), time.monotonic()
     out: list[dict] = []
     with _LOCK:
         for q in _QUEUES.values():
-            for w in q.attended:
+            for place, w in enumerate(q.attended):
                 if w.attended is None:
                     continue
                 out.append(
                     {
                         "id": w.id,
+                        # The calls ahead of it on this model: the ones holding it, and every
+                        # attended wait before it (a background call waits behind it).
+                        "ahead": len(q.holders) + place,
                         "step": w.attended.step,
                         "session": w.attended.session,
                         "model": f"{w.provider}:{w.model}",

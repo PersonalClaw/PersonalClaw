@@ -189,8 +189,12 @@ def test_a_reply_with_another_model_moves_on_and_says_it_waited_behind_backgroun
             gate.set()
             await chore
 
-    events = asyncio.run(scenario())
+    everything = asyncio.run(scenario())
 
+    # Moving on to the next model is said as it happens (#3833), naming the model it asks.
+    (moving_on,) = [ev for ev in everything if ev.kind == "retrying"]
+    assert moving_on.tool_meta["model"], moving_on.tool_meta
+    events = [ev for ev in everything if ev.kind != "retrying"]
     kinds = [ev.kind for ev in events]
     assert kinds == [SUBSTITUTION, EVENT_TEXT_CHUNK, EVENT_COMPLETE], kinds
     assert events[0].text == (

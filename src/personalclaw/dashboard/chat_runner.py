@@ -151,6 +151,7 @@ from personalclaw.llm.events import (
     COMPACTION_AUTOMATIC,
     EVENT_CARRIED_ON,
     EVENT_MODEL_SUBSTITUTION,
+    EVENT_RETRYING,
     EVENT_STEER,
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
@@ -2431,6 +2432,20 @@ async def run_chat(
             asked_for_by=asked_for_by,
             # Bounded again only if this attempt was (`turn_deadline.bounded`).
             attended=not turn_deadline.bounded(),
+        )
+
+    #: An agent CLI whose connection was lost before any step is sent again up to this many times.
+    _RESENDS = 3
+
+    def _say_resent(resends: int) -> None:
+        """Say the turn sent again after its agent's connection was lost as its phase (#3833):
+        retrying, this attempt of the first and every resend, until the resent turn starts."""
+        chat_phase.retrying(
+            state,
+            session,
+            attempt=resends + 1,
+            of=_RESENDS + 1,
+            reason=f"The connection to {_turn_agent or 'the agent'} was lost.",
         )
 
     # The turn checkpoint: open a numbered turn and
@@ -5039,7 +5054,8 @@ async def run_chat(
             elif event.kind == EVENT_MODEL_SUBSTITUTION:
                 # The turn's model failed before it said anything and the next one in its chain
                 # answers. Said now, before that model's reply streams, and stamped on the reply
-                # with whatever substitution the turn started with.
+                # with whatever substitution the turn started with. Its retry has started.
+                chat_phase.retry_started(state, session)
                 state.broadcast_ws(
                     "activity_event",
                     {
@@ -5049,6 +5065,24 @@ async def run_chat(
                     },
                 )
                 _substitution_note = f"{_substitution_note} {event.text}".strip()
+            elif event.kind == EVENT_RETRYING:
+                # Its model call failed and is tried again, or the next model of its chain is
+                # asked: said as the turn's phase from the measured event (#3833), and back to
+                # thinking once the retry's call is made.
+                _retry_meta = event.tool_meta or {}
+                if _retry_meta.get("started"):
+                    chat_phase.retry_started(state, session)
+                else:
+                    _why = _retry_meta.get("error")
+                    chat_phase.retrying(
+                        state,
+                        session,
+                        attempt=int(_retry_meta.get("attempt") or 2),
+                        of=int(_retry_meta.get("of") or 2),
+                        reason=humanize_provider_error(_why) if _why is not None else "",
+                        next_in=_retry_meta.get("next_in"),
+                        model=str(_retry_meta.get("model") or ""),
+                    )
             elif event.kind == EVENT_CARRIED_ON:
                 # A refusal ended the agent's turn and it was asked to go on without the call:
                 # said where it happened, and what it does next is still this turn. Should it
@@ -5231,6 +5265,7 @@ async def run_chat(
                 session._acp_pipe_death_retries += 1
                 _send_again()
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — retrying...")
+                _say_resent(session._acp_pipe_death_retries)
             elif _prompt_depth == 0 and session._acp_pipe_death_retries >= 3:
                 _emit_error(f"Session stuck{_rc_suffix} — please start a new chat.")
                 session._last_turn_errored = True
@@ -5554,6 +5589,7 @@ async def run_chat(
             if session._acp_pipe_death_retries <= 3:
                 _send_again()
                 session.append("error", "⟳ Connection lost — retrying...", "msg msg-err")
+                _say_resent(session._acp_pipe_death_retries)
             else:
                 session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
                 session._last_turn_errored = True

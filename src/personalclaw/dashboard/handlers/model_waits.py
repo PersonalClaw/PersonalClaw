@@ -11,13 +11,28 @@ are doing, and moving one on sends its prompt to another model.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from aiohttp import web
 
 from personalclaw.guardrails import local_queue
 from personalclaw.http_errors import json_error
 
+logger = logging.getLogger(__name__)
+
 #: The ``refresh`` kind a page re-reads the waits on.
 REFRESH_KIND = "model_waits"
+
+
+def _say_waits(state: object) -> None:
+    """Each running chat says whether its call waits for a local model (its phase)."""
+    try:
+        from personalclaw.dashboard import chat_phase
+
+        chat_phase.model_waits_changed(state, local_queue.waits())  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 — a phase is said beside the wait, never in its way
+        logger.debug("could not say the model waits as phases", exc_info=True)
 
 
 def _view(row: dict) -> dict:
@@ -52,12 +67,19 @@ def register_model_waits_routes(app: web.Application) -> None:
     # Every open page hears when a wait starts or ends, from whichever thread the call waits on
     # (a broadcast is safe from any thread). Unsubscribed on stop, so a later gateway in the same
     # process is the one told.
+    # A chat whose call waits says so as its phase (`chat_phase.model_waits_changed`), on the
+    # gateway's loop, which owns the chats, whichever thread the wait changed on.
+    loops: list[asyncio.AbstractEventLoop] = []
+
     def _announce() -> None:
         state = app.get("state")
         if state is not None:
             state.push_refresh(REFRESH_KIND)
+            if loops:
+                loops[0].call_soon_threadsafe(_say_waits, state)
 
     async def _subscribe(_app: web.Application) -> None:
+        loops[:] = [asyncio.get_running_loop()]
         local_queue.subscribe(_announce)
 
     async def _unsubscribe(_app: web.Application) -> None:

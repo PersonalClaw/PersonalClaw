@@ -57,6 +57,13 @@ EVENT_STEER = "steer"
 # that asked it to fail over (``NativeAgentRuntime.announce_failover``), since a caller that
 # drops this event would be showing another model's reply as the chosen one's.
 EVENT_MODEL_SUBSTITUTION = "model_substitution"
+#: The turn's model call failed and is tried again (#3833's ``retrying`` phase): said when the
+#: retry is pending and again when it starts. ``tool_meta`` holds ``attempt`` and ``of`` (the
+#: attempts, this one counted), and either ``next_in`` (seconds until the retry, and ``error``, the
+#: exception it retries after) or ``model`` (the next model of the turn's chain, for a fail-over),
+#: or ``started`` once the retry's call is made. Not a terminal event. Only the native loop sends
+#: it; a caller that does not show it drops it.
+EVENT_RETRYING = "retrying"
 
 #: The ``stop_reason`` of a reply that stopped because it reached the model's OUTPUT cap — the
 #: Anthropic/Bedrock spelling, which a provider that owns its own decoding also emits.
