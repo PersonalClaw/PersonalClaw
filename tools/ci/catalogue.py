@@ -88,7 +88,7 @@ SECURITY: tuple[str, ...] = ("ordinary", "security")
 
 #: What a job installs before its steps run.
 TOOLCHAINS = frozenset(
-    {"uv", "uv-sync", "node", "npm-ci", "chromium", "tmux", "shellcheck", "dash"}
+    {"uv", "uv-sync", "node", "npm-ci", "chromium", "electron", "tmux", "shellcheck", "dash"}
 )
 
 #: The caches a job restores.
@@ -124,6 +124,9 @@ INSTALLS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("uv", "sync"), "uv-sync"),
     (("npm", "ci"), "npm-ci"),
     (("npx", "playwright", "install"), "chromium"),
+    # Electron's binary, which `npm ci` does not download: its install script fetches the build
+    # the locked package names and checks it against the checksums that package ships.
+    (("node", "node_modules/electron/install.js"), "electron"),
 )
 
 #: What a toolchain installs that a job's ``needs_*`` flag says it needs: the two agree.

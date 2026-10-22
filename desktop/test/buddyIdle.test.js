@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { electronUnavailable } = require("./helpers/electronHost");
+const { electronCommand, electronTier, electronUnavailable } = require("./helpers/electronHost");
 
 // ── The buddy's window, in a real Electron (#3831) ─────────────────────────────────────────────
 //
@@ -17,14 +17,16 @@ const { electronUnavailable } = require("./helpers/electronHost");
 // A page that keeps ticking while hidden is the negative control: the probe must see its timers,
 // or a clean run proves nothing.
 //
-// Skips where Electron cannot start (no binary, or Linux with no display), and says why, as
-// `bridgeLoads.test.js`'s tier 2 does.
+// Skips where Electron cannot start (no binary, or Linux with no display and no `xvfb-run`), and
+// says why, as `bridgeLoads.test.js`'s tier 2 does, unless `PCLAW_REQUIRE_ELECTRON=1` says the host
+// must run it, which makes a can't-start a failure (`helpers/electronHost.js`).
 
 /** How long the window stays hidden and watched: the issue's 60 s unless the env asks less. */
 const IDLE_MS = Number(process.env.PC_BUDDY_IDLE_MS) > 0 ? Number(process.env.PC_BUDDY_IDLE_MS) : 60_000;
 
 function probe(page, idleMs) {
-  const res = spawnSync(require("electron"), [path.join(__dirname, "helpers", "buddyProbe.js")], {
+  const { command, args } = electronCommand([path.join(__dirname, "helpers", "buddyProbe.js")]);
+  const res = spawnSync(command, args, {
     timeout: idleMs + 60_000,
     encoding: "utf8",
     env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
@@ -36,10 +38,13 @@ function probe(page, idleMs) {
 
 const unavailable = electronUnavailable();
 const root = unavailable ? null : probe("root", IDLE_MS);
-const skip = unavailable || (root && root.launchFailed ? `electron did not start: ${root.detail}` : false);
+const { skip, fail } = electronTier(unavailable || (root && root.launchFailed ? `electron did not start: ${root.detail}` : null));
 
 describe("the buddy's window in a real Electron", () => {
-  it("built without error, carrying only the buddy's bridge", { skip }, () => {
+  // Where the host must run this tier, a can't-start is a failure, not a skip.
+  if (fail) it("starts a real Electron on this host", () => assert.fail(fail));
+  const skipped = skip || (fail ? "this host cannot start Electron: the test above fails with why" : false);
+  it("built without error, carrying only the buddy's bridge", { skip: skipped }, () => {
     assert.equal(root.error, undefined, root.error);
     assert.deepEqual(root.preloadErrors, []);
     assert.equal(root.bridge.buddy, "object");
@@ -47,7 +52,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.bridge.desktop, "undefined", "no capability bridge in the buddy's window");
   });
 
-  it("shows without taking focus, on top, and kept out of capture", { skip }, () => {
+  it("shows without taking focus, on top, and kept out of capture", { skip: skipped }, () => {
     assert.equal(root.shown.visible, true);
     assert.equal(root.shown.focused, false);
     assert.equal(root.shown.focusedWindowIsBuddy, false);
@@ -57,7 +62,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.ok(root.shown.frames > 0, "shown, the page draws");
   });
 
-  it(`is idle while hidden: no timer, no frame, no wakeup and no CPU over ${IDLE_MS / 1000} s`, { skip }, () => {
+  it(`is idle while hidden: no timer, no frame, no wakeup and no CPU over ${IDLE_MS / 1000} s`, { skip: skipped }, () => {
     assert.equal(root.hidden.documentHidden, true, "a hidden window's page reads hidden, which the root unmounts on");
     assert.equal(root.hidden.timers, 0);
     assert.equal(root.hidden.frames, 0);
@@ -66,7 +71,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.ok(root.hidden.percentCPU < 0.5, `the renderer used ${root.hidden.percentCPU}% of a core while hidden`);
   });
 
-  it("can see a page that keeps ticking while hidden", { skip }, () => {
+  it("can see a page that keeps ticking while hidden", { skip: skipped }, () => {
     const ticks = probe("ticks", 4000);
     assert.equal(ticks.hidden.documentHidden, true);
     assert.ok(ticks.hidden.timers > 0, "the negative control scheduled nothing the probe could count");

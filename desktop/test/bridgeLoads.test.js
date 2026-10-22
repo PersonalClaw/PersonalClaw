@@ -27,10 +27,10 @@
  *     `sandbox: false` — must come back `object`, proving run 2 failed because of the sandbox
  *     and not because the file is broken.
  *
- * Tier 2 SKIPS where Electron cannot start (no binary — `npm ci` blocks lifecycle scripts, so
- * CI has no `electron/dist` — or no display on Linux). That skip is why tier 1 exists rather
- * than being folded into it: the portable tier is the one that guards CI, and it catches both
- * mutations the issue names. A skipped tier 2 says so out loud, with the reason.
+ * Tier 2 SKIPS where Electron cannot start (no binary, because `npm ci` runs no lifecycle script,
+ * or Linux with no display and no `xvfb-run`). CI installs the binary and has `xvfb-run`, so it
+ * runs there (#3831). Tier 1 stays the portable tier: it needs no binary and catches both mutations
+ * the issue names. A skipped tier 2 says so out loud, with the reason.
  */
 
 const { describe, it } = require("node:test");
@@ -38,7 +38,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { electronUnavailable } = require("./helpers/electronHost");
+const { electronCommand, electronTier, electronUnavailable } = require("./helpers/electronHost");
 
 const ROOT = path.resolve(__dirname, "..");
 const { CAPABILITIES, IPC_CHANNELS } = require("../capabilities");
@@ -147,9 +147,10 @@ function bridgedBlock() {
 
 /** One probe run. Returns the parsed `PC_PROBE` payload, or `{ launchFailed, detail }`. */
 function probe({ preload, sandboxOff, namespace }) {
+  const { command, args } = electronCommand([path.join(__dirname, "helpers", "bridgeProbe.js")]);
   const res = spawnSync(
-    require("electron"),
-    [path.join(__dirname, "helpers", "bridgeProbe.js")],
+    command,
+    args,
     {
       cwd: ROOT,
       timeout: 90_000,
@@ -185,18 +186,21 @@ const rail = unavailable
       sandboxOff: /\bsandbox:\s*false\b/.test(bridgedBlock()),
       namespace: "pclawDesktop",
     });
-const skip =
-  unavailable ||
-  (rail && rail.launchFailed ? `electron did not start: ${rail.detail}` : false);
+const { skip, fail } = electronTier(
+  unavailable || (rail && rail.launchFailed ? `electron did not start: ${rail.detail}` : null),
+);
 
 describe("the bridge loads in a real Electron renderer (tier 2)", () => {
-  it("window.pclawDesktop is an object, with no preload-error", { skip }, () => {
+  // Where the host must run this tier, a can't-start is a failure, not a skip.
+  if (fail) it("starts a real Electron on this host", () => assert.fail(fail));
+  const skipped = skip || (fail ? "this host cannot start Electron: the test above fails with why" : false);
+  it("window.pclawDesktop is an object, with no preload-error", { skip: skipped }, () => {
     assert.deepStrictEqual(rail.preloadErrors, [], "the preload errored during load");
     assert.strictEqual(rail.bridge, "object", `bridge was ${rail.bridge}`);
     assert.deepStrictEqual(rail.keys, BRIDGE_KEYS);
   });
 
-  it("the probe can SEE a dead bridge — a sandboxed relative require", { skip }, () => {
+  it("the probe can SEE a dead bridge — a sandboxed relative require", { skip: skipped }, () => {
     // Negative control. Same harness, same sandbox setting the bridged view now uses, pointed
     // at the one preload in this shell that does need Node.
     const dead = probe({
@@ -209,7 +213,7 @@ describe("the bridge loads in a real Electron renderer (tier 2)", () => {
     assert.match(dead.preloadErrors.join("|"), /module not found/);
   });
 
-  it("and that failure is the sandbox, not the file — sandbox: false bridges it", { skip }, () => {
+  it("and that failure is the sandbox, not the file — sandbox: false bridges it", { skip: skipped }, () => {
     // Positive control, which is what makes the run above a measurement rather than a guess:
     // the only difference is the flag.
     const live = probe({

@@ -208,9 +208,10 @@ directions:
   coverage shards' gate. A listed line that no mapped job runs any more fails the row too, so
   the list holds only lines that exist. No line is a step of two entries. An entry mapped to a
   job in each workflow (`security`) holds each workflow's lines on its own.
-- An install is toolchain, never a step: `uv sync`, `npm ci` and the Playwright browser install
-  are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
-  `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
+- An install is toolchain, never a step: `uv sync`, `npm ci`, the Playwright browser install and
+  Electron's binary (`node node_modules/electron/install.js`, which `npm ci` does not run) are
+  refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`, `chromium`,
+  `electron`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
   leans on another job's installs.
 - The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps, inside the
   setup action when the job calls it there), the environment, the JUnit reports and the shard
