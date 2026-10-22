@@ -279,7 +279,7 @@ class AutoNudgeService:
     def __init__(
         self,
         base_dir: Path | None = None,
-        on_fire: Callable[[NudgeLoop], Awaitable[bool]] | None = None,
+        on_fire: Callable[[NudgeLoop], Awaitable[bool | str]] | None = None,
     ) -> None:
         from personalclaw.config.loader import config_dir
 
