@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **All tasks opens again for someone whose sidebar still shows the starter set: the visit kept re-pinning Tasks, which reads back as Projects, until the page stopped with an error.**
+- **A link to setup on a home that has finished it opens Home, and Back from there returns to the page you followed it from instead of bringing you back to Home.**
 
 ## [0.2.5] — 2026-10-22
 

@@ -546,7 +546,10 @@ function AppInner() {
       // reads it ever ran.
       return
     }
-    if (route === 'onboarding') { navigate(peekOnboardingExit() || 'dashboard'); return }
+    // Replace, as the corrector below does: setup's address has nothing to show once setup is done,
+    // so a pushed exit left it in the history, and Back from where it landed came back to it and was
+    // sent forward again (#3819).
+    if (route === 'onboarding') { navigate(peekOnboardingExit() || 'dashboard', { replace: true }); return }
     // `renderable`, not `ROUTABLE.has` — `#/companion` is rendered by an early return below and is
     // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
     if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }

@@ -9,6 +9,9 @@
  *    `#/dashboard` (the URL corrector, #306), so this is what catches a link that stopped opening;
  *    a redirect (`#/files/<slug>` to its artifact, a row of `routeRedirects.ts`) is caught too,
  *    unless the entry names where it goes.
+ *  · **Back.** Opening it leaves no entry of its own in the history, so a redirect replaces the old
+ *    address: Back from where it lands returns to the page before it, not to the old address, which
+ *    would redirect again.
  *  · **What it shows.** A page: not the shell's loading fallback left in place, not the switch's
  *    "This view isn't available", not the error boundary, and not nothing. On Settings, the page
  *    the address names and not the Settings home, which is what an id Settings does not know opens,
@@ -108,6 +111,8 @@ function stillLoading(page: Element): boolean {
 interface Opened {
   /** The address the bar settled on. */
   readonly settled: string
+  /** The history entries opening it added. */
+  readonly pushed: number
   readonly page: Element
   readonly loading: boolean
   /** Whether the page has Settings' way back from one of its pages. */
@@ -120,6 +125,7 @@ async function open(entry: ShippedRoute): Promise<Opened> {
   cleanup()
   setUp = entry.home !== 'new'
   history.replaceState(null, '', `#/${entry.route}`)
+  const before = history.length
   const view = render(
     <StrictMode>
       <ThemeProvider><AppearanceProvider><PersonalityProvider><IdentityProvider>
@@ -138,6 +144,7 @@ async function open(entry: ShippedRoute): Promise<Opened> {
   const page = pageOf(view.container)
   return {
     settled: location.hash,
+    pushed: history.length - before,
     page,
     loading: stillLoading(page),
     settingsPage: !!view.container.querySelector('button[aria-label="Back to Settings"]'),
@@ -154,6 +161,7 @@ function problems(entry: ShippedRoute, opened: Opened): string[] {
       ? `the shell did not know it, and replaced it with #/dashboard (expected #/${expected})`
       : `settled on #/${settled}, not #/${expected}`)
   }
+  if (opened.pushed > 0) out.push(`it left ${opened.pushed} history entr${opened.pushed === 1 ? 'y' : 'ies'} of its own, so Back returns to the old address`)
   if (opened.loading) out.push('the shell\'s loading fallback never gave way to the page')
   const text = (opened.page.textContent ?? '').trim()
   if (!text && !opened.page.querySelector('[role], img, svg, canvas, iframe')) out.push('it shows nothing')
@@ -198,12 +206,23 @@ describe('🔴 control: each check reports the failure it is for', () => {
   it('a page that shows nothing, an error or the switch\'s fallback is reported', () => {
     const entry: ShippedRoute = { route: 'tools', from: ['documented'] }
     const page = (html: string) => { const el = document.createElement('div'); el.innerHTML = html; return el }
-    const opened = (html: string): Opened => ({ settled: '#/tools', page: page(html), loading: false, settingsPage: false })
+    const opened = (html: string): Opened => ({ settled: '#/tools', pushed: 0, page: page(html), loading: false, settingsPage: false })
     expect(problems(entry, opened(''))).toEqual(['it shows nothing'])
     expect(problems(entry, opened('<p>This page hit an error</p>'))).toEqual(['it shows "This page hit an error"'])
     expect(problems(entry, opened('<p>This view isn’t available.</p>'))).toEqual(['it shows "This view isn’t available."'])
     expect(problems(entry, { ...opened('<p>Loading…</p>'), loading: true })).toEqual(['the shell\'s loading fallback never gave way to the page'])
     expect(problems(entry, opened('<h1>Tools</h1>'))).toEqual([])
+  })
+
+  it('a redirect that pushes where it lands is reported, since Back would return to the old address', async () => {
+    const planted: ShippedRoute = { route: 'dashboard', from: ['documented'], lands: 'inbox' }
+    // Redirected as setup's exit redirected an address it had nothing to show for: a pushed hash.
+    const push = setTimeout(() => { location.hash = '#/inbox' }, 0)
+    try {
+      expect(problems(planted, await open(planted))).toEqual([
+        'it left 1 history entry of its own, so Back returns to the old address',
+      ])
+    } finally { clearTimeout(push) }
   })
 })
 
