@@ -16,6 +16,7 @@ import { createElement } from 'react'
 import { parseWidgetBlocks } from './widget/blocks'
 import { embedFor } from './content/contentTypes'
 import { MermaidBlock } from './widget/MermaidBlock'
+import { WebLink, webHref } from './WebLink'
 import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
 import { copyText } from '../app/clipboard'
@@ -219,24 +220,6 @@ function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBe
   )
 }
 
-/** The schemes a link in rendered text may open. */
-const WEB_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
-
-/** A link's destination if it is a web or email address, else undefined.
- *
- *  Parsed with the browser's own URL parser rather than matched as text, so this reads the
- *  scheme exactly where navigation will: the parser drops every tab and newline and trims
- *  control characters first, which is how `java<TAB>script:` is the script scheme to the page
- *  while a regex sees no scheme at all. A relative reference (a path on this gateway, a `#/`
- *  route, `//host`, a bare `host/path`) is refused too: it resolves against the dashboard's
- *  own origin, and nothing in a stored body gets to choose where inside this app a click
- *  lands. The returned value is the parser's serialisation — what the browser will follow. */
-function webHref(href: string): string | undefined {
-  let url: URL
-  try { url = new URL(href.trim()) } catch { return undefined }
-  return WEB_LINK_PROTOCOLS.has(url.protocol) ? url.href : undefined
-}
-
 /** A generated image in the artifact library: `/api/artifacts/<slug>/raw`, optionally with a
  *  `?version=N`. The one path on this gateway rendered text may load. */
 const ARTIFACT_IMAGE = /^\/api\/artifacts\/[^/?#\s]+\/raw(?:\?[^#\s]*)?$/
@@ -392,10 +375,9 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
   th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
   a({ href, children }: any) {
-    // `markdownUrl` has already emptied any href that is not a web or email address. Such a
-    // link keeps its words, styled as the link it was written as, and goes nowhere.
-    if (!href) return <span className="text-primary underline decoration-primary/40 underline-offset-2" title="Not opened: only web and email links open from here">{children}</span>
-    return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary">{children}</a>
+    // `markdownUrl` has already emptied any href that is not a web or email address; `WebLink`
+    // holds it to the same rule, and is the path every row drawn from this text links out by.
+    return <WebLink href={href} className="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary">{children}</WebLink>
   },
   // Lazy and capped so an image cannot blow out the column; a refused source shows its alt
   // text, a deleted artifact its Regenerate placeholder. (componentsWith() threads the chat
@@ -613,9 +595,24 @@ function componentsWith(
   chatSessionKey?: string,
   citations?: MemoryCitation[],
   beside = false,
+  sourceOf?: SourceOf,
 ): Record<string, React.ComponentType<any>> {
-  if (!onFileClick && !chatSessionKey && !(citations && citations.length) && !beside) return COMPONENTS
+  if (!onFileClick && !chatSessionKey && !(citations && citations.length) && !beside && !sourceOf) return COMPONENTS
   const base: Record<string, React.ComponentType<any>> = { ...COMPONENTS }
+  // A link the turn retrieved carries its source's number beside it; any other link is left as it is.
+  if (sourceOf) {
+    const Link = COMPONENTS.a
+    base.a = ({ href, children }: any) => {
+      const n = href ? sourceOf(href) : undefined
+      if (n === undefined) return <Link href={href}>{children}</Link>
+      return (
+        <span className="whitespace-nowrap">
+          <Link href={href}>{children}</Link>
+          <sup data-source-n={n} className="ml-[1px] tabular-nums text-on-surface-low"><span className="sr-only">source </span>{n}</sup>
+        </span>
+      )
+    }
+  }
   // Scope the inline-image renderer to the chat session so a deleted image's
   // placeholder can offer "Regenerate" (re-runs at the same slug, server recovers
   // the prompt from this session's tool history).
@@ -679,16 +676,19 @@ function stringifyChildren(v: unknown): string {
 }
 
 /** Plain markdown (no widget split) — the inner renderer. */
-function MarkdownText({ children, onFileClick, chatSessionKey, citations, beside = false }: {
-  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]; beside?: boolean
+function MarkdownText({ children, onFileClick, chatSessionKey, citations, beside = false, sourceOf }: {
+  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]; beside?: boolean; sourceOf?: SourceOf
 }) {
   // One set of components for as long as what they close over holds: a new set is a new type for
   // every block, which remounts it (losing the focus on its controls and highlighting it again).
-  const components = useMemo(() => componentsWith(onFileClick, chatSessionKey, citations, beside), [onFileClick, chatSessionKey, citations, beside])
+  const components = useMemo(() => componentsWith(onFileClick, chatSessionKey, citations, beside, sourceOf), [onFileClick, chatSessionKey, citations, beside, sourceOf])
   return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={components}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations, beside }: {
+/** The number of the source a link's address is, or undefined for a link that is no source. */
+export type SourceOf = (href: string) => number | undefined
+
+export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations, beside, sourceOf }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
   /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
    *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
@@ -712,6 +712,9 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
    *  its reading (`OpenBesideProvider`). Not while the text streams: a block still arriving has no
    *  end, so it neither offers it nor registers. */
   beside?: boolean
+  /** Badge each link that is one of the turn's sources with its number (a chat reply's, from
+   *  `pages/chat/turnSources`). Keep it stable: a new function is a new set of components. */
+  sourceOf?: SourceOf
 }) {
   // Defensive: callers occasionally pass agent/tool-authored content that isn't
   // a clean string (an object/array where a doc was expected). Coerce so a stray
@@ -732,7 +735,7 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
   const segments = widgets ? parseWidgetBlocks(text, streaming) : null
   const offerBeside = !!beside && !streaming
   if (!segments || (segments.length === 1 && segments[0].type === 'md')) {
-    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside}>{text}</MarkdownText></div>
+    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf}>{text}</MarkdownText></div>
   }
   let wi = 0
   return (
@@ -741,7 +744,7 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
     // keeps the float contained inside THIS turn.
     <div className={`flow-root text-on-surface ${className ?? ''}`}>
       {segments.map((seg, i) => {
-        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside}>{seg.content}</MarkdownText>
+        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf}>{seg.content}</MarkdownText>
         // Resolve the block's renderer through the ONE content registry (was a
         // hardcoded react/widget fork): adding an inline-embeddable type is now a
         // registry entry, not an edit here.

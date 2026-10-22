@@ -10,7 +10,7 @@ import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
 import { tabListKeys } from '../../lib/tabListKeys'
 
-type Tab = 'files' | 'links' | 'subagents' | 'side'
+type Tab = 'files' | 'sources' | 'subagents' | 'side'
 
 export interface SidePanelData {
   msgs: { q: string; a: string; runId: string; done: boolean }[]
@@ -23,7 +23,9 @@ export interface SidePanelData {
  *  panel (the outer `SidePanel` primitive owns the frame: title bar, close, resize,
  *  expand-to-full). Two tabs derived entirely client-side from the conversation:
  *   • Files — files touched this session; click → open in the file side panel.
- *   • Links — http(s) URLs surfaced in the conversation.
+ *   • Sources — the links the chat's answers cite that its own turns retrieved (a web search's
+ *     result, a page a fetch read; `turnSources`), by the titles they came back with. A link the
+ *     model wrote from memory is no source and is not listed (#3820).
  *  (+ Side — an isolated throwaway Q&A against the frozen session context.)
  *
  *  This panel owns NO navigation. It used to open on an "Index" tab — a user-message
@@ -42,14 +44,14 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
   const [tab, setTab] = useState<Tab>('files')
   // opening the Side tab opens the throwaway side buffer (lazy).
   useEffect(() => { if (tab === 'side') side?.onOpen() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
-  const counts = { files: activity.files.length, links: activity.links.length }
+  const counts = { files: activity.files.length, sources: activity.sources.length }
 
   // Ordered tab descriptors — drive both the tablist render and arrow-key nav.
   // Subagents tab appears only once at least one has been spawned this session: by the chat itself,
   // or as a task of a batch it started.
   const TABS: { key: Tab; label: string; icon: typeof FileText; count: number }[] = [
     { key: 'files', label: 'Files', icon: FileText, count: counts.files },
-    { key: 'links', label: 'Links', icon: Link2, count: counts.links },
+    { key: 'sources', label: 'Sources', icon: Link2, count: counts.sources },
     ...(subagents.length ? [{ key: 'subagents' as Tab, label: 'Subagents', icon: Bot, count: subagents.length }] : []),
     ...(side ? [{ key: 'side' as Tab, label: 'Side', icon: MessagesSquare, count: side.msgs.length }] : []),
   ]
@@ -112,17 +114,17 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
                 ))}
               </div>
         )}
-        {tab === 'links' && (
-          activity.links.length === 0
-            ? <Empty icon={Link2} text="No links surfaced yet." />
+        {tab === 'sources' && (
+          activity.sources.length === 0
+            ? <Empty icon={Link2} text="No sources yet: a link shows here once an answer cites a page its turn searched or read." />
             : <div className="flex flex-col gap-px">
-                {activity.links.map((l) => (
-                  <motion.a key={l.url} href={l.url} target="_blank" rel="noreferrer" title={l.url}
+                {activity.sources.map((l) => (
+                  <motion.a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" title={l.url}
                     variants={fadeEnter} initial="initial" animate="animate"
                     className="group flex items-center gap-2 rounded-md px-2.5 py-2 transition-colors hover:bg-surface-high">
                     <Link2 size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
-                      <span data-type="body-s" className="block truncate text-on-surface">{l.label}</span>
+                      <span data-type="body-s" className="block truncate text-on-surface">{l.title}</span>
                       <span data-type="caption" className="block truncate text-on-surface-low">{l.url}</span>
                     </span>
                     <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />

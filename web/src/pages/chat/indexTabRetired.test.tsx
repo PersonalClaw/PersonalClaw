@@ -42,11 +42,13 @@ const E2E = join(WEB, 'e2e')
 const SELF = join('src', 'pages', 'chat', 'indexTabRetired.test.tsx')
 
 /** A real transcript that WOULD have produced Index rows: two user turns (the outline's only
- *  source), plus assistant prose carrying a path and a URL so the surviving tabs are non-empty.
+ *  source), plus assistant prose carrying a path and citing a page its turn read, so the surviving
+ *  tabs are non-empty.
  *  Built through `hydrateTurns`, not by hand, so the turn shapes are the ones the page renders. */
 const MESSAGES: HistMsg[] = [
   { role: 'user', content: 'run the build' },
   { role: 'assistant', content: 'starting' },
+  { role: 'tool', content: 'web_fetch', meta: { tool_call_id: 'tc-1', input: '{"url":"https://example.com/build"}', output: '# Build', done: true } },
   { role: 'assistant', content: 'done — touched src/pages/chat/sessionMap.ts, see https://example.com/build' },
   { role: 'user', content: 'now the tests' },
   { role: 'assistant', content: 'all green' },
@@ -70,15 +72,15 @@ describe('The Activity panel renders no Index tab', () => {
     expect(ENTRIES.map((e) => e.preview)).toEqual(USER_TEXTS)
     // The surviving tabs are non-empty, so the render below is a populated panel.
     expect(ACTIVITY.files.length, 'the fixture surfaced no file, so the Files control below is vacuous').toBeGreaterThan(0)
-    expect(ACTIVITY.links.length, 'the fixture surfaced no link').toBeGreaterThan(0)
+    expect(ACTIVITY.sources.length, 'the fixture surfaced no source').toBeGreaterThan(0)
   })
 
-  it('🔑 no tab named "Index" exists, and Files/Links still do (the control)', () => {
+  it('🔑 no tab named "Index" exists, and Files/Sources still do (the control)', () => {
     const panel = render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} />)
     // CONTROL FIRST: the same query finds the tabs that survive. Without this, a panel that failed
     // to render — or a renamed role — would report "no Index tab" and look like a pass.
     expect(panel.getByRole('tab', { name: 'Files' })).toBeTruthy()
-    expect(panel.getByRole('tab', { name: 'Links' })).toBeTruthy()
+    expect(panel.getByRole('tab', { name: 'Sources' })).toBeTruthy()
     // THE CONTRACT.
     expect(
       panel.queryByRole('tab', { name: 'Index' }),
@@ -86,7 +88,7 @@ describe('The Activity panel renders no Index tab', () => {
     ).toBeNull()
     // The whole tablist, so a tab reachable under some other accessible name is caught too.
     const names = panel.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))
-    expect(names).toEqual(['Files', 'Links'])
+    expect(names).toEqual(['Files', 'Sources'])
     panel.unmount()
   })
 
@@ -164,7 +166,7 @@ describe('The panel owns no navigation at all', () => {
 //
 // 🪤 THE SCAN WALKS THE TREE RATHER THAN READING A FILE LIST, because an enumerated rail cannot see
 // its own blind spot: a reinstated index in a file nobody thought to list would pass. It also runs
-// the SAME walker over the SURVIVING siblings (`activity.files`, `activity.links`), so a walker that
+// the SAME walker over the SURVIVING siblings (`activity.files`, `activity.sources`), so a walker that
 // read nothing — wrong cwd, wrong extension filter, a `readdirSync` that threw and was swallowed —
 // fails loudly instead of reporting a clean tree.
 
@@ -209,11 +211,11 @@ describe('Nothing in the tree consumes an activity index', () => {
   })
 
   it('🔴 the SAME scanner finds the surviving siblings (the control)', () => {
-    // `activity.files` / `activity.links` are read by exactly the same kind of expression the
+    // `activity.files` / `activity.sources` are read by exactly the same kind of expression the
     // deleted `activity.index` was. If the scanner cannot find them it cannot find an index either,
     // and every assertion in the next test is a false negative.
     expect(hits(scanned, /activity\.files/), 'the scanner found no activity.files consumer — it is not reading real source').not.toHaveLength(0)
-    expect(hits(scanned, /activity\.links/)).not.toHaveLength(0)
+    expect(hits(scanned, /activity\.sources/)).not.toHaveLength(0)
     expect(hits(scanned, /deriveActivity\(/), 'the scanner found no deriveActivity call at all').not.toHaveLength(0)
     // …and the id-family pattern DOES hit the panel that would carry a reinstated index id, so the
     // production-scoped absence below is a real absence and not an unreachable file set.

@@ -12,7 +12,7 @@ import type { SubagentCard } from './chatTypes'
 // where it shows how it ended. The list had a card only for a helper that started, and a helper
 // whose start she declined never did.
 
-const ACTIVITY = { files: [], links: [] }
+const ACTIVITY = { files: [], sources: [] }
 
 const DECLINED = {
   id: 'a1b2c3d4', session: 'chat-review', task: 'Review the last commit', agent: '',

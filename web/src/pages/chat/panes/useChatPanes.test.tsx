@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, cleanup, waitFor } from '@testing-library/react'
 import { useRef, useState } from 'react'
 import type { RouteProps } from '../../../app/useQueryState'
-import { userTurn, assistantTurn, type ChatTurn, type SubagentCard } from '../chatTypes'
+import { userTurn, type ChatTurn, type SubagentCard } from '../chatTypes'
 import { requestToolResultFull } from '../toolResultBridge'
 
 // ── The chat's docked panes ─────────────────────────────────────────────────────────────────────
@@ -24,9 +24,13 @@ vi.mock('../../../app/appSdk', () => ({ notify: h.notify }))
 let useChatPanes: typeof import('./useChatPanes')['useChatPanes']
 
 type SideMsg = { q: string; a: string; runId: string; done: boolean }
+// The answer cites a page its turn read, so it is one of the chat's sources.
 const TURNS: ChatTurn[] = [
   userTurn('Fix the feed'),
-  assistantTurn('Edited `src/fetch.py`; see https://docs.example.com/etag for the header.'),
+  { role: 'assistant', segments: [
+    { kind: 'tool', id: 'tc-1', tool: 'web_fetch', input: '{"url":"https://docs.example.com/etag"}', output: '# ETag', done: true },
+    { kind: 'text', text: 'Edited `src/fetch.py`; see https://docs.example.com/etag for the header.' },
+  ] },
 ]
 const CARDS: SubagentCard[] = [
   { id: 'a', task: 'scan', agent: 'researcher', done: false },
@@ -91,10 +95,10 @@ describe('useChatPanes keeps each panel on the URL', () => {
     expect(result.current.p.openFile).toBeNull()
   })
 
-  it('lists the files and links the transcript touched', () => {
+  it('lists the files the transcript touched and the sources its answers cite', () => {
     const { result } = mount()
     expect(result.current.p.activity.files.map((f) => f.path)).toEqual(['src/fetch.py'])
-    expect(result.current.p.activity.links.map((l) => l.label)).toEqual(['docs.example.com'])
+    expect(result.current.p.activity.sources.map((l) => l.title)).toEqual(['ETag'])
   })
 })
 
