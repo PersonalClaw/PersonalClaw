@@ -25,6 +25,10 @@ export const GLYPHS: Record<Mark, readonly string[]> = {
  *  badge on the upper edge. */
 export const PAD = 0.2
 
+/** The badge has its ring of dots from this orb size up; below it, its mark fills it, and a waiting
+ *  mark's badge is solid (`solidBadge`). */
+export const RING_FROM = 24
+
 export const dot = (x: number, y: number, r: number, a: number): Dot => ({ x, y, z: 0, r, white: 0, a })
 
 /** The wash: a soft field of dots rising from the orb's lower edge, strongest at the edge. */

@@ -14,6 +14,7 @@ import { expr, physics, spring } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type PhaseFamily, type PhaseTone } from '../lib/workPhase'
 import { ORB_LOOKS, type AgentOrbSize } from '../ui/AgentOrb'
 import { ORB_FPS } from '../ui/orbDots'
+import type { Pose, PoseKey } from '../ui/buddy/useOrbPose'
 
 /** The phases the spike plays: each of the four families, and two of the active family's drawings. */
 export type RigPhase = 'idle' | 'thinking' | 'tool' | 'approval' | 'input' | 'error' | 'done'
@@ -47,23 +48,13 @@ export function rigLook(phase: RigPhase): RigLook {
   return { family, drawing: orb.drawing, moves: orb.moves, ink: orb.ink, badge: BADGES[phase], tone, label: phaseLabel(phase) }
 }
 
-/** What a pose does to the dots and the whole orb. Every value is a plain number a preset moves. */
-export interface Pose {
-  /** The share of the drawing's dots shown: 1 full, less for quiet's sparse orb. */
-  density: number
-  /** How far the dots sit from the centre: 1 as drawn, less when an approval draws them in. */
-  spread: number
-  /** 0 to 1: how far the dots crowd toward the lower edge, as an error's droop. */
-  sink: number
-  /** The whole orb's rise (negative) or fall, as a share of its size: a question lifts it. */
-  lift: number
-  /** The done flourish: how far the dots have turned about the centre, in turns. */
-  swirl: number
-  /** 0 to 1: the alert's wash, rising from the orb's lower edge in the alert's tone. */
-  wash: number
-}
-export type PoseKey = keyof Pose
-export const POSE_KEYS: readonly PoseKey[] = ['density', 'spread', 'sink', 'lift', 'swirl', 'wash']
+/** What a pose does to the dots and the whole orb, every value a plain number a preset moves: the
+ *  share of the drawing's dots shown (1 full, less for quiet's sparse orb), how far they sit from
+ *  the centre (less when an approval draws them in), how far they crowd toward the lower edge (an
+ *  error's droop), the whole orb's rise (negative, a question) or fall as a share of its size, the
+ *  done flourish's turn, and the alert's wash rising from the lower edge. The buddy orb's own
+ *  (`ui/buddy/useOrbPose.ts`). */
+export { POSE_KEYS, type Pose, type PoseKey } from '../ui/buddy/useOrbPose'
 
 /** Quiet's dots: sparse, in the neutral. */
 const SPARSE = 0.45

@@ -72,12 +72,16 @@ const BADGE_GLYPHS: Record<OrbBadge, string> = { approval: '!', input: '?', erro
 type Contrast = 'normal' | 'more' | 'forced'
 const media = (query: string) => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
 const MEDIA_QUERIES = ['(prefers-reduced-motion: reduce)', '(forced-colors: active)', '(prefers-contrast: more)']
+/** The contrast the platform asks of an orb's dots: forced colours, more contrast, or neither. */
+export function orbContrast(): Contrast {
+  return media('(forced-colors: active)') ? 'forced' : media('(prefers-contrast: more)') ? 'more' : 'normal'
+}
 /** What the platform asks of the orb, read when it renders: `reduced|contrast`. */
 function mediaSnapshot(): string {
-  const contrast: Contrast = media('(forced-colors: active)') ? 'forced' : media('(prefers-contrast: more)') ? 'more' : 'normal'
-  return `${prefersReducedMotion() ? 'reduced' : 'motion'}|${contrast}`
+  return `${prefersReducedMotion() ? 'reduced' : 'motion'}|${orbContrast()}`
 }
-function onMediaChange(cb: () => void): () => void {
+/** Calls `cb` when reduced motion or the contrast asked for changes. */
+export function onOrbMediaChange(cb: () => void): () => void {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {}
   const lists = MEDIA_QUERIES.map((q) => window.matchMedia(q))
   for (const l of lists) l.addEventListener?.('change', cb)
@@ -128,7 +132,7 @@ export function AgentOrb({ phase, size = 20, className }: {
 }) {
   const look = ORB_LOOKS[phase]
   const { mode } = useMode()
-  const [motion, contrast] = useSyncExternalStore(onMediaChange, mediaSnapshot, mediaSnapshot).split('|') as ['reduced' | 'motion', Contrast]
+  const [motion, contrast] = useSyncExternalStore(onOrbMediaChange, mediaSnapshot, mediaSnapshot).split('|') as ['reduced' | 'motion', Contrast]
   const hidden = useSyncExternalStore(onVisibilityChange, visibility, visibility) === 'hidden'
   const token = contrast === 'forced' ? 'CanvasText' : contrast === 'more' ? '--color-on-surface' : look.ink === 'alive' ? '--color-orb-alive' : '--color-orb-rest'
   const ink = useInk(token)

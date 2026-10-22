@@ -13,15 +13,14 @@ import { resolvePreset } from 'thinking-orbs/engine'
 import type { PhaseTone } from '../lib/workPhase'
 import { tokenValue, type Mode } from '../design/tokenSheet'
 import { modeOf, poseFrame } from './arrange'
-import { PAD, SOLID_MARKS, badgeDots, solidBadge, washDots } from './inPlaceParts'
+import { PAD, RING_FROM, SOLID_MARKS, badgeDots, solidBadge, washDots } from './inPlaceParts'
 import { FAMILIES, FAMILY_STATES, TRAY_SIZES, TRAY_STATES, familyOf, poseSet, stillOf, wordsOf, type Frame, type PoseSpec, type TrayStill } from './poseSet'
 import { tunedDrawingFor } from './poses'
 
+export { RING_FROM }
+
 /** The instant a moving frame's dots are drawn at, in the drawing's own seconds. */
 export const MOVING_AT = 2.1
-/** The badge has its ring of dots from this orb size up; below it, its mark fills it, and a waiting
- *  mark's badge is solid (`solidBadge`). */
-export const RING_FROM = 24
 /** A dot fainter than this is not drawn. */
 const FAINT = 0.03
 /** The sizes the contact sheet draws every pose at, and the size it draws motion frames at. */

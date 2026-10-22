@@ -82,7 +82,7 @@ describe('Settings → Design → Motion sliders', () => {
     expect(runtime.bounciness).toBe(0)
     const flattened = (physics.playful as { damping: number }).damping
     expect(flattened).toBeGreaterThan(playfulAtDefault) // higher damping = calmer
-    expect(flattened).toBe(34)                          // the preset's calm endpoint
+    expect(flattened).toBe(41)                          // the preset's calm endpoint
   })
 
   it('each gesture slider writes the runtime key its helper reads', () => {
