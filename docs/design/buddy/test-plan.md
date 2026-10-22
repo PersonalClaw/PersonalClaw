@@ -89,6 +89,36 @@ A scripted day in the life on a scratch home with fake model and channel service
 steps, an approval, a question, a failure, finished work, listening, absence and return, a restart,
 quiet hours. Every surface is recorded and compared against the design.
 
+## The playground
+
+`#/buddy/playground` is where the buddy is played before any desktop surface ships ([#3892]). It is
+a full-screen route outside the navigation, like `#/companion`, and it ships in release builds:
+nothing links to it but its address, so the owner can play it on an installed build. It mounts the
+real state machine and the real orb (`web/src/pages/buddy/`) and mocks only their inputs: the work
+and its phases, the waiting list, the connection, push-to-talk, the pointer, a drag, idle, the
+owner's own switches, and a clock that fires the machine's timers at their lengths. It reads
+nothing from the gateway, and an answer the machine asks to send is written in its log and never
+sent.
+
+- **Play** (`?tab=play`): the stage, one control per input, the clock and the event log. The stage
+  holds the buddy as each surface would (the top-edge island in its peek, compact and expanded
+  rooms, or the floating orb with its bubble and card), at 320, 390 or 412 px or the page's width,
+  with Waiting on You, Running Now and the focused work beside it. A control the matrix says cannot
+  happen now is off and says why. The look controls are the app's own scheme, mode and two motion
+  dials.
+- **A day** (`?tab=day`): the scripted day (`scriptedDay.ts`) on the playground's clock, played at
+  1×, 4× or 16×, paused, or a step at a time. The acceptance run reuses it ([#3902]).
+- **Poses** (`?tab=poses`): every pose of the four status families at 18, 24, 48 and 96 px and the
+  focused card's orb for each family, each as its still with its words beside it, in the current
+  scheme and mode. The renderer's snapshots are taken from it.
+
+Its tests: `PlaygroundPage.test.tsx` enters every situation outside the matrix's later-work list
+through the controls and sends every such event from them, and uses every control with nothing
+reaching the network; `playground.test.ts` runs the day through the reducer; and
+`web/e2e/buddyPlayground.spec.ts` steps the day in the browser, saving the stage after every step in
+light and dark, at 320, 390 and 412 px, in high contrast and at 200% text zoom, each with an
+overflow check. The three tabs are in `web/e2e/routes.ts`, so the UI quality check covers them.
+
 ## Later work
 
 ### Play and drop tests
@@ -104,6 +134,7 @@ Later work: play ([#3894]) and drop and quick ask ([#3895]).
 
 [#3832]: https://github.com/PersonalClaw/PersonalClaw/issues/3832
 [#3890]: https://github.com/PersonalClaw/PersonalClaw/issues/3890
+[#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902

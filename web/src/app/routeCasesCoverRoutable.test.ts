@@ -137,8 +137,8 @@ describe('an unknown route corrects its URL', () => {
 
   it('🪤 vacuity floor — both route lists were actually found', () => {
     // Either regex matching nothing would make the check above pass on an empty array.
-    expect(earlyReturnRoutes().sort()).toEqual(['companion', 'onboarding'])
-    expect(shellRoutes().sort()).toEqual(['companion', 'onboarding'])
+    expect(earlyReturnRoutes().sort()).toEqual(['buddy', 'companion', 'onboarding'])
+    expect(shellRoutes().sort()).toEqual(['buddy', 'companion', 'onboarding'])
   })
 
   it('🔴 the correction is downstream of the onboarding branches, in ONE effect (#3506)', () => {

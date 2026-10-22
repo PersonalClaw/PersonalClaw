@@ -130,7 +130,8 @@ later work below.
 - [`test-plan.md`](test-plan.md): [logic](test-plan.md#logic), [consent](test-plan.md#consent),
   [pixels](test-plan.md#pixels), [motion](test-plan.md#motion), [cost](test-plan.md#cost),
   [the real window](test-plan.md#the-real-window),
-  [accessibility](test-plan.md#accessibility) and [the acceptance run](test-plan.md#acceptance-run).
+  [accessibility](test-plan.md#accessibility), [the acceptance run](test-plan.md#acceptance-run)
+  and [the playground](test-plan.md#the-playground).
 - [`decisions/`](decisions/README.md): where the rig decision and the originality record go.
 
 ## Later work

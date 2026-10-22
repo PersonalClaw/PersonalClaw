@@ -131,7 +131,7 @@ const familyPose = (state: BuddyState): PoseSpec => {
 
 /** The focused card's orb for each family: the family's own pose at the card's size, for the
  *  phase the card most often shows it in. */
-const CARD_STATES: Record<PhaseFamily, BuddyState> = { quiet: 'done', active: 'tool', waiting: 'approval', blocked: 'error' }
+export const CARD_STATES: Record<PhaseFamily, BuddyState> = { quiet: 'done', active: 'tool', waiting: 'approval', blocked: 'error' }
 
 /** The pose under an alert, which an answer goes back to: the work running. */
 const UNDER = 'tool'

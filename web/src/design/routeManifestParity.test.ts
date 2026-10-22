@@ -104,6 +104,15 @@ function scannedRoutes(): string[] {
   return [...manifestRoutes(), ...nonNavRoutes(), ...viewRoutes()]
 }
 
+/** The routes the shell renders itself, full-screen (`SHELL_ROUTES` in App.tsx): `#/companion`,
+ *  the buddy playground. A manifest entry may visit one; it is a page the shell routes to. */
+function shellRoutes(): string[] {
+  const src = readFileSync(join(WEB, 'src/app/App.tsx'), 'utf8')
+  const block = src.match(/const SHELL_ROUTES = new Set\(\[(.*?)\]\)/s)
+  if (!block) throw new Error('could not locate the SHELL_ROUTES literal in App.tsx')
+  return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+}
+
 /** The string literals in `ROUTABLE` that are NOT spread in from NAV — the non-nav routes. */
 function routableExtras(): string[] {
   const src = readFileSync(join(WEB, 'src/app/App.tsx'), 'utf8')
@@ -212,7 +221,8 @@ describe('e2e route manifest vs NAV', () => {
       // every entry was a bare `#/<id>`, and reddened the moment one carried a path parameter
       // (`app/not-a-real-app`, the app-hosting shell). The rule is "the shell still routes to this
       // page", and the page is named by the first segment.
-      const routable = new Set(routableExtras())
+      const routable = new Set([...routableExtras(), ...shellRoutes()])
+      expect(shellRoutes()).toContain('companion')
       const firstSegment = (r: string) => r.split('?')[0].split('/')[0]
       const stale = nonNavRoutes().filter((r) => !routable.has(firstSegment(r)))
       expect(stale, 'NON_NAV_ROUTES names routes App.tsx no longer routes to').toEqual([])
