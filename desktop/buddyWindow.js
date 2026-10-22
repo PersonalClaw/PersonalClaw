@@ -281,8 +281,10 @@ const BUDDY_CHANNELS = Object.freeze({
   menu: `${BUDDY_PREFIX}menu`,
 });
 
-/** What main tells the buddy's page (#3832), the only two messages that go that way: a ring, which
- *  carries nothing and says the lists moved (read them again), and the doorbell's connection. */
+/** What main tells the buddy's page (#3832), the only messages that go that way: a ring, which
+ *  carries nothing and says the lists moved (read them again); the doorbell's connection; where a
+ *  drag left the buddy; whether one of the app's own windows is full screen; a tap on an alert's
+ *  notification; whether the owner is away; and whether the owner hid the buddy. */
 const BUDDY_PUSHES = Object.freeze({
   ring: `${BUDDY_PREFIX}ring`,
   connection: `${BUDDY_PREFIX}connection`,

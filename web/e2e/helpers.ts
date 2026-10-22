@@ -701,9 +701,25 @@ export async function expectRouteScreenshot(
       `the failure to the next run. Raise the stage's budget in \`visual.spec.ts\`, or run on a\n` +
       `quieter host.`,
   ).toEqual([])
+  await pinGreeting(page)
   await expect(page).toHaveScreenshot(`${name}.png`, {
     fullPage: true,
     animations: 'disabled',
+  })
+}
+
+/** The greeting on Home and a new chat names the time of day the run happens at ("Good morning,
+ *  Keyur"), so a golden taken in the evening failed every morning run, and the goldens disagreed
+ *  among themselves. Its words are written as one time of day before the capture; its type, place
+ *  and colour are still photographed. The accessibility trees fold the same words
+ *  (`surfaceChecks.ts`, `Good <time of day>`). */
+export async function pinGreeting(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const said = /^Good (morning|afternoon|evening)\b/
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (n.nodeValue && said.test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(said, 'Good afternoon')
+    }
   })
 }
 
