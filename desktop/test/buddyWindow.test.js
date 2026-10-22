@@ -125,7 +125,7 @@ describe("what the page reads of its window", () => {
     buddy.hide();
     const hide = win.calls.map((c) => c[0]);
     assert.deepEqual(win.calls.filter((c) => c[0] === "setBackgroundThrottling"), [["setBackgroundThrottling", true]]);
-    assert.ok(hide.indexOf("setBackgroundThrottling") < hide.indexOf("hide"), "throttled again before it hides, so the page reads hidden");
+    assert.ok(hide.indexOf("setBackgroundThrottling") > hide.indexOf("hide"), "throttled again after it hides: before, macOS never told the page it was hidden");
   });
 });
 
