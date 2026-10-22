@@ -8,6 +8,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-10-22
+
+A patch release on 0.2.4. A new install can add `bedrock-models`, and every other app built on
+botocore, again: PersonalClaw keeps python-dateutil below 3, as every botocore requires, where
+python-dateutil 3.0.0, released 2026-10-21, reached fresh installs. An Attended loop that asked you
+a question no longer takes a paid worker turn at every idle interval while it waits, and no worker
+turn starts for a loop at its cycle cap, deadline or cost budget. It installs over 0.2.4.
+
+### Fixed
+
+- **A new install can add the Amazon Bedrock app, and every other app built on botocore, again: PersonalClaw keeps python-dateutil below 3, since every botocore requires that and python-dateutil 3.0.0 (released 2026-10-21) reached fresh installs.**
+- **A loop waiting on your answer spends nothing: an Attended loop whose worker asked you a question kept taking a paid worker turn at every idle interval while it waited, and the turn that asked was asked again for a finding. No worker turn starts while a loop waits on you, is paused or held, or is at its cycle cap, its deadline or its cost budget, in any state, so a loop capped at three cycles no longer reads "cycle 4/3".**
+- **On the phone, each loop's Send nudge button names the loop it sends to, so a screen reader can tell one loop's nudge from another's.**
+- **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**
+- **Home no longer asks for an animation frame each time one of its reads answers while you leave it be, from its buttons or its Discover deck: each button re-made its pointer sheen's subscription on every render, whether or not it drew the sheen, and the deck's cards measured themselves on every render rather than when one moves.**
+- **A permission or task mode pick the gateway doesn't answer in 15 s now says so beside its control and lets the next pick through, instead of holding every later pick until a reload; and a pick that reaches the gateway after a newer one changes nothing; a refusal stays beside the control until you open it or pick again.**
+- **An approval behind an open dialog no longer answers to ⌘Enter (Ctrl+Enter elsewhere), even while the browser still reports focus on it, and Escape in a dialog an approval opened closes that dialog's detail and leaves the approval's second confirmation as it was.**
+- **With Bounciness at 0 (Settings → Design → Motion), nothing springs past where it lands: quick controls and the few playful moments still overshot a little there.**
+- **When a message is sent, the composer's Send button pops once as it turns into a check: the pop asked a spring for three steps, which a spring cannot take, so it failed and never played.**
+
 ### Added
 
 - **A chat's Context view lists what fills its context window, part by part: instructions and tools, memory and profile, attached files, the conversation and tool results, each with its tokens, its share of the window and the action that frees it (Review tools, Review what's recalled, Compact now), counted by the gateway where the request is assembled, and "not measured" for a part it doesn't count (an agent CLI's own history); `/context` prints the same list in the chat.**
@@ -31,18 +51,6 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A project's tasks are a view of the project: its page switches between Overview and Tasks, the task list and board held to it; the sidebar drops its Tasks row, and All tasks, every project's, is a ⌘K row and a control on the Projects page, at `#/tasks` as before.**
 - **An empty Knowledge, Memory, Triggers, Workflows, Agents, Skills or Apps page shows one Discover tip under its own empty state, for another page, with its link and its dismiss, and the end of first setup shows one too; a tip dismissed there is gone from Discover as well, and with Discover off or nothing left in it, no tip shows.**
 - **The sidebar has no Terminal row: the terminal is the drawer on every page (⌘J or ⌘\`, or the corner's toggle), and its full page stays at `#/terminal`, the drawer's Open full and a ⌘K row.**
-
-### Fixed
-
-- **On the phone, each loop's Send nudge button names the loop it sends to, so a screen reader can tell one loop's nudge from another's.**
-- **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**
-- **Home no longer asks for an animation frame each time one of its reads answers while you leave it be, from its buttons or its Discover deck: each button re-made its pointer sheen's subscription on every render, whether or not it drew the sheen, and the deck's cards measured themselves on every render rather than when one moves.**
-- **A permission or task mode pick the gateway doesn't answer in 15 s now says so beside its control and lets the next pick through, instead of holding every later pick until a reload; and a pick that reaches the gateway after a newer one changes nothing; a refusal stays beside the control until you open it or pick again.**
-- **A new install can add the Amazon Bedrock app, and every other app built on botocore, again: PersonalClaw keeps python-dateutil below 3, since every botocore requires that and python-dateutil 3.0.0 (released 2026-10-21) reached fresh installs.**
-- **An approval behind an open dialog no longer answers to ⌘Enter (Ctrl+Enter elsewhere), even while the browser still reports focus on it, and Escape in a dialog an approval opened closes that dialog's detail and leaves the approval's second confirmation as it was.**
-- **A loop waiting on your answer spends nothing: an Attended loop whose worker asked you a question kept taking a paid worker turn at every idle interval while it waited, and the turn that asked was asked again for a finding. No worker turn starts while a loop waits on you, is paused or held, or is at its cycle cap, its deadline or its cost budget, in any state, so a loop capped at three cycles no longer reads "cycle 4/3".**
-- **With Bounciness at 0 (Settings → Design → Motion), nothing springs past where it lands: quick controls and the few playful moments still overshot a little there.**
-- **When a message is sent, the composer's Send button pops once as it turns into a check: the pop asked a spring for three steps, which a spring cannot take, so it failed and never played.**
 
 ## [0.2.4] — 2026-10-21
 
