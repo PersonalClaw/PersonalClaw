@@ -144,14 +144,10 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           // the skeleton and the group is never remounted. Areas are keyed by name,
           // never by index or count, so re-fetching cannot remount a surviving band.
           <EntranceGroup className="flex flex-col gap-2xl">
-            {/* The copy pass: Discover is named as the disclosure arm beside the
-                starter rail, so the two mechanisms read as one idea — the rail holds a
-                surface back until you reach it, and this is where you find out it exists. */}
             <EntranceRegion>
               <p data-type="body-m" className="max-w-[520px] text-on-surface-var">
-                The parts of PersonalClaw you haven&rsquo;t tried yet. Your sidebar starts short and
-                grows as you open things &mdash; this is where you find out what else is there. Each
-                tip links straight into the feature; dismiss any you&rsquo;re not interested in.
+                The parts of PersonalClaw you haven&rsquo;t tried yet. Each tip links straight into the
+                feature; dismiss any you&rsquo;re not interested in.
               </p>
               {/* The restore control also has to live HERE, not only in the empty state where
                   the count it gates on was specified. A user with two tips showing and five

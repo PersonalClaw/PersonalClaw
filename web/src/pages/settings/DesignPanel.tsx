@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Eyebrow } from '../../ui/Eyebrow'
-import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Sliders, Boxes, Layout as LayoutIcon, PanelLeft, Type, Save } from 'lucide-react'
+import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Sliders, Boxes, Layout as LayoutIcon, Type, Save } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
@@ -19,8 +19,7 @@ import { AgentOrbStates } from './AgentOrbStates'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY } from '../../design/personalities'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
-import { PanelHeader, Row, Section, Toggle } from './settingsUI'
-import { useNavDisclosure } from '../../app/navDisclosure'
+import { PanelHeader, Section } from './settingsUI'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Design subpage. Cleanly separated concerns:
@@ -180,44 +179,10 @@ export function DesignPanel() {
       {/* ── 4. SHAPE ── (content width is a preset in Account → Layout) */}
       <ControlSection title="Layout & shape" icon={LayoutIcon} subtitle="Interface density (comfortable / dense / CLI) and corner roundness." groups={LAYOUT_GROUPS} />
 
-      {/* ── 5. NAVIGATION — the expert-mode half of progressive disclosure ──
-          The rail carries its own "Everything / Show fewer" row; this is the same one setting,
-          not a second mechanism, so that a user who is in Settings looking for it finds it. */}
-      <NavigationSection />
-
       <div>
         <Button variant="ghost" size="sm" onClick={resetEverything}><RotateCcw size={15} /> Reset everything to defaults</Button>
       </div>
     </div>
-  )
-}
-
-/** Expert mode — show every sidebar destination, permanently.
- *
- *  Deliberately NOT a token/appearance override: this is a nav preference the shell reads
- *  live (`app/navDisclosure.ts`), so it is a plain switch over that store rather than another
- *  entry in the appearance blob. The panel does not know the rail's id list and must not
- *  import it — a static import of `app/App.tsx` from a lazily-loaded settings panel is what
- *  pulls the whole shell into the first-load bundle (the `INEFFECTIVE_DYNAMIC_IMPORT`
- *  trap) — so the hint counts what this store itself knows: the surfaces already
- *  revealed. */
-function NavigationSection() {
-  const { mode, pinned, setMode } = useNavDisclosure()
-  const expert = mode === 'expert'
-  const hint = expert
-    ? 'The sidebar lists every destination.'
-    : pinned.length
-      ? `The essentials, plus the ${pinned.length} surface${pinned.length === 1 ? '' : 's'} you have opened. Anything else joins the sidebar the first time you open it.`
-      : 'Just the essentials. Any other surface joins the sidebar the first time you open it — from a link, from search (⌘K), or from Discover. Nothing is ever locked away.'
-  return (
-    <Section title="Navigation" icon={PanelLeft}
-      hint="How much of the sidebar shows at once. The rail carries the same control at the end of its list.">
-      <Surface tone="container" radius="lg" className="px-l py-m">
-        <Row label="Show every surface" hint={hint}>
-          <Toggle on={expert} onChange={(v) => setMode(v ? 'expert' : 'starter')} label="Show every surface" />
-        </Row>
-      </Surface>
-    </Section>
   )
 }
 

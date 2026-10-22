@@ -140,8 +140,9 @@ test.describe('the top of the thread rail', () => {
 
   test('scrolled past the threads, the bar leaves with them and never covers the rows below', async ({ page }) => {
     // Short enough that, scrolled to the end, the threads end less than a bar's height below the
-    // sidebar's top: the bar is then pushed off with them, the case the check is for.
-    await page.setViewportSize({ width: 1280, height: 320 })
+    // sidebar's top: the bar is then pushed off with them, the case the check is for. The rows below
+    // the threads are Platform's three, so the window is what makes it short enough.
+    await page.setViewportSize({ width: 1280, height: 280 })
     await stubThreads(page)
     await gotoRoute(page, 'dashboard')
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()

@@ -5,9 +5,9 @@
  *  list and board, held to the project. The cross-project list stays at `#/tasks`, with every query
  *  it always read, and ⌘K's All tasks opens it. No address is retired.
  *
- *  The old shell's local state still opens the new home with what it held: a starter sidebar that
- *  had pinned Tasks keeps a row for Projects, where tasks went, and the remembered list view and
- *  scope still shape `#/tasks`. A project's Tasks view never writes the scope All tasks remembers.
+ *  The old shell's local state still opens the new home with what it held: a record the starter
+ *  sidebar kept, with Tasks pinned, still finds a row for Projects, where tasks went, and the
+ *  remembered list view and scope still shape `#/tasks`. A project's Tasks view never writes the scope All tasks remembers.
  *
  *  The real shell is booted as `main.tsx` boots it, at each address, and asserted on what a person
  *  sees; the palette's rows are the ones the shell hands it.
@@ -227,29 +227,22 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
 })
 
 describe('the old shell\'s local state opens the new home with what it held', () => {
-  it('a starter sidebar that pinned Tasks shows Projects, where tasks went', async () => {
+  it('a record the starter sidebar kept, with Tasks pinned, finds Projects, where tasks went', async () => {
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['tasks'] }))
     await open('dashboard')
     expect(railRows()).toContain('Projects')
     expect(railRows()).not.toContain('Tasks')
   })
 
-  it('a starter sidebar opens #/tasks, keeps a row for Projects, and writes its record once', async () => {
-    // The visit pinned `tasks`, the record read the pin back as `projects`, and the next render
-    // pinned `tasks` again: thousands of writes a second until the page hit React's update limit.
-    // Under `act` that loop never yields, so the twentieth change stops it as React's limit does.
+  it('with that record left behind, #/tasks opens All tasks and writes nothing to it', async () => {
+    // The starter sidebar pinned each page it was shown, and a page that had moved under another
+    // row was pinned again on every render until the page hit React's update limit (#5108). The
+    // record is no longer read or written (#3812).
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: [] }))
     const writes = vi.spyOn(Storage.prototype, 'setItem')
-    const dispatch = window.dispatchEvent.bind(window)
-    let changes = 0
-    const limit = vi.spyOn(window, 'dispatchEvent').mockImplementation((event) => {
-      if (event.type === 'ne:nav-disclosure' && ++changes > 20) throw new Error('the record is rewritten in a loop')
-      return dispatch(event)
-    })
     await open('tasks')
-    limit.mockRestore()
     expect(heading()).toBe('All tasks')
-    expect(writes.mock.calls.filter(([key]) => key === 'nav-disclosure').length, 'the record is not rewritten in a loop').toBeLessThanOrEqual(1)
+    expect(writes.mock.calls.filter(([key]) => key === 'nav-disclosure')).toEqual([])
     expect(railRows()).toContain('Projects')
     expect(railRows()).not.toContain('Tasks')
     writes.mockRestore()

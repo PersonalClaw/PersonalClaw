@@ -19,7 +19,6 @@
   - button "Terminal"
   - button "Capabilities"
   - button "Workflows"
-  - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -201,10 +200,6 @@
   - text: Corner roundness #.#×
   - slider "Corner roundness": "#"
   - button "Reset Corner roundness"
-  - heading "Navigation" [level=#]
-  - paragraph: How much of the sidebar shows at once. The rail carries the same control at the end of its list.
-  - text: Show every surface The sidebar lists every destination.
-  - switch "Show every surface" [checked]
   - button "Reset everything to defaults"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

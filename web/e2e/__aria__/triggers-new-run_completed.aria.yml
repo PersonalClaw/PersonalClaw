@@ -16,7 +16,6 @@
   - button "Inbox"
   - button "Automations"
   - button "Capabilities"
-  - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:

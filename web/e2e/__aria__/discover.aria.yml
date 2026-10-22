@@ -19,7 +19,6 @@
   - button "Terminal"
   - button "Capabilities"
   - button "Workflows"
-  - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -33,7 +32,7 @@
   - paragraph: Replay the tour
   - paragraph: The two-minute walk through the sidebar, chat, the Inbox, approvals and Settings. Escape ends it at any point.
   - button "Start the tour"
-  - paragraph: The parts of PersonalClaw you haven’t tried yet. Your sidebar starts short and grows as you open things — this is where you find out what else is there. Each tip links straight into the feature; dismiss any you’re not interested in.
+  - paragraph: The parts of PersonalClaw you haven’t tried yet. Each tip links straight into the feature; dismiss any you’re not interested in.
   - heading "Talk to it" [level=#]
   - paragraph: Start a conversation
   - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.

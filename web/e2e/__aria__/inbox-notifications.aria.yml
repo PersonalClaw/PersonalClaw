@@ -17,7 +17,6 @@
   - button "Triggers"
   - button "Capabilities"
   - button "Workflows"
-  - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:

@@ -58,10 +58,9 @@ const animated = () => rendered
 beforeEach(() => { rendered.length = 0 })
 
 describe('a rail click schedules no animation', () => {
-  it('the rail renders no motion element that animates, its disclosure row included', () => {
-    render(<NavRail items={ITEMS} activeId="dashboard" onSelect={() => {}} collapsed={false}
-      disclosure={{ expanded: false, moreCount: 4, onToggle: () => {} }} />)
-    expect(screen.getByRole('button', { name: /Everything, show 4 more surfaces/ })).toBeInTheDocument()
+  it('the rail renders no motion element that animates', () => {
+    render(<NavRail items={ITEMS} activeId="dashboard" onSelect={() => {}} collapsed={false} />)
+    expect(screen.getByRole('button', { name: 'Home' })).toBeInTheDocument()
     expect(animated(), 'the rail still hands framer a gesture or a shared layout').toEqual([])
   })
 
