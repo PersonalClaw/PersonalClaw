@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -45,7 +42,7 @@
   - button "Investigate in chat"
   - group: Every state path is claimed by the manifest all # state paths claimed
   - group: Sync is sending and receiving sync is off
-  - group: Scheduled snapshots and exports are working last snapshot under a minute ago
+  - group: Scheduled snapshots and exports are working last snapshot <when>
   - text: Store files that could not be read Every store file this gateway read could be read. Memory
   - button "Investigate in chat"
   - group: Memory store + faiss consistency memory.db healthy
@@ -109,12 +106,12 @@
   - text: Automation would-execute What one automation would do on its next fire — the resolved schedule, the rendered action, the session it targets, what it is allowed to do, and its observe-mode dry fire.
   - combobox "An automation to describe":
     - option "Pick an automation…" [selected]
-    - option "Notification digest · schedule"
+    - option "Heartbeat tasks · schedule"
+    - option "Identity report · schedule"
     - option "Monthly usage recap · schedule"
     - option "Morning source digest · schedule"
-    - option "Identity report · schedule"
+    - option "Notification digest · schedule"
     - option "Self-remediation · schedule"
-    - option "Heartbeat tasks · schedule"
   - button "Describe" [disabled]
   - heading "Maintenance" [level=#]
   - paragraph: A health-scored engine keeps the stores tidy (embedding re-index, orphan prune, skill aging) on an adaptive schedule. Run it on demand here.

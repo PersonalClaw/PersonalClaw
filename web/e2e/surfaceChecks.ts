@@ -251,7 +251,9 @@ function install(): void {
    *  digits folded, and no classes. What a committed baseline keys a control by. */
   const key = (el: Element) => {
     const role = el.getAttribute('role')
-    let n = name(el).slice(0, 60).replace(/\d+/g, '#')
+    // A relative time is folded first, before the cut: the Doctor's snapshot row reads "last
+    // snapshot under a minute ago" and then "… 4 minutes ago", and keyed whole it was two controls.
+    let n = name(el).replace(/(just now|under a minute ago|\d+\s?(second|min|minute|hour|day|month)s? ago|\d+\s?[smhd] ago)/g, '<when>').slice(0, 60).replace(/\d+/g, '#')
     // A week-grid hour cell names the automations that fire in it after its date and hour
     // (`Mon, Nov 2 9:00 — 3 fires: …`), and that list moves with the clock. The cell IS its date
     // and hour, so that is what it is keyed by.
@@ -349,8 +351,9 @@ export function normalizeTree(raw: string): string {
         // check has answered so far, and which scheduled jobs the week view lists for a day.
         // No leading `\b`: a `#` after a space has no word boundary before it, so `#m ago` slipped
         // through and was then read as a countdown.
-        // Settings › durability spells minutes `# min ago` (`relativeTime`), after a "just now".
-        .replace(/(just now|#\s?[smhd] ago|#\s?(second|min|minute|hour|day|month)s? ago)\b/g, '<when>')
+        // Settings › durability spells minutes `# min ago` (`relativeTime`), after a "just now", and
+        // the Doctor's snapshot row says "under a minute ago" before its first minute.
+        .replace(/(just now|under a minute ago|#\s?[smhd] ago|#\s?(second|min|minute|hour|day|month)s? ago)\b/g, '<when>')
         // The run's own home, which the harness makes fresh per run in the OS temp folder (#4864),
         // so its path differs on every run and every machine.
         .replace(/\/\S*?personalclaw-e#e[^/\s]*/g, '<e2e home>')

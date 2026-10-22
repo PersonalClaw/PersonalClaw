@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -58,6 +55,8 @@
     - button "Refresh"
     - button "knowledge"
     - button "Actions for knowledge"
+    - button "lexicon"
+    - button "Actions for lexicon"
     - button "memory"
     - button "Actions for memory"
     - button "outbox"

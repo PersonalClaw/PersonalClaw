@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, renderHook } from '@testing-library/react'
 import { join } from 'node:path'

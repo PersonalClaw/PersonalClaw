@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -34,7 +31,7 @@
   - heading "<theme>" [level=#]
   - paragraph: "This machine, read live: health, versions, and what the agent is running."
   - heading "Health" [level=#]
-  - text: <uptime> uptime v#.#.# <platform> <cpu> cpu #.#/#GB mem #/#GB disk #.# load · #cpu # triggers # subagents
+  - text: <uptime> uptime v#.#.# <platform> <cpu> cpu #.#/#GB mem ↓#.#MB/s ↑#KB/s net #/#GB disk #.# load · #cpu # triggers # subagents
   - button "Details →"
   - paragraph:
     - text: Which local models are holding memory, with Unload and the memory meter, is in

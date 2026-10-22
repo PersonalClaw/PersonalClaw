@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -58,15 +55,14 @@
   - option "Chat Go to"
   - option "Projects Go to"
   - option "Library Go to"
-  - option "Tasks Go to"
   - option "Inbox Go to"
-  - option "Triggers Go to"
-  - option "Terminal Go to"
+  - option "Automations Go to"
   - option "Capabilities Go to"
-  - option "Workflows Go to"
   - option "Settings Go to"
   - option "Mission Control Go to"
   - option "Notifications Go to"
+  - option "All tasks Go to"
+  - option "Terminal Go to"
   - option "Discover Go to"
   - option "Agents Go to"
   - option "Skills Go to"
@@ -80,6 +76,7 @@
   - option "Memory Go to"
   - option "Files Go to"
   - option "Artifacts Go to"
+  - option "Workflows Go to"
   - option "Start a loop Action"
   - option "Open Settings Action"
   - option "Command palette Not available here Action · ⌘K or ⌘⇧P" [disabled]

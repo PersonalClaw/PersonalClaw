@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -47,6 +44,8 @@
   - text: Send on Enter Enter sends · Shift+Enter for a newline.
   - status
   - switch "Send on Enter" [checked]
+  - text: "Keep my question in view Off: a long reply scrolls your question out of view as it streams."
+  - switch "Keep my question in view"
   - text: Show timestamps Display a time on each message.
   - switch "Show timestamps"
   - text: Show thinking inline Show intermediate reasoning between tool calls instead of collapsing it.

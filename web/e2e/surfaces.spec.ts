@@ -1,4 +1,4 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test'
+import { test, expect, type APIResponse, type Page, type TestInfo } from '@playwright/test'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -169,8 +169,10 @@ function fixedWeek(clock: string) {
 /** Reads a surface's row answers with a fixed body, and why. Only for a read whose answer depends on
  *  what other specs did first in the shared home or on state outside the run, so the surface would
  *  hold one of several states on any run, or one the run's home can only answer empty. Each state
- *  the stub hides is held by a unit test instead, named here. */
-const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[]> = {
+ *  the stub hides is held by a unit test instead, named here. A `patch` answers with the live body
+ *  and only the moving fields pinned, so the rest of the read is still the gateway's. */
+type StubbedRead = { url: RegExp; why: string } & ({ json: unknown } | { patch: (live: any) => unknown })
+const STUBBED_READS: Record<string, StubbedRead[]> = {
   'mission-control': [{
     url: /\/api\/waiting(\?.*)?$/,
     // One item of each shape the lanes draw. The run's home has nothing waiting on you, so the
@@ -296,6 +298,55 @@ const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[
     json: { tasks: FIXED_TASKS, total: FIXED_TASKS.length, complete: true, owner: '' },
     why: "the run's home has no project, so no task of one",
   }],
+  'settings/doctor': [{
+    url: /\/api\/doctor(\?.*)?$/,
+    // The memory pipeline's row as a fresh home reads it. The gateway's first flush pass writes the
+    // staging log some minutes after it starts, so the row read "no staging log yet" on a visit
+    // before that pass and "# passes in …, # produced, …" after it: light and dark, a minute or six
+    // apart in one run, read different trees. Every other row is the live report. The row's other
+    // states are held by `tests/test_resilience_doctor.py` (its memory-pipeline section).
+    patch: (live) => pinProbe(live, 'memory-pipeline', 'memory-pipeline.freshness', {
+      ok: true, detail: 'no staging log yet (nothing captured on this home)', evidence: { staging_log: false },
+    }),
+    why: "the memory pipeline's first pass lands at a time the run does not decide",
+  }],
+  'settings/system': [{
+    url: /\/api\/status(\?.*)?$/,
+    // No update waiting. The real check compares this checkout with its remote, so the strip
+    // offered "Update available" once a commit landed on main during the run, and not on the
+    // next. The action is held by `src/pages/settings/systemPanel.test.tsx`.
+    patch: (live) => ({ ...live, update_available: false }),
+    why: "whether an update waits is the remote's, not the run's",
+  }, {
+    url: /\/api\/system(\?.*)?$/,
+    // One fixed network rate. The rate is null until the gateway's second sample, and then this
+    // machine's traffic, so the strip showed no `net` reading on an early visit, and `KB/s` or
+    // `MB/s` after one. The readings are held by `systemHealthLabels.test.tsx`.
+    patch: (live) => ({ ...live, net_rx_kbs: 2048, net_tx_kbs: 512 }),
+    why: "the network rate is the machine's traffic, sampled at a time the run does not decide",
+  }],
+}
+
+/** What a surface's row reads after the home is put in a state no other spec decides. Only for a
+ *  folder or store something opens lazily, so whether it exists hangs on which pages loaded first. */
+const ARRANGED: Record<string, { why: string; arrange: (page: Page) => Promise<APIResponse> }> = {
+  // The lexicon's store makes its folder the first time anything reads it (Knowledge, a
+  // transcription, Settings), so Files listed `lexicon` after one of those pages and not before.
+  // Reading it first makes the folder always there.
+  files: { why: 'the lexicon folder is made by the first page that reads it', arrange: (page) => page.request.get('/api/lexicon/terms') },
+}
+
+/** `live` (a `/api/doctor` report) with one probe's result replaced by `pinned`. */
+function pinProbe(live: any, capability: string, probe: string, pinned: Record<string, unknown>): unknown {
+  const cap = live?.capabilities?.[capability]
+  if (!cap) return live
+  return {
+    ...live,
+    capabilities: {
+      ...live.capabilities,
+      [capability]: { ...cap, probes: cap.probes.map((p: { id: string }) => (p.id === probe ? { ...p, ...pinned } : p)) },
+    },
+  }
 }
 
 const fileId = (s: string) => s.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '')
@@ -376,7 +427,16 @@ for (const theme of THEMES) {
         if (FIXED_CLOCK[route]) await page.clock.setFixedTime(new Date(FIXED_CLOCK[route]))
         for (const stub of STUBBED_READS[route] ?? []) {
           info.annotations.push({ type: 'stubbed-read', description: `${stub.url.source}: ${stub.why}` })
-          await page.route(stub.url, (r) => r.fulfill({ json: stub.json }))
+          await page.route(stub.url, async (r) => {
+            if ('json' in stub) return r.fulfill({ json: stub.json })
+            const live = await r.fetch()
+            return r.fulfill({ response: live, json: stub.patch(await live.json()) })
+          })
+        }
+        const arranged = ARRANGED[route]
+        if (arranged) {
+          info.annotations.push({ type: 'arranged-home', description: arranged.why })
+          expect((await arranged.arrange(page)).ok(), arranged.why).toBe(true)
         }
         await gotoRoute(page, route)
         await checkSurface(page, info, { where: `#/${route} (${theme})`, theme, kind: 'route', route }, fileId(id ?? route))
