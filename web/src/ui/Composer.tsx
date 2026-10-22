@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
-import { ORB_LOOKS } from './AgentOrb'
+import { AgentOrb, ORB_LOOKS } from './AgentOrb'
+import { voiceOrbPhase } from './composer/voiceOrb'
 import { AgentModelPill, ApprovalPill, ReplyStylePill, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
@@ -430,6 +431,15 @@ export function Composer({
               {onCompact && !streaming && !processing && (
                 <Button variant="ghost-accent" size="xs" onClick={onCompact}>Compact now</Button>
               )}
+            </div>
+          )}
+
+          {/* Voice mode (#4963): the 64 px orb, above the draft its dictation fills. `listening`
+              while it hears the owner, the turn's own phase the rest of the time; under reduced
+              motion the orb is one still frame. Its name is the phase's words. */}
+          {listening && (
+            <div data-voice-orb="" className="flex justify-center pt-s">
+              <AgentOrb phase={voiceOrbPhase({ heard: mic.state === 'recording' && !mic.muted, phase })} size={64} />
             </div>
           )}
 

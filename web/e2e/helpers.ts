@@ -611,6 +611,30 @@ export async function openTheInspectedChat(page: Page, query: string): Promise<O
   return true
 }
 
+/** Hands-free on, hearing the owner. Headless Chromium has no microphone, so a tone stands in for
+ *  the voice, and the recorder's segment never ends: the orb holds `listening` for the whole matrix
+ *  instead of flipping to the turn's phase every four seconds while a segment is transcribed. */
+async function openVoiceMode(page: Page): Promise<OpenResult> {
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const ctx = new AudioContext()
+      const tone = ctx.createOscillator()
+      const out = ctx.createMediaStreamDestination()
+      tone.connect(out)
+      tone.start()
+      return out.stream
+    }
+    MediaRecorder.prototype.stop = function stop() {}
+  })
+  const ear = page.getByRole('button', { name: /^Hands-free voice/ })
+  if (!(await ear.count())) return { skip: 'no Hands-free voice button on #/chat' }
+  await ear.click()
+  await expect(page.locator('[data-voice-orb] [data-orb-size="64"][data-orb-phase="listening"]')).toBeVisible()
+  // One 64 px orb at a time: the empty chat's own gives way to voice mode's.
+  await expect(page.locator('[data-orb-size="64"]:visible')).toHaveCount(1)
+  return true
+}
+
 /** The recipes, all proven by hand in audits before being wired in here. */
 export const OPENERS: Opener[] = [
   {
@@ -654,6 +678,9 @@ export const OPENERS: Opener[] = [
   // holding a helper the chat started (#3820).
   { label: 'chat session inspector', route: 'chat', open: (page) => openTheInspectedChat(page, '?activity=1') },
   { label: 'chat detail tile', route: 'chat', open: (page) => openTheInspectedChat(page, '?activity=1&beside=helper:aaaa1111') },
+  // Voice mode (#4963): hands-free on, the composer's 64 px orb listening. It is the composer's own
+  // state with no address, so it is opened here rather than listed in `routes.ts`.
+  { label: 'composer voice mode', route: 'chat', open: openVoiceMode },
   { label: 'knowledge peek dock', route: 'knowledge', open: clickRowBody },
   { label: 'inbox peek dock', route: 'inbox', open: clickRowBody },
   {

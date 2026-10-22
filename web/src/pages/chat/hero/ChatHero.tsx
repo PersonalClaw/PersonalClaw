@@ -145,10 +145,11 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
   onPickSuggestion: (s: string) => void
 }) {
   return (
-    <div className="relative flex-1 flex flex-col items-center justify-center px-l">
+    <div className="group/hero relative flex-1 flex flex-col items-center justify-center px-l">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialDefault}
         className="flex flex-col items-center gap-l mb-2xl">
-        <AgentOrb phase="idle" size={64} />
+        {/* One 64 px orb at a time: once voice mode is on, its orb in the composer is the one. */}
+        <AgentOrb phase="idle" size={64} className="group-has-[[data-voice-orb]]/hero:hidden" />
         <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
       </motion.div>
       <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
