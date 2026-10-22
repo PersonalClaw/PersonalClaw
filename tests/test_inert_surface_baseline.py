@@ -233,10 +233,13 @@ def test_the_list_is_read_by_site(tmp_path, monkeypatch):
         '{"site": "src/personalclaw/b.py::sdk_export:B", "reason": "r", "added": "2026-10-20"}\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(gen, "sites_path", lambda: path)
-    assert listed() == {"src/personalclaw/a.py::enum:X.A", "src/personalclaw/b.py::sdk_export:B"}
-    assert gen.sites_path() == path
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(gen, "sites_path", lambda: path)
+        assert listed() == {
+            "src/personalclaw/a.py::enum:X.A",
+            "src/personalclaw/b.py::sdk_export:B",
+        }
+        assert gen.sites_path() == path
     assert gen.sites_path() == _repo_root() / SITES
 
 
