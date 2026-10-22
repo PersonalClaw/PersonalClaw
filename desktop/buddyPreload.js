@@ -1,15 +1,16 @@
 /**
  * Preload for the buddy's window (#3831).
  *
- * Six named sends, six named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
+ * Six named sends, eight named pushes back (#3832, #5216), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
  * reaching the capability bridge (the microphone, notifications, the login item), so it gets a
  * surface of its own, the smallest that drives its window: where the pointer is, the shape that
  * takes clicks, a drag of the face, the room it needs, and opening a route of this app in the main
  * window. No `send` or `invoke` of the page's choosing is exposed. What comes back is main's
  * doorbell, a ring that carries nothing (the lists moved: read them again) and its connection, one
- * of three words; where the window is (moving, docked or floating); and three booleans: whether one
+ * of three words; where the window is (moving, docked or floating); three booleans: whether one
  * of the app's own windows is full screen, whether the owner is away, and whether they hid the
- * buddy. The sixth send asks for the buddy's context menu and carries nothing.
+ * buddy; and where the orb and its card's area are in the window (#5216), geometry only. The sixth
+ * send asks for the buddy's context menu and carries nothing.
  *
  * The window is sandboxed, and a sandboxed preload's `require` resolves `electron` and three
  * builtins only, so the channel names are copied here; `buddyBridge.test.js` holds them equal to
@@ -36,9 +37,12 @@ const BUDDY_PUSHES = Object.freeze({
   openAlert: `${BUDDY_PREFIX}open-alert`,
   away: `${BUDDY_PREFIX}away`,
   hidden: `${BUDDY_PREFIX}hidden`,
+  layout: `${BUDDY_PREFIX}layout`,
 });
 const BUDDY_CONNECTIONS = ["up", "lost", "restarting"];
 const BUDDY_PLACEMENTS = ["moving", "docked", "floating"];
+const BUDDY_SIDES = ["right", "left", "below", "above"];
+const BUDDY_OPENS = ["down", "up"];
 
 /** Hear *channel*, handing *cb* only what *shape* lets through; returns the way to stop. */
 function hear(channel, cb, shape) {
@@ -61,6 +65,14 @@ ipcRenderer.on(BUDDY_PUSHES.openAlert, () => {
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
 const rect = (r) => ({ x: num(r && r.x), y: num(r && r.y), width: num(r && r.width), height: num(r && r.height) });
+/** A layout in its shape, with nothing else it carried; undefined for anything else. */
+function layoutShape(v) {
+  if (!v || typeof v !== "object" || !BUDDY_SIDES.includes(v.side) || !BUDDY_OPENS.includes(v.opens)) return undefined;
+  const orb = rect(v.orb);
+  const card = rect(v.card);
+  if (![orb, card].every((r) => Object.values(r).every(Number.isFinite))) return undefined;
+  return { side: v.side, opens: v.opens, orb, card };
+}
 
 contextBridge.exposeInMainWorld("pclawBuddy", {
   /** macOS: whether the pointer is over the face or the open card (take clicks) or not (pass them). */
@@ -72,7 +84,8 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
   dragStart: () => ipcRenderer.send(BUDDY_CHANNELS.drag, { phase: "start" }),
   dragBy: (dx, dy) => ipcRenderer.send(BUDDY_CHANNELS.drag, { phase: "move", dx: num(dx), dy: num(dy) }),
   dragEnd: (instant) => ipcRenderer.send(BUDDY_CHANNELS.drag, { phase: "end", instant: instant === true }),
-  /** The room the buddy needs: `peek`, `compact`, `expanded`, or `hidden`, which hides the window. */
+  /** What the buddy presents: `orb`, `line`, `card` (or the earlier `peek`, `compact`, `expanded`),
+   *  or `hidden`, which hides the window. Nothing else changes the window (#5216). */
   setPresentation: (presentation) => ipcRenderer.send(BUDDY_CHANNELS.presentation, { presentation: String(presentation) }),
   /** Open a route of this app (`#/chat/…`) in the main window: the focused work. */
   openInApp: (route) => ipcRenderer.send(BUDDY_CHANNELS.open, { route: String(route) }),
@@ -106,6 +119,11 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
   onAway: (cb) => hear(BUDDY_PUSHES.away, cb, (v) => (typeof v === "boolean" ? v : undefined)),
   /** Whether the owner hid the buddy (for an hour, or until tomorrow). */
   onHidden: (cb) => hear(BUDDY_PUSHES.hidden, cb, (v) => (typeof v === "boolean" ? v : undefined)),
+  /** Where the orb and its card's area are in the window (#5216): the side of the orb the card opens
+   *  on (`right`, `left`, `below`, `above`), the way it opens (`down` from the orb's top, `up` from
+   *  its bottom), and the two rectangles, in the window's own points. Sent on show, after a drop and
+   *  on a display change; never for a state or the card. */
+  onLayout: (cb) => hear(BUDDY_PUSHES.layout, cb, layoutShape),
   /** The buddy's context menu, at the pointer: hide it, or open PersonalClaw. */
   openMenu: () => ipcRenderer.send(BUDDY_CHANNELS.menu, {}),
 });

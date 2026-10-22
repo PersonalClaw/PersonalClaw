@@ -27,7 +27,9 @@ the orb's 56 pt box and that area, one fixed size, and the shell pushes the shap
 (`desktop/buddyPlacement.js`, `layoutAt`); the playground and a browser tab run the same rule
 (`web/src/lib/buddy/cardPlacement.ts`). Opening, growing, shrinking or closing the card never moves
 the orb or changes its size: the card is laid out apart from the orb, anchored to its edge
-(`web/src/pages/buddy/BuddyPresence.tsx`).
+(`web/src/pages/buddy/BuddyPresence.tsx`). In the buddy's window the whole-UI zoom (Appearance)
+leaves the orb's box and the card's area at the shell's points, and zooms the card's words inside
+the area, so the orb is the same size at every zoom ([#5216]).
 
 | Surface | Size | Shows | Drops |
 |---|---|---|---|
@@ -132,12 +134,14 @@ shape, and never joined to the notch, the menu bar or the screen's edge as one s
 - **The default, until the first move:** centred just below the menu bar on the display with the
   menu bar, or just below the notch on a notched Mac, with no orbs on both sides of the camera and
   no group of orbs in a wing ([#3831]).
-- **At the top edge or away from it:** a drop within `dockZone` of the top centre counts as the top
-  edge, and a drag more than `undockDistance` from it leaves it. The starting values are
-  `undockDistance` 48 points and `dockZone` 96 points, measured from the top centre of the menu-bar
-  display's work area (`desktop/buddyPlacement.js`). Where it sits changes what the machine does
-  while the owner is away (at the top edge it steps aside, elsewhere it dozes) and what its card
-  shows on an alert, never the orb's size or look.
+- **At the top edge or away from it:** any drag that moves the orb leaves the top edge, and a drop
+  whose centre is within `dockZone` (96 points) of the default spot puts it back there
+  (`desktop/buddyPlacement.js`). Where it sits changes what the machine does while the owner is
+  away (at the top edge it steps aside, elsewhere it dozes) and what its card shows on an alert,
+  never the orb's size or look.
+- **Which display:** moved, it stays on the display it was dropped on, each display keeping its own
+  spot; while that display is gone the orb waits at the default, and it goes back to its spot there
+  when the display returns.
 - **Its card** opens beside it on the side with room ([the room budget](#the-room-budget)), and it
   covers no menu-bar item and no window control ([#3831]).
 

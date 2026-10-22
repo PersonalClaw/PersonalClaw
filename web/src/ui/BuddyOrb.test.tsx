@@ -98,6 +98,22 @@ describe('the exact line sits beside every family pose and the focused card', ()
   })
 })
 
+describe('without a line', () => {
+  it('draws the orb alone, with nothing beside it to take room, so an orb in a slot is in its middle (#5216)', () => {
+    const { container } = render(<BuddyOrb state="thinking" line="" size={48} />)
+    const row = orbOf(container)
+    const laidOut = [...row.children].filter((el) => !el.classList.contains('sr-only'))
+    expect(laidOut.length, 'only the art takes part in the row').toBe(1)
+    expect(row.querySelector('[data-buddy-words]')?.textContent, 'its state still said in words').toBe(wordsOf('thinking'))
+  })
+
+  it('with a line, keeps the line beside the art and says nothing twice', () => {
+    const { container } = render(<BuddyOrb state="thinking" line="Release notes: Thinking" size={48} />)
+    expect(lineBesideArt(container)).toBe('Release notes: Thinking')
+    expect(orbOf(container).querySelector('[data-buddy-words]')).toBeNull()
+  })
+})
+
 describe('its colour is the orb tokens', () => {
   it('alive states take --color-orb-alive and the rest --color-orb-rest', () => {
     for (const state of STATES) {

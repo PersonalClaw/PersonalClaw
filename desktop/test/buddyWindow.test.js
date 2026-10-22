@@ -2,7 +2,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { CAPTURE_KEY, ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow } = require("../buddyWindow");
-const { PLACEMENT_KEY, UNDOCK_DISTANCE } = require("../buddyPlacement");
+const { ORB_BOX, PLACEMENT_KEY, PRESENTATIONS, defaultSpot } = require("../buddyPlacement");
 
 // ── The buddy's own window (#3831) ─────────────────────────────────────────────────────────────
 //
@@ -53,15 +53,30 @@ function memoryStore(initial = {}) {
   return { data, getItem: (k) => (k in data ? data[k] : null), setItem: (k, v) => { data[k] = String(v) }, removeItem: (k) => { delete data[k] } };
 }
 
-const fakeScreen = (displays = [NOTCHED, EXTERNAL]) => ({ getAllDisplays: () => displays, getPrimaryDisplay: () => displays[0], on: () => {} });
+/** A screen whose displays a test can change, firing the events Electron fires. */
+function fakeScreen(displays = [NOTCHED, EXTERNAL]) {
+  const handlers = {};
+  const screen = {
+    displays,
+    getAllDisplays: () => screen.displays,
+    getPrimaryDisplay: () => screen.displays[0],
+    on: (event, fn) => { (handlers[event] ||= []).push(fn); },
+    change(next, event) { screen.displays = next; for (const fn of handlers[event] || []) fn(); },
+  };
+  return screen;
+}
 
-function make(platform = "darwin", store = memoryStore()) {
+function make(platform = "darwin", store = memoryStore(), screen = fakeScreen()) {
   const { FakeWindow, made } = fakeWindowClass();
   const placed = [];
-  const buddy = makeBuddyWindow({ BrowserWindowCtor: FakeWindow, screen: fakeScreen(), store, preload: "/app/buddyPreload.js", platform, onPlacement: (p) => placed.push(p) });
+  const layouts = [];
+  const buddy = makeBuddyWindow({ BrowserWindowCtor: FakeWindow, screen, store, preload: "/app/buddyPreload.js", platform, onPlacement: (p) => placed.push(p), onLayout: (l) => layouts.push(l) });
   buddy.create("http://127.0.0.1:10000/#/buddy");
-  return { buddy, win: made[0], made, store, placed };
+  return { buddy, win: made[0], made, store, placed, layouts, screen };
 }
+/** The orb's box on the screen: the window's position plus the layout's orb. */
+const orbOnScreen = (buddy, win) => ({ x: win.position[0] + buddy.layout.orb.x, y: win.position[1] + buddy.layout.orb.y, width: buddy.layout.orb.width, height: buddy.layout.orb.height });
+const moves = (win) => win.calls.filter((c) => c[0] === "setBounds" || c[0] === "setPosition");
 const names = (win) => win.calls.map((c) => c[0])
 
 describe("the window", () => {
@@ -91,10 +106,12 @@ describe("the window", () => {
     assert.equal(names(win).includes("focus"), false);
   });
 
-  it("starts docked below the notch, centred, and loads the buddy route", () => {
-    const { win } = make();
-    assert.equal(win.options.y, 38);
-    assert.equal(win.options.x + win.options.width / 2, 756);
+  it("starts at the default, below the notch and centred on it, and loads the buddy route", () => {
+    const { buddy, win } = make();
+    assert.deepEqual(orbOnScreen(buddy, win), { ...defaultSpot(NOTCHED), width: ORB_BOX, height: ORB_BOX });
+    assert.ok(orbOnScreen(buddy, win).y >= NOTCHED.workArea.y, "below the notch");
+    assert.equal(orbOnScreen(buddy, win).x + ORB_BOX / 2, 756, "centred on it");
+    assert.deepEqual({ width: win.options.width, height: win.options.height }, { width: buddy.layout.window.width, height: buddy.layout.window.height });
     assert.deepEqual(win.calls.find((c) => c[0] === "loadURL"), ["loadURL", "http://127.0.0.1:10000/#/buddy"]);
   });
 });
@@ -160,42 +177,171 @@ describe("click-through", () => {
   });
 });
 
-describe("dragging", () => {
-  it("holds its dock until the drag passes the undock distance, then floats where it is dropped, saved", () => {
-    const { buddy, win, store } = make();
+describe("one orb of one size, where it was put (#5216)", () => {
+  it("no state moves or resizes it: every presentation, hide and show, away, regions and the pointer leave its box", () => {
+    for (const platform of ["darwin", "linux"]) {
+      const { buddy, win } = make(platform);
+      buddy.show();
+      const box = orbOnScreen(buddy, win);
+      const bounds = { ...win.bounds };
+      win.calls.length = 0;
+      for (const presentation of PRESENTATIONS.filter((p) => p !== "hidden")) {
+        buddy.setPresentation(presentation);
+        buddy.setRegions([{ ...buddy.layout.orb }, { ...buddy.layout.card }]);
+        buddy.pointerOver(true);
+        buddy.pointerOver(false);
+        buddy.hide();
+        buddy.show();
+        buddy.setRegions([{ ...buddy.layout.orb }]);
+      }
+      assert.deepEqual(moves(win), [], `${platform}: nothing moved or resized the window`);
+      assert.deepEqual(win.bounds, bounds);
+      assert.deepEqual(orbOnScreen(buddy, win), box);
+    }
+  });
+
+  it("only a drag moves it, by any distance: there is no dock to pull it out of", () => {
+    const { buddy, win } = make();
     buddy.show();
+    const before = orbOnScreen(buddy, win);
     buddy.beginDrag();
-    buddy.dragBy(0, UNDOCK_DISTANCE - 10);
-    assert.equal(names(win).includes("setPosition"), false, "still docked");
-    buddy.dragBy(1200, 400);
-    assert.ok(names(win).includes("setPosition"));
+    buddy.dragBy(0, 10);
+    assert.deepEqual(win.calls.at(-1), ["setPosition", win.bounds.x, win.bounds.y + 10], "ten points is a move");
+    buddy.dragBy(300, 200);
+    buddy.endDrag({ instant: true });
+    assert.deepEqual(orbOnScreen(buddy, win), { x: before.x + 300, y: before.y + 210, width: ORB_BOX, height: ORB_BOX }, "the orb is where it was dropped");
+  });
+
+  it("a drop keeps the orb where it fell, lays the card's side out again, saves the spot, and tells the page", () => {
+    const { buddy, win, store, placed, layouts } = make();
+    buddy.show();
+    const sent = layouts.length;
+    const start = orbOnScreen(buddy, win);
+    // Near the external display's right edge: the card has no room on the right, so it opens left.
+    const edge = EXTERNAL.workArea.x + EXTERNAL.workArea.width - ORB_BOX - 10;
+    buddy.beginDrag();
+    buddy.dragBy(edge - start.x, 400);
     buddy.endDrag({ instant: true });
     assert.equal(buddy.placement.mode, "floating");
     assert.equal(buddy.placement.displayId, 2, "dropped on the external display");
-    assert.equal(JSON.parse(store.data[PLACEMENT_KEY]).mode, "floating");
-    assert.deepEqual(win.calls.at(-1).slice(0, 1), ["setBounds"]);
-    assert.equal(win.calls.at(-1)[2], false, "instant under reduced motion");
+    assert.deepEqual(orbOnScreen(buddy, win), { x: edge, y: start.y + 400, width: ORB_BOX, height: ORB_BOX }, "the orb is where it fell");
+    assert.equal(buddy.layout.side, "left", "the card's side is laid out again for the new spot");
+    const saved = JSON.parse(store.data[PLACEMENT_KEY]);
+    assert.equal(saved.on, 2);
+    assert.deepEqual(placed, ["moving", "floating"]);
+    assert.equal(layouts.length, sent + 1, "the page hears the new layout once");
+    assert.deepEqual(layouts.at(-1), buddy.layout);
+    assert.equal(win.calls.filter((c) => c[0] === "setBounds").at(-1)[2], false, "instant under reduced motion");
   });
 
-  it("tells the page once the drag moves it and where it settled, and nothing for a press that never moved", () => {
-    const { buddy, placed } = make();
+  it("a drop near the default puts it back at the default", () => {
+    const { buddy, win } = make();
     buddy.show();
     buddy.beginDrag();
+    buddy.dragBy(30, 20);
     buddy.endDrag({ instant: true });
-    assert.deepEqual(placed, [], "a press on the face is a click, not a drag");
-    buddy.beginDrag();
-    buddy.dragBy(0, UNDOCK_DISTANCE - 10);
-    assert.deepEqual(placed, [], "held in the dock, it has not moved");
-    buddy.dragBy(1200, 400);
-    buddy.dragBy(5, 5);
-    buddy.endDrag({ instant: true });
-    assert.deepEqual(placed, ["moving", "floating"]);
+    assert.equal(buddy.placement.mode, "docked");
+    assert.deepEqual(orbOnScreen(buddy, win), { ...defaultSpot(NOTCHED), width: ORB_BOX, height: ORB_BOX });
   });
 
-  it("comes back floating on that display after a restart", () => {
+  it("never animates a move that lays the card out again: the orb would slide away from where it fell", () => {
+    const { buddy, win } = make();
+    buddy.show();
+    const start = orbOnScreen(buddy, win);
+    const edge = EXTERNAL.workArea.x + EXTERNAL.workArea.width - ORB_BOX - 10;
+    buddy.beginDrag();
+    buddy.dragBy(edge - start.x, 400);
+    buddy.endDrag();
+    assert.equal(buddy.layout.side, "left");
+    assert.equal(win.calls.filter((c) => c[0] === "setBounds").at(-1)[2], false, "the side changed: the window jumps with the page's new layout");
+    // Back near the default from below it: the layout is the default's again, so the snap is instant too.
+    buddy.beginDrag();
+    const home = defaultSpot(NOTCHED);
+    const here = orbOnScreen(buddy, win);
+    buddy.dragBy(home.x + 20 - here.x, home.y + 20 - here.y);
+    buddy.endDrag();
+    assert.deepEqual(orbOnScreen(buddy, win), { ...home, width: ORB_BOX, height: ORB_BOX });
+    assert.equal(win.calls.filter((c) => c[0] === "setBounds").at(-1)[2], false);
+  });
+
+  it("animates a snap to the default on macOS when the card's side stays the same", () => {
+    const { buddy, win } = make();
+    buddy.show();
+    buddy.beginDrag();
+    buddy.dragBy(40, 30);
+    buddy.endDrag();
+    assert.equal(buddy.placement.mode, "docked");
+    assert.equal(win.calls.filter((c) => c[0] === "setBounds").at(-1)[2], true, "the orb slides home");
+  });
+
+  it("tells the page once the drag moves it, and nothing for a press that never moved", () => {
+    const { buddy, placed, win } = make();
+    buddy.show();
+    win.calls.length = 0;
+    buddy.beginDrag();
+    buddy.endDrag({ instant: true });
+    assert.deepEqual(placed, [], "a press on the orb is a click, not a drag");
+    assert.deepEqual(moves(win), [], "and moves nothing");
+  });
+
+  it("comes back where it was dropped after a restart, on that display", () => {
+    const first = make();
+    first.buddy.show();
+    first.buddy.beginDrag();
+    first.buddy.dragBy(1200, 400);
+    first.buddy.endDrag({ instant: true });
+    const dropped = orbOnScreen(first.buddy, first.win);
+    const again = make("darwin", first.store);
+    assert.deepEqual(orbOnScreen(again.buddy, again.win), dropped);
+  });
+
+  it("reads the window's earlier floating placement as a spot on its display", () => {
     const store = memoryStore({ [PLACEMENT_KEY]: JSON.stringify({ mode: "floating", displayId: 2, x: 2000, y: 400 }) });
-    const { win } = make("darwin", store);
-    assert.deepEqual({ x: win.options.x, y: win.options.y }, { x: 2000, y: 400 });
+    const { buddy, win } = make("darwin", store);
+    assert.deepEqual({ x: orbOnScreen(buddy, win).x, y: orbOnScreen(buddy, win).y }, { x: 2000, y: 400 });
+  });
+
+  it("a display that's gone puts it at the default; back, the orb goes back to its spot there", () => {
+    const { buddy, win, screen, layouts } = make();
+    buddy.show();
+    buddy.beginDrag();
+    buddy.dragBy(1200, 400);
+    buddy.endDrag({ instant: true });
+    const spot = orbOnScreen(buddy, win);
+    const heard = layouts.length;
+    screen.change([NOTCHED], "display-removed");
+    assert.deepEqual(orbOnScreen(buddy, win), { ...defaultSpot(NOTCHED), width: ORB_BOX, height: ORB_BOX });
+    assert.equal(layouts.length, heard, "the card opens right and down there too: the page's layout is the same, so it hears nothing");
+    screen.change([NOTCHED, EXTERNAL], "display-added");
+    assert.deepEqual(orbOnScreen(buddy, win), spot);
+  });
+
+  it("a display change that leaves the card no room on its side lays it out again, and the page hears it", () => {
+    const { buddy, win, screen, layouts } = make();
+    buddy.show();
+    const start = orbOnScreen(buddy, win);
+    buddy.beginDrag();
+    buddy.dragBy(EXTERNAL.workArea.x + 1500 - start.x, 300);
+    buddy.endDrag({ instant: true });
+    assert.equal(buddy.layout.side, "right");
+    const spot = orbOnScreen(buddy, win);
+    const heard = layouts.length;
+    const smaller = { ...EXTERNAL, bounds: { ...EXTERNAL.bounds, width: 1920 }, workArea: { ...EXTERNAL.workArea, width: 1920 } };
+    screen.change([NOTCHED, smaller], "display-metrics-changed");
+    assert.equal(buddy.layout.side, "left");
+    assert.deepEqual(orbOnScreen(buddy, win), spot, "the orb stays on its spot");
+    assert.equal(layouts.length, heard + 1);
+  });
+
+  it("Settings' reset puts it back at the default", () => {
+    const { buddy, win } = make();
+    buddy.show();
+    buddy.beginDrag();
+    buddy.dragBy(1200, 400);
+    buddy.endDrag({ instant: true });
+    buddy.resetPlacement();
+    assert.equal(buddy.placement.mode, "docked");
+    assert.deepEqual(orbOnScreen(buddy, win), { ...defaultSpot(NOTCHED), width: ORB_BOX, height: ORB_BOX });
   });
 });
 

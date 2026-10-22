@@ -4,6 +4,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const { electronCommand, electronTier, electronUnavailable, launchDetail } = require("./helpers/electronHost");
+const { ORB_BOX } = require("../buddyPlacement");
 
 // ── The buddy's window, in a real Electron (#3831) ─────────────────────────────────────────────
 //
@@ -17,6 +18,13 @@ const { electronCommand, electronTier, electronUnavailable, launchDetail } = req
 // A page that keeps ticking while hidden is the negative control: the probe must see its timers,
 // or a clean run proves nothing.
 //
+// The orb's box, in a window the shell's own controller builds on the real screen (#5216): the
+// window's real bounds plus the layout its page heard, through every presentation, a hide and a
+// show, a drag and a restart. With its card closed, the window is click-through everywhere but the
+// orb: on a display of the run's own, real pointer input over every pixel of it lands on the window
+// below, and the buddy hears nothing there. Hidden, it costs nothing at its real size, the orb's box
+// and the card's area.
+//
 // Skips where Electron cannot start (no binary, or Linux with no display and no `xvfb-run`), and
 // says why, as `bridgeLoads.test.js`'s tier 2 does, unless `PCLAW_REQUIRE_ELECTRON=1` says the host
 // must run it, which makes a can't-start a failure (`helpers/electronHost.js`).
@@ -26,10 +34,12 @@ const IDLE_MS = Number(process.env.PC_BUDDY_IDLE_MS) > 0 ? Number(process.env.PC
 
 function probe(page, idleMs, show = "shell") {
   const { command, args } = electronCommand([path.join(__dirname, "helpers", "buddyProbe.js")]);
+  // Real pointer input only on the display xvfb-run gives this run, never on someone's desktop.
+  const ownDisplay = path.basename(command) === "xvfb-run";
   const res = spawnSync(command, args, {
-    timeout: idleMs + 60_000,
+    timeout: idleMs + 360_000,
     encoding: "utf8",
-    env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), PC_PROBE_SHOW: show, ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
+    env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), PC_PROBE_SHOW: show, PC_PROBE_OS_CLICKS: ownDisplay ? "1" : "", ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
   });
   const line = (res.stdout || "").split("\n").find((l) => l.startsWith("PC_PROBE "));
   if (!line) return { launchFailed: true, detail: launchDetail(res) };
@@ -48,7 +58,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.error, undefined, root.error);
     assert.deepEqual(root.preloadErrors, []);
     assert.equal(root.bridge.buddy, "object");
-    assert.deepEqual(root.bridge.keys, ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"]);
+    assert.deepEqual(root.bridge.keys, ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onLayout", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"]);
     assert.equal(root.bridge.desktop, "undefined", "no capability bridge in the buddy's window");
   });
 
@@ -63,7 +73,56 @@ describe("the buddy's window in a real Electron", () => {
     assert.ok(root.shown.frames > 0, "shown, the page draws");
   });
 
+  it("keeps the orb's box where the owner put it, at one size, through every state, a hide and a show (#5216)", { skip: skipped }, () => {
+    const placed = root.placed;
+    assert.equal(placed.error, undefined, placed.error);
+    assert.ok(placed.heard.length >= 1, "the page heard where its orb is");
+    assert.deepEqual(placed.boxes[0], { ...placed.defaultSpot, width: ORB_BOX, height: ORB_BOX }, "it starts at the default");
+    for (const [i, box] of placed.boxes.entries()) assert.deepEqual(box, placed.boxes[0], `${placed.steps[i]}: the orb's box is the same`);
+    for (const [i, bounds] of placed.bounds.entries()) assert.deepEqual(bounds, placed.bounds[0], `${placed.steps[i]}: the window is neither moved nor resized`);
+  });
+
+  it("moves the orb by a drag, to where it was dropped, and keeps it there after a restart (#5216)", { skip: skipped }, () => {
+    const placed = root.placed;
+    assert.deepEqual(placed.dropped, placed.expectedDrop, "the orb is where it fell");
+    assert.deepEqual(placed.restarted, placed.dropped, "and comes back there");
+  });
+
+  it("passes every click outside the orb to the window below while the card is closed, and takes the orb's (#5216)", { skip: skipped }, (t) => {
+    const c = root.clickThrough;
+    if (c.skipped) return t.skip(c.skipped);
+    assert.equal(c.error, undefined, c.error);
+    assert.equal(c.posted.ok, true, c.posted.error);
+    const why = `\n${JSON.stringify({ firstOrbPress: c.firstOrbPress, waitedMs: c.waitedMs, stacking: c.stacking, clicked: c.clicked, landedBelow: c.landedBelow, belowAtTheOrb: c.belowAtTheOrb, ...c.diagnosis })}`;
+    // No window manager here keeps an always-on-top window above: which is above is the order the
+    // X server has, and a buddy under the other window would take nothing at all.
+    assert.equal(c.stacking.error, undefined, c.stacking.error);
+    assert.ok(c.stacking.buddy >= 0 && c.stacking.below >= 0 && c.stacking.buddy > c.stacking.below, `the buddy's window is above the other one${why}`);
+    assert.equal(c.firstOrbPress, 1, `a press on the orb, before anything else, reached the buddy${why}`);
+    assert.equal(c.buddyOrbPresses, 1, `the press on the orb reached the buddy: the input was real${why}`);
+    assert.equal(c.belowAtTheOrb, 0, "and not the window below");
+    assert.ok(c.clicked > 1000);
+    assert.equal(c.landedBelow, c.clicked, `every press outside the orb landed on the window below${why}`);
+    assert.deepEqual(c.buddyOutsidePresses, [], "no press, click or wheel outside the orb reached the buddy");
+    assert.deepEqual(c.buddyOutsideMovesFromInput, [], "and no move of the real pointer outside it, over every pixel of the window");
+    // Before any input, Chromium may move the page's pointer to where the pointer rests as the window
+    // shows: not input, and the page gives a move outside the orb's box no meaning (`BuddyPage`).
+    t.diagnostic(`moves outside the orb before any input, the window's own: ${JSON.stringify(c.strayMoves)}`);
+    // The control: shaped to its whole window, the buddy takes the same clicks.
+    assert.equal(c.control.posted.ok, true, c.control.posted.error);
+    const control = `\n${JSON.stringify(c.control)}`;
+    assert.ok(c.control.shape, `the window took the whole-window shape${control}`);
+    assert.equal(c.control.buddyPresses, c.control.clicked, `a buddy that takes the whole window gets every click at its window: the leg can see one${control}`);
+    assert.equal(c.control.landedBelow, 0, control);
+    // And the other window raised above it takes even the orb's press: the leg tells the stacking
+    // from the shape.
+    assert.equal(c.raised.posted.ok, true, c.raised.posted.error);
+    assert.deepEqual([c.raised.landedBelow, c.raised.buddyOrbPresses], [1, 0], `raised above the buddy, the other window takes the orb's press${why}`);
+  });
+
   it(`is idle while hidden: no timer, no frame, no wakeup and no CPU over ${IDLE_MS / 1000} s`, { skip: skipped }, () => {
+    assert.deepEqual(root.windowSize, root.defaultLayoutSize, "measured at the window's real size, the orb's box and the card's area (#5216)");
+    assert.ok(root.windowSize.width > ORB_BOX && root.windowSize.height > ORB_BOX);
     assert.equal(root.hidden.documentHidden, true, "a hidden window's page reads hidden, which the root unmounts on");
     assert.equal(root.hidden.timers, 0);
     assert.equal(root.hidden.frames, 0);

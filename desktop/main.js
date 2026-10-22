@@ -1782,6 +1782,8 @@ function startBuddy() {
     // A drag that moves the window, and where it settles, are the page's to hear: its machine
     // docks or floats with it.
     onPlacement: (where) => pushToBuddy(buddy?.window, "placement", where),
+    // Where the orb and its card's area are in the window (#5216): the page draws them there.
+    onLayout: (layout) => pushToBuddy(buddy?.window, "layout", layout),
     log: (msg) => console.warn(`desktop: ${msg}`),
   });
   registerBuddyIpc({
@@ -1844,9 +1846,11 @@ function syncBuddyToTray() {
 /** The buddy's page stays on the gateway it came from and opens no window of any kind. */
 function guardBuddyContents(win) {
   const wc = win.webContents;
-  // Each load of the page hears where the window is and whether an app window is full screen.
+  // Each load of the page hears where the window is, where the orb and its card's area are in it,
+  // and whether an app window is full screen.
   wc.on("did-finish-load", () => {
     pushToBuddy(win, "placement", buddy?.placement?.mode === "floating" ? "floating" : "docked");
+    pushToBuddy(win, "layout", buddy?.layout);
     tellBuddyFullScreen();
     pushToBuddy(win, "away", absence.away);
     pushToBuddy(win, "hidden", Boolean(buddyHide?.hidden));

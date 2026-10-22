@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { BUDDY_CHANNELS, BUDDY_CONNECTIONS, BUDDY_PAYLOADS, BUDDY_PLACEMENTS, BUDDY_PUSHES, buddyWindowOptions, pushToBuddy, registerBuddyIpc } = require("../buddyWindow");
+const { layoutAt } = require("../buddyPlacement");
 const { loadPreloadSandboxed, unsandboxableRequires } = require("./helpers/sandboxedPreload");
 
 // ── The buddy's bridge (#3831) ─────────────────────────────────────────────────────────────────
@@ -13,12 +14,13 @@ const { loadPreloadSandboxed, unsandboxableRequires } = require("./helpers/sandb
 // capability bridge. Four more hear main (#3832): the doorbell's ring, which carries nothing, and its
 // connection, one of three words; where the window is, one of three words; and whether one of the
 // app's own windows is full screen, a boolean. A fifth hears a tap on an alert's notification, a
-// ring that carries nothing (#3897). Main hears the five channels behind them only from the buddy window's own web
+// ring that carries nothing (#3897). A sixth hears where the orb and its card's area are in the
+// window (#5216), geometry and nothing else. Main hears the five channels behind them only from the buddy window's own web
 // contents, and checks every payload whatever the preload sent. A route it opens is one a
 // `pclaw://` link may open, checked by the deep-link parser itself.
 
 const PRELOAD = path.join(__dirname, "..", "buddyPreload.js");
-const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"];
+const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onLayout", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"];
 
 /** The preload loaded as the sandboxed buddy window loads it, with every send it makes recorded. */
 function loadBuddyBridge() {
@@ -66,7 +68,7 @@ function wired() {
 }
 
 describe("the buddy's preload", () => {
-  it("loads in a sandbox and exposes exactly the fifteen named calls, under its own name", () => {
+  it("loads in a sandbox and exposes exactly the sixteen named calls, under its own name", () => {
     assert.deepEqual(unsandboxableRequires(fs.readFileSync(PRELOAD, "utf8")), []);
     const { exposed } = loadBuddyBridge();
     assert.deepEqual(Object.keys(exposed), ["pclawBuddy"], "not the capability bridge, and nothing else");
@@ -109,6 +111,17 @@ describe("the buddy's preload", () => {
     for (const f of [true, false, "true", 1, null]) emit(BUDDY_PUSHES.fullScreen, f);
     assert.deepEqual(placed, [...BUDDY_PLACEMENTS]);
     assert.deepEqual(full, [true, false]);
+  });
+
+  it("hears where the orb and its card's area are, only as a side, a direction and two rectangles (#5216)", () => {
+    const { exposed, emit } = loadBuddyBridge();
+    const laid = [];
+    exposed.pclawBuddy.onLayout((l) => laid.push(l));
+    const good = layoutAt({ id: 1, bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 38, width: 1512, height: 944 } }, { x: 728, y: 46 });
+    const { window: _onScreen, ...pushed } = good;
+    emit(BUDDY_PUSHES.layout, { ...pushed, route: "#/settings", extra: { html: "<b>" } });
+    for (const bad of [null, "right", { ...pushed, side: "inside" }, { ...pushed, opens: "sideways" }, { ...pushed, orb: { x: 0, y: 0, width: "56", height: 56 } }, { ...pushed, card: null }, { ...pushed, card: { x: 0, y: 0, width: Infinity, height: 1 } }]) emit(BUDDY_PUSHES.layout, bad);
+    assert.deepEqual(laid, [pushed], "the one well-formed layout, with nothing else it carried");
   });
 
   it("hears the doorbell's two pushes, each in its shape, and stops hearing when asked", () => {
@@ -311,6 +324,16 @@ describe("main's two pushes to the buddy", () => {
     assert.deepEqual(w.sent, [...BUDDY_PLACEMENTS.map((p) => [BUDDY_PUSHES.placement, p]), [BUDDY_PUSHES.fullScreen, true]]);
   });
 
+  it("sends where the orb and its card's area are in the window, and nothing but that geometry (#5216)", () => {
+    const w = win();
+    const laid = layoutAt({ id: 1, bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 38, width: 1512, height: 944 } }, { x: 728, y: 46 });
+    assert.equal(pushToBuddy(w, "layout", laid), true);
+    assert.equal(pushToBuddy(w, "layout", { ...laid, side: "inside" }), false);
+    assert.equal(pushToBuddy(w, "layout", { ...laid, orb: { x: 0, y: 0, width: NaN, height: 56 } }), false);
+    assert.equal(pushToBuddy(w, "layout", null), false);
+    assert.deepEqual(w.sent, [[BUDDY_PUSHES.layout, { side: laid.side, opens: laid.opens, orb: laid.orb, card: laid.card }]], "the window's screen position stays in main");
+  });
+
   it("sends nothing to a window that is gone", () => {
     assert.equal(pushToBuddy(null, "ring"), false);
     const gone = win(true);
@@ -328,5 +351,14 @@ describe("the buddy window's web preferences", () => {
     assert.equal(webPreferences.nodeIntegration, false);
     assert.equal("nodeIntegrationInSubFrames" in webPreferences && webPreferences.nodeIntegrationInSubFrames, false);
     assert.equal(webPreferences.webviewTag, undefined, "no webview tag");
+  });
+});
+
+describe("what the page may say it presents (#5216)", () => {
+  it("is hidden, the orb, its line or its card, and the earlier three until the page moves to them", () => {
+    for (const presentation of ["hidden", "orb", "line", "card", "peek", "compact", "expanded"]) {
+      assert.deepEqual(BUDDY_PAYLOADS.presentation({ presentation }), { presentation }, presentation);
+    }
+    for (const presentation of ["fullscreen", "Orb", "", "toString"]) assert.equal(BUDDY_PAYLOADS.presentation({ presentation }), null, presentation);
   });
 });
