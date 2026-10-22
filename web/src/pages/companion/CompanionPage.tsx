@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone, ArrowRight } from 'lucide-react'
-import { api, type PendingApproval, type PushStatus, type WaitingItem, type WaitingList } from '../../lib/api'
+import { api, type PendingApproval, type PushStatus, type RunningList, type RunningRow, type WaitingItem, type WaitingList } from '../../lib/api'
+import { phaseLabel } from '../../lib/workPhase'
+import { WorkHead, waitingLine, waitingOrbState, waitingWorkName, workKindOf } from './allWork'
 import {
   WAITING_KIND_LABEL, approvalOf, isStale, useStaleAt, waitingRoute, waitingSource, waitingText,
 } from '../../lib/waitingList'
@@ -62,6 +64,14 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   const { data, loading, error, refresh } = useQuery<WaitingList>(
     'companion:waiting', () => api.waiting())
   useLiveLane('companion:waiting', FOLLOWS.waiting)
+  // The running list, the same read the Running section makes, for the name of the work each
+  // waiting item belongs to. A read that failed names each ask by its own source instead, and the
+  // Running section below says the read failed.
+  const { data: runningData, error: runningError } = useQuery<RunningList>('running-companion', () => api.running())
+  const rows = useMemo(
+    () => new Map(runningError ? [] : (runningData?.running ?? []).map((r) => [r.work, r])),
+    [runningData, runningError],
+  )
   // Optimistically resolved ids — the row leaves immediately, and comes BACK if the POST
   // failed (with the failure announced), because silently dropping a permission prompt would
   // leave the user believing they answered it.
@@ -136,13 +146,14 @@ export function CompanionPage({ navigate, query }: RouteProps) {
 
   // An approval, on its own card, answered here: the decision the phone exists for. Past
   // answering, the card keeps no choice that could still send.
-  const approvalCard = (ap: PendingApproval, stale: boolean) => (
+  const approvalCard = (ap: PendingApproval, stale: boolean, item: WaitingItem) => (
     <div
       key={ap.id}
       ref={ap.id === focusId ? focusRef : undefined}
       tabIndex={ap.id === focusId ? -1 : undefined}
-      className={ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : undefined}
+      className={`flex flex-col gap-s ${ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : ''}`}
     >
+      <WaitingHead item={item} rows={rows} />
       <ApprovalPrompt
         density="roomy"
         // The row's own fields, as every surface that shows a waiting-list row shows them.
@@ -199,8 +210,8 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                 // An approval is answered on its card, under the id its own route names; anything
                 // else, an approval whose route is not an approval's among it, opens its page.
                 const ap = approvalOf(w)
-                return ap ? approvalCard(ap, isStale(w, now))
-                  : <WaitingRow key={w.id} item={w} stale={isStale(w, now)} navigate={navigate} />
+                return ap ? approvalCard(ap, isStale(w, now), w)
+                  : <WaitingRow key={w.id} item={w} rows={rows} stale={isStale(w, now)} navigate={navigate} />
               })}
             </AnimatePresence>
           )}
@@ -375,7 +386,19 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
 /** One item that is answered on its own page, with its text in its source's own words: its kind,
  *  where it came from, how long it has waited, and Open, which takes you to its card. Past
  *  answering it says so, and Open is off: there is nothing left to answer there. */
-function WaitingRow({ item, stale, navigate }: { item: WaitingItem; stale: boolean; navigate: RouteProps['navigate'] }) {
+/** A waiting item's head, as the buddy says it (#3898): its orb, its work's glyph, its one line,
+ *  and the exact phase it holds that work in. */
+function WaitingHead({ item, rows }: { item: WaitingItem; rows: ReadonlyMap<string, RunningRow> }) {
+  const state = waitingOrbState(item)
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      <WorkHead state={state} kind={workKindOf(item.work)} line={waitingLine(item, waitingWorkName(item, rows))} />
+      <p data-type="caption" className="text-on-surface-low" data-phase={state}>{phaseLabel(state)}</p>
+    </div>
+  )
+}
+
+function WaitingRow({ item, rows, stale, navigate }: { item: WaitingItem; rows: ReadonlyMap<string, RunningRow>; stale: boolean; navigate: RouteProps['navigate'] }) {
   const said = waitingText(item)
   const from = waitingSource(item)
   const route = waitingRoute(item)
@@ -386,6 +409,7 @@ function WaitingRow({ item, stale, navigate }: { item: WaitingItem; stale: boole
       aria-label={`${WAITING_KIND_LABEL[item.kind]}: ${said}`}
       className="flex flex-col gap-s rounded-lg border border-outline-variant bg-surface p-l"
     >
+      <WaitingHead item={item} rows={rows} />
       <p data-type="caption" className="text-on-surface-low">
         {WAITING_KIND_LABEL[item.kind]}{from ? ` · ${from}` : ''}
       </p>

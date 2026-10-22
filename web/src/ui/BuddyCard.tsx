@@ -76,7 +76,8 @@ export const IN_SIGHT_LINE = 48
 /** In-sight rows shown before "Show all": the card is 360 px tall at most. */
 export const IN_SIGHT_SHOWN = 6
 
-const KIND_GLYPH: Record<WorkKind, LucideIcon> = {
+/** Each kind of work's glyph: the card's rows, and the phone's (`pages/companion`). */
+export const KIND_GLYPH: Record<WorkKind, LucideIcon> = {
   chat: MessageSquare, loop: Repeat, workflow: Workflow, subagent: Users, trigger: Zap, webhook: Webhook,
 }
 const STEP_GLYPH: Record<StepKind, LucideIcon> = { plan: ListChecks, step: CircleDot, tool: Wrench, result: SquareCheckBig }

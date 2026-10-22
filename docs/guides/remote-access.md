@@ -460,6 +460,11 @@ waiting. Approve or deny, and the run you were pinged about continues. If the ap
 while your phone was in your pocket, the screen says so rather than leaving you hunting for a card
 that no longer exists.
 
+Every row reads as the desktop buddy says it: the buddy's orb for its state (waiting with a "!" for
+an approval, a "?" for a question, its phase for work that runs), the glyph of its kind of work, and
+one line of at most 48 characters, such as "Release notes needs your OK: Bash", with its exact phase
+under it. What waits on you comes first, in the one order every surface keeps, then what runs.
+
 Below the approvals are what is running, open tasks, the Inbox and recent notifications. The Running
 list is the one Mission Control and the menu bar read: every chat turn, helper, loop, workflow run,
 automation and webhook at work, each with its name, its exact phase, what it is doing and when it

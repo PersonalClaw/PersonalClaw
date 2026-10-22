@@ -91,7 +91,9 @@ describe('the phone lists everything waiting on you', () => {
       'Loop: May I archive last year’s mail?',
     ])
     expect(screen.getByRole('heading', { name: 'Waiting on you (3)' })).toBeTruthy()
-    expect(screen.getByText('workflow “release”', { exact: false })).toBeTruthy()
+    expect(screen.getAllByText('workflow “release”', { exact: false }).length).toBeGreaterThan(0)
+    // Each item's one line, as the buddy says it (#3898).
+    expect(screen.getByText('Workflow “release” asks: Ship v1.2?')).toBeTruthy()
   })
 
   it('answers an approval on its card, and opens every other item on its own page', async () => {

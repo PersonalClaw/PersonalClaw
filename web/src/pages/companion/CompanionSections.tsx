@@ -15,6 +15,7 @@ import { clockTime } from '../../lib/epoch'
 import { loopRoute } from '../../lib/loopKind'
 import { rowSubject } from '../../lib/rowSubject'
 import { INTERRUPTED_LINE, KIND_WORD, phaseLine, phaseOf, wordAndLine } from '../../lib/runningRows'
+import { WorkHead, runningLine } from './allWork'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { useCutOff } from '../../lib/useCutOff'
 import { TextLink } from '../../ui/TextLink'
@@ -331,7 +332,9 @@ export function RunningSection() {
           </Capped>
         )}
       </>}>
-      {(shown) => (
+      {(shown) => {
+        const now = Date.now()
+        return (
         <ul className="flex flex-col gap-m">
           {shown.map((row) => {
             const found = byId.get(loopIdOf(row))
@@ -342,6 +345,7 @@ export function RunningSection() {
               .filter(Boolean).join(' · ')
             return (
               <Item key={row.work} title={row.name} sub={phaseLine(row)} meta={meta || undefined}
+                head={<WorkHead state={row.phase} kind={row.kind} line={runningLine(row, now)} />}
                 actions={<>
                   <Opens route={row.route} subject={rowSubject([row.name, KIND_WORD[row.kind] ?? row.kind])} />
                   {l ? steering(l) : null}
@@ -351,7 +355,8 @@ export function RunningSection() {
             )
           })}
         </ul>
-      )}
+        )
+      }}
     </Section>
   )
 }
@@ -374,12 +379,16 @@ function Capped({ id, label, total, children }: {
 }
 
 /** One row of the Running section, named by its title. */
-function Item({ title, sub, meta, actions, children }: {
-  title: string; sub?: string; meta?: string; actions: React.ReactNode; children?: React.ReactNode
+function Item({ title, sub, meta, actions, head, children }: {
+  title: string; sub?: string; meta?: string; actions: React.ReactNode
+  /** The row's buddy head (#3898): its orb, its kind's glyph and its one line. */
+  head?: React.ReactNode
+  children?: React.ReactNode
 }) {
   const titleId = useId()
   return (
     <li aria-labelledby={titleId} className="flex flex-col gap-m">
+      {head}
       <Row title={title} titleId={titleId} sub={sub} meta={meta} actions={actions} />
       {children}
     </li>
