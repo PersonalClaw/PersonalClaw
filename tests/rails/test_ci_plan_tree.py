@@ -205,6 +205,7 @@ _INPUT_ROWS = {
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-stateful": ("web/src/App.tsx", "docs/vision.md"),
+    "ui-quality": ("web/src/App.tsx", "docs/vision.md"),
     "browse-live": ("src/personalclaw/browse/x.py", None),
     "security": ("tests/security/test_x.py", None),
     "apps-contract": ("src/personalclaw/sdk/channel.py", "docs/vision.md"),
@@ -550,7 +551,7 @@ GATED_IF = {
             "(needs.changes.outputs.full != 'false' || "
             f"contains(fromJSON(needs.changes.outputs.jobs || '[]'), '{job}')) }}}}"
         )
-        for job in ("e2e", "e2e-shard", "e2e-stateful")
+        for job in ("e2e", "e2e-shard", "e2e-stateful", "ui-quality")
     },
     "apps-contract": (
         "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "

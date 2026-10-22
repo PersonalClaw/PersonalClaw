@@ -7041,6 +7041,7 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "e2e": _Mapped(("e2e",), ("merge",)),
     "e2e-shard": _Mapped(("e2e-shard",), ("merge",)),
     "e2e-stateful": _Mapped(("e2e-stateful",), ("merge",)),
+    "ui-quality": _Mapped(("ui-quality",), ("merge",)),
     "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
     "apps-contract": _Mapped(("apps-contract",), ("merge",)),
     "audit": _Mapped(("audit",), ("merge",), live=True),

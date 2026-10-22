@@ -289,13 +289,16 @@ Everything else is in [`docs/design/buddy/`](../docs/design/buddy/README.md).
 2. `npm run e2e:a11y --workspace=web` and `npm run e2e:visual --workspace=web` pass. A snapshot is
    updated only for an intended change, and the PR names it. The visual baselines are macOS-only,
    so that leg runs locally until #3943.
-3. The one named UI quality check passes (#3811, #3941). It covers every route and substate URL in
-   light and dark, at 320, 390, 412, 768, 1024 and 1440 px and at 200% text zoom, operated by
-   keyboard alone, with its focus order, 44 px compact targets, rendered contrast, reduced motion
-   and accessibility-tree snapshot.
-4. `npm run audit:consistency` reports fewer raw controls than before, never more.
-5. The design detector reports no new findings over `web/src`: `npm run design:detect`, which
-   CI's web job runs, against `web/design-detector.baseline.jsonl`.
+3. The one named UI quality check passes: `ui-quality` in CI (#3811, #3941). Its browser matrix
+   (`npm run e2e:ui --workspace=web`) covers every route and substate URL in light and dark, at
+   320, 390, 412, 768, 1024 and 1440 px and at 200% text zoom, operated by keyboard alone, with its
+   focus order, 44 px compact targets, rendered contrast, reduced motion and accessibility-tree
+   snapshot, and the idle-cost probe. The same check runs items 4 and 5, and a failing surface
+   reports every check that failed on it.
+4. `npm run audit:consistency` reports fewer raw controls than before, never more, and the
+   raw-control ratchet holds each file to its baseline: `npm run ui:ratchet`.
+5. The design detector reports no new findings over `web/src`: `npm run design:detect`, against
+   `web/design-detector.baseline.jsonl`.
 6. The surface renders each of its states: empty, large, long content, offline, a concurrent or
    expired approval, interrupted, failed and recovered.
 7. One surface per PR. The PR answers §4's checklist, quotes its screen's before figures from the
