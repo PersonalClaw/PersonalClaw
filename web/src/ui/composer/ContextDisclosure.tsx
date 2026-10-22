@@ -1,4 +1,7 @@
+import { useId } from 'react'
 import { ChartPie } from 'lucide-react'
+import type { ContextPart } from '../../lib/api'
+import { Button } from '../Button'
 import { IconButton } from '../IconButton'
 import { Meter } from '../Meter'
 import { Popover } from '../Popover'
@@ -20,8 +23,44 @@ export interface ContextCost { cost: number; tokens: number; priced: boolean }
 
 /** A chat's context reading as its composer has it: the share of the window used (`undefined` when
  *  not measured), the window the gateway named (`null` = none declared or served, `undefined` =
- *  nothing said yet), and its cost (`null` before any usage is recorded). */
-export interface ContextReading { pct?: number; window?: number | null; cost?: ContextCost | null }
+ *  nothing said yet), what fills it part by part (`null`/absent when the gateway measured no
+ *  parts), and its cost (`null` before any usage is recorded). */
+export interface ContextReading { pct?: number; window?: number | null; parts?: ContextPart[] | null; cost?: ContextCost | null }
+
+/** What a part's action does: open the Tools page, open what memory recalls, remove an attached
+ *  file, or compact the conversation. */
+export type ContextAction = ContextPart['action']
+
+/** The parts in the order the gateway says them (`context_parts.PART_KINDS`), each with its name
+ *  and the words of its action. */
+const PARTS: { kind: ContextPart['kind']; label: string; action: ContextAction; actionLabel: string }[] = [
+  { kind: 'instructions', label: 'Instructions and tools', action: 'tools', actionLabel: 'Review tools' },
+  { kind: 'memory', label: 'Memory and profile', action: 'memory', actionLabel: 'Review what’s recalled' },
+  { kind: 'files', label: 'Attached files', action: 'files', actionLabel: 'Remove' },
+  { kind: 'conversation', label: 'Conversation', action: 'compact', actionLabel: 'Compact now' },
+  { kind: 'tool_results', label: 'Tool results', action: 'compact', actionLabel: 'Compact now' },
+]
+
+/** One part as the Context view lists it and `/context` prints it: its name, what it holds in
+ *  words ("12,000 tokens, 6% of the window", or "not measured"), and its action when measured. */
+export interface ContextPartRow { kind: ContextPart['kind']; label: string; said: string; measured: boolean; action: ContextAction; actionLabel: string }
+
+/** Every part, measured or not, in one order: the one source the view and `/context` read, so the
+ *  two always agree. A part the gateway did not measure says so rather than guess. */
+export function contextPartRows(r: Pick<ContextReading, 'parts' | 'window'>): ContextPartRow[] {
+  return PARTS.map((p) => {
+    const part = r.parts?.find((x) => x.kind === p.kind)
+    if (!part) return { ...p, said: 'not measured', measured: false }
+    const share = typeof r.window === 'number' && r.window > 0 ? `, ${Math.round((part.tokens / r.window) * 100)}% of the window` : ''
+    return { ...p, said: `${part.tokens.toLocaleString('en-US')} tokens${share}`, measured: true }
+  })
+}
+
+/** What `/context` prints in the chat: the reading, then every part as the view lists it. */
+export function contextReport(r: ContextReading): string {
+  const reading = r.pct !== undefined ? `${readingSaid(r.pct, r.window)}.` : unmeasuredSaid(r.window)
+  return ['## Context', '', reading, '', ...contextPartRows(r).map((row) => `- ${row.label}: ${row.said}`)].join('\n')
+}
 
 /** From this share of the window the composer warns, in a line of its own (#3823's call). */
 export const CONTEXT_NEAR_LIMIT_PCT = 80
@@ -79,11 +118,15 @@ export function contextLineSaid(r: ContextReading): { line: string; sentence: st
 /** Whether a reading is near the limit. */
 export const nearLimit = (pct: number | undefined) => pct !== undefined && clamp(pct) >= CONTEXT_NEAR_LIMIT_PCT
 
-export function ContextDisclosure({ pct, window: windowTokens, cost, pin }: ContextReading & {
+export function ContextDisclosure({ pct, window: windowTokens, parts, cost, pin, actionFor }: ContextReading & {
   /** The status-line pin, when the host has a status line to pin to. */
   pin?: { pinned: boolean; onPin: (pinned: boolean) => void }
+  /** What a part's action does here, or `undefined` when it cannot run now (Compact while a turn
+   *  runs) or this host has nothing for it: then the part shows no action. */
+  actionFor?: (action: ContextAction) => (() => void) | undefined
 }) {
   const near = nearLimit(pct)
+  const id = useId()
   const tone = pct !== undefined && clamp(pct) >= 90 ? 'var(--color-danger)' : near ? 'var(--color-warn)' : 'var(--color-primary)'
   return (
     <Popover portal width={300} trigger={(open, toggle) => (
@@ -104,6 +147,25 @@ export function ContextDisclosure({ pct, window: windowTokens, cost, pin }: Cont
             <dt className="text-on-surface-low">Cost so far</dt>
             <dd className="text-on-surface-var">{costSaid(cost)}</dd>
           </dl>
+          {/* What fills it, part by part, as the gateway measured it: the same rows `/context`
+              prints. Each measured part offers the action that frees its space. */}
+          <section aria-labelledby={`${id}-parts`} className="flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
+            <p id={`${id}-parts`} data-type="label-s" className="text-on-surface">What fills it</p>
+            <ul className="flex flex-col gap-xs">
+              {contextPartRows({ parts, window: windowTokens }).map((row) => {
+                const run = row.measured ? actionFor?.(row.action) : undefined
+                return (
+                  <li key={row.kind} data-part={row.kind} className="flex items-center justify-between gap-s" data-type="body-s">
+                    <span className="min-w-0">
+                      <span className="text-on-surface">{row.label}</span>
+                      <span className="text-on-surface-low">: {row.said}</span>
+                    </span>
+                    {run && <Button variant="ghost-accent" size="xs" onClick={run}>{row.actionLabel}</Button>}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
           {pin && (
             <div className="flex items-center justify-between gap-s border-t border-outline-variant/30 pt-s">
               <span data-type="body-s" className="text-on-surface">Pin to the status line</span>

@@ -176,7 +176,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Read-aloud: Speak, "Speak replies aloud" and the audio a reading streams (`chat/useChatVoice`).
   const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
 
-  const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} onOpenFile={setOpenFile}
+  const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} navigate={navigate} onOpenFile={setOpenFile}
     voiceCfg={voiceCfg} speakingTurn={speakingTurn} onBriefAgent={header.briefAgent} onChangeFolder={header.setWorkspaceDir} />
 
   if (missing) return <MissingChat draft={input} navigate={navigate} />

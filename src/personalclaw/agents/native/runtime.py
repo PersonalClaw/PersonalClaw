@@ -298,6 +298,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # model call of the turn sees them, compaction and the char backstop never count
         # base64, and a later turn is never handed an earlier turn's image.
         self._staged_images: list[str] = []
+        # What fills the context, part by part (`context_parts`): the assembly's split of the NEXT
+        # turn's message (`stage_context_parts`), each turn's message with its split and length as
+        # measured, and the tool definitions the last request sent.
+        self._staged_parts: dict[str, int] | None = None
+        self._message_parts: list[tuple[dict, dict[str, int], int]] = []
+        self._last_tools: list | None = None
         self._turn_images: list[str] = []
         self._turn_message: dict | None = None
         # The reply the turn in flight owes (`owed_reply`): `_request_messages` lays the note that
@@ -884,6 +890,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._turn_images, self._staged_images = self._staged_images, []
         self._messages.append({"role": "user", "content": message})
         self._turn_message = self._messages[-1]
+        if self._staged_parts:
+            self._message_parts.append((self._turn_message, self._staged_parts, len(message)))
+        self._staged_parts = None
 
         # A tool installed, removed or switched off since the last turn reaches this one.
         await self._follow_tool_surface()
@@ -1005,6 +1014,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 )
                 logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
                 msgs = self._request_messages(mode)
+                self._last_tools = tools_kwarg
                 # #2287/#252: the native loop's ONE correction-retry. A transient
                 # inference failure (provider 5xx, dropped connection, timeout)
                 # that arrives BEFORE anything user-visible streamed is retried
@@ -2338,6 +2348,20 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     # ── status / control ──
     def context_usage_pct(self) -> float | None:
         return self._last_context_pct
+
+    def stage_context_parts(self, parts: dict[str, int] | None) -> None:
+        """Split the NEXT turn's message as its assembly measured it (``context_parts``)."""
+        self._staged_parts = dict(parts) if parts else None
+
+    def context_parts(self) -> list[dict] | None:
+        """What fills the context, part by part, as this loop's history would be sent now: each
+        turn's message split as its assembly measured it, the replies, the tool results and the
+        tool definitions (:func:`personalclaw.context_parts.history_parts`)."""
+        from personalclaw.context_parts import history_parts
+
+        held = {id(m) for m in self._messages}
+        self._message_parts[:] = [mark for mark in self._message_parts if id(mark[0]) in held]
+        return history_parts(self._messages, self._message_parts, self._last_tools)
 
     @property
     def keeps_cancelled_turns(self) -> bool:

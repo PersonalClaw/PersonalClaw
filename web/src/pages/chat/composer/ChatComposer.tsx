@@ -68,8 +68,10 @@ function askBeforeSwitch(session: string): AskBeforeSwitch {
   }
 }
 
-export function ChatComposer({ composer, stream, sessionId, started, onOpenFile: setOpenFile, voiceCfg, speakingTurn, onBriefAgent, onChangeFolder }: {
+export function ChatComposer({ composer, stream, sessionId, started, navigate, onOpenFile: setOpenFile, voiceCfg, speakingTurn, onBriefAgent, onChangeFolder }: {
   composer: ReturnType<typeof useChatComposer>
+  /** Where the Context control's actions go: the Tools page, and what memory recalls. */
+  navigate: (p: string) => void
   stream: ChatStream
   sessionId: string | null
   started: boolean
@@ -85,12 +87,12 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
   speakingTurn: number | null
 }) {
   const { acpFor, activatePlanMode, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
-  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, sessionCost, autoChain, startedBy, workingDir } = stream
+  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
   // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
   const contextPinned = useContextPinned()
   useEffect(() => {
-    publishContextReading(sessionId ? { pct: contextPct, window: contextWindow, cost: sessionCost } : null)
-  }, [sessionId, contextPct, contextWindow, sessionCost])
+    publishContextReading(sessionId ? { pct: contextPct, window: contextWindow, parts: contextParts, cost: sessionCost } : null)
+  }, [sessionId, contextPct, contextWindow, contextParts, sessionCost])
   useEffect(() => () => publishContextReading(null), [])
   // The sandbox and the network of the next turn, the gateway's words: an open chat's once its own
   // read has landed, a new chat's for the agent it is set to.
@@ -320,7 +322,9 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} sessionCost={sessionId ? sessionCost : null} contextPin={{ pinned: contextPinned, onPin: setContextPinned }} onCompact={sessionId ? () => { void send('/compact') } : undefined} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} sessionCost={sessionId ? sessionCost : null} contextPin={{ pinned: contextPinned, onPin: setContextPinned }} onCompact={sessionId ? () => { void send('/compact') } : undefined}
+          contextParts={contextParts}
+          contextActions={sessionId ? { tools: () => navigate('tools'), memory: () => navigate('memory?tab=recall'), compact: () => { void send('/compact') } } : undefined} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}

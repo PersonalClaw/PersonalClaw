@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import type { AgentDef, AgentProvider, DiscoveredAgent, ModelItem, ApprovalMode, TaskMode, ReasoningEffort } from '../../lib/api'
 import type { WorkPhase } from '../../lib/workPhase'
 import type { AskBeforeSwitch } from './dearerSwitch'
-import type { ContextCost } from './ContextDisclosure'
+import type { ContextAction, ContextCost } from './ContextDisclosure'
+import type { ContextPart } from '../../lib/api'
 
 /** Which controls a composer instance surfaces. Chat enables most; the goal
  *  composer enables only the shared core (send + optimize) and supplies its own
@@ -177,6 +178,13 @@ export interface ComposerProps {
   /** Compacts the bound session's conversation (`/compact`), offered beside the near-limit line
    *  while no turn runs. Absent: the line states the reading only. */
   onCompact?: () => void
+  /** What fills the bound session's context, part by part, as the gateway measured it where the
+   *  request is assembled; the Context control lists every part and says "not measured" for one
+   *  absent here. `null`/absent: no part was measured. */
+  contextParts?: ContextPart[] | null
+  /** What each part's action does in this host (open the Tools page, open what memory recalls,
+   *  compact). A part whose action is absent here, and Compact while a turn runs, shows none. */
+  contextActions?: Partial<Record<ContextAction, () => void>>
   /** The model that answered the bound chat's latest turn and how it was chosen ("from your Code &
    *  tools chain"), which the model pill's Auto names. Absent before any turn named one. */
   servedModel?: { model: string; chosen: string }

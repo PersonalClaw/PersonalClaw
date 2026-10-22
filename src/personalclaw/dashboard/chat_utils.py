@@ -469,6 +469,7 @@ _SLASH_COMMAND_HINTS: dict[str, str] = {
     "/undo": "Roll back the last N conversation turns",
     "/rewind-to-turn": "Put back the agent's file edits after turn N (not a command's)",
     "/compact": "Compact the conversation to free context",
+    "/context": "Show what fills the context window, part by part",
 }
 
 
@@ -551,7 +552,24 @@ async def compact_before_opening(
         state, session, NOTHING_TO_COMPACT_YET if has_turns else NOTHING_TO_COMPACT
     )
     window = await resolve_window(model, serving=client)
-    state.say_context_usage(session, client.context_usage_pct(), window=window)
+    state.say_context_usage(
+        session, client.context_usage_pct(), window=window, parts=context_parts_of(client)
+    )
+
+
+def context_parts_of(client: object) -> list[dict] | None:
+    """What fills *client*'s context, part by part (``context_parts``), or ``None`` when it measures
+    none. Only a list is an answer: a runtime without the reader, or one that fails, measured
+    nothing, and the page then says so rather than show a part it was not told."""
+    read = getattr(client, "context_parts", None)
+    if not callable(read):
+        return None
+    try:
+        parts = read()
+    except Exception:  # noqa: BLE001 — a breakdown never costs a turn its reading
+        logger.debug("context parts read failed; said as not measured", exc_info=True)
+        return None
+    return parts if isinstance(parts, list) else None
 
 
 async def _broadcast_compaction_result(

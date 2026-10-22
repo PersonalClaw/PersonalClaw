@@ -716,7 +716,8 @@ describe('the context reading never states an unmeasured percentage', () => {
   })
 
   it('a measured reading does NOT claim unknown', () => {
-    const measured = opened(61.5, 32768).textContent!
+    // The reading itself: the Context window entry (the parts below it each say their own state).
+    const measured = within(opened(61.5, 32768)).getByText('Context window').nextElementSibling!.textContent!
     expect(measured.toLowerCase()).not.toContain('unknown')
     expect(measured).not.toContain('not measured')
   })
