@@ -131,15 +131,43 @@ export interface DesktopBridge {
   }
 }
 
+/** A rectangle in the buddy window's own points. */
+export interface BuddyRect { x: number; y: number; width: number; height: number }
+
+/** The buddy's room: `hidden` hides its window until the shell shows it again. */
+export type BuddyPresentation = 'hidden' | 'peek' | 'compact' | 'expanded'
+
+/** `window.pclawBuddy`: only in the buddy's own window (`desktop/buddyPreload.js`, #3831), never
+ *  beside `pclawDesktop`. Seven sends and nothing back; the shell checks each one again. */
+export interface BuddyBridge {
+  /** macOS: the forwarded pointer is over the face or the open card (take clicks), or not. */
+  pointerOver: (hit: boolean) => void
+  /** Linux: the face's and the card's rectangles are the window's shape. */
+  setRegions: (rects: BuddyRect[]) => void
+  dragStart: () => void
+  dragBy: (dx: number, dy: number) => void
+  /** `instant` under reduced motion: the dock or the float lands without a move. */
+  dragEnd: (instant: boolean) => void
+  setPresentation: (presentation: BuddyPresentation) => void
+  /** Open a route of this app (a chat, a run) in the main window, as a hash route. */
+  openInApp: (route: string) => void
+}
+
 declare global {
   interface Window {
     pclawDesktop?: DesktopBridge
+    pclawBuddy?: BuddyBridge
   }
 }
 
 /** The bridge, or null in a browser tab. */
 export function desktopBridge(): DesktopBridge | null {
   return (typeof window !== 'undefined' && window.pclawDesktop) || null
+}
+
+/** The buddy window's bridge, or null anywhere else (a browser tab, the main window). */
+export function buddyBridge(): BuddyBridge | null {
+  return (typeof window !== 'undefined' && window.pclawBuddy) || null
 }
 
 /** Ask the OS for a capability through the shell. Null when there is no shell — the

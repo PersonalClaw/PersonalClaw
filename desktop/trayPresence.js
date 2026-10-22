@@ -265,18 +265,20 @@ function endedLabel(r, { word, line } = {}) {
  * @param {object} opts
  * @param {object} opts.presence `summarizePresence()`, carried by `carryPresence()`
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
- * @param {object} opts.actions open/deepLink/quickCapture/toggleLoginItem/quit
+ * @param {{enabled: boolean}} [opts.buddy] whether the buddy's window is on for this machine (#3831)
+ * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/toggleLoginItem/quit
  * @param {Array<{label: string, click?: Function}>} [opts.tiles] ambient
  *        menu-bar tiles. Optional — rendered when supplied,
  *        skipped when not, so the menu never depends on them.
  */
-function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, actions = {}, tiles = [] } = {}) {
+function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, buddy = { enabled: false }, actions = {}, tiles = [] } = {}) {
   const { waiting, running, finished, interrupted, connected, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
   const open = actions.open || noop;
   const deepLink = actions.deepLink || noop;
   const quickCapture = actions.quickCapture || noop;
   const toggleLoginItem = actions.toggleLoginItem || noop;
+  const toggleBuddy = actions.toggleBuddy || noop;
   const quit = actions.quit || noop;
 
   const template = [
@@ -337,6 +339,13 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
 
   template.push(
     { type: "separator" },
+    {
+      // Buddy status, for this machine: the buddy's own window, off until the owner turns it on.
+      label: "Show Buddy",
+      type: "checkbox",
+      checked: Boolean(buddy.enabled),
+      click: (menuItem) => toggleBuddy(menuItem ? Boolean(menuItem.checked) : !buddy.enabled),
+    },
     {
       label: "Open at Login",
       type: "checkbox",
@@ -402,6 +411,7 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
   let tray = null;
   let presence = { ...EMPTY_PRESENCE };
   let loginItemState = { supported: false, enabled: false };
+  let buddyState = { enabled: false };
   let capturing = false;
   let tiles = [];
 
@@ -456,7 +466,7 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
   function render() {
     if (!tray) return;
     try {
-      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, actions, tiles });
+      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: buddyState, actions, tiles });
       tray.setContextMenu(MenuCtor.buildFromTemplate(template));
       tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting }));
       tray.setToolTip(composeTrayTooltip({ capturing, ...presence }));
@@ -485,6 +495,11 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
     /** The login item's current registration, for the checkbox. */
     setLoginItemState(next) {
       loginItemState = { supported: false, enabled: false, ...(next || {}) };
+      render();
+    },
+    /** Whether the buddy's window is on, for the checkbox. */
+    setBuddyState(next) {
+      buddyState = { enabled: Boolean(next && next.enabled) };
       render();
     },
     /** The microphone indicator, routed through the one title writer. */

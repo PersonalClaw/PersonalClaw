@@ -1,7 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { CAPTURE_KEY, makeBuddyWindow } = require("../buddyWindow");
+const { CAPTURE_KEY, ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow } = require("../buddyWindow");
 const { PLACEMENT_KEY, UNDOCK_DISTANCE } = require("../buddyPlacement");
 
 // ── The buddy's own window (#3831) ─────────────────────────────────────────────────────────────
@@ -41,6 +41,8 @@ function fakeWindowClass() {
     getPosition() { return [...this.position] }
     setPosition(x, y) { this.position = [x, y]; this.record("setPosition", x, y) }
     on(event, fn) { this.handlers[event] = fn }
+    once(event, fn) { this.handlers[event] = fn }
+    emit(event) { if (this.handlers[event]) this.handlers[event]() }
   }
   return { FakeWindow, made };
 }
@@ -128,6 +130,14 @@ describe("click-through", () => {
     buddy.setRegions([{ x: 0.4, y: 0, width: 56, height: 28 }, { x: 0, y: 28, width: 420, height: 300 }, { x: "a" }]);
     assert.deepEqual(win.calls.at(-1), ["setShape", [{ x: 0, y: 0, width: 56, height: 28 }, { x: 0, y: 28, width: 420, height: 300 }]]);
   });
+
+  it("on Linux takes no click at all when nothing is shown, never the whole window", () => {
+    const { buddy, win } = make("linux");
+    for (const none of [[], [{ x: "a" }], "nonsense"]) {
+      buddy.setRegions(none);
+      assert.deepEqual(win.calls.at(-1), ["setShape", [{ x: 0, y: 0, width: 0, height: 0 }]], JSON.stringify(none));
+    }
+  });
 });
 
 describe("dragging", () => {
@@ -151,5 +161,80 @@ describe("dragging", () => {
     const store = memoryStore({ [PLACEMENT_KEY]: JSON.stringify({ mode: "floating", displayId: 2, x: 2000, y: 400 }) });
     const { win } = make("darwin", store);
     assert.deepEqual({ x: win.options.x, y: win.options.y }, { x: 2000, y: 400 });
+  });
+});
+
+describe("whether the window exists", () => {
+  function presence(store, url = () => "http://127.0.0.1:10000/#/buddy") {
+    const { FakeWindow, made } = fakeWindowClass();
+    let follows = 0;
+    const screen = { ...fakeScreen(), on: () => { follows += 1; } };
+    const buddy = makeBuddyWindow({ BrowserWindowCtor: FakeWindow, screen, store, preload: "/app/buddyPreload.js", platform: "darwin" });
+    const prepared = [];
+    const p = makeBuddyPresence({ buddy, store, url, prepare: (w) => prepared.push(names(w).length) });
+    return { p, buddy, made, prepared, follows: () => follows };
+  }
+
+  it("is no window until the owner turns Buddy status on", () => {
+    const store = memoryStore();
+    const { p, made } = presence(store);
+    assert.equal(p.enabled(), false);
+    assert.equal(p.start(), false);
+    assert.equal(made.length, 0, "off by default: nothing is created, nothing loads");
+    for (const raw of ["", "true", "yes", "0"]) {
+      store.data[ENABLED_KEY] = raw;
+      assert.equal(p.start(), false, JSON.stringify(raw));
+    }
+    assert.equal(made.length, 0);
+  });
+
+  it("opens on the owner's switch, guarded before it loads, and shows once painted without focus", () => {
+    const store = memoryStore();
+    const { p, buddy, made, prepared } = presence(store);
+    assert.equal(p.setEnabled(true), true);
+    assert.equal(store.data[ENABLED_KEY], "1");
+    const [win] = made;
+    assert.equal(prepared.length, 1);
+    const loadedAt = names(win).indexOf("loadURL");
+    assert.ok(loadedAt >= prepared[0], "the guards are on before the page loads");
+    assert.deepEqual(win.calls[loadedAt], ["loadURL", "http://127.0.0.1:10000/#/buddy"]);
+    assert.equal(buddy.isVisible(), false, "nothing shows before the page has painted");
+    win.emit("ready-to-show");
+    assert.equal(buddy.isVisible(), true);
+    assert.ok(names(win).includes("showInactive"));
+    assert.equal(names(win).includes("focus") || names(win).includes("show"), false);
+    assert.equal(win.excludedFromShownWindowsMenu, true, "not in the Window menu");
+  });
+
+  it("closes when the owner turns it off, and is one window however often it is turned on", () => {
+    const store = memoryStore();
+    const { p, buddy, made, follows } = presence(store);
+    p.setEnabled(true);
+    p.start();
+    assert.equal(made.length, 1, "a second start is the same window");
+    assert.equal(p.setEnabled(false), false);
+    assert.equal(store.data[ENABLED_KEY], "0");
+    assert.ok(names(made[0]).includes("destroy"));
+    assert.equal(buddy.window, null);
+    p.setEnabled(true);
+    assert.equal(made.length, 2);
+    assert.equal(follows(), 3, "the three display events are followed once, not once per window");
+  });
+
+  it("waits for a gateway to load from", () => {
+    const store = memoryStore({ [ENABLED_KEY]: "1" });
+    let url = null;
+    const { p, made } = presence(store, () => url);
+    assert.equal(p.start(), false);
+    assert.equal(made.length, 0);
+    url = "http://127.0.0.1:10000/#/buddy";
+    assert.equal(p.start(), true);
+    assert.equal(made.length, 1);
+  });
+
+  it("never keeps the app running by itself", () => {
+    assert.equal(buddyOutlivesClose({ appWindowsLeft: 0, quitsWithNoWindow: true }), false, "no tray: the last window closing quits, the buddy with it");
+    assert.equal(buddyOutlivesClose({ appWindowsLeft: 0, quitsWithNoWindow: false }), true, "the menu-bar item keeps the app, and the buddy with it");
+    assert.equal(buddyOutlivesClose({ appWindowsLeft: 1, quitsWithNoWindow: true }), true, "a tab is still open");
   });
 });

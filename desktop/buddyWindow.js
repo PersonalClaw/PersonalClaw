@@ -15,6 +15,8 @@
  *   is unless this machine's store says `"0"` under `CAPTURE_KEY`.
  * - **Placed** by `buddyPlacement.js`: docked on the menu-bar display, or floating where it was
  *   dropped, saved in the shell's store.
+ * - **The owner's to have.** It exists only while "Buddy status" is on for this machine
+ *   (`makeBuddyPresence`), and it never keeps the app running by itself (`buddyOutlivesClose`).
  */
 
 const placement = require("./buddyPlacement");
@@ -22,6 +24,8 @@ const { SCHEME, parseDeepLink } = require("./deepLinks");
 
 /** "Hide from screen sharing and screenshots": on unless this is `"0"`. */
 const CAPTURE_KEY = "buddy:hideFromCapture";
+/** "Buddy status": the window exists only while this is `"1"`, and nothing sets it but the owner. */
+const ENABLED_KEY = "buddy:enabled";
 
 /** The window's options. Exported for the test: what the window IS is only observable through them. */
 function buddyWindowOptions({ bounds, preload }) {
@@ -58,6 +62,7 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
   let current = placement.readPlacement(store);
   let drag = null;
   let visible = false;
+  let following = false;
 
   const displays = () => {
     try { return screen.getAllDisplays(); } catch { return []; }
@@ -86,14 +91,22 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
     if (win) return win;
     const at = resolved();
     win = new BrowserWindowCtor(buddyWindowOptions({ bounds: at ? at.bounds : { width: 360, height: 28 }, preload }));
-    if (platform === "darwin") win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (platform === "darwin") {
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      // Not one of the app's windows in the Window menu either.
+      win.excludedFromShownWindowsMenu = true;
+    }
     win.setAlwaysOnTop(true, "floating");
     win.setContentProtection(hideFromCapture());
     passClicks();
-    win.on("closed", () => { win = null; visible = false; });
+    win.on("closed", () => { win = null; visible = false; drag = null; });
     if (url) win.loadURL(url);
-    for (const event of ["display-added", "display-removed", "display-metrics-changed"]) {
-      try { screen.on(event, () => place()); } catch (err) { log(`buddy: cannot follow ${event}: ${err && err.message}`); }
+    // Once for the controller, however many times the owner turns the buddy off and on.
+    if (!following) {
+      following = true;
+      for (const event of ["display-added", "display-removed", "display-metrics-changed"]) {
+        try { screen.on(event, () => place()); } catch (err) { log(`buddy: cannot follow ${event}: ${err && err.message}`); }
+      }
     }
     return win;
   }
@@ -121,6 +134,7 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       if (win) win.destroy();
       win = null;
       visible = false;
+      drag = null;
     },
     /** The page's presentation (`peek`, `compact`, `expanded`): the window takes its room. */
     setPresentation(next) {
@@ -134,11 +148,14 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       if (hit && visible) win.setIgnoreMouseEvents(false);
       else passClicks();
     },
-    /** Linux: the face's and the card's rectangles, in the window's own points, are its shape. */
+    /** Linux: the face's and the card's rectangles, in the window's own points, are its shape. No
+     *  rectangle is one empty rectangle, not an empty list: Electron reads `[]` as "the whole
+     *  window again", which would take every click. */
     setRegions(rects) {
       if (!win || platform === "darwin" || typeof win.setShape !== "function") return;
       const ok = Array.isArray(rects) ? rects.filter((r) => r && [r.x, r.y, r.width, r.height].every(Number.isFinite)) : [];
-      win.setShape(ok.map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) })));
+      const shape = ok.map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }));
+      win.setShape(shape.length ? shape : [{ x: 0, y: 0, width: 0, height: 0 }]);
     },
     /** A drag of the face starts: the window follows the pointer's deltas until `endDrag`. */
     beginDrag() {
@@ -177,6 +194,53 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
     },
     hideFromCapture,
   };
+}
+
+// ── Whether the window exists ──────────────────────────────────────────────────────────────────
+
+/**
+ * The window exists only while "Buddy status" is on for this machine (`ENABLED_KEY`), which it is
+ * not until the owner turns it on, and only once there is a gateway to load it from. `url()` is the
+ * buddy route on the gateway this shell started, or null before it is up. `prepare(win)` runs
+ * before the page loads (main's navigation guards). The window shows once its page has painted,
+ * docked or where it was left.
+ */
+function makeBuddyPresence({ buddy, store, url, prepare = () => {}, log = () => {} }) {
+  const enabled = () => store.getItem(ENABLED_KEY) === "1";
+  function start() {
+    if (buddy.window) return true;
+    if (!enabled()) return false;
+    const at = url();
+    if (!at) return false;
+    const win = buddy.create(null);
+    prepare(win);
+    win.once("ready-to-show", () => buddy.show());
+    win.loadURL(at);
+    log("buddy: the window is up");
+    return true;
+  }
+  const stop = () => buddy.destroy();
+  return {
+    enabled,
+    start,
+    stop,
+    /** The owner's switch: on creates the window, off closes it. */
+    setEnabled(on) {
+      store.setItem(ENABLED_KEY, on ? "1" : "0");
+      if (on) return start();
+      stop();
+      return false;
+    },
+  };
+}
+
+/**
+ * Whether the buddy stays when one of the app's own windows closes. It never keeps the app alive on
+ * its own: once the last of them is gone, and the app would quit with no window left (no menu-bar
+ * item to bring one back), the buddy goes too, so the app quits as it did before there was one.
+ */
+function buddyOutlivesClose({ appWindowsLeft, quitsWithNoWindow }) {
+  return appWindowsLeft > 0 || !quitsWithNoWindow;
 }
 
 // ── The buddy's bridge (main side) ─────────────────────────────────────────────────────────────
@@ -265,4 +329,14 @@ function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, log = () => {} }
   return () => { for (const channel of Object.values(BUDDY_CHANNELS)) ipcMain.removeAllListeners(channel); };
 }
 
-module.exports = { CAPTURE_KEY, BUDDY_CHANNELS, BUDDY_PAYLOADS, buddyWindowOptions, makeBuddyWindow, registerBuddyIpc };
+module.exports = {
+  CAPTURE_KEY,
+  ENABLED_KEY,
+  BUDDY_CHANNELS,
+  BUDDY_PAYLOADS,
+  buddyWindowOptions,
+  makeBuddyWindow,
+  makeBuddyPresence,
+  buddyOutlivesClose,
+  registerBuddyIpc,
+};

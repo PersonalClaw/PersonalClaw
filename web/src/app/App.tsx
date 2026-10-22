@@ -23,6 +23,7 @@ import { opensDuringSetup } from './onboarding/openDuringSetup'
 import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
+import { BuddyRoutePage } from '../pages/buddy/buddyRoute'
 import { linkStatePatch, showsNewThread, withLinkState } from './linkState'
 import { useIsMobile } from './useIsMobile'
 import { useWindowMaterial } from './windowMaterial'
@@ -86,7 +87,6 @@ const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m
 const Home = lazy(() => import('../pages/dashboard/Home').then((m) => ({ default: m.Home })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
-const PlaygroundPage = lazy(() => import('../pages/buddy/PlaygroundPage').then((m) => ({ default: m.PlaygroundPage })))
 
 const NAV: NavItem[] = [
   // Primary group (no section header): the Dashboard is the home, then Chat,
@@ -741,7 +741,7 @@ function AppInner() {
       <>
         <ErrorBoundary resetKey={`buddy:${sub}`}>
           <Suspense fallback={<PageFallback />}>
-            <PlaygroundPage sub={sub} navigate={navigate} navEpoch={navEpoch} query={query} setQuery={setQuery} />
+            <BuddyRoutePage sub={sub} navigate={navigate} navEpoch={navEpoch} query={query} setQuery={setQuery} />
           </Suspense>
         </ErrorBoundary>
         <Toaster />
