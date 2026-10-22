@@ -64,6 +64,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **After a restart, work that runs again leaves Home's Interrupted rows in the same moment it shows as running, instead of reading as both for a frame.**
 - **All tasks opens again for someone whose sidebar still shows the starter set: the visit kept re-pinning Tasks, which reads back as Projects, until the page stopped with an error.**
 - **A link to setup on a home that has finished it opens Home, and Back from there returns to the page you followed it from instead of bringing you back to Home.**
 - **Only you answer what waits on you, at every door: an app whose manifest declared `/api/browse` could approve a browser grant, and an agent's tool could answer the question it asked you, approve the plan it drafted, or answer a loop's question, merge, conflict, plan step or launch. Each is now refused, as an approval always was.**
