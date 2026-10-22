@@ -93,7 +93,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
-| Home | see what needs you, what is running and what finished | Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed. An approval is answered inline. | New thread, View | the selected item's detail; a compact window opens it in place |
+| Home | see what needs you, what is running and what finished | Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed. An approval is answered inline. | New thread, View (Attention or Overview) | the selected item's detail; a compact window opens it in place |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
@@ -190,8 +190,12 @@ Top to bottom:
 
 - **From Home:** the count pills (one needs-you badge in the toolbar replaces them, and it shows
   nothing at 0), the chip row that repeats the sidebar, the system telemetry (to Settings ›
-  System), and suggestions outside Needs You or the empty state. #3803 makes the first cut before
-  Home becomes the three groups.
+  System), and suggestions outside Needs You or the empty state. #3803 made the first cut, and
+  #3813 made Home the three groups.
+- **To Home's Overview:** the bands that have no place in the three groups, the Agent world, the
+  desktop and browser live views, tasks, Discover, pinned artifacts and recent activity, are Home's
+  second view, View › Overview (`#/dashboard?view=overview`). What was pinned to Home and the
+  dashboard's surface overlays stay under the three groups.
 - **From the thread header:** the task-mode and permission-mode pills (to the composer and the
   Execution Boundary control), the agent and model selectors (one composer pill), Brief the agent (a
   row in the composer's `+` menu), the working directory (the Execution Boundary control), Save as

@@ -86,7 +86,6 @@ describe('the pattern these two joined', () => {
   const ADOPTERS: [string, RegExp][] = [
     ['pages/loop/LoopComposer.tsx', /inline-flex min-h-6 cursor-pointer items-center/],
     ['pages/dashboard/widgets/kit.tsx', /inline-flex min-h-6 -my-px items-center/],
-    ['pages/dashboard/DashboardPage.tsx', /inline-flex min-h-6 -my-0\.5 items-center/],
   ]
   for (const [rel, re] of ADOPTERS) {
     it(`${rel} still uses the grow-the-box idiom`, () => {

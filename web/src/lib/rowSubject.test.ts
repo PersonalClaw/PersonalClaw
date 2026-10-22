@@ -121,10 +121,10 @@ describe('both composing surfaces use the one helper', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
   const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it("the dashboard's action centre composes through it", () => {
-    const code = codeOf('pages/dashboard/widgets/ActionCenter.tsx')
-    expect(code).toMatch(/const subject = rowSubject\(\[e\.title, e\.sub\]\)/)
-    expect(code, 'the hand-rolled join must be gone').not.toMatch(/e\.sub \? `\$\{e\.title\} — \$\{e\.sub\}`/)
+  it("Home's Needs You composes through it", () => {
+    const code = codeOf('pages/dashboard/Home.tsx')
+    expect(code).toMatch(/const subject = rowSubject\(\[row\.title, row\.raisedBy, row\.subtitle\]\)/)
+    expect(code, 'no hand-rolled join').not.toMatch(/`\$\{row\.title\} — \$\{row\.subtitle\}`/)
   })
 
   it('the notification rows compose through it', () => {

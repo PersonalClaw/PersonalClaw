@@ -26,25 +26,13 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Keyur" [level=#]
-  - textbox "Message input"
-  - button "Attach files"
-  - 'button "Agent and model: Agent · Auto"': Agent · Auto
-  - button "Send message" [disabled]
-  - heading "To triage" [level=#]
-  - paragraph: Nothing to triage — no approvals, messages or skill proposals are waiting.
-  - heading "Active work" [level=#]
-  - paragraph: No active work. Loops you launch appear here as they run.
+  - button "New thread"
+  - radiogroup "View":
+    - radio "Attention"
+    - radio "Overview" [checked]
   - heading "Tasks" [level=#]
   - paragraph: No tasks ready to work.
   - button "New task"
-  - heading "Suggestions" [level=#]
-  - button "Show health-check status"
-  - button "Break a goal into tasks"
-  - button "Save a note to my knowledge base"
-  - button "Run a command and explain the output"
-  - button "What can you help me with?"
-  - button "Set up a daily briefing"
-  - button "Refresh"
   - heading "Agent world" [level=#]
   - paragraph: Nothing is running. Loops, chats and subagents appear here as they start.
   - heading "Discover" [level=#]

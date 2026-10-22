@@ -95,7 +95,8 @@ describe('every mutation site busts the collection it changed', () => {
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('all four proposal-decision sites bust the proposals prefix', () => {
-    // Four surfaces decide the same proposal; a fix at one is a fix for one journey only.
+    // Four surfaces decide the same proposal; a fix at one is a fix for one journey only. Home's
+    // Needs You took the dashboard's place when it took the triage card's proposals.
     // `InboxPage` joined them when dismiss-all started ANSWERING the proposals its rows mirror
     // (issue 409): a bulk sweep that rejects 32 proposals and leaves "Proposals (32)" on the
     // Skills page is the same two-stores-one-queue disagreement that sweep exists to end.
@@ -103,7 +104,7 @@ describe('every mutation site busts the collection it changed', () => {
       'pages/skills/SkillProposals.tsx',
       'pages/inbox/InboxDetail.tsx',
       'pages/inbox/InboxPage.tsx',
-      'pages/dashboard/widgets/ActionCenter.tsx',
+      'pages/dashboard/Home.tsx',
     ]) {
       expect(codeOf(rel), `${rel} must bust the whole collection`)
         .toMatch(/invalidateKeys\('skill-proposals', true\)/)

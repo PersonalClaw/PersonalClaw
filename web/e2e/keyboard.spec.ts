@@ -20,20 +20,21 @@ function approvalRow(over: Record<string, unknown> = {}) {
   }
 }
 
-/** *row* as the waiting list carries it (`GET /api/waiting`): the registry row as its brief. */
+/** An approval row as `GET /api/waiting` serves it: its registry fields as its brief, answered at
+ *  its own route. */
 function waitingOf(row: Record<string, unknown>) {
   const id = String(row.id)
   return {
-    id: `approval:${id}`, kind: 'approval', work: '', session: String(row.session ?? ''), brief: row,
-    consequence: row.risk === 'destructive' ? 'destructive' : 'changes', risk: String(row.risk ?? ''),
-    asked_at: new Date(Number(row.ts ?? 0) * 1000).toISOString(), age_secs: 0, expires_at: null,
-    current: true, interrupt: 'deliver', route: '',
-    answer: { method: 'POST', path: `/api/approvals/${id}/{answer}`, takes: ['approve', 'reject'], body: {} },
+    id: `approval:${id}`, kind: 'approval', work: String(row.work ?? ''), session: String(row.session ?? ''),
+    brief: row, consequence: row.risk === 'destructive' ? 'destructive' : 'changes', risk: String(row.risk ?? ''),
+    asked_at: null, age_secs: null, expires_at: null, current: true, interrupt: 'deliver',
+    answer: { method: 'POST', path: `/api/approvals/${encodeURIComponent(id)}/{answer}`, takes: ['approve', 'reject'], body: {} },
+    route: row.session ? `#/chat/${encodeURIComponent(String(row.session))}` : '',
   }
 }
 
-/** Answer `GET /api/approvals` with *rows*, and `GET /api/waiting` with them as its approvals (what
- *  Mission Control reads), and record every decision the page sends. */
+/** Answer `GET /api/approvals` with *rows*, and `GET /api/waiting` with the same rows as Home's
+ *  Needs You reads them, and record every decision the page sends. */
 async function stubApprovals(page: Page, rows: Record<string, unknown>[]): Promise<Request[]> {
   const decisions: Request[] = []
   await page.route('**/api/approvals', (route) =>
@@ -41,10 +42,7 @@ async function stubApprovals(page: Page, rows: Record<string, unknown>[]): Promi
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) })
       : route.fallback())
   await page.route('**/api/waiting', (route) =>
-    route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({ waiting: rows.map(waitingOf), unreadable: [] }),
-    }))
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ waiting: rows.map(waitingOf), unreadable: [] }) }))
   await page.route('**/api/approvals/*/*', (route) => {
     decisions.push(route.request())
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok": true}' })

@@ -3,11 +3,10 @@
 The dashboard-as-views registry first shipped with ONE preset and a comment reserving
 the second for this one (gated on unifying the inbox and notifications, now done). This covers
 the server third of the feature: a **locked** "Mission Control" view whose
-DECLARED composition is the four attention lanes, in triage order.
+DECLARED composition is Home's three groups, in the order they are read (#3813).
 
-The lane refs asserted here are a CONTRACT with the frontend — ``attentionLanes.ts`` /
-``MissionControl.tsx`` render by these exact strings, so a rename is a breaking change
-on both sides, not a local edit.
+The group refs asserted here are a CONTRACT with the frontend — ``Home.tsx`` renders by these
+exact strings, so a rename is a breaking change on both sides, not a local edit.
 
 Isolation: every test binds an isolated home via ``PERSONALCLAW_HOME`` AND
 monkeypatches the store's imported ``config_dir`` symbol, so nothing touches the real
@@ -22,14 +21,13 @@ import pytest
 
 from personalclaw.dashboard import views_store as store
 
-#: The four lane refs, verbatim, in triage order. Duplicated from the module ON PURPOSE:
+#: The three group refs, verbatim, in their order. Duplicated from the module ON PURPOSE:
 #: asserting against ``store._MISSION_CONTROL_CORE_REFS`` alone would pass through any
 #: rename, and the FE codes against these literals.
-LANE_REFS = [
-    "core:lane-needs-approval",
-    "core:lane-your-turn",
-    "core:lane-working",
-    "core:lane-idle",
+GROUP_REFS = [
+    "core:group-needs-you",
+    "core:group-running-now",
+    "core:group-recent",
 ]
 
 #: The eight Overview refs, verbatim — a second preset must not perturb the first.
@@ -57,15 +55,15 @@ def _isolate_home(tmp_path, monkeypatch):
 # ── The preset resolves, and is locked ──────────────────────────────────────
 
 
-def test_mission_control_resolves_as_a_locked_preset_with_four_lanes():
+def test_mission_control_resolves_as_a_locked_preset_with_three_groups():
     view = store.get_view(store.PRESET_MISSION_CONTROL_ID)
     assert view is not None
     assert view.id == "mission-control"
     assert view.name == "Mission Control"
     assert view.preset is True
-    # Exactly the four lanes, in declared triage order — nothing more on a fresh home.
-    assert [t.ref for t in view.tiles] == LANE_REFS
-    assert store._MISSION_CONTROL_CORE_REFS == tuple(LANE_REFS)
+    # Exactly the three groups, in their declared order — nothing more on a fresh home.
+    assert [t.ref for t in view.tiles] == GROUP_REFS
+    assert store._MISSION_CONTROL_CORE_REFS == tuple(GROUP_REFS)
 
 
 def test_mission_control_is_nav_pinned_with_a_resolvable_icon():
@@ -98,21 +96,21 @@ def test_both_presets_listed_and_overview_is_unchanged():
     assert [t["ref"] for t in overview["tiles"]] == OVERVIEW_REFS
     assert overview["preset"] is True and overview["nav_pinned"] is True
     assert overview["icon"] == "LayoutDashboard"
-    # And the two presets share no refs — the ``lane-`` segment is doing its job.
-    assert not set(LANE_REFS) & set(OVERVIEW_REFS)
+    # And the two presets share no refs — the ``group-`` segment is doing its job.
+    assert not set(GROUP_REFS) & set(OVERVIEW_REFS)
 
 
 # ── Overlay ordering (the Overview invariant, held for the new preset) ───────
 
 
-def test_overlay_tile_orders_after_the_four_core_lanes():
+def test_overlay_tile_orders_after_the_three_core_groups():
     store.add_tile(store.PRESET_MISSION_CONTROL_ID, "artifact:board")
     view = store.get_view(store.PRESET_MISSION_CONTROL_ID)
     refs = [t.ref for t in view.tiles]
-    assert refs == [*LANE_REFS, "artifact:board"]
+    assert refs == [*GROUP_REFS, "artifact:board"]
     overlaid = next(t for t in view.tiles if t.ref == "artifact:board")
-    assert overlaid.order == len(LANE_REFS)
-    assert all(t.order < overlaid.order for t in view.tiles if t.ref in LANE_REFS)
+    assert overlaid.order == len(GROUP_REFS)
+    assert all(t.order < overlaid.order for t in view.tiles if t.ref in GROUP_REFS)
 
 
 # ── Vacuity floor: resolution DISCRIMINATES ─────────────────────────────────
@@ -144,10 +142,10 @@ def test_preset_never_round_trips_to_disk_as_a_user_view():
     # The overlay is persisted; the preset's own composition is NOT.
     assert "mission-control" in disk["overlay"]
     assert [t["ref"] for t in disk["overlay"]["mission-control"]] == ["artifact:board"]
-    assert not any(r in json.dumps(disk["views"]) for r in LANE_REFS)
-    # Re-reading rebuilds the lanes from code, and the lock still holds.
+    assert not any(r in json.dumps(disk["views"]) for r in GROUP_REFS)
+    # Re-reading rebuilds the groups from code, and the lock still holds.
     reread = store.get_view(store.PRESET_MISSION_CONTROL_ID)
-    assert [t.ref for t in reread.tiles] == [*LANE_REFS, "artifact:board"]
+    assert [t.ref for t in reread.tiles] == [*GROUP_REFS, "artifact:board"]
     with pytest.raises(store.PresetLockedError):
         store.delete_view(store.PRESET_MISSION_CONTROL_ID)
 
@@ -165,12 +163,12 @@ def test_a_user_view_named_like_the_preset_is_still_not_a_preset():
     store.delete_view(created.id)
 
 
-def test_the_frontend_names_the_same_four_refs_as_the_registry():
+def test_the_frontend_names_the_same_three_refs_as_the_registry():
     """The cross-language drift rail — the ONLY check that can fail on this mismatch.
 
     The registry and the view that renders it were built on separate branches against a
-    contract written in prose, and they disagreed: `core:lane-*` here, `core:attention-*`
-    in `MissionControl.tsx`. Nothing caught it. A tile ref is a plain string on both sides,
+    contract written in prose, and they disagreed once: `core:lane-*` here, `core:attention-*`
+    in the view. Nothing caught it. A tile ref is a plain string on both sides,
     so `make lint`, mypy and both suites were green while the view's ref map named four
     tiles the preset does not register — the frontend would have looked correct and matched
     nothing.
@@ -182,19 +180,17 @@ def test_the_frontend_names_the_same_four_refs_as_the_registry():
     import pathlib
     import re
 
-    tsx = pathlib.Path(__file__).resolve().parents[1] / "web/src/pages/dashboard/MissionControl.tsx"
+    tsx = pathlib.Path(__file__).resolve().parents[1] / "web/src/pages/dashboard/Home.tsx"
     assert tsx.exists(), f"{tsx} moved — re-point this rail"
     body = tsx.read_text()
-    block = re.search(r"export const LANE_REFS[^{]*\{(.*?)\n\}", body, re.S)
-    assert (
-        block
-    ), "LANE_REFS is no longer a literal object in MissionControl.tsx — re-derive this rail"
+    block = re.search(r"export const GROUP_REFS[^{]*\{(.*?)\n\}", body, re.S)
+    assert block, "GROUP_REFS is no longer a literal object in Home.tsx — re-derive this rail"
     fe_refs = set(re.findall(r"'(core:[^']+)'", block.group(1)))
     # Vacuity floor: a regex that matched an empty block would make the comparison below
     # trivially true against an empty set, which is exactly how a rail reads clean forever.
-    assert len(fe_refs) == 4, f"parsed {len(fe_refs)} refs out of LANE_REFS, expected 4: {fe_refs}"
+    assert len(fe_refs) == 3, f"parsed {len(fe_refs)} refs out of GROUP_REFS, expected 3: {fe_refs}"
     assert fe_refs == set(store._MISSION_CONTROL_CORE_REFS), (
-        "the Mission Control view's LANE_REFS and the registry's _MISSION_CONTROL_CORE_REFS name "
+        "the Mission Control view's GROUP_REFS and the registry's _MISSION_CONTROL_CORE_REFS name "
         f"different tiles.\n  frontend: {sorted(fe_refs)}\n  registry: "
         f"{sorted(store._MISSION_CONTROL_CORE_REFS)}"
     )

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
-// ── "Jump back in" names the app that started a chat ─────────────────────────────────────────────
+// ── Your threads name the app that started a chat ────────────────────────────────────────────────
 //
-// Home's "Jump back in" links reopen your most recent chats, and an app's conversation is one of
+// Home's Your threads (under Recent and completed) reopen your most recent chats, and an app's conversation is one of
 // them (#3632 puts them in your history). Opening one means speaking under the APP's permissions,
 // not yours — and a bare title cannot tell you that. The history rows already say "Started by
 // <App>"; these links are the other place you pick a chat up again, so they say it too, in the
@@ -41,29 +41,29 @@ vi.mock('../../lib/api', async (orig) => {
   return { ...real, api }
 })
 
-const { DashboardPage } = await import('./DashboardPage')
+const { HomeHarness } = await import('../../test/homeHarness')
 const { AppearanceProvider } = await import('../../app/appearance')
 
 afterEach(cleanup)
 
 const jumpLinks = async () => {
-  render(<AppearanceProvider><DashboardPage sub="" navEpoch={0} navigate={() => {}} query={{}} setQuery={() => {}} /></AppearanceProvider>)
-  const label = await screen.findByText('Jump back in')
-  return label.parentElement as HTMLElement
+  render(<AppearanceProvider><HomeHarness /></AppearanceProvider>)
+  return screen.findByRole('list', { name: 'Your threads' })
 }
 
-describe('"Jump back in"', () => {
+describe('Your threads, on Home', () => {
   it('says "Started by <App>" on the app\'s chat', async () => {
     const links = await jumpLinks()
     const app = within(links).getByRole('button', { name: /Inbox triage/ })
-    expect(within(app).getByText('Started by Probe Alpha')).toBeTruthy()
-    // …and says it in the link's name, so a screen reader hears it before choosing.
-    expect(app.textContent).toContain('Started by Probe Alpha')
+    expect(app.closest('li')?.textContent).toContain('Started by Probe Alpha')
+    // …and says it in the row's name, so a screen reader hears it before choosing.
+    expect(app.getAttribute('aria-label')).toContain('Started by Probe Alpha')
   })
 
   it('names no app on one of yours', async () => {
     const links = await jumpLinks()
     const mine = within(links).getByRole('button', { name: /Weekly review/ })
-    expect(within(mine).queryByText(/^Started by /)).toBeNull()
+    expect(mine.closest('li')?.textContent).not.toMatch(/Started by /)
+    expect(mine.getAttribute('aria-label')).not.toMatch(/Started by /)
   })
 })

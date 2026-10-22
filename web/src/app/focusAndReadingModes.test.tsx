@@ -64,7 +64,7 @@ const { App } = await import('./App')
 const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
-await Promise.all([import('../pages/dashboard/DashboardPage'), import('../pages/ChatPage')])
+await Promise.all([import('../pages/dashboard/Home'), import('../pages/ChatPage')])
 
 const renderApp = () => render(
   <ThemeProvider><AppearanceProvider><PersonalityProvider><App /></PersonalityProvider></AppearanceProvider></ThemeProvider>,

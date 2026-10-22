@@ -63,7 +63,7 @@ beforeAll(async () => {
   await Promise.all([
     import('../pages/tasks/TasksSection'),
     import('../pages/projects/ProjectsSection'),
-    import('../pages/dashboard/DashboardPage'),
+    import('../pages/dashboard/Home'),
     import('../pages/discover/DiscoverPage'),
   ])
 }, 120_000)
@@ -210,7 +210,7 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
     expect(screen.getAllByRole('button', { name: /notifications/i }).length, 'the bell is on screen').toBeGreaterThan(0)
   })
 
-  it('Discover: Home\'s deck, whose footer opens #/discover', async () => {
+  it('Discover: the deck in Home\'s Overview, whose footer opens #/discover', async () => {
     phone()
     answers.discover = {
       enabled: true, visible_count: 2, total: 2, dismissed_count: 0,
@@ -219,7 +219,7 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
         { id: 'inbox', area: 'Stay organized', title: 'Route messages into one inbox', lesson: 'One inbox.', try_it: { route: 'inbox', label: 'Open Inbox' } },
       ] }],
     }
-    await open('dashboard')
+    await open('dashboard?view=overview')
     fireEvent.click(await screen.findByRole('button', { name: /See all 2 in Discover/ }))
     await settle()
     expect(location.hash).toBe('#/discover')

@@ -98,7 +98,9 @@ export function useStaleAt(items: readonly Pick<WaitingItem, 'expires_at'>[]): n
     .reduce<number | null>((min, at) => (min === null || at < min ? at : min), null)
   useEffect(() => {
     if (next === null) return
-    const timer = window.setTimeout(() => setNow(Date.now()), Math.max(0, next - Date.now()) + 50)
+    // Clamped to the longest delay a timer holds: past it, a browser fires at once, and an item a
+    // month out would re-arm a zero-length timer on every render.
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(Math.max(0, next - Date.now()) + 50, 2 ** 31 - 1))
     return () => window.clearTimeout(timer)
   }, [next])
   return now

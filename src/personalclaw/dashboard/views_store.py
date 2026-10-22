@@ -96,19 +96,17 @@ _OVERVIEW_CORE_REFS = (
 #: The Mission Control preset id — the attention-triage surface.
 PRESET_MISSION_CONTROL_ID = "mission-control"
 
-#: The four attention lanes, in triage order (most-blocking first): what needs YOU to
-#: approve, what needs YOU to answer, what the system is doing unattended, what is
-#: parked. Same DECLARED-composition contract as ``_OVERVIEW_CORE_REFS`` — the FE
-#: renders a fixed lane layout for these ``core:`` refs and sources every lane from the
-#: unified attention store, so the schema is
-#: composition-ready without making the render dynamic. The ``lane-`` segment is load
-#: bearing: it keeps a lane ref from colliding with a same-named Overview widget
-#: (``core:lane-working`` vs ``core:active-work``).
+#: Home's three groups, in the order they are read: what waits on YOU to answer, what is
+#: running now, and what finished recently. Same DECLARED-composition contract as
+#: ``_OVERVIEW_CORE_REFS`` — the FE renders a fixed layout for these ``core:`` refs (``GROUP_REFS``
+#: in ``web/src/pages/dashboard/Home.tsx``), sourcing Needs You from the waiting list and Running
+#: Now from the running list, so the schema is composition-ready without making the render
+#: dynamic. The ``group-`` segment is load bearing: it keeps a group ref from colliding with a
+#: same-named Overview widget.
 _MISSION_CONTROL_CORE_REFS = (
-    "core:lane-needs-approval",
-    "core:lane-your-turn",
-    "core:lane-working",
-    "core:lane-idle",
+    "core:group-needs-you",
+    "core:group-running-now",
+    "core:group-recent",
 )
 
 
@@ -339,7 +337,7 @@ def _overview_preset(data: dict) -> DashboardView:
 
 
 def _mission_control_preset(data: dict) -> DashboardView:
-    """Build the locked Mission Control preset: four attention lanes + persisted overlay."""
+    """Build the locked Mission Control preset: Home's three groups + persisted overlay."""
     core = [
         DashboardTile(ref=ref, size="m", order=i, added_by="user")
         for i, ref in enumerate(_MISSION_CONTROL_CORE_REFS)

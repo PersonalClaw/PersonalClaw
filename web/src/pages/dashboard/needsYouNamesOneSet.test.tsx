@@ -35,6 +35,13 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // while `ProjectsSection`'s `WORK_STATE_LABEL` hand-typed `'Needs input'` for the same wire
 // value. A fifth per-page map its rail could not see, so the drift it declared fixed was live.
 // §3 compares the two objects directly, which is why it cannot drift again silently.
+//
+// 🔑 AND THEN THE WIDER SET ARRIVED (#3888, #3813). The triage card is gone: Home's Needs You reads
+// `GET /api/waiting`, the one list of everything the owner must answer from every source, and the
+// approved Home names its group "Needs You". The rule this file held is unchanged, only its
+// subject moved: a confident "nothing waiting on you" is said only by the surface that read the
+// whole set, and only when no source of it went unread. So §1 and §2 now hold Home to that, §3
+// still holds the work state's one word, and §4 holds the tour to the group it points at.
 
 const SRC = join(process.cwd(), 'src')
 
@@ -66,57 +73,40 @@ const phraseSites = (phrase: string | RegExp) =>
     .map((abs) => abs.slice(SRC.length + 1))
     .sort()
 
-const actionCenter = () => codeOf(join(SRC, 'pages/dashboard/widgets/ActionCenter.tsx'))
-const dashboardPage = () => codeOf(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
+const home = () => codeOf(join(SRC, 'pages/dashboard/Home.tsx'))
+const needsRead = () => codeOf(join(SRC, 'lib/useNeedsYou.ts'))
+const overview = () => codeOf(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
 
-describe('§1 the triage card does not assert the absence of a set it cannot see', () => {
-  it('its empty state makes no unscoped "nothing waiting on you" claim', () => {
+describe('§1 "nothing waiting on you" is said only by the surface that read the whole set', () => {
+  it('Needs You is the waiting list, read whole, with the Inbox’s own asks after it', () => {
+    expect(needsRead(), 'Needs You reads the one list of everything waiting').toMatch(/api\.waiting\(\)/)
+    expect(home(), 'Home draws Needs You from that read').toMatch(/useNeedsYou\(\)/)
+  })
+
+  it('and its all-clear sentence is the only one, said only when no source went unread', () => {
+    const src = home()
+    expect(src).toMatch(/'Nothing is waiting on you\.'/)
+    // The sentence for a list some source of which could not be read is a narrower one.
+    expect(src).toMatch(/needs\.unreadable\.length > 0 \? 'Nothing else is waiting on you\.'/)
     expect(
-      actionCenter(),
-      'a card reading three lanes cannot report on everything that waits on the user',
-    ).not.toMatch(/nothing waiting on you/i)
-  })
-
-  it('and scopes the negative to the three lanes it actually read', () => {
-    // Not merely "shorter copy": the sentence has to name the lanes, or the reader is back to
-    // guessing how wide the claim is.
-    const src = actionCenter()
-    expect(src).toMatch(/Nothing to triage/)
-    for (const lane of ['approvals', 'messages', 'skill proposals']) {
-      expect(src, `the empty state does not name the ${lane} lane`).toContain(lane)
-    }
-  })
-
-  it('and the set it reads is still exactly those three (the vacuity floor)', () => {
-    // §1 goes green the day the card starts reading a fourth lane without widening its
-    // sentence — which is the same defect with a different set.
-    const src = actionCenter()
-    expect(src).toMatch(/approvals\.map\(/)
-    expect(src).toMatch(/liveInbox\.map\(/)
-    expect(src).toMatch(/proposals\.map\(/)
+      phraseSites(/nothing (is )?waiting on you/i).filter((rel) => rel.startsWith('pages/dashboard/')),
+      'a dashboard surface that did not read the whole set claims nothing waits',
+    ).toEqual(['pages/dashboard/Home.tsx'])
   })
 })
 
-describe('§2 the dashboard section is named for what it holds', () => {
-  it('the triage card is not labelled with the wider phrase', () => {
-    expect(
-      dashboardPage(),
-      'the ActionCenter section still claims the phrase that names the needs_input state',
-    ).not.toMatch(/label="Needs you"/)
+describe('§2 the group is named for what it holds', () => {
+  it('Home names the whole waiting list "Needs You"', () => {
+    expect(home()).toMatch(/'needs-you': 'Needs You'/)
   })
 
-  it('it is labelled "To triage", agreeing with its own empty state', () => {
-    expect(dashboardPage()).toMatch(/label="To triage"/)
-    expect(actionCenter()).toMatch(/Nothing to triage/)
-  })
-
-  it('and the phrase still exists somewhere, owned by the state that means it', () => {
+  it('and the work state keeps its own word, owned by the registry', () => {
     // Without this the whole file passes if "Needs you" is simply deleted from the app — a
     // green built on the phrase meaning nothing rather than one thing.
     const sites = phraseSites('Needs you')
     expect(sites, 'the phrase vanished; it is supposed to have ONE owner, not none').not.toEqual([])
     expect(sites).toContain('lib/loopStatus.ts')
-    expect(sites, 'the dashboard page took the phrase back').not.toContain('pages/dashboard/DashboardPage.tsx')
+    expect(overview(), 'the Overview took the phrase').not.toMatch(/Needs [yY]ou/)
   })
 })
 
@@ -148,11 +138,11 @@ describe('§3 one wire value, one word', () => {
   })
 })
 
-describe('§4 the tour describes the card it points at', () => {
-  it('names the new label and the set the card actually holds', () => {
+describe('§4 the tour describes the group it points at', () => {
+  it('names the group by its label, and no label Home no longer has', () => {
     const tour = codeOf(join(SRC, 'app/onboarding/ProductTour.tsx'))
     const step = tour.slice(tour.indexOf("id: 'approvals'"))
-    expect(step.slice(0, 600), 'the tour still quotes the old section label').not.toContain('"Needs you"')
-    expect(step.slice(0, 600)).toContain('"To triage"')
+    expect(step.slice(0, 600)).toContain('"Needs You"')
+    expect(step.slice(0, 600), 'the tour still quotes the retired card').not.toContain('"To triage"')
   })
 })

@@ -468,12 +468,13 @@ for (const theme of THEMES) {
           },
         })
       })
-      await gotoRoute(page, 'dashboard')
+      // Recent activity is a band of Home's Overview view.
+      await gotoRoute(page, 'dashboard?view=overview')
       await expect(page.getByText('every recent fire was held by a gate'), 'the stub reached the card').toBeVisible()
       await checkSurface(
         page,
         info,
-        { where: `#/dashboard, one fire held (${theme})`, theme, kind: 'route', route: 'dashboard' },
+        { where: `#/dashboard?view=overview, one fire held (${theme})`, theme, kind: 'route', route: 'dashboard' },
         'dashboard-held-fire',
       )
     })

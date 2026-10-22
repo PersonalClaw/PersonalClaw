@@ -16,11 +16,14 @@ import { approvalDestination } from './approvalDestination'
  *  card offers this call alone. *opensSource* links the source to where that work is answered in
  *  full, for a surface that lists approvals from everywhere.
  */
-export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false }: {
+export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false, sourceHref }: {
   approval: ApprovalCardInput
   onDecide: (action: 'approve' | 'reject') => void | Promise<unknown>
   busy?: boolean
   opensSource?: boolean
+  /** Where the source is answered in full, when the surface already knows it (a waiting item's
+   *  `route`): it wins over the address read off the approval's session. */
+  sourceHref?: string
 }) {
   const source = approval.source_label || undefined
   // A queue holds one card per call, so the verbs' names carry who asked and what the call does.
@@ -32,7 +35,7 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
       seg={approvalSegmentOf(approval)}
       answers="once"
       source={source}
-      sourceHref={opensSource && approval.session ? approvalDestination(approval).href : undefined}
+      sourceHref={opensSource ? sourceHref || (approval.session ? approvalDestination(approval).href : undefined) : undefined}
       subject={subject}
       busy={busy}
       onAct={(_id, action) => onDecide(action === 'rejected' ? 'reject' : 'approve')}

@@ -92,7 +92,7 @@ const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
 await Promise.all([
-  import('../pages/dashboard/DashboardPage'), import('../pages/ChatPage'), import('../pages/projects/ProjectsSection'),
+  import('../pages/dashboard/Home'), import('../pages/ChatPage'), import('../pages/projects/ProjectsSection'),
   import('../pages/loops/LoopsSection'), import('../pages/code/CodeSection'),
 ])
 

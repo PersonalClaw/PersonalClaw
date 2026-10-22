@@ -59,7 +59,7 @@ beforeAll(async () => {
   await Promise.all([
     import('../pages/triggers/TriggersSection'),
     import('../pages/workflows/WorkflowsSection'),
-    import('../pages/dashboard/DashboardPage'),
+    import('../pages/dashboard/Home'),
   ])
 }, 120_000)
 

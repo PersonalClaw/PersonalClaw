@@ -5,8 +5,8 @@ import type { TaskItem } from '../lib/api'
 // ── A count that changes does not pop ───────────────────────────────────────────────────────────
 //
 // Three counts the owner watches tick all day used to re-mount on every change and pop back in on
-// the most overshooting preset (`physics.playful`): Home's pulse counts, each Tasks board column's
-// count, and the bell's unread badge. Each was a `motion.span` keyed on the number, so a new number
+// the most overshooting preset (`physics.playful`): Home's pulse counts (the toolbar's needs-you
+// badge now), each Tasks board column's count, and the bell's unread badge. Each was a `motion.span` keyed on the number, so a new number
 // was a new element with `scale(0.5…)`/`opacity: 0` written on it and a spring back to 1. A count
 // changing many times an hour is not an event; the new number is the news. So the count is one
 // element that keeps its place and swaps its text, with nothing written on it to animate.
@@ -19,17 +19,10 @@ function expectNoPop(before: Element, after: Element, name: string) {
   expect(after.getAttribute('style') ?? '', `${name} still animates in`).not.toMatch(/scale|opacity/)
 }
 
-// ── Home's pulse ──────────────────────────────────────────────────────────────────────────────────
+// ── The needs-you badge ───────────────────────────────────────────────────────────────────────────
 
-const live = vi.hoisted(() => ({
-  value: {
-    approvals: [] as unknown[], inbox: [] as unknown[], tasks: [] as unknown[],
-    approvalsErr: null, inboxErr: null, tasksErr: null,
-    read: { approvals: true, inbox: true, tasks: true },
-    status: null,
-  },
-}))
-vi.mock('../pages/dashboard/DashboardLive', () => ({ useDashboardLive: () => live.value }))
+const needs = vi.hoisted(() => ({ value: { rows: [] as unknown[], data: {}, error: null as unknown } }))
+vi.mock('../lib/useNeedsYou', () => ({ useNeedsYou: () => needs.value }))
 
 // ── The bell ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -45,29 +38,28 @@ vi.mock('../lib/useChatSocket', () => ({
   useChatSocket: (handler: (m: { type: string }) => void) => { bell.onMessage = handler },
 }))
 
-const { HeroPulse } = await import('../pages/dashboard/widgets/HeroPulse')
+const { NeedsYouBadge } = await import('../ui/NeedsYouBadge')
 const { TaskBoard } = await import('../pages/tasks/TaskBoard')
 const { NotificationBell } = await import('../ui/NotificationBell')
 
-const approval = (id: string) => ({ id, tool: 'shell', args: {} })
+const row = (key: string) => ({ key, origin: 'waiting', title: key, raisedBy: '', subtitle: '' })
 const task = (id: string, status: string): TaskItem => ({ id, title: `Task ${id}`, status, priority: 'medium' } as unknown as TaskItem)
 const note = (ts: number) => ({ ts, kind: 'info', title: `Note ${ts}`, body: 'body', acked: false, mode: '', targets: [] })
 
 afterEach(() => cleanup())
 
-describe('Home’s pulse counts swap their number in place', () => {
-  beforeEach(() => { live.value = { ...live.value, approvals: [approval('a1')] } })
+describe('the needs-you badge swaps its number in place', () => {
+  beforeEach(() => { needs.value = { ...needs.value, rows: [row('a1')] } })
 
-  it('an approvals count going 1 → 2 keeps its element and writes no pop', () => {
-    const props = { sub: '', navigate: () => {}, navEpoch: 0, setQuery: () => {}, query: {} }
-    const { rerender } = render(<HeroPulse {...props} />)
-    const before = within(screen.getByRole('button', { name: '1 approval waiting' })).getByText('1')
+  it('a count going 1 → 2 keeps its element and writes no pop', () => {
+    const { rerender } = render(<NeedsYouBadge navigate={() => {}} />)
+    const before = within(screen.getByRole('button', { name: '1 waiting on you — open Home' })).getByText('1')
     expect(before.getAttribute('style') ?? '', 'the count animates in on its first frame').not.toMatch(/scale|opacity/)
 
-    live.value = { ...live.value, approvals: [approval('a1'), approval('a2')] }
-    rerender(<HeroPulse {...props} />)
-    const after = within(screen.getByRole('button', { name: '2 approvals waiting' })).getByText('2')
-    expectNoPop(before, after, 'the pulse count')
+    needs.value = { ...needs.value, rows: [row('a1'), row('a2')] }
+    rerender(<NeedsYouBadge navigate={() => {}} />)
+    const after = within(screen.getByRole('button', { name: '2 waiting on you — open Home' })).getByText('2')
+    expectNoPop(before, after, 'the needs-you count')
   })
 })
 

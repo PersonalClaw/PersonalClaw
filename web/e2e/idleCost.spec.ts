@@ -9,9 +9,10 @@ import { IDLE_PROBE_SCRIPT, IDLE_ROUTES, IDLE_TRIES, IDLE_WINDOW_MS, idleCostFin
 // and measured over a 5 s window by `idleCost.ts`: no animation frame at all, and no timer or
 // request that recurs faster than once a second. A window in which the gateway pushed something
 // to the page, or a turn ran anywhere, is not idle, so the probe measures again; this spec shares
-// the run's gateway with specs that drive turns at any time. Home's window must also hold an
-// answer of its 8 s poll (`holds`), since what a page costs at rest is mostly what each answer
-// makes it do: a window between two answers would pass a frame per answer.
+// the run's gateway with specs that drive turns at any time. A route that polls at rest names the
+// read its window must hold an answer of (`holds`), since what a page costs at rest is mostly what
+// each answer makes it do: a window between two answers would pass a frame per answer. Neither
+// Home nor Chat polls at rest.
 //
 // Every check here can fail, and the last two tests show it on the real pages, with the same probe:
 // the wave backdrop (Claw Arcade's) keeps a frame loop, and a planted frame loop, a 100 ms interval

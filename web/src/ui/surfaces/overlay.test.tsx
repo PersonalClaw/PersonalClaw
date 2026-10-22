@@ -261,13 +261,13 @@ describe('clause 6 — safe mode forces maxLayer=0, so no overlay loads', () => 
 // ── the render path reaches the loader ────────────────────────────────────────
 
 describe('the dashboard call site', () => {
-  it('🪤 DashboardPage renders the band for the `dashboard` surface', () => {
-    // A SOURCE assertion, deliberately, and named as one: `DashboardPage` mounts
-    // `AgentWorld`, framer-motion and a dozen data widgets, so mounting it here would
-    // measure that scaffolding rather than this seam. The behavioural half is every test
-    // above, which drives the real band. The Python suite holds the same rail from the
-    // other side — `OVERLAYABLE_SURFACES` may not name a surface with no call site.
-    const src = readFileSync(join(process.cwd(), 'src/pages/dashboard/DashboardPage.tsx'), 'utf8')
+  it('🪤 Home renders the band for the `dashboard` surface', () => {
+    // A SOURCE assertion, deliberately, and named as one: Home mounts its three groups and a
+    // dozen reads, so mounting it here would measure that scaffolding rather than this seam (Home's
+    // own suite holds that the band renders under the groups). The behavioural half is every test
+    // above, which drives the real band. The Python suite holds the same rail from the other side —
+    // `OVERLAYABLE_SURFACES` may not name a surface with no call site.
+    const src = readFileSync(join(process.cwd(), 'src/pages/dashboard/Home.tsx'), 'utf8')
     expect(src).toContain('<SurfaceOverlay surface="dashboard" />')
     expect(src).toContain("from '../../ui/surfaces/SurfaceOverlay'")
   })

@@ -64,16 +64,4 @@ describe('the fix reaches the widgets, and the chips too', () => {
     expect(count, 'the primitive must actually be in use across the widgets').toBeGreaterThanOrEqual(6)
   })
 
-  it('the "Jump back in" chips grew too', () => {
-    const src = readFileSync(join(DIR, 'DashboardPage.tsx'), 'utf8')
-    // 20px → 24px needs 4px back, hence `-my-0.5` rather than `-my-px`.
-    expect(src).toMatch(/inline-flex min-h-6 -my-0\.5 items-center gap-xs text-on-surface-var/)
-  })
-
-  it('does not silence the Reply CONTRAST finding, which is a separate design call', () => {
-    // `#/settings` light-theme audit still reports 4.46:1 on these buttons. That is deferred;
-    // a target-size fix must not be mistaken for having addressed it.
-    const src = readFileSync(join(DIR, 'widgets', 'ActionCenter.tsx'), 'utf8')
-    expect(src, 'the tone is untouched — only the hit box moved').toMatch(/<RowAction tone="primary"/)
-  })
 })

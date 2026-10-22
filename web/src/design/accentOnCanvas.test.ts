@@ -222,12 +222,14 @@ describe('a dashboard row action uses the emphasis shade', () => {
     expect(code).toMatch(/default: 'text-on-surface-var hover:bg-surface-highest hover:text-on-surface'/)
   })
 
-  it('the call sites it reaches are the four dashboard row actions', () => {
-    // If a fifth appears it inherits the fix; this pins the population the measurement covered.
+  it('the call sites it reaches are the dashboard row actions', () => {
+    // If another appears it inherits the fix; this pins the population the measurement covered.
+    // Four when measured; the triage card's three left with it when Home became the attention
+    // stack, whose answers are `Button`s, so one remains.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     const sites = walk(join(SRC, 'pages/dashboard')).flatMap((abs) =>
       [...readSource(abs).matchAll(/<RowAction tone="primary"/g)].map(() => abs.slice(SRC.length + 1)))
-    expect(sites.length, 'RowAction tone="primary" call sites on the dashboard').toBeGreaterThanOrEqual(4)
+    expect(sites.length, 'RowAction tone="primary" call sites on the dashboard').toBeGreaterThanOrEqual(1)
   })
 
   it('the scheme rail carries the fourth ground for every scheme', () => {

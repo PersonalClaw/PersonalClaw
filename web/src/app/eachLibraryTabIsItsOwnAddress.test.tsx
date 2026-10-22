@@ -62,7 +62,7 @@ beforeAll(async () => {
     import('../pages/files/FilesSection'),
     import('../pages/artifacts/ArtifactsSection'),
     import('../pages/settings/SettingsPage'),
-    import('../pages/dashboard/DashboardPage'),
+    import('../pages/dashboard/Home'),
   ])
 }, 120_000)
 

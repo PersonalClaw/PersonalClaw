@@ -51,7 +51,7 @@ const HIGH_FREQUENCY: Record<string, string> = {
   'pages/tasks/TasksListPage.tsx': 'the tasks list',
   'pages/notifications/NotificationsPage.tsx': 'the notifications list',
   'pages/projects/ProjectsSection.tsx': 'the projects list',
-  'pages/dashboard/widgets/HeroPulse.tsx': 'Home’s pulse counts',
+  'ui/NeedsYouBadge.tsx': 'the toolbar’s needs-you badge',
   'pages/tasks/TaskBoard.tsx': 'the board’s column counts',
 }
 

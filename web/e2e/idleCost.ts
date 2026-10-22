@@ -40,10 +40,11 @@ export interface IdleRoute extends RouteEntry {
   holds?: string
 }
 
-/** The routes the probe holds, from the manifest: Home and Chat. Home's window holds its fastest
- *  poll, the 8 s loops read (`pages/dashboard/DashboardLive.tsx`); Chat polls nothing at rest. */
+/** The routes the probe holds, from the manifest: Home and Chat. Neither polls at rest: Home reads
+ *  what waits on you and what runs once, and again on the frames that say they moved (#3813), and
+ *  Chat polls nothing. A route that polls names the read a window must hold an answer of. */
 export const IDLE_ROUTES: readonly IdleRoute[] = [
-  { route: 'dashboard', label: 'Home', holds: 'GET /api/loops' },
+  { route: 'dashboard', label: 'Home' },
   { route: 'chat', label: 'Chat' },
 ]
 

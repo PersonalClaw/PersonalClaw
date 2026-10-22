@@ -45,10 +45,6 @@
 {"file":"pages/code/cockpit/tasks/StageTasks.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/code/cockpit/tasks/TaskDetailView.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/code/cockpit/tasks/TaskRow.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/dashboard/DashboardPage.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/dashboard/widgets/ActionCenter.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/dashboard/widgets/ActiveWork.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
-{"file":"pages/dashboard/widgets/HeroPulse.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/Suggestions.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/SystemHealth.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/TasksWidget.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
