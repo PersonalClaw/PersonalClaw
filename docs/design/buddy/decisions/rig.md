@@ -5,14 +5,13 @@ The record of the rig spike ([#3887]): both ways of extending the agent orb's dr
 sets, with the choice its rule gives. The script that took the numbers and every run's raw numbers
 are beside this file ([the method](#the-method)).
 
-**Status: no rig chosen, and the choice is reopened.** With the buddy's dots capped at 30 frames a
-second, the orb at 48 px, neither candidate passes the animating CPU bar on both of its runs on a
-120 Hz display, loaded or quiet ([the quiet re-measure](#the-quiet-re-measure)), so the rule names
-none ([the choice](#the-choice)). The cap holds; what is left is the pose, which the motion library
-moves at the display's rate. In place stays the working default the renderer ([#3891]) builds on,
-and the next step is the pose's springs on the dots' capped loop, then both candidates re-measured
-at 120 Hz. The memory bar is pending until the buddy window has its own bundle, and the Linux column
-waits for a Linux host or the container runner.
+**Status: the rig is extended in place.** With the buddy's dots and its pose both on one clock at
+30 frames a second, the orb at 48 px on a 120 Hz display, in place passes every bar a rig can meet
+on both of its runs, 4.27% and 4.44% of one core while animating, and the layered candidate fails
+the animating bar on both, 5.18% and 5.13% ([the numbers](#the-numbers), [the choice](#the-choice)).
+The renderer ([#3891]) starts from in place. Two rows are not this spike's to fill: the memory bar
+is measured on the buddy window's own bundle once it exists ([#3831], [#3891]), and the Linux
+column is taken with the buddy's acceptance in CI ([#3902]).
 
 ## What the spike drew
 
@@ -58,11 +57,18 @@ of their own, at most at [the buddy's frame rate](#the-buddys-frame-rate):
 ## The buddy's frame rate
 
 The buddy paints its dots at most 30 frames a second (`BUDDY_FPS` in `poses.ts`). The agent orb in
-chat draws through the same loop at the same rate (`web/src/ui/orbDots.ts`). A capped loop waits out
-the gap on a timer and only then asks for one frame, so the page draws nothing between two paints:
-the working hold measured 28.5 to 28.6 frames a second. A scheme change repaints the dots at once, moving or
-still, rather than at the next capped paint. The motion library still moves the pose's values, and
-the layered candidate's SVG layer, at the display's rate while a change is moving.
+chat draws through the same clock at the same rate (`web/src/ui/orbDots.ts`). A capped clock waits
+out the gap on a timer and only then asks for one frame, so the page draws nothing between two
+paints: the working hold measured 28.0 to 28.6 frames a second. A scheme change repaints the dots at
+once, moving or still, rather than at the next capped paint.
+
+The pose moves on the same clock. The motion library runs each change of pose on the app's presets,
+through a driver of the clock's (`cappedDriver`), so a change steps its values at most 30 times a
+second, in the frame the dots are painted in and just before they are, instead of on every frame
+the display draws. In place painted the pose only at the capped rate already, so what it shows does
+not change; the motion library stopped doing the work between two paints that nobody saw. The
+layered candidate's SVG layer, which the motion library moves with those values, now moves at 30
+frames a second too.
 
 ## The environment
 
@@ -72,49 +78,48 @@ the layered candidate's SVG layer, at the display's rate while a change is movin
 | OS | macOS 27.0.1 (26A434) | pending |
 | Display | 120 Hz, scale 2 | pending |
 | Electron | 44.7.2, Chromium 152.0.7977.149 | pending |
-| Build | this change over `692a48e6`, built with `VITE_BUDDY_RIG=1` | pending |
-| Window | 420 by 600 px in the screen's lower right corner, shown without focus and kept above other windows on every space; the orb at 48 px, its dots at 30 frames a second | pending |
+| Build | this change over `f8aa737c`, built with `VITE_BUDDY_RIG=1` | pending |
+| Window | 420 by 600 px in the lower right corner of the 120 Hz display, shown without focus and kept above other windows on every space; the orb at 48 px, its dots and its pose at 30 frames a second | pending |
 
-The machine is shared. A run starts only while the 5-minute load average is under 30, re-checking
-each minute for up to an hour, and every sample carries the load it was taken under. The load did
-not fall under 30 in the hour (it ran 34 to 66), so the runs below went at 35 to 46, and each run's
-load is beside its numbers. Three windows stopped before their run was done, on a hidden window or a
-page that did not load within 30 s; each was run again, and none of their numbers is in the record.
+The machine is shared. A run starts only while the 5-minute load average is under the gate,
+re-checking each minute for up to an hour, and every sample carries the load it was taken under.
+The record's runs went at 5-minute loads of 12 to 23, each beside its numbers.
 
 ## The numbers
 
 Two runs of each candidate on macOS, each number against its bar. CPU is the renderer's, in percent
 of one core, from its CPU time over each second; the at-rest window is 60 s in the quiet family
 with nothing moving, and the animating window is 60 s of the loop: into each of the four families
-and back, then the card open and closed, each step held 800 ms.
+and back, then the card open and closed, each step held 800 ms. The runs are in `rig-runs/`.
 
 | Measure | Bar | In place, run 1 | In place, run 2 | Layered, run 1 | Layered, run 2 | Linux |
 |---|---|---|---|---|---|---|
-| CPU at rest, visible | under 0.5% | 0.20%, passes | 0.22%, passes | 0.26%, passes | 0.21%, passes | pending |
-| CPU while animating | under 5% | 4.83%, passes | 5.43%, fails | 6.07%, fails | 6.54%, fails | pending |
-| Frames while still | zero | 0, passes | 0, passes | 0, passes | 0, passes | pending |
-| Memory | under 60 MB, on the buddy window's own bundle | 307 MB, pending | 280 MB, pending | 196 MB, pending | 208 MB, pending | pending |
-| Bundle size | under 150 KB | 2.72 KB, passes | 2.72 KB, passes | 2.66 KB, passes | 2.66 KB, passes | pending |
-| Live retint | within one frame | 1 frame moving, 1 still: passes | 1 and 1: passes | 1 and 1: passes | 1 and 1: passes | pending |
-| The dials | overshoot and travel scale | passes | passes | passes | passes | pending |
-| Reduced motion | a still per state | passes | passes | passes | passes | pending |
-| The working hold, alone | none of its own | 5.23% | 5.61% | 5.92% | 6.30% | pending |
-| 5-minute load (start, mean, highest) | under 30 | 35, 35, 40 | 44, 43, 45 | 44, 46, 46 | 40, 39, 41 | pending |
+| CPU at rest, visible | under 0.5% | 0.29%, passes | 0.32%, passes | 0.27%, passes | 0.31%, passes | [#3902] |
+| CPU while animating | under 5% | 4.27%, passes | 4.44%, passes | 5.18%, fails | 5.13%, fails | [#3902] |
+| Frames while still | zero | 0, passes | 0, passes | 0, passes | 0, passes | [#3902] |
+| Memory | under 60 MB, on the buddy window's own bundle | 178 MB, pending | 196 MB, pending | 164 MB, pending | 191 MB, pending | [#3902] |
+| Bundle size | under 150 KB | 2.53 KB, passes | 2.53 KB, passes | 2.38 KB, passes | 2.38 KB, passes | [#3902] |
+| Live retint | within one frame | 1 frame moving, 1 still: passes | 1 and 1: passes | 1 and 1: passes | 1 and 1: passes | [#3902] |
+| The dials | overshoot and travel scale | passes | passes | passes | passes | [#3902] |
+| Reduced motion | a still per state | passes | passes | passes | passes | [#3902] |
+| The working hold, alone | none of its own | 5.56% | 6.47% | 5.48% | 5.53% | [#3902] |
+| Frames in the 60 s loop | none of its own | 936 | 936 | 1,437 | 1,434 | [#3902] |
+| 5-minute load (start, mean, highest) | under 45 | 20, 19, 20 | 17, 20, 23 | 15, 14, 15 | 12, 12, 13 | [#3902] |
 
 What each row holds:
 
 - **CPU** is the renderer's alone. The GPU process, which composites what the renderer draws, adds
-  4.0 to 4.5% of a core while animating in place and 5.6 to 6.0% layered, whose SVG layer the
-  motion library moves at the display's rate.
-- **Memory** is the renderer's working set at its highest sample: 148 to 220 MB with the harness
+  3.6 to 3.8% of a core while animating in place and 4.0 to 4.1% layered, whose SVG layer is
+  composited apart from the canvas.
+- **Memory** is the renderer's working set at its highest sample: 139 to 164 MB with the harness
   alone and no candidate, so it is the renderer loading the web app's own bundle, not either rig.
   The bar stays and is the buddy window's to meet: that window gets a small bundle of its own
   ([#3831], [#3891]), and the bar is measured on that bundle once it exists. Until then this row is
   pending, not failed.
-- **Bundle size** is the gzip of the chunks only the candidate loads: its own chunk (1.56 KB in
-  place, 1.49 KB layered) and the pose and frame-loop code both share (1.17 KB). The thinking-orbs
-  drawing and framer-motion are shared app code already in the entry. Beyond `index.html` the route
-  also fetched the harness's own chunk and two more it pulls in, 87 KB in all with the candidate.
+- **Bundle size** is the gzip of the chunks only the candidate loads: its own chunk (1.64 KB in
+  place, 1.49 KB layered) and the pose code both share (0.89 KB). The thinking-orbs drawing,
+  framer-motion and the capped clock (`orbDots.ts`, the agent orb's in chat) are shared app code
+  the entry already loads.
 - **Live retint** counts the display's frames from the scheme change to the painted dots taking the
   new hue: once while the dots move, and once as a still under reduced motion. Both repaint as the
   change lands, since both painters are their own.
@@ -124,18 +129,24 @@ What each row holds:
 
   | Move | Preset | Overshoot at bounciness 0, 1 | Travel at expressiveness 0, 1 |
   |---|---|---|---|
-  | an approval draws the dots in | `snappy` | 0.3%, 6.4% | 9%, 26% of the radius |
-  | a question lifts the orb | `snappy` | 0.2%, 6.4% | 2.0 px, 5.8 px at 48 px |
+  | an approval draws the dots in | `snappy` | 0%, 6.2% | 9%, 26% of the radius |
+  | a question lifts the orb | `snappy` | 0%, 6.1% | 2.0 px, 5.8 px at 48 px |
   | an error sinks the dots | `smooth` | 0%, 0% | 25%, 70% of a full droop |
-  | done swirls the dots | `playful` | 0.9%, 31.9% | 0.35, 1 turn |
+  | done swirls the dots | `playful` | 0.9%, 31.4% | 0.35, 1 turn |
+
+  The values are read where the pose is painted, 30 times a second, so a peak can fall between two
+  readings: an approval's overshoot read 6.4% when the values moved on every frame the display drew.
 
 - **Reduced motion**: with the system setting on, every change in the 20 s loop was a jump: no pose
-  value took a value between two poses (each changed at most 6 times in 25 steps). The page ran 30
-  to 39 frame callbacks in those 20 s, one or two a step, which is the motion library applying each
-  instant change; no frame loop ran.
+  value took a value between two poses (each changed at most 6 times in 25 steps). The page ran 7
+  or 8 frame callbacks in those 20 s in place and 37 or 38 layered, whose SVG layer the motion
+  library renders for each instant change; no frame loop ran.
 - **The working hold** is 20 s in the working pose alone: the pose an orb holds for as long as an
-  agent works. It has no bar of its own; it is here because it is what the animating number is made
-  of, and at 30 frames a second it is about the bar on its own.
+  agent works, its dots moving at 30 frames a second. It has no bar of its own; the loop holds the
+  working pose for one of its steps.
+- **Frames in the loop** counts every animation-frame callback the page ran in the 60 s loop. It
+  was 3,026 to 3,062 at 120 Hz while the pose moved on every frame the display drew
+  ([before the pose was capped](#before-the-pose-was-capped)).
 
 The rows the table cannot hold:
 
@@ -154,64 +165,48 @@ The rule ([#3887], open question 5): the smallest by the chunks only the candida
 candidates whose every run passes the at-rest and the animating CPU bars and retints within a
 frame.
 
-**It names none.** Both pass at rest, 0.20 to 0.26% of one core, and both retint within a frame on
-every run, moving and still. Neither passes the animating bar on both runs. Were both to pass, the
-rule would name the layered candidate: its own chunks are 2.66 KB against 2.72 KB in place.
+**It names in place.** It is the only candidate whose every run passes both CPU bars: 0.29% and
+0.32% at rest, 4.27% and 4.44% while animating. Both candidates retint within a frame on every run,
+moving and still, and pass every other bar a rig can meet.
 
 Each candidate, with the measure it lost on:
 
-- **In place** lost on CPU while animating in its second run: 5.43% at a load of 43, after 4.83%
-  at 35 in its first. It passes every other bar a rig can meet, it is the only candidate to pass
-  the animating bar in any of these runs, and it costs less than the layered candidate on every
-  run, by 0.6 to 1.7 points.
-- **Layered** lost on CPU while animating in both runs: 6.07% at a load of 46 and 6.54% at 39.
-  Its dots cost what in place's do; what it adds is the SVG layer, which the motion library moves
-  at the display's rate while a change is moving, where in place paints the same moves in its
-  capped loop.
+- **Layered** lost on CPU while animating in both runs: 5.18% at a load of 15 and 5.13% at 12. Its
+  own chunks are smaller, 2.38 KB against 2.53 KB, which the rule weighs only among candidates that
+  pass. Its dots cost what in place's do; what it adds is the SVG layer, which the motion library
+  renders on its own frames: its loop ran 1,434 to 1,437 frames to in place's 936.
 
-Every run above went at a load over the gate's 30. The [quiet re-measure](#the-quiet-re-measure)
-took the load out, and it is not what kept the candidates over the bar: at 120 Hz the quiet runs
-land where the loaded ones did. The record names no rig.
+`node docs/design/buddy/decisions/rig-measure.mjs --summary` reads `rig-runs/` and names the same.
 
-## The quiet re-measure
+## Before the pose was capped
 
-Both candidates again, two runs each, the orb at 48 px and its dots at 30 frames a second, with the
-5-minute load under the gate's 30 (one run's mean was 32). This Mac's main display had become a 60
-Hz monitor, and [`rig-window.cjs`](rig-window.cjs) opens on the main display, so a plain run
-measured at 60 Hz. The 120 Hz runs put the window on the built-in panel, the record's, with a copy
-of the window script that picks the fastest display; nothing else in the method changed. Builds
-`53eeaeed` and `1cb803e1`, whose rig code is the same.
+The runs before the pose moved on the dots' clock, kept for what they show; none of them is the
+record's.
 
-CPU while animating, in percent of one core, against the bar of 5:
+**The first record**, the dots capped and the pose not, at loads of 35 to 46 (`rig-runs/loaded/`,
+build `692a48e6`): in place 4.83% and 5.43% while animating, layered 6.07% and 6.54%; at rest 0.20
+to 0.26%; the GPU process 4.0 to 4.5% in place and 5.6 to 6.0% layered.
 
-| | 120 Hz, the built-in panel | 60 Hz, the external monitor |
+**The quiet re-measure**, the same code at loads under 30, builds `53eeaeed` and `1cb803e1`. The
+120 Hz runs put the window on the built-in panel with a copy of the window script that picked the
+fastest display, which `--hz` now does; the 60 Hz runs went on an external monitor.
+
+| CPU while animating, bar 5 | 120 Hz, the built-in panel | 60 Hz, the external monitor |
 |---|---|---|
 | In place, run 1 | 5.78%, fails (load 25, highest 26) | 4.24%, passes (load 27, highest 29) |
 | In place, run 2 | 5.04%, fails (load 27, highest 29) | 3.95%, passes (load 26, highest 27) |
 | Layered, run 1 | 5.58%, fails (load 23, highest 27) | 4.48%, passes (load 32, highest 33) |
 | Layered, run 2 | 5.77%, fails (load 18, highest 19) | 4.38%, passes (load 24, highest 25) |
 
-Every other bar a rig can meet passes in every run (memory stays pending): at rest 0.27 to 0.36%
-of one core, no frame while still, a retint within one frame moving and still, the dials and
-reduced motion as before. The candidates' own chunks are 2.45 KB in place and 2.31 KB layered,
-smaller than the record's because the capped loop has since moved into `web/src/ui/orbDots.ts`,
-which the agent orb in chat shares and the app's own code loads (#5035).
-
-What the runs show:
-
-- **The load was not the cause.** At 120 Hz the quiet runs land where the loaded ones did: in
-  place 5.78% and 5.04% against 4.83% and 5.43%.
-- **The cap holds.** The working hold paints 572 to 574 frames in its 20 s in every 120 Hz run,
-  28.6 to 28.7 a second. What the cap does not reach is the pose: the motion library moves its
-  values at the display's rate while a change runs, so the 60 s loop draws 3,026 to 3,062 frames at
-  120 Hz and 1,657 to 1,691 at 60 Hz. That is why 60 Hz passes and 120 Hz does not.
-- **At 60 Hz both pass**, and the rule would name layered by its chunks, 0.14 KB smaller, though
-  in place costs less CPU in every run. The bar was set at the record's 120 Hz, so the choice is
-  not settled on a 60 Hz pass.
-
-The runs are in `rig-runs/quiet/` (120 Hz) and `rig-runs/quiet-60hz/`, each read by `--summary
---out docs/design/buddy/decisions/rig-runs/<folder>`. Each run file records its display's rate as
-`window.refreshHz`.
+The load was not the cause: at 120 Hz the quiet runs land where the loaded ones did. The cap held,
+the working hold painting 572 to 574 frames in its 20 s, but the motion library moved the pose's
+values at the display's rate while a change ran, so the 60 s loop drew 3,026 to 3,062 frames at
+120 Hz and 1,657 to 1,691 at 60 Hz. That is why 60 Hz passed and 120 Hz did not, and it is what the
+pose on the dots' clock removed. The runs are in `rig-runs/quiet/` and `rig-runs/quiet-60hz/`, each
+read by `--summary --out docs/design/buddy/decisions/rig-runs/<folder>`; each run file records its
+display's rate as `window.refreshHz`. The record's runs were not repeated at 60 Hz: the 60 Hz
+monitor was no longer attached, and a pose that steps 30 times a second asks a 60 Hz display for no
+more than it asks a 120 Hz one.
 
 ## Sizes
 
@@ -269,6 +264,7 @@ app's windows are (`desktop/localSignIn.js`), and writes each run to `rig-runs/`
 
 ```bash
 node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 2
+node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 2 --hz 60
 node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 1 --size 24
 node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 1 --fps 0
 node docs/design/buddy/decisions/rig-measure.mjs --summary
@@ -293,21 +289,25 @@ For each candidate the window measures, in this order:
 - **Reduced motion**: the system setting, emulated through the DevTools protocol, then the loop
   again for 20 s: the frames it ran and how many times each pose value changed (a jump is once).
 
-The record's setting is the orb at 48 px and its dots at the buddy's 30 frames a second, and its
-files carry no setting in their names. Another setting names itself in its files and is never mixed
-with the record's: `--size 24` adds `24px-`, `--fps 60` adds `60fps-`, and `--fps 0`, every frame
-the display draws, adds `uncapped-`. `--summary` reads each setting apart.
+The record's setting is the orb at 48 px and its dots at the buddy's 30 frames a second, on a 120 Hz
+display, and its files carry no setting in their names. Another setting names itself in its files
+and is never mixed with the record's: `--size 24` adds `24px-`, `--fps 60` adds `60fps-`, `--fps 0`,
+every frame the display draws, adds `uncapped-`, and `--hz 60` adds `60hz-`. The window opens on
+the display that refreshes `--hz` times a second, whichever display is the main one, and a machine
+with none is refused; a run whose window drew at another rate is refused too. `--summary` reads each
+setting apart. The 5-minute load gate is `--max-load` (30); the record's runs set 45.
 
 The Linux column takes the same commands on a Linux host with a display, or on the container runner
-with a virtual one; until then it is pending.
+with a virtual one, and goes with the buddy's acceptance in CI ([#3902]).
 
 ## Where the spike's code lives
 
 Open question 1 of [#3887] proposes keeping the measurement script and this record, and dropping
 the losing candidate's code before the renderer ([#3891]) lands. That stands: the harness and both
-candidates stay in `web/src/buddyRig/`, built only with the flag, and the losing candidate goes when
-the renderer lands, starting from the winner.
+candidates stay in `web/src/buddyRig/`, built only with the flag, and the layered candidate goes
+when the renderer lands, starting from in place.
 
 [#3831]: https://github.com/PersonalClaw/PersonalClaw/issues/3831
 [#3887]: https://github.com/PersonalClaw/PersonalClaw/issues/3887
 [#3891]: https://github.com/PersonalClaw/PersonalClaw/issues/3891
+[#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902

@@ -5,11 +5,14 @@
  *  dials, moves each parameter that differs on its preset; a preset that reduced motion has made
  *  instant is applied as a jump, so a change under reduced motion asks for no frame at all. `moving`
  *  is true from a change until every parameter it started has settled: the candidates draw frames
- *  only while it is, or while the dots themselves move. */
+ *  only while it is, or while the dots themselves move. The values step on the dots' capped clock
+ *  (`cappedDriver`), at the buddy's frame rate and in the frame the dots are painted in, rather
+ *  than on every frame the display draws. */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { animate, motionValue, type MotionValue, type Transition } from 'framer-motion'
-import { POSE_KEYS, poseOf, poseTransition, type Pose, type PoseKey, type RigPhase } from './poses'
+import { cappedDriver } from '../ui/orbDots'
+import { BUDDY_FPS, POSE_KEYS, poseOf, poseTransition, type Pose, type PoseKey, type RigPhase } from './poses'
 
 export type PoseValues = Readonly<Record<PoseKey, MotionValue<number>>>
 
@@ -35,8 +38,11 @@ function targetOf(phase: RigPhase, key: PoseKey, now: number): number {
 }
 
 /** The pose for `phase`. `dials` is any value that changes when the motion dials do, so a pose
- *  re-reads its amplitudes and its presets when the owner moves one. */
-export function usePose(phase: RigPhase, dials: string): PoseHandle {
+ *  re-reads its amplitudes and its presets when the owner moves one. `fps` is the dots' rate, as
+ *  `runDots` takes it: the buddy's unless set, and `null` or 0 for every frame the display draws. */
+export function usePose(phase: RigPhase, dials: string, fps?: number | null): PoseHandle {
+  const rate = fps === undefined ? BUDDY_FPS : fps
+  const driver = useMemo(() => (rate ? cappedDriver(rate) : undefined), [rate])
   const values = useMemo<PoseValues>(() => {
     const pose = poseOf(phase)
     return Object.fromEntries(POSE_KEYS.map((key) => [key, motionValue(pose[key])])) as Record<PoseKey, MotionValue<number>>
@@ -57,12 +63,15 @@ export function usePose(phase: RigPhase, dials: string): PoseHandle {
       if (value.get() === target) continue
       const transition = poseTransition(phase, param)
       if (isInstant(transition)) value.jump(target)
-      else runs.push(animate(value, target, transition).finished)
+      else runs.push(animate(value, target, driver ? { ...transition, driver } : transition).finished)
     }
     if (!runs.length) { setMoving(false); return }
     setMoving(true)
     void Promise.all(runs).then(() => { if (generation.current === step) setMoving(false) })
-  }, [phase, dials, values])
+  }, [phase, dials, values, driver])
+
+  // An orb that leaves stops its pose where it stands, so nothing of it stays on the clock.
+  useEffect(() => () => { for (const key of POSE_KEYS) values[key].stop() }, [values])
 
   return useMemo(() => ({
     values,

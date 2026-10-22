@@ -96,7 +96,12 @@ async function main() {
     token: config.token,
   });
 
-  const area = require("electron").screen.getPrimaryDisplay().workArea;
+  // The display the run asked for by its rate, whichever is the main one: a bar set at 120 Hz is
+  // not met at 60.
+  const displays = require("electron").screen.getAllDisplays();
+  const shown = displays.find((d) => Math.round(d.displayFrequency) === config.hz);
+  if (!shown) throw new Error(`no display refreshes ${config.hz} times a second: ${displays.map((d) => Math.round(d.displayFrequency)).join(", ")} Hz`);
+  const area = shown.workArea;
   const win = new BrowserWindow({
     width: 420,
     height: 600,
@@ -246,7 +251,7 @@ async function main() {
     fps: config.fps ?? null,
     versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
     window: (() => {
-      const display = require("electron").screen.getPrimaryDisplay();
+      const display = require("electron").screen.getDisplayMatching(win.getBounds());
       return { width: 420, height: 600, scaleFactor: display.scaleFactor, refreshHz: display.displayFrequency };
     })(),
     start,
