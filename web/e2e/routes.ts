@@ -24,7 +24,6 @@ export const ROUTES: RouteEntry[] = [
   { route: 'projects', label: 'Projects', needsData: true },
   // Library opens its first tab, Knowledge; each tab's own address is in VIEW_ROUTES below.
   { route: 'library', label: 'Library', needsData: true },
-  { route: 'tasks', label: 'Tasks', needsData: true },
   { route: 'inbox', label: 'Inbox', needsData: true },
   { route: 'triggers', label: 'Triggers', needsData: true },
   { route: 'terminal', label: 'Terminal' },
@@ -90,6 +89,9 @@ export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'prompts', id: 'prompts', label: 'Capabilities › Prompts', needsData: true },
   { route: 'apps', id: 'apps', label: 'Capabilities › Apps', needsData: true },
   { route: 'knowledge', id: 'knowledge', label: 'Library › Knowledge', needsData: true },
+  // All tasks, every project's: a project's own are its Tasks view (#3818), and the sidebar has no
+  // Tasks row. It keeps the address, the visual baseline and the scans it had as a row.
+  { route: 'tasks', id: 'tasks', label: 'Projects › All tasks', needsData: true },
   { route: 'files', id: 'files', label: 'Library › Files', needsData: true },
   { route: 'artifacts', id: 'artifacts', label: 'Library › Artifacts', needsData: true },
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },

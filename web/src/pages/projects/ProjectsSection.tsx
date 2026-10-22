@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { fadeEnter } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
+import { FolderKanban, LayoutDashboard, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -35,19 +35,23 @@ import { runLook } from '../workflows/workflowMeta'
 import { loopRoute } from '../../lib/loopKind'
 import { reportingWrite } from '../../app/reportingWrite'
 import { stopLoop } from '../loop/stopLoop'
+import { Segmented } from '../../ui/Segmented'
+import { TaskList } from '../tasks/TasksSection'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
  *    #/projects        → the project list
  *    #/projects/<id>   → that project's detail (workspace, context, task lists)
+ *    #/projects/<id>?tab=tasks → its Tasks view (#3818): the task list and board, held to it, with
+ *                        the keys `#/tasks` reads (view, filter, q, sort, list, tag, open)
  */
-export function ProjectsSection({ sub, navigate, query, setQuery }: RouteProps) {
+export function ProjectsSection({ sub, navigate, query, setQuery, navEpoch }: RouteProps) {
   const seg = (sub || '').split('/')[0]
-  if (seg) return <ProjectDetailPage id={seg} onBack={() => navigate('projects')} navigate={navigate} query={query} setQuery={setQuery} />
-  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} onOpenLoops={() => navigate('loops/history')} query={query} setQuery={setQuery} />
+  if (seg) return <ProjectDetailPage id={seg} onBack={() => navigate('projects')} navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch} />
+  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} onOpenLoops={() => navigate('loops/history')} onOpenTasks={() => navigate('tasks')} query={query} setQuery={setQuery} />
 }
 
-function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id: string) => void; onOpenLoops: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: { onOpen: (id: string) => void; onOpenLoops: () => void; onOpenTasks: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: projects, loading, error: loadErr, refresh } = useQuery('projects:list', () => api.projects(), { persist: true })
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
@@ -189,7 +193,9 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
         // "Loops": the nav's Projects tile is the home of loops too (a loop deep-link lights it),
         // and Home's "loops running" pill lands here — which had no way to the loops at all
         // (measured 2026-09-25).
-        right={<HeaderActions><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        // All tasks, every project's, from the page the sidebar's Projects row opens: the way to it
+        // where no ⌘K is, a phone's (#3818).
+        right={<HeaderActions><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
       {/* Raw: no primitive draws a file picker. Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
       <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
@@ -655,7 +661,15 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+/** A project page's two views: its overview (the work board and task lists) and its Tasks. */
+const PROJECT_VIEWS = [
+  { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { key: 'tasks', label: 'Tasks', icon: ListChecks },
+]
+/** The keys only the Tasks view reads, which the overview leaves behind. */
+const TASK_VIEW_KEYS = ['view', 'filter', 'q', 'sort', 'list', 'tag', 'open', 'edit'] as const
+
+function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery' | 'navEpoch'>) {
   // `error` was previously discarded, so a 500 fell through to `!project` and the page claimed the
   // project was deleted. A failed read is not a deletion.
   const { data: project, loading, error: detailErr, refresh } = useQuery(`projects:detail:${id}`, () => api.project(id))
@@ -706,6 +720,12 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // ?panel (push, so Back closes it): `tasks:<listId>` | `dir:workspace` | `dir:context`.
   // The panel object is resolved from that token against loaded lists / the project.
   const [panelTok, setPanelTok] = useQueryParam(query, setQuery, 'panel', '')
+  // Which view of the project shows (`?tab`): its overview, or its Tasks (#3818). A view of one
+  // page, so choosing one replaces the history entry, as every in-page view does.
+  const showsTasks = query.tab === 'tasks'
+  const chooseView = (v: string) => setQuery(v === 'tasks'
+    ? { tab: 'tasks', panel: null }
+    : { tab: null, ...Object.fromEntries(TASK_VIEW_KEYS.map((k) => [k, null])) }, { replace: true })
   const panel: { kind: 'tasks'; list: TaskListItem } | { kind: 'dir'; label: string; path: string } | null = (() => {
     if (!panelTok) return null
     const [kind, rest] = [panelTok.slice(0, panelTok.indexOf(':')), panelTok.slice(panelTok.indexOf(':') + 1)]
@@ -839,8 +859,23 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       {!project.is_builtin && (
         <IconButton icon={Pencil} label="Rename" size={24} iconSize={13} onClick={() => { setNameDraft(project.name); setRenaming(true) }} className="shrink-0 -m-0.5" />
       )}
+      <span className="ml-xs shrink-0">
+        <Segmented ariaLabel="Project view" size="sm" collapse="menu" value={showsTasks ? 'tasks' : 'overview'}
+          onChange={chooseView} options={PROJECT_VIEWS} />
+      </span>
     </div>
   )
+  // The Tasks view: the task list and board at the keys `#/tasks` reads, held to this project.
+  if (showsTasks) {
+    return (
+      <TaskList navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch}
+        inProject={{
+          name: project.name,
+          title: titleNode,
+          actions: <HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} />,
+        }} />
+    )
+  }
   const headerActions = (
     <>
       {project.status === 'archived' ? (

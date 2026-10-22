@@ -64,7 +64,7 @@ describe('the knowledge graph is reachable as a harness route', () => {
     // A regex that stopped matching would make every assertion below trivially true, which is
     // exactly how a route manifest rots silently.
     expect(VIEW_ROUTES.length, 'VIEW_ROUTES parsed as empty — the matcher is broken').toBeGreaterThan(0)
-    expect(navRoutes().length, 'the ROUTES matcher must still find the nav routes').toBeGreaterThan(10)
+    expect(navRoutes().length, 'the ROUTES matcher must still find the nav routes').toBeGreaterThan(8)
   })
 
   it('enumerates the graph', () => {
