@@ -59,6 +59,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The menu bar and the buddy hear a change the moment it happens, over one connection the app holds to its gateway, instead of the menu bar asking every five seconds; a hidden buddy comes back only for something that may interrupt you now.**
 - **A colour scheme, a dial or a personality chosen in one window is the look of every open window at once, the buddy's included, as the light and dark mode already was; the sound-cue switch shows what another window set.**
 - **The phone companion shows everything running and waiting with the buddy's orbs: each row has the buddy's orb for its state, its kind of work's glyph, the one line the buddy would say ("Release notes needs your OK: Bash", at most 48 characters) and its exact phase, with what waits on you first, in the one order, and then what runs.**
+- **A tap on a phone companion row gives that one piece of work the screen: the buddy's card for it, with its orb large, its exact phase, its steps as they happen, its approval or question answered with the same controls on its own route, and Open in PersonalClaw; a push's link opens an approval there, with focus on the card and never on Allow, and the orb moves between the two views (instantly under reduced motion).**
 
 ### Fixed
 

@@ -4,6 +4,7 @@ import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckChe
 import { api, type PendingApproval, type PushStatus, type RunningList, type RunningRow, type WaitingItem, type WaitingList } from '../../lib/api'
 import { phaseLabel } from '../../lib/workPhase'
 import { WorkHead, waitingLine, waitingOrbState, waitingWorkName, workKindOf } from './allWork'
+import { OneWorkView, type Opened } from './OneWorkView'
 import {
   WAITING_KIND_LABEL, approvalOf, isStale, useStaleAt, waitingRoute, waitingSource, waitingText,
 } from '../../lib/waitingList'
@@ -45,7 +46,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  and would still be wrong for a tablet or a keyboard-only phone user. The layout is a
  *  single centered column that simply reads well narrow.
  */
-export function CompanionPage({ navigate, query }: RouteProps) {
+export function CompanionPage({ navigate, query, setQuery }: RouteProps) {
   // `?approval=<id>` — where a push notification's tap lands. The service
   // worker builds this URL from the ping's `item_id`; nothing else in the payload could
   // have told it which card to open.
@@ -123,37 +124,25 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   const now = useStaleAt(pending)
   // No autonomy rung on a card, as on the chat's: a rung is declared per ACTION PROVIDER, and a
   // tool call dispatches none (`lib/rungs.providerRungIndex`).
-  const focusTarget = focusId ? pending.find((w) => w.id === `approval:${focusId}`) : undefined
-  // The deep link is honest in BOTH directions. Present-and-found: scroll it into view,
-  // move focus to it, ring it. Present-and-missing (answered elsewhere, or it timed out
-  // while the phone was locked): say so. Rendering the ordinary queue with no explanation
-  // would read as "the notification opened the wrong thing", and the user would go looking
-  // for a card that no longer exists while the run they were pinged about stays blocked.
-  const focusMissing = Boolean(focusId) && !focusTarget && data !== undefined
-  const focusRef = useRef<HTMLDivElement | null>(null)
-  const focusedFor = useRef('')
-  useEffect(() => {
-    if (!focusTarget || focusedFor.current === focusTarget.id) return
-    const el = focusRef.current
-    if (!el) return
-    focusedFor.current = focusTarget.id
-    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
-    // Focus the WRAPPER (tabIndex -1), not the Allow button. Landing focus on the card
-    // announces the prompt and puts Allow/Deny one Tab away; landing it ON Allow would put
-    // an irreversible grant one stray Enter away on a phone that just woke up in a pocket.
-    el.focus?.()
-  }, [focusTarget])
+  // View two (#3898): one piece of work owning the screen, opened from a row (`?open=` a waiting
+  // item's id or a running row's work) or from a push (`?approval=<id>`). The deep link is honest
+  // in BOTH directions. Present-and-found: view two opens on it, with focus on its wrapper.
+  // Present-and-missing (answered elsewhere, or it timed out while the phone was locked): say so.
+  // Rendering the ordinary queue with no explanation would read as "the notification opened the
+  // wrong thing", and the user would go looking for a card that no longer exists.
+  const openId = qget(query, 'open') || (focusId ? `approval:${focusId}` : '')
+  const openItem = openId ? pending.find((w) => w.id === openId) : undefined
+  const openRow = openId && !openItem ? rows.get(openId) : undefined
+  const opened: Opened | null = openItem ? { item: openItem, row: rows.get(openItem.work) ?? null }
+    : openRow ? { item: null, row: openRow } : null
+  const openMissing = Boolean(openId) && !opened && data !== undefined && (runningData !== undefined || runningError !== undefined)
+  const close = () => setQuery({ open: null, approval: null })
 
   // An approval, on its own card, answered here: the decision the phone exists for. Past
   // answering, the card keeps no choice that could still send.
   const approvalCard = (ap: PendingApproval, stale: boolean, item: WaitingItem) => (
-    <div
-      key={ap.id}
-      ref={ap.id === focusId ? focusRef : undefined}
-      tabIndex={ap.id === focusId ? -1 : undefined}
-      className={`flex flex-col gap-s ${ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : ''}`}
-    >
-      <WaitingHead item={item} rows={rows} />
+    <div key={ap.id} className="flex flex-col gap-s">
+      <WaitingHead item={item} rows={rows} onOpen={() => setQuery({ open: item.id })} />
       <ApprovalPrompt
         density="roomy"
         // The row's own fields, as every surface that shows a waiting-list row shows them.
@@ -180,6 +169,11 @@ export function CompanionPage({ navigate, query }: RouteProps) {
           <IconButton icon={RefreshCw} label="Refresh what is waiting on you" onClick={refresh} size={40} iconSize={18} />
         </header>
 
+        {opened ? (
+          <OneWorkView opened={opened} rows={rows} onBack={close}
+            onDecide={(ap, action) => { void act(ap, action).then((landed) => { if (landed) close() }) }}
+            onAnswered={() => { refresh(); close() }} />
+        ) : <>
         <PushRow navigate={navigate} />
 
         <section aria-labelledby="companion-approvals-heading" className="flex flex-col gap-s">
@@ -211,14 +205,15 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                 // else, an approval whose route is not an approval's among it, opens its page.
                 const ap = approvalOf(w)
                 return ap ? approvalCard(ap, isStale(w, now), w)
-                  : <WaitingRow key={w.id} item={w} rows={rows} stale={isStale(w, now)} navigate={navigate} />
+                  : <WaitingRow key={w.id} item={w} rows={rows} stale={isStale(w, now)} navigate={navigate} onOpen={() => setQuery({ open: w.id })} />
               })}
             </AnimatePresence>
           )}
-          {focusMissing ? (
+          {openMissing ? (
             <p role="status" data-type="body-m" className="text-on-surface-low">
-              The approval your notification pointed at isn&rsquo;t waiting anymore &mdash; it was
-              answered or it timed out.
+              {focusId
+                ? <>The approval your notification pointed at isn&rsquo;t waiting anymore &mdash; it was answered or it timed out.</>
+                : <>What you opened isn&rsquo;t waiting or running anymore &mdash; it was answered, it ended, or it timed out.</>}
             </p>
           ) : null}
         </section>
@@ -226,7 +221,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
         {/* The rest of the attention path. The "Not on the phone yet" stub list that
             stood here earlier is DELETED, not hidden — the sections it named
             are what these four are. */}
-        <RunningSection />
+        <RunningSection onOpen={(work) => setQuery({ open: work })} />
         <TasksSection />
         <InboxSection />
         <RecentSection />
@@ -242,6 +237,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
             <Smartphone size={15} /> Paired devices
           </Button>
         </footer>
+        </>}
       </div>
     </div>
   )
@@ -388,17 +384,19 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
  *  answering it says so, and Open is off: there is nothing left to answer there. */
 /** A waiting item's head, as the buddy says it (#3898): its orb, its work's glyph, its one line,
  *  and the exact phase it holds that work in. */
-function WaitingHead({ item, rows }: { item: WaitingItem; rows: ReadonlyMap<string, RunningRow> }) {
+function WaitingHead({ item, rows, onOpen }: { item: WaitingItem; rows: ReadonlyMap<string, RunningRow>; onOpen: () => void }) {
   const state = waitingOrbState(item)
   return (
     <div className="flex min-w-0 flex-col gap-xs">
-      <WorkHead state={state} kind={workKindOf(item.work)} line={waitingLine(item, waitingWorkName(item, rows))} />
+      <WorkHead id={item.id} state={state} kind={workKindOf(item.work)} line={waitingLine(item, waitingWorkName(item, rows))} onOpen={onOpen} />
       <p data-type="caption" className="text-on-surface-low" data-phase={state}>{phaseLabel(state)}</p>
     </div>
   )
 }
 
-function WaitingRow({ item, rows, stale, navigate }: { item: WaitingItem; rows: ReadonlyMap<string, RunningRow>; stale: boolean; navigate: RouteProps['navigate'] }) {
+function WaitingRow({ item, rows, stale, navigate, onOpen }: {
+  item: WaitingItem; rows: ReadonlyMap<string, RunningRow>; stale: boolean; navigate: RouteProps['navigate']; onOpen: () => void
+}) {
   const said = waitingText(item)
   const from = waitingSource(item)
   const route = waitingRoute(item)
@@ -409,7 +407,7 @@ function WaitingRow({ item, rows, stale, navigate }: { item: WaitingItem; rows: 
       aria-label={`${WAITING_KIND_LABEL[item.kind]}: ${said}`}
       className="flex flex-col gap-s rounded-lg border border-outline-variant bg-surface p-l"
     >
-      <WaitingHead item={item} rows={rows} />
+      <WaitingHead item={item} rows={rows} onOpen={onOpen} />
       <p data-type="caption" className="text-on-surface-low">
         {WAITING_KIND_LABEL[item.kind]}{from ? ` · ${from}` : ''}
       </p>

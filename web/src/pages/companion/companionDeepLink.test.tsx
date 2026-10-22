@@ -66,12 +66,14 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('the push deep link focuses the addressed approval', () => {
-  it('focuses and marks the card named in ?approval, not the first one', async () => {
+  it('opens view two on the card named in ?approval, with focus on its wrapper and never on Allow', async () => {
     approvals.mockResolvedValue([AP('ap-1', 'Bash'), AP('ap-2', 'WebFetch'), AP('ap-3', 'Write')])
     render(<CompanionPage {...routeWith({ approval: 'ap-2' })} />)
 
+    // View two (#3898): the addressed approval owns the screen, and the others are not drawn.
     const target = await screen.findByRole('group', { name: 'Permission needed to run WebFetch' })
-    // The focused element is the card's own wrapper, and the card inside it is the ADDRESSED
+    expect(document.querySelector('[data-companion-view="one"]')).toBeTruthy()
+    // The focused element is the view's own wrapper, and the card inside it is the ADDRESSED
     // one — asserted by containment rather than by an id attribute, so the DOM can change
     // shape without the rail going quietly vacuous.
     await waitFor(() => {
@@ -79,17 +81,10 @@ describe('the push deep link focuses the addressed approval', () => {
       expect(active, 'nothing received focus').toBeTruthy()
       expect(active!.contains(target), 'focus did not land on the addressed card').toBe(true)
     })
-    // Visibly marked as well as focused: a focus ring alone is invisible to a touch user,
-    // who is exactly who arrived here.
-    const marked = document.activeElement as HTMLElement
-    expect(marked.className).toContain('ring-2')
-
-    // And the OTHER cards are neither focused nor marked — otherwise "the right card is
-    // focused" would be true of a build that marked all three.
-    const bash = screen.getByRole('group', { name: 'Permission needed to run Bash' })
-    expect(marked.contains(bash)).toBe(false)
-    const rings = document.querySelectorAll('.ring-2')
-    expect(rings.length).toBe(1)
+    // Never on Allow: an irreversible grant one stray Enter away on a phone just out of a pocket.
+    expect(document.activeElement?.tagName).not.toBe('BUTTON')
+    expect(screen.queryByRole('group', { name: 'Permission needed to run Bash' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Permission needed to run Write' })).toBeNull()
   })
 
   it('does not focus anything when no ?approval is present', async () => {
@@ -102,7 +97,7 @@ describe('the push deep link focuses the addressed approval', () => {
     expect(document.activeElement).toBe(document.body)
   })
 
-  it('scrolls the addressed card into view', async () => {
+  it('starts view two in sight', async () => {
     // A card focused below the fold on a phone is a card the user cannot see.
     const scrolls: unknown[] = []
     const original = Element.prototype.scrollIntoView
@@ -112,7 +107,7 @@ describe('the push deep link focuses the addressed approval', () => {
       render(<CompanionPage {...routeWith({ approval: 'ap-2' })} />)
       await screen.findByRole('group', { name: 'Permission needed to run WebFetch' })
       await waitFor(() => expect(scrolls.length).toBeGreaterThan(0))
-      expect(scrolls[0]).toMatchObject({ block: 'center' })
+      expect(scrolls[0]).toMatchObject({ block: 'start' })
     } finally {
       Element.prototype.scrollIntoView = original
     }

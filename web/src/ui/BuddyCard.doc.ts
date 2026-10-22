@@ -20,6 +20,7 @@ const doc: UiDoc = {
     { name: 'countdown', description: 'Seconds before the card folds, while its countdown line shows.' },
     { name: 'openHref', description: 'Where Open in PersonalClaw goes.' },
     { name: 'orbId', description: "The shared element's id, the same on the island's compact orb, so the room change moves the orb." },
+    { name: 'orbSize', description: "The focused orb's size: 48 on the buddy's card, 96 where one piece of work owns the screen (the phone's view two)." },
     { name: 'onAnswer', description: "Raises a question's reply or an error's dismiss; the buddy's presence turns it into the machine's input. An approval answers through its own choices." },
     { name: 'onHold', description: 'Says while the pointer or the keyboard focus is on the card, so a fold on a timer waits.' },
   ],
@@ -31,7 +32,7 @@ const doc: UiDoc = {
   ],
   anatomy: [
     'div[role=group][data-buddy-card][data-card-done] — named by its header',
-    'header — BuddyOrb at 48 (a Morph when orbId is set), h3 name, p[data-card-line], the phase and last update',
+    'header — BuddyOrb at orbSize, 48 by default (a Morph when orbId is set), h3 name, p[data-card-line], the phase and last update',
     'div[data-step-window] — p[data-step-trail] (marks and +N), ol li[data-step-place=before|current|next]',
     'div[data-card-alert=approval|input|error] — ApprovalPrompt in a scrolling brief, QuestionCard, or Open and Dismiss; +N waiting',
     'section[data-in-sight-list] — li[data-in-sight][data-kind]: AgentOrb, glyph, the line as a link, the phase and last update; Just finished',
