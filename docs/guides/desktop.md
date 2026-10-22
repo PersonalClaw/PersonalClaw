@@ -17,12 +17,14 @@ says the state in words: **Nothing running**, **Working: 2 running**, **Needs yo
 you**, **Something stopped**, **Listening**, **Not connected to the gateway**, or **PersonalClaw is
 restarting** while a restart you asked for is under way. The tooltip says the same.
 
-- **Waiting on you** — how many things wait on your answer: approvals, an agent's
-  questions, a loop's question, a workflow's gate, an automation's parked action, a
-  browser grant, a plan to review and a control-bridge confirmation, the one list every
-  surface counts (`GET /api/waiting`). Clicking the row opens Mission Control, which lists
-  each with its answer. It stays clickable at zero, so it is a way in rather than a row
-  that greys out the moment you catch up.
+- **Waiting on you** — everything that waits on your answer, one row each, before what is
+  running and in the order every surface lists them (`GET /api/waiting`): approvals, an
+  agent's questions, a loop's question, a workflow's gate, an automation's parked action, a
+  browser grant, a plan to review and a control-bridge confirmation. Each row says what kind
+  it is and what it asks, in the app's own words, and opens where you answer it. The first 8
+  are listed, and one row for the rest opens Mission Control, which lists each with its
+  answer. With nothing waiting, the row says so and still opens Mission Control, so it is a
+  way in rather than a row that greys out the moment you catch up.
 - **Running** — everything running now, the same list Mission Control's Working lane
   shows (`GET /api/running`): a chat's turn, a helper, a loop, a workflow run, an
   automation's fire and a webhook's turn, each once. Each entry says the work's name, its
