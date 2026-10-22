@@ -13,10 +13,15 @@
 // The gateway is the one the named home's record names (scripts/lib/named_home.mjs); no home, or
 // the default one, is refused before anything starts. Each run opens one scratch window
 // (rig-window.cjs) for one candidate and writes rig-runs/<os>-<candidate>-<n>.json, the orb at the
-// buddy's 48 px and its dots at the buddy's 30 frames a second. Another setting names itself in the
-// file: --size 24 adds 24px-, --fps 60 adds 60fps-, and --fps 0, every frame the display draws as
-// the spike's first runs did, adds uncapped-. --out DIR writes them elsewhere: a trial run's
-// numbers are not the record's, and the spike's first runs are in rig-runs/spike/.
+// buddy's 48 px and its dots at the buddy's 30 frames a second, on a 120 Hz display. Another setting
+// names itself in the file: --size 24 adds 24px-, --fps 60 adds 60fps-, --fps 0, every frame the
+// display draws as the spike's first runs did, adds uncapped-, and --hz 60 adds 60hz-. --out DIR
+// writes them elsewhere: a trial run's numbers are not the record's, and the spike's first runs are
+// in rig-runs/spike/.
+//
+// The window opens on the display that refreshes --hz times a second (120), whichever display is
+// the main one, and a machine with no such display is refused before the window opens: the bar is
+// set at a rate, and a run at another one is not its number.
 //
 // A CPU number is only as good as the machine is quiet, so a run starts only while the 5-minute
 // load average is under --max-load (30), re-checking each minute for up to --wait (60) minutes in
@@ -46,13 +51,16 @@ export const BARS = { restCpu: 0.5, loopCpu: 5, stillFrames: 0, memoryMb: 60, bu
 /** The most frames a second the buddy paints its dots at (web/src/buddyRig/poses.ts). */
 export const BUDDY_FPS = 30
 const RECORD_SIZE = 48
+/** The display rate the record's bars are set at. */
+const RECORD_HZ = 120
 
 /** The start of a run's file name: the record's own setting, 48 px at the buddy's rate, is bare,
  *  and any other names itself. */
-export function runStem({ os: system, candidate, size, fps }) {
+export function runStem({ os: system, candidate, size, fps, hz = RECORD_HZ }) {
   const sized = size === RECORD_SIZE ? '' : `${size}px-`
   const rated = fps === BUDDY_FPS ? '' : fps ? `${fps}fps-` : 'uncapped-'
-  return `${system}-${candidate}-${sized}${rated}`
+  const shown = hz === RECORD_HZ ? '' : `${hz}hz-`
+  return `${system}-${candidate}-${sized}${rated}${shown}`
 }
 
 /** n, mean, median, 95th percentile and maximum of `values`. */
@@ -132,7 +140,7 @@ export function provisional(runs) {
 }
 
 function parseArgs(argv) {
-  const out = { candidates: [], runs: 1, seconds: 60, reducedSeconds: 20, harnessSeconds: 10, holdSeconds: 20, stepMs: 800, settleMs: 5000, size: RECORD_SIZE, maxLoad: 30, wait: 60, summary: false, out: RECORD, fps: BUDDY_FPS }
+  const out = { candidates: [], runs: 1, seconds: 60, reducedSeconds: 20, harnessSeconds: 10, holdSeconds: 20, stepMs: 800, settleMs: 5000, size: RECORD_SIZE, maxLoad: 30, wait: 60, summary: false, out: RECORD, fps: BUDDY_FPS, hz: RECORD_HZ }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
@@ -145,6 +153,7 @@ function parseArgs(argv) {
     else if (a === '--step-ms') out.stepMs = Number(next())
     else if (a === '--size') out.size = Number(next())
     else if (a === '--fps') out.fps = Number(next())
+    else if (a === '--hz') out.hz = Number(next())
     else if (a === '--max-load') out.maxLoad = Number(next())
     else if (a === '--wait') out.wait = Number(next())
     else if (a === '--summary') out.summary = true
@@ -232,7 +241,7 @@ function summary(dir) {
     console.log(`\n${run.file}: ${run.env.osVersion}, ${run.env.cpu}, Electron ${run.versions.electron}, build ${run.env.commit}, 5-minute load ${fmt(load.mean)} (max ${fmt(load.max)})`)
     for (const m of verdicts(run)) console.log(`  ${verdictWord(m)}  ${m.measure}: ${fmt(m.value)} (${m.unit}; bar ${m.bar})`)
   }
-  const setting = (r) => `${r.size ?? RECORD_SIZE} px, ${r.fps ? `${r.fps} fps` : 'every frame'}`
+  const setting = (r) => `${r.size ?? RECORD_SIZE} px, ${r.fps ? `${r.fps} fps` : 'every frame'}, ${Math.round(r.window?.refreshHz ?? RECORD_HZ)} Hz`
   for (const at of [...new Set(runs.map(setting))]) {
     const choice = provisional(runs.filter((r) => setting(r) === at))
     console.log(`\nthe rule at ${at}: ${choice.choice ?? 'none'}`)
@@ -258,10 +267,11 @@ async function main() {
     for (const candidate of args.candidates) {
       const gate = await quiet(args.maxLoad, end)
       const loadAtStart = os.loadavg()
-      const raw = await runWindow({ url: gateway.url, token: gateway.token, candidate, seconds: args.seconds, reducedSeconds: args.reducedSeconds, harnessSeconds: args.harnessSeconds, holdSeconds: args.holdSeconds, stepMs: args.stepMs, settleMs: args.settleMs, size: args.size, fps: args.fps })
+      const raw = await runWindow({ url: gateway.url, token: gateway.token, candidate, seconds: args.seconds, reducedSeconds: args.reducedSeconds, harnessSeconds: args.harnessSeconds, holdSeconds: args.holdSeconds, stepMs: args.stepMs, settleMs: args.settleMs, size: args.size, fps: args.fps, hz: args.hz })
+      if (Math.round(raw.window.refreshHz) !== args.hz) throw new Error(`the window drew at ${raw.window.refreshHz} Hz, not the ${args.hz} asked for`)
       const chunks = chunksOf({ baseline: raw.resources.baseline.map((p) => p.replace(/^\//, '')), loaded: raw.resources.loaded.map((p) => p.replace(/^\//, '')), entry: new Set([...entry].map((p) => p.replace(/^\//, ''))) })
       const run = { ...raw, size: args.size, env, gate: { maxLoad: args.maxLoad, ...gate, loadAtStart, loadAtEnd: os.loadavg() }, bundle: { candidate: sized(chunks.candidate), route: sized(chunks.route) } }
-      const stem = runStem({ os: env.os, candidate, size: args.size, fps: args.fps })
+      const stem = runStem({ os: env.os, candidate, size: args.size, fps: args.fps, hz: args.hz })
       const taken = readdirSync(args.out).filter((f) => f.startsWith(stem) && /^\d+\.json$/.test(f.slice(stem.length))).length
       const file = path.join(args.out, `${stem}${taken + 1}.json`)
       writeFileSync(file, `${JSON.stringify(run, null, 1)}\n`)

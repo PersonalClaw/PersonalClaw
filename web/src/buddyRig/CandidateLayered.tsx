@@ -20,7 +20,7 @@ import { usePose } from './usePose'
 
 export function CandidateLayered({ phase, size, still = false, dials = '', onPose, fps }: CandidateProps) {
   const look = rigLook(phase)
-  const pose = usePose(phase, dials)
+  const pose = usePose(phase, dials, fps)
   const mayMove = useMayMove()
   const { mode } = useMode()
   const { inkToken, ink, tone } = useRigInks(look)
