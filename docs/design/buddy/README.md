@@ -85,8 +85,9 @@ later work below.
   [which work is in focus](state-machine.md#which-work-is-in-focus),
   [the alert queue](state-machine.md#the-alert-queue),
   [presence rules](state-machine.md#presence-rules), [the badge](state-machine.md#the-badge),
-  [the invariants](state-machine.md#invariants-each-a-test) and
-  [the timing names](state-machine.md#timing-names).
+  [the invariants](state-machine.md#invariants-each-a-test),
+  [the timing names](state-machine.md#timing-names) and
+  [the module](state-machine.md#the-module) that runs it.
 - [`interruption-matrix.md`](interruption-matrix.md), with the same matrix as data in
   [`interruption-matrix.json`](interruption-matrix.json):
   [how to read it](interruption-matrix.md#reading-it) and
