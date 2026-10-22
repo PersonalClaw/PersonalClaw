@@ -1087,6 +1087,11 @@ jobs:
       # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
       - name: npm ci (root)
         run: npm ci
+      # `npm ci` does not run electron's download script, so the desktop tier's real-Electron
+      # legs had no binary here and skipped. Its install script fetches the build the locked
+      # package names and checks it against the checksums that package ships (#3831).
+      - name: electron's binary, for the desktop tier's real-Electron legs
+        run: node node_modules/electron/install.js
       # The run's one typecheck: `npm run build` below is `vite build` alone, and nothing else in
       # this workflow typechecks the web.
       - name: typecheck
@@ -1133,9 +1138,11 @@ jobs:
         # preload throws at load" and "the preload reaches for a module the sandbox withholds" —
         # the two mutations that left the old suite at 359 pass / 0 fail over a DEAD bridge — red
         # here, headless, on this runner. Tier 2 confirms that model against a real Electron
-        # renderer and SKIPS on this job, by design and out loud: `npm ci` does not run electron's
-        # download lifecycle script, so there is no binary, and Linux would want a display besides.
-        # Tier 2 is a local/maintainer rail; tier 1 is the one that guards CI.
+        # renderer, and `buddyIdle.test.js` checks the buddy's window there: shown without taking
+        # focus, and hidden for 60 s with no timer, no frame and no CPU (#3831). Both run on the
+        # binary the step above installs, under `xvfb-run` (the runner has no display). Where
+        # Electron cannot start they skip and say why, unless PCLAW_REQUIRE_ELECTRON=1 makes that
+        # a failure (`desktop/test/helpers/electronHost.js`).
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
