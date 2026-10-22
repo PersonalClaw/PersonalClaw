@@ -74,33 +74,6 @@ export function cleanAgentHint(desc?: string): string {
   return (desc ?? '').replace(/\s*--\s*⚠️[^]*$/u, '').replace(/\s*\(?\[?DO NOT (UPDATE|EDIT)[^]*$/i, '').trim()
 }
 
-function ContextRing({ pct }: { pct: number }) {
-  // A 16px ring that fills with context-window usage; warms to danger as it nears
-  // full so a user notices an at-risk turn before it truncates.
-  const r = 6, c = 2 * Math.PI * r
-  const clamped = Math.max(0, Math.min(100, pct))
-  const tone = clamped >= 90 ? 'var(--color-danger)' : clamped >= 70 ? 'var(--color-warn)' : 'var(--color-primary)'
-  return (
-    <span title={`Context: ${clamped.toFixed(0)}% used`} className="relative inline-flex shrink-0 items-center justify-center" style={{ width: 16, height: 16 }}>
-      <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
-        <circle cx="8" cy="8" r={r} fill="none" stroke="var(--color-outline-variant)" strokeWidth="2" opacity={0.4} />
-        <circle cx="8" cy="8" r={r} fill="none" stroke={tone} strokeWidth="2" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c * (1 - clamped / 100)} />
-      </svg>
-    </span>
-  )
-}
-
-/** Why the model pill shows no ring. Only one of the three causes is the user's to fix, so only
- *  that one (`null`: the gateway said nothing declares or serves a window) names the
- *  field that fixes it. Otherwise nothing has been measured since this page opened or the session
- *  restarted, which the next answer puts right. */
-function unmeasuredTitle(windowTokens: number | null | undefined): string {
-  if (windowTokens === null) return 'Context usage unknown — no context window is declared for this model. Set “Served context window” on the provider in Settings → Models.'
-  const against = typeof windowTokens === 'number' ? `, against its ${windowTokens.toLocaleString('en-US')}-token window` : ''
-  return `Context usage not measured yet — it's measured each time the model answers${against}.`
-}
-
 /** A reasoning-effort level as the pill lists it: the value the chat stores and its name. */
 export type EffortLevel = { value: string; label: string }
 
@@ -144,14 +117,13 @@ export type AgentModelPick = { agent?: string; model?: string; reasoning?: Reaso
  *  `askBeforeSwitch`, given by an open chat, is asked before a switch to another of its own models
  *  (never Auto, whose model the next turn's chain picks, nor an agent CLI's): a question it puts
  *  takes the menu's place until it is answered (`dearerSwitch`). */
-export function AgentModelPill({ data, agent, model, effort, onSelect, parts, contextPct, contextWindow, served, autoChain, openSignal, effortSignal, askBeforeSwitch }: {
+export function AgentModelPill({ data, agent, model, effort, onSelect, parts, served, autoChain, openSignal, effortSignal, askBeforeSwitch }: {
   data?: ComposerData
   agent: string
   model: string
   effort: ReasoningEffort
   onSelect: (pick: AgentModelPick) => void
   parts?: { agent?: boolean; model?: boolean; effort?: boolean }
-  contextPct?: number; contextWindow?: number | null
   /** The model the chat's latest turn was answered by, and how it was chosen. */
   served?: { model: string; chosen: string }
   /** The Settings → Models chain the chat's turns run on while the model is Auto. */
@@ -212,16 +184,6 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   const acp = agent ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent) : undefined
   const acpModels = acp?.models ?? []
   // `undefined` = the backend measured NO context usage → plain dot, no number.
-  // A measured 0 still renders the ring (reading "0% used"): an empty context is a
-  // real answer, and folding it into "unmeasured" is the inverse of the fabricated-
-  // zero bug this guard replaced (it used to also require `> 0`, which hid it).
-  // The dot SAYS it is unmeasured rather than just being quiet: a ring and a bare dot
-  // are one pixel apart, so "unknown" was indistinguishable from "barely any context
-  // used". And it says WHY (`unmeasuredTitle`), because only one of the reasons is a
-  // user action.
-  const dot = contextPct !== undefined
-    ? <ContextRing pct={contextPct} />
-    : <span title={unmeasuredTitle(contextWindow)} className="size-1.5 rounded-pill bg-primary" />
   const onAuto = !model || model === 'Auto'
   // The friendly model_name, not the raw "Provider:model_id" ref stored as the value. On Auto it
   // also names the model the latest turn was answered by: "Auto" alone read the same whichever
@@ -290,7 +252,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
     <span className="inline-flex min-w-0 flex-wrap items-center gap-xs">
       <Popover portal width={300} openSignal={openSignal} className="flex min-w-0" trigger={(open, toggle) => (
         <>
-          <PillButton icon={showModel ? dot : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
+          <PillButton icon={showModel ? <Cpu size={16} strokeWidth={2} /> : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
             open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
             toggle={() => { if (!open) { setNote(''); setEffortOpen(false) } asking.current++; setQuestion(null); toggle() }} />
           {/* However the menu closes (Escape, a click outside), a question it was putting goes with

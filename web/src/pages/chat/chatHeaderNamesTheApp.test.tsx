@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
 // ── The chat header names the app that started the chat, where you look ──────────────────────────
@@ -7,8 +7,10 @@ import { runState } from '../../test/runState'
 // #3632 labelled an app's conversation in the history row and above the composer, and kept it OUT
 // of the chat's header on purpose: that row was already over-full below ~1300px, and a chip there
 // slid under the Task and Permission pills. The header now has a context line under its row
-// (`TopBar.below`), which wraps, so the chip goes where a reader looks first — and the chips that
-// already overflowed the row (cost, "Branched from") moved there with it.
+// (`TopBar.below`), which wraps, so the chip goes where a reader looks first — and the chip that
+// already overflowed the row ("Branched from") moved there with it. What the chat has cost is not on
+// it: cost waits behind the composer's Context control (#3823), so a chat with a cost and nothing
+// else to say keeps a one-row header.
 //
 // Geometry is `e2e/chatHeaderGeometry.spec.ts`'s job: jsdom lays nothing out. This pins the
 // structure that geometry depends on — what is in the title's row, what is on the context line,
@@ -140,6 +142,15 @@ describe('one of your chats', () => {
     await waitFor(() => expect(h.usageTotals).toHaveBeenCalled())
     expect(contextLine(banner), 'an empty context line still takes a strip of the header').toBeNull()
   })
+
+  it('keeps a single row for a chat that has cost something, its cost behind the Context control', async () => {
+    open()
+    const banner = await header()
+    await waitFor(() => expect(h.usageTotals).toHaveBeenCalled())
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(contextLine(banner), 'no cost chip, so no context line').toBeNull()
+    expect(banner.textContent).not.toMatch(/\$0\.0123|tokens/)
+  })
 })
 
 describe('the title row holds only what names the chat', () => {
@@ -148,9 +159,10 @@ describe('the title row holds only what names the chat', () => {
     const banner = await header()
     const line = await waitFor(() => {
       const l = contextLine(banner)
-      expect(within(l!).getByText(/tokens$/)).toBeTruthy()
+      expect(within(l!).getByText(`Branched from ${PARENT}`)).toBeTruthy()
       return l!
     })
+    expect(line.textContent, 'cost is not on the line').not.toMatch(/tokens/)
     // The branch chip truncates on the line, and its whole sentence is still its name.
     const branch = within(line).getByRole('button', { name: `Branched from "${PARENT}" — open the original` })
     expect(branch.querySelector('.truncate')?.textContent).toBe(`Branched from ${PARENT}`)

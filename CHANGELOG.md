@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A chat's context and cost wait behind the composer's Context control until you open it: the model pill no longer wears a context ring and the chat header no longer carries a cost chip, so a started chat with nothing else to say keeps a one-row header. Opened, the control says how full the context window is (or why that isn't measured) and what the chat has cost so far, and a switch pins that reading to the status line, kept in this browser; from 80% of the window the composer says how full it is in a line of its own.**
 - **The menu-bar item lists everything running now, as Mission Control does: each entry says the work's name, its phase, what it is doing and when that last changed, says when it is blocked or waits on you, and opens the work where it runs, and the menu says what just finished or failed, what a gateway restart interrupted, when nothing runs or the list cannot be read, and keeps the last entries it read while the gateway is away.**
 - **Settings stays at the foot of the sidebar while the rest of it scrolls, so in a short window it no longer sits in the sidebar's edge with its focus ring cut off.**
 - **A new loop's Mode (Attended or Unattended) sits beside the loop composer's input as its Execution Boundary control, with where the loop will work, the sandbox its commands run in and the network its work reaches; it left the page's header.**

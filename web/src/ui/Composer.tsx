@@ -18,6 +18,7 @@ import { cx } from './cx'
 import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
 import { MicCaptureChip } from './MicCaptureChip'
+import { ContextDisclosure, nearLimit, nearLimitSaid } from './composer/ContextDisclosure'
 
 // MIN_MAX_H is the resize FLOOR (user can shrink to ~1 line); DEFAULT_REST_H is
 // the resting height a fresh composer opens at — ~3-4 lines tall (17px × 1.5
@@ -39,7 +40,7 @@ export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   replyStyle, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -167,12 +168,13 @@ export function Composer({
   // share one wrapping row beside the send cluster. On a phone (#3808: at 390 the footer wrapped a
   // row per control, `+` alone on the first, and the composer grew from 276 px to 316) the first
   // group keeps the first row beside the send cluster, the pill truncating its label rather than
-  // wrapping under `+`, and the second group takes the row below, its pills capped at 6rem (4.75rem
-  // below 360 px) so three share it. The send cluster drops to a line of its own only when the first
+  // wrapping under `+`, and the second group takes the row below, its pills capped at 5.25rem
+  // (4.25rem below 360 px) so three share it with the Context control. The send cluster drops to a line of its own only when the first
   // row cannot hold it beside `+` and the shortest pill (320 px). One tree in both layouts, switched
   // by classes alone, so crossing the breakpoint keeps every control mounted and Send keeps its focus.
   const hasLead = !!controls.attach || !!controls.agent || !!controls.model
-  const hasRest = !!controls.approval || !!replyStyle || !!hostPills
+  const hasContext = contextPct !== undefined || contextWindow !== undefined || !!sessionCost
+  const hasRest = !!controls.approval || !!replyStyle || !!hostPills || hasContext
   // A host with no first group (the loop composer) keeps the one wrapping row at every width.
   const twoRows = isMobile && hasLead
   const lead = (
@@ -184,7 +186,7 @@ export function Composer({
       {(controls.agent || controls.model) && (
         <AgentModelPill data={data} agent={sel?.agent ?? ''} model={sel?.model ?? ''} effort={sel?.reasoning ?? ''}
           parts={{ agent: !!controls.agent, model: !!controls.model, effort: !!controls.reasoning }}
-          contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain} askBeforeSwitch={askBeforeModelSwitch}
+          served={servedModel} autoChain={autoChain} askBeforeSwitch={askBeforeModelSwitch}
           openSignal={(openAgentSignal ?? 0) + (openModelSignal ?? 0) + (openReasoningSignal ?? 0)} effortSignal={openReasoningSignal}
           onSelect={(p) => onSelect?.(p)} />
       )}
@@ -199,6 +201,9 @@ export function Composer({
           read is attributable to a control the owner can see. */}
       {replyStyle && <ReplyStylePill {...replyStyle} />}
       {hostPills}
+      {/* Context and cost, collapsed until opened: no number shows until the owner opens this or
+          pins it to the status line. */}
+      {hasContext && <ContextDisclosure pct={contextPct} window={contextWindow} cost={sessionCost} pin={contextPin} />}
     </>
   )
 
@@ -408,6 +413,12 @@ export function Composer({
             />
           </div>
 
+          {/* Near the limit the composer says so, pinned or not: the one context reading that is
+              never collapsed, because it is the one that needs a decision. */}
+          {nearLimit(contextPct) && (
+            <p role="status" data-type="caption" className="px-xs text-warn">{nearLimitSaid(contextPct!)}</p>
+          )}
+
           {/* live-markdown editor (CodeMirror 6): the caret line shows raw
               markdown, other lines render. Replaces the old <textarea>. */}
           <MarkdownInput
@@ -432,8 +443,8 @@ export function Composer({
               {hasRest && (
                 <div data-composer-row={twoRows ? 'rest' : undefined}
                   className={twoRows ? cx('order-last flex min-w-0 basis-full flex-wrap items-center gap-xs',
-                    '[--composer-pill-max:6rem] [--composer-pill-max-wide:6rem]',
-                    'max-[359px]:[--composer-pill-max:4.75rem] max-[359px]:[--composer-pill-max-wide:4.75rem]') : 'contents'}>
+                    '[--composer-pill-max:5.25rem] [--composer-pill-max-wide:5.25rem]',
+                    'max-[359px]:[--composer-pill-max:4.25rem] max-[359px]:[--composer-pill-max-wide:4.25rem]') : 'contents'}>
                   {rest}
                 </div>
               )}

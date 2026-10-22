@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { runState, runningState } from '../../test/runState'
 
 // ── A line the gateway adds to a chat is painted when it is added ──────────────────────────────
@@ -147,27 +147,36 @@ describe('a notice the gateway adds to the chat', () => {
   })
 })
 
-// ── …and the context ring says what the compaction read ────────────────────────────────────────
+// ── …and the context reading says what the compaction read ─────────────────────────────────────
 //
-// The ring is the gateway's own reading, the number its compaction acts on. When there is none,
-// the dot used to say "no context window is declared for this model" whatever the reason — beside
+// The reading is the gateway's own, the number its compaction acts on, read in the composer's
+// Context control (#3823; it was the model pill's ring). When there is none, the pill's dot used to say "no context window is declared for this model" whatever the reason — beside
 // "Auto-compacted at 71% of the context window". The gateway names the window with each reading, a
-// restart clears only the reading, and a chat opened later is drawn from what the ring was last told.
+// restart clears only the reading, and a chat opened later is drawn from what it was last told.
 
-const ringTitle = () => document.querySelector('[title^="Context"]')?.getAttribute('title') ?? ''
+/** What the composer's Context control says, opening it the first time it is read. */
+function contextSaid(): string {
+  const open = () => screen.queryByRole('dialog', { name: 'Context' })
+  if (!open()) {
+    const button = screen.queryByRole('button', { name: 'Context' })
+    if (!button) return ''
+    fireEvent.click(button)
+  }
+  return open()?.textContent ?? ''
+}
 
-describe('the context ring', () => {
+describe('the context reading', () => {
   it('after a restart at the threshold, says it is not measured yet, not that no window exists', async () => {
     await openRunning()
     pushFrame('chat_chunk', { content: 'An answer.', seq: 1 })
     pushFrame('context_usage', { pct: 71, window: 32768 })
     pushFrame('chat_done', { outcome: 'complete' })
-    await waitFor(() => expect(ringTitle()).toBe('Context: 71% used'))
+    await waitFor(() => expect(contextSaid()).toContain('71% of the 32,768-token context window used'))
     pushFrame('chat_message', { role: 'assistant', content: RESTARTED })
     pushFrame('context_usage', { pct: null })
-    await waitFor(() => expect(ringTitle()).toContain('not measured yet'))
-    expect(ringTitle()).toContain('32,768-token window')
-    expect(ringTitle()).not.toContain('declared')
+    await waitFor(() => expect(contextSaid()).toContain('not measured yet'))
+    expect(contextSaid()).toContain('32,768-token window')
+    expect(contextSaid()).not.toContain('declared')
   })
 
   it('is drawn on opening from what it was last told', async () => {
@@ -178,12 +187,12 @@ describe('the context ring', () => {
     )
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
     await act(async () => { h.detailCalls[0].resolve({ ...h.detail, context_usage: { pct: 40, window: 32768 } }) })
-    await waitFor(() => expect(ringTitle()).toBe('Context: 40% used'))
+    await waitFor(() => expect(contextSaid()).toContain('40% of the 32,768-token context window used'))
   })
 
   it('names the fix only when the gateway says no window is declared or served', async () => {
     await openRunning()
     pushFrame('context_usage', { pct: null, window: null })
-    await waitFor(() => expect(ringTitle()).toContain('Served context window'))
+    await waitFor(() => expect(contextSaid()).toContain('Served context window'))
   })
 })

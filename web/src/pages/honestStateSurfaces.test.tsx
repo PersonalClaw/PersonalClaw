@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ReactElement } from 'react'
 import { api, type FeedbackProducerRow } from '../lib/api'
 import { writeQuery } from '../lib/data'
-import { AgentModelPill } from '../ui/composer/controls'
+import { ContextDisclosure } from '../ui/composer/ContextDisclosure'
 import { AgentsListPage } from './agents/AgentsListPage'
 import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
 import { ChatHistorySidePanelBody } from './chat/history/ChatHistorySidePanel'
@@ -637,82 +637,86 @@ describe('the chat list says when it could not be read', () => {
   })
 })
 
-// ── The composer's context ring never states an unmeasured percentage ──────────────────────────
+// ── The composer's context reading never states an unmeasured percentage ───────────────────────
 //
 // The backend emitted a `context_usage` frame every turn with `pct: 0.0`, and the model pill drew
 // its ring from it, so it said "Context: 0% used" on turns carrying 18 KB of injected context. Now
-// `pct` is `null` when nothing was measured, and the two answers render distinctly: unmeasured is a
-// plain dot with NO percentage anywhere in the markup, and a measured 0 is the ring.
+// `pct` is `null` when nothing was measured, and the two answers render distinctly: unmeasured
+// carries NO percentage anywhere in the markup, and a measured 0 is a reading. The reading lives in
+// the composer's Context control now (#3823: collapsed until opened or pinned), and it keeps every
+// rule the ring had.
 //
 // 🪤 The guard this replaced was `contextPct !== undefined && contextPct > 0`. The `> 0` hid the
 // fabricated ring while the producer could not say "unknown", and is the INVERSE defect once it
 // can: it folds a legitimately empty context into "unmeasured". Both directions are asserted, and
 // that the two markups DISAGREE.
 //
-// A bare dot sits one pixel from a nearly-empty ring, so the dot also says WHY it is unmeasured,
-// and an unmeasured reading has more than one cause: the gateway names the window with each
-// reading (`null` when nothing declared or served one), and the remedy is offered only then.
+// An unmeasured reading also says WHY, and it has more than one cause: the gateway names the
+// window with each reading (`null` when nothing declared or served one), and the remedy is offered
+// only then.
 
-describe('the context ring never states an unmeasured percentage', () => {
-  const pill = (contextPct?: number, contextWindow?: number | null) => (
-    <AgentModelPill data={undefined} agent="" model="Auto" effort="" onSelect={vi.fn()} contextPct={contextPct} contextWindow={contextWindow} />
-  )
-  const titleOf = (el: ReactElement) => render(el).container.querySelector('[title]')!.getAttribute('title')!
+describe('the context reading never states an unmeasured percentage', () => {
+  /** The Context control for a reading, opened: its panel's markup and text. */
+  function opened(pct?: number, windowTokens?: number | null): HTMLElement {
+    cleanup()
+    render(<ContextDisclosure pct={pct} window={windowTokens} cost={null} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Context' }))
+    return screen.getByRole('dialog', { name: 'Context' })
+  }
 
   it('renders no percentage at all when the backend measured nothing', () => {
-    // The ring's only text is its title, so the whole markup must be free of a "Context: N%" claim.
-    const { container } = render(pill(undefined))
-    expect(container.querySelector('[title^="Context:"]')).toBeNull()
-    expect(container.innerHTML).not.toContain('%')
+    const panel = opened(undefined)
+    expect(within(panel).queryByRole('progressbar')).toBeNull()
+    expect(panel.innerHTML).not.toContain('%')
   })
 
-  it('renders a 0% ring when the context was measured and is empty', () => {
-    render(pill(0))
-    expect(screen.getByTitle('Context: 0% used')).toBeTruthy()
+  it('renders a 0% reading when the context was measured and is empty', () => {
+    const panel = opened(0)
+    expect(within(panel).getByRole('progressbar', { name: 'Context used' }).getAttribute('aria-valuenow')).toBe('0')
+    expect(within(panel).getByText('0% of the context window used')).toBeTruthy()
   })
 
   it('renders the measured value when there is one', () => {
-    render(pill(61.5))
-    expect(screen.getByTitle('Context: 62% used')).toBeTruthy()
+    expect(within(opened(61.5)).getByText('62% of the context window used')).toBeTruthy()
   })
 
   it('unmeasured and measured-zero produce different markup', () => {
-    const unmeasured = render(pill(undefined)).container.innerHTML
-    const measuredZero = render(pill(0)).container.innerHTML
+    const unmeasured = opened(undefined).innerHTML
+    const measuredZero = opened(0).innerHTML
     expect(unmeasured).not.toEqual(measuredZero)
   })
 
   it('names the control that fixes it when the gateway says no window is known', () => {
-    const title = titleOf(pill(undefined, null))
-    expect(title.toLowerCase()).toContain('unknown')
+    const said = opened(undefined, null).textContent!
+    expect(said.toLowerCase()).toContain('unknown')
     // The exact label of the field on the provider form (ModelBackends.tsx), and where it lives.
-    expect(title).toContain('Served context window')
-    expect(title).toContain('Settings')
+    expect(said).toContain('Served context window')
+    expect(said).toContain('Settings')
   })
 
   it('says it is not measured yet, and names the window, when the model has one', () => {
-    const title = titleOf(pill(undefined, 32768))
-    expect(title).toContain('not measured yet')
-    expect(title).toContain('32,768-token window')
-    expect(title).not.toContain('declared')
+    const said = opened(undefined, 32768).textContent!
+    expect(said).toContain('not measured yet')
+    expect(said).toContain('32,768-token window')
+    expect(said).not.toContain('declared')
   })
 
   it('says it is not measured yet before the gateway has said anything', () => {
-    const title = titleOf(pill(undefined))
-    expect(title).toContain('not measured yet')
-    expect(title).not.toContain('declared')
+    const said = opened(undefined).textContent!
+    expect(said).toContain('not measured yet')
+    expect(said).not.toContain('declared')
   })
 
   it('still states no percentage: explaining is not fabricating', () => {
     for (const w of [undefined, null, 32768]) {
-      const { container } = render(pill(undefined, w))
-      expect(container.innerHTML).not.toContain('%')
-      expect(container.querySelector('[title^="Context:"]')).toBeNull()
+      const panel = opened(undefined, w)
+      expect(panel.innerHTML).not.toContain('%')
+      expect(within(panel).queryByRole('progressbar')).toBeNull()
     }
   })
 
-  it('a measured ring does NOT claim unknown', () => {
-    const measured = titleOf(pill(61.5, 32768))
+  it('a measured reading does NOT claim unknown', () => {
+    const measured = opened(61.5, 32768).textContent!
     expect(measured.toLowerCase()).not.toContain('unknown')
     expect(measured).not.toContain('not measured')
   })

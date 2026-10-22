@@ -10,7 +10,7 @@ import { spring, physics, exprHeavy } from '../design/motion'
  *  wobble. Keeps the icon-morph (`iconKey`) and success `bloom` moments. Yields to
  *  reduced-motion; halo drops below the heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
+  icon: Icon, label, title, onClick, active, expanded, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
 }: {
   icon: LucideIcon
   label: string
@@ -22,6 +22,9 @@ export function IconButton({
   title?: string
   onClick?: (e: React.MouseEvent) => void
   active?: boolean
+  /** The button opens a disclosure (a popover, a panel): whether it is open, as `aria-expanded`.
+   *  Omit it for a button that opens nothing. */
+  expanded?: boolean
   filled?: boolean
   size?: number
   /** Glyph size within the hit area (default 20). Dense toolbars/inline chrome
@@ -107,6 +110,7 @@ export function IconButton({
       // and mic buttons are its two `active` callers, and "recording" vs "not recording" is exactly the
       // state a screen-reader user cannot infer from a tint. `undefined` unless a caller opts in.
       aria-pressed={active}
+      aria-expanded={expanded}
       // "Working", not "unavailable" — the state `disabled` was standing in for at every async
       // site. It is the ONLY signal a screen-reader user gets here: the glyph swap is decorative
       // (`aria-hidden`) and the name never changes, by design, so the action stays findable.

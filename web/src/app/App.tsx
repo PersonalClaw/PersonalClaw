@@ -11,6 +11,7 @@ import { IncidentBanner } from './IncidentBanner'
 import { DisconnectedBanner } from './DisconnectedBanner'
 import { GatewayConnectionProvider } from './gatewayConnection'
 import { StatusLine } from './StatusLine'
+import { PinnedContextReading } from './pinnedContext'
 import { ModelWaits } from '../ui/ModelWaitNotice'
 import { SignedOutScreen } from './SignedOutScreen'
 import { useSignedOut } from '../lib/signedOut'
@@ -948,9 +949,10 @@ function AppInner() {
             </ErrorBoundary>
           </main>
         </div>
-        {/* Ambient state at the bottom of the window, on every page. Focus mode hides it while the
+        {/* Ambient state at the bottom of the window, on every page: the connection, and on the
+            right the open chat's context when the owner pinned it. Focus mode hides it while the
             gateway answers. */}
-        <StatusLine focusMode={focus} />
+        <StatusLine focusMode={focus} right={<PinnedContextReading />} />
         <CommandPalette commands={commands} navigate={navigate} />
         {/* The replayable product tour — shell-level because its stops
             are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and

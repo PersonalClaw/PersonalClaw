@@ -14,6 +14,7 @@ const doc: UiDoc = {
       { name: 'label', description: 'Accessible name (aria-label) and native tooltip — required, since there is no visible text.' },
     { name: 'onClick', description: 'Click handler; receives the mouse event. Suppressed while disabled.' },
     { name: 'active', description: 'Renders the currently-on (toggled) state — a surface-high fill instead of the bare idle glyph.' },
+    { name: 'expanded', description: 'For a button that opens a disclosure (a popover or a panel): whether it is open, announced as aria-expanded. The composer\'s Context control passes it. Omit it on a button that opens nothing, so no expanded state is announced.' },
     { name: 'filled', description: 'Solid primary treatment (bg-primary / on-primary) for an emphasized action; carries its own emphasis so the hover halo is suppressed.' },
     { name: 'size', description: 'Hit-area width/height in px (default 40). Shrink for dense inline chrome.' },
     { name: 'iconSize', description: 'Glyph size within the hit area (default 20); dense toolbars use 12–16 so those sites adopt the primitive instead of hand-rolling a <button>.' },
