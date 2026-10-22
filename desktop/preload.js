@@ -49,6 +49,10 @@ const IPC_CHANNELS = {
   notify: `${IPC_PREFIX}notify`,
   notificationActivate: `${IPC_PREFIX}notification-activate`,
   systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
+  buddyGetPlace: `${IPC_PREFIX}buddy-get-place`,
+  buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
+  buddyGetHideFromCapture: `${IPC_PREFIX}buddy-get-hide-from-capture`,
+  buddySetHideFromCapture: `${IPC_PREFIX}buddy-set-hide-from-capture`,
 };
 
 /**
@@ -216,5 +220,19 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
     /** Resolves {ok, reason?}: a browser that did not open is an answer, so the page can offer
      * the link to open by hand. */
     open: (url) => ipcRenderer.invoke(IPC_CHANNELS.systemBrowserOpen, String(url ?? "")),
+  },
+
+  /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
+   * is kept out of screen capture, which live in the shell's store, not the gateway's config.
+   * Main answers these for the app's own windows only and changes the live window at once. */
+  buddy: {
+    /** Resolves {mode: "docked"|"floating", displayId?}. */
+    getPlace: () => ipcRenderer.invoke(IPC_CHANNELS.buddyGetPlace),
+    /** Puts the buddy back docked. Resolves where it is now. */
+    resetPlace: () => ipcRenderer.invoke(IPC_CHANNELS.buddyResetPlace),
+    /** Resolves whether the buddy is kept out of screen sharing and screenshots. */
+    getHideFromCapture: () => ipcRenderer.invoke(IPC_CHANNELS.buddyGetHideFromCapture),
+    /** Resolves the value that holds after the change. */
+    setHideFromCapture: (on) => ipcRenderer.invoke(IPC_CHANNELS.buddySetHideFromCapture, on === true),
   },
 });

@@ -187,6 +187,12 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       placement.writePlacement(store, current);
       place(!instant);
     },
+    /** Back to the dock, for this machine: Settings' reset. */
+    resetPlacement() {
+      current = { mode: "docked" };
+      placement.writePlacement(store, current);
+      place();
+    },
     /** "Hide from screen sharing and screenshots", for this machine. */
     setHideFromCapture(on) {
       store.setItem(CAPTURE_KEY, on ? "1" : "0");
@@ -351,6 +357,62 @@ function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, log = () => {} }
   return () => { for (const channel of Object.values(BUDDY_CHANNELS)) ipcMain.removeAllListeners(channel); };
 }
 
+// ── This machine's buddy rows in Settings (#3901) ─────────────────────────────────────────────
+//
+// Settings shows and changes where the buddy's window sits and whether it is kept out of screen
+// capture, which are this machine's (the shell's store), not the gateway's. Four calls on
+// `pclawDesktop.buddy`, answered for the app's own bridged windows only: never the buddy's page,
+// whose preload has none of them, and never another web contents. A change goes through the
+// buddy's controller, so the live window moves or changes at once.
+
+/** Where the buddy sits, as Settings shows it: docked, or floating on a display. */
+function placeShown(store) {
+  const at = placement.readPlacement(store);
+  return at.mode === "floating" && Number.isFinite(at.displayId) ? { mode: "floating", displayId: at.displayId } : { mode: at.mode };
+}
+
+/**
+ * Answer the four calls. `buddy()` is the controller (`makeBuddyWindow`) once main has made it,
+ * else null; `store()` the shell's store; `isAppWindow(sender)` whether a call came from one of
+ * the app's own bridged windows. A call from anywhere else is refused, and a value outside its
+ * shape changes nothing.
+ */
+function registerBuddySettingsIpc({ ipcMain, channels, buddy, store, isAppWindow, log = () => {} }) {
+  const answer = (channel, act) => {
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!event || !isAppWindow(event.sender)) {
+        log(`buddy settings: ${channel} from a page that is not the app's, refused`);
+        throw new Error("not one of the app's windows");
+      }
+      const shell = store();
+      if (!shell) throw new Error("the shell's store is not open");
+      return act(shell, ...args);
+    });
+  };
+  const captureOn = (shell) => shell.getItem(CAPTURE_KEY) !== "0";
+  answer(channels.buddyGetPlace, (shell) => placeShown(shell));
+  answer(channels.buddyResetPlace, (shell) => {
+    const controller = buddy();
+    if (controller) controller.resetPlacement();
+    else placement.writePlacement(shell, { mode: "docked" });
+    return placeShown(shell);
+  });
+  answer(channels.buddyGetHideFromCapture, (shell) => captureOn(shell));
+  answer(channels.buddySetHideFromCapture, (shell, on) => {
+    if (typeof on !== "boolean") {
+      log("buddy settings: hide-from-capture outside its shape, unchanged");
+      return captureOn(shell);
+    }
+    const controller = buddy();
+    if (controller) controller.setHideFromCapture(on);
+    else shell.setItem(CAPTURE_KEY, on ? "1" : "0");
+    return captureOn(shell);
+  });
+  return () => {
+    for (const c of [channels.buddyGetPlace, channels.buddyResetPlace, channels.buddyGetHideFromCapture, channels.buddySetHideFromCapture]) ipcMain.removeHandler(c);
+  };
+}
+
 module.exports = {
   CAPTURE_KEY,
   ENABLED_KEY,
@@ -364,4 +426,5 @@ module.exports = {
   makeBuddyPresence,
   buddyOutlivesClose,
   registerBuddyIpc,
+  registerBuddySettingsIpc,
 };

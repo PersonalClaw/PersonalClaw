@@ -85,6 +85,13 @@ const IPC_CHANNELS = {
    * answer whether it opened. Handled by `registerSystemBrowserIpc`, which opens only an http or
    * https page, the rule every other door to the system browser follows. */
   systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
+  /** renderer → main: this machine's buddy rows in Settings (#3901): where the buddy's window sits,
+   * putting it back docked, and whether it is kept out of screen capture. Handled by
+   * `registerBuddySettingsIpc` (`buddyWindow.js`), which answers the app's own bridged windows only. */
+  buddyGetPlace: `${IPC_PREFIX}buddy-get-place`,
+  buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
+  buddyGetHideFromCapture: `${IPC_PREFIX}buddy-get-hide-from-capture`,
+  buddySetHideFromCapture: `${IPC_PREFIX}buddy-set-hide-from-capture`,
 };
 
 /**
