@@ -81,21 +81,35 @@ describe("main answers the app's own windows only", () => {
     assert.equal(logs.length, 4);
   });
 
-  it("reads where the buddy sits, and puts it back docked through the live window", async () => {
+  it("reads where the buddy sits from the live window, and puts it back docked through it", async () => {
     let reset = 0;
-    const store = memoryStore({ [PLACEMENT_KEY]: '{"mode":"floating","displayId":2,"x":10,"y":20}' });
-    const controller = { resetPlacement: () => { reset += 1; store.setItem(PLACEMENT_KEY, '{"mode":"docked"}'); }, setHideFromCapture: () => {} };
+    let at = { mode: "floating", displayId: 2 };
+    const store = memoryStore({ [PLACEMENT_KEY]: '{"v":2,"on":3,"spots":{"3":{"x":10,"y":20}}}' });
+    const controller = { get placement() { return at; }, resetPlacement: () => { reset += 1; at = { mode: "docked" }; }, setHideFromCapture: () => {} };
     const { ipcMain, app } = wired({ store, controller });
-    assert.deepEqual(await ipcMain.invoke(IPC_CHANNELS.buddyGetPlace, app), { mode: "floating", displayId: 2 });
+    assert.deepEqual(await ipcMain.invoke(IPC_CHANNELS.buddyGetPlace, app), { mode: "floating", displayId: 2 }, "the window's, which knows the displays there are");
     assert.deepEqual(await ipcMain.invoke(IPC_CHANNELS.buddyResetPlace, app), { mode: "docked" });
     assert.equal(reset, 1, "the controller moved the window");
   });
 
-  it("puts it back docked in the store when there is no window yet", async () => {
-    const store = memoryStore({ [PLACEMENT_KEY]: '{"mode":"floating","displayId":2,"x":10,"y":20}' });
+  it("reads where the buddy sits from the store when there is no window yet, the earlier placement too (#5216)", async () => {
+    for (const [raw, shown] of [
+      ['{"v":2,"on":2,"spots":{"2":{"x":10,"y":20}}}', { mode: "floating", displayId: 2 }],
+      ['{"v":2,"on":null,"spots":{"2":{"x":10,"y":20}}}', { mode: "docked" }],
+      ['{"mode":"floating","displayId":2,"x":10,"y":20}', { mode: "floating", displayId: 2 }],
+      ['{"mode":"docked"}', { mode: "docked" }],
+      [null, { mode: "docked" }],
+    ]) {
+      const { ipcMain, app } = wired({ store: memoryStore(raw === null ? {} : { [PLACEMENT_KEY]: raw }) });
+      assert.deepEqual(await ipcMain.invoke(IPC_CHANNELS.buddyGetPlace, app), shown, String(raw));
+    }
+  });
+
+  it("puts it back docked in the store when there is no window yet, keeping each display's spot", async () => {
+    const store = memoryStore({ [PLACEMENT_KEY]: '{"v":2,"on":2,"spots":{"2":{"x":10,"y":20}}}' });
     const { ipcMain, app } = wired({ store });
     assert.deepEqual(await ipcMain.invoke(IPC_CHANNELS.buddyResetPlace, app), { mode: "docked" });
-    assert.equal(store.data[PLACEMENT_KEY], '{"mode":"docked"}');
+    assert.deepEqual(JSON.parse(store.data[PLACEMENT_KEY]), { v: 2, on: null, spots: { 2: { x: 10, y: 20 } } });
   });
 
   it("reads and sets hide-from-capture, on by default, and ignores a value that is not a boolean", async () => {

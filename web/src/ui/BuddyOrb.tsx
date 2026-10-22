@@ -118,8 +118,8 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
           style={{ width: size + pad * 2, height: size + pad * 2, left: -pad, top: -pad }}
         />
       </span>
-      <span data-buddy-line="" data-type="body-s" className="min-w-0 truncate text-on-surface">{line}</span>
-      {line ? null : <span data-buddy-words="" className="sr-only">{wordsOf(state)}</span>}
+      {/* Without a line nothing sits beside the art, so an orb in a slot is in its middle (#5216). */}
+      {line ? <span data-buddy-line="" data-type="body-s" className="min-w-0 truncate text-on-surface">{line}</span> : <span data-buddy-words="" className="sr-only">{wordsOf(state)}</span>}
     </span>
   )
 }

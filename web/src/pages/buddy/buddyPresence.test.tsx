@@ -252,6 +252,19 @@ describe("in the buddy's own window", () => {
     expect(resolveApproval).not.toHaveBeenCalled()
   })
 
+  it('a move outside the orb\'s box is no rest on the zone: only the pointer on the orb\'s box peeks (#5216)', async () => {
+    lists.running = { running: [], finished: [] }
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    // In the card's area, where the window is shown but takes nothing: the shell's own move as the
+    // window shows lands there, and so does every pointer the window forwards on macOS.
+    await act(async () => { document.dispatchEvent(new MouseEvent('mousemove', { clientX: 200, clientY: 300 })) })
+    expect(container.querySelector('[data-buddy-presence]'), 'no peek').toBeNull()
+    await act(async () => { document.dispatchEvent(new MouseEvent('mousemove', { clientX: 20, clientY: 20 })) })
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="peek"]')).not.toBeNull())
+  })
+
   it('floating, its orb stays on the screen with nothing running, and the window keeps its size', async () => {
     lists.running = { running: [], finished: [] }
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
@@ -371,6 +384,48 @@ describe("in the buddy's own window", () => {
     expect(box(container.querySelector('[data-buddy-orb-slot]'))).toBe(at)
   })
 
+  // The whole-UI zoom Appearance sets on the page's root (`app/appearance.tsx`, 80 to 150 %), and
+  // twice the size: the shell's boxes are its points, so the zoom is undone on them, and done again
+  // on what the card says inside its area.
+  it.each([0.8, 1, 1.5, 2])('under a whole-UI zoom of %s, the orb\'s box and the card\'s area stay the shell\'s points', async (zoom) => {
+    document.documentElement.style.zoom = String(zoom)
+    try {
+      const { container } = render(<BuddyPage {...route} />)
+      await prompt()
+      await act(async () => {
+        layout?.({ side: 'left', opens: 'up', orb: { x: 428, y: 504, width: 56, height: 56 }, card: { x: 0, y: 0, width: 420, height: 560 } })
+      })
+      const undone = zoom === 1 ? '' : String(1 / zoom)
+      const slot = container.querySelector<HTMLElement>('[data-buddy-orb-slot]')!
+      expect([box(slot), slot.style.zoom], 'the orb at its box, in points').toEqual(['428px 504px 56px 56px', undone])
+      const area = container.querySelector<HTMLElement>('[data-buddy-card-area]')!
+      expect([box(area), area.style.zoom], 'the card\'s area, in points').toEqual(['0px 0px 420px 560px', undone])
+      const surface = area.querySelector<HTMLElement>('[data-buddy-card-surface]')!
+      expect(surface.style.zoom, 'what the card says, at the owner\'s zoom').toBe(zoom === 1 ? '' : String(zoom))
+    } finally {
+      document.documentElement.style.zoom = ''
+    }
+  })
+
+  it('under a whole-UI zoom, the line card is never wider than its area', async () => {
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    document.documentElement.style.zoom = '2'
+    try {
+      const { container } = render(<BuddyPage {...route} />)
+      await act(async () => {
+        layout?.({ side: 'right', opens: 'down', orb: { x: 0, y: 0, width: 56, height: 56 }, card: { x: 64, y: 0, width: 420, height: 560 } })
+      })
+      const surface = await waitFor(() => {
+        const el = container.querySelector<HTMLElement>('[data-buddy-card-area] [data-buddy-card-surface]')
+        expect(el).not.toBeNull()
+        return el!
+      }, { timeout: 2000 })
+      expect(surface.style.maxWidth, 'zoomed twice, half the area in its own points').toBe('210px')
+    } finally {
+      document.documentElement.style.zoom = ''
+    }
+  })
+
   it('a right-click on the face asks the shell for the context menu, and answers nothing', async () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
@@ -412,6 +467,20 @@ describe('in the window of a shell built before its layout push', () => {
     expect(slot.style.top).toBe('8px')
     const area = container.querySelector<HTMLElement>('[data-buddy-card-area]')!
     expect(area.dataset.side).toBe(window.innerWidth >= 2 * (28 + 8 + 420) + 16 ? 'right' : 'below')
+  })
+
+  it('under a whole-UI zoom, lays itself out in the zoomed page: the orb still at its top centre', async () => {
+    window.pclawBuddy = { pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(), onRing: vi.fn(() => () => {}) }
+    document.documentElement.style.zoom = '1.5'
+    try {
+      const { container } = render(<BuddyPage {...route} />)
+      await prompt()
+      const slot = container.querySelector<HTMLElement>('[data-buddy-orb-slot]')!
+      expect(slot.style.left, 'in the page\'s zoomed points, which the zoom makes the window\'s').toBe(`${Math.round(window.innerWidth / 1.5 / 2 - 28)}px`)
+      expect(slot.style.zoom, 'a tab zooms all of it').toBe('')
+    } finally {
+      document.documentElement.style.zoom = ''
+    }
   })
 })
 

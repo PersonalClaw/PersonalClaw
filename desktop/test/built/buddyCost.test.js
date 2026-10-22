@@ -19,6 +19,7 @@ const { builtPageTier, pageUnbuilt } = require("../helpers/builtPage");
 // - covered (animating under a window above it): the shell's show keeps it drawing (#5210), under
 //   the animating bar;
 // - hidden: no frame, no timer, under 0.5%.
+// The window is measured at its real size, the orb's box and the card's area beside it (#5216).
 // Shared runners are noisy (#3902's open question 2), so CI holds the CPU bars at ×3
 // (`PC_BUDDY_CPU_MARGIN`); the report prints each mode beside the design's own bar. The renderer's
 // working set is reported against its 60 MB bar, not held to it, until #3829's memory task decides
@@ -110,6 +111,7 @@ describe("the real #/buddy in the buddy's window costs what its bars say", () =>
   });
 
   it("hidden: no frame, no timer, and idle", { skip: skipped }, () => {
+    assert.deepEqual(run.windowSize, run.defaultLayoutSize, "measured at the window's real size, the orb's box and the card's area (#5216)");
     const m = run.modes.hidden;
     assert.equal(m.documentHidden, true);
     assert.equal(m.frames, 0, "hidden, the buddy asks for no frame");

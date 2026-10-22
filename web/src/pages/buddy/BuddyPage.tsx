@@ -66,7 +66,9 @@ function SocketDoorbell({ hostRef }: { hostRef: HostRef }) {
 /** The buddy window's shell: its doorbell (the shell's one socket, heard through the window's
  *  bridge), where the window is, whether one of the app's own windows is full screen, and the
  *  top-edge zone. */
-function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridge }) {
+function WindowShell({ hostRef, bridge, orb }: { hostRef: HostRef; bridge: BuddyBridge; orb: BuddyRect }) {
+  const orbRef = useRef(orb)
+  useEffect(() => { orbRef.current = orb }, [orb])
   useEffect(() => {
     const machine = () => hostRef.current?.snapshot().machine
     const stops = [
@@ -93,13 +95,19 @@ function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridg
         if (m && m.muted !== hidden) hostRef.current?.send({ type: hidden ? 'hide' : 'show' })
       }),
     ]
-    // The top-edge zone: docked with nothing to show, the window stays up as a strip that takes no
-    // click, and the pointer resting on it is the machine's `zone` (a peek). On macOS the shell
-    // forwards the pointer's moves to it; nothing samples the pointer on a timer.
+    // The top-edge zone: docked with nothing to show, the window stays up and takes no click, and
+    // the pointer resting on the orb's box is the machine's `zone` (a peek). On macOS the shell
+    // forwards the pointer's moves to it; nothing samples the pointer on a timer. A move anywhere
+    // else in the window (its card's area, or the move Chromium makes at the pointer's resting
+    // place as the window shows) means nothing (#5216).
     let inZone = false
-    const onMove = () => {
+    const onOrb = (e: globalThis.MouseEvent) => {
+      const o = orbRef.current
+      return e.clientX >= o.x && e.clientX < o.x + o.width && e.clientY >= o.y && e.clientY < o.y + o.height
+    }
+    const onMove = (e: globalThis.MouseEvent) => {
       const m = machine()
-      if (inZone || !m || !m.docked || m.presence !== 'hidden') return
+      if (inZone || !m || !m.docked || m.presence !== 'hidden' || !onOrb(e)) return
       inZone = true
       hostRef.current?.send({ type: 'pointer', at: 'zone' })
     }
@@ -168,21 +176,36 @@ const scaled = (r: BuddyRect, by: number): BuddyRect => ({ x: r.x / by, y: r.y /
 /** Where the page draws the orb and its card. In the buddy's window, the shape its shell pushes
  *  (`onLayout`), in the window's points: the work area and the choice of display live in main, so
  *  the page follows them and never guesses its own. Zoomed in, the points are divided by the zoom,
- *  read off the window's own width against the shape's. In a tab, or a window from a shell that
- *  sizes it to the room, the same rule over the page itself, the orb at its top centre. */
-function useLayout(bridge: BuddyBridge | null): BuddyLayout {
-  const view = useViewport()
+ *  read off the window's own width against the shape's; the whole-UI zoom on the page's root is
+ *  undone where the presence draws them (`shell`). In a tab, or a window from a shell that sizes it
+ *  to the room, the same rule over the page itself, zoomed with it, the orb at its top centre. */
+function useLayout(bridge: BuddyBridge | null, uiZoom: number): { layout: BuddyLayout; shell: boolean } {
+  const viewport = useViewport()
   const [pushed, setPushed] = useState<BuddyLayout | null>(null)
   const follows = Boolean(bridge?.onLayout)
   useEffect(() => bridge?.onLayout?.(setPushed), [bridge])
   if (follows) {
     const l = pushed ?? DEFAULT_LAYOUT
     const width = Math.max(l.orb.x + l.orb.width, l.card.x + l.card.width) - Math.min(l.orb.x, l.card.x)
-    const zoom = view.width > 0 ? Math.max(1, width / view.width) : 1
-    return zoom === 1 ? l : { ...l, orb: scaled(l.orb, zoom), card: scaled(l.card, zoom) }
+    const zoom = viewport.width > 0 ? Math.max(1, width / viewport.width) : 1
+    return { layout: zoom === 1 ? l : { ...l, orb: scaled(l.orb, zoom), card: scaled(l.card, zoom) }, shell: true }
   }
+  // A tab zooms the whole page, the buddy with it: laid out in the zoomed page's points.
+  const view = { width: viewport.width / uiZoom, height: viewport.height / uiZoom }
   const area = { x: PAGE_EDGE, y: PAGE_EDGE, width: Math.max(0, view.width - 2 * PAGE_EDGE), height: Math.max(0, view.height - 2 * PAGE_EDGE) }
-  return layoutAt(area, { x: Math.round(view.width / 2 - ORB_BOX / 2), y: PAGE_EDGE })
+  return { layout: layoutAt(area, { x: Math.round(view.width / 2 - ORB_BOX / 2), y: PAGE_EDGE }), shell: false }
+}
+
+/** The whole-UI zoom on the page's root (`app/appearance.tsx`), followed as it changes. */
+function useUiZoom(): number {
+  const read = () => Number(document.documentElement.style.zoom) || 1
+  const [zoom, setZoom] = useState(read)
+  useEffect(() => {
+    const watch = new MutationObserver(() => setZoom(read()))
+    watch.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    return () => watch.disconnect()
+  }, [])
+  return zoom
 }
 
 export function BuddyPage(_: RouteProps) {
@@ -208,7 +231,8 @@ export function BuddyPage(_: RouteProps) {
   // In the buddy's own window its size follows the machine, once the lists have been read: before
   // that the machine's hidden is only where it starts.
   const [bridge] = useState(buddyBridge)
-  const layout = useLayout(bridge)
+  const uiZoom = useUiZoom()
+  const { layout, shell } = useLayout(bridge, uiZoom)
   const presentation = snap?.read ? presentationOf(snap.machine) : null
 
   // A tap on an alert's notification opens the buddy (#3897): the shell shows its window and rings
@@ -248,11 +272,12 @@ export function BuddyPage(_: RouteProps) {
       <h1 className="sr-only">Buddy</h1>
       {snap ? <Announcer machine={snap.machine} /> : null}
       {/* A shell built before its doorbell has no ring to hear: the page keeps its own socket. */}
-      {bridge?.onRing ? <WindowShell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
+      {bridge?.onRing ? <WindowShell hostRef={hostRef} bridge={bridge} orb={layout.orb} /> : <SocketDoorbell hostRef={hostRef} />}
       {snap && host ? (
         <BuddyPresence
           machine={snap.machine}
           layout={layout}
+          zoom={shell ? uiZoom : 1}
           onClick={() => host.send({ type: 'click' })}
           onPointer={(at) => host.send({ type: 'pointer', at })}
           card={truth ? <BuddyCard {...liveCardPropsOf(snap, host)} state={orbOf(truth, snap.machine)} /> : null}

@@ -14,8 +14,9 @@
  *   `document.hidden` follows the shell's show and hide, not the OS's guess (`showOnScreen`).
  * - **Kept out of screen capture** while "Hide from screen sharing and screenshots" is on, which it
  *   is unless this machine's store says `"0"` under `CAPTURE_KEY`.
- * - **Placed** by `buddyPlacement.js`: docked on the menu-bar display, or floating where it was
- *   dropped, saved in the shell's store.
+ * - **One orb, where the owner put it** (#5216), by `buddyPlacement.js`: the window is the orb's box
+ *   and its card's area on the side with room, set where the orb settles and never resized for a
+ *   state or the card. Only a drag moves it; the spot is kept per display in the shell's store.
  * - **The owner's to have.** It exists only while "Buddy status" is on for this machine
  *   (`makeBuddyPresence`), and it never keeps the app running by itself (`buddyOutlivesClose`).
  */
@@ -79,13 +80,14 @@ function hideFromScreen(win) {
   win.webContents?.setBackgroundThrottling?.(true);
 }
 
-function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, onPlacement = () => {}, log = () => {} }) {
+function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, onPlacement = () => {}, onLayout = () => {}, log = () => {} }) {
   let win = null;
-  let presentation = "compact";
-  let current = placement.readPlacement(store);
   let drag = null;
   let visible = false;
   let following = false;
+  /** The window's bounds as last set, and the layout the page last heard. */
+  let applied = null;
+  let layout = null;
 
   const displays = () => {
     try { return screen.getAllDisplays(); } catch { return []; }
@@ -93,7 +95,8 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
   const primary = () => {
     try { return screen.getPrimaryDisplay(); } catch { return null; }
   };
-  const resolved = () => placement.resolveBounds({ placement: current, presentation, displays: displays(), primary: primary() });
+  let current = placement.readPlacement(store, displays());
+  const resolved = () => placement.resolvePlacement({ placement: current, displays: displays(), primary: primary() });
 
   const hideFromCapture = () => store.getItem(CAPTURE_KEY) !== "0";
 
@@ -104,16 +107,32 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
     if (platform === "darwin") win.setIgnoreMouseEvents(true, visible ? { forward: true } : undefined);
   };
 
+  const same = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+  /** Put the window where the spot says, and tell the page its layout when that changed. Nothing
+   *  but the spot and the displays decides either: no state of the buddy goes in (#5216). A move
+   *  that lays the card out again is never animated: the page draws the orb at the old layout's
+   *  place until it hears the new one, so a sliding window would carry the orb away from its spot. */
   const place = (animate = false) => {
     const at = resolved();
     if (!win || !at) return;
-    win.setBounds(at.bounds, animate && platform === "darwin");
+    const { window: _was, ...before } = layout || {};
+    const { window: _now, ...after } = at.layout;
+    const relaid = JSON.stringify(before) !== JSON.stringify(after);
+    if (!same(applied, at.layout.window)) {
+      applied = { ...at.layout.window };
+      win.setBounds(applied, animate && !relaid && platform === "darwin");
+    }
+    layout = at.layout;
+    if (relaid) onLayout(layout);
   };
 
   function create(url) {
     if (win) return win;
     const at = resolved();
-    win = new BrowserWindowCtor(buddyWindowOptions({ bounds: at ? at.bounds : { width: 360, height: 28 }, preload }));
+    applied = at ? { ...at.layout.window } : { width: placement.ORB_BOX, height: placement.ORB_BOX };
+    layout = at ? at.layout : null;
+    win = new BrowserWindowCtor(buddyWindowOptions({ bounds: applied, preload }));
     if (platform === "darwin") {
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       // Not one of the app's windows in the Window menu either.
@@ -137,7 +156,14 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
   return {
     create,
     get window() { return win; },
-    get placement() { return { ...current }; },
+    /** Where the orb is, as Settings and the page read it: at the default (`docked`), or moved
+     *  (`floating`) on a display. */
+    get placement() {
+      const at = resolved();
+      return at && !at.atDefault ? { mode: "floating", displayId: at.displayId } : { mode: "docked" };
+    },
+    /** The orb's and the card's places in the window, as the page draws them (`layout` push). */
+    get layout() { return layout; },
     isVisible: () => visible,
     /** Show without taking focus. */
     show() {
@@ -159,19 +185,17 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       visible = false;
       drag = null;
     },
-    /** The page's presentation (`peek`, `compact`, `expanded`): the window takes its room. */
-    setPresentation(next) {
-      if (!placement.SIZES[next] || next === presentation) return;
-      presentation = next;
-      place();
-    },
-    /** macOS: the forwarded pointer is over the face or the card (take clicks), or not (pass them). */
+    /** The page's presentation. It moves and resizes nothing: the orb keeps its box in every state,
+     *  and the card draws inside the window's card area (#5216). `hidden` is the page's hide, which
+     *  `registerBuddyIpc` turns into `hide()`. */
+    setPresentation() {},
+    /** macOS: the forwarded pointer is over the orb or the card (take clicks), or not (pass them). */
     pointerOver(hit) {
       if (!win || platform !== "darwin") return;
       if (hit && visible) win.setIgnoreMouseEvents(false);
       else passClicks();
     },
-    /** Linux: the face's and the card's rectangles, in the window's own points, are its shape. No
+    /** Linux: the orb's and the card's rectangles, in the window's own points, are its shape. No
      *  rectangle is one empty rectangle, not an empty list: Electron reads `[]` as "the whole
      *  window again", which would take every click. */
     setRegions(rects) {
@@ -180,22 +204,16 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       const shape = ok.map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }));
       win.setShape(shape.length ? shape : [{ x: 0, y: 0, width: 0, height: 0 }]);
     },
-    /** A drag of the face starts: the window follows the pointer's deltas until `endDrag`. */
+    /** A drag of the orb starts: the window follows the pointer's deltas until `endDrag`. */
     beginDrag() {
       if (!win) return;
       const [x, y] = win.getPosition();
-      drag = { x, y, out: current.mode === "floating", moved: false };
+      drag = { x, y, moved: false };
     },
-    /** A docked buddy holds its place until the drag takes it past the undock distance. */
+    /** Any move moves the orb: the one thing that does. */
     dragBy(dx, dy) {
       if (!win || !drag || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
       drag = { ...drag, x: drag.x + dx, y: drag.y + dy };
-      if (!drag.out) {
-        const at = resolved();
-        const home = displays().find((d) => at && d.id === at.displayId) || primary();
-        if (!home || !placement.draggedOut(home, drag.y)) return;
-        drag.out = true;
-      }
       win.setPosition(Math.round(drag.x), Math.round(drag.y));
       // The page hears that the window is moving once, when it first moves: a press that never
       // moves it is a click, not a drag.
@@ -204,26 +222,25 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
         onPlacement("moving");
       }
     },
-    /** The drop: dock in the dock zone, else float where it fell; saved for this machine. `instant`
-     *  under reduced motion. */
+    /** The drop: the orb stays where it fell (or snaps to the default near it), the card's side is
+     *  laid out again for that spot, and the spot is saved for this display. `instant` under
+     *  reduced motion. */
     endDrag({ instant = false } = {}) {
       if (!win || !drag) return;
-      const { out, moved } = drag;
-      const [x, y] = win.getPosition();
+      const { moved } = drag;
       drag = null;
-      if (!out) {
-        place();
-        if (moved) onPlacement(current.mode);
-        return;
-      }
-      current = placement.settleDrop({ faceTopLeft: { x, y }, displays: displays(), primary: primary() });
+      if (!moved) return;
+      const [x, y] = win.getPosition();
+      if (applied) applied = { ...applied, x, y };
+      const orb = layout ? { x: x + layout.orb.x, y: y + layout.orb.y } : { x, y };
+      current = placement.settleDrop({ orb, placement: current, displays: displays(), primary: primary() });
       placement.writePlacement(store, current);
       place(!instant);
-      if (moved) onPlacement(current.mode);
+      onPlacement(this.placement.mode);
     },
-    /** Back to the dock, for this machine: Settings' reset. */
+    /** Back to the default, for this machine: Settings' reset. Each display's spot is kept. */
     resetPlacement() {
-      current = { mode: "docked" };
+      current = { on: null, spots: { ...(current.spots || {}) } };
       placement.writePlacement(store, current);
       place();
     },
@@ -307,7 +324,8 @@ const BUDDY_CHANNELS = Object.freeze({
 /** What main tells the buddy's page (#3832), the only messages that go that way: a ring, which
  *  carries nothing and says the lists moved (read them again); the doorbell's connection; where a
  *  drag left the buddy; whether one of the app's own windows is full screen; a tap on an alert's
- *  notification; whether the owner is away; and whether the owner hid the buddy. */
+ *  notification; whether the owner is away; whether the owner hid the buddy; and where the orb and
+ *  its card's area are in the window (#5216). */
 const BUDDY_PUSHES = Object.freeze({
   ring: `${BUDDY_PREFIX}ring`,
   connection: `${BUDDY_PREFIX}connection`,
@@ -318,6 +336,7 @@ const BUDDY_PUSHES = Object.freeze({
   openAlert: `${BUDDY_PREFIX}open-alert`,
   away: `${BUDDY_PREFIX}away`,
   hidden: `${BUDDY_PREFIX}hidden`,
+  layout: `${BUDDY_PREFIX}layout`,
 });
 
 /** The doorbell's connection states the page hears (`doorbell.js`). */
@@ -326,11 +345,31 @@ const BUDDY_CONNECTIONS = Object.freeze(["up", "lost", "restarting"]);
 /** Where the window is, as the page hears it: a drag moving it, or where it settled. */
 const BUDDY_PLACEMENTS = Object.freeze(["moving", "docked", "floating"]);
 
+/** The sides of the orb its card opens on, and the ways it opens (`buddyPlacement.layoutAt`). */
+const BUDDY_SIDES = Object.freeze(["right", "left", "below", "above"]);
+const BUDDY_OPENS = Object.freeze(["down", "up"]);
+
+/** A layout as the page hears it: the side, the way it opens, and the orb's and the card's area's
+ *  rectangles in the window's own points; null for anything else. The window's place on the screen
+ *  stays in main. */
+function layoutShown(layout) {
+  const box = (r) => {
+    if (!r || typeof r !== "object") return null;
+    const out = { x: r.x, y: r.y, width: r.width, height: r.height };
+    return Object.values(out).every((n) => typeof n === "number" && Number.isFinite(n)) ? out : null;
+  };
+  if (!layout || typeof layout !== "object" || !BUDDY_SIDES.includes(layout.side) || !BUDDY_OPENS.includes(layout.opens)) return null;
+  const orb = box(layout.orb);
+  const card = box(layout.card);
+  return orb && card ? { side: layout.side, opens: layout.opens, orb, card } : null;
+}
+
 /**
  * Tell the buddy's page *name*: `ring`; `connection`, one of `BUDDY_CONNECTIONS`; `placement`, one
  * of `BUDDY_PLACEMENTS`; `fullScreen`, whether one of the app's own windows is full screen; `away`,
- * whether the owner is away; `hidden`, whether the owner hid the buddy (`buddyAway.js`); or
- * `openAlert`, a tap on an alert's notification, carrying nothing.
+ * whether the owner is away; `hidden`, whether the owner hid the buddy (`buddyAway.js`); `layout`,
+ * where the orb and its card's area are in the window (`layoutShown`); or `openAlert`, a tap on an
+ * alert's notification, carrying nothing.
  * Nothing else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
  */
 function pushToBuddy(win, name, value) {
@@ -342,6 +381,7 @@ function pushToBuddy(win, name, value) {
   else if (name === "openAlert") win.webContents.send(BUDDY_PUSHES.openAlert);
   else if (name === "away" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.away, value);
   else if (name === "hidden" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.hidden, value);
+  else if (name === "layout" && layoutShown(value)) win.webContents.send(BUDDY_PUSHES.layout, layoutShown(value));
   else return false;
   return true;
 }
@@ -379,7 +419,7 @@ const BUDDY_PAYLOADS = Object.freeze({
     if (p.phase === "end") return { phase: "end", instant: p.instant === true };
     return { phase: "start" };
   },
-  presentation: (p) => (plain(p) && typeof p.presentation === "string" && Object.prototype.hasOwnProperty.call(placement.SIZES, p.presentation) ? { presentation: p.presentation } : null),
+  presentation: (p) => (plain(p) && typeof p.presentation === "string" && placement.PRESENTATIONS.includes(p.presentation) ? { presentation: p.presentation } : null),
   open: (p) => {
     const route = plain(p) ? openableRoute(p.route) : null;
     return route ? { route } : null;
@@ -427,10 +467,12 @@ function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, openMenu = () =>
 // whose preload has none of them, and never another web contents. A change goes through the
 // buddy's controller, so the live window moves or changes at once.
 
-/** Where the buddy sits, as Settings shows it: docked, or floating on a display. */
-function placeShown(store) {
-  const at = placement.readPlacement(store);
-  return at.mode === "floating" && Number.isFinite(at.displayId) ? { mode: "floating", displayId: at.displayId } : { mode: at.mode };
+/** Where the buddy sits, as Settings shows it: docked (at the default), or floating on a display.
+ *  The live window's, which knows the displays there are, else the store's. */
+function placeShown(store, controller) {
+  if (controller) return controller.placement;
+  const on = placement.savedDisplay(store);
+  return on === null ? { mode: "docked" } : { mode: "floating", displayId: on };
 }
 
 /**
@@ -453,12 +495,12 @@ function registerBuddySettingsIpc({ ipcMain, channels, buddy, store, isAppWindow
     });
   };
   const captureOn = (shell) => shell.getItem(CAPTURE_KEY) !== "0";
-  answer(channels.buddyGetPlace, (shell) => placeShown(shell));
+  answer(channels.buddyGetPlace, (shell) => placeShown(shell, buddy()));
   answer(channels.buddyResetPlace, (shell) => {
     const controller = buddy();
     if (controller) controller.resetPlacement();
-    else placement.writePlacement(shell, { mode: "docked" });
-    return placeShown(shell);
+    else placement.writePlacement(shell, { ...placement.readPlacement(shell), on: null });
+    return placeShown(shell, controller);
   });
   const canHide = captureHidingSupported(platform);
   answer(channels.buddyGetHideFromCapture, (shell) => (canHide ? captureOn(shell) : null));
