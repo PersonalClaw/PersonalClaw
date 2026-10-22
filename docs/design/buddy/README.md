@@ -122,8 +122,9 @@ later work below.
   [the choice](character.md#the-choice), made on 2026-10-18, with
   [the three directions it rejected](character.md#three-directions-to-explore),
   [the poses](character.md#the-poses),
-  [the gesture vocabulary](character.md#the-gesture-vocabulary) and
-  [the drawn poses](character.md#the-drawn-poses), with their contact sheets.
+  [the gesture vocabulary](character.md#the-gesture-vocabulary),
+  [the drawn poses](character.md#the-drawn-poses), with their contact sheets, and
+  [the component](character.md#the-component) that draws them in the app.
 - [`rig.md`](rig.md): [candidates](rig.md#candidates), [what is measured](rig.md#what-is-measured)
   and [the starting position](rig.md#starting-position).
 - [`test-plan.md`](test-plan.md): [logic](test-plan.md#logic), [consent](test-plan.md#consent),

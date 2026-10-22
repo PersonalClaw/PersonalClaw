@@ -41,6 +41,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A new install can add the Amazon Bedrock app, and every other app built on botocore, again: PersonalClaw keeps python-dateutil below 3, since every botocore requires that and python-dateutil 3.0.0 (released 2026-10-21) reached fresh installs.**
 - **An approval behind an open dialog no longer answers to ⌘Enter (Ctrl+Enter elsewhere), even while the browser still reports focus on it, and Escape in a dialog an approval opened closes that dialog's detail and leaves the approval's second confirmation as it was.**
 - **A loop waiting on your answer spends nothing: an Attended loop whose worker asked you a question kept taking a paid worker turn at every idle interval while it waited, and the turn that asked was asked again for a finding. No worker turn starts while a loop waits on you, is paused or held, or is at its cycle cap, its deadline or its cost budget, in any state, so a loop capped at three cycles no longer reads "cycle 4/3".**
+- **With Bounciness at 0 (Settings → Design → Motion), nothing springs past where it lands: quick controls and the few playful moments still overshot a little there.**
 
 ## [0.2.4] — 2026-10-21
 

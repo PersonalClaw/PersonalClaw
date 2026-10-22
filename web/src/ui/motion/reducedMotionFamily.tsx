@@ -26,6 +26,7 @@
 import type { ReactElement } from 'react'
 
 import { AgentOrb } from '../AgentOrb'
+import { BuddyOrb } from '../BuddyOrb'
 import { DotGlow } from '../DotGlow'
 import { WavyProgress } from '../WavyProgress'
 import { Bud } from './Bud'
@@ -115,6 +116,17 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
     // The layer is still mounted (it paints one static frame); its canvas is the proof
     // that the decision is not "render nothing".
     positiveControl: (el) => el.querySelector('canvas'),
+  },
+  {
+    id: 'BuddyOrb — every state is its still, and the line stays beside it',
+    source: 'ui/BuddyOrb.tsx',
+    render: () => <BuddyOrb state="thinking" line="Release notes: thinking" />,
+    selector: '[data-buddy-orb]',
+    attr: 'data-buddy-orb',
+    reduced: 'still',
+    animated: 'animated',
+    // The orb is still drawn, named for its state, with its line: the branch is not "draw nothing".
+    positiveControl: (el) => el.querySelector('canvas[role="img"][aria-label="Thinking"]') && el.querySelector('[data-buddy-line]')?.textContent,
   },
   {
     id: 'AgentOrb — live work is one still frame of its drawing',

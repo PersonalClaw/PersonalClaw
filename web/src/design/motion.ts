@@ -190,14 +190,14 @@ function bouncy(stiffness: number, dampingAtPlayful: number, calmDamping: number
  *  app's whole personality is four numbers here, not a sweep of call sites. */
 export const physics = {
   /** quick, minimal overshoot — controls, chevrons, press/hover feedback */
-  get snappy(): Transition { return bouncy(520, 30, 40) },
+  get snappy(): Transition { return bouncy(520, 30, 46) },
   /** default UI — reach for this when nothing argues for another tier */
   get smooth(): Transition { return bouncy(320, 34, 38) },
   /** liquid, generous settle — large surfaces, layout shifts, morphs */
   get fluid(): Transition { return bouncy(180, 26, 34) },
   /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments (a success
    *  bloom, a sheet). Never a menu, a list or a count: those repeat too often to bounce. */
-  get playful(): Transition { return bouncy(420, 14, 34) },
+  get playful(): Transition { return bouncy(420, 14, 41) },
 }
 
 export const ease = {

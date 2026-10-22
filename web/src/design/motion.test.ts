@@ -65,10 +65,10 @@ const PRESETS = ['snappy', 'smooth', 'fluid', 'playful'] as const
 // The tuned constants, verbatim — pinned so a retune is a deliberate edit
 // here and not a silent drift in feel.
 const ENDPOINTS: Record<(typeof PRESETS)[number], [number, number]> = {
-  snappy: [40, 30],
+  snappy: [46, 30],
   smooth: [38, 34],
   fluid: [34, 26],
-  playful: [34, 14],
+  playful: [41, 14],
 }
 
 describe('physics presets', () => {
@@ -98,6 +98,15 @@ describe('physics presets', () => {
     expect(atPlayful.damping!).toBeLessThan(atCalm.damping!)
     // Stiffness is the preset's identity and must NOT move with the slider.
     expect(atPlayful.stiffness).toBe(atCalm.stiffness)
+  })
+
+  it.each(PRESETS)('%s does not overshoot at bounciness 0: it is at least critically damped', (name) => {
+    // `bouncy()`'s contract, "0 → critically damped". A spring from rest overshoots only when its
+    // damping ratio, damping / (2√(stiffness × mass)), is under 1; snappy's and playful's calm ends
+    // used to sit at 0.88 and 0.83.
+    runtime.bounciness = 0
+    const t = physics[name] as { damping: number; stiffness: number; mass: number }
+    expect(t.damping / (2 * Math.sqrt(t.stiffness * t.mass))).toBeGreaterThanOrEqual(1)
   })
 
   it('reads the slider at ANIMATION time, not once at import', () => {

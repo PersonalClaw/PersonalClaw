@@ -17,10 +17,10 @@ is "how should this move?" and not "what am I in?".
 
 | Preset | Reach for it when | Feel | Constants (stiffness / damping at bounciness 1 → 0) |
 |---|---|---|---|
-| `physics.snappy` | controls, chevrons, press + hover feedback, small state flips | quick, barely overshoots | 520 / 30 → 40 |
+| `physics.snappy` | controls, chevrons, press + hover feedback, small state flips | quick, barely overshoots | 520 / 30 → 46 |
 | `physics.smooth` | **the default.** Anything where nothing argues for another tier | critically damped, no wobble | 320 / 34 → 38 |
 | `physics.fluid` | large surfaces, layout shifts, cards promoting, morphs | liquid, generous settle | 180 / 26 → 34 |
-| `physics.playful` | the ~3–4 *earned* personality moments — a success bloom, a sheet. Never a menu, a list or a count: those repeat too often to bounce | the most overshoot | 420 / 14 → 34 |
+| `physics.playful` | the ~3–4 *earned* personality moments — a success bloom, a sheet. Never a menu, a list or a count: those repeat too often to bounce | the most overshoot | 420 / 14 → 41 |
 
 ```tsx
 import { physics } from '../design/motion'
@@ -54,7 +54,7 @@ one-off literal at the call site.
 
 | Dial | Where the user finds it | What it scales | What it does NOT touch |
 |---|---|---|---|
-| `--bounciness` (0…1, default 1) | Settings → Design → Motion | the overshoot of every `physics` preset and every gesture spring, by interpolating damping | stiffness (a preset's identity), durations, `spring.*` |
+| `--bounciness` (0…1, default 1) | Settings → Design → Motion | the overshoot of every `physics` preset and every gesture spring, by interpolating damping; at 0 every preset is at least critically damped, so nothing overshoots | stiffness (a preset's identity), durations, `spring.*` |
 | `--expressiveness` (0…1, default 0.8) | Settings → Design → Motion | every expressive *magnitude* — hover lift, press depth, morph delta — through `expr()`; heavy effects switch off entirely below `exprHeavy()`'s threshold | which preset you picked |
 | `prefers-reduced-motion` | the user's OS | **overrides both.** Every preset collapses to `instant` | the user's ability to *do* anything (see §3) |
 

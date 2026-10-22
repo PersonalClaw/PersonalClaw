@@ -197,6 +197,31 @@ contract. After a change to the table, redraw them from `web/`:
 PC_WRITE_BUDDY_POSES=1 npx vitest run src/buddyRig/poseSources.test.ts
 ```
 
+## The component
+
+`web/src/ui/BuddyOrb.tsx` draws the orb in the app ([#3891]), on the in-place rig
+[`decisions/rig.md`](decisions/rig.md) chose: one canvas, painted with the agent orb's engine and
+painter, in the pose the table above gives each state, with the state's exact line beside it so the
+art never carries the state alone. The buddy's window, the playground, the focused card and the
+phone's views all draw this one component.
+
+- **Poses and transitions.** `web/src/ui/buddy/orbPoses.ts` is the transitions table: each entry
+  names one of `design/motion.ts`'s presets and the timing token it is held to, so the renderer
+  writes no spring and no length of its own. Each pose parameter moves on its preset, stepped on the
+  dots' capped clock (`web/src/ui/buddy/useOrbPose.ts`).
+- **Colour.** The dots are `--color-orb-alive` or `--color-orb-rest`, and the badge and the wash
+  the alert's tone; a scheme change repaints the orb as it lands. Under more contrast the dots take
+  the words' ink, and under forced colours the system's, as the agent orb's do.
+- **Cost.** It paints only while its dots or its pose move, at most 30 frames a second, and nothing
+  at all while a pose holds, while the page is hidden or while the orb is out of view.
+- **The dials and reduced motion.** At bounciness 0 no pose passes its target, and at the
+  expressiveness floor every state still moves the orb. Under reduced motion every state is its
+  still and a change jumps, stated on `data-buddy-orb`; switching it keeps the same orb, state and
+  line.
+
+`web/src/ui/BuddyOrb.test.tsx`, `BuddyOrb.frames.test.tsx` and `buddy/orbPoses.test.ts` hold it to
+this.
+
 ## Later work
 
 ### Play and drop poses
@@ -223,6 +248,7 @@ an export of the chosen rig ([`rig.md`](rig.md#the-portable-sprite-sheet)).
 [#3807]: https://github.com/PersonalClaw/PersonalClaw/issues/3807
 [#3830]: https://github.com/PersonalClaw/PersonalClaw/issues/3830
 [#3887]: https://github.com/PersonalClaw/PersonalClaw/issues/3887
+[#3891]: https://github.com/PersonalClaw/PersonalClaw/issues/3891
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
 [#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
