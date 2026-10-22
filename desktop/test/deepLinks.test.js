@@ -729,7 +729,11 @@ describe("the route list is the app's own", () => {
     const extra = app.match(/const ROUTABLE = new Set\(\[\.\.\.NAV\.map\(\(n\) => n\.id\), ([^\]]+)\]\)/);
     assert.ok(extra, "the ROUTABLE set must be findable");
     const extras = [...extra[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
-    assert.ok(navIds.length >= 10 && extras.length >= 3, "vacuity floor");
+    // The floor names pages rather than counting them: the redesign folds the sidebar into fewer
+    // top-level destinations (8 since Automations), and a count sized to the old nav read that as
+    // a list the matcher had lost.
+    for (const id of ["dashboard", "chat", "settings"]) assert.ok(navIds.includes(id), `vacuity floor: NAV must hold ${id}`);
+    assert.ok(extras.length >= 3, "vacuity floor");
     assert.deepStrictEqual([...ROUTES].sort(), [...new Set([...navIds, ...extras])].sort());
   });
 
