@@ -125,6 +125,7 @@ describe('the declaration-implies-implementation census', () => {
       'pages/files/browse/FileTree.tsx',
       // A new loop's Execution Boundary control: its Mode, a pick-one menu for the same reason.
       'pages/loop/LoopBoundary.tsx',
+      'pages/loop/LoopReportPill.tsx',
       'ui/HeaderActions.tsx',
       'ui/ProjectPicker.tsx',
       'ui/Segmented.tsx',
@@ -162,7 +163,7 @@ describe('the declaration-implies-implementation census', () => {
   it('the pick-one popups open on their SELECTED option, not the top', () => {
     // APG: focus starts on the checked/selected item so the user hears what is set. The action
     // menus (ContextMenu, FileTree) correctly keep the default 0 — nothing there is "current".
-    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx', 'pages/chat/composer/ExecutionBoundary.tsx', 'pages/loop/LoopBoundary.tsx']) {
+    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx', 'pages/chat/composer/ExecutionBoundary.tsx', 'pages/loop/LoopBoundary.tsx', 'pages/loop/LoopReportPill.tsx']) {
       expect(read(rel), `${rel} should seed the cursor from the value`).toMatch(/initialIndex:/)
     }
     for (const rel of ['ui/motion/ContextMenu.tsx', 'pages/files/browse/FileTree.tsx']) {

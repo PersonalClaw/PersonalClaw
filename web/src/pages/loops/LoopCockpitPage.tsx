@@ -26,14 +26,14 @@ import { thinkingGlow } from '../../design/gradients'
 import { duration, spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
-import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type LoopCheck, type LoopCheckJudge, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type LoopCheck, type LoopCheckJudge, type Artifact, type TaskItem, type LoopSpend, type LoopReport } from '../../lib/api'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
 import { downloadText, safeFilename } from '../../lib/download'
 import { useRunStream } from './useRunStream'
 import { LoopApprovals } from './LoopApprovals'
-import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
+import { isRunBackedKind, loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
 import { LoopProgressStrip } from './LoopProgressStrip'
@@ -599,6 +599,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     } finally { renameInFlight.current = false }
   }
 
+  // How the loop reports changes in any state, as its name does (`PUT /api/loops/{id} {report}`).
+  // Reported, never swallowed: the strip would otherwise show a choice the loop does not hold.
+  async function changeReport(report: LoopReport) {
+    const next = await api.updateULoop(id, { report }).catch((e) => {
+      reportActionFailure('change how this loop reports')(e)
+      return null
+    })
+    if (next) setC(loopToGoalLoop(next))
+  }
+
   // Move a loop that hasn't started onto another runtime — the recourse when the one it was created
   // on isn't ready. Reported, never swallowed: the chip would otherwise show a runtime the loop is
   // not on.
@@ -889,7 +899,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         {/* ── The foot of the thread (#3824): the progress strip, and under it the loop's composer,
             its nudge, while it has a next cycle to guide. ── */}
         <div className="shrink-0 px-2xl pb-l flex flex-col gap-s" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
-          <LoopProgressStrip status={c.status} totalCycles={c.total_cycles} maxCycles={c.max_cycles} onAction={act} />
+          <LoopProgressStrip status={c.status} totalCycles={c.total_cycles} maxCycles={c.max_cycles} onAction={act}
+            report={c.report} onReport={isRunBackedKind(c.kind ?? 'goal') ? undefined : changeReport} />
           {active && (
             <div className="rounded-lg bg-surface-container p-m">
               {/* Raw: a bare text surface inside the composer card; TextArea draws its own fill, padding and radius. */}

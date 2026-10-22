@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Pause, Play, Square } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { LOOP_ACTION_SOURCE_STATUSES, shownCycle } from '../../lib/loopStatus'
+import type { LoopReport } from '../../lib/api'
+import { DEFAULT_REPORT, LoopReportPill } from '../loop/LoopReportPill'
 
 /** The four lifecycle actions the strip can send (`PATCH /api/loops/{id} {action}`). */
 export type StripAction = 'start' | 'pause' | 'resume' | 'stop'
@@ -16,12 +18,18 @@ export function cycleLabel(status: string, totalCycles: number, maxCycles: numbe
  *  controls. Each control shows exactly when the action route accepts it, by asking
  *  LOOP_ACTION_SOURCE_STATUSES, the mirror of the route's guard; a loop cannot be offered a press
  *  that answers 409, nor be refused one the route takes. Stop is terminal (a stopped loop does not
- *  resume), so its first press arms it as "Stop for good?" and only the second sends it. */
-export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction }: {
+ *  resume), so its first press arms it as "Stop for good?" and only the second sends it.
+ *
+ *  Given `onReport`, it also carries how the loop reports, the choice its start asked for, to change
+ *  while the loop still has cycles ahead of it; a loop no action can move on has nothing left to
+ *  report. */
+export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction, report, onReport }: {
   status: string
   totalCycles: number
   maxCycles: number
   onAction: (action: StripAction) => void
+  report?: LoopReport
+  onReport?: (report: LoopReport) => void
 }) {
   const [stopArmed, setStopArmed] = useState(false)
   useEffect(() => {
@@ -31,9 +39,11 @@ export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction }: 
     return () => clearTimeout(t)
   }, [stopArmed])
   const can = (a: StripAction) => LOOP_ACTION_SOURCE_STATUSES[a].has(status)
+  const ahead = (['start', 'pause', 'resume', 'stop'] as const).some(can)
   return (
     <div role="toolbar" aria-label="This loop" className="flex min-h-11 flex-wrap items-center gap-s rounded-lg bg-surface-container/60 px-m py-1.5">
       <span data-type="caption" className="tabular-nums text-on-surface-var">{cycleLabel(status, totalCycles, maxCycles)}</span>
+      {onReport && ahead && <LoopReportPill value={report ?? DEFAULT_REPORT} onChange={onReport} />}
       <span className="flex-1" />
       {can('start') && <Button size="sm" onClick={() => onAction('start')}><Play size={14} /> Start</Button>}
       {can('pause') && <Button size="sm" variant="secondary" onClick={() => onAction('pause')}><Pause size={14} /> Pause</Button>}

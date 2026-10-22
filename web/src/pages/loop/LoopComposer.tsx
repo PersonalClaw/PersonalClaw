@@ -12,13 +12,15 @@ import { ClawMark } from '../../ui/ClawMark'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { DotGlow } from '../../ui/DotGlow'
 import { spring } from '../../design/motion'
-import { api, isCreatedLoopRun, transcriptionFailure, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
+import { api, isCreatedLoopRun, transcriptionFailure, type Granularity, type LoopCreateResult, type LoopKind, type LoopReport } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
 import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/ComposerNotice'
 import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
 import { LoopRuntimePill } from './LoopRuntimePill'
+import { DEFAULT_REPORT, LoopReportPill } from './LoopReportPill'
+import { isRunBackedKind } from '../../lib/loopMode'
 import { LoopBoundary } from './LoopBoundary'
 import { ON_PERSONALCLAW, runtimeFields, type LoopRuntime } from './loopRuntime'
 
@@ -104,6 +106,8 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   const [busy, setBusy] = useState(false)
   const [granularity, setGranularity] = useState<Granularity>('balanced')
   const [attended, setAttended] = useState(!!initialAttended)
+  // How a goal loop reports (#3824), asked once here: only its outcome unless the owner says otherwise.
+  const [report, setReport] = useState<LoopReport>(DEFAULT_REPORT)
   // What the loop's planner and workers run on — PersonalClaw unless she picks an agent CLI here.
   // Settings → Agent defaults' Default agent is a CHAT's default and never reaches a loop: a loop
   // moves onto another program only when it is chosen for that loop.
@@ -224,6 +228,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         strategy_id: cls.strategy_id ?? 'orchestrator',
         max_cycles: kind === 'goal' && granularity === 'forever' ? 0 : 30,
         attended,
+        ...(!isRunBackedKind(kind) ? { report } : {}),
         auto_teardown_on_complete: scratch,
         project_id: projectId,
         ...runtimeFields(runtime),
@@ -378,6 +383,9 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 <LoopBoundary attended={attended} onAttended={setAttended} kind={kind} runtime={runtime.provider}
                   folder={kind === 'code' ? (inheritedWs || (projectKind === 'brownfield' ? brownfieldWs.trim() : '')) : ''}
                   projectId={projectId} disabled={busy} />
+                {/* Asked once how it should report (#3824). A run-backed kind reports as a run does,
+                    through the run's notifications, so it is not asked. */}
+                {!isRunBackedKind(kind) && <LoopReportPill value={report} onChange={setReport} />}
               </>}
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}

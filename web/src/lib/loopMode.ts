@@ -22,6 +22,10 @@ export function loopModeLabel(attended: boolean): string {
 /** The loop kinds that run as a workflow run rather than as a loop of their own. */
 const RUN_BACKED_KINDS = new Set(['general'])
 
+/** Whether a loop of *kind* runs as a workflow run (`workflows/service.PORTED_LOOP_KINDS`), which
+ *  reports through the run's own notifications rather than the loop watchdog's. */
+export const isRunBackedKind = (kind: string): boolean => RUN_BACKED_KINDS.has(kind)
+
 /** The loop kinds whose tasks' work is merged into your branch (`loop/kinds/sdlc`). */
 const MERGING_KINDS = new Set(['code'])
 
