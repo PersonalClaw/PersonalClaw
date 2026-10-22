@@ -206,8 +206,9 @@ NO_PHASE_OF_ITS_OWN: Mapping[str, str] = MappingProxyType(
 # ── A loop's phase, by its status ────────────────────────────────────────────────────────────────
 
 #: What running work incident mode holds says: it waits to start again, for the switch, not for
-#: her. A loop's views and a run's say why (``loop.loop.held_reason``, ``incident_hold``).
-HELD: tuple[WorkPhase, str] = (WorkPhase.QUEUED, "Held: incident mode is on")
+#: her, and the line says what moves it again (#3813). A loop's views and a run's say why
+#: (``loop.loop.held_reason``, ``incident_hold``).
+HELD: tuple[WorkPhase, str] = (WorkPhase.QUEUED, "Held until incident mode is off")
 
 #: The phase each loop status reads as (``loop.loop.LoopStatus``), with its line, and the two
 #: statuses its views derive (``web/src/lib/loopStatus.ts``, ``effectiveLoopStatus``): ``held``, a

@@ -16,8 +16,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "390": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -34,8 +39,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "412": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -52,8 +62,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "768": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -70,8 +85,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ]
     },
     "known": {
@@ -98,8 +118,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "390": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -116,8 +141,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "412": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -134,8 +164,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "768": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
@@ -152,8 +187,13 @@
         "button \"Open terminal\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ]
     },
     "known": {

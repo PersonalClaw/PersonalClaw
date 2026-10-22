@@ -13,8 +13,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "390": [
         "button \"Break a goal into tasks\"",
@@ -30,8 +35,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "412": [
         "button \"Break a goal into tasks\"",
@@ -47,8 +57,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "768": [
         "button \"Break a goal into tasks\"",
@@ -64,8 +79,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ]
     },
     "known": {
@@ -89,8 +109,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "390": [
         "button \"Break a goal into tasks\"",
@@ -106,8 +131,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "412": [
         "button \"Break a goal into tasks\"",
@@ -123,8 +153,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ],
       "768": [
         "button \"Break a goal into tasks\"",
@@ -140,8 +175,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button \"What can you help me with?\"",
+        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button[role=radio] \"Needs You\"",
+        "button[role=radio] \"Overview\"",
+        "button[role=radio] \"Recent and completed\"",
+        "button[role=radio] \"Running Now\"",
+        "input \"Start something\""
       ]
     },
     "known": {

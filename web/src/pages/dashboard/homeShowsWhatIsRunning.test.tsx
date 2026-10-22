@@ -108,6 +108,22 @@ describe('each row says what the work is doing', () => {
     expect(within(working()).getByText('1 blocked')).toBeTruthy()
   })
 
+  it('a held run and a held loop say what holds them and what moves them again, and never read as running', async () => {
+    // The running list's own words for work incident mode holds (`work_phase.HELD`).
+    const held = 'Held until incident mode is off'
+    running.mockResolvedValue(list([
+      row({ work: 'workflow:r1', kind: 'workflow', session: '', name: 'nightly-digest', phase: 'queued', line: held, blocked: true }),
+      row({ work: 'loop:l1', kind: 'loop', session: '', name: 'Fix the README', phase: 'queued', line: held, blocked: true }),
+    ]))
+    await mount()
+    for (const name of [/nightly-digest/, /Fix the README/]) {
+      const card = await within(working()).findByRole('listitem', { name })
+      expect(within(card).getByText(held)).toBeTruthy()
+      expect(within(card).getByText('Blocked')).toBeTruthy()
+      expect(card.textContent ?? '', 'a held row reads as running').not.toMatch(/\b(Running|Thinking|Working)\b/)
+    }
+  })
+
   it('a row that waits on you says so', async () => {
     running.mockResolvedValue(list([row({ phase: 'approval', line: 'Needs your OK: shell', waiting: ['ask-1'] })]))
     await mount()

@@ -727,8 +727,9 @@ past answering, an item leaves the list.
   one exception beside the approval relay's (`docs/security/limitations.md`).
 - **Who reads it:** Home's Needs You is its items in its order, then your notes and the skill
   proposals (an approval on the one approval card; a gate, a park, a browser grant and a bridge
-  confirmation answered in place through their own routes; every other item opening its own
-  page). The toolbar's needs-you badge counts the same rows. The phone companion lists every
+  confirmation answered in place through their own routes; a free-text gate, a loop's question
+  and an agent's single question answered with a typed line from the item's detail
+  (`waitingAnswer.waitingReply`); every other item opening its own page). The toolbar's needs-you badge counts the same rows. The phone companion lists every
   item first, in the list's order, each with its text: an approval answered on its card, every
   other item opening its page. The desktop tray counts every item. A card held past an item's
   `expires_at` keeps no action that could still send (`web/src/lib/waitingList.ts`, `useStaleAt`).

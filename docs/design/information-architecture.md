@@ -93,7 +93,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
-| Home | see what needs you, what is running and what finished | Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed. An approval is answered inline. | New thread, View (Attention or Overview) | the selected item's detail; a compact window opens it in place |
+| Home | see what needs you, what is running and what finished | A Start something line, then Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New thread, View (Attention or Overview) | the selected item's detail; a compact window opens it in place |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
