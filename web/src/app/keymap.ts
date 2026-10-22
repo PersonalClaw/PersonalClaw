@@ -26,7 +26,8 @@ export type KeyScope = 'global' | 'focused'
 export const THREAD_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
 export type CommandId =
-  | 'palette' | 'sidebar' | 'drawer' | 'focus-mode' | 'reading-mode' | 'workspace-tree' | 'next-needs-you' | 'new-chat'
+  | 'palette' | 'sidebar' | 'drawer' | 'focus-mode' | 'reading-mode' | 'workspace-tree' | 'next-needs-you' | 'mark-all-read'
+  | 'new-chat'
   | `chat-${(typeof THREAD_NUMBERS)[number]}`
   | 'approve-focused' | 'restore-last-prompt'
 
@@ -65,6 +66,9 @@ export const KEYMAP: readonly KeyBinding[] = [
     keywords: 'files file tree explorer workspace directory folder', disabledReason: 'Open a chat to see its working folder',
   },
   { id: 'next-needs-you', label: 'Go to the next chat that needs you', keywords: 'approval waiting attention your turn', scope: 'global', chords: ['mod+alt+a'] },
+  // Every chat seen, on the gateway's record (`POST /api/chat/seen`), so every window and the phone
+  // clear their unread marks. What waits on you stays marked: seeing a chat answers nothing.
+  { id: 'mark-all-read', label: 'Mark every chat as read', keywords: 'unread seen clear marks dismiss', scope: 'global', chords: ['shift+escape'] },
   // A new thread, and the sidebar's threads by number: ⌘n opens the nth thread row the sidebar shows,
   // top to bottom (`threadRail.tsx`, `threadNumberRoute`). The ids keep the names they had when the
   // keys counted the chat list, since the desktop app's Go menu sends them (`desktop/goMenu.js`), and
