@@ -14,8 +14,14 @@ import { useEffect, useRef } from 'react'
  */
 type DetachableDiffEditor = { setModel: (model: null) => void }
 
-export function useDiffTeardown(): (editor: DetachableDiffEditor) => void {
+/** `onEditor`, when given, is handed the mounted editor too: a host that reads more of it (the
+ *  cockpit's diff reads its selection) does so here, so its `onMount` stays this guard. */
+export function useDiffTeardown<E extends DetachableDiffEditor = DetachableDiffEditor>(
+  onEditor?: (editor: E) => void,
+): (editor: E) => void {
   const ref = useRef<DetachableDiffEditor | null>(null)
+  const onEditorRef = useRef(onEditor)
+  onEditorRef.current = onEditor
   useEffect(
     () => () => {
       // Best-effort: a hot-reload or an already-disposed editor may throw here, and a
@@ -30,7 +36,8 @@ export function useDiffTeardown(): (editor: DetachableDiffEditor) => void {
     },
     [],
   )
-  return (editor: DetachableDiffEditor) => {
+  return (editor: E) => {
     ref.current = editor
+    onEditorRef.current?.(editor)
   }
 }

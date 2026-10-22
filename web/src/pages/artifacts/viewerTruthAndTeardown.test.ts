@@ -44,7 +44,8 @@ describe('both DiffEditor sites route through the teardown hook (source-level)',
   for (const [name, src] of [['ArtifactCompare', compare], ['DiffView', diffView]] as const) {
     it(`${name} mounts MonacoDiff with the guard`, () => {
       expect(src).toContain("from '../../ui/useDiffTeardown'")
-      expect(src).toMatch(/const onDiffMount = useDiffTeardown\(\)/)
+      // An optional callback is handed the mounted editor too; the guard is still the onMount.
+      expect(src).toMatch(/const onDiffMount = useDiffTeardown\(\w*\)/)
       expect(src).toMatch(/onMount=\{onDiffMount\}/)
     })
   }

@@ -4,7 +4,7 @@ import { IconButton } from '../../../ui/IconButton'
 import { Centered } from '../../../ui/Centered'
 import { PaneHost } from '../../../ui/PaneHost'
 import { type FsEntry } from '../../../lib/api'
-import { ReviewChanges } from './ReviewChanges'
+import { ReviewChanges, type ReviewComments } from './ReviewChanges'
 import { FileViewer } from '../../files/browse/FileViewer'
 import { TypingReveal } from '../TypingReveal'
 import { DiffReveal } from '../DiffReveal'
@@ -20,8 +20,10 @@ import type { RouteProps } from '../../../app/useQueryState'
 // with the diff under review in the pane host beside it and the terminal drawer beneath.
 // `useCenterEditor` keeps what it shows and does.
 
-export function CenterEditor({ ws, isProjectDir = false, showTerm, onCloseTerm, running, runCmd, query, setQuery }: {
+export function CenterEditor({ ws, isProjectDir = false, showTerm, onCloseTerm, running, runCmd, comments, query, setQuery }: {
   ws: string; isProjectDir?: boolean; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null
+  /** Where a comment on a change under review goes (see `ReviewChanges`). */
+  comments?: ReviewComments
 } & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   const {
     termOpened, closeTerm, tabs, active, activePath, dirty, open, closeNow, setActivePath, markDirty,
@@ -88,7 +90,7 @@ export function CenterEditor({ ws, isProjectDir = false, showTerm, onCloseTerm, 
         <PaneHost surface="code"
           pane={diff ? {
             id: diff.path, title: `Diff — ${diff.name}`, label: 'diff', icon: GitBranch, onClose: closeReview,
-            body: <ReviewChanges ws={ws} diff={diff} changes={changes} />,
+            body: <ReviewChanges ws={ws} diff={diff} changes={changes} comments={comments} />,
           } : null}>
         {reveal ? (
           <div className="flex h-full flex-col">
