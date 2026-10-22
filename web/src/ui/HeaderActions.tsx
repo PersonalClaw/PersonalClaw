@@ -555,8 +555,8 @@ const variants: Record<Variant, string> = {
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high active:bg-surface-high',
   // `text-on-danger`, not `text-white` — same as Button's danger variant. Hardcoding white
   // pinned one ink across both themes, and the two themes need OPPOSITE inks: dark's danger is
-  // a light red (#f66c66) where white is 2.89:1, light's is a deep red (#af2f29) where white is
-  // 6.44:1. This was the only site that bypassed the token, and the only one that failed.
+  // a light red (#ff8179) where white is 2.42:1, light's is a deep red (#a62621) where white is
+  // 7.19:1. This was the only site that bypassed the token, and the only one that failed.
   danger: 'bg-danger text-on-danger hover:opacity-90 active:opacity-90 focus-visible:outline-on-surface',
 }
 

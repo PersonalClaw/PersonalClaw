@@ -20,7 +20,7 @@ import { readSource } from '../test/sourceTree'
  *
  *  Why a solid tier needs its own ring colour. The app-wide `:focus-visible` ring in `tokens.css` is
  *  the scheme's primary. On a primary button that is the button's own fill colour (1.00:1), and on a
- *  danger button it is within a hair of it (coral `#ff6b5b` on danger `#f66c66`), so the ring reads
+ *  danger button it is within a hair of it (coral `#ff6b5b` on danger `#ff8179`), so the ring reads
  *  as part of the button and a measurement of the focused button finds no indicator at all.
  *
  *  Why that colour is a neutral. No single colour drawn outside the button can clear 3:1 against

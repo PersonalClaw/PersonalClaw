@@ -136,9 +136,6 @@
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Mission Control\" clips at #%: #x# in #x#"
-      ],
-      "axe (WCAG 2 AA)": [
-        "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): .h-\\[#px\\], .disabled\\:opacity-#.px-#\\.#.h-#:nth-child(#)"
       ]
     }
   }
