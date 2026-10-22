@@ -46,14 +46,14 @@ space, **listening always wins** — a live microphone is never hidden behind a 
 
 ### While the buddy is on
 
-With **Show Buddy** on, the menu-bar icon is the buddy's still orb for the state instead of the
-claw: idle, working, needs you, error, listening or offline. Each keeps its badge and its dots'
-density, so it reads in a one-colour menu bar, in high contrast and with no animation, and the
-first line of the menu and the tooltip say the state in words. No count sits beside it. Listening
-always wins the icon, and an announced restart shows working, never offline. On macOS, the dock
-icon shows the needs-you orb while something waits on you, and goes back to the app icon when
-nothing does; Linux has no dock icon to change. On Linux the orb follows your light or dark
-appearance.
+With **Show Buddy** on, and the menu-bar icon among its surfaces, the icon is the buddy's still
+orb for the state instead of the claw: idle, working, needs you, error, listening or offline. Each
+keeps its badge and its dots' density, so it reads in a one-colour menu bar, in high contrast and
+with no animation, and the first line of the menu and the tooltip say the state in words. No count
+sits beside it. Listening always wins the icon, and an announced restart shows working, never
+offline. On macOS, the dock icon shows the needs-you orb while something waits on you, and goes
+back to the app icon when nothing does; Linux has no dock icon to change. On Linux the orb follows
+your light or dark appearance.
 
 If the gateway cannot be reached the menu says **"not connected"** rather than showing
 zeroes, because a zero looks like good news.
@@ -521,8 +521,11 @@ bug in the rule.
 ## The buddy
 
 The buddy is a small window of its own that shows what PersonalClaw is doing and what is waiting
-on you, without opening the app. It is off until you turn it on: menu bar → **Show Buddy**, on this
-computer. Turning it off closes the window.
+on you, without opening the app. It is off until you turn on **Buddy status**, in Settings → Buddy
+or with the menu bar's **Show Buddy**: one switch, kept by your gateway, that every window and the
+phone follow at once. Turning it off closes the window. Settings → Buddy also chooses which surfaces
+show it (the window, the menu-bar icon, the dock), and the app follows each. If the app starts before
+its gateway answers, it does what you last chose.
 
 - **Where it sits.** Docked, it hangs from the top centre of the display with the menu bar, just
   below the menu bar, so it covers no menu-bar item and no window control. On a Mac with a camera

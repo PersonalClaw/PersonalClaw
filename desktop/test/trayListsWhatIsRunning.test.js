@@ -256,7 +256,9 @@ describe("the tooltip and the poll", () => {
     assert.match(main, /getGateway\("\/api\/waiting"\)/);
     assert.doesNotMatch(main, /getGateway\("\/api\/approvals"\)/);
     assert.match(main, /function adoptLocalGateway\(ready\) \{\s+localGatewayUrl = ready\.url;\s+gatewayStarts \+= 1;/);
-    assert.match(main, /const before = gatewayStarts;\s+const \[waiting, running\] = await Promise\.all\([^\n]+\);\s+const boot = bootRead\(before, gatewayStarts\);/);
+    // The start is counted before the reads go out (the lists and Buddy status's policy) and
+    // compared after they come back.
+    assert.match(main, /const before = gatewayStarts;\s+const \[waiting, running, policy\] = await Promise\.all\(\[[\s\S]*?\]\);\s+const boot = bootRead\(before, gatewayStarts\);/);
     assert.match(main, /carryPresence\(trayPresence\.presence, summarizePresence\(waiting, running\), \{ boot \}\)/);
   });
 

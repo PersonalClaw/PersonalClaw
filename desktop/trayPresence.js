@@ -512,7 +512,9 @@ function makeTrayPresence({
   let tray = null;
   let presence = { ...EMPTY_PRESENCE };
   let loginItemState = { supported: false, enabled: false };
-  let buddyState = { enabled: false };
+  /** Buddy status (`enabled`, the checkbox) and the surfaces it shows on here: the tray's stills
+   *  and the dock's (`buddyPolicy.js`). */
+  let buddyState = { enabled: false, tray: false, dock: false };
   let capturing = false;
   let restarting = false;
   /** The files the tray and the dock show now, so an unchanged state sets no image. */
@@ -541,7 +543,7 @@ function makeTrayPresence({
   function showState() {
     const flags = { capturing, restarting };
     const dark = Boolean(isDark());
-    const wantTray = buddyState.enabled && imageDir
+    const wantTray = buddyState.tray && imageDir
       ? path.join(imageDir, trayStillFile(trayStill(presence, flags), { platform, dark }))
       : trayImagePath;
     if (wantTray && wantTray !== shownTray) {
@@ -556,7 +558,7 @@ function makeTrayPresence({
       }
     }
     if (!dock || typeof dock.setIcon !== "function") return;
-    const still = dockStillFile(presence, { platform, dark, buddyOn: buddyState.enabled });
+    const still = dockStillFile(presence, { platform, dark, buddyOn: buddyState.dock });
     const wantDock = still && imageDir ? path.join(imageDir, still) : null;
     if (wantDock === shownDock) return;
     const image = imageAt(wantDock || appIconPath);
@@ -623,8 +625,8 @@ function makeTrayPresence({
       const flags = { capturing, restarting };
       const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: buddyState, flags, actions });
       tray.setContextMenu(MenuCtor.buildFromTemplate(template));
-      tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting, buddyOn: buddyState.enabled }));
-      tray.setToolTip(composeTrayTooltip({ capturing, ...presence, buddyOn: buddyState.enabled, restarting }));
+      tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting, buddyOn: buddyState.tray }));
+      tray.setToolTip(composeTrayTooltip({ capturing, ...presence, buddyOn: buddyState.tray, restarting }));
       showState();
     } catch (err) {
       // A tray destroyed mid-render during shutdown is the common case here.
@@ -653,9 +655,12 @@ function makeTrayPresence({
       loginItemState = { supported: false, enabled: false, ...(next || {}) };
       render();
     },
-    /** Whether the buddy's window is on, for the checkbox, and whether it is hidden for a while. */
+    /** Buddy status for the checkbox, whether its owner hid it for a while, and whether the tray's
+     *  stills and the dock's show (each on with it unless the policy turns that surface off). */
     setBuddyState(next) {
-      buddyState = { enabled: Boolean(next && next.enabled), hidden: Boolean(next && next.hidden) };
+      const enabled = Boolean(next && next.enabled);
+      const surface = (key) => enabled && (typeof (next && next[key]) === "boolean" ? next[key] : true);
+      buddyState = { enabled, hidden: Boolean(next && next.hidden), tray: surface("tray"), dock: surface("dock") };
       render();
     },
     /** The microphone indicator, routed through the one title writer. */
