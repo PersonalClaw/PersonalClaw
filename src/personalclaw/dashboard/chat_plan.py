@@ -431,12 +431,20 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
 
 
 async def api_chat_plan_approve(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/plan/approve {step_id} — approve a step.
+    """POST /api/chat/sessions/{session}/plan/approve {step_id, run?} — approve a step.
 
     Routes through ``PS.approve_step``. When that completes the walkthrough
     (``PS.is_complete``) the chat leaves the plan posture: the remembered task mode is
     restored and, if activation had parked a run, the approved plan is dispatched as a
     continuation into the SAME session — the transcript above it is untouched.
+
+    ``run: "fresh"`` (#3821, the gate's "Approve, and run it in a fresh chat") runs the approved
+    plan in a new chat instead: same project, working folder, agent, model and privacy (its memory
+    mode, never broader than the planning chat's), with the plan's
+    markdown as its first and only message, and none of the conversation that produced it. The
+    planning chat runs nothing (a run the plan parked there is let go) and says where the plan
+    runs. Only an approval that completes the plan may take it: one with a step still waiting
+    after it is refused ``plan_not_complete`` and approves nothing.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
@@ -455,10 +463,31 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return json_error("step_id_required", message="step_id is required", status=400)
+    run_in = str(body.get("run", "") or "here").strip()
+    if run_in not in _RUN_IN:
+        return json_error(
+            "run_invalid", message=f"run must be one of {', '.join(_RUN_IN)}", status=400
+        )
+    # A fresh chat is a chat of yours, briefed with the plan: an app approves in a chat it
+    # started (its route row), and starts none of yours.
+    if run_in == _FRESH and by.kind == approval_answer.APP:
+        return json_error(
+            "fresh_chat_owner_only",
+            message="Only you can run an approved plan in a fresh chat",
+            status=403,
+        )
     sess, binding = read(chat.key)
     if sess is None:
         return json_error(
             "plan_session_missing", message="This chat has no plan session", status=404
+        )
+    if run_in == _FRESH and any(
+        s.id != step_id and s.status != StepStatus.APPROVED.value for s in sess.steps
+    ):
+        return json_error(
+            "plan_not_complete",
+            message="A fresh chat runs the whole plan, so every other step is approved first",
+            status=409,
         )
     if not PS.approve_step(sess, step_id):
         return json_error(
@@ -469,12 +498,18 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     complete = PS.is_complete(sess)
     resumed = False
     restored = ""
+    fresh = None
     if complete:
         restored = str(binding.get("resume_task_mode", "agent")) or "agent"
         apply_task_mode(state, chat, restored)
-        if binding.pop("parked", False):
+        parked = bool(binding.pop("parked", False))
+        if parked:
             binding.pop("parked_at", None)
             binding.pop("parked_messages", None)
+        if run_in == _FRESH:
+            fresh = _run_in_a_fresh_chat(state, chat, sess, app=str(request.get("app", "") or ""))
+            binding["runs_in"] = fresh.key
+        elif parked:
             _dispatch(state, chat, _resume_prompt(markdown), own_words="")
             resumed = True
     write(sess, binding)
@@ -484,7 +519,10 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
             operation="chat.plan_approve",
             outcome="allowed",
             source="dashboard",
-            resources=f"session={chat.key},step={step_id},complete={complete}",
+            resources=(
+                f"session={chat.key},step={step_id},complete={complete}"
+                + (f",runs_in={fresh.key}" if fresh is not None else "")
+            ),
         )
     except Exception:  # noqa: BLE001
         logger.warning("SEL audit failed for chat plan approval", exc_info=True)
@@ -496,8 +534,63 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
             "complete": complete,
             "resumed": resumed,
             "task_mode": restored or (getattr(chat, "_task_mode", "agent") or "agent"),
+            "fresh_session": fresh.key if fresh is not None else None,
         }
     )
+
+
+#: Where an approved plan runs: here (the planning chat, the default) or in a fresh chat.
+_FRESH = "fresh"
+_RUN_IN: tuple[str, ...] = ("here", _FRESH)
+
+
+def _fresh_prompt(sess: PlanSession) -> str:
+    """A fresh chat's brief: the approved plan, its steps' markdown in order, and nothing of the
+    conversation that produced it."""
+    parts = [PS.step_markdown(s).strip() for s in sess.steps]
+    return (
+        "Carry out the plan below. It was reviewed and approved in another chat; "
+        "do not re-plan it.\n\n" + "\n\n".join(p for p in parts if p)
+    )
+
+
+def _run_in_a_fresh_chat(
+    state: DashboardState, chat: _ChatSession, sess: PlanSession, *, app: str
+) -> _ChatSession:
+    """Start a chat that carries out the approved plan, beside the one that planned it: the same
+    project, folder, agent and model, the plan as its first message, one turn dispatched. The
+    planning chat gains a line saying where the plan runs (``plan_runs_in``), which its page
+    links.
+
+    Never broader than the chat that planned it: the same memory mode (a temporary or incognito
+    chat's plan runs in a temporary or incognito chat, which keeps no lasting record and writes no
+    memory), the same ephemeral posture and the same mode; and on an ACP provider, the same
+    provider agent. What the planning chat was trusted with (its folder trust, its extra tool
+    roots) is not carried: the fresh chat asks for each change, as a new chat does.
+    """
+    fresh = state.get_or_create_session(
+        None,
+        agent=str(getattr(chat, "agent", "") or ""),
+        workspace_dir=str(getattr(chat, "workspace_dir", "") or ""),
+        model=str(getattr(chat, "model", "") or ""),
+        mode=str(getattr(chat, "mode", "") or ""),
+        memory_mode=str(getattr(chat, "memory_mode", "") or "persistent"),
+        ephemeral=f"dashboard:{chat.key}" in getattr(state, "_ephemeral_keys", set()),
+        created_by_app=app,
+        project_id=str(getattr(chat, "project_id", "") or ""),
+    )
+    if not fresh.workspace_dir:
+        fresh.workspace_dir = str(getattr(chat, "workspace_dir", "") or "")
+    fresh.acp_provider = str(getattr(chat, "acp_provider", "") or "")
+    fresh.acp_provider_agent = str(getattr(chat, "acp_provider_agent", "") or "")
+    _dispatch(state, fresh, _fresh_prompt(sess), own_words="")
+    chat.append(
+        "assistant",
+        "The approved plan runs in a fresh chat.",
+        "msg msg-a",
+        meta={"plan_runs_in": fresh.key},
+    )
+    return fresh
 
 
 async def api_chat_plan_cancel(request: web.Request) -> web.Response:

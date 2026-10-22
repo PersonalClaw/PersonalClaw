@@ -193,7 +193,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/chat/sessions/{session}/pin` — toggle pinned state.
 - `GET /api/chat/sessions/{session}/plan-session` — the walkthrough state.
 - `POST /api/chat/sessions/{session}/plan/activate` — open the plan walkthrough.
-- `POST /api/chat/sessions/{session}/plan/approve` — {step_id} — approve a step.
+- `POST /api/chat/sessions/{session}/plan/approve` — {step_id, run?} — approve a step.
 - `POST /api/chat/sessions/{session}/plan/cancel` — abandon the walkthrough.
 - `POST /api/chat/sessions/{session}/plan/comment` — {step_id, text} — comment + redraft.
 - `POST /api/chat/sessions/{session}/plan/edit` — {step_id, markdown} — edit the plan.
@@ -887,6 +887,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/voice/profiles/{id}/unlock` — variation returns.
 - `GET /api/voice/resolve` — which level wins, and why.
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
+- `GET /api/waiting` — everything waiting on you to answer, from every source.
 - `GET /api/workflows` — _(no summary)_
 - `POST /api/workflows` — validate a definition and, unless ``save: false``, save it.
 - `POST /api/workflows/agent-plans` — an agent's ``workflow_plan``, planned here.

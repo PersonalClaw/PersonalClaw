@@ -286,7 +286,8 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             composer's pill can't drift from the posture the backend gate enforces. */}
         {sessionRef.current && (
           <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
-            onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
+            onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))}
+            onOpenChat={(key) => navigate(`chat/${encodeURIComponent(key)}`)} />
         )}
         {/* The honest label on the bundled zero-config floor model, immediately above
             the composer so it is read where the answers arrive. Mounted unconditionally and
