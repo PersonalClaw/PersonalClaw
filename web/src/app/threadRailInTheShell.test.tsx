@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { runState } from '../test/runState'
+import { SHIPPED_ROUTES } from './shippedRoutes'
 
 // ── The shell's sidebar lists the threads, and the address says which one is open (#3814) ─────────
 //
@@ -14,6 +15,10 @@ import { runState } from '../test/runState'
 //
 // The compact path: at a phone's width the rail is the drawer the toolbar opens, and the threads
 // are in it; opening one closes the drawer.
+//
+// A project's page is its thread list beside its detail: the threads the rail lists under it, each
+// with the rail's mark, opening at its own address. And the pages threads came from still open at
+// their bare addresses.
 //
 // jsdom notes (the shape `navDisclosure.test.tsx` established): no gateway socket, every read
 // resolves empty unless named below, and the viewport is the `(max-width: 768px)` media query.
@@ -86,7 +91,10 @@ const { App } = await import('./App')
 const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
-await Promise.all([import('../pages/dashboard/DashboardPage'), import('../pages/ChatPage')])
+await Promise.all([
+  import('../pages/dashboard/DashboardPage'), import('../pages/ChatPage'), import('../pages/projects/ProjectsSection'),
+  import('../pages/loops/LoopsSection'), import('../pages/code/CodeSection'),
+])
 
 const renderApp = () => render(
   <ThemeProvider><AppearanceProvider><PersonalityProvider><App /></PersonalityProvider></AppearanceProvider></ThemeProvider>,
@@ -217,5 +225,31 @@ describe('a read that fails, and a gateway that is away, each say so', () => {
     expect(within(rail()).queryByText(/Couldn't load/)).toBeNull()
     expect(within(rail()).queryByText('No threads yet')).toBeNull()
     expect(within(rail()).queryByText('Loading threads…')).toBeNull()
+  })
+})
+
+describe("a project's page lists its threads, and the pages they came from still open", () => {
+  it("a project's page lists the threads the sidebar lists under it, and opens each at its address", async () => {
+    location.hash = '#/projects/p-garden'
+    const user = userEvent.setup()
+    renderApp()
+    const main = () => document.querySelector('main') as HTMLElement
+    expect(await within(main()).findByText('Threads · 3')).toBeInTheDocument()
+    const rows = within(main()).getAllByRole('button', { name: /^(Chat|Goal loop|Code session): / }).map((b) => b.getAttribute('aria-label'))
+    expect(rows).toEqual(expect.arrayContaining(['Chat: Plan the garden', 'Chat: Order the soil', 'Code session: Fence gate, failed']))
+    expect(rows, 'another project\'s thread').not.toContain('Chat: A question about tax')
+    await user.click(within(main()).getByRole('button', { name: 'Code session: Fence gate, failed' }))
+    await waitFor(() => expect(location.hash).toBe('#/code/e5f6a7b8'))
+  })
+
+  // Where each lands is the route catalogue's: the bare loop and code addresses open the composer a
+  // goal loop or code session starts from (`shippedRoutes.ts`), as they did before threads.
+  it.each([['chat', 'chat'], ['projects', 'projects'], ['loops', 'loop'], ['code', 'loop?kind=code']])('#/%s still opens a page: #/%s', async (route, lands) => {
+    expect(SHIPPED_ROUTES.find((e) => e.route === route)?.lands ?? route, 'the catalogue agrees').toBe(lands)
+    location.hash = `#/${route}`
+    renderApp()
+    await waitFor(() => expect(document.querySelector('main h1')?.textContent ?? '').not.toBe(''))
+    expect(location.hash).toBe(`#/${lands}`)
+    expect(document.querySelector('main h1')?.textContent, 'not the fallback').not.toBe('Home')
   })
 })

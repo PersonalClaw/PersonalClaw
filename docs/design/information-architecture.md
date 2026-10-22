@@ -32,7 +32,8 @@ next; the utilities sit at the bottom.
    thread's type changes its layout, never its address. Pinned projects come first. Rows are about
    32 px high, and each carries a static pip (running, waiting on you, failed) that reads the same
    rule as Home's groups. Within a project, pinned threads come first, then the most recently
-   active; a status change never moves a row. Nothing in the sidebar animates.
+   active; a status change never moves a row. Nothing in the sidebar animates. A project's own page
+   is its thread list beside its detail: the same threads, in the same order, with the same marks.
 4. **The work destinations:** Inbox (#3818), Library (#3815), Automations (#3816) and Capabilities
    (#3817).
 5. **The utilities**, pinned at the bottom: Settings, which gains System, and diagnostics.

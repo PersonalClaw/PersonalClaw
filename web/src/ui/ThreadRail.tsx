@@ -29,8 +29,9 @@ export type ThreadRailStatus = 'loading' | 'ready' | 'failed' | 'offline'
  *  holds a thread and closed while it holds none. */
 const OPEN_KEY = 'thread-groups-open'
 
-/** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. */
-const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
+/** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
+ *  project's page lists its threads with the same marks (`pages/projects/ProjectThreads.tsx`). */
+export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   waiting: { family: 'waiting', word: 'waiting on you' },
   running: { family: 'active', word: 'running' },
   failed: { family: 'blocked', word: 'failed' },
