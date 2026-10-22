@@ -95,10 +95,10 @@ const NAV: NavItem[] = [
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'library', label: 'Library', icon: Library },
   // Platform group (was "Workspace"). Tasks are a view of each project (#3818), and All tasks, at
-  // `#/tasks` (ROUTABLE below), is a palette row.
+  // `#/tasks` (ROUTABLE below), is a palette row. The terminal is the drawer on every page (#3826);
+  // its full page, `#/terminal` (ROUTABLE below), is the drawer's Open full and a palette row.
   { id: 'inbox', label: 'Inbox', icon: Inbox, section: 'Platform' },
   { id: 'triggers', label: 'Triggers', icon: Zap, section: 'Platform' },
-  { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
   // Capabilities is one destination (#3817): Agents, Skills, Learning, Tools, Prompts, Apps and the
   // Store are its tabs, each still at its own address (ROUTABLE below). It has no section of its
   // own: a "Capabilities" header over a "Capabilities" row groups nothing. Workflows keeps its row
@@ -122,7 +122,7 @@ const NAV: NavItem[] = [
 // surface the rail is holding back), not a workaround.
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`).
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
  *  destination) and every bit as real as the ones inside it.
@@ -838,6 +838,7 @@ function AppInner() {
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed inbox', run: () => navigate('inbox?filter=notifications') },
     // Every project's tasks: a project's own are its Tasks view (#3818).
     { id: 'go:tasks', label: 'All tasks', hint: 'Go to', icon: ListChecks, keywords: 'tasks todo board kanban projects', run: () => navigate('tasks') },
+    { id: 'go:terminal', label: 'Terminal', hint: 'Go to', icon: Terminal, keywords: 'Platform shell pty console full page', run: () => navigate('terminal') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
     // Capabilities' tabs, each a row of its own: they left the sidebar for the one Capabilities row.
     { id: 'go:agents', label: 'Agents', hint: 'Go to', icon: Users, keywords: 'Capabilities', run: () => navigate('agents') },

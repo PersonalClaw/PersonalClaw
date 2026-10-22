@@ -297,7 +297,6 @@ const DESTINATIONS = [
   ['Library', 'library'],
   ['Inbox', 'inbox'],
   ['Triggers', 'triggers'],
-  ['Terminal', 'terminal'],
   ['Capabilities', 'capabilities'],
   ['Workflows', 'workflows'],
   ['Settings', 'settings'],

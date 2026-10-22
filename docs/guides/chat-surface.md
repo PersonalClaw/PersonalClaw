@@ -610,7 +610,8 @@ with no session open yet, it opens one first. The drawer keeps its sessions whil
 chats, and a new one starts in the gateway's terminal folder: `dashboard.terminal.cwd` when the
 config sets one, else the agent's workspace, else your home folder. Drag its top edge to make it
 taller; it remembers the height. **Open full** opens the session the drawer shows on the Terminal
-page, at full height, with the other open sessions beside it.
+page, at full height, with the other open sessions beside it. The sidebar has no Terminal row: the
+page stays at `#/terminal`, and the command palette's **Terminal** row opens it.
 
 ---
 

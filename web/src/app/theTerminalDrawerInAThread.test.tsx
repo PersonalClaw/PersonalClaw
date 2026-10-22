@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { runState } from '../test/runState'
+import type { Command } from './CommandPalette'
 
 // ── The terminal drawer, inside a thread ────────────────────────────────────────────────────────
 //
@@ -14,6 +15,8 @@ import { runState } from '../test/runState'
 // - ⌘J and ⌘` show and hide it, and moving to another thread keeps its sessions.
 // - A new session starts where the gateway puts it (no folder asked for), as it did before.
 // - Open full opens the session the drawer shows on the Terminal page, not the page's first one.
+// - The sidebar has no Terminal row, even where the old sidebar listed or pinned one; the page stays
+//   at its address and ⌘K's Terminal row opens it.
 //
 // The PTY view is a stand-in that registers with the real bridge (`pages/terminal/terminalBridge.ts`)
 // and refuses a send until its socket would be open, as `TerminalView` does: what is under test is
@@ -47,6 +50,13 @@ vi.mock('../pages/terminal/TerminalView', async () => {
 })
 
 vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
+
+/** The rows the shell hands ⌘K. */
+let rows: readonly Command[] = []
+vi.mock('./CommandPalette', async (orig) => {
+  const real = await orig<typeof import('./CommandPalette')>()
+  return { ...real, CommandPalette: ({ commands }: { commands: Command[] }) => { rows = commands; return null } }
+})
 
 vi.mock('./identity', async (orig) => {
   const real = await orig<typeof import('./identity')>()
@@ -214,5 +224,38 @@ describe('the drawer in a thread', () => {
     await within(page).findByRole('tab', { name: /^Session 2/ })
     expect(within(page).getByRole('tab', { name: /^Session 2/ })).toHaveAttribute('aria-selected', 'true')
     expect(within(page).getByRole('tab', { name: /^Session 1/ })).toHaveAttribute('aria-selected', 'false')
+  })
+})
+
+describe('the sidebar has no Terminal row', () => {
+  /** The full sidebar's rows, as the old full sidebar listed Terminal among them. */
+  const railRows = () => within(document.querySelector('nav[data-tour="rail"]') as HTMLElement)
+    .getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '')
+
+  it('the full sidebar lists no Terminal, and the corner\'s toggle and ⌘K still reach it', async () => {
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: [] }))
+    await openChat(SESSION, /RUN THIS ONE/)
+    expect(railRows()).toContain('Triggers')
+    expect(railRows()).not.toContain('Terminal')
+    expect(screen.getByRole('button', { name: 'Open terminal' }), 'the corner\'s toggle').toBeInTheDocument()
+    const row = rows.find((r) => r.id === 'go:terminal')
+    expect(row?.label).toBe('Terminal')
+    act(() => row!.run())
+    await waitFor(() => expect(document.querySelector('main h1')?.textContent).toBe('Terminal'), { timeout: 10_000 })
+    expect(location.hash).toBe('#/terminal')
+  })
+
+  it('a starter sidebar that pinned Terminal shows no row for it', async () => {
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['triggers', 'terminal'] }))
+    await openChat(SESSION, /RUN THIS ONE/)
+    expect(railRows()).toContain('Triggers')
+    expect(railRows()).not.toContain('Terminal')
+  })
+
+  it('a copied #/terminal address opens the Terminal page', async () => {
+    location.hash = '#/terminal'
+    render(<StrictMode><ThemeProvider><AppearanceProvider><PersonalityProvider><App /></PersonalityProvider></AppearanceProvider></ThemeProvider></StrictMode>)
+    await waitFor(() => expect(document.querySelector('main h1')?.textContent).toBe('Terminal'), { timeout: 10_000 })
+    expect(location.hash).toBe('#/terminal')
   })
 })
