@@ -26,7 +26,6 @@ export const ROUTES: RouteEntry[] = [
   { route: 'library', label: 'Library', needsData: true },
   { route: 'inbox', label: 'Inbox', needsData: true },
   { route: 'triggers', label: 'Triggers', needsData: true },
-  { route: 'terminal', label: 'Terminal' },
   // Capabilities opens its first tab, Agents; each tab's own address is in VIEW_ROUTES below.
   { route: 'capabilities', label: 'Capabilities', needsData: true },
   { route: 'workflows', label: 'Workflows', needsData: true },
@@ -92,6 +91,10 @@ export const VIEW_ROUTES: RouteEntry[] = [
   // All tasks, every project's: a project's own are its Tasks view (#3818), and the sidebar has no
   // Tasks row. It keeps the address, the visual baseline and the scans it had as a row.
   { route: 'tasks', id: 'tasks', label: 'Projects › All tasks', needsData: true },
+  // The terminal's full page, the drawer's Open full: the terminal is the drawer on every page
+  // (#3826), and the sidebar has no Terminal row. It keeps the address, the visual baseline and the
+  // scans it had as a row.
+  { route: 'terminal', id: 'terminal', label: 'Terminal (full page)' },
   { route: 'files', id: 'files', label: 'Library › Files', needsData: true },
   { route: 'artifacts', id: 'artifacts', label: 'Library › Artifacts', needsData: true },
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },

@@ -341,7 +341,7 @@ describe('expert mode', () => {
 
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Triggers', 'Terminal', 'Workflows', 'Projects', 'Library']) {
+      for (const label of ['Triggers', 'Workflows', 'Projects', 'Library']) {
         expect(names).toContain(label)
       }
     })
@@ -374,7 +374,7 @@ describe('expert mode', () => {
     renderApp()
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Home', 'Chat', 'Triggers', 'Terminal', 'Workflows', 'Settings']) {
+      for (const label of ['Home', 'Chat', 'Triggers', 'Workflows', 'Settings']) {
         expect(names).toContain(label)
       }
     })

@@ -29,6 +29,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On a phone the composer's footer keeps two rows: `+` and the agent-and-model pill beside Send on the first, the reply style, task mode and Execution Boundary on the second, each pill shortening its label rather than wrapping, so the composer is no taller than it was before the footer took the Execution Boundary control (#3808).**
 - **A project's tasks are a view of the project: its page switches between Overview and Tasks, the task list and board held to it; the sidebar drops its Tasks row, and All tasks, every project's, is a ⌘K row and a control on the Projects page, at `#/tasks` as before.**
 - **An empty Knowledge, Memory, Triggers, Workflows, Agents, Skills or Apps page shows one Discover tip under its own empty state, for another page, with its link and its dismiss, and the end of first setup shows one too; a tip dismissed there is gone from Discover as well, and with Discover off or nothing left in it, no tip shows.**
+- **The sidebar has no Terminal row: the terminal is the drawer on every page (⌘J or ⌘\`, or the corner's toggle), and its full page stays at `#/terminal`, the drawer's Open full and a ⌘K row.**
 
 ### Fixed
 
