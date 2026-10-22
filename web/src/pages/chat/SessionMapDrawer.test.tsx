@@ -1,10 +1,14 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SessionMapDrawer } from './SessionMapDrawer'
 import { sessionMapEntries } from './sessionMap'
 import { sessionMapMarkName } from './SessionMapCard'
 import type { ChatTurn } from './chatTypes'
+import { registerAudioSource, resetAudioPresence } from '../../lib/audioPresence'
+import { resetMediaPresence } from '../../lib/mediaPresence'
+
+afterEach(() => { resetMediaPresence(); resetAudioPresence() })
 
 // ── THE COARSE-POINTER FORM ─────────────────────────────────────────────────────────────────
 //
@@ -140,5 +144,26 @@ describe('the Session Map drawer', () => {
   it('the rows are still: no staggered entrance on a list opened to navigate', () => {
     render(<SessionMapDrawer entries={ENTRIES} onJumpTo={() => {}} />)
     for (const r of rows()) expect(r.getAttribute('style') ?? '', 'a row animates in').not.toMatch(/opacity|transform/)
+  })
+
+  it('🔑 says which message is playing or listening, in words and in its name, measuring nothing', () => {
+    const attach = vi.fn(() => ({ read: () => 0.5, detach: () => {} }))
+    const playing = registerAudioSource('playback', attach)
+    playing.setOwner(7) // the second question's reply
+    playing.setLive(true)
+    const mic = registerAudioSource('microphone', attach)
+    mic.setLive(true)
+    const { unmount } = render(<SessionMapDrawer entries={ENTRIES} onJumpTo={() => {}} audioPresence />)
+    expect(rows()[1].getAttribute('data-audio')).toBe('playing')
+    expect(rows()[1].querySelector('[data-session-map-audio]')!.textContent).toBe('Playing')
+    expect(jumpOf(rows()[1]).getAttribute('aria-label')).toBe('Message 2 of 4, playing: Fix the type errors.')
+    expect(rows()[3].getAttribute('data-audio')).toBe('listening')
+    expect(rows()[3].querySelector('[data-session-map-audio]')!.textContent).toBe('Listening')
+    // Still: the drawer draws no level line, so nothing is measured for it.
+    expect(attach, 'the drawer measured audio').not.toHaveBeenCalled()
+    unmount()
+    // Off: nothing said.
+    render(<SessionMapDrawer entries={ENTRIES} onJumpTo={() => {}} />)
+    expect(rows().some((r) => r.hasAttribute('data-audio'))).toBe(false)
   })
 })

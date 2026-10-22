@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Bookmark, BookmarkCheck, MessageSquare } from 'lucide-react'
 import type { SessionMapEntry } from './sessionMap'
 import { SESSION_MAP_MIN_MARKS } from './sessionMap'
-import { bookmarkLabel, sessionMapMarkName } from './SessionMapCard'
+import { bookmarkLabel, sessionMapMarkName, type MarkAudio } from './SessionMapCard'
+import { useRailAudio } from './sessionMapAudio'
 import { currentMarkRange } from './sessionMapRegion'
 import { MARK_MAX_PX, markLength } from './sessionMapGeometry'
 import { EmptyState } from '../../ui/ListScaffold'
@@ -45,6 +46,9 @@ export interface SessionMapDrawerProps {
    *  to say which exchanges were on screen behind it. */
   turnNodes?: ReadonlyMap<number, Element>
   scrollRef?: { current: Element | null }
+  /** "Session Map reacts to audio" is on: a row says it is playing or listening, in words, as the
+   *  rail does (`sessionMapAudio.ts`). Still: the drawer draws no level line. */
+  audioPresence?: boolean
 }
 
 /** The coordinates on screen in the transcript right now, measured from the turn nodes' boxes.
@@ -61,21 +65,29 @@ function onScreenNow(turnNodes: ReadonlyMap<number, Element> | undefined, scroll
   return seen
 }
 
-export function SessionMapDrawer({ entries, onJumpTo, onToggleBookmark, turnNodes, scrollRef }: SessionMapDrawerProps) {
+export function SessionMapDrawer({ entries, onJumpTo, onToggleBookmark, turnNodes, scrollRef, audioPresence = false }: SessionMapDrawerProps) {
   const [visible] = useState(() => onScreenNow(turnNodes, scrollRef?.current))
+  const listRef = useRef<HTMLUListElement>(null)
+  const audio = useRailAudio(audioPresence, listRef, { still: true })
   // The same self-suppression threshold the rail applies. A drawer the owner deliberately OPENED
   // must say why it is empty instead of showing a blank panel.
   if (entries.length < SESSION_MAP_MIN_MARKS) {
     return <EmptyState icon={MessageSquare} title="Nothing to map yet" hint="Once you have sent four messages, the session map lists each one, so you can jump back to it." />
   }
   const [start, end] = visible.length ? currentMarkRange(entries, visible) : [0, -1]
+  // The same rule as the rail's: a reply read aloud plays on its question, the microphone listens
+  // at the newest message, and playing wins a tie.
+  const playingAt = audio.playing === null ? -1 : entries.findIndex((e) => e.coords.includes(audio.playing!))
+  const audioOf = (i: number): MarkAudio | undefined =>
+    i === playingAt ? 'playing' : audio.listening && i === entries.length - 1 ? 'listening' : undefined
   return (
-    <ul data-session-map-drawer className="flex flex-col gap-px">
+    <ul ref={listRef} data-session-map-drawer className="flex flex-col gap-px">
       {entries.map((entry, i) => {
         const iso = isoStamp(entry.ts)
         const isCurrent = i >= start && i <= end
         const len = markLength(i, null, isCurrent)
         const bookmark = bookmarkLabel(entry)
+        const heard = audioOf(i)
         return (
           // The row is the jump, and it carries a control of its own (the bookmark), so the jump is
           // `ui/RowHitTarget`'s empty button stretched under the row, never a button around a button.
@@ -85,19 +97,20 @@ export function SessionMapDrawer({ entries, onJumpTo, onToggleBookmark, turnNode
             data-session-map-row
             data-current={isCurrent || undefined}
             data-bookmarked={entry.bookmarked || undefined}
+            data-audio={heard}
             onClick={() => onJumpTo(entry.visibleIndex)}
             // Out of the tab order: the keyboard reaches the row through its `RowHitTarget`.
             tabIndex={-1}
             className="group relative isolate flex min-h-11 cursor-pointer items-stretch rounded-md transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
           >
             {/* The row's name is the rail's: short, positioned, bounded, saying a bookmark. */}
-            <RowHitTarget label={sessionMapMarkName(entries, i)} selected={isCurrent} />
+            <RowHitTarget label={sessionMapMarkName(entries, i, heard)} selected={isCurrent} />
             <span className="flex min-w-0 flex-1 items-start gap-s px-2.5 py-2 text-left">
               {/* The rail's marker for this message, at rest: its length and tone say whether its
                   exchange was on screen, and its dot says it is bookmarked. */}
               <span aria-hidden data-session-map-row-mark className="relative mt-2 flex h-0.5 shrink-0" style={{ width: MARK_MAX_PX + 8 }}>
                 <span
-                  className="block h-0.5 origin-left rounded-pill"
+                  className={`block ${heard ? 'h-1' : 'h-0.5'} origin-left rounded-pill`}
                   style={{
                     width: MARK_MAX_PX,
                     transform: `scaleX(${len / MARK_MAX_PX})`,
@@ -113,6 +126,9 @@ export function SessionMapDrawer({ entries, onJumpTo, onToggleBookmark, turnNode
                 <span data-type="body-s" data-session-map-request className="line-clamp-2 text-on-surface">{entry.preview}</span>
                 {entry.response ? (
                   <span data-type="caption" data-session-map-response className="mt-xs line-clamp-1 text-on-surface-var">{entry.response}</span>
+                ) : null}
+                {heard ? (
+                  <span data-type="caption" data-session-map-audio={heard} className="mt-xs text-on-surface">{heard === 'playing' ? 'Playing' : 'Listening'}</span>
                 ) : null}
               </span>
               {iso ? (

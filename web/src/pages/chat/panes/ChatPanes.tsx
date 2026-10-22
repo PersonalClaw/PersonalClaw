@@ -34,7 +34,7 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
   )
 }
 
-export function ChatPanes({ panes, stream, transcript, started, setQuery, navigate, send }: {
+export function ChatPanes({ panes, stream, transcript, started, setQuery, navigate, send, mapAudio = false }: {
   panes: ChatPanesState
   stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy' | 'workingDir' | 'streaming' | 'sessionRef'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'isMobile' | 'setMapOpen' | 'sessionEntries' | 'pendingMapJump' | 'runPendingMapJump' | 'toggleBookmark' | 'turnNodes' | 'scrollRef'>
@@ -42,6 +42,8 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
   send: (text: string) => unknown
+  /** Settings › Speech › "Session Map reacts to audio" is on. */
+  mapAudio?: boolean
 }) {
   const { openFile, setOpenFile, activityOpen: activityAsked, setActivityOpen, treeOpen, setTreeOpen, historyOpen, setHistoryOpen, activity, outputs, beside, setBeside, killFanout, openSide, askSide } = panes
   const { subagents, sideMsgs, sideBusy, workingDir, streaming, sessionRef } = stream
@@ -83,7 +85,7 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
           <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
             fillHeight onClose={() => setMapOpen(false)}>
             <SessionMapDrawer entries={sessionEntries} onToggleBookmark={toggleBookmark}
-              turnNodes={turnNodes.current} scrollRef={scrollRef}
+              turnNodes={turnNodes.current} scrollRef={scrollRef} audioPresence={mapAudio}
               onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
           </SidePanel>
         )}
