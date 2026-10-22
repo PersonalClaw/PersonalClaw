@@ -159,6 +159,39 @@ function scrollRailTo(y: number) {
 /** The palette's own row for the sidebar, run as ⌘K runs it. */
 const paletteToggle = () => act(() => rows.find((r) => r.label === 'Show or hide the sidebar')!.run())
 
+describe('the sidebar after a collapse', () => {
+  it('opened again, it keeps the search as typed and what it found, the address and the lit thread', async () => {
+    location.hash = '#/chat/chat-2'
+    const user = userEvent.setup()
+    renderApp()
+    await row(/^Order the soil/)
+    await user.type(within(rail()).getByRole('searchbox', { name: 'Search threads' }), 'soil')
+    await waitFor(() => expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ })).toBeNull())
+
+    await user.click(toggle())
+    await waitFor(() => expect(expanded()).toBe(false))
+    await user.click(toggle())
+    await waitFor(() => expect(expanded()).toBe(true))
+    expect(within(rail()).getByRole('searchbox', { name: 'Search threads' })).toHaveValue('soil')
+    await row(/^Order the soil/)
+    expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ }), 'still what the search found').toBeNull()
+    expect(location.hash).toBe('#/chat/chat-2')
+    expect(lit()).toEqual(['Order the soil'])
+  })
+
+  it('a reload starts with no search', async () => {
+    location.hash = '#/chat/chat-2'
+    const user = userEvent.setup()
+    const view = renderApp()
+    await row(/^Order the soil/)
+    await user.type(within(rail()).getByRole('searchbox', { name: 'Search threads' }), 'soil')
+    view.unmount()
+    renderApp()
+    await row(/^Plan the garden/)
+    expect(within(rail()).getByRole('searchbox', { name: 'Search threads' })).toHaveValue('')
+  })
+})
+
 describe('the sidebar after a reload', () => {
   it('toggled from the toolbar, the keyboard and the palette, then reloaded: open, as wide, as scrolled, its groups as they were', async () => {
     location.hash = '#/chat/chat-2'

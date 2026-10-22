@@ -9,12 +9,14 @@ const doc: UiDoc = {
   props: [
     { name: 'groups', description: 'The groups in the order they show, each {projectId, name, threads}. The shell builds them with railGroups (app/threadRail.tsx): the project list\'s order, "No project" last, each group\'s threads in the named order (byRailOrder: pinned first, then the latest activity, ties by key).' },
     { name: 'selectedKey', description: 'The key of the open thread (threadAt in app/threadRail.ts reads it from the address), or "" when the page is no thread. Never kept by the rail itself, so reload, Back and a copied address light the same row.' },
-    { name: 'status', description: "'loading' (nothing read yet: one Loading threads row and no groups), 'ready', or 'failed' (the failure row with Retry, above the groups the last good read gave)." },
+    { name: 'status', description: "'loading' (nothing read yet: one Loading threads row and no groups), 'ready', 'failed' (the failure row with Retry, above the groups the last good read gave), or 'offline' (the gateway is not answering: an Offline row with Retry, above the groups it last listed, and no failure wording)." },
     { name: 'failure', description: 'The sentence a failed read shows beside Retry. Defaults to "Couldn\'t load your threads."' },
     { name: 'onOpen', description: "Opens a thread at its route (no leading #/). The shell navigates there and closes the phone's drawer." },
     { name: 'onRetry', description: 'Reads the threads again, from the failure row\'s Retry.' },
     { name: 'onNewThread', description: 'Opens a new thread, from New thread at the top. Its tooltip shows the keymap\'s New thread key.' },
     { name: 'onShown', description: 'Told the thread rows the rail shows, top to bottom (closed groups and the search applied), whenever they change; null while it shows none it has read. The shell keeps them for ⌘1 to ⌘9. Keep it stable.' },
+    { name: 'search', description: 'The search, when the caller keeps it. The shell does (App.tsx), so a collapse, which unmounts the rail, gives back what was typed; a reload starts with none. Unset, the rail keeps its own.' },
+    { name: 'onSearch', description: 'Told each change of the search, with search.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Derive selectedKey from the address on every render; the address is the selection.' },
