@@ -225,7 +225,7 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
     await userEvent.click(await screen.findByRole('button', { name: 'Nudge Nightly sweep' }))
     const box = screen.getByRole('textbox', { name: 'What should Nightly sweep do next?' })
     await userEvent.type(box, 'check the staging logs first')
-    await userEvent.click(screen.getByRole('button', { name: 'Send nudge' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Send nudge to Nightly sweep' }))
     await waitFor(() => expect(uLoopNudge).toHaveBeenCalledWith('lp-1', 'check the staging logs first'))
 
     // Retyping a nudge you already wrote is the worst possible apology for a failed POST.

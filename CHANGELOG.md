@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **On the phone, each loop's Send nudge button names the loop it sends to, so a screen reader can tell one loop's nudge from another's.**
 - **While Sync agents or Re-probe MCP servers is running, its row in the list's More menu says so and when it can run again, instead of only dimming.**
 - **Home no longer asks for an animation frame each time one of its reads answers while you leave it be, from its buttons or its Discover deck: each button re-made its pointer sheen's subscription on every render, whether or not it drew the sheen, and the deck's cards measured themselves on every render rather than when one moves.**
 - **A permission or task mode pick the gateway doesn't answer in 15 s now says so beside its control and lets the next pick through, instead of holding every later pick until a reload; and a pick that reaches the gateway after a newer one changes nothing; a refusal stays beside the control until you open it or pick again.**

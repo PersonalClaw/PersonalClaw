@@ -263,6 +263,7 @@ export function RunningSection() {
       {/* A disabled control that will not say why is a dead end for a keyboard or
           screen-reader user — `ui/disabledReason*` is the house rail for it. */}
       <Button size="sm" onClick={() => send(l)} disabled={!text.trim()}
+        ariaLabel={`Send nudge to ${l.name || l.task}`}
         disabledReason="Type what it should do next.">
         Send nudge
       </Button>
