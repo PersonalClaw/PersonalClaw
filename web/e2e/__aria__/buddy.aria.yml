@@ -1,8 +1,8 @@
 - heading "Buddy" [level=#]
 - status: "Needs you: Approval needs your OK: Clear the build folder"
+- 'button "Approval needs your OK: Clear the build folder"': Needs your OK
 - group "Buddy":
   - banner:
-    - text: Needs your OK
     - heading "Buddy" [level=#]
     - paragraph: "Approval needs your OK: Clear the build folder"
   - group "Permission needed to run bash":

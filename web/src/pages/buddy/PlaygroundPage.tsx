@@ -5,7 +5,7 @@
  *  every control is one input, the clock fires the machine's timers at their lengths, and the log
  *  shows every input with what the machine asked for. Nothing reaches the gateway: an answer the
  *  machine asks to send is shown in the log and never sent. Four tabs, each an address of its own
- *  (`?tab=`): Play, the scripted day (`scriptedDay.ts`), the expanded card in each of its states
+ *  (`?tab=`): Play, the scripted day (`scriptedDay.ts`), the card beside the orb in each of its states
  *  (`cardFixtures.ts`) and the pose sheet the renderer's snapshots are taken from.
  *
  *  A full-screen route outside the navigation, as `#/companion` is, and in release builds: the
@@ -20,6 +20,7 @@ import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { situationOf } from '../../lib/buddy/machine'
 import type { Effect } from '../../lib/buddy/inputs'
+import { BuddyFace } from './BuddyPresence'
 import { BuddyStage, STAGE_WIDTHS, type StageWidth } from './BuddyStage'
 import { LookControls, PlaygroundControls, clockOf } from './PlaygroundControls'
 import { CARD_FIXTURES } from './cardFixtures'
@@ -160,7 +161,8 @@ function Day() {
   )
 }
 
-/** The Card tab: the expanded card in each state it must be seen in, at the width being played. */
+/** The Card tab: the card in each state it must be seen in, at the width being played, below the
+ *  buddy's one orb as it opens there (#5216). */
 function Cards() {
   const [width, setWidth] = useState<StageWidth>('full')
   const [answered, setAnswered] = useState('')
@@ -178,7 +180,10 @@ function Cards() {
         {CARD_FIXTURES.map((f) => (
           <figure key={f.key} data-card-fixture={f.key} className="flex min-w-0 flex-col gap-s" style={width === 'full' ? undefined : { maxWidth: `${Number(width) / 16}rem` }}>
             <figcaption><Eyebrow as="h3">{f.label}</Eyebrow></figcaption>
-            <BuddyCard {...f.card} alert={alertOf(f.card.alert, f.label)} orbId={`buddy-card-${f.key}`} onAnswer={answer(f.label)} />
+            <div className="flex min-w-0 flex-col items-center gap-s">
+              <BuddyFace state={f.card.state ?? f.card.focus?.phase ?? 'idle'} label={f.label} />
+              <BuddyCard {...f.card} alert={alertOf(f.card.alert, f.label)} onAnswer={answer(f.label)} />
+            </div>
           </figure>
         ))}
       </div>

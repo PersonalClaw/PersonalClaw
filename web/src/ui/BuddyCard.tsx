@@ -1,6 +1,7 @@
-/** The buddy's expanded card (#3893, `docs/design/buddy/surfaces.md#the-expanded-card-top-to-bottom`).
+/** The buddy's card, beside its orb (#3893, #5216,
+ *  `docs/design/buddy/surfaces.md#the-expanded-card-top-to-bottom`).
  *
- *  Top to bottom: the focused work (its orb at 48, its name, its state in the machine's words and
+ *  Top to bottom: the focused work (its name, its state in the machine's words and
  *  its exact phase), its run as a three-line step window (`lib/buddy/steps.ts`), the alert when one
  *  shows, every other piece of live work in sight, and Open in PersonalClaw. Nothing in it sends,
  *  and it adds no answer of its own. It has no drop target and no ask field in v0.3.0.
@@ -18,9 +19,10 @@
  *    card, so the presence pauses its fold, and the countdown line says how to keep it.
  *
  *  At 320, 390 and 412 px every section stacks with nothing clipped, and every control is a 44 px
- *  target there. The focused orb is a shared element (`Morph`) with the island's compact orb, so the
- *  room change moves it, and the sections enter on the app's region stagger; both are instant under
- *  reduced motion. */
+ *  target there. Beside the buddy's orb (#5216) the card draws no orb of its own: the orb is the
+ *  buddy's, one size, where the owner put it. Where one piece of work owns the screen (the phone's
+ *  view two) the card heads with that work's orb. The sections enter on the app's region stagger,
+ *  instant under reduced motion. */
 
 import { useId, useState, type ReactNode } from 'react'
 import { Check, CircleDot, ListChecks, MessageSquare, Repeat, SquareCheckBig, Users, Webhook, Workflow, Wrench, Zap, type LucideIcon } from 'lucide-react'
@@ -257,7 +259,7 @@ function InSight({ rows, finished, interrupted, list, roomy }: {
 
 export function BuddyCard({
   focus, line, state, steps, alert, waiting = 0, inSight, finished = [], interrupted = [], list = 'live',
-  countdown, openHref, orbId, orbSize = 48, onAnswer, onHold,
+  countdown, openHref, orbId, orbSize = null, onAnswer, onHold,
 }: {
   focus: CardWork | null
   /** The machine's line for what the card is about (`lineOf(truth, 'expandedCard')`). */
@@ -280,18 +282,19 @@ export function BuddyCard({
   countdown?: number
   /** Where Open in PersonalClaw goes. */
   openHref: string
-  /** The shared element's id, the same on the island's compact orb. */
+  /** The focused work's orb at the card's head, 96 where one piece of work owns the screen (the
+   *  phone's view two, #3898); none beside the buddy's own orb. */
+  orbSize?: 48 | 96 | null
+  /** The head orb's shared-element id, where the view before it drew the same orb (the phone's
+   *  list row). */
   orbId?: string
-  /** The focused orb's size: 48 on the buddy's card, 96 where one piece of work owns the screen
-   *  (the phone's view two, #3898). */
-  orbSize?: 48 | 96
   onAnswer: (answer: CardAnswer) => void
   /** The pointer or the keyboard focus is on the card (true), or has left it (false). */
   onHold?: (held: boolean) => void
 }) {
   const headerId = useId()
   const orbState: OrbState = state ?? focus?.phase ?? 'idle'
-  const orb = <BuddyOrb state={orbState} line="" size={orbSize} />
+  const orb = orbSize ? <BuddyOrb state={orbState} line="" size={orbSize} /> : null
   const done = focus?.phase === 'done'
   return (
     <div
@@ -304,7 +307,7 @@ export function BuddyCard({
       <EntranceGroup className="flex min-w-0 flex-col gap-m">
         <EntranceRegion>
           <header className="flex min-w-0 items-start gap-m">
-            {orbId ? <Morph id={orbId} className="shrink-0">{orb}</Morph> : <span className="shrink-0">{orb}</span>}
+            {!orb ? null : orbId ? <Morph id={orbId} className="shrink-0">{orb}</Morph> : <span className="shrink-0">{orb}</span>}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <h3 id={headerId} data-type="title-s" className="min-w-0 break-words text-on-surface">
                 {focus ? clipWords(focus.name, CARD_LINE) : 'Buddy'}

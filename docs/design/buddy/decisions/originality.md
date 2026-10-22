@@ -41,27 +41,26 @@ it ([#3830]).
 | `character.wash` | a soft gradient up from the orb's lower edge, in the one tone of the alert | distinct | it rises once under the orb and holds; it never pulses, never takes several colours and never lights the screen's edge | 2026-10-22 |
 | `character.poses` | each phase's pose: the dots' density, spread and sink, in two colours, with the badge | distinct | the state is in the dots and the badge, never in a colour per state or a spinning arc | 2026-10-22 |
 | `character.gestures` | point, wave, stir, raise, hold, droop, flourish: motions of the orb's dots and of the whole orb | distinct | the wave is a ripple out from the centre, never dots bouncing in a row; the flourish is one swirl that comes to rest, never a continuous churn | 2026-10-22 |
-| `character.presence` | where the orb lives: the docked pill, the peek, the card, the floating orb, the doze | changed | the docked pill is now the app's raised surface, never black and never joined to the notch, the menu bar or the edge as one shape, with a small gap below the menu bar; the card takes the pill's place instead of the pill's outline stretching into it, with no overshoot; docking moves the orb instead of melting a shape ([`surfaces.md`](../surfaces.md#docking), the transitions below) | 2026-10-22 |
+| `character.presence` | where the orb lives: one orb where the owner put it, its card beside it, the doze | changed | was a docked pill that changed shape with the state, a peek and a floating orb at their own sizes, and a card growing out of the pill; now one orb of one size that stays where the owner put it, its state only in its dots, badge and wash, with a card beside it on the side that has room, and nothing forms around the orb or grows out of the edge ([#5216], the owner's ruling on [#3829]) ([`surfaces.md`](../surfaces.md#docking), the transitions below) | 2026-10-22 |
 | `character.whole-orb` | the whole orb: a sphere of dots in the app's primary, with a still badge and a one-tone wash | distinct | it reads as the app's agent orb, at the top edge or floating | 2026-10-22 |
 
 ### The status layouts
 
-Each surface of [the room budget](../surfaces.md#the-room-budget), and docking on both display
-shapes ([docking](../surfaces.md#docking)).
+Each surface of [the room budget](../surfaces.md#the-room-budget), and the orb's default on both
+display shapes ([docking](../surfaces.md#docking), where the orb stays).
 
 | Element | In product terms | Verdict | What changed and why | Date |
 |---|---|---|---|---|
-| `layout.top-edge-peek` | the orb alone, just below the top edge | distinct | the orb only, on no shape of its own | 2026-10-22 |
-| `layout.top-edge-compact` | the pill: the focused work's orb, its one line and `+N` | distinct | one orb, one line and a count in a row on the app's surface; the other work is a count, never a group of orbs | 2026-10-22 |
-| `layout.top-edge-expanded` | the card: the focused orb at 48, its state, its step flow, the alert's brief and answer controls, then every other piece of live work as a row | distinct | an app card that opens below where the pill was; with the presence change above, nothing grows out of the edge | 2026-10-22 |
-| `layout.floating-orb` | the orb at 56 anywhere on screen; on an alert, a one-line bubble; on click, the card beside it | distinct | an orb, not a character, and the bubble is one line of state; the orbs never stack into a pile of heads | 2026-10-22 |
+| `layout.the-orb` | the orb at 48 where the owner put it, the same size and place in every state | changed | was an orb at 18, 22, 48 or 56 by its room and its place, inside a pill when docked; now one orb of one size on no shape of its own, its state only in its dots, badge and wash ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `layout.the-line-card` | one line and `+N` beside the orb | changed | was the pill around the orb; now a line card beside it on the app's surface, and the other work is a count, never a group of orbs ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `layout.the-card` | the card beside the orb: its state, its step flow, the alert's brief and answer controls, then every other piece of live work as a row | changed | was a card the pill opened into, with the focused orb inside it at 48; now a card beside the orb on the side that has room, drawing no orb of its own, and nothing grows out of the edge or the orb ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
 | `layout.tray-or-menu-bar-icon` | a still orb per state, its words in the tooltip and the menu's first line | distinct | a system tray icon drawn as the app's still orb; a count never stands alone | 2026-10-22 |
 | `layout.tray-menu` | the system menu: what waits on the owner, then live work, then show, hide and open | distinct | a plain system menu of rows | 2026-10-22 |
 | `layout.dock-or-app-icon` | the app icon shows the state's still orb while something needs the owner | distinct | the still orb in place of a red count, only while something waits | 2026-10-22 |
 | `layout.os-notification` | the system's banner: the still orb, one line, a tap that opens the buddy | distinct | the system's own banner; no answer buttons | 2026-10-22 |
 | `layout.phone-companion` | an app screen of rows, or one piece of work owning the screen | distinct | rows in the app's own screen, never tiles on the lock screen | 2026-10-22 |
-| `layout.docked-notch` | docked on a notched display | changed | was the focused orb in the left wing beside the camera and up to four orbs in the right wing; now the same pill a screen without a notch has, hung just below the notch and centred on it, so no orbs sit on both sides of the camera and no group of orbs sits in a wing (settled 2026-10-14), with the presence change above | 2026-10-22 |
-| `layout.docked-plain` | docked on a screen without a notch: the pill below the menu bar at the top centre | changed | the pill keeps its place and now carries the presence change above: the app's surface, a small gap below the menu bar, and the card taking its place | 2026-10-22 |
+| `layout.docked-notch` | at its default on a notched display | changed | was the focused orb in the left wing beside the camera and up to four orbs in the right wing; then the pill a screen without a notch has, hung just below the notch; now the one orb, at its default just below the notch and centred on it until a drag moves it, so no orbs sit on both sides of the camera and no group of orbs sits in a wing (settled 2026-10-14) ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `layout.docked-plain` | at its default on a screen without a notch: the orb below the menu bar at the top centre | changed | was the pill below the menu bar; now the one orb there until a drag moves it, with a small gap below the menu bar and its card beside it ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
 
 ### The four families
 
@@ -82,10 +81,10 @@ and in which order.
 
 | Element | In product terms | Verdict | What changed and why | Date |
 |---|---|---|---|---|
-| `transition.peek-in` | the orb slides down from the top edge until its badge clears it | distinct | the orb moves, never a shape | 2026-10-22 |
-| `transition.compact-in` | the pill fades in below the edge as the orb enters | changed | was the pill growing out of the edge; now it fades in below it and nothing grows out of the edge | 2026-10-22 |
-| `transition.expand` | the card takes the pill's place, opening downward; the focused orb scales to 48 | changed | was the pill growing into the card on a slight overshoot; now the card opens where the pill was, on `smooth` with no overshoot, and the pill's outline never stretches into it | 2026-10-22 |
-| `transition.collapse` | the card folds away and the pill comes back in its place | distinct | the effects curve, no overshoot; reworded to match the change to expand | 2026-10-22 |
+| `transition.peek-in` | the orb, hidden at its default, fades in where it stays | changed | was the orb sliding down from the top edge; now it appears where it is, and nothing slides it into place ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `transition.compact-in` | the line card fades in beside the orb | changed | was the pill fading in below the edge around the orb; now the line card fades in beside it, and the orb does not move or change size ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `transition.expand` | the card opens beside the orb, on the side that has room | changed | was the card taking the pill's place with the focused orb scaling to 48; now the card opens from the orb's edge, on `smooth` with no overshoot, and the orb does not move or change size ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
+| `transition.collapse` | the card folds back toward the orb, and the line card returns while work runs | distinct | the effects curve, no overshoot, and the orb stays as it is | 2026-10-22 |
 | `transition.phase-change` | one pose exits and the next enters; the badge swaps with a small pop | distinct | the app's own poses and marks | 2026-10-22 |
 | `transition.working-hold` | the dots stir in the phase's state; the step's label fills with the alive colour | distinct | the agent orb's own motion, never a spinning arc | 2026-10-22 |
 | `transition.alert-arrives` | the orb holds or lifts and goes still; the badge pops; the wash rises once | distinct | stillness, a mark and one tone, never a pulse | 2026-10-22 |
@@ -94,7 +93,7 @@ and in which order.
 | `transition.error` | the dots sink toward the lower edge and settle in the neutral; the danger wash rises | distinct | the orb settles, never a flash | 2026-10-22 |
 | `transition.done` | the check, one swirl round the orb, then rest | distinct | one swirl that ends, never a continuous churn | 2026-10-22 |
 | `transition.listening` | the orb swells a little toward the owner, its dots listen, the microphone badge pops | distinct | the orb swells a little and its dots move, with no glow and no wave of light | 2026-10-22 |
-| `transition.dock-and-undock` | the orb moves into or out of the pill, which fades in or out around it | changed | was a shape forming from the orb or melting into it; now the orb moves and the pill fades, so no shape melts | 2026-10-22 |
+| `transition.dock-and-undock` | only a drag moves the orb, and it stays where it is dropped | changed | was the orb moving into or out of a pill that faded in or out around it; now nothing forms around the orb, and only the owner's drag moves it ([#5216], the owner's ruling on [#3829]) | 2026-10-22 |
 | `transition.doze-and-wake` | the dots slow to a stop and the orb dims; on wake it brightens | distinct | the orb dims and brightens, with no breathing light | 2026-10-22 |
 | `transition.badge-unfolds` | the badge widens into the state's words and folds back | distinct | the app's own badge and words | 2026-10-22 |
 
@@ -152,9 +151,12 @@ its feature ships.
 ## Sign-off
 
 Signed off by the maintainer on 2026-10-22, for the v0.3.0 rows. Each later row is signed with its
-task.
+task. The presence, layout and transition rows changed on 2026-10-22 record the maintainer's ruling
+on [#3829] after playing the playground: one orb of one size that stays where the owner put it,
+with its card beside it ([#5216]).
 
 [#3807]: https://github.com/PersonalClaw/PersonalClaw/issues/3807
+[#3829]: https://github.com/PersonalClaw/PersonalClaw/issues/3829
 [#3830]: https://github.com/PersonalClaw/PersonalClaw/issues/3830
 [#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
@@ -162,4 +164,5 @@ task.
 [#3900]: https://github.com/PersonalClaw/PersonalClaw/issues/3900
 [#3903]: https://github.com/PersonalClaw/PersonalClaw/issues/3903
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
+[#5216]: https://github.com/PersonalClaw/PersonalClaw/issues/5216
 [PersonalClaw/PersonalClawApps#164]: https://github.com/PersonalClaw/PersonalClawApps/issues/164

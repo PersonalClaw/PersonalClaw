@@ -79,9 +79,12 @@ export function PlaygroundControls({ pg, onUse, onPhase, onFire, onAdvance }: {
             {CONTROLS.filter((c) => c.group === group).map((c) => {
               const off = offBecause(pg, c.id)
               return (
-                <Button key={c.id} variant="secondary" size="sm" onClick={() => onUse(c.id)} disabled={Boolean(off)} disabledReason={off}>
-                  {c.label}
-                </Button>
+                // Marked with its id, so a browser test can drive the matrix by it.
+                <span key={c.id} data-playground-control={c.id} className="contents">
+                  <Button variant="secondary" size="sm" onClick={() => onUse(c.id)} disabled={Boolean(off)} disabledReason={off}>
+                    {c.label}
+                  </Button>
+                </span>
               )
             })}
           </div>

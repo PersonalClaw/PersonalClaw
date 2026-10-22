@@ -66,7 +66,7 @@ export function liveAlertOf(snap: HostSnapshot, host: Pick<BuddyHost, 'answer'>)
 }
 
 /** The card's props for the snapshot as it stands. */
-export function liveCardPropsOf(snap: HostSnapshot, host: BuddyHost, orbId: string): CardProps {
+export function liveCardPropsOf(snap: HostSnapshot, host: BuddyHost): CardProps {
   const { machine } = snap
   const view = viewOf(machine)
   const focus = focusedWork(machine)
@@ -86,7 +86,6 @@ export function liveCardPropsOf(snap: HostSnapshot, host: BuddyHost, orbId: stri
     list: machine.connection === 'up' ? 'live' : 'reconnecting',
     countdown: view.countdown ? 10 : undefined,
     openHref: '#/mission-control',
-    orbId,
     onAnswer,
     onHold: (held) => host.hold(held),
   }

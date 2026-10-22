@@ -144,11 +144,83 @@ test.describe('the buddy playground: the expanded card, recorded', () => {
         const found = [...(await overflowFindings(page)), ...(await clippedFindings(page))]
         expect(found, `the ${key} card on the ${leg.name} leg`).toEqual([])
       }
-      // The card's orb is the shared element with the island's, and under reduced motion it is
-      // dropped: a plain box that does not fly.
-      const morph = page.locator('[data-buddy-card] [data-morph]')
-      await expect(morph).toHaveCount(keys.length)
-      expect(new Set(await morph.evaluateAll((els) => els.map((e) => e.getAttribute('data-morph'))))).toEqual(new Set([leg.reduced ? 'none' : 'shared']))
+      // Each card opens below the buddy's one orb and draws no orb of its own (#5216).
+      await expect(page.locator('[data-card-fixture] [data-buddy-orb-slot]')).toHaveCount(keys.length)
+      await expect(page.locator('[data-buddy-card] [data-buddy-orb]')).toHaveCount(0)
+    })
+  }
+})
+
+// ── The orb holds its box (#5216) ──────────────────────────────────────────────────────────────
+//
+// On the Play tab, every control of the matrix in its panel's order, each followed by the next
+// timer firing, three rounds (the second one floating), and the clock run between rounds: wherever the orb shows, its box, read in the
+// browser, is the one it had the first time it showed. Every card opens, grows, shrinks and closes
+// on the way (an approval, a broad-reach approval, a question, an error, Running now and the step
+// window), and the orb's box is read before and after each control too. Light at the rest width,
+// and at 320 px with 200% text zoom.
+
+/** The orb's box on the stage's screen, relative to the screen, or null while nothing shows. */
+async function orbBox(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const slot = document.querySelector('[data-stage-screen] [data-buddy-orb-slot]')
+    const screen = document.querySelector('[data-stage-screen]')
+    if (!slot || !screen) return null
+    const a = slot.getBoundingClientRect()
+    const s = screen.getBoundingClientRect()
+    return [a.left - s.left, a.top - s.top, a.width, a.height].map((n) => Math.round(n * 10) / 10).join(',')
+  })
+}
+
+const BOX_LEGS = [
+  { name: 'light', width: 1280, height: 900, zoom: false },
+  { name: '320 at 200%', width: 320, height: 844, zoom: true },
+]
+
+test.describe('the buddy playground: the orb holds its box', () => {
+  test.describe.configure({ timeout: 300_000 })
+  for (const leg of BOX_LEGS) {
+    test(`across the matrix, at ${leg.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: leg.width, height: leg.height })
+      await seedTheme(page, 'light')
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await gotoRoute(page, 'buddy/playground?tab=play')
+      if (leg.zoom) {
+        await page.evaluate(() => {
+          const root = document.documentElement
+          root.style.fontSize = `${(parseFloat(getComputedStyle(root).fontSize) || 16) * 2}px`
+        })
+      }
+      const labels = await page.locator('[data-playground-control]').evaluateAll((els) => els.map((e) => e.getAttribute('data-playground-control') ?? ''))
+      expect(labels.length, 'the controls are marked').toBeGreaterThan(30)
+      let first: string | null = null
+      const seen = new Set<string>()
+      const nextTimer = page.getByRole('group', { name: 'Clock' }).getByRole('button', { name: /^Next timer/ })
+      const press = async (id: string) => {
+        const button = id === 'timer' ? nextTimer : page.locator(`[data-playground-control="${id}"] button`)
+        if (!(await button.isEnabled())) return
+        const before = await orbBox(page)
+        await button.click()
+        const after = await orbBox(page)
+        const room = (await page.locator('[data-stage-screen]').getAttribute('data-room')) ?? 'none'
+        seen.add(room)
+        for (const [when, box] of [['before', before], ['after', after]] as const) {
+          if (box === null) continue
+          first ??= box
+          expect(box, `${id} (${when}), in ${room}`).toBe(first)
+        }
+      }
+      for (let round = 0; round < 3; round++) {
+        if (round === 1) for (const id of ['start', 'drag', 'dropFloating']) await press(id)
+        for (const id of labels) {
+          if (round === 1 && id === 'dropDocked') continue
+          await press(id)
+          await press('timer')
+        }
+        await page.getByRole('button', { name: '+10 min' }).click()
+      }
+      expect(first, 'the orb showed').not.toBeNull()
+      for (const room of ['peek', 'compact', 'expanded', 'floating']) expect([...seen], room).toContain(room)
     })
   }
 })

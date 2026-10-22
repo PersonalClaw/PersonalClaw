@@ -43,8 +43,8 @@ each task's approved update and settled answers change it.
   first.
 - **It respects** absence (it hides while the owner is away and says what happened on return),
   quiet hours (a quiet peek) and full-screen apps (alerts only). Listening always wins.
-- **One orb and one state contract on every surface:** the top-edge island or the floating orb,
-  the tray's and the dock's still orbs (a state, not a red count), notifications (the still orb and
+- **One orb and one state contract on every surface:** the buddy's one orb where the owner put it,
+  with its card beside it ([#5216]), the tray's and the dock's still orbs (a state, not a red count), notifications (the still orb and
   one line), and the phone companion's two views.
 - **Reduced motion and the expressiveness and bounciness dials are honoured everywhere,** and every
   colour scheme retints it.
@@ -102,7 +102,7 @@ later work below.
   [many pieces of work at once](surfaces.md#many-pieces-of-work-at-once),
   [the expanded card](surfaces.md#the-expanded-card-top-to-bottom) (the focused status card, with
   Open in PersonalClaw), [compact layouts](surfaces.md#compact-layouts),
-  [docking](surfaces.md#docking) and
+  [docking](surfaces.md#docking), where the orb stays, and
   [how a state change travels](surfaces.md#how-a-state-change-travels).
 - [`interactions.md`](interactions.md): every input's outcome,
   [the context menu](interactions.md#the-context-menu),
@@ -194,3 +194,4 @@ quick ask.
 [#3903]: https://github.com/PersonalClaw/PersonalClaw/issues/3903
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
 [PersonalClaw/PersonalClawApps#164]: https://github.com/PersonalClaw/PersonalClawApps/issues/164
+[#5216]: https://github.com/PersonalClaw/PersonalClaw/issues/5216

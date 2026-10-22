@@ -106,8 +106,8 @@ nothing from the gateway, and an answer the machine asks to send is written in i
 sent.
 
 - **Play** (`?tab=play`): the stage, one control per input, the clock and the event log. The stage
-  holds the buddy as each surface would (the top-edge island in its peek, compact and expanded
-  rooms, or the floating orb with its bubble and card), at 320, 390 or 412 px or the page's width,
+  holds the buddy as each surface would (the one orb where it stays, alone, with its line card, or
+  with its card, docked or floating, [#5216]), at 320, 390 or 412 px or the page's width,
   with Waiting on You, Running Now and the focused work beside it. A control the matrix says cannot
   happen now is off and says why. The look controls are the app's own scheme, mode and two motion
   dials.
@@ -152,3 +152,4 @@ Later work: play ([#3894]) and drop and quick ask ([#3895]).
 [#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
+[#5216]: https://github.com/PersonalClaw/PersonalClaw/issues/5216
