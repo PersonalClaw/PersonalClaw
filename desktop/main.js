@@ -1194,6 +1194,12 @@ const trayPresence = makeTrayPresence({
   MenuCtor: Menu,
   nativeImageMod: nativeImage,
   trayImagePath: path.join(__dirname, trayImageFile(process.platform)),
+  // While Buddy status is on, the buddy's still for the state, in the system's appearance, and the
+  // dock's while something needs you (#3896).
+  platform: process.platform,
+  isDark: () => nativeTheme.shouldUseDarkColors,
+  dock: process.platform === "darwin" ? app.dock : null,
+  appIconPath: path.join(__dirname, "icon.png"),
   log: (msg) => console.warn(`tray: ${msg}`),
   actions: {
     open: () => showMainWindow(),
@@ -1364,7 +1370,11 @@ const doorbell = makeDoorbell({
   openSocket: socketGateway,
   read: readPresence,
   onLevels: takePresence,
-  onConnection: (state) => pushToBuddy(buddy?.window, "connection", state),
+  onConnection: (state) => {
+    // A restart the gateway announced is working, said as restarting, never offline (#3896).
+    trayPresence.setRestarting(state === "restarting");
+    pushToBuddy(buddy?.window, "connection", state);
+  },
   pollMs: PRESENCE_REFRESH_MS,
   log: (msg) => console.warn(`desktop: ${msg}`),
 });
@@ -1970,6 +1980,8 @@ if (!app.requestSingleInstanceLock()) {
     const win = createWindow();
     // The sidebar material follows the system's reduced-transparency setting in every window.
     windowChrome.watch(() => appWindows());
+    // The tray's colour stills follow the system's light or dark appearance.
+    nativeTheme.on("updated", () => trayPresence.appearanceChanged());
 
     try {
       await startGateway();

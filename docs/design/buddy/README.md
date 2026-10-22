@@ -125,6 +125,9 @@ later work below.
   [the gesture vocabulary](character.md#the-gesture-vocabulary),
   [the drawn poses](character.md#the-drawn-poses), with their contact sheets, and
   [the component](character.md#the-component) that draws them in the app.
+- [`render_stills.mjs`](render_stills.mjs): renders the tray's and the dock's still orbs from the
+  drawn stills, and writes [`stills.json`](stills.json), the digest of each source and each raster,
+  which the desktop app's test holds its images to ([#3896]).
 - [`rig.md`](rig.md): [candidates](rig.md#candidates), [what is measured](rig.md#what-is-measured)
   and [the starting position](rig.md#starting-position).
 - [`test-plan.md`](test-plan.md): [logic](test-plan.md#logic), [consent](test-plan.md#consent),

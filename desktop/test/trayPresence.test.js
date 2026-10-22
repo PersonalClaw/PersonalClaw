@@ -12,6 +12,14 @@ const {
   shouldQuitOnAllWindowsClosed,
   makeTrayPresence,
   trayImageFile,
+  TRAY_STILLS,
+  STILL_FAMILY,
+  ROW_MAX,
+  TOOLTIP_MAX,
+  trayStill,
+  stateWords,
+  trayStillFile,
+  dockStillFile,
 } = require("../trayPresence");
 
 /** Flatten a template (including submenus) to every row carrying a click handler. */
@@ -109,7 +117,7 @@ describe("buildTrayMenuTemplate", () => {
     assert.match(text, /3 waiting on you/);
     assert.match(text, /1 running/);
     assert.match(text, /Quick Capture Note/);
-    assert.match(text, /Open Dashboard/);
+    assert.match(text, /Open PersonalClaw/);
     assert.match(text, /Open at Login/);
     assert.match(text, /Quit PersonalClaw/);
   });
@@ -117,7 +125,8 @@ describe("buildTrayMenuTemplate", () => {
   it("the waiting row deep-links to the surface that lists every kind waiting on you", () => {
     const a = actions();
     const template = buildTrayMenuTemplate({ presence: { waiting: 2, running: [], connected: true }, actions: a });
-    const row = template.find((r) => /2 waiting on you/.test(r.label || ""));
+    // The first line says the state in words; the row under it is the one that opens the list.
+    const row = template.slice(1).find((r) => /2 waiting on you/.test(r.label || ""));
     row.click();
     assert.deepStrictEqual(a.calls, [["deepLink", DEEP_LINKS.waiting]]);
     assert.equal(DEEP_LINKS.waiting, "#/mission-control", "Mission Control lists everything waiting on you");
@@ -180,17 +189,20 @@ describe("buildTrayMenuTemplate", () => {
 
   it("says `not connected` when the gateway poll failed", () => {
     const header = buildTrayMenuTemplate({ presence: EMPTY_PRESENCE })[0];
-    assert.match(header.label, /not connected/);
+    assert.equal(header.label, "PersonalClaw — Not connected to the gateway");
     assert.equal(header.enabled, false);
   });
 
-  it("renders ambient tiles when supplied and adds NOTHING when absent", () => {
-    const without = buildTrayMenuTemplate({});
-    const withTiles = buildTrayMenuTemplate({ tiles: [{ label: "Next meeting: 3pm" }] });
-    assert.ok(!labels(without).includes("Next meeting: 3pm"));
-    assert.ok(labels(withTiles).includes("Next meeting: 3pm"));
-    // Non-blocking: an absent tile registry must not leave an empty section behind.
-    assert.equal(withTiles.length, without.length + 2);
+  it("has no ambient-tiles seam: no option, no rows, and nothing in desktop/ names one (#3896)", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const plain = buildTrayMenuTemplate({});
+    const offered = buildTrayMenuTemplate({ tiles: [{ label: "Next meeting: 3pm" }] });
+    assert.deepEqual(labels(offered), labels(plain), "a tiles option is ignored, not rendered");
+    const dir = path.join(__dirname, "..");
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+      assert.doesNotMatch(fs.readFileSync(path.join(dir, file), "utf8"), /\btiles\b|setTiles/, file);
+    }
   });
 
   it("survives being built with no actions at all", () => {
@@ -309,7 +321,8 @@ describe("makeTrayPresence", () => {
     const site = /makeTrayPresence\(\{[\s\S]*?\n\}\);/.exec(main);
     assert.ok(site, "the tray wiring site must be findable");
     assert.match(site[0], /trayImagePath:\s*path\.join\(__dirname,\s*trayImageFile\(process\.platform\)\)/);
-    assert.doesNotMatch(site[0], /icon\.png/);
+    // The app icon is the dock's to go back to (#3896), never the menu bar's image.
+    assert.deepEqual(site[0].split("\n").filter((l) => /icon\.png/.test(l)).map((l) => l.trim()), ['appIconPath: path.join(__dirname, "icon.png"),']);
   });
 
   it("with no menu-bar image path there is no tray", () => {
@@ -405,7 +418,9 @@ describe("makeTrayPresence", () => {
     presence.setPresence({ waiting: 3 });
     presence.setCapturing(true);
     presence.setLoginItemState({ supported: true, enabled: true });
-    presence.setTiles([{ label: "x" }]);
+    presence.setRestarting(true);
+    presence.appearanceChanged();
+    presence.setBuddyState({ enabled: true });
     presence.destroy();
     assert.equal(presence.available, false);
   });
@@ -546,5 +561,178 @@ describe("main.js quick-capture deep link agrees with the SPA that reads it", ()
       !/\/api\/inbox/.test(mainCode),
       "the desktop shell must reach the inbox through the SPA, not by calling the API",
     );
+  });
+});
+
+// ── The buddy's state on the tray and the dock (#3896) ─────────────────────────────────────────
+
+describe("the tray's still orb", () => {
+  const live = (over = {}) => ({ ...EMPTY_PRESENCE, connected: true, listed: true, ...over });
+  const row = (over = {}) => ({ work: "chat:1", name: "A chat", phase: "Thinking", phaseKey: "thinking", line: "", since: "", route: "#/chat/1", blocked: false, waiting: 0, ...over });
+
+  it("is one of six, each a variant inside its family", () => {
+    assert.deepEqual([...TRAY_STILLS], ["idle", "working", "needs-you", "error", "listening", "offline"]);
+    assert.deepEqual({ ...STILL_FAMILY }, { idle: "quiet", working: "active", listening: "active", "needs-you": "waiting", error: "blocked", offline: "blocked" });
+  });
+
+  it("follows the state: each of the six from its own presence, and listening wins over the rest", () => {
+    assert.equal(trayStill(live()), "idle");
+    assert.equal(trayStill(live({ running: [row()] })), "working");
+    assert.equal(trayStill(live({ waiting: 2, running: [row()] })), "needs-you");
+    assert.equal(trayStill(live({ finished: [row({ phase: "Stopped", phaseKey: "error" })] })), "error");
+    assert.equal(trayStill(live({ running: [row({ blocked: true })] })), "error", "blocked with nothing waiting on you");
+    assert.equal(trayStill(live({ running: [row({ blocked: true, waiting: 1 })], waiting: 1 })), "needs-you");
+    assert.equal(trayStill(live({ interrupted: [{ row: row(), at: 0 }] })), "error", "work a restart cut off");
+    assert.equal(trayStill(EMPTY_PRESENCE), "offline");
+    for (const p of [live(), live({ waiting: 3 }), EMPTY_PRESENCE, live({ finished: [row({ phaseKey: "error" })] })]) {
+      assert.equal(trayStill(p, { capturing: true }), "listening");
+    }
+  });
+
+  it("takes an announced restart from the doorbell's connection, the one place the shell hears it", () => {
+    const main = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "main.js"), "utf8");
+    const site = /onConnection: \(state\) => \{[\s\S]*?\n  \},/.exec(main);
+    assert.ok(site, "the doorbell's onConnection must be findable");
+    assert.match(site[0], /trayPresence\.setRestarting\(state === "restarting"\);/);
+    assert.equal((main.match(/setRestarting\(/g) || []).length, 1, "nothing else says restarting");
+  });
+
+  it("shows an announced restart as working, said as restarting, never offline", () => {
+    assert.equal(trayStill(EMPTY_PRESENCE, { restarting: true }), "working");
+    assert.equal(stateWords(EMPTY_PRESENCE, { restarting: true }), "PersonalClaw is restarting");
+  });
+
+  it("names the exact state in words for every state, and a count only supports the words", () => {
+    const cases = [
+      [live(), {}, "Nothing running"],
+      [live({ running: [row(), row({ work: "chat:2" })] }), {}, "Working: 2 running"],
+      [live({ waiting: 3 }), {}, "Needs you: 3 waiting on you"],
+      [live({ finished: [row({ phaseKey: "error" })] }), {}, "Something stopped"],
+      [live(), { capturing: true }, "Listening"],
+      [EMPTY_PRESENCE, {}, "Not connected to the gateway"],
+    ];
+    const seen = new Set();
+    for (const [p, flags, words] of cases) {
+      seen.add(trayStill(p, flags));
+      assert.equal(stateWords(p, flags), words);
+      const header = buildTrayMenuTemplate({ presence: p, flags })[0];
+      assert.equal(header.label, `PersonalClaw — ${words}`, "the menu's first line");
+      assert.ok(header.label.length <= ROW_MAX);
+      if (!flags.capturing) {
+        const tip = composeTrayTooltip({ ...p, buddyOn: true });
+        assert.equal(tip, `PersonalClaw — ${words}`, "the tooltip");
+        assert.doesNotMatch(tip, /—\s*\d+\s*$/, "never a bare count");
+      }
+    }
+    assert.equal(seen.size, 6, "every still has its words");
+  });
+
+  it("keeps the tooltip within 80 characters and the first line within 56", () => {
+    const p = live({ running: [row()], stale: true, finished: [row({ phaseKey: "error" })] });
+    assert.ok(composeTrayTooltip({ ...p, buddyOn: true }).length <= TOOLTIP_MAX);
+    assert.ok(buildTrayMenuTemplate({ presence: p })[0].label.length <= ROW_MAX);
+  });
+
+  it("puts no count beside the still while Buddy status is on, and keeps capture's title", () => {
+    assert.equal(composeTrayTitle({ waiting: 4, buddyOn: true }), "");
+    assert.equal(composeTrayTitle({ waiting: 4, buddyOn: true, capturing: true }), "● Listening");
+    assert.equal(composeTrayTitle({ waiting: 4 }), "4", "Buddy status off: the menu bar as before");
+  });
+
+  it("is a template image on macOS, and the colour one for the appearance elsewhere", () => {
+    assert.equal(trayStillFile("needs-you", { platform: "darwin" }), "buddy/tray-needs-youTemplate.png");
+    assert.equal(trayStillFile("needs-you", { platform: "linux", dark: true }), "buddy/tray-needs-you-dark.png");
+    assert.equal(trayStillFile("idle", { platform: "linux", dark: false }), "buddy/tray-idle-light.png");
+    assert.equal(trayStillFile(null, { platform: "darwin" }), trayImageFile("darwin"), "no still: the claw");
+    for (const still of TRAY_STILLS) {
+      for (const [platform, dark] of [["darwin", false], ["linux", false], ["linux", true]]) {
+        const file = require("node:path").join(__dirname, "..", trayStillFile(still, { platform, dark }));
+        assert.ok(require("node:fs").existsSync(file), `${file} is rendered`);
+      }
+    }
+  });
+});
+
+describe("makeTrayPresence with the buddy's stills", () => {
+  const goodImage = (file) => ({ file, isEmpty: () => false });
+  function rig({ platform = "darwin", dark = false } = {}) {
+    const calls = { images: [], dockIcons: [] };
+    class Tray {
+      setTitle() {}
+      setToolTip() {}
+      setContextMenu() {}
+      on() {}
+      destroy() {}
+      setImage(image) { calls.images.push(require("node:path").basename(image.file)); }
+    }
+    const presence = makeTrayPresence({
+      TrayCtor: Tray,
+      MenuCtor: { buildFromTemplate: (t) => t },
+      nativeImageMod: { createFromPath: goodImage },
+      trayImagePath: "/app/trayTemplate.png",
+      platform,
+      isDark: () => dark,
+      dock: platform === "darwin" ? { setIcon: (image) => calls.dockIcons.push(require("node:path").basename(image.file)) } : null,
+      appIconPath: "/app/icon.png",
+    });
+    presence.start();
+    return { presence, calls };
+  }
+  const live = (over = {}) => ({ ...EMPTY_PRESENCE, connected: true, listed: true, ...over });
+
+  it("keeps the claw and the app icon while Buddy status is off", () => {
+    const { presence, calls } = rig();
+    presence.setPresence(live({ waiting: 2 }));
+    assert.deepEqual(calls.images, []);
+    assert.deepEqual(calls.dockIcons, []);
+  });
+
+  it("swaps the image on a change of state, once per change, and listening wins", () => {
+    const { presence, calls } = rig();
+    presence.setBuddyState({ enabled: true });
+    presence.setPresence(live());
+    presence.setPresence(live());
+    presence.setPresence(live({ waiting: 1 }));
+    presence.setCapturing(true);
+    presence.setCapturing(false);
+    presence.setPresence(EMPTY_PRESENCE);
+    presence.setRestarting(true);
+    assert.deepEqual(calls.images, [
+      "tray-offlineTemplate.png",
+      "tray-idleTemplate.png",
+      "tray-needs-youTemplate.png",
+      "tray-listeningTemplate.png",
+      "tray-needs-youTemplate.png",
+      "tray-offlineTemplate.png",
+      "tray-workingTemplate.png",
+    ]);
+    presence.setBuddyState({ enabled: false });
+    assert.equal(calls.images.at(-1), "trayTemplate.png", "off again: the claw");
+  });
+
+  it("follows the appearance with the colour stills on Linux", () => {
+    let dark = false;
+    const calls = { images: [] };
+    class Tray { setTitle() {} setToolTip() {} setContextMenu() {} on() {} destroy() {} setImage(i) { calls.images.push(require("node:path").basename(i.file)); } }
+    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: { buildFromTemplate: (t) => t }, nativeImageMod: { createFromPath: goodImage }, trayImagePath: "/app/tray.png", platform: "linux", isDark: () => dark });
+    presence.start();
+    presence.setBuddyState({ enabled: true });
+    presence.setPresence(live());
+    dark = true;
+    presence.appearanceChanged();
+    assert.deepEqual(calls.images.slice(-2), ["tray-idle-light.png", "tray-idle-dark.png"]);
+  });
+
+  it("shows the dock's still only while something needs the owner, and the app icon after", () => {
+    const { presence, calls } = rig({ dark: true });
+    presence.setBuddyState({ enabled: true });
+    presence.setPresence(live({ running: [{ work: "w", name: "W", phase: "Thinking", phaseKey: "thinking", line: "", since: "", route: "", blocked: false, waiting: 0 }] }));
+    assert.deepEqual(calls.dockIcons, [], "working is not something that needs the owner");
+    presence.setPresence(live({ waiting: 1 }));
+    presence.setPresence(live({ waiting: 2 }));
+    presence.setPresence(live());
+    assert.deepEqual(calls.dockIcons, ["dock-needs-you-dark.png", "icon.png"]);
+    assert.equal(dockStillFile(live({ waiting: 1 }), { platform: "linux", buddyOn: true }), null, "no dock on Linux");
+    assert.equal(dockStillFile(live({ waiting: 1 }), { platform: "darwin", buddyOn: false }), null, "Buddy status off");
   });
 });

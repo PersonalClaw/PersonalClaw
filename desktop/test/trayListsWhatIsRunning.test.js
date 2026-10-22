@@ -46,7 +46,7 @@ function actions() {
   return { calls, deepLink: (href) => calls.push(href) };
 }
 const menu = (presence, a = actions()) => buildTrayMenuTemplate({ presence: { ...EMPTY_PRESENCE, ...presence }, actions: a });
-const running = (template) => template.find((r) => /running|could not be read/.test(r.label || ""));
+const running = (template) => template.slice(1).find((r) => /running|could not be read/.test(r.label || ""));
 const finished = (template) => template.find((r) => /^Just finished/.test(r.label || ""));
 
 describe("each row says what the work is doing, and opens it", () => {
