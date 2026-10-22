@@ -31,6 +31,7 @@ import type { RouteProps } from './useQueryState'
 import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
 import { syncAppGenUiComponents } from './appGenUiLayer'
 import { api } from '../lib/api'
+import { reportingWrite } from './reportingWrite'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
@@ -600,6 +601,8 @@ function AppInner() {
       })
       .catch(() => notify("Couldn't read what is waiting on you.", 'error'))
   }
+  // ⇧Esc: every chat seen. Its marks clear when the gateway says so (`chat_seen`), on every window.
+  const markAllRead = () => { void reportingWrite('mark every chat as read', () => api.markAllChatsSeen()) }
   const goThread = (n: number) => {
     threadNumberRoute(n)
       .then((to) => {
@@ -624,6 +627,7 @@ function AppInner() {
     ...(embedRef.current ? {} : { 'focus-mode': toggleFocus, ...(readsAChat ? { 'reading-mode': toggleReading } : {}) }),
     'workspace-tree': chatTree,
     'next-needs-you': goNeedsYou,
+    'mark-all-read': markAllRead,
     'new-chat': () => navigate('chat/new'),
     ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goThread(n)])),
   }
@@ -632,6 +636,7 @@ function AppInner() {
   useKeyBinding('focus-mode', keyRunners['focus-mode'])
   useKeyBinding('reading-mode', keyRunners['reading-mode'])
   useKeyBinding('next-needs-you', () => keyRunners['next-needs-you']?.())
+  useKeyBinding('mark-all-read', () => keyRunners['mark-all-read']?.())
   useKeyBinding('new-chat', () => keyRunners['new-chat']?.())
   useKeyBinding('chat-1', () => goThread(1))
   useKeyBinding('chat-2', () => goThread(2))

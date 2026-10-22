@@ -4,8 +4,8 @@
  *
  *  The approval cases answer every request in the page, so the test counts exactly what each key
  *  sent: one approve per decision, nothing on Enter alone on the card or Escape, nothing before a
- *  second confirmation, however Allow is pressed again. ⌘⌥A and ⌘1 read lists the page answers too,
- *  so where each key lands is known. */
+ *  second confirmation, however Allow is pressed again. ⌘⌥A, ⌘1 and ⇧Esc read lists the page
+ *  answers too, so where each key lands is known. */
 import { test, expect, type Page, type Request } from '@playwright/test'
 import { gotoRoute, driveScriptedTurns } from './helpers'
 
@@ -136,6 +136,33 @@ test.describe('the keymap, in the built app', () => {
     await gotoRoute(page, 'dashboard')
     await page.keyboard.press(`${MOD}+Alt+A`)
     await expect(page).toHaveURL(/#\/chat\/e2e-first$/)
+  })
+
+  test('⇧Esc marks every chat as read, once, and its mark clears', async ({ page }) => {
+    // One chat with a reply you have not seen. The mark is the gateway's: the page clears it when
+    // the gateway's own `chat_seen` frame says every chat was seen and the list reads it seen.
+    let seen = false
+    const marks: Request[] = []
+    await page.route('**/api/chat/sessions', (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          {
+            key: 'e2e-unread', title: 'Unread reply', messages: 2, run_state: 'idle', last_activity_ts: '2026-02-01T00:00:00Z',
+            attention: { unread: !seen, needs_you: false, your_turn: true },
+          },
+        ]) })
+        : route.fallback())
+    await page.route('**/api/chat/seen', (route) => {
+      marks.push(route.request())
+      seen = true
+      return route.continue()
+    })
+    await gotoRoute(page, 'dashboard')
+    const row = page.locator('[data-thread-key="chat:e2e-unread"]')
+    await expect(row).toHaveAccessibleName('Unread reply, unread')
+    await page.keyboard.press('Shift+Escape')
+    await expect(row).toHaveAccessibleName('Unread reply')
+    expect(marks.map((r) => r.method())).toEqual(['POST'])
   })
 
   test('↑ in an empty composer restores the last prompt', async ({ page }) => {

@@ -17,6 +17,7 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt. Shortcuts can'
 | ⌘\\ | turns focus mode on or off: it hides the sidebar, the side pane and the status line |
 | ⌘⇧. | turns reading mode on or off in a chat: it folds the composer while you read |
 | ⌘⌥A | goes to the oldest chat that needs you: approvals first, then the chats waiting on your reply, in the order Home lists them |
+| ⇧Esc | marks every chat as read, on every window and the phone. A chat with something waiting on you keeps its mark: reading it answers nothing |
 | ⌘N | starts a new chat |
 | ⌘1 to ⌘9 | opens the first nine chats in the chat list, pinned first, then the most recent |
 | ↑ in an empty composer | puts your last prompt back |
