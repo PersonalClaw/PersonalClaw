@@ -345,8 +345,8 @@ function stateWords(presence, { capturing = false, restarting = false } = {}) {
 }
 
 /** The menu-bar image's file, beside this module: the still for the state while Buddy status is on
- *  (a template image on macOS, else the colour one for the system's light or dark appearance), or
- *  the claw (`trayImageFile`) while it is off. */
+ *  (a template image on macOS, else the one drawn in the system's light or dark appearance's ink),
+ *  or the claw (`trayImageFile`) while it is off. */
 function trayStillFile(still, { platform, dark = false } = {}) {
   if (!TRAY_STILLS.includes(still)) return trayImageFile(platform);
   return platform === "darwin" ? `buddy/tray-${still}Template.png` : `buddy/tray-${still}-${dark ? "dark" : "light"}.png`;
@@ -752,7 +752,7 @@ function makeTrayPresence({
       restarting = Boolean(on);
       render();
     },
-    /** The system's appearance changed: the colour stills follow it. */
+    /** The system's appearance changed: the Linux stills follow it. */
     appearanceChanged() {
       render();
     },

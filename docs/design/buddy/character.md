@@ -166,7 +166,11 @@ them, and a test holds the committed files to what the table draws.
 - **The tray's and the dock's stills** are `poses/tray-<still>-<size>.svg` at 16, 18 and 22 px,
   each its family's still with the badge inside the square, and beside each a `-template.svg`: black
   on clear with no wash, for the macOS menu bar, which recolours it. The rasters the tray and the
-  dock load are their task's export ([#3896]).
+  dock load are their task's export ([#3896]): the macOS menu bar takes the templates, the Linux
+  tray the same template drawing painted in its appearance's own ink (`--color-on-surface`), and
+  the dock the colour drawing at 22 px. At 18 px the colour drawing's dots, shaded by their
+  opacity, hold under 3:1 against a plain bar, which the one ink holds for every still
+  (`desktop/test/buddyStillsContrast.test.js`).
 - **The marks the buddy adds:** the microphone while listening and a slash while offline, beside the
   agent orb's "!", "?" and "×", the working mark and the check.
 - **What the drawing settles:** presence and the answers are drawn on the working pose, the one an

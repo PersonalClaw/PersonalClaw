@@ -2009,7 +2009,7 @@ if (!app.requestSingleInstanceLock()) {
     const win = createWindow();
     // The sidebar material follows the system's reduced-transparency setting in every window.
     windowChrome.watch(() => appWindows());
-    // The tray's colour stills follow the system's light or dark appearance.
+    // The Linux tray's stills follow the system's light or dark appearance.
     nativeTheme.on("updated", () => trayPresence.appearanceChanged());
 
     try {

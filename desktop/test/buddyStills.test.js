@@ -31,7 +31,7 @@ const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
 describe("the buddy's still orbs", () => {
   it("were rendered by today's script from today's drawings", () => {
     assert.equal(manifest.script_sha256, sha256(SCRIPT), "render_stills.mjs changed: run node docs/design/buddy/render_stills.mjs");
-    assert.equal(manifest.sources.length, 14, "the six colour and six template drawings, the dock's and the sheet");
+    assert.equal(manifest.sources.length, 8, "the six template drawings, the dock's colour drawing and the sheet");
     for (const src of manifest.sources) {
       assert.equal(sha256(path.join(REPO, src.path)), src.sha256, `${src.path} changed: run node docs/design/buddy/render_stills.mjs`);
     }
@@ -67,9 +67,17 @@ describe("the buddy's still orbs", () => {
     assert.ok(pkg.build.files.includes("buddy"), "desktop/package.json build.files lists the buddy/ folder");
   });
 
-  it("each template image is drawn from the template drawing, and each colour one from the colour drawing", () => {
+  it("each template image and each Linux tray still is drawn from the template drawing, and the dock's from the colour one", () => {
     for (const out of manifest.outputs) {
-      assert.equal(out.path.includes("Template"), out.source.endsWith("-template.svg"), out.path);
+      const tray = out.path.startsWith("desktop/buddy/tray-");
+      assert.equal(out.source.endsWith("-template.svg"), tray, out.path);
+    }
+  });
+
+  it("each Linux tray still is the template painted in its appearance's own ink, and nothing else is (#3896)", () => {
+    for (const out of manifest.outputs) {
+      const mode = /^desktop\/buddy\/tray-[a-z-]+-(light|dark)(@2x)?\.png$/.exec(out.path)?.[1];
+      assert.equal(out.ink, mode ? `--sheet-template (${mode})` : undefined, out.path);
     }
   });
 });

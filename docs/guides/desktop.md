@@ -54,8 +54,9 @@ keeps its badge and its dots' density, so it reads in a one-colour menu bar, in 
 with no animation, and the first line of the menu and the tooltip say the state in words. No count
 sits beside it. Listening always wins the icon, and an announced restart shows working, never
 offline. On macOS, the dock icon shows the needs-you orb while something waits on you, and goes
-back to the app icon when nothing does; Linux has no dock icon to change. On Linux the orb follows
-your light or dark appearance.
+back to the app icon when nothing does; Linux has no dock icon to change. On Linux the orb is drawn
+in one ink, your light or dark appearance's own, which holds 3:1 against the bar at 18 px; macOS
+draws its menu-bar images in the bar's ink itself, Increase Contrast included.
 
 If the gateway cannot be reached the menu says **"not connected"** rather than showing
 zeroes, because a zero looks like good news.

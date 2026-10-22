@@ -3,7 +3,7 @@
 // show, rendered from the drawn stills in docs/design/buddy/poses/ (character.md, "The drawn
 // poses"), so no raster is painted by hand and none can drift from the drawing.
 //
-//   desktop/buddy/tray-<still>-<mode>.png, @2x      18/36  colour     the Linux tray
+//   desktop/buddy/tray-<still>-<mode>.png, @2x      18/36  mode ink   the Linux tray
 //   desktop/buddy/tray-<still>Template.png, @2x     18/36  template   the macOS menu bar, which
 //                                                                     recolours a template image
 //   desktop/buddy/dock-needs-you-<mode>.png         512    colour     the macOS dock while
@@ -11,8 +11,11 @@
 //
 // Each <still> is idle, working, needs-you, error, listening or offline, and each <mode> light or
 // dark: the shell takes the one its system appearance asks for. The tray's come from the 18 px
-// drawings (tray-<still>-18.svg and its -template.svg), the dock's from the 22 px one, the largest
-// the set draws. Each SVG is drawn full-frame on a transparent ground in Playwright's Chromium, as
+// drawings, the dock's from the 22 px colour one, the largest the set draws. The Linux tray's are
+// the template drawing (tray-<still>-18-template.svg) painted in the mode's own ink (the sheet's
+// `--sheet-template`, the scheme's on-surface): at 18 and 36 px the colour drawing's dots, shaded by
+// their opacity, hold under 3:1 against the bar they sit on, and the one ink holds it for every
+// still (#3896, desktop/test/buddyStillsContrast.test.js). Each SVG is drawn full-frame on a transparent ground in Playwright's Chromium, as
 // docs/brand/render_marks.mjs draws the claw mark.
 //
 // A colour drawing paints with design tokens (`var(--color-orb-alive)`, `var(--color-warn)`, …),
@@ -46,8 +49,8 @@ const STILLS = ['idle', 'working', 'needs-you', 'error', 'listening', 'offline']
 const OUTPUTS = [
   ...STILLS.flatMap((still) => [
     ...MODES.flatMap((mode) => [
-      { path: `desktop/buddy/tray-${still}-${mode}.png`, size: 18, source: `${POSES}/tray-${still}-18.svg`, mode },
-      { path: `desktop/buddy/tray-${still}-${mode}@2x.png`, size: 36, source: `${POSES}/tray-${still}-18.svg`, mode },
+      { path: `desktop/buddy/tray-${still}-${mode}.png`, size: 18, source: `${POSES}/tray-${still}-18-template.svg`, mode, ink: true },
+      { path: `desktop/buddy/tray-${still}-${mode}@2x.png`, size: 36, source: `${POSES}/tray-${still}-18-template.svg`, mode, ink: true },
     ]),
     { path: `desktop/buddy/tray-${still}Template.png`, size: 18, source: `${POSES}/tray-${still}-18-template.svg`, mode: null },
     { path: `desktop/buddy/tray-${still}Template@2x.png`, size: 36, source: `${POSES}/tray-${still}-18-template.svg`, mode: null },
@@ -71,6 +74,9 @@ const TOKENS = Object.fromEntries(MODES.map((mode) => {
   return [mode, block[1].trim()];
 }));
 
+/** A template drawing painted in the mode's own ink, in place of the black the system recolours. */
+const inked = (markup) => markup.replaceAll('fill: black', 'fill: var(--sheet-template)');
+
 function html(markup, size, mode) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   :root{${mode ? TOKENS[mode] : ''}}
@@ -87,7 +93,9 @@ try {
   for (const out of OUTPUTS) {
     const ctx = await browser.newContext({ viewport: { width: out.size, height: out.size }, deviceScaleFactor: 1 });
     const page = await ctx.newPage();
-    await page.setContent(html(sources.get(out.source).toString('utf8'), out.size, out.mode), { waitUntil: 'load' });
+    const markup = sources.get(out.source).toString('utf8');
+    if (out.ink && !markup.includes('fill: black')) throw new Error(`${out.source} has no black to paint in the mode's ink`);
+    await page.setContent(html(out.ink ? inked(markup) : markup, out.size, out.mode), { waitUntil: 'load' });
     const png = await page.screenshot({ omitBackground: true });
     await ctx.close();
     rendered.push({ ...out, png });
@@ -100,7 +108,7 @@ const manifest = {
   about: 'Written by docs/design/buddy/render_stills.mjs. Re-run it after a change to a drawing; do not edit by hand.',
   script_sha256: sha256(scriptBytes),
   sources: [...sources, [SHEET, sheetBytes]].map(([source, bytes]) => ({ path: source, sha256: sha256(bytes) })),
-  outputs: rendered.map((r) => ({ path: r.path, size: r.size, source: r.source, sha256: sha256(r.png) })),
+  outputs: rendered.map((r) => ({ path: r.path, size: r.size, source: r.source, ...(r.ink ? { ink: `--sheet-template (${r.mode})` } : {}), sha256: sha256(r.png) })),
 };
 const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
 
