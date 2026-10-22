@@ -151,7 +151,37 @@ describe('nothing reaches the network', () => {
   })
 })
 
+describe('the stage draws the real card', () => {
+  it('expanded, the card shows the focused work and its steps, and its Allow sends the machine the answer', async () => {
+    await mount()
+    // The next timer is the new work's show delay: until it fires, the room is about to show.
+    for (const name of ['Start work', NEXT, 'Set its phase', 'Click the orb']) press(name)
+    expect(stage().dataset.situation).toBe('expanded')
+    const card = stage().querySelector('[data-buddy-card]') as HTMLElement
+    expect(card, 'the expanded room holds the card').not.toBeNull()
+    expect(card.querySelector('[data-step-place="current"]')?.textContent).toContain('Searching')
+    expect(card.querySelector('[data-step-place="before"]')?.textContent).toContain('Thinking')
+    press('An approval arrives')
+    fireEvent.click(within(stage()).getByRole('button', { name: 'Allow git push' }))
+    expect(logged()[0], 'the log is newest first').toBe('answered')
+    expect(document.querySelector('[data-event-log]')?.textContent).toMatch(/answer, not sent: allow/)
+    expect(requests.filter((r) => !r.includes('/api/themes'))).toEqual([])
+  })
+})
+
 describe('the tabs', () => {
+  it('the card tab draws the card in each of its states, every alert kind among them', async () => {
+    await mount('card')
+    const keys = [...document.querySelectorAll('[data-card-fixture]')].map((f) => f.getAttribute('data-card-fixture'))
+    expect(keys).toEqual(['approval', 'question', 'error', 'five', 'finished', 'empty', 'large', 'reconnecting', 'failed', 'ended'])
+    const alerts = [...document.querySelectorAll('[data-card-alert]')].map((a) => a.getAttribute('data-card-alert'))
+    expect(alerts).toEqual(['approval', 'input', 'error'])
+    expect(document.querySelectorAll('[data-card-fixture="five"] [data-in-sight]')).toHaveLength(5)
+    fireEvent.click(screen.getByRole('button', { name: 'Allow Bash' }))
+    expect(screen.getByText(/An approval, two more waiting: allow, written here and never sent/)).toBeTruthy()
+    expect(requests.filter((r) => !r.includes('/api/themes'))).toEqual([])
+  })
+
   it('the pose sheet draws every family pose and the focused card, each with its words', async () => {
     await mount('poses')
     const poses = [...document.querySelectorAll('[data-pose]')]
@@ -171,5 +201,20 @@ describe('the tabs', () => {
     expect(stage().dataset.situation).toBe('alert')
     fireEvent.click(next)
     expect(stage().dataset.situation, 'the owner allowed it').toBe('compact')
+  })
+})
+
+describe("the playground's Allow and Deny", () => {
+  it("are the app's words and names, and neither is the primary tier", async () => {
+    const { approvalChoicesOf } = await import('./stageCard')
+    const answered: string[] = []
+    const row = { tool: 'Bash', deny_effect: 'Deny ends this turn.' } as Parameters<typeof approvalChoicesOf>[0]
+    const [allow, deny] = approvalChoicesOf(row, (a) => answered.push(a.kind))
+    expect([allow.label, allow.name, deny.label, deny.name]).toEqual(['Allow', 'Allow Bash', 'Deny', 'Deny Bash. Deny ends this turn.'])
+    expect(allow.tone ?? 'neutral', 'the buddy never argues for an answer').not.toBe('primary')
+    expect(allow.approves).toBe(true)
+    void allow.onClick()
+    void deny.onClick()
+    expect(answered).toEqual(['allow', 'deny'])
   })
 })

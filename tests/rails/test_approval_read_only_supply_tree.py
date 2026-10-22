@@ -30,13 +30,14 @@ class TestBothPermissionSurfacesAgree:
 
     #: The surfaces that read an approval's radius off the wire. A registry row reaches every
     #: queue card (the run page, Mission Control, To triage, the Inbox, a loop's page) through
-    #: the one segment adapter, `approvalSegment.ts`.
+    #: the one segment adapter, `approvalSegment.ts`; a waiting-list row reaches the phone
+    #: companion and the buddy's card through `approvalRow.tsx`.
     READERS = [
         "app/useApprovalToasts.ts",
+        "pages/chat/approvalRow.tsx",
         "pages/chat/approvalSegment.ts",
         "pages/chat/chatTypes.ts",
         "pages/chat/liveToolFrames.ts",
-        "pages/companion/CompanionPage.tsx",
     ]
 
     def test_every_reader_decodes_the_radius_through_the_one_decoder(self) -> None:

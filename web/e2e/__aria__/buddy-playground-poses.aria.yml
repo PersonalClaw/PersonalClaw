@@ -4,6 +4,7 @@
   - radiogroup "Playground view":
     - radio "Play"
     - radio "A day"
+    - radio "Card"
     - radio "Poses" [checked]
   - group "Look":
     - heading "Look" [level=#]

@@ -4,18 +4,22 @@
  *  A screen's top edge holds the island: the peek's orb, the compact line with its count of other
  *  work, or the expanded card. Undocked, the floating orb sits on the screen with its bubble or its
  *  card. Beside the screen: Waiting on You in the waiting list's order, Running Now in start order,
- *  and the focused work. The card is the playground's stand-in until the expanded card lands
- *  (#3893). The screen's width is the compact width being played (320, 390, 412 px) or the page's. */
+ *  and the focused work. The card is the real expanded card (`ui/BuddyCard.tsx`, #3893), drawn from
+ *  the machine by `stageCard.ts`, and its controls send the machine its answer, as the presence will.
+ *  The screen's width is the compact width being played (320, 390, 412 px) or the page's. */
 
 import type { ReactNode } from 'react'
+import { BuddyCard } from '../../ui/BuddyCard'
 import { BuddyOrb } from '../../ui/BuddyOrb'
+import { Morph } from '../../ui/motion/Morph'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { orbStateOf, type BuddyState as OrbState } from '../../ui/buddy/orbPoses'
 import { focusedWork, viewOf, type BuddyState, type Truth } from '../../lib/buddy/machine'
-import { inSight } from '../../lib/buddy/focus'
 import { lineOf } from '../../lib/buddy/lines'
+import type { StepWindows } from '../../lib/buddy/steps'
 import type { BuddySurface } from '../../lib/buddy/copy'
 import { phaseLabel } from '../../lib/workPhase'
+import { cardPropsOf, type StageAnswer } from './stageCard'
 
 /** The widths the stage plays: the three compact widths and the page's own. */
 export const STAGE_WIDTHS = ['320', '390', '412', 'full'] as const
@@ -42,37 +46,26 @@ function Section({ title, children, count }: { title: string; children: ReactNod
   )
 }
 
-/** The expanded card: the focused orb at 48 with its line, the alert's brief and whether its
- *  controls act, then every other live piece of work as an orb at 18 and its one line. */
-function Card({ machine }: { machine: BuddyState }) {
-  const view = viewOf(machine)
-  const truth = view.truth!
-  const alert = machine.queue.find((a) => a.id === machine.shown)
-  const others = inSight(machine.live, focusedWork(machine)?.id ?? machine.focus)
-  return (
-    <div data-stage-card="" className="flex w-full min-w-0 flex-col gap-m rounded-xl bg-surface-high p-l">
-      <BuddyOrb state={orbOf(truth, machine)} line={lineOf(truth, 'expandedCard')} size={48} />
-      {alert ? (
-        <p data-type="body-s" className="text-on-surface-var">
-          {ALERT_WORDS[alert.kind]}: {alert.brief}.{' '}
-          {view.actions === 'on' ? 'Its controls act.' : view.actions === 'confirm' ? 'It asks to confirm first.' : view.actions === 'listening' ? 'Its controls wait while you talk.' : view.actions === 'offline' ? 'Its controls wait for the connection.' : ''}
-          {view.waiting ? ` ${view.waiting} more waiting.` : ''}
-        </p>
-      ) : null}
-      {view.countdown ? <p data-type="body-s" className="text-on-surface-var">Folding in 10 seconds.</p> : null}
-      {others.length ? (
-        <ul className="flex flex-col gap-s" aria-label="Other live work">
-          {others.map((w) => (
-            <li key={w.id}><BuddyOrb state={w.phase} line={lineOf({ kind: 'phase', phase: w.phase, work: w }, 'inSightRow')} size={18} /></li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  )
+interface StageProps {
+  machine: BuddyState
+  width: StageWidth
+  /** Each piece of work's step window, folded from the playground's inputs. */
+  steps: StepWindows
+  /** An alert's control was used: the playground sends the machine its answer. */
+  onAnswer: (answer: StageAnswer) => void
+}
+
+/** The focused orb's shared-element id: the compact island's orb and the card's are one object. */
+const ORB_ID = 'buddy-playground-orb'
+
+/** The expanded card, drawn from the machine. */
+function Card({ machine, steps, onAnswer }: Pick<StageProps, 'machine' | 'steps' | 'onAnswer'>) {
+  const truth = viewOf(machine).truth!
+  return <BuddyCard {...cardPropsOf(machine, steps, onAnswer)} state={orbOf(truth, machine)} orbId={ORB_ID} />
 }
 
 /** The screen: the island on its top edge, or the floating orb. */
-function Screen({ machine, width }: { machine: BuddyState; width: StageWidth }) {
+function Screen({ machine, width, steps, onAnswer }: StageProps) {
   const view = viewOf(machine)
   const truth = view.truth
   return (
@@ -90,17 +83,17 @@ function Screen({ machine, width }: { machine: BuddyState; width: StageWidth }) 
           {view.room === 'peek' ? (
             <BuddyOrb state={orbOf(truth, machine)} line="" size={18} />
           ) : view.room === 'expanded' ? (
-            <Card machine={machine} />
+            <Card machine={machine} steps={steps} onAnswer={onAnswer} />
           ) : (
             <div className="flex w-full min-w-0 max-w-sm items-center gap-s rounded-full bg-surface-high px-m py-xs">
-              <span className="flex min-w-0 flex-1"><BuddyOrb state={orbOf(truth, machine)} line={lineOf(truth, 'topEdgeCompact')} size={24} /></span>
+              <Morph id={ORB_ID} className="flex min-w-0 flex-1"><BuddyOrb state={orbOf(truth, machine)} line={lineOf(truth, 'topEdgeCompact')} size={24} /></Morph>
               {view.inSight ? <span data-type="label-s" className="shrink-0 text-on-surface-var">+{view.inSight}</span> : null}
             </div>
           )}
         </div>
       ) : (
         <div data-stage-floating="" className="mt-auto flex w-full min-w-0 flex-col items-end gap-s">
-          {machine.card === 'open' ? <Card machine={machine} /> : null}
+          {machine.card === 'open' ? <Card machine={machine} steps={steps} onAnswer={onAnswer} /> : null}
           {machine.card === 'hover' || machine.shown ? (
             <p data-type="body-s" className="max-w-full rounded-lg bg-surface-high px-m py-xs text-on-surface"><Line truth={truth} surface="floatingBubble" /></p>
           ) : null}
@@ -112,12 +105,12 @@ function Screen({ machine, width }: { machine: BuddyState; width: StageWidth }) 
 }
 
 /** The stage: the screen, then Waiting on You, Running Now and the focused work. */
-export function BuddyStage({ machine, width }: { machine: BuddyState; width: StageWidth }) {
+export function BuddyStage({ machine, width, steps, onAnswer }: StageProps) {
   const view = viewOf(machine)
   const focus = focusedWork(machine)
   return (
     <div data-stage="" data-situation={view.situation} data-family={view.family ?? 'none'} className="flex min-w-0 flex-col gap-l">
-      <Screen machine={machine} width={width} />
+      <Screen machine={machine} width={width} steps={steps} onAnswer={onAnswer} />
       <p data-type="body-s" className="text-on-surface-var">
         {view.situation === 'hidden' ? 'Hidden' : `Showing ${view.situation}`}
         {view.family ? `, in the ${view.family} family` : ''}

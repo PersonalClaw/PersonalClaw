@@ -148,6 +148,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'buddy/playground', from: ['documented'] },
   { route: 'buddy/playground?tab=day', from: ['documented'] },
   { route: 'buddy/playground?tab=poses', from: ['documented'] },
+  { route: 'buddy/playground?tab=card', from: ['documented'] },
 
   // ── Home ──────────────────────────────────────────────────────────────────────────────────────
   { route: 'dashboard?safe=1', from: ['documented'] },

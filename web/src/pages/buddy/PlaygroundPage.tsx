@@ -4,14 +4,15 @@
  *  It drives the real state machine and the real orb, and mocks only their inputs (`playground.ts`):
  *  every control is one input, the clock fires the machine's timers at their lengths, and the log
  *  shows every input with what the machine asked for. Nothing reaches the gateway: an answer the
- *  machine asks to send is shown in the log and never sent. Three tabs, each an address of its own
- *  (`?tab=`): Play, the scripted day (`scriptedDay.ts`) and the pose sheet the renderer's snapshots
- *  are taken from.
+ *  machine asks to send is shown in the log and never sent. Four tabs, each an address of its own
+ *  (`?tab=`): Play, the scripted day (`scriptedDay.ts`), the expanded card in each of its states
+ *  (`cardFixtures.ts`) and the pose sheet the renderer's snapshots are taken from.
  *
  *  A full-screen route outside the navigation, as `#/companion` is, and in release builds: the
  *  owner can play it on an installed build, and nothing links to it but its address. */
 
 import { useEffect, useRef, useState } from 'react'
+import { BuddyCard, type CardAlert } from '../../ui/BuddyCard'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { PageTitle } from '../../ui/PageTitle'
@@ -21,11 +22,13 @@ import { situationOf } from '../../lib/buddy/machine'
 import type { Effect } from '../../lib/buddy/inputs'
 import { BuddyStage, STAGE_WIDTHS, type StageWidth } from './BuddyStage'
 import { LookControls, PlaygroundControls, clockOf } from './PlaygroundControls'
+import { CARD_FIXTURES } from './cardFixtures'
+import { approvalChoicesOf, type StageAnswer } from './stageCard'
 import { PoseSheet } from './PoseSheet'
 import { advance, fire, startPlayground, use, type LogEntry, type Playground } from './playground'
 import { DAY_LENGTH, SCRIPTED_DAY, dayAt } from './scriptedDay'
 
-const TABS = [{ key: 'play', label: 'Play' }, { key: 'day', label: 'A day' }, { key: 'poses', label: 'Poses' }]
+const TABS = [{ key: 'play', label: 'Play' }, { key: 'day', label: 'A day' }, { key: 'card', label: 'Card' }, { key: 'poses', label: 'Poses' }]
 const SPEEDS = [{ key: '1', label: '1×' }, { key: '4', label: '4×' }, { key: '16', label: '16×' }]
 /** How often a playing day moves its clock, in real ms. */
 const TICK = 100
@@ -68,6 +71,12 @@ function StageWidthPicker({ width, onWidth }: { width: StageWidth; onWidth: (w: 
   )
 }
 
+/** The control an alert's answer on the card stands for: the same input the controls send. */
+const ANSWER_CONTROL: Record<StageAnswer['kind'], string> = { allow: 'allow', deny: 'deny', reply: 'reply', dismiss: 'withdrawn' }
+
+/** The day plays itself, so its card's controls send nothing. */
+const ignore = () => {}
+
 /** The Play tab: the stage, the controls and the log. */
 function Play() {
   const [pg, setPg] = useState<Playground>(startPlayground)
@@ -76,7 +85,7 @@ function Play() {
     <div className="grid min-w-0 gap-xl lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       <div className="flex min-w-0 flex-col gap-l">
         <StageWidthPicker width={width} onWidth={setWidth} />
-        <BuddyStage machine={pg.machine} width={width} />
+        <BuddyStage machine={pg.machine} width={width} steps={pg.steps} onAnswer={(a) => setPg((p) => use(p, ANSWER_CONTROL[a.kind]))} />
         <Log log={pg.log} />
       </div>
       <div className="flex min-w-0 flex-col gap-l">
@@ -121,7 +130,7 @@ function Day() {
     <div className="grid min-w-0 gap-xl lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       <div className="flex min-w-0 flex-col gap-l">
         <StageWidthPicker width={width} onWidth={setWidth} />
-        <BuddyStage machine={day.pg.machine} width={width} />
+        <BuddyStage machine={day.pg.machine} width={width} steps={day.pg.steps} onAnswer={ignore} />
         <Log log={day.pg.log} />
       </div>
       <div className="flex min-w-0 flex-col gap-l">
@@ -151,10 +160,40 @@ function Day() {
   )
 }
 
+/** The Card tab: the expanded card in each state it must be seen in, at the width being played. */
+function Cards() {
+  const [width, setWidth] = useState<StageWidth>('full')
+  const [answered, setAnswered] = useState('')
+  const answer = (label: string) => (a: StageAnswer) => setAnswered(`${label}: ${a.kind}, written here and never sent.`)
+  // A fixture's approval takes the playground's own Allow and Deny, as the stage's does.
+  const alertOf = (alert: CardAlert | null, label: string): CardAlert | null =>
+    alert?.kind === 'approval' ? { ...alert, choices: approvalChoicesOf(alert.row, answer(label)) } : alert
+  return (
+    <div className="flex min-w-0 flex-col gap-l">
+      <StageWidthPicker width={width} onWidth={setWidth} />
+      <p role="status" data-type="body-s" className="text-on-surface-var">
+        {answered || 'An answer on a card is written here and never sent.'}
+      </p>
+      <div className="grid min-w-0 gap-xl lg:grid-cols-2">
+        {CARD_FIXTURES.map((f) => (
+          <figure key={f.key} data-card-fixture={f.key} className="flex min-w-0 flex-col gap-s" style={width === 'full' ? undefined : { maxWidth: `${Number(width) / 16}rem` }}>
+            <figcaption><Eyebrow as="h3">{f.label}</Eyebrow></figcaption>
+            <BuddyCard {...f.card} alert={alertOf(f.card.alert, f.label)} orbId={`buddy-card-${f.key}`} onAnswer={answer(f.label)} />
+          </figure>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function PlaygroundPage({ query, setQuery }: RouteProps) {
   const [tab, setTab] = useQueryParam(query, setQuery, 'tab', 'play', { replace: true })
   return (
-    <div data-full-screen="buddy" className="h-full overflow-y-auto" style={{ background: 'var(--color-canvas)' }}>
+    // Every control is a 44 px target at the compact widths (320 to 768 px), the kit's size above.
+    <div
+      data-full-screen="buddy" style={{ background: 'var(--color-canvas)' }}
+      className="h-full overflow-y-auto max-lg:[&_button]:min-h-11 max-lg:[&_button]:min-w-11 max-lg:[&_input]:min-h-11 max-lg:[&_select]:min-h-11"
+    >
       <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-xl p-l">
         <header className="flex min-w-0 flex-col gap-s">
           <PageTitle>Buddy playground</PageTitle>
@@ -163,7 +202,7 @@ export function PlaygroundPage({ query, setQuery }: RouteProps) {
           </p>
           <Segmented ariaLabel="Playground view" value={TABS.some((t) => t.key === tab) ? tab : 'play'} onChange={setTab} options={TABS} />
         </header>
-        {tab === 'day' ? <Day /> : tab === 'poses' ? (
+        {tab === 'day' ? <Day /> : tab === 'card' ? <Cards /> : tab === 'poses' ? (
           <div className="flex min-w-0 flex-col gap-xl">
             <LookControls />
             <PoseSheet />

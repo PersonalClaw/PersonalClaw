@@ -12,6 +12,7 @@
 
 import { CANNOT_OCCUR, CannotOccur, INITIAL, eventOf, focusedWork, reduce, situationOf, type BuddyState, type MatrixEvent, type Situation } from '../../lib/buddy/machine'
 import type { Alert, AlertKind, BuddyInput, Effect, Work } from '../../lib/buddy/inputs'
+import { stepsOnInput, type StepWindows } from '../../lib/buddy/steps'
 import { TIMINGS, type TimerName } from '../../lib/buddy/timing'
 import type { WorkPhase } from '../../lib/workPhase'
 
@@ -40,11 +41,13 @@ export interface Playground {
   made: number
   /** The phase the phase control sets. */
   phase: WorkPhase
+  /** Each piece of work's step window, folded from the same inputs (`lib/buddy/steps.ts`). */
+  steps: StepWindows
 }
 
 /** The playground's first state: Buddy status on and nothing running, at the clock's start. */
 export function startPlayground(): Playground {
-  const start: Playground = { machine: INITIAL, now: 0, due: {}, log: [], made: 0, phase: 'searching' }
+  const start: Playground = { machine: INITIAL, now: 0, due: {}, log: [], made: 0, phase: 'searching', steps: {} }
   return send(start, { type: 'enabled', on: true }, 'Buddy status on')
 }
 
@@ -76,7 +79,7 @@ export function send(pg: Playground, input: BuddyInput, label: string): Playgrou
     n: pg.log.length + 1, at: pg.now, label, input, event: eventOf(pg.machine, input),
     from: situationOf(pg.machine), to: situationOf(step.state), effects: step.effects,
   }
-  return { ...pg, machine: step.state, due, log: [...pg.log, entry] }
+  return { ...pg, machine: step.state, due, log: [...pg.log, entry], steps: stepsOnInput(pg.steps, input) }
 }
 
 /** The timer due next, and when. */

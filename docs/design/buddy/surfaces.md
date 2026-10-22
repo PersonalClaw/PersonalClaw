@@ -76,6 +76,20 @@ work, the waiting decisions and Open in PersonalClaw, with no drop target and no
 ([#3893]). Neither Allow nor Deny carries the primary style: the buddy styles them as the chat's
 approval card does, so it never argues for an answer ([#3899]).
 
+As built ([#3893]): the card is `web/src/ui/BuddyCard.tsx`, and its step window is the fold in
+`web/src/lib/buddy/steps.ts`, which turns the machine's phase inputs into the step before, the
+current one and the next, with the trail's count. The brief is the app's approval prompt with the
+waiting-list row's own fields (`approvalRowFields`, the phone companion's mapping), its full
+arguments in a block that scrolls within the card; a question is the chat's question card, and an
+error has Open and Dismiss. The controls only raise the answer, which the presence sends
+([#3832]). In sight is the running list's rows, each with its agent orb, its kind's glyph, its one
+line, its exact phase, its last update and its route, and the list's own states (reconnecting,
+could not be read, interrupted, just finished, many). When the focused work finishes, the step
+window goes and the rows take its room. The card says while the pointer or the keyboard focus is
+on it, so a fold on a timer waits. The focused orb is a shared element with the island's compact
+orb, and the sections enter on the region stagger; both are instant under reduced motion. The
+next step shows only when the work knows it, so a free chat turn's window has two lines.
+
 ## Compact layouts
 
 Every buddy surface the web app draws renders without clipping at 320, 390, 412, 768, 1024 and
@@ -133,6 +147,7 @@ version and phase contract, stays read-only, signs in with a credential scoped t
 only the text the owner approved, and records the core and app commits validated together.
 
 [#3831]: https://github.com/PersonalClaw/PersonalClaw/issues/3831
+[#3832]: https://github.com/PersonalClaw/PersonalClaw/issues/3832
 [#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
 [#3893]: https://github.com/PersonalClaw/PersonalClaw/issues/3893
 [#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
