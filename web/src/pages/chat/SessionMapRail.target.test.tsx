@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SessionMapRail } from './SessionMapRail'
 import { sessionMapEntries } from './sessionMap'
+import { MARK_FALLOFF, MARK_IN_VIEW_PX, MARK_MAX_PX, MARK_REST_PX, markLength } from './sessionMapGeometry'
 import type { ChatTurn, Segment } from './chatTypes'
 
 // ── Hit target, focus ring, and something for reduced motion to collapse ─────────────────────
@@ -60,29 +61,19 @@ function railCode(): string {
     .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, lead: string) => lead + ' '.repeat(m.length - lead.length))
 }
 
-const turns: ChatTurn[] = [
-  { role: 'user', ts: TS, visibleIndex: 0, segments: [{ kind: 'text', text: 'run the build' }] },
-  { role: 'assistant', ts: TS, visibleIndex: 1, segments: [
+/** Eight questions, so a target in the middle has three neighbours on each side. */
+const turns: ChatTurn[] = Array.from({ length: 16 }, (_, i) => (i % 2 === 0
+  ? { role: 'user', ts: TS, visibleIndex: i, segments: [{ kind: 'text', text: `question ${i / 2 + 1}` }] }
+  : { role: 'assistant', ts: TS, visibleIndex: i, segments: [
     { kind: 'text', text: 'done' },
-    { kind: 'tool', id: 't', tool: 'Terminal', detail: 'npm run build', done: true } as Segment,
-  ] },
-  { role: 'user', ts: TS, visibleIndex: 2, segments: [{ kind: 'text', text: 'now test it' }] },
-  { role: 'assistant', ts: TS, visibleIndex: 3, segments: [{ kind: 'text', text: 'all green' }] },
-  { role: 'user', ts: TS, visibleIndex: 4, segments: [{ kind: 'text', text: 'ship it' }] },
-]
+    { kind: 'tool', id: `t${i}`, tool: 'Terminal', detail: 'npm run build', done: true } as Segment,
+  ] }))
 
-/** The horizontal scale a mark's line is rendered at.
- *
- *  🪤 `transform: none` IS SCALE 1, NOT A MISSING ANIMATION. framer-motion collapses the whole
- *  transform to the keyword when every component sits at its default, and `scaleX`'s default is 1 —
- *  so a mark at FULL length writes no `scaleX(…)` at all. Reading the regex alone made the
- *  hover assertion NaN against a rail that was working perfectly. An element with no `transform` in
- *  its style at all still reads NaN, which is what keeps "the animation was deleted" a failure. */
-function scaleOf(el: Element | null): number {
+/** The painted length of a mark's line, in px, from the `scaleX` its style carries. */
+function lengthOf(el: Element | null): number {
   const style = (el as HTMLElement | null)?.getAttribute('style') ?? ''
   const m = /scaleX\(([\d.]+)\)/.exec(style)
-  if (m) return Number(m[1])
-  return /transform:\s*none/.test(style) ? 1 : NaN
+  return m ? Math.round(Number(m[1]) * MARK_MAX_PX * 100) / 100 : NaN
 }
 
 function mount() {
@@ -90,52 +81,44 @@ function mount() {
   const { container } = render(
     <SessionMapRail entries={entries} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={() => {}} />,
   )
-  return { container, entries, ticks: [...container.querySelectorAll('[data-session-mark]')] as HTMLButtonElement[] }
+  const ticks = [...container.querySelectorAll('[data-session-mark]')] as HTMLButtonElement[]
+  const lines = ticks.map((el) => el.querySelector('[data-session-map-mark-line]') as HTMLElement)
+  return { container, entries, ticks, lines }
 }
+
+const point = (el: Element) => act(() => { fireEvent.pointerMove(el, { pointerType: 'mouse', buttons: 0 }) })
 
 describe('SessionMapRail — the mark IS its row', () => {
   it('every mark declares its own box, and the rows are flush', () => {
     const { container, ticks } = mount()
-    expect(ticks.length).toBeGreaterThan(1)
+    expect(ticks.length).toBe(8)
     for (const el of ticks) {
       const cls = el.className.split(/\s+/)
-      // The pressable box is the ROW, not the drawn line — a mark sized to its own ink is what left
-      // 4px targets with dead space between them. Height and width both, declared here.
+      // The pressable box is the ROW, not the drawn line, and it is the same box at every length the
+      // line is painted: 24px, SC 2.5.8, across the rail's full width.
       expect(cls, 'the marker must declare the row pitch as its own height — 24px, SC 2.5.8').toContain('h-6')
       expect(cls, 'and span the rail’s full width').toContain('w-full')
-      // 🔴 AND IT MUST NOT BE `absolute`. `ui/Popover` wraps the trigger in its own unsized
-      // `<div className="relative">`, which becomes the containing block for anything absolute
-      // inside it — so `absolute inset-0` here measured THAT wrapper and rendered a rail of 32×0
-      // buttons. Measured in a browser (Playwright: "element is not visible", 321 retries) while
-      // every assertion in this jsdom file passed, because jsdom computes no layout. Explicit
-      // dimensions cannot be captured by a wrapper this file does not own.
-      expect(cls, 'an absolute mark resolves against Popover’s wrapper, not the row').not.toContain('absolute')
+      // `shrink-0`: without it the flex column compresses its rows when the list outgrows its cap,
+      // instead of scrolling — the targets would shrink, not overflow.
+      expect(cls, 'a row must refuse to shrink').toContain('shrink-0')
       expect(cls, 'and `inset-0` is the shape that made them zero-size').not.toContain('inset-0')
     }
-    // The rows are FLUSH — no gap utility anywhere in the list, so every pixel of the rail belongs to
-    // some mark. A `gap-*` here would reintroduce unclickable bands between targets.
+    // The rows are FLUSH — no gap utility anywhere in the list, so every pixel belongs to some mark.
     const rows = [...container.querySelectorAll('[data-session-map-list] > *')] as HTMLElement[]
-    expect(rows, 'one row per mark').toHaveLength(ticks.length)
-    for (const row of rows) {
-      // `shrink-0` is the row's whole job: without it the flex column compresses its children when
-      // the list outgrows `max-h-full`, instead of scrolling — the marks would shrink, not overflow.
-      expect(row.className, 'a row must refuse to shrink').toContain('shrink-0')
-      expect(row.className, 'the rail must not add vertical rhythm between targets').not.toMatch(/\bgap(-y)?-/)
-      // And the pitch is declared ONCE. A row that also sets a height is a second source for the
-      // one number this layout turns on.
-      expect(row.className, 'the pitch belongs to the mark, not to the row').not.toMatch(/\bh-\d/)
-    }
+    expect(rows, 'one row per mark, and the row is the mark').toEqual(ticks)
     expect(
       container.querySelector('[data-session-map-list]')!.className,
       'nor may the list space its rows apart',
     ).not.toMatch(/\bgap(-y)?-|\bspace-y-/)
   })
 
+  it('the list is capped at the reference height and scrolls itself past it', () => {
+    const list = mount().container.querySelector('[data-session-map-list]') as HTMLElement
+    expect(list.style.maxHeight).toBe('min(70vh, 40rem)')
+    expect(list.className.split(/\s+/)).toContain('overflow-y-auto')
+  })
+
   it('🔴 the list is padded by the FADE distance, so the edge mask never dims a resting marker', () => {
-    // The mask fades the list's own top and bottom by `--spacing-xl`, whether or not it overflows.
-    // Unpadded, the first and last markers' lines sat inside that band at 60% alpha — the rest tone
-    // composited to ~1.9:1 on the canvas. The padding must be the SAME token as the fade, or a
-    // density change moves one and not the other; the painted result is measured in the browser gate.
     const fade = /EDGE_FADE =[\s\S]*?black var\((--spacing-[a-z0-9]+)\)/.exec(railCode())?.[1]
     expect(fade, 'could not read the fade distance out of EDGE_FADE').toBe('--spacing-xl')
     const list = mount().container.querySelector('[data-session-map-list]') as HTMLElement
@@ -143,9 +126,6 @@ describe('SessionMapRail — the mark IS its row', () => {
   })
 
   it('🔴 the mark carries NO hit-target utility — the row already is one', () => {
-    // The deliberate removal, pinned so it cannot creep back as inert markup. Both variants: the
-    // horizontal band is now inside a 32px element, and the symmetric `.hit-24` would overhang into
-    // the neighbouring marks — the stolen-target defect `hitTargetThinHandle.test.ts` records twice.
     const src = railCode()
     expect(mount().ticks[0].className.match(/hit-\d+\S*/g), 'no band utility on the mark').toBeNull()
     expect(src, 'and none anywhere in a className in this file').not.toMatch(/className="[^"]*\bhit-\d+/)
@@ -154,14 +134,8 @@ describe('SessionMapRail — the mark IS its row', () => {
 
 describe('SessionMapRail — the focus ring', () => {
   it('🔑 the mark does NOT kill its outline, so it takes the global :focus-visible ring', () => {
-    // The one thing that would put this rail into `focusRingPerElement`'s 17-control inventory — and
-    // the defect that inventory exists for: a control that sets `outline-none` and replaces it with
-    // nothing is focusable and invisible. jsdom computes no styles, so this is asserted as the source
-    // property it actually is.
     const src = railCode()
     expect(src, 'the mark must not opt out of the app-wide ring').not.toContain('outline-none')
-    // And the ring it inherits is the opaque one (`focusRingContrast.test.ts` owns the number): the
-    // rail must not mint a local alpha ring either.
     expect(src).not.toMatch(/ring-primary\/\d/)
   })
 
@@ -170,59 +144,71 @@ describe('SessionMapRail — the focus ring', () => {
     const stop = ticks.find((el) => el.tabIndex === 0)!
     act(() => { stop.focus() })
     expect(document.activeElement).toBe(stop)
-    // Not `aria-hidden` — the marks first shipped hidden, which is what made every a11y check in
-    // this change vacuous.
     for (const el of ticks) expect(el.getAttribute('aria-hidden')).toBeNull()
   })
 })
 
-describe('SessionMapRail — the rail HAS an animation for reduced motion to collapse', () => {
-  it('🔑 hovering GROWS the one marker under the pointer and brightens it — and ONLY that one', async () => {
-    const { ticks } = mount()
-    const lines = ticks.map((el) => el.querySelector('[data-session-map-mark-line]') as HTMLElement)
-    expect(lines.filter(Boolean), 'no line = nothing for the reduced-motion rail to be about')
-      .toHaveLength(ticks.length)
-    // The line is the ink; it is decorative because the BUTTON carries the accessible name.
-    expect(lines[0].getAttribute('aria-hidden')).toBe('true')
-    await act(async () => { await Promise.resolve() })
-    const restScale = scaleOf(lines[0])
-    expect(restScale, `at rest: ${lines[0].getAttribute('style')}`).not.toBeNaN()
-    expect(restScale, 'a marker at rest must be shorter than full length').toBeLessThan(1)
-    const restTone = ticks[0].style.color
-
-    // …and it actually GROWS, which is the motion-allowed half `SessionMapRail.reducedMotion.test.tsx`
-    // needs to exist for its negative to mean anything. `mouseOver`, not `mouseEnter`: React
-    // delegates onMouseEnter off the bubbling event.
-    fireEvent.mouseOver(ticks[0])
-    await waitFor(() => expect(scaleOf(lines[0]), `after hover: ${lines[0].getAttribute('style')}`).toBe(1))
-    // It brightens: marker 0 is off screen (the newest message is the current one), so its lit tone
-    // is the strongest ink rather than the rest neutral.
-    expect(restTone).toBe('var(--color-map-rest)')
-    expect(ticks[0].style.color, 'the pointed-at marker must brighten').toBe('var(--color-on-surface)')
-    // 🔑 ONLY IT. The Codex form dragged its ±3 neighbours after it; the rule is that only the
-    // marker under the pointer or the cursor expands, so the neighbour must NOT move, in length or tone.
-    expect(scaleOf(lines[1]), 'the neighbour expanded with the hovered marker').toBe(restScale)
-    expect(ticks[1].style.color, 'the neighbour changed tone').toBe(restTone)
-    // And it lets go: leaving it returns it to the uniform resting length and tone.
-    fireEvent.mouseOut(ticks[0])
-    await waitFor(() => expect(scaleOf(lines[0])).toBe(restScale))
-    expect(ticks[0].style.color).toBe(restTone)
+describe('SessionMapRail — the wave around the target', () => {
+  it('the geometry: 26 px at the target, 0.7 / 0.4 / 0.2 of the way for the three either side', () => {
+    expect(MARK_FALLOFF).toEqual([1, 0.7, 0.4, 0.2])
+    expect(markLength(4, 4, false)).toBe(MARK_MAX_PX)
+    expect(markLength(3, 4, false)).toBeCloseTo(MARK_REST_PX + (MARK_MAX_PX - MARK_REST_PX) * 0.7)
+    expect(markLength(6, 4, false)).toBeCloseTo(MARK_REST_PX + (MARK_MAX_PX - MARK_REST_PX) * 0.4)
+    expect(markLength(1, 4, false)).toBeCloseTo(MARK_REST_PX + (MARK_MAX_PX - MARK_REST_PX) * 0.2)
+    expect(markLength(0, 4, false), 'four away rests').toBe(MARK_REST_PX)
+    expect(markLength(0, null, true), 'an exchange on screen rests longer').toBe(MARK_IN_VIEW_PX)
   })
 
-  it('an on-screen marker brightens to the accent’s higher-contrast shade, not to the neutral ink', async () => {
+  it('🔑 pointing grows the target and pulls its neighbours after it, then lets go', () => {
+    const { container, ticks, lines } = mount()
+    expect(lines.filter(Boolean)).toHaveLength(ticks.length)
+    expect(lines[0].getAttribute('aria-hidden')).toBe('true')
+    const rest = lines.map(lengthOf)
+    // The newest exchange is the one on screen at load (nothing reported), so it rests longer.
+    expect(rest).toEqual([6, 6, 6, 6, 6, 6, 6, 12])
+    point(ticks[3])
+    const lit = lines.map(lengthOf)
+    expect(lit).toEqual(ticks.map((_, i) => Math.round(markLength(i, 3, i === 7) * 100) / 100))
+    expect(lit[3]).toBe(MARK_MAX_PX)
+    expect(lit[2], 'the neighbour above follows').toBeGreaterThan(rest[2])
+    expect(lit[4], 'the neighbour below follows').toBeGreaterThan(rest[4])
+    expect(lit[2]).toBeGreaterThan(lit[1])
+    // Only the TARGET brightens; its neighbours keep their tone.
+    expect(ticks[3].style.color).toBe('var(--color-on-surface)')
+    expect(ticks[2].style.color).toBe('var(--color-map-rest)')
+    // 🔑 THE HIT AREAS NEVER MOVED: every row is still the one 24px box, whatever its line is.
+    for (const el of ticks) expect(el.className).toContain('h-6')
+    // And it lets go: the pointer leaving the rail returns every line to rest.
+    vi.useFakeTimers()
+    try {
+      act(() => { fireEvent.pointerLeave(container.querySelector('nav')!) })
+      act(() => { vi.advanceTimersByTime(200) })
+    } finally { vi.useRealTimers() }
+    expect(lines.map(lengthOf)).toEqual(rest)
+  })
+
+  it('an on-screen target brightens to the accent’s higher-contrast shade, not to the neutral ink', () => {
     const { ticks } = mount()
     const current = ticks.find((el) => el.getAttribute('data-current') === 'true')!
     expect(current.style.color).toBe('var(--color-primary)')
-    fireEvent.mouseOver(current)
-    await waitFor(() => expect(current.style.color).toBe('var(--color-primary-emphasis)'))
+    point(current)
+    expect(current.style.color).toBe('var(--color-primary-emphasis)')
   })
 
-  it('the length’s transition comes from the gated `physics` family, not a hand-rolled spring', () => {
-    // `reducedMotionAppWide.test.ts` proves every `physics` member collapses to `instant`, and
-    // censuses source for spring params minted OUTSIDE `design/motion.ts`. Both only bind on the rail
-    // if the rail reaches for the module — so that is what is asserted, at the source.
+  it('the keyboard cursor is a target too: focus from an arrow grows its marker the same way', () => {
+    const { ticks, lines } = mount()
+    act(() => { ticks[7].focus() })
+    act(() => { fireEvent.keyDown(ticks[7], { key: 'ArrowUp' }) })
+    expect(document.activeElement).toBe(ticks[6])
+    expect(lengthOf(lines[6])).toBe(MARK_MAX_PX)
+    expect(lengthOf(lines[5])).toBeCloseTo(markLength(5, 6, false))
+  })
+
+  it('the length moves on a CSS transition, from the duration tokens, and never through a frame loop', () => {
     const src = railCode()
-    expect(src).toMatch(/transition=\{physics\.snappy\}/)
+    expect(src).toMatch(/transition-transform duration-\(--duration-short\)/)
+    expect(src, 'reduced motion stops it outright as well as through the global rule').toMatch(/motion-reduce:transition-none/)
+    expect(src, 'no frame loop paints the rail').not.toMatch(/requestAnimationFrame|framer-motion/)
     expect(src, 'a hand-rolled spring would escape the app-wide off-switch').not.toMatch(/stiffness|damping|bounce:/)
   })
 })

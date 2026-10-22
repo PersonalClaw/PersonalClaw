@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   editResend: vi.fn(),
   regenerate: vi.fn(),
   chatSessionDetail: vi.fn(),
+  editSessionBookmarks: vi.fn(),
   notify: vi.fn(),
 }))
 
@@ -25,7 +26,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/api')>()
   const api = new Proxy({
     approve: h.approve, setTaskMode: h.setTaskMode, editResend: h.editResend,
-    regenerate: h.regenerate, chatSessionDetail: h.chatSessionDetail,
+    regenerate: h.regenerate, chatSessionDetail: h.chatSessionDetail, editSessionBookmarks: h.editSessionBookmarks,
   } as Record<string, unknown>, {
     get(t, p: string) { return p in t ? t[p] : (t[p] = () => Promise.resolve({})) },
   })
@@ -46,15 +47,16 @@ function mount({ sessionId = SESSION as string | null, query = {} as Record<stri
   const hook = renderHook(() => {
     const [turns, setTurns] = useState<ChatTurn[]>(TURNS)
     const [selection, setSelection] = useState<ComposerValue>({ agent: 'researcher', model: 'Auto', approval: 'normal', taskMode: 'ask', reasoning: '' })
+    const [bookmarks, setBookmarks] = useState<readonly string[]>([])
     const t = useTranscript({
       sessionId, query, setQuery, navigate: vi.fn(),
       stream: {
         sessionRef: { current: sessionId }, turns, setTurns, streaming: false, streamingRef: { current: false },
-        markStreaming, dropTextRun: vi.fn(), readSnapshot, adoptSnapshot: vi.fn(),
+        markStreaming, dropTextRun: vi.fn(), readSnapshot, adoptSnapshot: vi.fn(), bookmarks, setBookmarks,
       },
       started: turns.length > 0, notice, memoryMode: 'persistent', setSelection, agent: selection.agent, send,
     })
-    return { t, turns, selection }
+    return { t, turns, selection, bookmarks }
   })
   return { ...hook, setQuery, notice, markStreaming, send }
 }
@@ -107,6 +109,31 @@ describe('useTranscript keeps the Session Map', () => {
 
   it('derives one entry per message she sent', () => {
     expect(mount().result.current.t.sessionEntries).toHaveLength(1)
+  })
+})
+
+describe('useTranscript keeps the bookmarks', () => {
+  it('🔑 shows a bookmark at once, keeps what the gateway stored, and says nothing more', async () => {
+    h.editSessionBookmarks.mockResolvedValue({ ok: true, bookmarks: ['2026-10-01T09:00:00Z'] })
+    const { result } = mount()
+    const entry = result.current.t.sessionEntries[0]
+    expect(entry.bookmarked).toBe(false)
+    act(() => { result.current.t.toggleBookmark(entry) })
+    // Shown before the gateway answers.
+    expect(result.current.t.sessionEntries[0].bookmarked).toBe(true)
+    expect(h.editSessionBookmarks).toHaveBeenCalledWith(SESSION, { add: ['2026-10-01T09:00:00Z'] })
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.bookmarks).toEqual(['2026-10-01T09:00:00Z'])
+  })
+
+  it('a refusal puts the map back and says so in the composer’s notice', async () => {
+    h.editSessionBookmarks.mockRejectedValue(new Error('the gateway is busy'))
+    const { result, notice } = mount()
+    act(() => { result.current.t.toggleBookmark(result.current.t.sessionEntries[0]) })
+    expect(result.current.t.sessionEntries[0].bookmarked).toBe(true)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(result.current.t.sessionEntries[0].bookmarked).toBe(false)
+    expect(notice.showError).toHaveBeenCalledWith('Couldn’t bookmark that message: the gateway is busy')
   })
 })
 

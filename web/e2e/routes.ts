@@ -144,6 +144,9 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // the screen. View one is `companion` itself, in NON_NAV_ROUTES; both read the same stubbed list.
   { route: 'companion?approval=ap-0a1b2c3d', id: 'companion-one-work', label: 'Companion › one piece of work', needsData: true },
   // The composer's voice mode (#4963) has no address: it is `composer voice mode` in `OPENERS`.
+  // A chat long enough for its Session Map (#4776): six questions, one bookmarked, the rail showing.
+  // Its transcript is a stub (`MAPPED_CHAT` in `surfaces.spec.ts`), under the catalogue's sample id.
+  { route: 'chat/chat-1-1792387100', id: 'chat-session-map', label: 'Chat › session map', needsData: true },
   { route: 'memory?tab=health', id: 'memory-health', label: 'Library › Memory › health', needsData: true },
   { route: 'memory?tab=recall', id: 'memory-recall', label: 'Library › Memory › recall', needsData: true },
   { route: 'memory?tab=inspect', id: 'memory-inspect', label: 'Library › Memory › inspect', needsData: true },

@@ -57,6 +57,12 @@ const MESSAGES: HistMsg[] = [
 const TURNS = hydrateTurns(MESSAGES)
 const ACTIVITY = deriveActivity(TURNS)
 const ENTRIES = sessionMapEntries(TURNS)
+/** The same session two messages longer: the rail appears at four of the owner's messages. */
+const RAIL_ENTRIES = sessionMapEntries(hydrateTurns([
+  ...MESSAGES,
+  { role: 'user', content: 'and lint it' }, { role: 'assistant', content: 'clean' },
+  { role: 'user', content: 'and ship it' }, { role: 'assistant', content: 'shipped' },
+]))
 
 const USER_TEXTS = ['run the build', 'now the tests']
 const A_FILE = 'src/pages/chat/sessionMap.ts'
@@ -273,15 +279,15 @@ describe('The survivor still navigates', () => {
     // proof, which asserted this of BOTH surfaces; only one is left to assert it of.
     const jumpToTurn = vi.fn()
     const rail = render(
-      <SessionMapRail entries={ENTRIES} turnNodes={new Map<number, Element>()} scrollRef={{ current: null }} onJumpTo={jumpToTurn} />,
+      <SessionMapRail entries={RAIL_ENTRIES} turnNodes={new Map<number, Element>()} scrollRef={{ current: null }} onJumpTo={jumpToTurn} />,
     )
     const ticks = rail.container.querySelectorAll('[data-session-mark]')
-    expect(ticks, 'the rail rendered no marks').toHaveLength(ENTRIES.length)
-    const nth = ENTRIES.findIndex((e) => e.preview === USER_TEXTS[1])
+    expect(ticks, 'the rail rendered no marks').toHaveLength(RAIL_ENTRIES.length)
+    const nth = RAIL_ENTRIES.findIndex((e) => e.preview === USER_TEXTS[1])
     expect(nth, 'the rail carries no user mark, so it is not indexing the turns the Index tab listed').toBeGreaterThan(-1)
     await userEvent.click(ticks[nth])
     expect(jumpToTurn, 'a rail tick reached no jump handler').toHaveBeenCalledTimes(1)
-    expect(jumpToTurn.mock.calls[0][0]).toBe(ENTRIES[nth].visibleIndex)
+    expect(jumpToTurn.mock.calls[0][0]).toBe(RAIL_ENTRIES[nth].visibleIndex)
     rail.unmount()
   })
 

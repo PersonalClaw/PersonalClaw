@@ -30,7 +30,7 @@ const SCROLLER = '[data-transcript-scroll]'
 const LIVE = '[data-session-map-live]'
 /** The drawn ink of a mark — the 2px line whose LENGTH is the rail's primary channel. */
 const LINE = '[data-session-map-mark-line]'
-/** The preview card's own root (`SessionMapCard.tsx`), portaled into `document.body`. */
+/** The preview's body (`SessionMapCard.tsx`), inside the rail's one preview surface. */
 const CARD = '[data-session-map-card]'
 
 /** Scroll geometry of the transcript container, read in the page. */
@@ -160,7 +160,7 @@ test.describe('Session Map — in the transcript', () => {
     // satisfied by a rail that was always there.
     await expect(page.locator(RAIL)).toHaveCount(0)
 
-    await driveScriptedTurns(page, PROMPT, 3)
+    await driveScriptedTurns(page, PROMPT, 4)
 
     // ── CLAUSE 1: the rail renders in the session ────────────────────────────────────────────
     const rail = page.locator(RAIL)
@@ -227,9 +227,9 @@ test.describe('Session Map — in the transcript', () => {
 
   test('open/closed persists to a URL query flag and survives a reload', async ({ page }) => {
     await gotoRoute(page, 'chat')
-    // TWO messages: the map lists user messages and suppresses itself below two (one message has
-    // nothing to navigate between), so a one-turn session has no rail to open or close.
-    await driveScriptedTurns(page, PROMPT, 2)
+    // FOUR messages: the map lists user messages and appears at four (#4776), so a shorter
+    // session has no rail to open or close.
+    await driveScriptedTurns(page, PROMPT, 4)
     const sessionUrl = page.url()
     expect(sessionUrl, 'the send did not open a session route, so a reload would not restore the transcript').toContain('#/chat/')
 
@@ -269,7 +269,7 @@ test.describe('Session Map — the coarse-pointer form', () => {
 
   test('the rail collapses to one named control that opens a tappable SidePanel drawer', async ({ page }) => {
     await gotoRoute(page, 'chat')
-    await driveScriptedTurns(page, PROMPT, 3)
+    await driveScriptedTurns(page, PROMPT, 4)
 
     // ── the rail is GONE, and the map is NOT ───────────────────────────────────────────────
     // Another agent UI's rail simply vanishes on touch. Since this map is the SOLE in-session
@@ -286,7 +286,7 @@ test.describe('Session Map — the coarse-pointer form', () => {
     // Park the transcript at its newest turn, so "the tap navigated" has somewhere to travel FROM.
     // Asserted, not assumed: with the oldest prompt already on screen the jump below could not be
     // distinguished from doing nothing.
-    const oldest = page.getByText(`${PROMPT} (1)`, { exact: false }).first()
+    const oldest = page.locator(SCROLLER).getByText(`${PROMPT} (1)`, { exact: false }).first()
     await page.evaluate((sel) => {
       const el = document.querySelector(sel)
       if (el) el.scrollTop = el.scrollHeight
@@ -307,13 +307,15 @@ test.describe('Session Map — the coarse-pointer form', () => {
     await expect(rows.first()).toBeVisible()
     const rowCount = await rows.count()
     expect(rowCount, 'the drawer opened with no marks').toBeGreaterThan(1)
-    // The design rule holds on the phone too: one row per USER message — three sends, three rows —
+    // The design rule holds on the phone too: one row per USER message — four sends, four rows —
     // and none for the replies or the work inside them. Named the way the rail names its markers.
-    expect(rowCount, 'the drawer lists something other than the user messages').toBe(3)
+    expect(rowCount, 'the drawer lists something other than the user messages').toBe(4)
     // (The subject is capped at 40 characters, so the prompt's own "(n)" is cut off; the position is
     // what tells the rows apart.)
-    const names = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''))
-    names.forEach((name, i) => expect(name).toMatch(new RegExp(`^Message ${i + 1} of 3: ${PROMPT.slice(0, 20)}`)))
+    // A row's name is its jump's, `ui/RowHitTarget`'s button under the row (the row carries a bookmark
+    // control of its own, so the row itself is not a button).
+    const names = await rows.evaluateAll((els) => els.map((el) => el.querySelector('button')?.getAttribute('aria-label') ?? ''))
+    names.forEach((name, i) => expect(name).toMatch(new RegExp(`^Message ${i + 1} of 4: ${PROMPT.slice(0, 20)}`)))
 
     // A real 44px measurement at a real viewport — the reason this clause is not in vitest.
     const heights = await rows.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().height)))
@@ -555,7 +557,9 @@ test.describe('Session Map — operable from the KEYBOARD alone', () => {
     // The newest mark has no twin for this — see `expectMarkLanded`'s 🪤 — and asserting one anyway
     // is what made this test host-dependent.
     await expect(
-      page.getByText(`${PROMPT} (1)`, { exact: false }).first(),
+      // In the TRANSCRIPT: the sidebar lists chats titled by their first message, and the preview the
+      // cursor revealed quotes it too, so an unscoped match can land on either.
+      page.locator(SCROLLER).getByText(`${PROMPT} (1)`, { exact: false }).first(),
       'Enter moved the transcript but did not bring the oldest turn on screen',
     ).toBeInViewport({ timeout: 10_000 })
 
@@ -605,7 +609,7 @@ test.describe('Session Map — operable from the KEYBOARD alone', () => {
   // the drift reds ONCE, loudly, next to the thing that moved.
   test('the rail is painted on the ground the 12-scheme contrast guard measures', async ({ page }) => {
     await gotoRoute(page, 'chat')
-    await driveScriptedTurns(page, PROMPT, 3)
+    await driveScriptedTurns(page, PROMPT, 4)
     await expect(page.locator(RAIL)).toBeVisible()
 
     const ground = await page.evaluate((railSel) => {
@@ -766,11 +770,11 @@ test.describe('Session Map — it is the session\'s ONLY index', () => {
 // ── THE MARKER FORM, MEASURED WHERE LAYOUT EXISTS ────────────────────────────────
 //
 // 🔴 WHY EVERY CLAUSE BELOW IS A BROWSER CLAUSE AND NOT A VITEST ONE. The rules are about what a
-// reader SEES — one uniform length at rest, the on-screen messages told apart by colour, the marker
-// under the pointer or the cursor expanding and brightening — and length and colour are rendered
+// reader SEES — the on-screen messages told apart by length and colour, the marker under the pointer
+// or the cursor growing with its neighbours following, a bookmark's dot — and length and colour are rendered
 // numbers: `scaleX` is a transform jsdom never applies, and `var(--color-*)` resolves to nothing
 // there. The unit files pin the VALUES the rail hands the animation and paint layers
-// (`SessionMapRail.test.tsx`, `.target.test.tsx`, `.reducedMotion.test.tsx`, `schemeContrast.test.ts`);
+// (`SessionMapRail.test.tsx`, `.target.test.tsx`, `.quiescence.test.tsx`, `schemeContrast.test.ts`);
 // these read the painted result.
 
 /** Every marker's painted line length, in CSS px, in rail order. Includes the `scaleX`, which is the
@@ -782,25 +786,17 @@ async function lineLengths(page: Page): Promise<number[]> {
 
 /** Poll the rail's painted lengths until they stop changing, and return where they came to rest.
  *
- *  🪤 A LENGTH READ WHILE A MARKER IS MOVING MEASURES THE SPRING, NOT THE DESIGN — and it is the
- *  regression this file shipped with. The length animates on `physics.snappy`, a spring that takes
- *  about half a second to land and overshoots on the way, and the two tests that assert the SHAPE of
- *  the pointed-at marker awaited only the first sample past a threshold (`> rest`, `> full`) before
- *  asserting the settled shape. A threshold is crossed early in the travel, so the comparison that
- *  followed was made mid-flight. Measured frame by frame on the form this replaced (Darwin, from the
- *  real `mouseenter`): the hovered mark passed the poll's threshold at ~110 ms while its ±1 neighbour
- *  was still at 17.2-18.1px on its way to 18.6, against a ±2 neighbour resting at 18.24; the cursor
- *  test read mark 0 at 12.15px, one frame above its 12.12 rest, on its way to 24. Same numbers at the
- *  commit that added both tests (4 of 6 runs red there) and at every later one — never a regression
- *  of the product, a race the host decided (its CI runner happened to sample late and pass).
+ *  🪤 A LENGTH READ WHILE A MARKER IS MOVING MEASURES THE TRANSITION, NOT THE DESIGN. The length
+ *  moves on a short CSS transition, and a threshold poll (`> rest`) is crossed early in its travel,
+ *  so a shape asserted on that first sample is asserted mid-flight. (The form this replaced moved on
+ *  a spring that overshot, and two tests read it mid-flight on 4 of 6 runs.)
  *
  *  Quiet is the condition, as in `restingOffset`: two equal samples at least 100ms apart. Callers
  *  await MOVEMENT first (their threshold poll), because two samples taken before the marker starts
  *  moving are equal too, and would "settle" on the rail it has not left yet.
  *
- *  `settleEntranceAnimations` cannot stand in for this: it watches inline `opacity` and
- *  `document.getAnimations()`, and framer drives `scaleX` from its own frame loop — measured, zero
- *  Web Animations on the marker lines in any frame — which neither sees. */
+ *  `settleEntranceAnimations` cannot stand in for this: it watches inline `opacity` and entrance
+ *  animations, not the lines' transforms. */
 async function restingLengths(page: Page, what: string): Promise<number[]> {
   let last = ''
   let lengths: number[] = []
@@ -856,15 +852,15 @@ test.describe('Session Map — the marker form', () => {
 
   test('a marker owns its whole row — 32×24, contiguous, on one constant pitch', async ({ page }) => {
     await gotoRoute(page, 'chat')
-    await driveScriptedTurns(page, PROMPT, 3)
+    await driveScriptedTurns(page, PROMPT, 4)
     await expect(page.locator(RAIL)).toBeVisible()
 
     const rows = await page.$$eval(MARK, (els) => els.map((el) => {
       const r = el.getBoundingClientRect()
       return { top: r.top, bottom: r.bottom, w: r.width, h: r.height }
     }))
-    // One marker per user message: three sends, three markers.
-    expect(rows.length, 'the rail drew a marker for something other than a user message').toBe(3)
+    // One marker per user message: four sends, four markers.
+    expect(rows.length, 'the rail drew a marker for something other than a user message').toBe(4)
     for (const [i, r] of rows.entries()) {
       // SC 2.5.8: 24×24 at least — the reference's "precise pointer movement required" friction.
       // Floors, so a density or width change is free to make it BIGGER without reding.
@@ -880,7 +876,7 @@ test.describe('Session Map — the marker form', () => {
     expect(new Set(pitches).size, `the pitch varies across the rail: ${pitches.join(', ')}`).toBe(1)
   })
 
-  test('🔑 at rest every marker is ONE length, and what is on screen is told by COLOUR — scrolling moves the colour, never the geometry', async ({ page }) => {
+  test('🔑 at rest what is on screen is told by length AND colour — scrolling moves those, never a hit area', async ({ page }) => {
     await gotoRoute(page, 'chat')
     await driveScriptedTurns(page, PROMPT, 4)
     await expect(page.locator(RAIL)).toBeVisible()
@@ -888,17 +884,11 @@ test.describe('Session Map — the marker form', () => {
 
     const rest = await restingLengths(page, 'the idle rail')
     expect(rest.length).toBe(4)
-    expect(new Set(rest).size, `resting lengths differ: ${rest.join(', ')}`).toBe(1)
-    expect(rest[0], 'a resting marker is a visible line').toBeGreaterThanOrEqual(6)
-    expect(rest[0], 'and not the full line — that is reserved for the marker being pointed at').toBeLessThan(24)
     // …and every one is painted at FULL strength: none sits inside the list's edge fade, which would
-    // composite its tone toward the canvas and spend the contrast a colour-only rail depends on.
-    // (Measured before the fix: the first and last lines sat 12px into a 20px fade, at 60% alpha.)
+    // composite its tone toward the canvas.
     const fade = await page.evaluate(([rail, line]) => {
       const list = document.querySelector(`${rail} [data-session-map-list]`) as HTMLElement
       const box = list.getBoundingClientRect()
-      // The MASK's fade distance, resolved on its own — the rail's EDGE_FADE is `var(--spacing-xl)`
-      // (pinned in `SessionMapRail.target.test.tsx`) — so this reads the defect, not the fix.
       const probe = document.createElement('div')
       probe.style.height = 'var(--spacing-xl)'
       document.body.appendChild(probe)
@@ -912,39 +902,45 @@ test.describe('Session Map — the marker form', () => {
     expect(fade.distance, 'the fade distance resolved to nothing').toBeGreaterThan(0)
     expect(fade.inFade, 'a resting marker sits inside the edge fade, dimmed toward the canvas').toBe(0)
 
-    // At the newest message, the newest exchange is on screen and the first is not: BOTH colours
-    // are on the rail, which is what makes "the lengths are equal" a claim about colour doing the work.
+    // At the newest message, the newest exchange is on screen and the first is not.
     const atBottom = await markerState(page)
-    const lit = atBottom.filter((m) => m.current)
-    const unlit = atBottom.filter((m) => !m.current)
+    const lit = atBottom.map((m, i) => ({ ...m, len: rest[i] })).filter((m) => m.current)
+    const unlit = atBottom.map((m, i) => ({ ...m, len: rest[i] })).filter((m) => !m.current)
     expect(lit.length, 'nothing is marked on screen').toBeGreaterThan(0)
-    expect(unlit.length, 'everything is marked on screen, so colour distinguishes nothing').toBeGreaterThan(0)
+    expect(unlit.length, 'everything is marked on screen, so nothing is told apart').toBeGreaterThan(0)
     for (const m of lit) expect(m.token).toBe('var(--color-primary)')
     for (const m of unlit) expect(m.token).toBe('var(--color-map-rest)')
-    // …and the two colours really differ ON SCREEN, in lightness and not only in hue — the painted
-    // measurement of `schemeContrast.test.ts`'s floor for this scheme.
+    // 🔑 NOT COLOUR ALONE: an exchange on screen rests LONGER than one off it, painted.
+    for (const m of lit) for (const n of unlit) expect(m.len, 'an on-screen marker is not longer than an off-screen one').toBeGreaterThan(n.len)
+    expect(Math.max(...rest), 'nothing rests at the full length the target takes').toBeLessThan(24)
     expect(contrastOf(lit[0].rgb, unlit[0].rgb), `on-screen ${lit[0].rgb} vs ${unlit[0].rgb}`).toBeGreaterThanOrEqual(1.7)
-    // Each clears SC 1.4.11 on the canvas the rail sits on.
     const canvas = await resolved(page, 'var(--color-canvas)')
     for (const m of [lit[0], unlit[0]]) expect(contrastOf(m.rgb, canvas), `${m.token} on the canvas`).toBeGreaterThanOrEqual(3)
 
-    // Scroll to the FIRST message. The colour must move with the transcript…
+    // Scroll to the FIRST message: what is told as on screen moves with the transcript…
+    const boxes = async () => page.$$eval(`${RAIL} ${MARK}`, (els) => els.map((el) => {
+      const r = el.getBoundingClientRect()
+      return [r.top, r.left, r.width, r.height].map((v) => Math.round(v)).join(',')
+    }))
+    const hitAreas = await boxes()
     const before = atBottom.map((m) => m.current)
     await page.evaluate((sel) => { document.querySelector(sel)!.scrollTop = 0 }, SCROLLER)
     await restingOffset(page, 'parking the transcript at its first message')
     await expect
       .poll(async () => (await markerState(page)).map((m) => m.current).join(','), {
-        message: 'scrolling the transcript moved nothing on the rail — the colour does not follow the viewport',
+        message: 'scrolling the transcript moved nothing on the rail — the rail does not follow the viewport',
         timeout: 10_000,
       })
       .not.toBe(before.join(','))
     const atTop = await markerState(page)
     expect(atTop[0].current, 'the first message is on screen and is not lit').toBe(true)
-    // …and the GEOMETRY must not: every marker is still exactly the resting length it was.
-    expect(await restingLengths(page, 'the rail after scrolling'), 'scrolling changed a marker\'s size').toEqual(rest)
+    const after = await restingLengths(page, 'the rail after scrolling')
+    expect(after[0], 'the first message came on screen and its marker did not lengthen').toBeGreaterThan(rest[0])
+    // …and no HIT AREA moved: only the painted lines did.
+    expect(await boxes(), 'scrolling moved a marker\'s pressable box').toEqual(hitAreas)
   })
 
-  test('🔑 only the marker under the pointer expands and brightens — its neighbours stay put — and it lets go', async ({ page }) => {
+  test('🔑 the marker under the pointer grows, its neighbours follow it by 0.7 / 0.4 / 0.2, and it lets go', async ({ page }) => {
     await gotoRoute(page, 'chat')
     await driveScriptedTurns(page, PROMPT, 4)
     await expect(page.locator(RAIL)).toBeVisible()
@@ -954,33 +950,101 @@ test.describe('Session Map — the marker form', () => {
     const restState = await markerState(page)
     const canvas = await resolved(page, 'var(--color-canvas)')
     const marks = page.locator(`${RAIL} ${MARK}`)
+    const boxesBefore = await marks.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
     const at = 1
     await marks.nth(at).hover()
-    // Movement first, then rest — see `restingLengths` for why the order and the second wait exist.
     await expect
       .poll(async () => (await lineLengths(page))[at], { message: 'the hovered marker never expanded' })
       .toBeGreaterThan(rest[at])
     const hovered = await restingLengths(page, 'the marker under the pointer')
 
-    expect(hovered[at], 'the hovered marker must expand beyond the uniform length').toBeGreaterThan(rest[at])
-    expect(hovered[at], 'and be the longest line on the rail').toBe(Math.max(...hovered))
-    // 🔑 ONLY IT. Every other marker is exactly where it rested — no ±1/±2/±3 falloff.
+    expect(hovered[at], 'the hovered marker must be the longest line on the rail').toBe(Math.max(...hovered))
+    expect(hovered[at], 'the target takes the full 26px').toBeCloseTo(26, 0)
+    // 🔑 ITS NEIGHBOURS FOLLOW, each by its share of the way to the full length, from its own rest.
+    const pull = [1, 0.7, 0.4, 0.2]
     hovered.forEach((len, i) => {
-      if (i !== at) expect(len, `marker ${i} moved when marker ${at} was hovered`).toBe(rest[i])
+      const share = pull[Math.abs(i - at)] ?? 0
+      expect(len, `marker ${i} is not ${share} of the way to the full length`).toBeCloseTo(rest[i] + (26 - rest[i]) * share, 0)
     })
-    // It BRIGHTENS: its colour now out-contrasts its resting colour on the canvas.
-    const lit = (await markerState(page))[at]
-    expect(lit.token, 'the hovered marker kept its resting tone').not.toBe(restState[at].token)
-    expect(contrastOf(lit.rgb, canvas), 'the hovered marker dimmed instead of brightening')
+    // It BRIGHTENS: its colour now out-contrasts its resting colour on the canvas; the neighbours keep theirs.
+    const lit = await markerState(page)
+    expect(lit[at].token, 'the hovered marker kept its resting tone').not.toBe(restState[at].token)
+    expect(contrastOf(lit[at].rgb, canvas), 'the hovered marker dimmed instead of brightening')
       .toBeGreaterThan(contrastOf(restState[at].rgb, canvas))
+    expect(lit[at + 1].token).toBe(restState[at + 1].token)
+    // 🔑 AND NO HIT AREA MOVED while the lines grew.
+    expect(await marks.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))).toEqual(boxesBefore)
 
-    // It lets go: moving the pointer off the rail returns it to the uniform length and its tone.
+    // It lets go: moving the pointer off the rail returns every line to rest.
     await page.mouse.move(900, 300)
     await expect
       .poll(async () => (await lineLengths(page))[at], { message: 'the hovered marker never let go' })
       .toBe(rest[at])
     expect(await restingLengths(page, 'the rail after the pointer left')).toEqual(rest)
     expect((await markerState(page))[at].token).toBe(restState[at].token)
+  })
+
+  test('🔑 press and drag scrubs: each marker it crosses jumps at once, and the release jumps no more', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    await driveScriptedTurns(page, PROMPT, 4)
+    await expect(page.locator(RAIL)).toBeVisible()
+    await settleEntranceAnimations(page)
+    const marks = page.locator(`${RAIL} ${MARK}`)
+    const box = async (i: number) => (await marks.nth(i).boundingBox())!
+    const first = await box(0)
+    const third = await box(2)
+    await page.mouse.move(first.x + 8, first.y + first.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(first.x + 8, third.y + third.height / 2, { steps: 6 })
+    // Immediately on screen, without waiting for a smooth scroll: the third question is current.
+    await expect(marks.nth(2), 'the scrub never brought the third question on screen').toHaveAttribute('data-current', 'true', { timeout: 5_000 })
+    await expect(page.locator('[data-session-map-preview]'), 'the preview did not follow the scrub').toContainText(`${PROMPT} (3)`)
+    const scrubbedTo = await scrollBox(page)
+    await page.mouse.up()
+    await page.waitForTimeout(400)
+    // The release's click jumped nowhere else: the transcript is where the drag left it.
+    expect((await scrollBox(page)).top, 'the release jumped a second time').toBe(scrubbedTo.top)
+    await expect(page.locator('[data-session-map-preview]')).toHaveCount(1)
+  })
+
+  test('🔑 ⌥↑ and ⌥↓ move between your messages from the composer, without entering the rail', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    await driveScriptedTurns(page, PROMPT, 4)
+    await expect(page.locator(RAIL)).toBeVisible()
+    await settleEntranceAnimations(page)
+    const marks = page.locator(`${RAIL} ${MARK}`)
+    // From the composer, where the owner is.
+    await page.getByRole('textbox', { name: 'Message input' }).click()
+    await page.keyboard.press('Alt+ArrowUp')
+    await expect(page.locator(LIVE)).toHaveText('Jumped to message 3 of 4', { timeout: 10_000 })
+    await expect(marks.nth(2)).toHaveAttribute('data-current', 'true', { timeout: 10_000 })
+    await page.keyboard.press('Alt+ArrowUp')
+    await expect(page.locator(LIVE)).toHaveText('Jumped to message 2 of 4', { timeout: 10_000 })
+    await page.keyboard.press('Alt+ArrowDown')
+    await expect(page.locator(LIVE)).toHaveText('Jumped to message 3 of 4', { timeout: 10_000 })
+    // Focus never left the composer.
+    await expect(page.getByRole('textbox', { name: 'Message input' })).toBeFocused()
+  })
+
+  test('🔑 a bookmark set from the preview is a dot on the rail, and the gateway keeps it across a reload', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    await driveScriptedTurns(page, PROMPT, 4)
+    await expect(page.locator(RAIL)).toBeVisible()
+    const marks = page.locator(`${RAIL} ${MARK}`)
+    await marks.nth(1).hover()
+    const bookmark = page.locator('[data-session-map-preview]').getByRole('button', { name: 'Bookmark this message' })
+    await expect(bookmark).toBeVisible({ timeout: 10_000 })
+    await bookmark.click()
+    await expect(marks.nth(1).locator('[data-session-map-bookmark]')).toHaveCount(1)
+    await expect(marks.nth(1)).toHaveAttribute('aria-label', /^Message 2 of 4, bookmarked: /)
+    await expect(marks.nth(0).locator('[data-session-map-bookmark]')).toHaveCount(0)
+    await page.reload()
+    await expect(page.locator(RAIL)).toBeVisible({ timeout: 20_000 })
+    await expect(marks.nth(1).locator('[data-session-map-bookmark]'), 'the bookmark did not survive a reload').toHaveCount(1, { timeout: 10_000 })
+    // And it comes off the same way.
+    await marks.nth(1).hover()
+    await page.locator('[data-session-map-preview]').getByRole('button', { name: 'Remove bookmark' }).click()
+    await expect(marks.nth(1).locator('[data-session-map-bookmark]')).toHaveCount(0)
   })
 
   test('the card opens BESIDE the rail, never over the markers below it', async ({ page }) => {
@@ -1020,13 +1084,13 @@ test.describe('Session Map — the marker form', () => {
   })
 
   test('under prefers-reduced-motion the pointed-at marker still EXPANDS — it just does not travel there', async ({ page }) => {
-    // "Collapses to instant" is pinned where it is falsifiable — `SessionMapRail.reducedMotion.test.tsx`
-    // asserts the rail hands framer `physics.snappy` and that under the query that getter IS
-    // `instant`. What a browser CAN say, and what matters to a user who has motion off, is that the
-    // marker still expands and the card still previews with the animation gone.
+    // The rail's length moves on a CSS transition the global reduced-motion rule collapses
+    // (`SessionMapRail.quiescence.test.tsx` counts its frames). What a browser CAN say, and what
+    // matters to a user who has motion off, is that the marker still expands and the preview still
+    // opens with the animation gone.
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await gotoRoute(page, 'chat')
-    await driveScriptedTurns(page, PROMPT, 3)
+    await driveScriptedTurns(page, PROMPT, 4)
     await expect(page.locator(RAIL)).toBeVisible()
 
     const rest = await lineLengths(page)
@@ -1039,7 +1103,7 @@ test.describe('Session Map — the marker form', () => {
     await expect(page.locator(CARD)).toBeVisible({ timeout: 10_000 })
   })
 
-  test('the roving cursor is VISIBLE — its marker expands, brightens and wears the ring; the rest stay uniform', async ({ page }) => {
+  test('the roving cursor is VISIBLE — its marker expands, brightens and wears the ring, its neighbours following', async ({ page }) => {
     // The guarantee `getByRole` cannot give. `SessionMapRail.keyboard.test.tsx` proves the cursor
     // moves and that Enter jumps; neither says the moved-to marker looks any different. The marker
     // under the cursor expands AND brightens AND takes the global `:focus-visible` ring — the ring is
@@ -1049,7 +1113,6 @@ test.describe('Session Map — the marker form', () => {
     await expect(page.locator(RAIL)).toBeVisible()
 
     const rest = await restingLengths(page, 'the idle rail')
-    expect(new Set(rest).size, 'the rail is not uniform at rest').toBe(1)
     const restState = await markerState(page)
     // Focus the rail's single tab stop directly, then rove with the keys — the same path
     // `SessionMapRail.keyboard.test.tsx` drives, here for its VISIBLE effect.
@@ -1061,9 +1124,8 @@ test.describe('Session Map — the marker form', () => {
       .toBeGreaterThan(rest[0])
     const lengths = await restingLengths(page, 'the marker under the cursor')
     expect(lengths[0], 'the cursor’s marker must be the longest on the rail').toBe(Math.max(...lengths))
-    lengths.forEach((len, i) => {
-      if (i !== 0) expect(len, `marker ${i} is not at the uniform length while the cursor is on 0`).toBe(rest[i])
-    })
+    // The cursor is a target like the pointer: its neighbours follow it by the same falloff.
+    expect(lengths[1], 'the cursor’s neighbour did not follow it').toBeGreaterThan(rest[1])
     // Brightened, in the painted colour:
     const canvas = await resolved(page, 'var(--color-canvas)')
     const cursorState = (await markerState(page))[0]

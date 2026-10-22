@@ -344,6 +344,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // (`turnRuns.withRunEnded`).
   const runningTurnRef = useRef<{ id: string; start: string } | null>(null)
   const [title, setTitle] = useState(seededDetail?.title || '')
+  // The messages bookmarked on this chat's Session Map, by their `ts`: from the chat's read, and
+  // from the gateway's session list each time any window changes them.
+  const [bookmarks, setBookmarks] = useState<readonly string[]>(seededDetail?.bookmarks ?? [])
   // Why the chat has no title yet, when no model is chosen for the chores (the gateway's sentence);
   // read with the chat, on opening it and after each turn, and gone once it has a title.
   const [titleNeed, setTitleNeed] = useState('')
@@ -567,6 +570,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         sinks.current.onOpened(d)
         setTitle(d.title || '')
         setTitleNeed(d.title_needs_model || '')
+        setBookmarks(Array.isArray(d.bookmarks) ? d.bookmarks : [])
         // Seed the session cost chip from the ledger for a revisited chat.
         refreshSessionCost(sessionId)
         // Branch lineage — restore the "Branched from" breadcrumb on every open,
@@ -864,6 +868,13 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         const key = String(d.key ?? '')
         const t = String(d.title ?? '')
         if (t && deliverableToOpenSession(key, sessionRef.current)) { setTitle(t); setTitleNeed('') }
+        break
+      }
+      // The gateway's session list, pushed whenever a chat changes: this chat's bookmarks as stored,
+      // so a bookmark set in another window or on the phone shows here too.
+      case 'sessions': {
+        const row = (Array.isArray(m.data) ? m.data : []).find((r: { key?: unknown }) => r?.key === s)
+        if (row && Array.isArray(row.bookmarks)) setBookmarks(row.bookmarks.filter((t: unknown): t is string => typeof t === 'string'))
         break
       }
       case 'chat_done': {
@@ -1225,6 +1236,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   return {
     // The session the chat follows, and its transcript.
     sessionRef, turns, setTurns, patchLastAssistant, dropTextRun, readSnapshot, adoptSnapshot,
+    // The messages bookmarked on its Session Map.
+    bookmarks, setBookmarks,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
     streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
     takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, sessionSkillsEpoch, wsConnected,

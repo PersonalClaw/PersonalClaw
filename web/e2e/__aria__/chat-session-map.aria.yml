@@ -1,0 +1,113 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to chat history"
+  - button "The release checklist"
+  - button "Regenerate title"
+  - button "Share"
+  - button "Session map"
+  - button "Activity"
+  - button "More actions"
+  - navigation "Session map":
+    - text: One mark per message you sent. Point at or arrow to a mark to preview it; click it or press Enter to jump to it, or press and drag along the marks to scrub through the conversation. Option or Alt with the up and down arrows moves between your messages from anywhere.
+    - 'button "Message # of #: What is left before the release?"'
+    - 'button "Message # of #, bookmarked: Run the test suite."'
+    - 'button "Message # of #: Draft the release notes."'
+    - 'button "Message # of #: Check the changelog for typos."'
+    - 'button "Message # of #: Tag the release."'
+    - 'button "Message # of #: Tell the team it shipped."'
+    - status
+  - text: What is left before the release?
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - paragraph: "Done: what is left before the release, and nothing else needed."
+  - button "Copy"
+  - button "Branch from here"
+  - button "Speak"
+  - text: Run the test suite.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - button "Worked for #s · # steps"
+  - paragraph: "Done: run the test suite, and nothing else needed."
+  - button "Copy"
+  - button "Branch from here"
+  - button "Speak"
+  - text: Draft the release notes.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - paragraph: "Done: draft the release notes, and nothing else needed."
+  - button "Copy"
+  - button "Branch from here"
+  - button "Speak"
+  - text: Check the changelog for typos.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - paragraph: "Done: check the changelog for typos, and nothing else needed."
+  - button "Copy"
+  - button "Branch from here"
+  - button "Speak"
+  - text: Tag the release.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - paragraph: "Done: tag the release, and nothing else needed."
+  - button "Copy"
+  - button "Branch from here"
+  - button "Speak"
+  - text: Tell the team it shipped.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - paragraph: "Done: tell the team it shipped, and nothing else needed."
+  - button "Copy"
+  - button "Regenerate"
+  - button "Branch from here"
+  - button "Speak"
+  - status
+  - button "Jump to latest message"
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Optimize prompt (⌘↵)" [disabled]
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

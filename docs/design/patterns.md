@@ -244,8 +244,8 @@ All carry `aria-busy`/`aria-label`. **Migrate to it when** you see a bespoke `an
 ### Session Map — `web/src/pages/chat/sessionMap*` + `SessionMap*.tsx`
 
 The canonical **index of a long scrollable surface**: one marker per thing a reader will want to go
-back to, a narrow rail of uniform markers beside the content, a preview card that answers "what is
-this one?", one jump handler, and one "back to newest". Chat is its only consumer today — it
+back to, a narrow rail of short markers beside the content, one preview that answers "what is this
+one?", one jump handler, and one "back to newest". Chat is its only consumer today — it
 **replaced** the Activity → **Index** tab rather than sitting beside it (`CHANGELOG.md` records the
 deletion of the tab, its list body and the `ChatActivity.index` model) — so the parts live under
 `pages/chat/` rather than `ui/`, the way `SlotEmptyState` lives under `pages/dashboard/widgets/`. It
@@ -255,31 +255,38 @@ panel or "jump to section" list is the thing not to build.
 | Part | File | Owns |
 |---|---|---|
 | **typed index + map entries** | `sessionMap.ts` | `SessionMark`, `SESSION_MARK_KINDS`, `sessionMapMarks()`; `SessionMapEntry`, `sessionMapEntries()`; `SESSION_MAP_MIN_MARKS` |
+| **geometry** | `sessionMapGeometry.ts` | `markLength()`: every marker's painted length from the target, its distance and whether it is on screen |
 | **current region** | `sessionMapRegion.ts` | `useVisibleTurns()` (the `IntersectionObserver`) + `currentMarkRange()` (pure) |
-| **the rail** | `SessionMapRail.tsx` | the markers, the roving cursor, the one expanded marker, the reveal |
-| **the preview card** | `SessionMapCard.tsx` | `sessionMapMarkName()`, the card body |
-| **coarse-pointer form** | `SessionMapDrawer.tsx` | one 44px row per user message, the card's content inlined |
+| **the rail** | `SessionMapRail.tsx` | the markers, the roving cursor, the target and its wave, the one preview, scrubbing, ⌥↑/⌥↓ |
+| **the preview** | `SessionMapCard.tsx` | `sessionMapMarkName()`, the preview's body and its bookmark control |
+| **touch form** | `SessionMapDrawer.tsx` | one 44px row per user message, the rail's marker beside it, the preview inlined, a bookmark control |
 | **return-to-newest** | `SessionMapReturnLatest.tsx` | the app's **one** "back to the newest message" control |
 
 #### The design rules
 
-The form was settled property by property, and each rule replaced something an earlier form
-did. They are the spec; the rail's header restates them beside the code.
+The form follows #4776, approved on 2026-10-18; the rail's header restates the rules beside the code.
 
 1. **A marker is a user message.** Replies and their tool calls are not markers: a reply is too long
-   to show, and its opening is already on the question's card.
-2. **Every marker rests at one length.** At rest, length encodes nothing — not structure, not
-   position in the session.
-3. **What is on screen is said by colour alone**, never by size, so scrolling the transcript never
-   moves the rail's geometry.
-4. **Only the marker under the pointer or the keyboard cursor expands**, beyond the resting length and
-   in a brighter tone, with its card beside it. Its neighbours do not move, and it returns to the
-   resting length when the pointer or focus leaves.
-5. **Skimming moves nothing but the card.** Pointing and arrowing preview; only a click, `Enter` or
-   `Space` jumps the transcript.
+   to show, and its opening and what it did are on the question's preview.
+2. **At rest a marker is short, and an exchange on screen rests longer and in the accent.** The rail
+   is a spatial overview of where the reader is, said by length as well as colour, never colour
+   alone.
+3. **The target grows and its neighbours follow.** The marker the pointer, the keyboard cursor or a
+   scrub is on grows to the full length in a brighter tone, and the three either side grow by
+   0.7, 0.4 and 0.2 of the way, so a sweep reads as a wave around the pointer. Only the painted line
+   changes: every row stays the same 32×24 target, so nothing a pointer aims at ever moves.
+4. **A bookmark is a dot** at the end of its marker: a shape, not a colour.
+5. **One preview, beside the target**, for pointing (after an intent delay), arrowing and scrubbing.
+6. **A click jumps smoothly; press and drag scrubs**, jumping at once over every marker it crosses,
+   and the release jumps no more.
+7. **⌥↑ / ⌥↓ move between your messages from anywhere** (`prev-message` / `next-message` in the
+   keymap), without entering the rail.
 
 The rail stays put while the transcript scrolls (it is a sibling of the scroller — see **Usage**),
-the return-to-newest control is a circular button, and the phone drawer follows the same rules.
+the return-to-newest control is a circular button, and the touch drawer is the same map laid out for
+a finger. At rest, under reduced motion and in a hidden document the rail does no animation work:
+its lengths are CSS transforms on a short CSS transition, and `SessionMapRail.quiescence.test.tsx`
+counts its frames.
 
 #### The typed index — the contract the durable endpoint mirrors
 
@@ -350,11 +357,13 @@ agree about coordinates and previews by construction.
 | `ts` | the user message's timestamp, `''` when it carries none |
 | `preview` | the user message, one line of plain text |
 | `response` | the opening of the reply, one line of plain text — `''` until reply text has arrived |
+| `outputs` | what the reply did: the exchange's typed marks (`tool`, `approval`, `error`, `activity`) in order — the preview lists two and counts the rest |
+| `bookmarked` | the owner bookmarked this message; the gateway keeps bookmarks by the message's `ts` (`PUT /api/chat/sessions/{session}/bookmarks`), so a message with no `ts` yet cannot be one |
 
 Agent output that precedes the first user message (an agent-initiated or resumed session) opens no
 entry: there is no question to file it under.
 
-**Self-suppression:** `SESSION_MAP_MIN_MARKS = 2` entries. One threshold, two behaviours — the rail
+**Self-suppression:** `SESSION_MAP_MIN_MARKS = 4` entries. One threshold, two behaviours — the rail
 returns `null` before its first hook; the drawer, which the user deliberately opened, renders the
 canonical `EmptyState` instead of a blank panel.
 
@@ -396,16 +405,17 @@ Two pieces, split so the arithmetic is testable without a DOM:
 > callback — and in any environment with no layout — the honest answer is the newest entry, which is
 > where an unscrolled surface *is*. One total function, not a second mechanism to keep in step.
 
-#### Markers — one length at rest, colour for what is on screen
+#### Markers — short at rest, a wave around the target
 
-Each marker is a 2px line inside a 32×24 button. At rest every marker is 12px long
-(`MARK_REST_SCALE = 0.5` of the 24px line), whatever it indexes and whether or not it is on screen.
+Each marker is a 2px line inside a 32×24 button, painted at the length `markLength()` gives it
+(`sessionMapGeometry.ts`): 6px at rest, 12px at rest while its exchange is on screen, 26px as the
+target, and its three neighbours either side 0.7, 0.4 and 0.2 of the way from their rest to 26px.
 The on-screen region paints `--color-primary` (One-Voice — coral means "the agent / live / current")
-and the rest paints `--color-map-rest`, a neutral minted for this rail (see **Contrast**). Only the
-pointed-at marker changes size: it grows to the full 24px (`MARK_EXPANDED_SCALE`) and brightens, to
-`--color-primary-emphasis` on screen and to `--color-on-surface` off it. Which marker is pointed at
-is rail state rather than per-marker state, because it is a singleton — a pointer moving from one
-marker to the next hands the expansion over and never leaves two expanded.
+and the rest paints `--color-map-rest`, a neutral minted for this rail (see **Contrast**). The target
+brightens, to `--color-primary-emphasis` on screen and to `--color-on-surface` off it; its
+neighbours keep their tone. The target is rail state rather than per-marker state, because it is a
+singleton. A bookmarked message carries a 6px dot just past the end of its line, which follows the
+line as it grows.
 
 There is **no track**. The earlier 1px `--color-rail` hairline measured 1.000:1 on the light canvas
 (it painted nothing), and a column of markers on a constant pitch already reads as a rail;
@@ -413,59 +423,72 @@ There is **no track**. The earlier 1px `--color-rail` hairline measured 1.000:1 
 Tone-Not-Line rule, `sideStripeDoctrine.test.ts`): the tone lives in discrete markers that are the
 nav targets.
 
-#### Preview card — "what is this one?"
+#### Preview — "what is this one?"
 
-Each marker is the trigger for a per-marker `ui/Popover` (portalled, `placement="right"` so it sits
-beside the rail instead of over the markers below it, 300px — a preview line wants ~45-55
-characters). The frosted material, corner, entrance spring, viewport clamp, z-index, single-layer
-Escape and focus-restore all come from the shared primitive; the card owns only its body:
+The rail renders **one** preview surface, beside whichever marker is the target, inside the rail's
+own box (so it is the next tab stop after the marker that revealed it). It wears the overlay
+material (`glass`, `--radius-lgi`, the menu layer), is 300px wide (a preview line wants ~45-55
+characters), is centred on its marker and kept inside the rail's height, and follows the rail's own
+scroll. One instance means two can never be open. Its body:
 
 - a small **timestamp** (caption, `--color-on-surface-low`); an unparseable one renders **nothing**
   rather than "Invalid Date" (`lib/epoch`'s contract);
+- the **bookmark** control, which says which way it goes ("Bookmark this message" / "Remove
+  bookmark"), and which a message not yet saved offers disabled, saying why;
 - the **request**, clamped to two lines, in `--color-on-surface` — not the low-contrast ramp, which
   is for chrome, never for the sentence you came to read;
 - under a hairline divider, a **muted excerpt of the reply's opening**, clamped to three lines, in
-  `--color-on-surface-var`.
+  `--color-on-surface-var`; while the newest reply is still on its way, a still placeholder line
+  holds its place;
+- **what the reply did**: its first two outputs, each by kind ("Ran", "Failed", "Asked", "Error"),
+  and "+N more".
 
-There is no role label: every entry is a user message and its excerpt is the reply, so a "You" on
-every card would label the one thing the map never varies.
+There is no role label: every entry is a user message and its excerpt is the reply.
 
-Pointer intent is two delays: **150ms to open** (so a pointer merely *crossing* the rail does not
-strobe a card per marker) and **120ms to close** (the bridge that lets the pointer leave the marker,
-cross the gap and land on the card to read or select the excerpt).
+Pointer intent is two delays: **150ms to open** (so a pointer merely *crossing* the rail opens
+nothing; once a preview is open, moving to another marker moves it at once) and **120ms to close**
+(the bridge that lets the pointer cross the gap onto the preview). Who opened it closes it: the
+pointer leaving, focus leaving the rail for a keyboard-opened one, and Escape for either, which hands
+focus back to the marker.
 
-> **🔑 Exactly one card open is a property of focus, not coordination.** `Popover.openSignal` is
-> one-way (nothing reaches `setOpen(false)`), so revealing card *j* while *i* was open would stack
-> them. Instead the card the cursor opened belongs to the marker that has **focus**, which the
-> platform already keeps a singleton, and a marker closes its own card on `blur`. `kbOpen` records
-> *who opened it*, because a pointer-opened card must not be dismissed by the blur that a click
-> **into** the card causes.
+#### Scrubbing and the chord
+
+A press on a marker that moves onto another captures the pointer (`setPointerCapture`) and becomes a
+scrub: every marker it crosses jumps the transcript **instantly**, the preview follows, and the
+click the release produces is swallowed, so the transcript stays where the drag ended. A press that
+stays on its marker is a click, and jumps smoothly. A touch press never scrubs — the touch form is
+the drawer, and a finger there scrolls. ⌥↑ / ⌥↓ step from the exchange on screen (from a long answer
+whose question has scrolled away, ⌥↑ goes to that question first), a second press within 1.5s steps
+on from the first one's target, and each says "Jumped to message N of M".
 
 #### Accessibility
 
 - **Landmark, once.** The rail is `<nav aria-label="Session map">`, described by a visually hidden
-  hint ("One mark per message you sent. Point at or arrow to a mark to preview it; click it or press
-  Enter to jump to it.") so what the markers are is said once rather than on every marker. The drawer
+  hint that names every way through it — preview, jump, scrub and ⌥↑/⌥↓ — so what the markers are is
+  said once rather than on every marker. A marker's name says a bookmark ("Message 3 of 9,
+  bookmarked: …"). The drawer
   adds **no** nav landmark: it renders inside `ui/SidePanel`, already a `role="region"` named
   "Session map", and nesting two same-named regions for one surface is the defect.
 - **One tab stop, roving `tabIndex`.** The slot starts on the current region's first marker; arrows
   move it, `Home`/`End` go to the ends, `PageUp`/`PageDown` step 5 markers, `Enter`/`Space` jump.
   `preventDefault()` fires only for handled keys: it stops the arrows scrolling the surface out from
   under the cursor **and** stops the browser's own button activation firing a second jump.
-- **Passive focus must not open the card; an explicit cursor key must.** The rail sits between the
-  content and the composer, so Tab-through would flash a card on the way past — but a sighted
-  keyboard user arrowing down markers with no card is navigating blind. The discriminator is
+- **Passive focus must not open the preview; an explicit cursor key must.** The rail sits between
+  the content and the composer, so Tab-through would flash a preview on the way past — but a sighted
+  keyboard user arrowing down markers with no preview is navigating blind. The discriminator is
   **intent**: a cursor key sets a one-shot `reveal` immediately before moving focus and the receiving
-  `onFocus` consumes it. Tab never sets it.
+  `onFocus` consumes it. Tab never sets it. A preview the keyboard opened is the next tab stop after
+  its marker, so Tab reaches its bookmark control and Escape there hands focus back.
 - **The cursor is visible twice.** The focused marker keeps the global `:focus-visible` ring
-  (`tokens.css`, 2px opaque `--color-primary`; no `outline-none` anywhere in the rail) **and** expands
-  like a hovered one, so a keyboard user sees where the cursor is through the platform's channel and
+  (`tokens.css`, 2px opaque `--color-primary`; no `outline-none` anywhere in the rail) **and** is the
+  target like a pointed-at one, its neighbours following, so a keyboard user sees where the cursor is through the platform's channel and
   the design's.
-- **Accessible name:** `sessionMapMarkName` → `Message N of M: <subject>`, the subject bounded to 40
-  chars through `lib/rowSubject`. The drawer's rows and the live region read the same position, so
+- **Accessible name:** `sessionMapMarkName` → `Message N of M: <subject>` (`Message N of M,
+  bookmarked: <subject>` for a bookmark), the subject bounded to 40 chars through `lib/rowSubject`. The drawer's rows and the live region read the same position, so
   the two forms cannot number a message differently.
-- **Live region:** `role="status" aria-live="polite"`, and it announces **only** the jump ("Jumped to
-  message N of M") and only while the rail holds focus. The name already states the cursor position
+- **Live region:** `role="status" aria-live="polite"`, and it announces **only** a keyboard jump
+  ("Jumped to message N of M"): one from the rail's keys while it holds focus, or one from ⌥↑/⌥↓
+  wherever focus is. A hover and a scrub stay silent. The name already states the cursor position
   on every move, so repeating it would be double-speak; what a screen-reader user cannot otherwise
   tell is whether the *content* moved, since focus stays on the rail. It clears when focus leaves the
   rail entirely, so a later hover cannot re-announce a jump nobody made.
@@ -486,13 +509,15 @@ cross the gap and land on the card to read or select the excerpt).
   a list that fits shows every marker at full strength. Unpadded, the first and last markers sat 12px
   into the fade at 60% alpha, which composites the rest tone to about 1.9:1 on the canvas. The roving
   cursor scrolls the rail until its marker clears the fade, not just the box edge.
-- **Touch:** drawer rows are `min-h-11` (44px) and carry the card's content inline — the request (two
-  lines), the reply's opening (one line) and the clock — because a touch device has no hover to reveal
-  a card with.
-- **Reduced motion:** the marker's length runs on `physics.snappy` and the drawer rows and the return
-  control on `spring.*` — gated getters, so `prefers-reduced-motion` collapses them through
-  `design/motion`'s single off-switch (`reducedMotionAppWide.test.ts`), never a hand-rolled spring.
-  With motion off a marker still expands; it just does not travel there. Colour switches and never
+- **Touch:** drawer rows are `min-h-11` (44px) and carry the preview's content inline — the rail's
+  own marker for the message (its on-screen length and tone, its bookmark dot), the request (two
+  lines), the reply's opening (one line) and the clock — and end in a 44px bookmark control named for
+  its message, because a touch device has no hover to reveal a preview with. The rows are still: no
+  staggered entrance.
+- **Reduced motion:** a marker's length moves on a short CSS transition (`--duration-short`), which
+  the global reduced-motion rule in `tokens.css` collapses (and `motion-reduce:transition-none` stops
+  outright); the return control runs on `spring.*`. With motion off a marker still grows; it just
+  does not travel there, and every jump is instant rather than smooth. Colour switches and never
   animates.
 - **Contrast:** a marker is a UI component, not text, so **SC 1.4.11 at 3:1** governs it — not
   1.4.3's 4.5. `design/schemeContrast.test.ts` parses both resting tones and both lit tones out of the

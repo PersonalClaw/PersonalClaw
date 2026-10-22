@@ -27,6 +27,7 @@ export const THREAD_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
 export type CommandId =
   | 'palette' | 'sidebar' | 'drawer' | 'focus-mode' | 'reading-mode' | 'workspace-tree' | 'next-needs-you' | 'mark-all-read'
+  | 'prev-message' | 'next-message'
   | 'new-chat'
   | `chat-${(typeof THREAD_NUMBERS)[number]}`
   | 'approve-focused' | 'restore-last-prompt'
@@ -69,6 +70,16 @@ export const KEYMAP: readonly KeyBinding[] = [
   // Every chat seen, on the gateway's record (`POST /api/chat/seen`), so every window and the phone
   // clear their unread marks. What waits on you stays marked: seeing a chat answers nothing.
   { id: 'mark-all-read', label: 'Mark every chat as read', keywords: 'unread seen clear marks dismiss', scope: 'global', chords: ['shift+escape'] },
+  // Your messages in the open chat, one at a time, from anywhere in it (`pages/chat/SessionMapRail`,
+  // whose runner it is while the chat's Session Map shows).
+  {
+    id: 'prev-message', label: 'Go to your previous message in this chat', scope: 'global', chords: ['alt+arrowup'],
+    keywords: 'session map prompt question jump back earlier', disabledReason: 'Open a chat with four or more of your messages',
+  },
+  {
+    id: 'next-message', label: 'Go to your next message in this chat', scope: 'global', chords: ['alt+arrowdown'],
+    keywords: 'session map prompt question jump forward later', disabledReason: 'Open a chat with four or more of your messages',
+  },
   // A new thread, and the sidebar's threads by number: ⌘n opens the nth thread row the sidebar shows,
   // top to bottom (`threadRail.tsx`, `threadNumberRoute`). The ids keep the names they had when the
   // keys counted the chat list, since the desktop app's Go menu sends them (`desktop/goMenu.js`), and
@@ -104,7 +115,7 @@ function isMac(): boolean {
   return /Mac|iPhone|iPad/.test(nav?.platform || nav?.userAgent || '')
 }
 
-const KEY_WORDS: Record<string, string> = { enter: 'Enter', arrowup: '↑', escape: 'Esc', '`': '`' }
+const KEY_WORDS: Record<string, string> = { enter: 'Enter', arrowup: '↑', arrowdown: '↓', escape: 'Esc', '`': '`' }
 
 /** A chord as this platform writes it: `⌘⇧P` on a Mac, `Ctrl+Shift+P` elsewhere. */
 export function chordLabel(chord: string): string {

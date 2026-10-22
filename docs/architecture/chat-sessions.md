@@ -1163,6 +1163,19 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   lines are never drawn in the turn itself, and a turn's tool cards never keep them out
   (`LEDGER_ACTIVITY_KINDS`, `insertActivity`).
 
+### Bookmarks on the map
+
+`dashboard/chat_bookmarks.py` — `PUT /api/chat/sessions/{session}/bookmarks` takes
+`{"add": [ts], "remove": [ts]}`: the owner's messages bookmarked on the Session Map, one in
+or out, applied to what is stored when the write lands (the tags route's rule, so one
+window's copy never drops another's bookmark). A bookmark is keyed by the message's `ts`,
+which edit-resend already addresses a message by, because a message has no id and its
+visible position moves on a rewind; a bookmark whose message is gone matches nothing. Only a
+message the owner sent in that conversation is taken (`400 unknown_message`), and a
+conversation keeps at most 500. They ride the session's meta line beside its colour and
+tags, come back every way a kept chat comes back, and are served on the session detail and
+on each row of the session list, whose `sessions` push is how another window learns of one.
+
 ## Channel-linked sessions
 
 A dashboard session can be linked to a channel thread (and vice versa):

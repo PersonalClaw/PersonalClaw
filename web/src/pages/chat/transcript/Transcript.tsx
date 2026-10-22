@@ -55,7 +55,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   speak: (text: string, turnIndex: number) => void
   speakingTurn: number | null
 }) {
-  const { scrollRef, endRef, followTurnRef, followEnd, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
+  const { scrollRef, endRef, followTurnRef, followEnd, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
   const { sessionRef, turns, streaming, turnPhase, turnLine, turnEnding, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
   // The latest question, which "Keep my question in view" pins while a long reply streams.
   const lastQuestion = turns.map((t) => t.role).lastIndexOf('user')
@@ -85,7 +85,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
     <div className="relative flex min-h-0 flex-1">
       {mapOpen && !isMobile && (
         <SessionMapRail entries={sessionEntries} turnNodes={turnNodes.current}
-          scrollRef={scrollRef} onJumpTo={jumpToTurn} />
+          scrollRef={scrollRef} onJumpTo={jumpToTurn} onToggleBookmark={toggleBookmark} replyPending={streaming} />
       )}
       {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
           the browser gate can assert scroll-fixity and the jump against the real scroll

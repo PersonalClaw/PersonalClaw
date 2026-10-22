@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sessionMapEntries, sessionMapMarks, SESSION_MARK_KINDS } from './sessionMap'
+import { sessionMapEntries, sessionMapMarks, SESSION_MAP_MIN_MARKS, SESSION_MARK_KINDS } from './sessionMap'
 import { hydrateTurns, type ChatTurn, type Segment, type SubagentCard, type HistMsg } from './chatTypes'
 
 // ── The typed session-map mark model + derivation (contract owner) ──────────────────────────
@@ -247,5 +247,34 @@ describe('sessionMapEntries — the map lists user messages, each owning its exc
 
   it('is a no-op on an empty transcript', () => {
     expect(sessionMapEntries([])).toEqual([])
+  })
+
+  it('🔑 lists what the reply did, from the typed index, in order — never its text', () => {
+    expect(entries[0].outputs).toEqual([
+      { kind: 'tool', preview: 'Terminal — npm run build' },
+      { kind: 'error', preview: 'one warning' },
+    ])
+    expect(entries[1].outputs).toEqual([])
+  })
+
+  it('carries a failed tool call’s outcome onto its output', () => {
+    const e = sessionMapEntries([
+      { role: 'user', ts: 'u', visibleIndex: 0, segments: [{ kind: 'text', text: 'read it' }] },
+      { role: 'assistant', ts: 'a', visibleIndex: 1, segments: [{ kind: 'tool', id: 'x', tool: 'Read', detail: 'gone.ts', done: true, ok: false }] },
+    ])
+    expect(e[0].outputs).toEqual([{ kind: 'tool', preview: 'Read — gone.ts', ok: false }])
+  })
+
+  it('🔑 marks an entry bookmarked by its message’s stamp — and never one with no stamp', () => {
+    expect(entries.map((e) => e.bookmarked)).toEqual([false, false])
+    expect(sessionMapEntries(turns, new Set(['u2'])).map((e) => e.bookmarked)).toEqual([false, true])
+    // The reply's stamp is not the question's: bookmarking is the owner's messages only.
+    expect(sessionMapEntries(turns, new Set(['a2'])).map((e) => e.bookmarked)).toEqual([false, false])
+    const unsaved = sessionMapEntries([{ role: 'user', visibleIndex: 0, segments: [{ kind: 'text', text: 'hi' }] }], new Set(['']))
+    expect(unsaved[0].bookmarked).toBe(false)
+  })
+
+  it('appears at four of the owner’s messages', () => {
+    expect(SESSION_MAP_MIN_MARKS).toBe(4)
   })
 })
