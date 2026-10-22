@@ -734,8 +734,10 @@ jobs:
         # -> electron-builder --linux (AppImage + deb per desktop/package.json).
         run: make desktop-dist-linux
       - name: Smoke the artifacts (release-blocking)
-        # The Electron shell itself is NOT launched — that needs a display, and
-        # ci.yml's desktop tier declines display-dependent smoke on purpose. What
+        # The Electron shell itself is NOT launched here. ci.yml's `desktop-smoke` job
+        # launches the packed shell under xvfb on every pull request that touches
+        # desktop/ or web/ (#3942), from electron-builder's Linux dir build on a stub
+        # backend: a fast smoke, never this release's artifacts. What
         # IS run for real is the bundled backend: extract the AppImage (no FUSE
         # needed) and execute the frozen personalclaw-backend on this OS/arch —
         # a bundle that packages but cannot start must fail the release, same

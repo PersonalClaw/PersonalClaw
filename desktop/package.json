@@ -11,7 +11,8 @@
     "test": "node --test test/*.test.js",
     "test:built": "node --test test/built/*.test.js",
     "dist": "electron-builder --mac --publish never --config.electronVersion=$(node -p \"require('electron/package.json').version\")",
-    "dist:linux": "electron-builder --linux --publish never --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
+    "dist:linux": "electron-builder --linux --publish never --config.electronVersion=$(node -p \"require('electron/package.json').version\")",
+    "dist:linux-dir": "electron-builder --linux dir --publish never --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
   },
   "devDependencies": {
     "electron": "^44.7.2",

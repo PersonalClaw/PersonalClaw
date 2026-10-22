@@ -32,6 +32,7 @@ jobs = [
   "client",
   "web-unit",
   "web-build",
+  "desktop-smoke",
   "package",
   "e2e",
   "e2e-shard",
@@ -879,6 +880,36 @@ command = [
 # no unknown-path fallback stands behind these inputs, and they alone decide a plan's
 # apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and plans every
 # tracked path the classifier ran the job on.
+# The packed desktop shell, launched as a user starts it (#3942): electron-builder's Linux dir build
+# with a stub backend that runs this checkout's gateway, its app.asar held to build.files, the app
+# started under xvfb reaching that gateway and drawing the chat, and two planted copies that must
+# each fail. A fast unpackaged smoke, never a packaged-release test: the release rehearsal is that.
+[[job]]
+id = "desktop-smoke"
+tiers = ["merge"]
+inputs = [
+  "desktop/",
+  "web/",
+  ".github/workflows/ci.yml",
+  ".github/actions/",
+]
+external_inputs = []
+toolchain = ["uv-sync", "node", "npm-ci", "electron"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+needs_node = true
+after = ["web-build"]
+command = [
+  { argv = ["node", "desktop/test/smoke/writeStubBackend.js", "desktop/backend-dist/smoke"] },
+  { argv = ["npm", "run", "dist:linux-dir", "--workspace=desktop"] },
+  { argv = ["sh", "tools/ci/sandbox_helper.sh", "desktop/dist/linux-unpacked/chrome-sandbox"] },
+  { argv = ["node", "desktop/test/smoke/packedApp.js", "check", "desktop/dist/linux-unpacked"] },
+  { argv = ["node", "desktop/test/smoke/shellSmoke.js", "desktop/dist/linux-unpacked/personalclaw-desktop", "--gateway-pid-file", "desktop/backend-dist/smoke/gateway.pid"] },
+  { argv = ["node", "desktop/test/smoke/packedApp.js", "controls", "desktop/dist/linux-unpacked", "--gateway-pid-file", "desktop/backend-dist/smoke/gateway.pid"] },
+]
+
 [[job]]
 id = "apps-contract"
 tiers = ["merge"]

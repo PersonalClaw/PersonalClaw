@@ -201,6 +201,7 @@ _INPUT_ROWS = {
     "client": ("packages/personalclaw-client-py/src/x.py", None),
     "web-unit": ("web/src/App.tsx", None),
     "web-build": ("web/src/App.tsx", None),
+    "desktop-smoke": ("desktop/main.js", "src/personalclaw/app.py"),
     "package": ("setup.cfg", None),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
@@ -430,6 +431,22 @@ def test_a_src_diff_that_reaches_the_sdk_plans_apps_contract() -> None:
     assert not p.full and "apps-contract" in p.jobs
 
 
+def test_the_desktop_smoke_runs_for_the_shell_and_the_dashboard_and_for_neither_else() -> None:
+    """The packed shell's smoke (#3942) is planned when the shell or the dashboard it loads
+    changed, and left out of a diff that touches neither: a backend change is e2e's to catch, as
+    the smoke proves the shell starts and draws, not the gateway."""
+    for path in ("desktop/main.js", "desktop/package.json", "web/src/App.tsx", "web/index.html"):
+        p = _plan(path)
+        assert "desktop-smoke" in p.jobs, path
+    for path in (
+        "src/personalclaw/app.py",
+        "docs/vision.md",
+        "packages/personalclaw-client-py/src/x.py",
+    ):
+        p = _plan(path)
+        assert not p.full and "desktop-smoke" not in p.jobs, path
+
+
 def test_docs_is_one_of_python_suites_inputs() -> None:
     """Suite modules read docs/ (the publication-hygiene check reads every tracked file, and
     modules check prose against the tree), so docs/ is one of python-suite's inputs. Every plan
@@ -551,7 +568,7 @@ GATED_IF = {
             "(needs.changes.outputs.full != 'false' || "
             f"contains(fromJSON(needs.changes.outputs.jobs || '[]'), '{job}')) }}}}"
         )
-        for job in ("e2e", "e2e-shard", "e2e-stateful", "ui-quality")
+        for job in ("e2e", "e2e-shard", "e2e-stateful", "ui-quality", "desktop-smoke")
     },
     "apps-contract": (
         "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "

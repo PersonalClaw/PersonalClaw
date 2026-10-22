@@ -5,12 +5,16 @@ const path = require("node:path");
 
 // ── Electron's install gives the setuid bit only on a machine GitHub owns ─────────────────────
 //
-// `tools/ci/install_electron.sh` makes Chromium's sandbox helper root's with mode 4755, which a
-// GitHub-hosted Linux runner needs (Ubuntu's AppArmor rule). `GITHUB_ACTIONS=true` is set on
-// self-hosted runners too, so every `sudo` line sits inside a guard that names Linux, GitHub
-// Actions and a github-hosted runner: the bit is never set on a machine someone else owns.
+// `tools/ci/sandbox_helper.sh` makes a Chromium sandbox helper root's with mode 4755, which a
+// GitHub-hosted Linux runner needs (Ubuntu's AppArmor rule): the toolchain's binary's, through
+// `tools/ci/install_electron.sh`, and a packed app's, in the desktop smoke (#3942).
+// `GITHUB_ACTIONS=true` is set on self-hosted runners too, so every `sudo` line sits inside a
+// guard that names Linux, GitHub Actions and a github-hosted runner: the bit is never set on a
+// machine someone else owns.
 
-const SCRIPT = path.join(__dirname, "..", "..", "tools", "ci", "install_electron.sh");
+const CI = path.join(__dirname, "..", "..", "tools", "ci");
+const SCRIPT = path.join(CI, "sandbox_helper.sh");
+const INSTALL = path.join(CI, "install_electron.sh");
 
 /** Each `sudo` line, with the conditions of every `if` it sits inside. */
 function sudoLines(src) {
@@ -29,6 +33,14 @@ function sudoLines(src) {
 const NAMES = [/\$\(uname -s\)" = Linux/, /"\$\{GITHUB_ACTIONS:-\}" = true/, /"\$\{RUNNER_ENVIRONMENT:-\}" = github-hosted/];
 
 describe("install_electron.sh", () => {
+  it("sets no bit itself: the toolchain's helper goes through sandbox_helper.sh", () => {
+    const src = fs.readFileSync(INSTALL, "utf8");
+    assert.deepEqual(sudoLines(src), []);
+    assert.match(src, /^sh tools\/ci\/sandbox_helper\.sh node_modules\/electron\/dist\/chrome-sandbox$/m);
+  });
+});
+
+describe("sandbox_helper.sh", () => {
   it("sets the helper's bit only inside a guard naming Linux, GitHub Actions and a github-hosted runner", () => {
     const lines = sudoLines(fs.readFileSync(SCRIPT, "utf8"));
     assert.deepEqual(lines.map((l) => l.line), [

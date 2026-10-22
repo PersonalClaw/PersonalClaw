@@ -1205,6 +1205,61 @@ jobs:
       - name: verify the wheel contract (contents · install from the wheel alone · boot · serve)
         run: uv run --no-project python scripts/verify_wheel.py --wheel "dist/*.whl"
 
+  desktop-smoke:
+    # ── The packed desktop shell, launched as a user starts it (#3942) ─────────────────────────────
+    # electron-builder's Linux dir build of the shell, with a stub in place of the bundled backend
+    # that runs this checkout's gateway on the offline scripted provider
+    # (desktop/test/smoke/writeStubBackend.js). The packed app.asar is held to every build.files
+    # entry. The app is then started under xvfb as a user starts it: it spawns that backend, takes
+    # its ready line and signs its window in. The smoke (desktop/test/smoke/shellSmoke.js) watches
+    # over the DevTools protocol on a pipe (fds 3 and 4), so nothing listens on a port: the window
+    # loads the gateway's origin, the desktop bridge is on the page, the chat shell mounts, and
+    # nothing throws. The app's own code and builder config carry no remote-debugging switch. Two planted copies must each fail: the
+    # asar without a module main.js requires, and a preload that throws. A fast unpackaged smoke,
+    # never a packaged-release test: the release rehearsal builds and boots the real artifacts.
+    # Gated on the plan (#3945): its inputs are desktop/ and web/.
+    needs: [changes, tree-check, web]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'desktop-smoke')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: npm ci (root)
+        run: npm ci
+      # As the web job's: npm ci does not run electron's download script (tools/ci/install_electron.sh).
+      - name: electron's binary
+        run: sh tools/ci/install_electron.sh
+      - name: the dashboard the web job built (web-dist)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: the stub backend, running this checkout's gateway
+        run: node desktop/test/smoke/writeStubBackend.js desktop/backend-dist/smoke
+      - name: the shell, packed (electron-builder --linux dir)
+        run: npm run dist:linux-dir --workspace=desktop
+      # The packed app carries its own copy of the helper, which needs the same owner and mode.
+      - name: the packed app's sandbox helper
+        run: sh tools/ci/sandbox_helper.sh desktop/dist/linux-unpacked/chrome-sandbox
+      - name: app.asar holds every build.files entry
+        run: node desktop/test/smoke/packedApp.js check desktop/dist/linux-unpacked
+      - name: the packed shell reaches its gateway and draws the chat
+        run: node desktop/test/smoke/shellSmoke.js desktop/dist/linux-unpacked/personalclaw-desktop --gateway-pid-file desktop/backend-dist/smoke/gateway.pid
+      - name: the smoke fails on its planted copies
+        run: node desktop/test/smoke/packedApp.js controls desktop/dist/linux-unpacked --gateway-pid-file desktop/backend-dist/smoke/gateway.pid
+
   e2e-shard:
     # ── The browser specs that share a gateway, in two legs, against the ONE build `web` made ──────
     # (#3939) One job replaced four: `e2e-a11y` ran eleven `playwright test` steps, each rebuilding

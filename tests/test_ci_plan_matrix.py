@@ -371,7 +371,7 @@ def test_the_real_tiers_split_into_their_workflows_stage_jobs() -> None:
     }
     assert list(merge) == ["build", "test", "test-2", "test-3"]
     assert merge["build"] == ["web-build"]
-    assert merge["test-2"] == ["package", "e2e-shard", "e2e-shard", "e2e-stateful"]
+    assert merge["test-2"] == ["package", "e2e-shard", "e2e-shard", "e2e-stateful", "desktop-smoke"]
     assert merge["test-3"] == ["e2e", "ui-quality"]
     change = planner.stage_jobs({"include": _real_entries("change")})
     assert list(change) == ["test"]
