@@ -1115,6 +1115,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_grant_refused": (
         "The operator ceiling says every tool call asks, so this can't approve calls on its own."
     ),
+    # ── approving a chat's plan (dashboard/chat_plan.py — POST …/plan/approve, #3821) ──
+    # `run_invalid` (400): `run` is neither "here" nor "fresh". `fresh_chat_owner_only` (403): an
+    # app asked to run an approved plan in a fresh chat; only the owner starts one of her chats.
+    # `plan_not_complete` (409): a fresh chat runs the whole plan, so another step still waits on
+    # approval and nothing was approved.
+    "run_invalid": "Say where the approved plan runs: here or in a fresh chat.",
+    "fresh_chat_owner_only": "Only you can run an approved plan in a fresh chat.",
+    "plan_not_complete": (
+        "A fresh chat runs the whole plan, so approve every other step first; nothing was approved."
+    ),
     # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
     # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
     # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved
