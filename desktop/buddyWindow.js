@@ -70,10 +70,13 @@ function showOnScreen(win) {
   win.webContents?.setBackgroundThrottling?.(false);
 }
 
-/** Hide *win*, throttled again first, so its page reads `document.hidden` and schedules nothing. */
+/** Hide *win*, then throttle it again, so its page reads `document.hidden` and schedules nothing.
+ *  The order matters on macOS: throttled first, the hide never reached the page, which went on
+ *  reading itself visible and drawing (#3902's cost leg measured a hidden buddy at 141 frames in
+ *  5 s); hidden first, the page reads hidden and stops. */
 function hideFromScreen(win) {
-  win.webContents?.setBackgroundThrottling?.(true);
   win.hide();
+  win.webContents?.setBackgroundThrottling?.(true);
 }
 
 function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, onPlacement = () => {}, log = () => {} }) {
