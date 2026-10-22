@@ -123,7 +123,9 @@ describe('the buddy sends no answer for anything but an explicit answer', () => 
       }
       await w.advance(TIMINGS.sleep + TIMINGS.collapse + TIMINGS.collapseCountdown)
     }
-    expect(situations.size, 'the inputs reach many situations').toBeGreaterThan(5)
+    // Docked and floating, hidden, a connection lost and a restart, with the alert showing.
+    const reached = [...situations].join(' | ')
+    for (const where of ['expanded/up/approval', 'floating/', 'hidden/', '/lost/', '/restarting/']) expect(reached, where).toContain(where)
     expect(w.answers).toEqual([])
   })
 

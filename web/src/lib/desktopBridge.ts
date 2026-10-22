@@ -160,10 +160,12 @@ export type BuddyConnection = 'up' | 'lost' | 'restarting'
 export type BuddyPlacement = 'moving' | 'docked' | 'floating'
 
 /** `window.pclawBuddy`: only in the buddy's own window (`desktop/buddyPreload.js`, #3831), never
- *  beside `pclawDesktop`. Seven sends, which the shell checks each one again, and four pushes back
+ *  beside `pclawDesktop`. Eight sends, which the shell checks each one again, and six pushes back
  *  (#3832): its doorbell's ring, which carries nothing, and connection; where the window is; and
- *  whether one of the app's own windows is full screen. */
+ *  whether one of the app's own windows is full screen, the owner is away, or hid the buddy. */
 export interface BuddyBridge {
+  // The page is served by the gateway and can be newer than the shell that loads it, so each call
+  // the shell added after the window's first seven is optional: a page reads it only where it is.
   /** macOS: the forwarded pointer is over the face or the open card (take clicks), or not. */
   pointerOver: (hit: boolean) => void
   /** Linux: the face's and the card's rectangles are the window's shape. */
@@ -180,14 +182,21 @@ export interface BuddyBridge {
   onOpenAlert?: (cb: () => void) => () => void
   /** The doorbell rang: something running or waiting changed, so read the lists again. Returns
    *  the way to stop hearing it. */
-  onRing: (cb: () => void) => () => void
+  onRing?: (cb: () => void) => () => void
   /** The doorbell's connection changed. */
-  onConnection: (cb: (state: BuddyConnection) => void) => () => void
+  onConnection?: (cb: (state: BuddyConnection) => void) => () => void
   /** A drag moved the window (`moving`), or it settled, docked or floating; and, on each load,
    *  where it is. */
-  onPlacement: (cb: (placement: BuddyPlacement) => void) => () => void
+  onPlacement?: (cb: (placement: BuddyPlacement) => void) => () => void
   /** One of the app's own windows went full screen, or left it; and, on each load, whether one is. */
-  onFullScreen: (cb: (on: boolean) => void) => () => void
+  onFullScreen?: (cb: (on: boolean) => void) => () => void
+  /** The owner went away (the system's idle time, a locked screen, sleep) or came back; and, on
+   *  each load, whether they are away. */
+  onAway?: (cb: (away: boolean) => void) => () => void
+  /** The owner hid the buddy for a while, or the hide ended; and, on each load, whether it holds. */
+  onHidden?: (cb: (hidden: boolean) => void) => () => void
+  /** The buddy's context menu, at the pointer: hide it for a while, or open PersonalClaw. */
+  openMenu?: () => void
 }
 
 declare global {

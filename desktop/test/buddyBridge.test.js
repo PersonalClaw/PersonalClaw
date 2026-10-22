@@ -18,7 +18,7 @@ const { loadPreloadSandboxed, unsandboxableRequires } = require("./helpers/sandb
 // `pclaw://` link may open, checked by the deep-link parser itself.
 
 const PRELOAD = path.join(__dirname, "..", "buddyPreload.js");
-const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onConnection", "onFullScreen", "onOpenAlert", "onPlacement", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"];
+const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"];
 
 /** The preload loaded as the sandboxed buddy window loads it, with every send it makes recorded. */
 function loadBuddyBridge() {
@@ -59,19 +59,43 @@ function wired() {
   const buddy = fakeBuddy();
   const own = { id: 7 };
   const opened = [];
+  const menus = [];
   const logs = [];
-  const unregister = registerBuddyIpc({ ipcMain, buddy, isBuddy: (sender) => sender === own, openRoute: (r) => opened.push(r), log: (m) => logs.push(m) });
-  return { ipcMain, buddy, own, opened, logs, unregister };
+  const unregister = registerBuddyIpc({ ipcMain, buddy, isBuddy: (sender) => sender === own, openRoute: (r) => opened.push(r), openMenu: () => menus.push(1), log: (m) => logs.push(m) });
+  return { ipcMain, buddy, own, opened, menus, logs, unregister };
 }
 
 describe("the buddy's preload", () => {
-  it("loads in a sandbox and exposes exactly the twelve named calls, under its own name", () => {
+  it("loads in a sandbox and exposes exactly the fifteen named calls, under its own name", () => {
     assert.deepEqual(unsandboxableRequires(fs.readFileSync(PRELOAD, "utf8")), []);
     const { exposed } = loadBuddyBridge();
     assert.deepEqual(Object.keys(exposed), ["pclawBuddy"], "not the capability bridge, and nothing else");
     assert.deepEqual(Object.keys(exposed.pclawBuddy).sort(), BUDDY_KEYS);
     for (const key of BUDDY_KEYS) assert.equal(typeof exposed.pclawBuddy[key], "function", key);
     assert.equal("send" in exposed.pclawBuddy || "invoke" in exposed.pclawBuddy || "on" in exposed.pclawBuddy, false, "no generic channel");
+  });
+
+  it("hears whether the owner is away and whether they hid the buddy, each only as a boolean", () => {
+    const { exposed, emit } = loadBuddyBridge();
+    const b = exposed.pclawBuddy;
+    const away = [];
+    const hidden = [];
+    b.onAway((v) => away.push(v));
+    b.onHidden((v) => hidden.push(v));
+    for (const v of [true, false, "true", 0, null, { valueOf: () => true }]) {
+      emit(BUDDY_PUSHES.away, v);
+      emit(BUDDY_PUSHES.hidden, v);
+    }
+    assert.deepEqual(away, [true, false]);
+    assert.deepEqual(hidden, [true, false]);
+  });
+
+  it("asks for the context menu and carries nothing, whatever the page passes", () => {
+    const { exposed, sent } = loadBuddyBridge();
+    exposed.pclawBuddy.openMenu({ items: ["Delete everything"] });
+    assert.deepEqual(sent, [{ channel: BUDDY_CHANNELS.menu, args: [{}] }]);
+    assert.deepEqual(BUDDY_PAYLOADS.menu({}), {});
+    assert.equal(BUDDY_PAYLOADS.menu({ items: [] }), null, "main refuses a menu payload with anything in it");
   });
 
   it("hears where the window is and whether an app window is full screen, each only in its shape", () => {
@@ -115,6 +139,7 @@ describe("the buddy's preload", () => {
     b.dragEnd(true);
     b.setPresentation("expanded");
     b.openInApp("#/chat/abc");
+    b.openMenu();
     const names = Object.fromEntries(Object.entries(BUDDY_CHANNELS).map(([name, channel]) => [channel, name]));
     assert.deepEqual([...new Set(sent.map((s) => s.channel))].sort(), Object.values(BUDDY_CHANNELS).sort(), "the preload's copy of the names is main's");
     for (const { channel, args } of sent) {
@@ -185,8 +210,8 @@ describe("main rings the buddy to open on an alert (#3897)", () => {
 });
 
 describe("main hears the buddy and no other page", () => {
-  it("listens on the five channels, and drops every one of them from another web contents", () => {
-    const { ipcMain, buddy, opened, logs, unregister } = wired();
+  it("listens on the six channels, and drops every one of them from another web contents", () => {
+    const { ipcMain, buddy, opened, menus, logs, unregister } = wired();
     assert.deepEqual(ipcMain.channels().sort(), Object.values(BUDDY_CHANNELS).sort());
     const stranger = { id: 1 };
     ipcMain.emit(BUDDY_CHANNELS.pointer, stranger, { hit: true });
@@ -194,9 +219,11 @@ describe("main hears the buddy and no other page", () => {
     ipcMain.emit(BUDDY_CHANNELS.drag, stranger, { phase: "start" });
     ipcMain.emit(BUDDY_CHANNELS.presentation, stranger, { presentation: "hidden" });
     ipcMain.emit(BUDDY_CHANNELS.open, stranger, { route: "#/chat/abc" });
+    ipcMain.emit(BUDDY_CHANNELS.menu, stranger, {});
     assert.deepEqual(buddy.calls, []);
     assert.deepEqual(opened, []);
-    assert.equal(logs.length, 5);
+    assert.equal(menus.length, 0, "no menu for another page");
+    assert.equal(logs.length, 6);
     assert.ok(logs.every((l) => /not the buddy's/.test(l)));
     unregister();
     assert.deepEqual(ipcMain.channels(), []);
@@ -272,6 +299,8 @@ describe("main's two pushes to the buddy", () => {
     assert.equal(pushToBuddy(w, "open", "#/chat/x"), false, "no other push");
     assert.equal(pushToBuddy(w, "placement", "sideways"), false);
     assert.equal(pushToBuddy(w, "fullScreen", "yes"), false);
+    assert.equal(pushToBuddy(w, "away", "yes"), false);
+    assert.equal(pushToBuddy(w, "hidden", 1), false);
     assert.deepEqual(w.sent, [[BUDDY_PUSHES.ring], ...BUDDY_CONNECTIONS.map((s) => [BUDDY_PUSHES.connection, s])]);
   });
 

@@ -458,6 +458,8 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
         beat('wake')
         timer('finishedHold')
       } else if (situation === 'offline' && s.presence === 'hidden') n.presence = 'compact'
+      // Back with work still running: the owner is active again, so it shows compact.
+      else if (situation === 'hidden' && s.enabled && s.docked && n.live.length) n.presence = 'compact'
       if (!n.returning) n.summary = null
       break
     }
@@ -485,7 +487,8 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
       break
     case 'show':
       n.muted = false
-      n.presence = n.docked ? nothingUnder(n) : 'floating'
+      // An alert that showed when the owner hid the buddy shows again as it arrived.
+      n.presence = n.docked ? (n.shown ? (n.quietHours ? 'peek' : 'expanded') : nothingUnder(n)) : 'floating'
       if (!n.shown && n.queue.length && !n.listening) showAlert(n.queue[0])
       break
     case 'enabled':

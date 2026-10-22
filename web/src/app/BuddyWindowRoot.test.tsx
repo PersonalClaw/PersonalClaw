@@ -42,6 +42,9 @@ function fakeBridge() {
     onConnection: vi.fn(() => () => {}),
     onPlacement: vi.fn(() => () => {}),
     onFullScreen: vi.fn(() => () => {}),
+    onAway: vi.fn(() => () => {}),
+    onHidden: vi.fn(() => () => {}),
+    openMenu: vi.fn(),
   } satisfies BuddyBridge
 }
 

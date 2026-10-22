@@ -574,6 +574,14 @@ Its page is `#/buddy`, and a browser tab can open it too.
   another app's full screen.
 - **Drag it** to float it or dock it again, and the buddy goes with the window: a drag that moves
   it is never also a click.
+- **Hide it for a while** from its own menu (right-click it) or the menu bar: **Hide for an Hour**
+  or **Hide Until Tomorrow** (the next midnight where you are). While it is hidden it shows nothing
+  but its listening face, nothing waiting brings it back, and the menu bar and notifications keep
+  telling you. **Show Buddy Now** in the menu bar ends it early; quitting the app does not.
+- **While you are away** (no keyboard or pointer for the buddy's absence time, three minutes
+  unless it is set otherwise, or the screen locked), a docked buddy hides and a floating one
+  dozes. When you are back it says what happened meanwhile ("While you were away: 2 done, 1 needs
+  you").
 
 Docked with nothing to say, the buddy keeps a strip at the top edge that draws nothing and passes
 every click through; rest the pointer there and it peeks. On macOS the app forwards the pointer's

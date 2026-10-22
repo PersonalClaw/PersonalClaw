@@ -36,6 +36,7 @@ const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require(".
 const { openShellStore } = require("./shellStore");
 const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
 const { makeDoorbell, mayRaise, openGatewaySocket } = require("./doorbell");
+const { makeAbsence, makeBuddyHide } = require("./buddyAway");
 const { pushToBridged } = require("./windowPushes");
 const { loadRegistry } = require("./endpointRegistry");
 const {
@@ -482,7 +483,11 @@ const pushToTalk = makePushToTalk({
         .filter((wc) => !wc.isDestroyed())
         .map((wc) => ({ webContents: wc })),
     postGateway: (route, body) => postGateway(route, body),
-    onIndicator: (on) => setCaptureIndicator(on),
+    // The buddy shows its listening face even when its owner hid it, so a hidden window comes up.
+    onIndicator: (on) => {
+      setCaptureIndicator(on);
+      if (on && buddy?.window && !buddy.window.isDestroyed() && !buddy.isVisible()) buddy.show();
+    },
     channel: IPC_CHANNELS.listening,
   }),
 });
@@ -1212,6 +1217,8 @@ const trayPresence = makeTrayPresence({
       setBuddyEnabled(next);
       syncBuddyToTray();
     },
+    hideBuddy: (span) => (span === "tomorrow" ? buddyHide?.hideUntilTomorrow() : buddyHide?.hideForAnHour()),
+    showBuddyNow: () => buddyHide?.showNow(),
     quit: () => {
       isQuitting = true;
       app.quit();
@@ -1273,7 +1280,47 @@ async function readPresence() {
   const before = gatewayStarts;
   const [waiting, running] = await Promise.all([getGateway("/api/waiting"), getGateway("/api/running")]);
   const boot = bootRead(before, gatewayStarts);
-  return { waiting, running, boot };
+  // The buddy's policy (#3901), while there is a buddy: its absence time. Read on every ring, since
+  // `buddy_policy_changed` is one of them.
+  const policy = buddy?.window ? await getGateway("/api/buddy/policy") : null;
+  return { waiting, running, boot, policy };
+}
+
+/** The last buddy policy read (`GET /api/buddy/policy`), or null before the first. */
+let buddyPolicy = null;
+
+/** Whether the owner is away (`buddyAway.js`): read while the buddy's window exists. */
+const absence = makeAbsence({
+  idleSeconds: () => require("electron").powerMonitor.getSystemIdleTime(),
+  awayAfterSecs: () => buddyPolicy?.away_after_secs,
+  onChange: (away) => pushToBuddy(buddy?.window, "away", away),
+});
+
+/** The owner's hide (`buddyAway.js`), made once the shell's store is open. */
+let buddyHide = null;
+
+function makeHide(store) {
+  buddyHide = makeBuddyHide({
+    store,
+    onChange: (hidden) => {
+      pushToBuddy(buddy?.window, "hidden", hidden);
+      syncBuddyToTray();
+      // The hide over, the buddy shows what it has (or keeps its top-edge zone).
+      if (!hidden && buddy?.window && !buddy.isVisible()) buddy.show();
+    },
+  });
+  buddyHide.start();
+}
+
+/** The buddy's context menu, at the pointer: hide it for a while, or open PersonalClaw. */
+function openBuddyMenu() {
+  if (!buddy?.window || buddy.window.isDestroyed() || !buddyHide) return;
+  Menu.buildFromTemplate([
+    { label: "Hide for an Hour", click: () => buddyHide.hideForAnHour() },
+    { label: "Hide Until Tomorrow", click: () => buddyHide.hideUntilTomorrow() },
+    { type: "separator" },
+    { label: "Open PersonalClaw", click: () => showMainWindow() },
+  ]).popup({ window: buddy.window });
 }
 
 /**
@@ -1294,13 +1341,15 @@ function socketGateway(url, gateway) {
  * to read its own, and its window, hidden, is shown again for an item the gateway says may
  * interrupt you now (`mayRaise`): nothing else raises it.
  */
-function takePresence({ waiting, running, boot }) {
+function takePresence({ waiting, running, boot, policy }) {
+  if (policy) buddyPolicy = policy;
   if (trayPresence.available) {
     trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(waiting, running), { boot }));
   }
   const win = buddy?.window;
   if (!win || win.isDestroyed()) return;
-  if (!buddy.isVisible() && mayRaise(waiting)) buddy.show();
+  // Hidden by the owner, nothing waiting raises it.
+  if (!buddy.isVisible() && !buddyHide?.hidden && mayRaise(waiting)) buddy.show();
   pushToBuddy(win, "ring");
 }
 
@@ -1704,7 +1753,7 @@ function mergeAllWindows() {
  * The buddy's own window: made once, created only while "Buddy status" is on for this machine
  * (`buddy:enabled` in the shell's store), on the default session so it carries the shell's sign-in,
  * loading the buddy route from the gateway this shell started. A restart moves it with every other
- * web contents (`followRestartedGateway`). It hears five named sends from its own page and no other
+ * web contents (`followRestartedGateway`). It hears six named sends from its own page and no other
  * (`registerBuddyIpc`), and a route it opens goes to the main window through `deepLink`.
  */
 function startBuddy() {
@@ -1725,6 +1774,7 @@ function startBuddy() {
     buddy,
     isBuddy: (sender) => Boolean(buddy.window) && !buddy.window.isDestroyed() && sender === buddy.window.webContents,
     openRoute: (hash) => deepLink(hash),
+    openMenu: () => openBuddyMenu(),
     log: (msg) => console.warn(`desktop: ${msg}`),
   });
   buddyPresence = makeBuddyPresence({
@@ -1732,6 +1782,8 @@ function startBuddy() {
     store: shellStore,
     url: () => (localGatewayUrl ? `${localGatewayUrl}/#/buddy` : null),
     prepare: guardBuddyContents,
+    onStart: () => absence.start(),
+    onStop: () => absence.stop(),
     log: (msg) => console.log(`desktop: ${msg}`),
   });
   return buddyPresence.start();
@@ -1747,7 +1799,7 @@ function setBuddyEnabled(on) {
 
 /** The tray's checkbox reads the store, the one place the switch is kept. */
 function syncBuddyToTray() {
-  trayPresence.setBuddyState({ enabled: Boolean(shellStore) && shellStore.getItem(ENABLED_KEY) === "1" });
+  trayPresence.setBuddyState({ enabled: Boolean(shellStore) && shellStore.getItem(ENABLED_KEY) === "1", hidden: Boolean(buddyHide?.hidden) });
 }
 
 /** The buddy's page stays on the gateway it came from and opens no window of any kind. */
@@ -1757,6 +1809,8 @@ function guardBuddyContents(win) {
   wc.on("did-finish-load", () => {
     pushToBuddy(win, "placement", buddy?.placement?.mode === "floating" ? "floating" : "docked");
     tellBuddyFullScreen();
+    pushToBuddy(win, "away", absence.away);
+    pushToBuddy(win, "hidden", Boolean(buddyHide?.hidden));
   });
   const onGateway = (url) => {
     try {
@@ -1893,6 +1947,11 @@ if (!app.requestSingleInstanceLock()) {
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to
     // spawn-local with a warning rather than taking the app down with it.
     shellStore = openShellStore({ home: PERSONALCLAW_HOME, log: (msg) => console.warn(`desktop: ${msg}`) });
+    makeHide(shellStore);
+    // A locked screen or sleep is away at once; unlocking or waking reads the idle time again.
+    const { powerMonitor } = require("electron");
+    for (const e of ["lock-screen", "suspend"]) powerMonitor.on(e, () => absence.lock());
+    for (const e of ["unlock-screen", "resume"]) powerMonitor.on(e, () => absence.unlock());
     connectDialog = makeConnectDialog({
       BrowserWindowCtor: BrowserWindow,
       ipcMain,
@@ -1985,6 +2044,8 @@ app.on("before-quit", (event) => {
   pushToTalk.unbind();
   pushToTalk.clearCapturing();
   stopPresenceRefresh();
+  absence.stop();
+  buddyHide?.stop();
   // A pending reachability re-check would otherwise fire during teardown and call `loadURL` on a
   // window that is being destroyed.
   cancelReachProbe();
