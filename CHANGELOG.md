@@ -38,6 +38,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A permission or task mode pick the gateway doesn't answer in 15 s now says so beside its control and lets the next pick through, instead of holding every later pick until a reload; and a pick that reaches the gateway after a newer one changes nothing; a refusal stays beside the control until you open it or pick again.**
 - **A new install can add the Amazon Bedrock app, and every other app built on botocore, again: PersonalClaw keeps python-dateutil below 3, since every botocore requires that and python-dateutil 3.0.0 (released 2026-10-21) reached fresh installs.**
 - **An approval behind an open dialog no longer answers to ⌘Enter (Ctrl+Enter elsewhere), even while the browser still reports focus on it, and Escape in a dialog an approval opened closes that dialog's detail and leaves the approval's second confirmation as it was.**
+- **A loop waiting on your answer spends nothing: an Attended loop whose worker asked you a question kept taking a paid worker turn at every idle interval while it waited, and the turn that asked was asked again for a finding. No worker turn starts while a loop waits on you, is paused or held, or is at its cycle cap, its deadline or its cost budget, in any state, so a loop capped at three cycles no longer reads "cycle 4/3".**
 
 ## [0.2.4] — 2026-10-21
 

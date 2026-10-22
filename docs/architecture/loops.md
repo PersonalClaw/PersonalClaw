@@ -227,6 +227,16 @@ is done is not asked again, the re-prompt names the file the worker's own prompt
 loop's folder (`files.finding_file`), and each re-prompt is told to the loop's page (a `reprompt`
 event: which worker, the file it owes, how many asks are left).
 
+A loop spends only while it runs and has budget left. Before a worker's turn starts, at its nudge's
+idle interval (the gateway's cycle driver) or at a re-prompt, one rule is asked
+(`manager.turn_held`), and a loop that is not running (waiting on her answer, paused, stalled,
+held), one whose worker asked her a question it waits on (`manager.question_holds`, the rule the
+watchdog's own question check reads), one at its cycle cap, and one at its deadline or its cost
+budget start no turn. The nudge's skip says so (`idle_poll.SKIP_LOOP_HELD`) and advances nothing,
+so the next cycle fires on the first poll after her answer or her Resume. A running loop already at
+its cap with nothing new to credit (one resumed at 3/3) is completed at its cap by the watchdog,
+rather than left running idle.
+
 A turn its owner ended with a Deny is never re-prompted (`manager.reprompt_due`): her answer stands
 for the cycle. The chat runner keeps what she declined in the turn, her Deny and the requests it
 refused with it, as the record a workflow cycle's Deny leaves (`_ChatSession._last_turn_declined`,

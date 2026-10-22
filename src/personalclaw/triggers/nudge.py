@@ -592,6 +592,8 @@ class AutoNudgeService:
         except Exception:
             logger.exception("AutoNudge fire callback failed for %s", loop.id)
             delivered = False
+        if delivered == idle_poll.SKIP_LOOP_HELD:
+            return False, idle_poll.SKIP_LOOP_HELD
         if not delivered:
             return False, idle_poll.SKIP_SESSION_BUSY
         idle_poll.record_delivery(loop.id, delivered=True, now=now, base_dir=self._base_dir)
