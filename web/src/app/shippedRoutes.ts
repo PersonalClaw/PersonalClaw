@@ -131,7 +131,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // Notifications are a filter of the Inbox (#3818): the route stays, retired to the filter.
   { route: 'notifications', from: ['router', 'deep-link', 'notification', 'documented'], since: 'v0.1.0', lands: 'inbox?filter=notifications' },
   { route: 'discover', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.2' },
-  { route: 'mission-control', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.2.0' },
+  { route: 'mission-control', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.2.0' },
   { route: 'loop', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // The bare loops and code routes fold into the one loop composer (`LoopsSection`, `CodeSection`).
   { route: 'loops', from: ['router', 'deep-link', 'notification', 'documented'], since: 'v0.1.0', lands: 'loop' },
@@ -262,7 +262,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'loop?kind=code', from: ['documented'] },
   { route: 'loop?mode=attended', from: ['deep-link', 'documented'] },
   { route: 'loops/history', from: ['documented'] },
-  { route: `loops/${S.loop}`, from: ['palette', 'tray', 'approval', 'companion-app', 'gateway', 'documented'] },
+  { route: `loops/${S.loop}`, from: ['palette', 'approval', 'companion-app', 'gateway', 'documented'] },
   { route: 'code/history', from: ['documented'] },
   { route: `code/${S.code}`, from: ['palette', 'deep-link', 'gateway', 'documented'] },
   // A cockpit's center and its open task, as a `personalclaw://` link names them.
