@@ -133,7 +133,7 @@ test.describe('a compact window stacks the block under the thread', () => {
       const g = await readSplit(page)
       const report = JSON.stringify(g)
       expect(g.layout, report).toBe('stacked')
-      expect(page.getByRole('separator', { name: /^Resize code/ }), 'no width to choose').toHaveCount(0)
+      await expect(page.getByRole('separator', { name: /^Resize code/ }), 'no width to choose').toHaveCount(0)
       expect(g.pane!.top, `the block is not under the thread: ${report}`).toBeGreaterThanOrEqual(g.scroller!.bottom - 1)
       expect(g.pane!.bottom, `the composer is not under the block: ${report}`).toBeLessThanOrEqual(g.composer!.top + 1)
       expect(Math.abs(g.pane!.width - g.host!.width), `the block is not the box's width: ${report}`).toBeLessThanOrEqual(1)

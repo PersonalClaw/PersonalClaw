@@ -195,7 +195,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // A detail the inspector or a card opened (`chat/beside/detailBeside`) takes the same place; on
   // a phone it stands in for the inspector it was opened from, which its Back brings back.
   const beside = detailPane({
-    address: panes.beside, outputs: panes.outputs, subagents: stream.subagents, session: sessionRef.current ?? undefined,
+    address: panes.beside, outputs: panes.outputs, subagents: stream.subagents, helpers: panes.helperRefs, session: sessionRef.current ?? undefined,
     ready: started && !loadingHistory, open: panes.setBeside, onClose: () => panes.setBeside(null),
     back: isMobile && panes.activityOpen ? () => panes.setBeside(null) : undefined,
   }) ?? besidePane({
