@@ -177,7 +177,8 @@ describe('SessionMapRail — Enter/Space/click jump to the message', () => {
     key(h, 'Enter')
     expect(h.jumped, 'Enter fired twice — the browser’s own button activation was not cancelled')
       .toHaveBeenCalledTimes(1)
-    expect(h.jumped).toHaveBeenCalledWith(h.entries[at].visibleIndex)
+    // A key's jump is the smooth one; only a scrub jumps instantly.
+    expect(h.jumped).toHaveBeenCalledWith(h.entries[at].visibleIndex, 'smooth')
     expect(h.scrolled).toEqual([h.entries[at].visibleIndex])
     // The jump coordinate is the MESSAGE's, not the marker's: marker 1 is turn 2, so a rail that
     // handed back its own index would land on the first question's answer.
@@ -191,7 +192,7 @@ describe('SessionMapRail — Enter/Space/click jump to the message', () => {
     const at = tabStop(h)
     key(h, ' ')
     expect(h.jumped).toHaveBeenCalledTimes(1)
-    expect(h.jumped).toHaveBeenCalledWith(h.entries[at].visibleIndex)
+    expect(h.jumped).toHaveBeenCalledWith(h.entries[at].visibleIndex, 'smooth')
     expect(h.scrolled).toEqual([h.entries[at].visibleIndex])
     expect(at).not.toBe(h.entries[at].visibleIndex)
   })
@@ -200,7 +201,7 @@ describe('SessionMapRail — Enter/Space/click jump to the message', () => {
     const h = mount()
     act(() => { fireEvent.click(h.ticks[3]) })
     expect(h.jumped).toHaveBeenCalledTimes(1)
-    expect(h.jumped).toHaveBeenCalledWith(h.entries[3].visibleIndex)
+    expect(h.jumped).toHaveBeenCalledWith(h.entries[3].visibleIndex, 'smooth')
     expect(h.scrolled).toEqual([h.entries[3].visibleIndex])
   })
 
@@ -223,6 +224,8 @@ describe('SessionMapRail — what the rail says', () => {
       { role: 'user', ts: TS, visibleIndex: 0, segments: [{ kind: 'text', text: long }] },
       { role: 'assistant', ts: TS, visibleIndex: 1, segments: [{ kind: 'text', text: 'ok' }] },
       { role: 'user', ts: TS, visibleIndex: 2, segments: [{ kind: 'text', text: 'and next' }] },
+      { role: 'user', ts: TS, visibleIndex: 3, segments: [{ kind: 'text', text: 'and then' }] },
+      { role: 'user', ts: TS, visibleIndex: 4, segments: [{ kind: 'text', text: 'and last' }] },
     ]
     const entries = sessionMapEntries(t)
     const { container } = render(
@@ -231,7 +234,7 @@ describe('SessionMapRail — what the rail says', () => {
     const first = container.querySelector('[data-session-mark]') as HTMLElement
     const name = first.getAttribute('aria-label')!
     expect(name).toBe(sessionMapMarkName(entries, 0))
-    expect(name).toMatch(/^Message 1 of 2: /)
+    expect(name).toMatch(/^Message 1 of 4: /)
     expect(name.length, 'the whole message leaked into the accessible name').toBeLessThan(80)
     expect(name).not.toContain(long)
     // Every marker is named, so none is announced as a bare "button".
@@ -265,7 +268,7 @@ describe('SessionMapRail — what the rail says', () => {
   })
 })
 
-describe('SessionMapRail — the card the cursor reveals', () => {
+describe('SessionMapRail — the preview the cursor reveals', () => {
   const card = () => document.querySelector('[data-session-map-card]')
 
   it('🔑 a cursor key REVEALS the card, and Tab-through still does not', async () => {
@@ -297,15 +300,48 @@ describe('SessionMapRail — the card the cursor reveals', () => {
     expect(card()!.textContent).toContain(h.entries[at].preview)
   })
 
-  it('Escape closes the card and leaves focus on the rail', async () => {
+  it('Escape closes the preview, leaves focus on the rail, and is heard by nothing behind it', async () => {
     const h = mount()
     key(h, 'ArrowUp')
     await waitFor(() => expect(card()).not.toBeNull())
     const at = tabStop(h)
-    act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
+    const behind = vi.fn()
+    document.addEventListener('keydown', behind)
+    try {
+      key(h, 'Escape')
+    } finally { document.removeEventListener('keydown', behind) }
     await waitFor(() => expect(card()).toBeNull())
+    expect(behind, 'one Escape closed two layers').not.toHaveBeenCalled()
     // Focus must not be dropped to <body> — that strands keyboard navigation mid-rail.
     expect(document.activeElement).toBe(h.ticks[at])
+  })
+
+  it('🔑 the revealed preview is the next stop after its marker: Tab reaches its bookmark, Escape comes back', async () => {
+    const t = turns(12)
+    const entries = sessionMapEntries(t)
+    const onToggle = vi.fn()
+    const { container } = render(
+      <SessionMapRail entries={entries} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={() => {}} onToggleBookmark={onToggle} />,
+    )
+    const ticks = [...container.querySelectorAll('[data-session-mark]')] as HTMLButtonElement[]
+    act(() => { ticks[5].focus() })
+    act(() => { fireEvent.keyDown(ticks[5], { key: 'ArrowUp' }) })
+    await waitFor(() => expect(card()).not.toBeNull())
+    // The tab order: the preview is rendered after the marker list, inside the rail, so the next
+    // tabbable after the marker with the roving stop is the preview's control.
+    const tabbables = [...container.querySelectorAll<HTMLElement>('button, [tabindex]')].filter((el) => el.tabIndex >= 0)
+    const bookmark = container.querySelector('[data-session-map-preview] button') as HTMLButtonElement
+    expect(bookmark.getAttribute('aria-label')).toBe('Bookmark this message')
+    expect(tabbables.indexOf(bookmark)).toBe(tabbables.indexOf(ticks[4]) + 1)
+    act(() => { bookmark.focus() })
+    // Focus moving INTO the preview keeps it open.
+    expect(card()).not.toBeNull()
+    act(() => { fireEvent.click(bookmark) })
+    expect(onToggle).toHaveBeenCalledWith(entries[4])
+    // Escape inside the preview closes it and hands focus back to its marker.
+    act(() => { fireEvent.keyDown(bookmark, { key: 'Escape' }) })
+    await waitFor(() => expect(card()).toBeNull())
+    expect(document.activeElement).toBe(ticks[4])
   })
 
   it('leaving the rail closes the card it revealed', async () => {

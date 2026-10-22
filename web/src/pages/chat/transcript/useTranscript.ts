@@ -5,11 +5,12 @@ import { notify } from '../../../app/appSdk'
 import { confirm } from '../../../ui/dialog'
 import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 import { useIsMobile } from '../../../app/useIsMobile'
+import { prefersReducedMotion } from '../../../design/motion'
 import type { useComposerNotice } from '../../../ui/composer/ComposerNotice'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { liveWorkflowCards } from '../WorkflowProgressCard'
 import { liveLoopCards } from '../SdlcProgressCard'
-import { sessionMapEntries } from '../sessionMap'
+import { sessionMapEntries, type SessionMapEntry } from '../sessionMap'
 import { askToRepeat } from '../repeatedSteps'
 import { branchIndexOf } from '../branchLineage'
 import { editReplacesLaterTurns, replacedTurnsAreKept } from '../editReplaces'
@@ -34,7 +35,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
   query: Record<string, string>
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
-  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'setTurns' | 'streaming' | 'streamingRef' | 'markStreaming' | 'dropTextRun' | 'readSnapshot' | 'adoptSnapshot'>
+  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'setTurns' | 'streaming' | 'streamingRef' | 'markStreaming' | 'dropTextRun' | 'readSnapshot' | 'adoptSnapshot' | 'bookmarks' | 'setBookmarks'>
   /** The chat has turns on screen. */
   started: boolean
   /** The composer's notice line, where a failed turn action is said. */
@@ -435,12 +436,32 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
   // The Session Map's entries — one per USER message, each owning the turns of its exchange.
   // Derived ONCE, here, and handed to both forms, so the rail and the coarse-pointer drawer index
   // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
-  const sessionEntries = useMemo(() => sessionMapEntries(turns), [turns])
+  const { bookmarks, setBookmarks } = stream
+  const bookmarked = useMemo(() => new Set(bookmarks), [bookmarks])
+  const sessionEntries = useMemo(() => sessionMapEntries(turns, bookmarked), [turns, bookmarked])
+  /** Bookmark the message an entry is, or take its bookmark off: shown at once, then the gateway's
+   *  answer is what stays, and a refusal puts the map back and says so. */
+  function toggleBookmark(entry: SessionMapEntry) {
+    const session = stream.sessionRef.current
+    if (!session || !entry.ts) return
+    const on = !entry.bookmarked
+    const before = bookmarks
+    setBookmarks(on ? [...bookmarks, entry.ts] : bookmarks.filter((t) => t !== entry.ts))
+    api.editSessionBookmarks(session, on ? { add: [entry.ts] } : { remove: [entry.ts] }).then(
+      (r) => { if (stream.sessionRef.current === session) setBookmarks(r.bookmarks) },
+      (e: unknown) => {
+        if (stream.sessionRef.current !== session) return
+        setBookmarks(before)
+        notice.showError(`Couldn’t ${on ? 'bookmark' : 'unbookmark'} that message: ${(e as Error).message}`)
+      },
+    )
+  }
   /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
    *  rail's tick and the drawer's row, which are the only two jump surfaces. */
-  function jumpToTurn(coord: number) {
+  function jumpToTurn(coord: number, how: 'smooth' | 'instant' = 'smooth') {
     const node = turnNodes.current.get(coord)
-    node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // A scrub asks for an instant jump, and so does reduced motion for every jump.
+    node?.scrollIntoView({ behavior: how === 'instant' || prefersReducedMotion() ? 'instant' : 'smooth', block: 'center' })
   }
   /** A drawer row's coordinate, parked between the tap and the drawer finishing its exit.
    *
@@ -500,7 +521,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // The find bar.
     findOpen, setFindOpen, findSeed,
     // The Session Map: its form, its open state, its entries and its jumps.
-    isMobile, mapOpen, setMapOpen, sessionEntries, jumpToTurn, pendingMapJump, runPendingMapJump,
+    isMobile, mapOpen, setMapOpen, sessionEntries, jumpToTurn, pendingMapJump, runPendingMapJump, toggleBookmark,
     // What a turn offers.
     liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure,
     editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun,

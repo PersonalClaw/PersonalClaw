@@ -52,7 +52,8 @@ test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () =>
     test(`chat: Session Map drawer [mobile] (${theme})`, async ({ page }, testInfo) => {
       await seedTheme(page, theme)
       await gotoRoute(page, 'chat')
-      await driveScriptedTurns(page, 'Index this turn on the session map, please', 2)
+      // Four messages: the map appears at four (`SESSION_MAP_MIN_MARKS`).
+      await driveScriptedTurns(page, 'Index this turn on the session map, please', 4)
 
       // The floor: in-session nav must remain REACHABLE at this viewport. The
       // gutter rail is gone here by design, so if the one named control is also unreachable the
@@ -67,8 +68,8 @@ test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () =>
       const drawer = page.getByRole('region', { name: 'Session map' })
       await expect(drawer).toBeVisible({ timeout: 10_000 })
       await expect(drawer.locator('[data-session-map-row]').first()).toBeVisible()
-      // The rows stagger `opacity: 0 → 1` (`SessionMapDrawer`'s per-row `delay`), and the row
-      // above being VISIBLE only means the FIRST one arrived. Measured without this settle: axe
+      // The rows used to stagger `opacity: 0 → 1`, and a row being VISIBLE only meant the FIRST one
+      // had arrived; they are still now, and the settle stays for the panel's own entrance. Measured without this settle: axe
       // reported `[serious] color-contrast … 3.56` against `#85888c`, which is not a token —
       // it is `--color-on-surface-var` (`#5f6368`) composited on white at α ≈ 0.76 (per channel:
       // (255−0x85)/(255−0x5f) = 0.76, (255−0x88)/(255−0x63) = 0.76). At rest the pair is 5.9:1.
@@ -132,7 +133,7 @@ test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN',
     test(`chat: Session Map rail + preview card [desktop] (${theme})`, async ({ page }, testInfo) => {
       await seedTheme(page, theme)
       await gotoRoute(page, 'chat')
-      await driveScriptedTurns(page, 'Index this turn on the session map, please', 3)
+      await driveScriptedTurns(page, 'Index this turn on the session map, please', 4)
 
       // ── FLOOR 1: the rail is actually here, with marks ──────────────────────
       // Desktop defaults OPEN (`useQueryParam(…, 'map', isMobile ? '0' : '1')`), so no
@@ -185,8 +186,8 @@ test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN',
         'the keyboard REVEAL did not open a preview card, so the second scan below would re-scan\n' +
           'the first state and report it as card coverage',
       ).toBeVisible({ timeout: 10_000 })
-      // The card's own excerpt arrives with `ui/Popover`'s `overlayEnter` spring; mid-flight
-      // opacity is what made the mobile tier read a composited `#85888c` (see Tier 5).
+      // The preview arrives in the rail's overlay material; any entrance it has must settle before
+      // axe reads colours, or a mid-flight opacity reads as a composited tone (see Tier 5).
       await settleEntranceAnimations(page)
 
       const cardResults = await new AxeBuilder({ page })

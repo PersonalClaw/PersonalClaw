@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, THEMES, type Theme } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
+import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
 
 // ── The UI quality check: every surface, once per theme, every check ────────────────────────────
@@ -167,6 +168,29 @@ function fixedWeek(clock: string) {
   }
 }
 
+/** A chat long enough for its Session Map (#4776): six questions, each answered, one answer with
+ *  the tool calls the preview lists, and the second question bookmarked. Under the route
+ *  catalogue's sample chat id, which no home holds. */
+const MAPPED_CHAT_ID = 'chat-1-1792387100'
+const askedAt = (n: number, s = 0) => `2026-11-02T10:${String(n * 4).padStart(2, '0')}:${String(s).padStart(2, '0')}+00:00`
+const MAPPED_CHAT = {
+  key: MAPPED_CHAT_ID, title: 'The release checklist', queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
+  run_state: idleRunState(MAPPED_CHAT_ID),
+  bookmarks: [askedAt(1)],
+  messages: [
+    'What is left before the release?', 'Run the test suite.', 'Draft the release notes.',
+    'Check the changelog for typos.', 'Tag the release.', 'Tell the team it shipped.',
+  ].flatMap((ask, n) => [
+    { role: 'user', content: ask, ts: askedAt(n) },
+    ...(n === 1 ? [
+      { role: 'tool', content: 'run_command', ts: askedAt(n, 2), meta: { tool_call_id: 'tc-1', purpose: '', input: '{"command":"make test"}', kind: 'execute', done: true, output: '412 passed' } },
+      { role: 'tool', content: 'read_file', ts: askedAt(n, 3), meta: { tool_call_id: 'tc-2', purpose: '', input: '{"path":"CHANGELOG.md"}', kind: 'read', done: true, output: '# Changelog' } },
+      { role: 'tool', content: 'write_file', ts: askedAt(n, 4), meta: { tool_call_id: 'tc-3', purpose: '', input: '{"path":"notes.md","content":"-"}', kind: 'edit', done: true, output: 'Wrote notes.md' } },
+    ] : []),
+    { role: 'assistant', content: `Done: ${ask.toLowerCase().replace(/[.?]$/, '')}, and nothing else needed.`, ts: askedAt(n, 9) },
+  ]),
+}
+
 /** Reads a surface's row answers with a fixed body, and why. Only for a read whose answer depends on
  *  what other specs did first in the shared home or on state outside the run, so the surface would
  *  hold one of several states on any run, or one the run's home can only answer empty. Each state
@@ -174,6 +198,14 @@ function fixedWeek(clock: string) {
  *  and only the moving fields pinned, so the rest of the read is still the gateway's. */
 type StubbedRead = { url: RegExp; why: string } & ({ json: unknown } | { patch: (live: any) => unknown })
 const STUBBED_READS: Record<string, StubbedRead[]> = {
+  // The chat the Session Map row opens. The run's home holds no chat long enough for a map, and
+  // one driven through real turns would differ by the scripted provider's timing. The rail's
+  // behaviour is held by `src/pages/chat/SessionMapRail*.test.tsx`.
+  [`chat/${MAPPED_CHAT_ID}`]: [{
+    url: new RegExp(`/api/chat/sessions/${MAPPED_CHAT_ID}(\\?.*)?$`),
+    json: MAPPED_CHAT,
+    why: "the run's home holds no chat with four of your messages",
+  }],
   'mission-control': [{
     url: /\/api\/waiting(\?.*)?$/,
     // One item of each shape the lanes draw. The run's home has nothing waiting on you, so the

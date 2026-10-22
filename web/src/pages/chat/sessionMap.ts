@@ -58,11 +58,12 @@ export interface SessionMark {
 
 const PREVIEW_CAP = 140
 
-/** SELF-SUPPRESSION THRESHOLD — a map of fewer than two entries indexes nothing worth
- *  navigating, so the map does not render at all. Defined here, with the contract, because BOTH
- *  forms apply it: the rail renders nothing, and the coarse-pointer drawer
- *  explains itself instead of showing a blank panel. Two forms, one threshold, one definition. */
-export const SESSION_MAP_MIN_MARKS = 2
+/** SELF-SUPPRESSION THRESHOLD — the map appears once a conversation holds four of the owner's
+ *  messages (#4776): below that the whole conversation is on one or two screens and a rail would
+ *  index what is already in view. Defined here, with the contract, because BOTH forms apply it:
+ *  the rail renders nothing, and the coarse-pointer drawer explains itself instead of showing a
+ *  blank panel. Two forms, one threshold, one definition. */
+export const SESSION_MAP_MIN_MARKS = 4
 
 /** Compact one-line preview for a tool / approval mark: the STABLE tool name plus its
  *  refined one-liner (the command / file+range, else the raw input), markdown-stripped. */
@@ -128,6 +129,16 @@ export function sessionMapMarks(turns: ChatTurn[], subagents: SubagentCard[] = [
   return marks
 }
 
+/** One thing an exchange's reply did, as the map's preview lists it: a typed mark of the index
+ *  (a tool call, an approval, an error, a meaningful activity), in the order it happened. */
+export interface SessionMapOutput {
+  kind: Exclude<SessionMarkKind, 'user' | 'assistant' | 'subagent'>
+  /** One line of plain text, as the typed index has it. */
+  preview: string
+  /** `false` on a tool call that failed, as on the typed mark. */
+  ok?: boolean
+}
+
 /** One ENTRY on the map: a user message, and the exchange it opened. */
 export interface SessionMapEntry {
   /** 0-based position among the entries — the render key, and the N of "Message N of M". */
@@ -145,7 +156,15 @@ export interface SessionMapEntry {
   preview: string
   /** The opening of the reply, one line of plain text — `''` until reply text has arrived. */
   response: string
+  /** What the reply did, in order: the typed marks of its turns. The preview shows the first two
+   *  and counts the rest. */
+  outputs: SessionMapOutput[]
+  /** The owner bookmarked this message (the gateway keeps them by the message's `ts`). Always
+   *  `false` for a message with no `ts` yet, which cannot be bookmarked. */
+  bookmarked: boolean
 }
+
+const NO_BOOKMARKS: ReadonlySet<string> = new Set()
 
 /** The map's entries: ONE PER USER MESSAGE.
  *
@@ -160,7 +179,7 @@ export interface SessionMapEntry {
  *  durable endpoint's marks agree about coordinates and previews by construction. Agent output that
  *  precedes the first user message (an agent-initiated or resumed session) opens no entry: there is
  *  no question to file it under, and the map indexes the user's messages only. */
-export function sessionMapEntries(turns: ChatTurn[]): SessionMapEntry[] {
+export function sessionMapEntries(turns: ChatTurn[], bookmarks: ReadonlySet<string> = NO_BOOKMARKS): SessionMapEntry[] {
   const entries: SessionMapEntry[] = []
   for (const mark of sessionMapMarks(turns)) {
     if (mark.kind === 'user') {
@@ -171,13 +190,19 @@ export function sessionMapEntries(turns: ChatTurn[]): SessionMapEntry[] {
         ts: mark.ts,
         preview: mark.preview,
         response: '',
+        outputs: [],
+        bookmarked: !!mark.ts && bookmarks.has(mark.ts),
       })
       continue
     }
     const entry = entries[entries.length - 1]
     if (!entry) continue
     if (!entry.coords.includes(mark.visibleIndex)) entry.coords.push(mark.visibleIndex)
-    if (!entry.response && mark.kind === 'assistant') entry.response = mark.preview
+    if (mark.kind === 'assistant') {
+      if (!entry.response) entry.response = mark.preview
+    } else if (mark.kind !== 'subagent') {
+      entry.outputs.push({ kind: mark.kind, preview: mark.preview, ...(mark.ok === false ? { ok: false } : {}) })
+    }
   }
   return entries
 }

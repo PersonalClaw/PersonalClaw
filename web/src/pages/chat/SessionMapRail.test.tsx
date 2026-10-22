@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { SessionMapRail, MARK_REST_SCALE } from './SessionMapRail'
+import { SessionMapRail } from './SessionMapRail'
+import { MARK_IN_VIEW_PX, MARK_MAX_PX, MARK_REST_PX } from './sessionMapGeometry'
 import { sessionMapEntries } from './sessionMap'
 import type { ChatTurn, Segment } from './chatTypes'
 
 // ── The Session Map rail component (the markers) ────────────────────────────────────────
 //
-// The contract: a <nav aria-label="Session map"> renders ONE
-// marker per USER message and none for replies or the work inside them; every marker RESTS AT ONE
-// LENGTH; what is on screen is told by COLOUR alone (--color-primary on screen, --color-map-rest
-// off it — no raw hex/px, tokenLint.test.ts; no coloured side-stripe, sideStripeDoctrine.test.ts);
-// the rail self-suppresses (renders null) below two messages.
+// The contract (#4776): a <nav aria-label="Session map"> renders ONE marker per USER message and
+// none for replies or the work inside them; at rest a marker is short, and an exchange on screen
+// rests LONGER and in the accent (--color-primary on screen, --color-map-rest off it), so what is in
+// view is told by length as well as colour; the rail self-suppresses below four messages.
 //
 // VACUITY FLOOR. "renders N markers" is faked by a component that renders N of ANYTHING, and
 // "self-suppresses" is faked by a component that never renders. So:
@@ -18,9 +18,8 @@ import type { ChatTurn, Segment } from './chatTypes'
 //     user turns in the fixture, whose replies carry tool calls, an approval, an error and a
 //     stats line — every one of which used to be a marker of its own;
 //   · both TONE tokens are asserted to actually land on the elements, and NO third tone is allowed;
-//   · the uniform length is asserted across a rail that HAS both tones, so "every marker is the
-//     same length" cannot pass on a rail where every marker is also the same colour;
-//   · the suppression is proven AT THE BOUNDARY (1 → null, 2 → rendered).
+//   · the two resting lengths are asserted on a rail that HAS both tones, each with its own tone;
+//   · the suppression is proven AT THE BOUNDARY (3 → null, 4 → rendered).
 
 const USER_TS = '2026-09-16T10:00:00.000Z'
 const ASST_TS = '2026-09-16T10:00:05.000Z'
@@ -42,34 +41,34 @@ const fixtureTurns: ChatTurn[] = [
   { role: 'assistant', ts: ASST_TS, visibleIndex: 1, segments: busyReply },
   { role: 'user', ts: USER_TS, visibleIndex: 2, segments: [{ kind: 'text', text: 'Now fix the missing file.' }] },
   { role: 'assistant', ts: ASST_TS, visibleIndex: 3, segments: [{ kind: 'text', text: 'Fixed it.' }] },
-  { role: 'user', ts: USER_TS, visibleIndex: 4, segments: [{ kind: 'text', text: 'Thanks — ship it.' }] },
+  { role: 'user', ts: USER_TS, visibleIndex: 4, segments: [{ kind: 'text', text: 'Now write the notes.' }] },
+  { role: 'assistant', ts: ASST_TS, visibleIndex: 5, segments: [{ kind: 'text', text: 'Written.' }] },
+  { role: 'user', ts: USER_TS, visibleIndex: 6, segments: [{ kind: 'text', text: 'Thanks — ship it.' }] },
 ]
 
 const railProps = { turnNodes: new Map<number, Element>(), scrollRef: { current: null }, onJumpTo: () => {} }
 
 const railMarks = (c: HTMLElement) => [...c.querySelectorAll('[data-session-mark]')] as HTMLElement[]
 const markLines = (c: HTMLElement) => [...c.querySelectorAll('[data-session-map-mark-line]')] as HTMLElement[]
-/** The scale a marker's line is rendered at, read off the style framer wrote.
- *
- *  🪤 `transform: none` IS SCALE 1. framer collapses the transform to the keyword when every
- *  component is at its default, and `scaleX`'s default is 1 — so a marker at FULL length writes no
- *  `scaleX(…)`. A style with no `transform` at all still reads NaN, so a deleted animation fails. */
-function scaleOf(el: Element | null): number {
+/** The painted length of a marker's line, in px: its `MARK_MAX_PX` width times the `scaleX` it is
+ *  drawn at. A line with no `scaleX` reads NaN, so a deleted length fails. */
+function lengthOf(el: Element | null): number {
   const style = (el as HTMLElement | null)?.getAttribute('style') ?? ''
   const m = /scaleX\(([\d.]+)\)/.exec(style)
-  if (m) return Number(m[1])
-  return /transform:\s*none/.test(style) ? 1 : NaN
+  return m ? Math.round(Number(m[1]) * MARK_MAX_PX * 100) / 100 : NaN
 }
 
 describe('SessionMapRail — the markers', () => {
   it('renders a <nav aria-label="Session map"> landmark that says how to use it', () => {
     const { getByRole } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
     const nav = getByRole('navigation', { name: 'Session map' })
-    // The reference's first friction: marks that are small and UNEXPLAINED. The landmark carries
-    // the explanation once, rather than every marker repeating it.
+    // The landmark carries the explanation once, rather than every marker repeating it, and it
+    // names every way through the rail: preview, jump, scrub and the chord.
     const hint = document.getElementById(nav.getAttribute('aria-describedby') ?? '')
     expect(hint, 'the rail names no description').not.toBeNull()
     expect(hint!.textContent).toMatch(/message you sent/i)
+    expect(hint!.textContent).toMatch(/drag/i)
+    expect(hint!.textContent).toMatch(/up and down arrows/i)
   })
 
   it('🔑 renders ONE marker per USER message — never one for a reply or the work inside it', () => {
@@ -79,20 +78,18 @@ describe('SessionMapRail — the markers', () => {
     const { container } = render(<SessionMapRail entries={entries} {...railProps} />)
     expect(railMarks(container), 'the rail drew a marker for something that is not a user message')
       .toHaveLength(userTurns)
-    // And the markers ARE the user messages, in order — named by them.
     expect(railMarks(container).map((m) => m.getAttribute('aria-label'))).toEqual([
-      'Message 1 of 3: Please run the build.',
-      'Message 2 of 3: Now fix the missing file.',
-      'Message 3 of 3: Thanks — ship it.',
+      'Message 1 of 4: Please run the build.',
+      'Message 2 of 4: Now fix the missing file.',
+      'Message 3 of 4: Now write the notes.',
+      'Message 4 of 4: Thanks — ship it.',
     ])
   })
 
   it('🔴 draws NO track — the spine was deleted, not retinted', () => {
     const { container } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
-    // The element AND the token, so neither a renamed spine nor a differently-tagged one passes.
     expect(container.querySelector('[data-session-map-track]'), 'the spine is back').toBeNull()
     expect(container.innerHTML, 'nothing in the rail may paint the rail tone').not.toContain('--color-rail')
-    // …and the thing that replaced it is really there: one drawn line per marker.
     expect(markLines(container)).toHaveLength(railMarks(container).length)
   })
 
@@ -102,7 +99,6 @@ describe('SessionMapRail — the markers', () => {
     for (const t of tones) {
       expect(t === 'var(--color-primary)' || t === 'var(--color-map-rest)', `unexpected marker tone: ${t}`).toBe(true)
     }
-    // BOTH tones appear (an all-grey or all-coral rail would be a lie about what is on screen).
     expect(tones).toContain('var(--color-primary)')
     expect(tones).toContain('var(--color-map-rest)')
     // The line inherits the row's colour rather than restating it — one declaration, which is the
@@ -112,45 +108,54 @@ describe('SessionMapRail — the markers', () => {
     }
   })
 
-  it('lights the newest exchange coral when nothing has reported on screen yet, the rest neutral', () => {
-    // No IntersectionObserver rows: the honest answer is the newest message, where an unscrolled
-    // transcript is. Everything before it is off screen.
+  it('lights the newest exchange when nothing has reported on screen yet, the rest neutral', () => {
     const { container } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
     expect(railMarks(container).map((m) => m.style.color)).toEqual([
-      'var(--color-map-rest)', 'var(--color-map-rest)', 'var(--color-primary)',
+      'var(--color-map-rest)', 'var(--color-map-rest)', 'var(--color-map-rest)', 'var(--color-primary)',
     ])
   })
 
   it('🔑 says "on screen" in ARIA too, so the region is not colour-alone for assistive tech', () => {
     const { container } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
-    const flags = railMarks(container).map((n) => n.getAttribute('aria-current'))
-    expect(flags).toEqual([null, null, 'true'])
+    expect(railMarks(container).map((n) => n.getAttribute('aria-current'))).toEqual([null, null, null, 'true'])
   })
 
-  it('🔑 every marker RESTS AT ONE LENGTH — being on screen is colour, never size', () => {
-    // The previous form idled a current turn at ~18px, a history turn at ~12px and a sub-event at
-    // 6px. The design rule: the on-screen markers "don't need to expand to indicate that". So at rest the
-    // lengths are identical across a rail that DOES carry both tones (asserted above).
+  it('🔑 at rest an exchange on screen is LONGER as well as in the accent — never colour alone', () => {
     const { container } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
-    const scales = markLines(container).map(scaleOf)
-    for (const [i, s] of scales.entries()) expect(s, `marker ${i} has no scaleX`).not.toBeNaN()
-    expect(new Set(scales).size, `resting lengths differ: ${scales.join(', ')}`).toBe(1)
-    expect(scales[0], 'the resting length is the rail\'s one declared constant').toBe(MARK_REST_SCALE)
-    // Nothing rests at full length — that is reserved for the marker under the pointer or cursor.
-    expect(scales[0]).toBeLessThan(1)
+    const lengths = markLines(container).map(lengthOf)
+    for (const [i, l] of lengths.entries()) expect(l, `marker ${i} has no painted length`).not.toBeNaN()
+    // Off screen, the short rest; on screen (the newest, here), the longer one — with its tone.
+    expect(lengths).toEqual([MARK_REST_PX, MARK_REST_PX, MARK_REST_PX, MARK_IN_VIEW_PX])
+    const tones = railMarks(container).map((m) => m.style.color)
+    lengths.forEach((l, i) => expect(tones[i]).toBe(l === MARK_IN_VIEW_PX ? 'var(--color-primary)' : 'var(--color-map-rest)'))
+    // Nothing rests at full length — that is reserved for the target.
+    expect(Math.max(...lengths)).toBeLessThan(MARK_MAX_PX)
   })
 
-  it('self-suppresses (renders null) below two messages, at the boundary', () => {
-    const one = sessionMapEntries(fixtureTurns.slice(0, 2))
-    expect(one).toHaveLength(1)
-    const { container: c1, queryByRole: q1 } = render(<SessionMapRail entries={one} {...railProps} />)
+  it('a bookmarked message carries its dot, and says so in its name; the others do not', () => {
+    const entries = sessionMapEntries(fixtureTurns, new Set([USER_TS]))
+    // Every fixture question shares one stamp, so mark only the second as bookmarked by hand.
+    const marked = entries.map((e, i) => ({ ...e, bookmarked: i === 1 }))
+    const { container } = render(<SessionMapRail entries={marked} {...railProps} />)
+    const dots = railMarks(container).map((m) => !!m.querySelector('[data-session-map-bookmark]'))
+    expect(dots).toEqual([false, true, false, false])
+    expect(railMarks(container)[1].getAttribute('aria-label')).toBe('Message 2 of 4, bookmarked: Now fix the missing file.')
+    // The dot sits just past the end of its line, wherever that end is.
+    const dot = railMarks(container)[1].querySelector('[data-session-map-bookmark]') as HTMLElement
+    expect(dot.style.transform).toBe(`translate(${MARK_REST_PX + 2}px, -50%)`)
+  })
+
+  it('self-suppresses (renders null) below four messages, at the boundary', () => {
+    const three = sessionMapEntries(fixtureTurns.slice(0, 5))
+    expect(three).toHaveLength(3)
+    const { container: c1, queryByRole: q1 } = render(<SessionMapRail entries={three} {...railProps} />)
     expect(q1('navigation')).toBeNull()
     expect(railMarks(c1)).toHaveLength(0)
-    // Exactly 2 messages → rendered: the threshold renders AT two, it does not require three.
-    const two = sessionMapEntries(fixtureTurns.slice(0, 3))
-    expect(two).toHaveLength(2)
-    const { queryByRole: q2, container: c2 } = render(<SessionMapRail entries={two} {...railProps} />)
+    // Exactly four messages → rendered: the threshold renders AT four.
+    const four = sessionMapEntries(fixtureTurns)
+    expect(four).toHaveLength(4)
+    const { queryByRole: q2, container: c2 } = render(<SessionMapRail entries={four} {...railProps} />)
     expect(q2('navigation', { name: 'Session map' })).not.toBeNull()
-    expect(railMarks(c2)).toHaveLength(2)
+    expect(railMarks(c2)).toHaveLength(4)
   })
 })

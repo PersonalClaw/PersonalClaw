@@ -63,9 +63,9 @@ const subs: Segment[] = [
   { kind: 'error', text: 'ValidationException: input is too long.' },
 ]
 
-/** Six turns — three questions (0, 2, 4), each answered by an assistant turn carrying two
- *  sub-events (1, 3, 5) — so three entries owning two coordinates each. */
-function turns(n = 6, tail = ''): ChatTurn[] {
+/** Eight turns — four questions (0, 2, 4, 6), each answered by an assistant turn carrying two
+ *  sub-events (1, 3, 5, 7) — so four entries owning two coordinates each, the fewest a map shows. */
+function turns(n = 8, tail = ''): ChatTurn[] {
   return Array.from({ length: n }, (_, i) => ({
     role: i % 2 === 0 ? 'user' : 'assistant',
     ts: TS,
@@ -106,9 +106,9 @@ describe('SessionMapRail — the on-screen colour follows the viewport', () => {
     const scroller = document.createElement('div')
     render(<SessionMapRail entries={sessionMapEntries(t)} turnNodes={nodes} scrollRef={{ current: scroller }} onJumpTo={() => {}} />)
     expect(observers).toHaveLength(1)
-    // Three markers, six observed nodes: a rail that watched only its own markers' turns could
+    // Four markers, eight observed nodes: a rail that watched only its own markers' turns could
     // never see a reply on screen, which is the state a reader spends the most time in.
-    expect(observers[0].observed).toHaveLength(6)
+    expect(observers[0].observed).toHaveLength(8)
     expect(new Set(observers[0].observed)).toEqual(new Set(nodes.values()))
     // The transcript is a pane with a header above and a composer below — "in the window" and "in
     // the transcript" are different rectangles, so a null root would measure the wrong one.
@@ -121,13 +121,13 @@ describe('SessionMapRail — the on-screen colour follows the viewport', () => {
     const { container } = render(<SessionMapRail entries={sessionMapEntries(t)} turnNodes={nodes} scrollRef={scrollRef} onJumpTo={() => {}} />)
     // On load nothing has been reported: the newest message is current.
     const onLoad = coralOf(container)
-    expect(onLoad).toEqual([false, false, true])
+    expect(onLoad).toEqual([false, false, false, true])
 
     // Scroll up: the first reply (turn 1) and the second question (turn 2) are on screen.
     report(nodes, [[1, true], [2, true]])
     const scrolled = coralOf(container)
     expect(scrolled, 'the colour did not move when the viewport did').not.toEqual(onLoad)
-    expect(scrolled).toEqual([true, true, false])
+    expect(scrolled).toEqual([true, true, false, false])
   })
 
   it('🔑 a reply ALONE on screen keeps its question lit — and only its question', () => {
@@ -138,7 +138,7 @@ describe('SessionMapRail — the on-screen colour follows the viewport', () => {
     // the top. The previous rule lit a marker only when its OWN turn was on screen, so this state
     // lit nothing — while the reader was reading the exchange it indexes.
     report(nodes, [[3, true]])
-    expect(coralOf(container)).toEqual([false, true, false])
+    expect(coralOf(container)).toEqual([false, true, false, false])
   })
 
   it('an exchange scrolling OUT of view loses its colour (the callback is a delta, not the truth)', () => {
@@ -146,11 +146,11 @@ describe('SessionMapRail — the on-screen colour follows the viewport', () => {
     const nodes = nodesFor(t)
     const { container } = render(<SessionMapRail entries={sessionMapEntries(t)} turnNodes={nodes} scrollRef={scrollRef} onJumpTo={() => {}} />)
     report(nodes, [[1, true], [2, true]])
-    expect(coralOf(container)).toEqual([true, true, false])
+    expect(coralOf(container)).toEqual([true, true, false, false])
     // Only turn 1 left the viewport. A rail that rebuilt its set from this one entry would now
     // think NOTHING is on screen.
     report(nodes, [[1, false]])
-    expect(coralOf(container)).toEqual([false, true, false])
+    expect(coralOf(container)).toEqual([false, true, false, false])
   })
 
   it('🪤 a streaming text mutation does NOT re-measure', () => {
@@ -166,30 +166,30 @@ describe('SessionMapRail — the on-screen colour follows the viewport', () => {
     // entry objects every time, which is exactly why keying the observer on it would rebuild the
     // observer once per token.
     for (const tail of [' a', ' ab', ' abc', ' abcd', ' abcde', ' abcdef']) {
-      rerender(<SessionMapRail entries={sessionMapEntries(turns(6, tail))} turnNodes={nodes} scrollRef={scrollRef} onJumpTo={() => {}} />)
+      rerender(<SessionMapRail entries={sessionMapEntries(turns(8, tail))} turnNodes={nodes} scrollRef={scrollRef} onJumpTo={() => {}} />)
     }
     expect(observers, 'the observer was rebuilt while text streamed').toHaveLength(1)
     expect(first.disconnected, 'the observer was torn down while text streamed').toBe(false)
-    expect(first.observed, 'the turn nodes were re-observed while text streamed').toHaveLength(6)
+    expect(first.observed, 'the turn nodes were re-observed while text streamed').toHaveLength(8)
   })
 
   it('…but a NEW TURN does re-measure — even a reply, which adds no marker', () => {
-    // The newest question is still waiting for its answer: five turns, three markers.
-    const t = turns(5)
+    // The newest question is still waiting for its answer: seven turns, four markers.
+    const t = turns(7)
     const nodes = nodesFor(t)
     const { rerender, container } = render(
       <SessionMapRail entries={sessionMapEntries(t)} turnNodes={nodes} scrollRef={scrollRef} onJumpTo={() => {}} />,
     )
     expect(observers).toHaveLength(1)
-    expect(observers[0].observed).toHaveLength(5)
+    expect(observers[0].observed).toHaveLength(7)
     // The answer arrives. It adds NO marker — and it must still be observed, because a reply on
     // screen is what keeps its question lit; a rail keyed on its own markers would miss it.
-    const t2 = turns(6)
+    const t2 = turns(8)
     const nodes2 = nodesFor(t2)
     rerender(<SessionMapRail entries={sessionMapEntries(t2)} turnNodes={nodes2} scrollRef={scrollRef} onJumpTo={() => {}} />)
-    expect(container.querySelectorAll('[data-session-mark]'), 'a reply grew a marker').toHaveLength(3)
+    expect(container.querySelectorAll('[data-session-mark]'), 'a reply grew a marker').toHaveLength(4)
     expect(observers, 'the new reply must be observed — it cannot light its question otherwise').toHaveLength(2)
     expect(observers[0].disconnected).toBe(true)
-    expect(observers[1].observed).toHaveLength(6)
+    expect(observers[1].observed).toHaveLength(8)
   })
 })

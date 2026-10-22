@@ -37,7 +37,7 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
 export function ChatPanes({ panes, stream, transcript, started, setQuery, navigate, send }: {
   panes: ChatPanesState
   stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy' | 'workingDir' | 'streaming' | 'sessionRef'>
-  transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'isMobile' | 'setMapOpen' | 'sessionEntries' | 'pendingMapJump' | 'runPendingMapJump'>
+  transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'isMobile' | 'setMapOpen' | 'sessionEntries' | 'pendingMapJump' | 'runPendingMapJump' | 'toggleBookmark' | 'turnNodes' | 'scrollRef'>
   started: boolean
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
@@ -45,7 +45,7 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
 }) {
   const { openFile, setOpenFile, activityOpen: activityAsked, setActivityOpen, treeOpen, setTreeOpen, historyOpen, setHistoryOpen, activity, outputs, beside, setBeside, killFanout, openSide, askSide } = panes
   const { subagents, sideMsgs, sideBusy, workingDir, streaming, sessionRef } = stream
-  const { mapOpen, isMobile, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
+  const { mapOpen, isMobile, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump, toggleBookmark, turnNodes, scrollRef } = transcript
   // On a phone a detail open beside the reading takes the inspector's place; the address keeps both,
   // and the detail's Back to Activity brings the inspector back.
   const activityOpen = activityAsked && !(isMobile && detailOf(beside))
@@ -82,7 +82,8 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
         {mapOpen && isMobile && started && (
           <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
             fillHeight onClose={() => setMapOpen(false)}>
-            <SessionMapDrawer entries={sessionEntries}
+            <SessionMapDrawer entries={sessionEntries} onToggleBookmark={toggleBookmark}
+              turnNodes={turnNodes.current} scrollRef={scrollRef}
               onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
           </SidePanel>
         )}

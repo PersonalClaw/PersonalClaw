@@ -9245,6 +9245,10 @@ export const api = {
   // since. Answers with the tags as stored after.
   editSessionTags: (session: string, edit: { add?: string[]; remove?: string[] }) =>
     put<{ ok: boolean; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, edit),
+  // A chat's bookmarked messages (its Session Map), by each message's `ts`, one in or out the same
+  // way as the tags. Answers with the bookmarks as stored after.
+  editSessionBookmarks: (session: string, edit: { add?: string[]; remove?: string[] }) =>
+    put<{ ok: boolean; bookmarks: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/bookmarks`, edit),
   // Suggested organization. The GET only READS — a suggestion never applies
   // itself; organizeAccept is the sole path that writes folder/tags from a proposal. It answers at
   // once: `pending` while the model is still sorting the chat, whose answer then arrives as a
@@ -9266,7 +9270,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[] }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[] }[]; bookmarks?: string[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.

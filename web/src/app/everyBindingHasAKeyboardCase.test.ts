@@ -28,6 +28,8 @@ const SPEC = 'e2e/keyboard.spec.ts'
 const PRESSED_ELSEWHERE: Partial<Record<CommandId, { spec: string; why: string }>> = {
   'focus-mode': { spec: 'e2e/focusAndReadingModes.spec.ts', why: 'presses ⌘\\ on a chat with a turn and measures the work surface it leaves' },
   'reading-mode': { spec: 'e2e/focusAndReadingModes.spec.ts', why: 'presses ⌘⇧. to fold and unfold the composer, a draft kept across the fold' },
+  'prev-message': { spec: 'e2e/sessionMap.spec.ts', why: 'presses ⌥↑ from the composer of a four-message chat and reads the rail announce each jump' },
+  'next-message': { spec: 'e2e/sessionMap.spec.ts', why: 'presses ⌥↓ after two ⌥↑ and reads the rail announce the jump back' },
 }
 
 /** Rows with no e2e case of their own, and why one would add nothing. */
