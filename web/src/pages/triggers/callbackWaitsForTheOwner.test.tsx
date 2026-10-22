@@ -10,12 +10,15 @@ import type { CallbackRow } from '../../lib/api'
 // yes. Measured before this: no surface listed a callback at all, so a turn the agent had set up
 // to start from its own words ran with nobody having seen it.
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { API } = vi.hoisted(() => ({
   API: {
     schedules: vi.fn(() => Promise.resolve({ jobs: [] })),
     hooks: vi.fn(() => Promise.resolve([])),
     storeTriggers: vi.fn(() => Promise.resolve([])),
     callbacks: vi.fn(() => Promise.resolve([] as CallbackRow[])),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: vi.fn(() => Promise.resolve([])),
     actionProviders: vi.fn(() => Promise.resolve([])),
     autonomyLadder: vi.fn(() => Promise.reject(new Error('no ladder in this test'))),

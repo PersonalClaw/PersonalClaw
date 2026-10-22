@@ -32,6 +32,7 @@ const SLEPT: TriggerReviewCard = {
   reason: '', count_is_floor: false, cause: 'paused', name: 'Pack the soccer bag', open_id: 'schedule:clock:pack',
 }
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { STATE } = vi.hoisted(() => ({
   STATE: {
     cards: [] as unknown[],
@@ -49,6 +50,8 @@ vi.mock('../../lib/api', async (orig) => ({
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve([]),
     callbacks: () => Promise.resolve([]),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: () => {
       STATE.reviewReads += 1
       return STATE.reviewError ? Promise.reject(STATE.reviewError) : Promise.resolve(STATE.cards)
@@ -140,7 +143,7 @@ describe('the review above the Triggers list', () => {
     mount()
     const missed = await cardFor('Hourly digest')
     fireEvent.click(within(missed).getByText('Hourly digest'))
-    expect(setQuery).toHaveBeenCalledWith({ open: 'schedule:clock:hourly', edit: null, view: 'list' })
+    expect(setQuery).toHaveBeenCalledWith({ open: 'schedule:clock:hourly', edit: null, run: null, view: 'list' })
   })
 })
 

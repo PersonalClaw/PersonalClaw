@@ -31,6 +31,7 @@ def serialize(callback: Any) -> dict[str, Any]:
     from personalclaw.dashboard.handlers.triggers import _redact
     from personalclaw.inbound import webhook
     from personalclaw.owner_grants import seal
+    from personalclaw.triggers import listing
 
     allowed = webhook_callbacks.allowed(callback)
     return {
@@ -43,6 +44,12 @@ def serialize(callback: Any) -> dict[str, Any]:
         "needs_grant": [] if allowed else [webhook_callbacks.RUNS_LABEL],
         "context_summary": _redact(callback.context_summary),
         "session_key": callback.session_key,
+        # The conversation a call resumes is the thread it reports to.
+        "reports_to": (
+            listing.reports_to(session=f"conversation:{callback.session_key}")
+            if callback.session_key
+            else {}
+        ),
         # Where a program calls it back, and where that address answers (`inbound.webhook`).
         "url": webhook.hook_url(),
         "reach": webhook.REACH,

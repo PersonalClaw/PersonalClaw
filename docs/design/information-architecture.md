@@ -102,6 +102,18 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 | Capabilities | configure what the agent can do | tabs for Agents, Skills, Tools, Prompts, Apps and the Store, each a list beside a detail, and Learning, beside Skills, the page of what the agent learned and the proposals it links to | Add (Install on the Store tab) | detail and permissions |
 | Settings | configure the system | a section list beside the form, search on top | none | none |
 
+Automations, as built (#3816): the sidebar row's address, `#/automations`, is the one list, and
+Workflows (definitions and the runs no automation started) is its second tab, at `#/workflows`.
+`GET /api/triggers` states the list's order once (`src/personalclaw/triggers/listing.py`): Needs
+you (a failed last run, a missed or interrupted run waiting for a decision, a change waiting for the
+owner's Allow), oldest first; Next to run, soonest first; Not on a clock, by name; ties by id. Each
+row carries its group, its place in the list and where it reports (to an app's read, a thread only
+of a conversation that app started), and the page shows the groups
+under their headings as served (`web/src/pages/automations/listGroups.ts`). The selected
+automation is `?open=<id>` and the run its history has open `?run=<run id>`; the history is newest
+first by each run's start, ties by run id. `#/triggers` and its sub-routes open the list as they
+always did, inside Automations, so no address is retired.
+
 A list beside a detail shows both from 840 px of content up: the room the page has beside the
 sidebar, not the window, so a collapsed and an expanded sidebar at one window width each get the
 layout their room allows. Below it they show one at a time, the detail in place of the list, and

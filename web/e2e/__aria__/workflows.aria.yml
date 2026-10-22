@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Show fewer, hide # surfaces": Show fewer
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
@@ -29,6 +26,9 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
+  - radiogroup "Automations":
+    - radio "Automations"
+    - radio "Workflows" [checked]
   - heading "Workflows" [level=#]
   - radiogroup "Workflows view":
     - radio "Runs" [checked]
@@ -45,5 +45,11 @@
   - button "Plan a project — project-planning": "Plan a project project-planning Turn a goal into a plan: understand the scope, research the domain and audit what exists in parallel, then design an approach and stage it for review."
   - button "Loop until done — general-project": Loop until done general-project Iterate on any task in judged steps until it is genuinely done.
   - button "Browse all definitions"
+  - complementary "A tip from Discover":
+    - paragraph: Start a conversation
+    - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+    - link "Open Chat":
+      - /url: "#/chat/new"
+    - button "Dismiss this tip"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

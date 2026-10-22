@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { automationsFrom } from '../../test/automationsRead'
 
 // ── A trigger an upgrade brought over waits, switched off, for the owner ──────────────────────────
 //
@@ -21,6 +22,8 @@ function mockApi() {
       hooks: () => Promise.resolve([]),
       storeTriggers: () => Promise.resolve(storeRows),
       callbacks: () => Promise.resolve([]),
+      // The page's one read, composed from the four above (#3816).
+      get automations() { return automationsFrom(this) },
       triggerReview: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),

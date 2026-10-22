@@ -1273,7 +1273,7 @@ automation's grant, which stays on its machine like every grant. A fire runs:
 * a newer version the owner saved in the editor, the newest one, since her save
   is her yes — an agent's version she then saved over in the editor included,
   which the editor showed her;
-* never a newer version anything else saved. The Triggers page says the
+* never a newer version anything else saved. The Automations page says the
   automation runs vN and that vM is newer, with who saved each version since;
   **Use vM** (`POST /api/triggers/{id}/workflow-version`) asks first, naming
   them, and moves it to the workflow as it is now (a stale `version` is `409
@@ -1316,7 +1316,7 @@ that lands between her question and her yes — an agent's `workflow_author`, an
 import, a sync — is refused (`409 stale_write`, "Nothing was changed: …"), with
 the question as it is now, which says who saved each version since the one she
 was shown. A yes that names no version allows none of it; the CLI's `--yes`
-cannot name one, so it sends a workflow's Allow to the Triggers page.
+cannot name one, so it sends a workflow's Allow to the Automations page.
 
 **What an agent working for an allowed run starts is held too.** An agent an
 "Invoke agent" or "Run prompt" step of such a run starts records the run it works

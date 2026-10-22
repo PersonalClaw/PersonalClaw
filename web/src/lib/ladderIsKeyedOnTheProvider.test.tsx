@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
+import { automationsFrom } from '../test/automationsRead'
 
 // ── The autonomy ladder is keyed on the ACTION PROVIDER, never on a tool's name ─────────────────
 //
@@ -100,6 +101,8 @@ describe('a trigger row shows the rung of the provider it dispatches', () => {
         state: 'active', run_count: 0, last_error: '', broken: [], warnings: [],
       }]),
       callbacks: () => Promise.resolve([]),
+      // The page's one read, composed from the four above (#3816).
+      get automations() { return automationsFrom(this) },
       triggerReview: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }),

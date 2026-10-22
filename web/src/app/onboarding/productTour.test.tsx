@@ -434,7 +434,7 @@ describe("The auto-pin model behaves identically with the tour present", () => {
     expect(readNavDisclosure()).toEqual(before)
     expect(readNavDisclosure().pinned).toEqual([])
     // The starter rail is still the starter rail — five rows plus the expander.
-    expect(railLinks()).not.toContain('Triggers')
+    expect(railLinks()).not.toContain('Automations')
   })
 
   it('and auto-pin still WORKS — the assertion above is not a dead mechanism', async () => {
@@ -443,8 +443,8 @@ describe("The auto-pin model behaves identically with the tour present", () => {
     setNavMode('starter')
     location.hash = '#/triggers'
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
+    expect(await screen.findByRole('heading', { name: 'Automations', level: 1 })).toBeInTheDocument()
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('automations'))
   })
 })
 

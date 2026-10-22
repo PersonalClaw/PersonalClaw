@@ -14,6 +14,30 @@ can find is not a guarantee.
 
 ---
 
+## Where you see them: the Automations page
+
+**Automations** in the sidebar is one list of everything that runs without you: schedules, data
+events, file and web watches, webhooks, lifecycle triggers and the callbacks an agent registered,
+and the automations that run a workflow. Each row says when it runs next, how its last run went and
+where it reports: the thread it reports to, the chat channel, the Inbox, or **Silent**. The list
+keeps one order, stated by the gateway (`GET /api/triggers`), in three groups:
+
+1. **Needs you**: its last run failed, a run a restart missed or interrupted waits for your decision,
+   or a change waits for your Allow (an import waiting for review, an action it may not run yet, a
+   newer workflow version, a restore's hold). Oldest first.
+2. **Next to run**: the clocks that will fire here, soonest first.
+3. **Not on a clock**: what an event, a file, a webhook or you start, and what is paused, switched
+   off or someone else's. By name.
+
+A row moves between groups only when its state changes. Selecting one opens its detail and run
+history beside the list, newest run first; the automation and the run you open are in the address
+(`#/automations?open=<id>&run=<run id>`), so a reload, Back and Forward and a copied link open them
+again. A run that started a workflow links to the workflow run's own page. The **Workflows** tab
+holds the workflow definitions and their runs. The old addresses, `#/triggers` and `#/workflows`
+with every sub-route, open the same pages inside Automations.
+
+---
+
 ## The three guarantees
 
 ### 1. A run that FAILS reaches your inbox — even when the automation's delivery is `none`
@@ -65,7 +89,7 @@ How it is implemented, in the order the fire path runs it:
 A **web watch** can fail without ever running: its checks of the page are refused by the network
 settings, cannot read the page, or find nothing on it the watch can track (no links, no feed
 entries), and then it can never fire. The first check of each such stretch is reported on the same
-failure route, once rather than at every check, and the Triggers page shows the watch's last check
+failure route, once rather than at every check, and the Automations page shows the watch's last check
 with a warning, and says it is not firing, until a check reads something it can watch.
 
 - `src/personalclaw/triggers/web_poll.py` — `report_checks` reports the stretch through
@@ -88,7 +112,7 @@ hold the reference, and the run fills it in where one of its steps uses the inpu
 project's secret first, then the global one. Such a fire is refused only when the run could read
 the secret from neither. Each such fire is recorded as
 `refused` in its run history, in a sentence that names the app and its action, or the secret by its
-name (never a value), and says what to do; the Triggers page shows it as the automation's last run,
+name (never a value), and says what to do; the Automations page shows it as the automation's last run,
 refused, with the same sentence. It is reported on the same failure route ("<name> did not run")
 the first time, and not again at every fire: the next report waits for a run that gets through, or
 a refusal for another reason. A refusal is not a failure, so it never pauses the automation, and it
@@ -107,7 +131,7 @@ PersonalClaw is still starting its apps waits for them rather than being refused
 **An automation that keeps failing pauses itself.** After 5 failed runs in a row (or the number
 its `failure_policy.autopause_after` sets), it stops firing and says so: the bell reads
 "<name> paused itself" with "paused after 5 failed runs: <why the last one failed>", and the
-Triggers page "Stopped by the system after repeated failures". A run counts as failed however it
+Automations page "Stopped by the system after repeated failures". A run counts as failed however it
 went wrong: the command it ran, or the agent (**Invoke Agent**, **Run Prompt**) or workflow run
 (**Run workflow**) it started, whose failure comes later than the fire that started it. Until that
 work ends its run reads `launched` and counts for nothing; when it ends, its row and the automation's
@@ -198,7 +222,7 @@ alone, as it is for every run of yours.
 
 An interrupted run is **not run again on its own**, because it may already have done part of its
 work. It waits for you instead, with the times PersonalClaw missed (see
-[When a scheduled time is missed](#when-a-scheduled-time-is-missed)): the Triggers page lists both
+[When a scheduled time is missed](#when-a-scheduled-time-is-missed)): the Automations page lists both
 under **Waiting for your decision**, and each card offers **Run now** (once, however many times it
 covers, recorded as late) and **Dismiss** (recorded as your decision). One notice in the bell says
 what is waiting ("Missed scheduled runs", or "Runs interrupted by a restart" when nothing was
@@ -207,7 +231,7 @@ Notifications is **Missed or interrupted runs to review**.
 
 | | |
 |---|---|
-| **Checked on** | the **run history** (the run has a terminal `interrupted` status, labelled "interrupted by a restart", with a reason naming the restart), the Schedule row (it stops rendering as in flight), and the review card at the top of the **Triggers** page |
+| **Checked on** | the **run history** (the run has a terminal `interrupted` status, labelled "interrupted by a restart", with a reason naming the restart), the Schedule row (it stops rendering as in flight), and the review card at the top of the **Automations** page |
 | **The status** | `interrupted` — its own word, because the run did not blow a deadline, and its own outcome in the runs feed: not a failure, and it never counts toward pausing the automation |
 
 - `src/personalclaw/triggers/reaper.py:326` — `terminalize_orphans_sync`, the boot pass, and its
@@ -241,9 +265,9 @@ gateway that was not running at all are treated alike. A run only a minute or tw
 missed: it runs as usual.
 
 What a missed time does is a setting on each scheduled automation, **If a time is missed**, under
-**Advanced** when you create or edit it on the Triggers page:
+**Advanced** when you create or edit it on the Automations page:
 
-- **Wait for me to decide** (the default). It does not run late by itself. The Triggers page shows
+- **Wait for me to decide** (the default). It does not run late by itself. The Automations page shows
   it under **Waiting for your decision**, with **Run now** and **Dismiss**, and the bell has one
   "Missed scheduled runs" notice saying how many were missed and why. A one-time automation whose
   time was missed is switched off with its time taken, so nothing runs it later unless you choose
@@ -259,7 +283,7 @@ same thing with the automation tools' `catch_up` field (`true` runs a missed tim
 
 | | |
 |---|---|
-| **Checked on** | the review at the top of the **Triggers** page, the "Missed scheduled runs" notice, the automation's **run history** (a late catch-up reads *ran late*), and the chip on its panel |
+| **Checked on** | the review at the top of the **Automations** page, the "Missed scheduled runs" notice, the automation's **run history** (a late catch-up reads *ran late*), and the chip on its panel |
 | **The setting** | `catch_up` on the trigger: off waits on the review, on runs once, late |
 
 - `src/personalclaw/triggers/scheduling.py` — `slot_missed`, the one rule for what counts as
@@ -283,14 +307,14 @@ else wrote are left as they were. A merge restore never needs this: what it brin
 switched off already. Chat channels do not come back connected either: a snapshot never carries a
 channel's token, so on a new machine each channel connects only once you enter its token there.
 
-The **Triggers** page shows **Paused by the restore** above the list with **Resume all**, badges
+The **Automations** page shows **Paused by the restore** above the list with **Resume all**, badges
 each paused row *paused by the restore*, and gives each one's panel its own **Resume**. Once
 resumed, an automation runs at its next scheduled time; the time it waited is never counted as a
 missed time.
 
 | | |
 |---|---|
-| **Checked on** | the restore's own output, the notice and the badges on the **Triggers** page, and the automation's panel |
+| **Checked on** | the restore's own output, the notice and the badges on the **Automations** page, and the automation's panel |
 | **The setting** | none: `restore_hold` on the trigger says where the snapshot came from until it is resumed |
 
 - `src/personalclaw/triggers/restore_hold.py` — what is paused, Resume all, and what the restore
@@ -308,7 +332,7 @@ since that save is your yes. A newer version saved any other way — an agent's 
 accepted refiner proposal, a prompt card, another machine's sync or a restore — is not used: the
 automation keeps running the version you allowed.
 
-The automation's panel on the **Triggers** page then says it runs vN and that vM is newer, with who
+The automation's panel on the **Automations** page then says it runs vN and that vM is newer, with who
 saved each version since, and the row is badged *vM waits for you*. **Use vM** asks first, naming
 them, and moves the automation to the workflow as it is now. The workflow's own page lists, on its
 **Versions** tab, who saved each version and every automation that runs it, with the version each
@@ -327,11 +351,11 @@ you are asked again, told who saved what since, about the workflow as it is now.
 automation's workflow starts (an *Invoke agent* or *Run prompt* step) can start a workflow itself only
 one the automation was allowed with, at the version you allowed or a newer one you saved; any other
 it does not start, and says why. `personalclaw cron update --yes` cannot say which version you were
-shown, so a Run workflow automation is allowed on the Triggers page.
+shown, so a Run workflow automation is allowed on the Automations page.
 
 | | |
 |---|---|
-| **Checked on** | the automation's panel and its row on the **Triggers** page, and the workflow's **Versions** tab |
+| **Checked on** | the automation's panel and its row on the **Automations** page, and the workflow's **Versions** tab |
 | **The setting** | none: the version you allowed is part of the automation's Allow, which stays on this machine |
 
 - `src/personalclaw/workflows/automation_version.py` — which version a fire runs.
@@ -342,7 +366,7 @@ shown, so a Run workflow automation is allowed on the Triggers page.
 **In your words:** *"When my build server finishes, I want PersonalClaw to tell me what it said."*
 
 A **webhook automation** runs when a program posts to its address. Ask for one in the chat ("when
-my build server posts, tell me what it says"), and allow it on the **Triggers** page if its action
+my build server posts, tell me what it says"), and allow it on the **Automations** page if its action
 needs your yes. Its page there shows two things:
 
 - **Its address**, `http://127.0.0.1:<port>/api/triggers/store:webhook:<name>/fire`. It takes
@@ -384,7 +408,7 @@ nothing is refused with `400`, and a post without one is a new fire every time.
 An agent can also register a **callback** with `hook_register`, for an outside system to call back
 later at `http://127.0.0.1:<port>/api/hooks/agent` with your **webhook token**, which you set with
 `personalclaw config set hooks.webhook_token <token>` (at least 32 characters). The tool's answer
-says exactly what the outside system sends, and the callback waits on the Triggers page until you
+says exactly what the outside system sends, and the callback waits on the Automations page until you
 allow it. A callback the outside system names with an `Idempotency-Key` header runs one turn: the
 same name again for the same `sessionKey`, within a week, answers `already_received`.
 
@@ -417,12 +441,12 @@ keeps a skipped row saying why.
 Each run's row in the run history says what started it: **you**, its **schedule**, an **event**, a
 **webhook**, a **view**, **after a run** it follows, a **file** or **web page** it watches, a **quiet
 chat**, or the **agent**, **app**, **automation** or **program** that asked for it (a row recorded
-before PersonalClaw kept this says nothing). The Triggers page shows the same word beside each
+before PersonalClaw kept this says nothing). The Automations page shows the same word beside each
 automation's last run.
 
 | | |
 |---|---|
-| **Checked on** | the automation's run history and its line on the Triggers page |
+| **Checked on** | the automation's run history and its line on the Automations page |
 | **The setting** | none: the automation's own gates (`max_runs_per_hour`, `failure_policy.autopause_after`) |
 
 - `src/personalclaw/triggers/run_source.py` — the words, who asked for a request's run
@@ -488,7 +512,7 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
      *interrupted by a restart* whose reason says it was interrupted by a gateway restart and how
      long it ran, and the automation is no longer rendered as running. It does **not** wait out a
      30-minute deadline first, because the owning pid is provably gone. It is not run again: the top
-     of the **Triggers** page shows it under *Waiting for your decision*, with **Run now** and
+     of the **Automations** page shows it under *Waiting for your decision*, with **Run now** and
      **Dismiss**.
    - **The guarantee broken would look like:** a row stuck at *running* indefinitely, with the next
      scheduled fire silently suppressed by an overlap gate waiting on a run that ended when you

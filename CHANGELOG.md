@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **While the gateway isn't answering, the sidebar's threads say Offline, keep the threads it last listed and offer Retry, instead of saying the read failed or that there are no threads.**
 - **A project's page lists its threads beside its detail: its chats, goal loops and code sessions as the sidebar lists them under it, each with its mark (running, waiting on you, failed), and a click opens the thread at its own address.**
 - **Collapsing the sidebar and opening it again keeps what you typed in its search, and the threads it found; a reload starts with an empty search.**
+- **Triggers and workflows are one Automations list, with next run and last result: one sidebar row whose list puts what needs you first (a failed last run, a missed run, a change waiting for your Allow), then what runs next, soonest first, then the rest by name, the order `GET /api/triggers` states; each row says where it reports, the automation and the run you open are in the address, and `#/triggers` and `#/workflows` open inside it (#3816).**
 
 ### Fixed
 

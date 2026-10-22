@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import type { WsMessage } from '../../lib/useChatSocket'
+import { automationsFrom } from '../../test/automationsRead'
 
 // ── The Triggers page follows the trigger store ─────────────────────────────────────────────
 //
@@ -27,6 +28,8 @@ function mockApi() {
       hooks: () => Promise.resolve([]),
       storeTriggers: () => storeTriggers(),
       callbacks: () => Promise.resolve([]),
+      // The page's one read, composed from the four above (#3816).
+      get automations() { return automationsFrom(this) },
       triggerReview: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),

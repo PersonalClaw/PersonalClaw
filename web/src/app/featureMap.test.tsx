@@ -10,7 +10,7 @@
  *  The palette's rows are the real shell's, as `thePaletteOpensEveryDestination.test.tsx` reads
  *  them: the shell is booted on a set-up home, the palette is handed its rows, and each page row is
  *  run, with the address it writes read back. The sidebar's rows are `App.tsx`'s `NAV`, read from
- *  its source; the tabs are Library's and Capabilities' own tables; the links are the source files
+ *  its source; the tabs are Library's, Capabilities' and Automations' own tables; the links are the source files
  *  that name a route in a navigation or an address.
  *
  *  `npm run docs:feature-map` sets `PC_WRITE_FEATURE_MAP=1`, and only then is the file written.
@@ -25,6 +25,7 @@ import type { Command } from './CommandPalette'
 import { featureMapMarkdown, featureRows, notFindable, type FeatureMapInput, type PaletteRow, type SidebarRow } from './featureMap'
 import { CAPABILITY_TABS } from '../pages/capabilities/capabilityTabs'
 import { LIBRARY_TABS } from '../pages/library/libraryTabs'
+import { AUTOMATIONS_TABS } from '../pages/automations/automationTabs'
 import { filesUnder } from '../test/sourceTree'
 
 /** The opt-in. Named on the npm script, so the intent is visible in package.json. */
@@ -161,6 +162,8 @@ beforeAll(async () => {
     tabs: [
       { row: 'library', tabs: LIBRARY_TABS },
       { row: 'capabilities', tabs: CAPABILITY_TABS },
+      // Automations' tabs, and the list at the address it had as the Triggers page (#3816).
+      { row: 'automations', tabs: [...AUTOMATIONS_TABS, { label: 'Automations', address: 'triggers' }] },
     ],
     palette: paletteRows(rows),
     links: linksByPage(new Set(ROUTES.map((r) => r.page))),

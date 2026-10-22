@@ -250,8 +250,8 @@ describe('the sidebar holds one Capabilities row', () => {
     const names = railRows()
     expect(names).toContain('Capabilities')
     for (const gone of ['Agents', 'Tools', 'Skills', 'Learning', 'Prompts', 'Apps']) expect(names).not.toContain(gone)
-    // Workflows keeps its row until its own move (#3816).
-    expect(names).toEqual(expect.arrayContaining(['Workflows', 'Settings']))
+    // Workflows moved with Triggers into the one Automations row (#3816).
+    expect(names).toEqual(expect.arrayContaining(['Automations', 'Settings']))
   })
 
   it('and an app UI the owner pinned stays a row of its own, below the destinations', async () => {
@@ -263,7 +263,7 @@ describe('the sidebar holds one Capabilities row', () => {
     await open('dashboard')
     const names = railRows()
     expect(names).toContain('An app board')
-    expect(names.indexOf('An app board'), 'after the destinations, the last of them Workflows').toBeGreaterThan(names.indexOf('Workflows'))
+    expect(names.indexOf('An app board'), 'after the destinations, the last of them Capabilities').toBeGreaterThan(names.indexOf('Capabilities'))
     expect(names.indexOf('An app board'), 'above Settings').toBeLessThan(names.indexOf('Settings'))
   })
 })
@@ -296,9 +296,8 @@ const DESTINATIONS = [
   ['Projects', 'projects'],
   ['Library', 'library'],
   ['Inbox', 'inbox'],
-  ['Triggers', 'triggers'],
+  ['Automations', 'automations'],
   ['Capabilities', 'capabilities'],
-  ['Workflows', 'workflows'],
   ['Settings', 'settings'],
 ] as const
 
@@ -312,15 +311,15 @@ describe('no sidebar header repeats a row under it', () => {
     }
   })
 
-  it('Capabilities and Workflows keep their place and their order, with no header of their own', async () => {
+  it('Automations and Capabilities keep their place and their order, with no header of their own', async () => {
     await open('dashboard')
     const labels = DESTINATIONS.map(([label]) => label) as string[]
     expect(railRows().filter((r) => labels.includes(r))).toEqual(labels)
     const headers = railGroups().map((g) => g.header)
-    for (const name of ['Capabilities', 'Workflows']) expect(headers).not.toContain(name)
+    for (const name of ['Automations', 'Capabilities']) expect(headers).not.toContain(name)
   })
 
-  it.each(DESTINATIONS.filter(([label]) => ['Capabilities', 'Workflows'].includes(label)))(
+  it.each(DESTINATIONS.filter(([label]) => ['Automations', 'Capabilities'].includes(label)))(
     'the %s row still opens #/%s', async (label, address) => {
       await open('dashboard')
       fireEvent.click(within(rail()).getByRole('button', { name: label }))

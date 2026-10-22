@@ -95,11 +95,9 @@ const TOOLS: Answers = {
   toolGroups: () => Promise.resolve(null),
   mcpElicitationServers: () => Promise.resolve([] as string[]),
 }
+// The Automations list reads every automation in one read (#3816).
 const TRIGGERS: Answers = {
-  schedules: () => Promise.resolve({ jobs: [] }),
-  hooks: () => Promise.resolve([]),
-  storeTriggers: () => Promise.resolve([]),
-  callbacks: () => Promise.resolve([]),
+  automations: () => Promise.resolve({ jobs: [], hooks: [], stores: [], callbacks: [], server_tz: 'UTC', unreadable: [] }),
   triggerReview: () => Promise.resolve([]),
   actionProviders: () => Promise.resolve([]),
   triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }),
@@ -193,13 +191,13 @@ const SURFACES: Surface[] = [
   {
     // Every list source used to `.catch(() => [])`, so a gateway that was down composed the same
     // empty array a fresh home does.
-    row: '#/triggers, every list source',
+    row: '#/automations, the list\'s one read',
     mount: () => <TriggersSection sub="" navigate={nav} navEpoch={0} query={q} setQuery={setQuery} />,
     answers: TRIGGERS,
-    fails: { schedules: boom, hooks: boom, storeTriggers: boom },
-    names: /triggers/i,
+    fails: { automations: boom },
+    names: /automations/i,
     empty: 'No triggers',
-    warm: { seed: { 'triggers:schedules': { jobs: [] }, 'triggers:hooks': [], 'triggers:store': [], 'triggers:callbacks': [] }, shows: heading('No triggers') },
+    warm: { seed: { 'automations:list': { jobs: [], hooks: [], stores: [], callbacks: [], server_tz: 'UTC', unreadable: [] } }, shows: heading('No triggers') },
   },
   {
     // It bound `{ data: week }` alone, so a failure stayed on "Projecting…" forever and drew 168
@@ -331,11 +329,10 @@ describe('the reads a surface tolerates', () => {
     expect(screen.queryByRole('alert'), 'a peripheral read is not a page failure').toBeNull()
   })
 
-  it('#/triggers: one failed list source is a LoadError, because the list cannot be completed', async () => {
-    // `triggers` composes once all three list sources answer, and the flag is `triggers === null
-    // && anyError`: with the store feed failed alone the list stays null, and the honest call is
-    // to say so rather than draw the schedules as though they were all there is.
-    answer({ ...TRIGGERS, storeTriggers: boom })
+  it('#/automations: a failed list read is a LoadError, and the list is not drawn in part', async () => {
+    // The list is one read now (#3816): it was four, one per kind, and a failed store feed left
+    // the schedules drawn as though they were all there is. One read either answers or does not.
+    answer({ ...TRIGGERS, automations: boom })
     render(<TriggersSection sub="" navigate={nav} navEpoch={0} query={q} setQuery={setQuery} />)
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
   })

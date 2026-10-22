@@ -304,8 +304,20 @@ def _exit_after(tag: str, ending: dict[str, Any]) -> str:
 
 
 def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """*rows* newest first by ``started_at``, whatever order the file holds them in."""
-    return bounded_log.in_time_order(rows, at="started_at")[::-1]
+    """*rows* newest first by ``started_at``, whatever order the file holds them in, two runs that
+    started at the same moment by their run id: the order an automation's run history states
+    (#3816), so a reread never swaps them. A run that recorded no start comes after every run that
+    did, the one written last first, which is the one fact about its age the file holds."""
+    timed: list[tuple[float, dict[str, Any]]] = []
+    untimed: list[dict[str, Any]] = []
+    for row in rows:
+        at = bounded_log.time_of(row, "started_at")
+        if at > 0:
+            timed.append((at, row))
+        else:
+            untimed.append(row)
+    timed.sort(key=lambda pair: (-pair[0], str(pair[1].get("run_id") or "")))
+    return [row for _at, row in timed] + untimed[::-1]
 
 
 class ScheduleRunStore:

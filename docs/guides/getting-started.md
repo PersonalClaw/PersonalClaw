@@ -525,9 +525,8 @@ defaults flipped, and some routes refuse input they used to accept. Run
 
 ## Where to go next
 
-- **Explore the platform** — Skills, Agents, Tasks, goal Loops, Knowledge,
-  Memory, Inbox, Triggers, and Workflows all live in the sidebar; each page has
-  inline explanations.
+- **Explore the platform** — Projects, Library, Inbox, Automations and
+  Capabilities all live in the sidebar; each page has inline explanations.
 - **Install more apps** — search providers, speech (STT/TTS), local models,
   channel connectors, and agent runtimes are all Store apps.
 - **Run it permanently** — `personalclaw service install` registers a systemd
@@ -542,7 +541,7 @@ defaults flipped, and some routes refuse input they used to accept. Run
   `~/.personalclaw/.env` at mode 0600), and settings carry only references to them — so a
   restore onto a new machine asks you to enter the keys again. A replace restore also brings your
   automations back paused, so a new machine does not send the same briefs and digests as the one
-  it replaces: resume them on the Triggers page (**Resume all**) once the old one is retired.
+  it replaces: resume them on the Automations page (**Resume all**) once the old one is retired.
   Wherever the new home is, a chat that worked in the old home's workspace works in the new
   home's, and what it kept stays in the shared memory every chat reads.
 

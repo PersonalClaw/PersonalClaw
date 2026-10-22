@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event'
 //
 // tsc cannot catch this class, so the assertion has to be behavioural.
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { EMPTY } = vi.hoisted(() => ({ EMPTY: [] as unknown[] }))
 
 vi.mock('../../lib/api', async (orig) => ({
@@ -29,6 +30,8 @@ vi.mock('../../lib/api', async (orig) => ({
     hooks: () => Promise.resolve(EMPTY),
     storeTriggers: () => Promise.resolve(EMPTY),
     callbacks: () => Promise.resolve([]),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: () => Promise.resolve([]),
     actionProviders: () => Promise.resolve(EMPTY),
     autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
@@ -58,6 +61,6 @@ describe('the header create button', () => {
     const target = String(navigate.mock.calls[0][0])
     expect(target, 'the blank path must not carry a preset at all').not.toMatch(/preset=/)
     expect(target, 'and certainly not a stringified event object').not.toMatch(/object%20Object|object Object/)
-    expect(target).toBe('triggers/new')
+    expect(target).toBe('automations/new')
   })
 })

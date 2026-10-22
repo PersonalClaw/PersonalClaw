@@ -19,7 +19,8 @@ file and the app differ.
 | `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/learning/IdentityReportPanel.tsx`, `pages/library/MemoryPage.tsx` and 3 more |
 | `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/dashboard/widgets/TasksWidget.tsx` and 8 more |
 | `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
-| `#/triggers` | Triggers | Platform › Triggers | Triggers | `lib/api.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx`, `pages/inbox/DeniedCallRerun.tsx` and 5 more |
+| `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
+| `#/triggers` | Automations | Automations, its Automations tab | none | `lib/api.ts`, `pages/automations/automationTabs.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx` and 5 more |
 | `#/files` | Files | Library, its Files tab | Files | `pages/artifacts/ArtifactsSection.tsx`, `pages/loops/LoopCockpitPage.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/TopBar.tsx` |
 | `#/artifacts` | Artifacts | Library, its Artifacts tab | Artifacts | `pages/chat/history/useChatHistory.ts`, `pages/dashboard/PinnedTiles.tsx`, `pages/dashboard/widgets/PinnedArtifacts.tsx`, `pages/files/FilesSection.tsx` and 6 more |
 | `#/terminal` | Terminal | not in the sidebar | Terminal | none |
@@ -29,7 +30,7 @@ file and the app differ.
 | `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/MissionControl.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
 | `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
-| `#/workflows` | Workflows | Platform › Workflows | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
+| `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 11 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
 | `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `design/tokenLintRule.ts`, `lib/data/store.ts` and 34 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |

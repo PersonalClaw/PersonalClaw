@@ -29,6 +29,7 @@ import { channelLabel } from './notifyChannel'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { useSelectedRun } from './selectedRun'
 
 /** A schedule as the editor starts from it: the form's draft of it, with the revision the same
  *  read reported — the base the save names. */
@@ -552,7 +553,8 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
   const [runs, setRuns] = useState<ScheduleRun[] | null>(null)
   const [total, setTotal] = useState(0)
   const [limit, setLimit] = useState(5)
-  const [openRun, setOpenRun] = useState<string | null>(null)
+  // The open run: the page's address holds it where the page lists automations (`?run=`).
+  const [openRun, setOpenRun] = useSelectedRun()
   const [unsupported, setUnsupported] = useState<string | null>(null)
   const [loadErr, setLoadErr] = useState<unknown>(null)
   // Retry tick. `setLimit(limit)` would be a no-op — same value, no re-render, a Retry button
@@ -573,6 +575,19 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
     }).catch((e) => { if (alive) { setLoadErr(e); setRuns(null) } })
     return () => { alive = false }
   }, [triggerId, limit, reloadKey, retry])
+
+  // A run the address names that this page of the history does not hold yet: read further back,
+  // up to the route's own cap, so a link to an older run opens it.
+  const runIds = (runs ?? []).map((r, i) => r.run_id ?? r.id ?? String(i))
+  const openUnread = openRun !== null && runs !== null && !runIds.includes(openRun) && runs.length < total && limit < 100
+  useEffect(() => {
+    if (openUnread) setLimit((l) => Math.min(100, l + 20))
+  }, [openUnread])
+  // An open run the fold hides (an inert `skipped_*` row) is shown with the rest it folds.
+  const openFolded = openRun !== null && (runs ?? []).some((r, i) => (r.run_id ?? r.id ?? String(i)) === openRun && isInertOutcome(r.outcome ?? r.status))
+  useEffect(() => {
+    if (openFolded) setShowSuppressed(true)
+  }, [openFolded])
 
   // 🔴 THE ERROR BRANCH COMES FIRST, AND IT HAS TO (#532). This read used to end
   // `.catch(() => setRuns([]))`, and `runs === null` is the LOADING sentinel — so a failed fetch
@@ -622,9 +637,9 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
                 <div className="flex justify-end px-m pb-1.5" onClick={(e) => e.stopPropagation()}>
                   {/* `kind="schedule_run"` addresses the RUN STORE, whose key is the raw id — the
                       part after the facade prefix. Derived from `triggerId` rather than passed
-                      separately so the two can never disagree. */}
+                      separately so the two can never disagree. Its way back is this run, open. */}
                   <InvestigateButton kind="schedule_run" id={`${rawId}:${r.run_id}`}
-                    backLink={`#/triggers?open=${triggerId}`} size={28} />
+                    backLink={`#/automations?open=${encodeURIComponent(triggerId)}&run=${encodeURIComponent(r.run_id)}`} size={28} />
                 </div>
               )}
               {expanded && <RunTrace triggerId={triggerId} runId={id} preview={r} />}
@@ -672,6 +687,8 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
   }, [triggerId, runId])
   if (!run) return <div className="px-m pb-2 text-on-surface-low text-[0.75rem]">Loading trace…</div>
   const inert = isInertOutcome(run.outcome ?? run.status)
+  const work = run.work_id ?? preview.work_id ?? ''
+  const workflowRun = work.startsWith('workflow:') ? work.slice('workflow:'.length) : ''
   return (
     <div className="px-m pb-3 flex flex-col gap-2 text-[0.8125rem]">
       <div className="flex flex-wrap gap-x-m gap-y-0.5 text-on-surface-low text-[0.75rem]">
@@ -703,6 +720,10 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
         <div className="text-on-surface leading-relaxed">{run.summary}</div>
       )}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
+      {/* The workflow run this run started, on its own page: its steps, its live state and Stop. */}
+      {workflowRun && (
+        <TextLink href={`#/workflows/runs/${encodeURIComponent(workflowRun)}`} size="sm" ink="emphasis">Open the workflow run</TextLink>
+      )}
       {/* `traceErr != null`, not `traceErr &&` — the state is `unknown`, and `unknown && …`
           is `unknown`, which is not a ReactNode. */}
       {traceErr != null && !run.trace && <InlineLoadError what="this run's trace" error={traceErr} />}

@@ -1972,7 +1972,7 @@ export type ScheduleKind = 'every' | 'cron' | 'at'
 // edit (notify, digest, remediation, …). It exists so the form stops presenting such a trigger
 // as an agent prompt — and so `_scheduleBodyToWire` knows not to invent an action for it.
 export type ScheduleExecMode = 'agent' | 'script' | 'command' | 'other'
-export interface ScheduleJob {
+export interface ScheduleJob extends ListPlace {
   id: string; name: string; message: string; enabled: boolean
   // attribution — see the same pair on `Trigger`. A schedule row is served by the same
   // store, so it carries the same verdict, and the same `served_by`.
@@ -2095,6 +2095,9 @@ export interface ScheduleRun {
   // derives BOTH sides — what the handler really sends and what the widget really reads.
   trigger_id?: string
   trigger_name?: string
+  // The work a launched run started, which ends later: `workflow:<run id>` for a workflow run,
+  // `subagent:<id>` for an agent (`schedule_history.ScheduleRun.work_id`).
+  work_id?: string
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).
@@ -3259,7 +3262,27 @@ export interface ToolInvokeResult { ok: boolean; output?: string; error?: string
 // the FE from `used_by.length` would restate the bug — `used_by: []` was already on the wire and a
 // user still could not tell an armed blocking hook from an inert one.
 export type HookEnforcement = 'enforcing' | 'not_enforcing' | 'advisory'
-export interface HookItem {
+/** The Automations list's three groups, in the order it shows them (`triggers/listing.py`). */
+export type AutomationGroup = 'needs_you' | 'next_to_run' | 'not_on_a_clock'
+/** Where a row's results go, as the list names it: the thread it reports to (its title while the
+ *  gateway holds the thread), else the chat channel, the Inbox, or nowhere. `{}` for a row that
+ *  says nothing about it (a lifecycle trigger, whose action runs inline). An app reads a thread's
+ *  key and title only for a conversation it started; any other is `{ kind: 'thread' }` alone. */
+export type ReportsTo =
+  | { kind: 'thread'; session?: string; title?: string }
+  | { kind: 'channel'; channel: string }
+  | { kind: 'inbox' }
+  | { kind: 'none' }
+  | Record<string, never>
+/** Where `GET /api/triggers` places a row in the Automations list's named order: its group, its
+ *  place in the whole list (`rank`), and where its results go. The order is the route's to state;
+ *  the page shows it as served. Absent on a row from an older gateway. */
+export interface ListPlace {
+  group?: AutomationGroup
+  rank?: number
+  reports_to?: ReportsTo
+}
+export interface HookItem extends ListPlace {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
   blocking?: boolean; enforcement?: HookEnforcement
@@ -3339,7 +3362,7 @@ export interface WorkflowAutomation {
  *  agent's tools, from `context_summary`; `reach` is the server's sentence for where `url` answers.
  *  `enabled` IS the owner's yes to that context — switching it on is Allow, which the gateway asks
  *  about first, naming the context it read by `seal`. */
-export interface CallbackRow {
+export interface CallbackRow extends ListPlace {
   kind: 'callback'; id: string; raw_id: string; name: string; enabled: boolean
   created_by: string; needs_grant: string[]; context_summary: string; session_key: string
   url: string; reach: string; registered_at: number; seal: string
@@ -3383,7 +3406,7 @@ export interface WebhookDoor {
 }
 /** What a program sends to fire an automation with a sender token, in the answer that made it. */
 export interface WebhookInstructions { url: string; header: string; curl: string }
-export interface Trigger {
+export interface Trigger extends ListPlace {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
   // and its pattern + matcher in `spec` — the separate `event` namespace went with the second store.
@@ -3528,6 +3551,7 @@ function _triggerToHook(t: Trigger): HookItem {
     needs_grant: t.needs_grant,
     held_back: t.held_back,
     workflow_version: t.workflow_version,
+    group: t.group, rank: t.rank, reports_to: t.reports_to,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -9625,6 +9649,19 @@ export const api = {
       server_tz: d.server_tz,
       unreadable: d.unreadable ?? [],
     })),
+  /** The Automations list (#3816): every automation in one read, in the order the route states
+   *  (`ListPlace`), each projected as its kind's panel reads it. */
+  automations: () => get<{ triggers: Array<Trigger | CallbackRow>; server_tz: string; unreadable?: TriggerSourceUnreadable[] }>('/api/triggers')
+    .then((d) => {
+      const out = { jobs: [] as ScheduleJob[], hooks: [] as HookItem[], stores: [] as Trigger[], callbacks: [] as CallbackRow[] }
+      for (const t of d.triggers) {
+        if (t.kind === 'callback') out.callbacks.push(t)
+        else if (t.kind === 'schedule') out.jobs.push({ ...t, id: t.raw_id } as unknown as ScheduleJob)
+        else if (t.kind === 'lifecycle') out.hooks.push(_triggerToHook(t))
+        else out.stores.push(t)
+      }
+      return { ...out, server_tz: d.server_tz, unreadable: d.unreadable ?? [] }
+    }),
   // "Auto-approve tools" is an automation's approval posture: turning it on is asked for in the
   // gateway's words, like a looser config field (`securityConsent.ts`).
   createSchedule: (body: Record<string, unknown>) =>

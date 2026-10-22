@@ -249,7 +249,7 @@ has cost someone a debugging session.
   moved past since, changes nothing and answers `409 stale_write`, "Nothing was changed: …", naming
   who saved each version since, with the question as it is now in `error.detail` (its own `shown`
   included): ask again and send that one back. The CLI's `--yes` cannot carry it, so a workflow's
-  Allow is given on the Triggers page.
+  Allow is given on the Automations page.
 - **Task comment authors are server-derived.** `POST /api/tasks/{task_id}/comments`
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked
