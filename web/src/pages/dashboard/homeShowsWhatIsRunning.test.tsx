@@ -239,11 +239,20 @@ describe('what a restart cut off is said once, and only while it is true', () =>
     await restart(300, list())
     await waitFor(() => expect(running).toHaveBeenCalledTimes(5))
     expect(cutRows()).toHaveLength(1)
-    // Its chat runs again: it is not cut off any more.
+    // Its chat runs again: it is not cut off any more, and no render shows it both running and
+    // cut off. Each DOM change is checked as it lands, so the cut row has to go in the same commit
+    // as the row that says it runs, not in one after it.
+    const both: boolean[] = []
+    const seen = new MutationObserver(() => {
+      both.push(within(working()).queryByText('Thinking') !== null && cutRows().length > 0)
+    })
+    seen.observe(document.body, { childList: true, subtree: true, characterData: true })
     running.mockResolvedValue(list([row({ phase: 'thinking', line: 'Thinking' })]))
     act(() => deliver({ type: 'running_changed', data: { changed: [{ work: 'chat:c1', session: 'c1' }] } }))
     await within(working()).findByText('Thinking')
-    expect(cutRows()).toHaveLength(0)
+    await waitFor(() => expect(cutRows()).toHaveLength(0))
+    seen.disconnect()
+    expect(both).not.toContain(true)
   })
 
   it('a restart while the rows went unread since the last one says it once', async () => {

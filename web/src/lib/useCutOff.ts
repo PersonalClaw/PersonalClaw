@@ -127,7 +127,10 @@ export function useCutOff(list: RunningList | undefined, refresh: () => void, fa
     }, TICK_MS)
     return () => window.clearInterval(timer)
   }, [])
-  useEffect(() => {
+  // A layout effect, so a row that is live or ended again leaves the cut-off rows in the commit
+  // that shows it so: a passive effect ran a render later, and the work read as running and cut
+  // off at once in between.
+  useLayoutEffect(() => {
     if (!list) return
     if (!down.current) {
       live.current = list.running
