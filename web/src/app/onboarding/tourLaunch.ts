@@ -41,7 +41,7 @@ export function consumeProductTourRequest(): boolean {
 }
 
 /** Subscribe to requests made while already mounted. Same in-tab event contract as
- *  `navApps`/`navDisclosure`; deliberately NOT cross-tab, because a tour is a thing
+ *  `navApps`; deliberately NOT cross-tab, because a tour is a thing
  *  happening in ONE window. */
 export function onProductTourRequest(cb: () => void): () => void {
   window.addEventListener(EVENT, cb)

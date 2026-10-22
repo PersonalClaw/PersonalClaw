@@ -12,9 +12,6 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 //    on `#/onboarding`, so a plain link here would be bounced — `exitTo.ts` is the seam);
 //  • the dial must be the Settings → Design Bounciness control, i.e. moving it must reach
 //    `runtime.bounciness`, which is what every spring preset reads;
-//  • the switch must drive the ONE nav-disclosure setting, and drive it through
-//    `finish()` — an abandoned flow must leave no record, because the absence of a record is
-//    exactly how the shell tells an upgrade from a fresh install.
 
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
@@ -68,7 +65,6 @@ vi.mock('./TryOneStep', () => ({
 
 import { OnboardingHarness } from '../../test/onboardingHarness'
 import { AppearanceProvider } from '../appearance'
-import { readNavDisclosure } from '../navDisclosure'
 import { peekOnboardingExit, clearOnboardingExit } from './exitTo'
 import { runtime } from '../../design/runtime'
 
@@ -135,33 +131,14 @@ describe('the done screen hands over the real Bounciness dial', () => {
   })
 })
 
-describe('the done screen unlock switch is the ONE nav-disclosure setting', () => {
-  it('writes expert mode when it is on at finish', async () => {
+describe('the done screen has no sidebar choice to make', () => {
+  it('offers no switch for the sidebar, and finishing writes no record of one', async () => {
+    // The sidebar is one rail for everyone (#3812): there is no starter set to unlock.
     await reachDoneScreen()
-    fireEvent.click(screen.getByRole('switch', { name: 'Show every surface' }))
+    expect(screen.queryByRole('switch', { name: 'Show every surface' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Start using/ }))
-    await waitFor(() => expect(readNavDisclosure().mode).toBe('expert'))
-  })
-
-  it('leaves the starter rail when it is off at finish', async () => {
-    await reachDoneScreen()
-    fireEvent.click(screen.getByRole('button', { name: /Start using/ }))
-    await waitFor(() => expect(readNavDisclosure().mode).toBe('starter'))
-  })
-
-  it('writes nothing until the flow finishes', async () => {
-    await reachDoneScreen()
-    fireEvent.click(screen.getByRole('switch', { name: 'Show every surface' }))
-    // An abandoned flow must leave NO record: the shell reads a missing record as "onboarded
-    // before this version" and shows every surface, which is the safe direction to fail in.
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' }))
     expect(localStorage.getItem('nav-disclosure')).toBeNull()
-  })
-
-  it('states what the switch will do, in both positions', async () => {
-    await reachDoneScreen()
-    expect(screen.getByText(/joins it the first time you open one/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('switch', { name: 'Show every surface' }))
-    expect(screen.getByText(/every destination from the start/)).toBeTruthy()
   })
 })
 

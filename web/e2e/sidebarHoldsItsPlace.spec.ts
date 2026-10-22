@@ -196,7 +196,7 @@ test.describe('the way back to a thread', () => {
 })
 
 /** The rows a person reaches the primary destinations by. */
-const PRIMARY = ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Capabilities', 'Settings']
+const PRIMARY = ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings']
 
 /** A destination's row, by its name: a row's badge rides its name ("Inbox, 2 new"). */
 const destination = (within: ReturnType<Page['locator']>, name: string) =>

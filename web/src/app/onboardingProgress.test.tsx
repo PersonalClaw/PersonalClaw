@@ -98,7 +98,6 @@ vi.mock('./onboarding/TryOneStep', () => ({
 
 import { OnboardingHarness } from '../test/onboardingHarness'
 import { AppearanceProvider } from './appearance'
-import { readNavDisclosure } from './navDisclosure'
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
 
@@ -275,36 +274,29 @@ describe("the name step does not promise a save it has not made", () => {
   })
 })
 
-describe('finishing marks the install as onboarded under THIS version', () => {
-  // Progressive disclosure needs to tell a fresh install from an upgrade, and the marker is the
-  // absence of a `nav-disclosure` record — so the write has to happen at the one act only a
-  // fresh install performs. Without it a brand-new user lands on the full 19-row rail and the
-  // starter rail never ships to anybody.
+describe('finishing writes no sidebar record', () => {
+  // The sidebar is one rail for everyone (#3812), so finishing has nothing to mark: a fresh install
+  // and an old one see the same rows, and a record a browser kept from before is left as it was.
   async function finishFlow() {
     await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
-    // A fourth step (`try`) landed between essentials and ready while this change was in
-    // flight, so the flow has to pass through it to reach the finish button — the same path
-    // every other test in this file already takes.
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
   }
 
-  it('writes the starter-rail marker', async () => {
+  it('on a fresh install', async () => {
     localStorage.clear()
-    // No record reads as "onboarded before this version" — the full rail.
-    expect(readNavDisclosure().mode).toBe('expert')
     await finishFlow()
-    await waitFor(() => expect(readNavDisclosure().mode).toBe('starter'))
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' }))
+    expect(localStorage.getItem('nav-disclosure')).toBeNull()
   })
 
-  it('leaves already-earned pins alone', async () => {
-    // "Restart onboarding" (Settings → Account) runs this flow again on an install that has
-    // history. It may reset the MODE — that is what restarting means — but taking away surfaces
-    // the user had already reached would be a rug-pull.
-    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: ['tools'] }))
+  it('and leaves an old record as it was', async () => {
+    const old = JSON.stringify({ mode: 'expert', pinned: ['tools'] })
+    localStorage.setItem('nav-disclosure', old)
     await finishFlow()
-    await waitFor(() => expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['tools'] }))
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' }))
+    expect(localStorage.getItem('nav-disclosure')).toBe(old)
   })
 })
 
@@ -550,8 +542,8 @@ describe('skip at any step lands in a working dashboard', () => {
     await waitFor(() => expect(keepOrDefaultName).toHaveBeenCalledWith())
     expect(setName).not.toHaveBeenCalled()
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
-    // …and the rail marker is written, so the skipper gets the starter rail like anyone else.
-    expect(readNavDisclosure().mode).toBe('starter')
+    // …and no sidebar record: there is one rail for everyone.
+    expect(localStorage.getItem('nav-disclosure')).toBeNull()
   })
 
   it('names the default it will use, rather than renaming you silently', async () => {

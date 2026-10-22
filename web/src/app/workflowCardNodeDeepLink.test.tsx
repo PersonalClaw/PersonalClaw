@@ -32,7 +32,7 @@ import type { NodeInspect, WorkflowNodeState, WorkflowRunDetailData } from '../l
 // `pages/dashboard/pinnedTilesSafeMode.test.tsx` already records ("the fix is to stop needing the
 // URL, not to exempt the file"), and stubbing the router was rejected above. What is left is that
 // this is not a page unit test at all: it mounts a whole section through the real router across two
-// page trees, which is exactly what `app/navDisclosure.test.tsx` and `app/routeTransition.test.tsx`
+// page trees, which is exactly what `app/everyDestinationShowsForEveryone.test.tsx` and `app/routeTransition.test.tsx`
 // do — `app/` is the sanctioned home for router-integration tests, and every assertion below keeps
 // its original strength here.
 

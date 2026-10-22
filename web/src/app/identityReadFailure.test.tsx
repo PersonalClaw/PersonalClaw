@@ -29,7 +29,7 @@ let identityReads: Array<Record<string, unknown> | Error> = []
 const unreachable = () => new TypeError('Failed to fetch')
 
 /** Envelope-shaped reads the shell and the dashboard destructure; anything else resolves `[]`
- *  (the trap `navDisclosure.test.tsx` records). */
+ *  (the trap `everyDestinationShowsForEveryone.test.tsx` records). */
 const ENVELOPES: Record<string, unknown> = {
   saveDashboardConfig: { ok: true },
   saveOnboardingState: { ok: true, state: {} },

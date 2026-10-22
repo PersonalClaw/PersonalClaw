@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowLeft, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
+import { ArrowLeft, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, FolderInput, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
@@ -14,7 +14,6 @@ import { ScalarControl } from '../ui/TokenControls'
 import { TOKENS, type ScalarToken } from '../design/tokenRegistry'
 import { spring, stagger, listItemEnter, prefersReducedMotion } from '../design/motion'
 import { useIdentity, firstNameOf, suggestHandle, DEFAULT_USER_NAME } from './identity'
-import { readNavDisclosure, setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
 import { api, type InstallKind, type OnboardingStatePatch } from '../lib/api'
@@ -199,12 +198,6 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
   /** What each step produced, for its collapsed row and the recap. A step absent from this map has
    *  NO recorded outcome and must render as not-yet-done — never as complete. */
   const [records, setRecords] = useState<Partial<Record<StepId, StepRecord>>>({})
-  /** The done screen's rail choice, written once by `finish()` — see there. */
-  // A re-run starts the switch at the rail this install already has, so finishing or skipping
-  // without touching it keeps that rail. A first run starts it off: no record there resolves to
-  // `expert` (the marker for an install onboarded before disclosure shipped), which is not a
-  // choice this user made.
-  const [showEverything, setShowEverything] = useState(() => rerun && readNavDisclosure().mode === 'expert')
 
   const namePassed = draft.passed && draft.name.trim().length > 0
   /** Which step is on screen: what the URL asks for, reconciled with what this run has reached.
@@ -495,17 +488,6 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
       }
     }
     progress({ step: 'done' })
-    // The fresh-install marker for the rail. This is the ONE act that can
-    // only happen on a fresh install — it is what commits identity and flips `onboarded` — so
-    // writing the disclosure record here is what tells the shell "onboarded under this
-    // version, start on the starter rail". An install that has no record was onboarded before
-    // this shipped and keeps its full rail; see app/navDisclosure.ts. Pins are left alone, so
-    // restarting onboarding never takes away a surface you had already reached.
-    //
-    // The done screen's "Show every surface" switch resolves into this SAME write rather than
-    // setting the mode itself: one act decides the rail, so the marker and the user's choice
-    // can never disagree, and abandoning the flow leaves no record behind.
-    setNavMode(showEverything ? 'expert' : 'starter')
     // The draft is dropped only now that identity is committed — the one act that makes it
     // redundant. Dropping it before the write could fail was half of the erased-input defect
     // above; leaving it behind afterwards would re-offer a stale name to the NEXT run.
@@ -721,7 +703,6 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 state={stateOf('ready')} onActivate={activate('ready')}>
                 <DoneScreen name={savedName} model={records.essentials} tried={records.try} settled={readiness !== null} readFailed={!!readError} modelCheck={modelSeed}
                   install={readiness ? { kind: readiness.install_kind, unattended: readiness.unattended_apply === true } : null}
-                  showEverything={showEverything} onShowEverything={setShowEverything}
                   onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
               </StepRow>
             </ol>
@@ -899,15 +880,13 @@ function PillField({ id, name, autoComplete, value, onChange, onEnter, ariaLabel
   )
 }
 
-/** The done screen — a recap of what this run actually did, then the four things worth
+/** The done screen — a recap of what this run actually did, then the three things worth
  *  knowing on day one, each with its real control rather than a sentence about one:
  *
  *   1. **the Inbox** is where work comes back to you (and you can land there instead);
  *   2. **Bounciness** — the live Settings → Design dial, so the app's feel reads as yours to
  *      set from the first minute rather than a taste you have to live with;
- *   3. **Show every surface** — the starter sidebar is a starting point, not a limit. The
- *      switch states intent; `finish()` performs the single write (see there);
- *   4. **what it does on its own** — how a new version reaches THIS install, and the Store's
+ *   3. **what it does on its own** — how a new version reaches THIS install, and the Store's
  *      one seeded community source. For a local-first product both must be TOLD at first
  *      run, not discovered. Only a source checkout installs an update by itself (opt-in,
  *      off by default), so only there does the update half hand over the real Settings →
@@ -926,7 +905,7 @@ function PillField({ id, name, autoComplete, value, onChange, onEnter, ariaLabel
  *  rather than replacing it: the recap above already hands over three controls, and a
  *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
  *  buttons finish the flow; one of them then walks the app. */
-function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCheck, install, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
+function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCheck, install, onFinish, onTakeTour, onExitTo }: {
   name: string
   /** What the essentials / try steps RECORDED, or `undefined` when they recorded nothing.
    *
@@ -954,8 +933,6 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
    *  out or when it failed, which claims nothing either way. Only `unattended` (a source checkout)
    *  gets the switch; every other kind is told what it does instead. */
   install: { kind?: InstallKind; unattended: boolean } | null
-  showEverything: boolean
-  onShowEverything: (v: boolean) => void
   onFinish: () => void
   onTakeTour: () => void
   onExitTo: (path: string) => void
@@ -1069,17 +1046,6 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
         <Pointer icon={Waves} title="How much the interface moves is a dial"
           body="Every animation scales with it — all the way down to none. This is the real control from Settings → Design.">
           {BOUNCINESS && <ScalarControl token={BOUNCINESS} />}
-        </Pointer>
-        <Pointer icon={PanelLeft} title="The sidebar starts short and grows"
-          body={showEverything
-            ? 'It will list every destination from the start. You can shorten it again in Settings → Design.'
-            : 'Five essentials now; any other surface joins it the first time you open one. Nothing is locked away.'}>
-          {/* The switch's own words, visible: its accessible name is "Show every surface" and a
-              sighted user gets the same phrase rather than a bare toggle under a paragraph. */}
-          <div className="flex items-center gap-2">
-            <Toggle on={showEverything} onChange={onShowEverything} label="Show every surface" />
-            <span className="text-on-surface-var text-[0.8125rem]">Show every surface</span>
-          </div>
         </Pointer>
         <Pointer icon={RefreshCw} title={updateTitle} body={updateBody}>
           <div className="flex flex-col gap-1.5">

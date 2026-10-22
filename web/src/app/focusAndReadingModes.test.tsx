@@ -18,7 +18,7 @@ import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
 // behind a hover: focus mode leaves a control on screen that ends it, and the folded composer is a
 // line that opens it again.
 //
-// jsdom notes (the shape `navDisclosure.test.tsx` established): the socket has no gateway, every read
+// jsdom notes (the shape `everyDestinationShowsForEveryone.test.tsx` keeps): the socket has no gateway, every read
 // resolves empty unless named below, and the file pane's viewer is a stand-in, since what is under
 // test is which pane opens, not what a file looks like. jsdom reports no Mac, so keys read as Ctrl.
 

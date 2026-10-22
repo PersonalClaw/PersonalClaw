@@ -20,7 +20,7 @@ import { SHIPPED_ROUTES } from './shippedRoutes'
 // with the rail's mark, opening at its own address. And the pages threads came from still open at
 // their bare addresses.
 //
-// jsdom notes (the shape `navDisclosure.test.tsx` established): no gateway socket, every read
+// jsdom notes (the shape `everyDestinationShowsForEveryone.test.tsx` keeps): no gateway socket, every read
 // resolves empty unless named below, and the viewport is the `(max-width: 768px)` media query.
 
 vi.mock('../lib/useChatSocket', async (orig) => ({

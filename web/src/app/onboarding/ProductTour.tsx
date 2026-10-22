@@ -10,14 +10,7 @@ interface Stop extends SpotlightStep {
   route: string | null
 }
 
-/** The five stops (rail → chat → inbox → approvals → settings).
- *
- *  Every route here is in `STARTER_NAV_IDS`, and that is load-bearing rather than a
- *  coincidence: the shell auto-pins a rail surface the moment it is REACHED, so a
- *  tour that walked the user through a held-back surface would grow their rail on their
- *  behalf. Because all four are starter surfaces, `isDisclosed` is already true for each
- *  and the auto-pin effect returns before it writes — the tour leaves the disclosure
- *  record byte-identical. `productTour.test.tsx` asserts that as an outcome. */
+/** The five stops (rail → chat → inbox → approvals → settings), each a row the sidebar shows. */
 const STOPS: Stop[] = [
   {
     id: 'rail', anchor: 'rail', route: null, icon: PanelLeft,

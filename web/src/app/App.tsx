@@ -51,7 +51,6 @@ import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
-import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
 import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
 import { CapabilitiesSection } from '../pages/capabilities/CapabilitiesSection'
@@ -123,8 +122,8 @@ const NAV: NavItem[] = [
 // registers (`views_store._mission_control_preset`), not a static rail destination. The registry
 // declares it `nav_pinned` with an icon, and NOTHING on the frontend reads either field yet — so
 // until a rail is built from `/api/dashboard/views`, the command palette below is how a user
-// reaches it. That is the palette's stated job (see its comment: the always-open door to a
-// surface the rail is holding back), not a workaround.
+// reaches it. That is the palette's stated job (see its comment: the door to every page the
+// sidebar does not carry), not a workaround.
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
@@ -556,12 +555,6 @@ function AppInner() {
     clearOnboardingExit()
   }, [identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate])
 
-  // ── Progressive disclosure over the rail ──
-  // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
-  // and no record at all resolves to `expert` — the marker for an install that was onboarded
-  // before this shipped (see app/navDisclosure.ts).
-  const { mode: navMode, pinned: navPinned, setMode: setNavMode, pin: pinNav } = useNavDisclosure()
-
   // The REAL route to render (loops/code keep their own sections for detail/history/
   // planning sub-routes; only the BARE route was folded into the #/loop composer).
   // An unknown route falls back to the home dashboard FOR THIS RENDER, and the route effect above
@@ -595,24 +588,6 @@ function AppInner() {
   // and a collapse changes chrome only (#3812), so opening it again gives back what was typed. A
   // reload starts with none.
   const [railSearch, setRailSearch] = useState('')
-
-  // Auto-pin on visit. Reaching a surface is the strongest signal it belongs in your rail, so
-  // a visit to one the starter rail is holding back REVEALS it permanently. This is what makes
-  // hiding safe: a deep link, a CommandPalette "Go to", a Discover tip and an in-app link all
-  // render their surface whatever the mode is, and the rail catches up by itself. Nothing is
-  // ever reachable ONLY through the rail.
-  //
-  // Starter mode only, deliberately: in expert mode nothing is hidden, so there is nothing to
-  // reveal — and pinning every surface you browsed while expanded would silently empty out
-  // "Show fewer" and make the toggle a one-way door.
-  //
-  // Placed above the early returns (with `rendered`/`active`) so hook order is stable —
-  // an effect after them would be conditional (React #310).
-  useEffect(() => {
-    if (navMode !== 'starter') return
-    if (isDisclosed(active, navMode, navPinned)) return
-    pinNav(active)
-  }, [active, navMode, navPinned, pinNav])
 
   // The keymap's global rows (`keymap.ts`), each run where the thing it moves lives. Hooks, so
   // they sit above every early return (React #310). ⌘⌥A reads the lists fresh when pressed, so it
@@ -851,21 +826,15 @@ function AppInner() {
     const badge = appBadges[ai.id.slice('app/'.length)]
     return badge ? { ...ai, badge: String(badge) } : ai
   }))
-  // Which rail rows SHOW. Disclosure hides rows; it never removes a route (`rendered` above is
-  // untouched by it) and never removes a command below.
-  const disclosedItems = navItems.filter((n) => isDisclosed(n.id, navMode, navPinned))
-  // The phone form's drawer also carries the companion, ahead of Settings (`COMPANION_RAIL_ITEM`).
+  // Every row shows, for everyone (#3812): the sidebar is a hierarchy short enough to hold, so there
+  // is no starter set to hide the rest behind. The phone form's drawer also carries the companion,
+  // ahead of Settings (`COMPANION_RAIL_ITEM`).
   const railItems = isMobile
-    ? [...disclosedItems.filter((n) => !n.pinBottom), COMPANION_RAIL_ITEM, ...disclosedItems.filter((n) => n.pinBottom)]
-    : disclosedItems
-  // What "Everything" would reveal — counted against starter whatever the current mode is, so
-  // the expanded rail can say what collapsing costs.
-  const moreCount = undisclosedCount(navItems.map((n) => n.id), navPinned)
+    ? [...navItems.filter((n) => !n.pinBottom), COMPANION_RAIL_ITEM, ...navItems.filter((n) => n.pinBottom)]
+    : navItems
 
-  // command palette (⌘K): every nav destination as a "Go to" + global actions.
-  // Built from the FULL `NAV`, never from `disclosedItems` — the palette is the always-open
-  // door to a surface the starter rail is holding back, and visiting through it pins the
-  // surface (the auto-pin effect above). Filtering it here would make disclosure a gate.
+  // command palette (⌘K): every nav destination as a "Go to" + global actions, built from the full
+  // `NAV`, and the door to every page the sidebar does not carry (`docs/feature-map.md`).
   const commands: Command[] = [
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
@@ -919,12 +888,7 @@ function AppInner() {
                   <WidgetBoundary what="your threads" className="mx-s">
                     <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} search={railSearch} onSearch={setRailSearch} />
                   </WidgetBoundary>
-                )}
-                disclosure={{
-                  expanded: navMode === 'expert',
-                  moreCount,
-                  onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
-                }} />
+                )} />
             </WidgetBoundary>
           )}
           <main className="relative flex-1 min-w-0" style={material ? { background: 'var(--color-canvas)' } : undefined}>

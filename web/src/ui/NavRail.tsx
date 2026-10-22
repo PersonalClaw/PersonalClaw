@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRememberedScroll } from './railScroll'
 import { withWeight } from '../design/fontWeight'
-import { ChevronDown, type LucideIcon } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cx } from './cx'
 import { fvs } from '../design/fontWeight'
@@ -35,27 +35,6 @@ export interface NavItem {
   pinBottom?: boolean
 }
 
-/** The progressive-disclosure control — the rail's own way in and out of
- *  "show everything", sitting at the end of scroll order.
- *
- *  The rail is deliberately dumb about the model: it is handed the already-filtered `items`
- *  plus this, so which surfaces are starter, which are pinned and how pins are persisted all
- *  live in ONE place (`app/navDisclosure.ts`) rather than half here.
- *
- *  Bidirectional on purpose. "One click to expand permanently" is the point, but a one-way
- *  door means a user who expands out of curiosity has no local undo and must go hunting in
- *  Settings — so the same control collapses again, and the Appearance toggle is its mirror,
- *  not its only home. */
-export interface NavDisclosureControl {
-  /** True while every surface shows (expert mode). */
-  expanded: boolean
-  /** How many surfaces the collapsed rail holds back — what expanding reveals, and what
-   *  collapsing would hide. Zero renders NO control: a disclosure that discloses nothing is
-   *  a button that appears to do something and does not. */
-  moreCount: number
-  onToggle: () => void
-}
-
 const W_KEY = 'nav-width-v2'
 const MIN_W = 172
 const MAX_W = 380
@@ -80,7 +59,7 @@ const DEFAULT_W = 196
  *  live system state is the status line's, at the window's bottom left. No operator/identity
  *  footer (single-user; Settings is in nav). */
 export function NavRail({
-  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure, material = false, threads,
+  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
 }: {
   items: NavItem[]
   /** The projects with their threads (`ThreadRail`), shown after the leading destinations and
@@ -94,9 +73,6 @@ export function NavRail({
   activeId: string
   onSelect: (id: string) => void
   collapsed: boolean
-  /** Progressive disclosure over the rail. Omit it and the rail renders exactly the
-   *  items it is given, with no expander — the shape every non-shell caller wants. */
-  disclosure?: NavDisclosureControl
   /** Mobile: render the rail as a fixed OVERLAY drawer (out of layout flow) instead
    *  of an in-flow column, so an expanded rail doesn't squeeze the page. */
   overlay?: boolean
@@ -133,9 +109,8 @@ export function NavRail({
   const topItems = items.filter((i) => !i.pinBottom)
   const pinnedItems = items.filter((i) => i.pinBottom)
 
-  // ONE geometry recipe for every row in the rail — the nav items and the disclosure control
-  // that sits at the end of them. Hand-tuning a second copy is how a 32px row becomes a 34px
-  // row that only looks wrong next to its neighbour.
+  // ONE geometry recipe for every row in the rail. Hand-tuning a second copy is how a 32px row
+  // becomes a 34px row that only looks wrong next to its neighbour.
   const rowCls = (tone: string) => cx(
     'group relative flex items-center gap-s w-full rounded-pill text-left transition-colors duration-(--duration-short)',
     collapsed ? 'justify-center px-0' : 'px-s',
@@ -217,16 +192,16 @@ export function NavRail({
   const firstSectioned = topItems.findIndex((i) => i.section)
   const threadsAt = firstSectioned < 0 ? topItems.length : firstSectioned
   // One keyed list, so the threads keep their place in React's tree (and their state) when the
-  // destinations around them change, as disclosure changes them.
-  const topRows = topItems.map((item) => renderItem(item, !disclosure || disclosure.expanded))
+  // destinations around them change, as an app pinned to the sidebar changes them.
+  const topRows = topItems.map((item) => renderItem(item, true))
   if (showFull && threads) topRows.splice(threadsAt, 0, <Fragment key="threads">{threads}</Fragment>)
   const railBody = (
     // `data-tour` is the product tour's anchor for its first stop. A
     // literal, not a prop: the rail is the shell's one navigation and the tour points at it
     // by name, so a prop would only let a second rail claim the same anchor.
     //
-    // Two parts, top to bottom: what scrolls (the wordmark, the destinations, the threads and the
-    // disclosure control) and the rows pinned under it (Settings, and the phone's Companion), which
+    // Two parts, top to bottom: what scrolls (the wordmark, the destinations and the threads) and
+    // the rows pinned under it (Settings, and the phone's Companion), which
     // never scroll. One scroller with Settings at its foot overflowed a 720 px window by 14 px, which
     // pushed Settings into the rail's bottom padding and cut its focus ring off at the edge. The foot
     // never meets the scroll area's edges. A row in the scroll area can sit at its fold while it
@@ -243,48 +218,7 @@ export function NavRail({
           {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
         </div>
 
-        {/* Section headers belong to the EXPANDED rail. Measured on the starter rail they read as
-            noise: five rows carrying "PLATFORM" over Inbox alone and "APPS" over Store alone —
-            a heading per item, which groups nothing. The starter rail is one curated group by
-            construction (essentials + what you have opened), and the sections it has are
-            "starter" and "everything". Expert keeps Platform / Apps untouched. */}
         {topRows}
-
-        {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the
-            rest" rather than as a section of its own. `aria-expanded` because it genuinely
-            reveals adjacent content (the repo's own distinction: a MODE toggle reveals nothing
-            and gets `aria-pressed` instead — see ui/rawToggleState.test.ts).
-
-            The count rides the accessible NAME, not just the visible `+N`, for the reason the
-            badge comment above spells out: an `aria-label` OVERRIDES the element's text, so
-            anything only in a child span is announced nowhere. */}
-        {disclosure && disclosure.moreCount > 0 && (
-          <button
-            type="button" onClick={disclosure.onToggle}
-            aria-expanded={disclosure.expanded}
-            aria-label={disclosure.expanded
-              ? `Show fewer, hide ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'}`
-              : `Everything, show ${disclosure.moreCount} more surface${disclosure.moreCount === 1 ? '' : 's'}`}
-            title={disclosure.expanded
-              ? `Hide the ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'} you have not opened yet`
-              : `Show all ${disclosure.moreCount} remaining surface${disclosure.moreCount === 1 ? '' : 's'}`}
-            data-type="body-m"
-            className={rowCls('mt-1 text-on-surface-low hover:bg-surface-low/60 hover:text-on-surface-var')}
-            style={withWeight({ height: 32 }, 400)}>
-            <span className="relative z-10 shrink-0 inline-flex">
-              <ChevronDown size={18} strokeWidth={2}
-                className={cx('transition-transform', disclosure.expanded && 'rotate-180')} />
-            </span>
-            {!collapsed && (
-              <span className="relative z-10 flex-1 truncate">
-                {disclosure.expanded ? 'Show fewer' : 'Everything'}
-              </span>
-            )}
-            {!collapsed && !disclosure.expanded && (
-              <span data-type="caption" className="relative z-10 tabular-nums">+{disclosure.moreCount}</span>
-            )}
-          </button>
-        )}
       </div>
       {/* The pinned rows, under the scroller at the rail's foot. The live system widget lives in the
           status line at the window's bottom left (app/StatusLine), collapsed to the gateway

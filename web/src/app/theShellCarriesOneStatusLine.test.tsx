@@ -16,7 +16,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 // again. A load in focus mode shows no line while the first read is out, so it never flashes, and
 // leaving focus mode brings it back.
 //
-// jsdom notes (the shape `navDisclosure.test.tsx` established): no gateway socket, every read
+// jsdom notes (the shape `everyDestinationShowsForEveryone.test.tsx` keeps): no gateway socket, every read
 // resolves empty unless named below, and the Tools page is a stand-in, since what is under test is
 // the shell around a page, not the page.
 

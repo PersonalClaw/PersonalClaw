@@ -35,7 +35,7 @@ const PHONE = { width: 390, height: 844 }
 const RAIL = 'nav[data-tour="rail"]'
 /** The sidebar's destination rows, by their names; a thread row is none of these. */
 const DESTINATIONS = ['Home', 'Chat', 'Projects', 'Library', 'Tasks', 'Knowledge', 'Files', 'Artifacts', 'Memory',
-  'Terminal', 'Inbox', 'Triggers', 'Capabilities', 'Workflows', 'Companion', 'Settings']
+  'Terminal', 'Inbox', 'Automations', 'Triggers', 'Capabilities', 'Workflows', 'Companion', 'Settings']
 
 // ── What a person sees ──────────────────────────────────────────────────────────────────────────
 
@@ -321,11 +321,12 @@ const FIXTURES: Fixture[] = [
     }),
     expected: (form) => ({
       hash: '#/tasks', mode: 'light', personality: 'retro-terminal', palette: 'phosphor', primary: PHOSPHOR_LIGHT, density: 'cli',
-      // Tasks went to Projects and Knowledge to Library; the terminal has no row.
-      ...(form === 'wide' ? { sidebar: 'Expand sidebar', rows: ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Capabilities', 'Settings'] } : {}),
+      // The record the starter rail kept is no longer read: every destination has its row, and the
+      // terminal none.
+      ...(form === 'wide' ? { sidebar: 'Expand sidebar', rows: ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings'] } : {}),
       heading: 'All tasks', view: 'Kanban board', tasks: ['Book the movers'],
     }),
-    drawer: { rows: ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Capabilities', 'Companion', 'Settings'] },
+    drawer: { rows: ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Companion', 'Settings'] },
     dropped: { what: 'the remembered board view', script: "localStorage.removeItem('tasks-view')", parts: ['view'] },
   },
   {

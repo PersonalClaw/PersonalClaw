@@ -3,7 +3,6 @@ import { act, render, screen, waitFor, cleanup, within } from '@testing-library/
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readNavDisclosure, setNavMode } from '../navDisclosure'
 import { requestProductTour, consumeProductTourRequest } from './tourLaunch'
 import { PRODUCT_TOUR_STOPS } from './ProductTour'
 
@@ -101,7 +100,7 @@ const calls: string[] = []
 const REJECT = Symbol('reject')
 /** Envelope-shaped reads have to be named: `[]` for everything left three shell reads
  *  throwing inside a render, which reads as "the surface did not render" (the trap
- *  `navDisclosure.test.tsx` records). Mutable so a test can pick a Discover state. */
+ *  `everyDestinationShowsForEveryone.test.tsx` records). Mutable so a test can pick a Discover state. */
 const ENVELOPES: Record<string, unknown> = {}
 function resetEnvelopes() {
   for (const k of Object.keys(ENVELOPES)) delete ENVELOPES[k]
@@ -409,42 +408,6 @@ describe('nothing about the tour is stored, and nothing is reported', () => {
       expect(/\bfetch\s*\(/.test(src), `${rel} must not call fetch`).toBe(false)
       expect(/localStorage|sessionStorage/.test(src), `${rel} must not persist anything`).toBe(false)
     }
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────────────────
-describe("The auto-pin model behaves identically with the tour present", () => {
-  it('a full walk leaves the disclosure record untouched', async () => {
-    // Auto-pin fires on REACHING a held-back surface, and the tour reaches four of them on
-    // the user's behalf — so a tour that toured a non-starter surface would grow their rail
-    // without them asking. Every stop is a starter surface, and this is how that stays true.
-    setNavMode('starter')
-    const user = userEvent.setup()
-    renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Chat'))
-    const before = readNavDisclosure()
-
-    act(() => { requestProductTour() })
-    await atStop('rail')
-    for (let n = 0; n < 4; n += 1) await user.click(next())
-    await atStop('settings')
-    await user.click(screen.getByRole('button', { name: /Done/ }))
-    await waitFor(() => expect(tour()).toBeNull())
-
-    expect(readNavDisclosure()).toEqual(before)
-    expect(readNavDisclosure().pinned).toEqual([])
-    // The starter rail is still the starter rail — five rows plus the expander.
-    expect(railLinks()).not.toContain('Automations')
-  })
-
-  it('and auto-pin still WORKS — the assertion above is not a dead mechanism', async () => {
-    // The vacuity guard. Without it, an auto-pin that had stopped writing entirely would
-    // make "the record is untouched" pass forever.
-    setNavMode('starter')
-    location.hash = '#/triggers'
-    renderApp()
-    expect(await screen.findByRole('heading', { name: 'Automations', level: 1 })).toBeInTheDocument()
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('automations'))
   })
 })
 

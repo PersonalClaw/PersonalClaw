@@ -46,7 +46,6 @@ vi.mock('./TryOneStep', () => ({
 
 import { OnboardingHarness } from '../../test/onboardingHarness'
 import { AppearanceProvider } from '../appearance'
-import { readNavDisclosure, setNavMode } from '../navDisclosure'
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
 
@@ -88,14 +87,6 @@ describe('a re-run of setup keeps what is already saved', () => {
     // default — and a re-run skip must leave even when that read would fail.
     expect(keepOrDefaultName).not.toHaveBeenCalled()
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
-  })
-
-  it('keeps the rail the install already has', async () => {
-    setNavMode('expert')
-    const onFinished = openRerun()
-    fireEvent.click(screen.getByRole('button', { name: 'Skip setup for now' }))
-    await waitFor(() => expect(onFinished).toHaveBeenCalled())
-    expect(readNavDisclosure().mode, 'a re-run skip shrank the rail to the starter set').toBe('expert')
   })
 
   it('speaks re-run copy, not first-run copy', () => {

@@ -228,12 +228,11 @@ describe('the drawer in a thread', () => {
 })
 
 describe('the sidebar has no Terminal row', () => {
-  /** The full sidebar's rows, as the old full sidebar listed Terminal among them. */
+  /** The sidebar's rows, as the old full sidebar listed Terminal among them. */
   const railRows = () => within(document.querySelector('nav[data-tour="rail"]') as HTMLElement)
     .getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '')
 
-  it('the full sidebar lists no Terminal, and the corner\'s toggle and ⌘K still reach it', async () => {
-    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: [] }))
+  it('the sidebar lists no Terminal, and the corner\'s toggle and ⌘K still reach it', async () => {
     await openChat(SESSION, /RUN THIS ONE/)
     expect(railRows()).toContain('Automations')
     expect(railRows()).not.toContain('Terminal')
@@ -245,7 +244,7 @@ describe('the sidebar has no Terminal row', () => {
     expect(location.hash).toBe('#/terminal')
   })
 
-  it('a starter sidebar that pinned Terminal shows no row for it', async () => {
+  it('a record the starter sidebar kept, with Terminal pinned, brings no row for it back', async () => {
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['automations', 'terminal'] }))
     await openChat(SESSION, /RUN THIS ONE/)
     expect(railRows()).toContain('Automations')

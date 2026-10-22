@@ -30,7 +30,7 @@ vi.mock('./identity', async (orig) => {
     useIdentity: () => ({ status: 'ready', name: 'Ada', username: 'ada', onboarded: true, setName: async () => {} }),
   }
 })
-// Every gateway read resolves empty; the envelope-shaped reads are named (see navDisclosure.test).
+// Every gateway read resolves empty; the envelope-shaped reads are named (see everyDestinationShowsForEveryone.test).
 const ENVELOPES: Record<string, unknown> = {
   dashboardConfig: { user_name: 'Ada' },
   agents: { agents: [] },
