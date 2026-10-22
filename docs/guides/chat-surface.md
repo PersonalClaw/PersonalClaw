@@ -260,7 +260,7 @@ In a **Temporary** or **Incognito** chat the agent sets up no work that lasts af
 creates, starts or steers no loop or project, creates or changes no automation or scheduled task,
 and registers no callback. Each of those is kept after the chat and works on by itself, on a model
 of its own, so what you said there would leave the chat. The agent tells you so, and you can set it
-up from an ordinary chat, or on the Loops or Triggers page. A workflow the agent starts from such a
+up from an ordinary chat, or on the Loops or Automations page. A workflow the agent starts from such a
 chat keeps the chat's mode and runs on its model.
 
 Nor does it save anything that other chats read later. It keeps no skill you teach it (there is

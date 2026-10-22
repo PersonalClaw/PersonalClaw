@@ -58,6 +58,8 @@ import { CapabilitiesSection } from '../pages/capabilities/CapabilitiesSection'
 import { isCapabilityRoute } from '../pages/capabilities/capabilityTabs'
 import { LibrarySection } from '../pages/library/LibrarySection'
 import { isLibraryRoute } from '../pages/library/libraryTabs'
+import { AutomationsSection } from '../pages/automations/AutomationsSection'
+import { isAutomationsRoute } from '../pages/automations/automationTabs'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
 // chat view loads lean (Monaco, graph SVG, settings panels, etc. load on demand).
@@ -100,13 +102,14 @@ const NAV: NavItem[] = [
   // `#/tasks` (ROUTABLE below), is a palette row. The terminal is the drawer on every page (#3826);
   // its full page, `#/terminal` (ROUTABLE below), is the drawer's Open full and a palette row.
   { id: 'inbox', label: 'Inbox', icon: Inbox, section: 'Platform' },
-  { id: 'triggers', label: 'Triggers', icon: Zap, section: 'Platform' },
+  // Automations is one destination (#3816): the one list of everything that runs without you, and
+  // the Workflows its rows run, as its two tabs. Triggers and Workflows were two rows; `#/triggers`
+  // and `#/workflows` keep opening their pages, inside it (ROUTABLE below).
+  { id: 'automations', label: 'Automations', icon: Zap, section: 'Platform' },
   // Capabilities is one destination (#3817): Agents, Skills, Learning, Tools, Prompts, Apps and the
   // Store are its tabs, each still at its own address (ROUTABLE below). It has no section of its
-  // own: a "Capabilities" header over a "Capabilities" row groups nothing. Workflows keeps its row
-  // beside it until its own move (#3816).
+  // own: a "Capabilities" header over a "Capabilities" row groups nothing.
   { id: 'capabilities', label: 'Capabilities', icon: Puzzle, section: 'Platform' },
-  { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Platform' },
   // The app pages the owner pinned (`navApps`) follow, under their own Apps header: an app's own
   // page is a working surface, not configuration (see appNavItems).
   // Settings is pinned to the very bottom of the rail (NavRail honors pinBottom).
@@ -123,8 +126,9 @@ const NAV: NavItem[] = [
 // reaches it. That is the palette's stated job (see its comment: the always-open door to a
 // surface the rail is holding back), not a workaround.
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
-// do Library's four (`libraryTabs.ts`).
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+// do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
+// before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control', 'triggers', 'workflows'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding`, `#/companion` and the buddy playground, `#/buddy/playground`. Deliberately
  *  outside `NAV`/`ROUTABLE` (none is a rail destination) and every bit as real as the ones inside
@@ -178,7 +182,9 @@ function renderPage(active: string, r: RouteProps) {
     case 'loops': return <LoopsSection {...r} />
     case 'code': return <CodeSection {...r} />
     case 'discover': return <DiscoverPage {...r} />
+    // The Automations list, at its own address and at the one it had as the Triggers page.
     case 'triggers': return <TriggersSection {...r} />
+    case 'automations': return <TriggersSection {...r} />
     case 'tasks': return <TasksSection {...r} />
     case 'projects': return <ProjectsSection {...r} />
     case 'knowledge': return <KnowledgeSection {...r} />
@@ -571,11 +577,13 @@ function AppInner() {
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
       : isCapabilityRoute(rendered) ? 'capabilities'  // each tab lights its destination
         : isLibraryRoute(rendered) ? 'library'
-          : rendered
+          : isAutomationsRoute(rendered) ? 'automations'
+            : rendered
   // The destination drawn: a tab of Capabilities is Capabilities, and a tab of Library is Library,
   // so moving between a destination's tabs keeps its strip (and the focus on it) where it is, and
   // only the page under it changes.
-  const surface = isCapabilityRoute(rendered) ? 'capabilities' : isLibraryRoute(rendered) ? 'library' : rendered
+  const surface = isCapabilityRoute(rendered) ? 'capabilities' : isLibraryRoute(rendered) ? 'library'
+    : isAutomationsRoute(rendered) ? 'automations' : rendered
   // Whether the sidebar lights a thread, the one the address opens (`threadRail.tsx`). While one is
   // lit, the destination its route belongs to (Chat, Projects) is not lit beside it: one row says
   // where you are. A hook, so it sits above the early returns (React #310).
@@ -880,6 +888,8 @@ function AppInner() {
     { id: 'go:memory', label: 'Memory', hint: 'Go to', icon: Database, keywords: 'Library facts episodes lessons recall audit remember', run: () => navigate('memory') },
     { id: 'go:files', label: 'Files', hint: 'Go to', icon: Files, keywords: 'Library workspace home outbox explorer', run: () => navigate('files') },
     { id: 'go:artifacts', label: 'Artifacts', hint: 'Go to', icon: FileCode, keywords: 'Library made reports outputs', run: () => navigate('artifacts') },
+    // Automations' Workflows tab, a row of its own: it left the sidebar for the one Automations row.
+    { id: 'go:workflows', label: 'Workflows', hint: 'Go to', icon: Workflow, keywords: 'Automations definitions runs', run: () => navigate('workflows') },
     // The loop composer has no rail tile (loops start from Projects), so this row is its way in.
     { id: 'act:start-loop', label: 'Start a loop', hint: 'Action', icon: Repeat, keywords: 'loop goal code design autonomous plan run new', run: () => navigate('loop') },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
@@ -971,7 +981,13 @@ function AppInner() {
                             {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
                           </LibrarySection>
                         )
-                        : renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                        : surface === 'automations'
+                          ? (
+                            <AutomationsSection route={rendered} navigate={navigate} fallback={<PageFallback />}>
+                              {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                            </AutomationsSection>
+                          )
+                          : renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
                   </ViewModesProvider>
                 </Suspense>
               </motion.div>

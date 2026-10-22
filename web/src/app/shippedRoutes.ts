@@ -114,7 +114,10 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'memory', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'tasks', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
-  { route: 'triggers', from: ['router', 'palette', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
+  // Automations (#3816): one sidebar row, whose tabs are the one list and Workflows. The list's
+  // address from before, `#/triggers`, opens it still.
+  { route: 'automations', from: ['router', 'palette', 'documented'], since: UNRELEASED },
+  { route: 'triggers', from: ['router', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
   { route: 'files', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   { route: 'artifacts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.3' },
   { route: 'terminal', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
@@ -125,6 +128,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'skills', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'learning', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.2.0' },
   { route: 'prompts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
+  // Automations' Workflows tab (#3816), at the address its page always had.
   { route: 'workflows', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   { route: 'apps', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'settings', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.1.0' },
@@ -212,7 +216,16 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'notifications?filter=unread', from: ['documented'], lands: 'inbox?filter=notifications&show=unread' },
   { route: `notifications?open=${encodeURIComponent(S.notification)}`, from: ['documented'], lands: `inbox?filter=notifications&open=${encodeURIComponent(S.notification)}` },
 
-  // ── Triggers ──────────────────────────────────────────────────────────────────────────────────
+  // ── Automations ───────────────────────────────────────────────────────────────────────────────
+  // The list, the automation it has open and the run that one's history has open (#3816), its week
+  // view and its create page.
+  { route: `automations?open=${S.trigger}`, from: ['documented'] },
+  { route: `automations?open=${S.trigger}&run=${S.run}`, from: ['documented'] },
+  { route: 'automations?view=week', from: ['documented'] },
+  { route: 'automations/new', from: ['documented'] },
+  { route: 'automations/new?kind=lifecycle', from: ['documented'] },
+  { route: `automations/new?kind=schedule&preset=${S.preset}`, from: ['documented'] },
+  // The same pages at the list's addresses from before it was Automations, which open as they did.
   { route: 'triggers/new', from: ['documented'] },
   { route: 'triggers/new?kind=lifecycle', from: ['documented'] },
   { route: 'triggers/new?kind=event', from: ['documented'] },
@@ -220,6 +233,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `triggers/new?kind=schedule&preset=${S.preset}`, from: ['documented'] },
   { route: 'triggers?view=week', from: ['documented'] },
   { route: `triggers?open=${S.trigger}`, from: ['gateway', 'documented'] },
+  { route: `triggers?open=${S.trigger}&run=${S.run}`, from: ['documented'] },
 
   // ── Files and artifacts ───────────────────────────────────────────────────────────────────────
   // An artifact's link from before artifacts had their own page, kept in old transcripts.

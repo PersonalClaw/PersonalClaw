@@ -2,55 +2,71 @@
   "dark": {
     "targets": {
       "320": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "390": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "412": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "768": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ]
     },
@@ -58,64 +74,77 @@
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Workflows\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "390": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "412": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "768": [
+        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
+        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ]
     },
@@ -123,9 +152,6 @@
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
         "<h#> \"Workflows\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""
       ]
     }
   }

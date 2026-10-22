@@ -41,6 +41,7 @@ from personalclaw.security import (
     redact_for_display,
     redact_values_for_display,
 )
+from personalclaw.triggers import listing
 
 
 def config_dir():
@@ -497,6 +498,8 @@ def _serialize_store(row: Any, *, owner: str = "", served_by: str | None = None)
         "needs_grant": _needs_grant(trigger),
         "held_back": _held_back(trigger),
         "workflow_version": _workflow_version(trigger),
+        # Where its results go: the thread it reports to, else its result route.
+        "reports_to": _reports_to(trigger),
         # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
         "restore_hold": trigger.restore_hold,
         # A webhook automation's address and its sender tokens; null for another kind.
@@ -565,6 +568,7 @@ def _schedule_row_for(
     projected["needs_grant"] = _needs_grant(trigger)
     projected["held_back"] = _held_back(trigger)
     projected["workflow_version"] = _workflow_version(trigger)
+    projected["reports_to"] = _reports_to(trigger)
     projected.update(_attribution(trigger, owner=owner))
     projected["served_by"] = _served_by(trigger.id, served_by)
     return trigger_revisions.with_revision(projected, schedule=True)
@@ -853,17 +857,77 @@ async def api_triggers(request: web.Request) -> web.Response:
                 for row in rows
             )
 
+    # An app reads only the conversations it started, here as everywhere: the app the token
+    # middleware put on the request, if any.
+    request_app = str(request.get("app", "") or "")
+    for row in triggers:
+        if row.get("reports_to"):
+            row["reports_to"] = _with_thread_title(state, row["reports_to"], app=request_app)
     tz_name, _ = get_local_tz()
     # `owner` mirrors the tasks seam's list response: the page labels a foreign row with its
     # author, and needs to know whose name is not worth showing.
     return web.json_response(
         {
-            "triggers": triggers,
+            # The Automations list's named order, stated here once (`triggers/listing.py`): a
+            # `?type=` read is a filter of it.
+            "triggers": listing.ordered(triggers, decisions=_waiting_decisions()),
             "server_tz": tz_name,
             "owner": owner_username(),
             "unreadable": _unreadable_sources(),
         }
     )
+
+
+def _waiting_decisions() -> dict[str, float]:
+    """Each row a restart left a decision on (a missed or an interrupted run,
+    `triggers.review`), by the id the list gives it, with the oldest slot the decision covers."""
+    from personalclaw.triggers import review
+
+    store = _trigger_store()
+    try:
+        cards = review.pending(base_dir=store.base_dir)
+    except Exception:  # noqa: BLE001 - the order must not fail the list; the cards say it apart
+        logger.debug("review cards unavailable for the list order", exc_info=True)
+        return {}
+    oldest: dict[str, float] = {}
+    for card in cards:
+        row = store.get(card.trigger_id)
+        if row is None:
+            continue
+        rid = f"{_SCHEDULE if row.trigger.kind == 'clock' else _STORE}:{card.trigger_id}"
+        at = card.oldest or card.latest
+        oldest[rid] = min(oldest.get(rid, at), at)
+    return oldest
+
+
+def _reports_to(trigger: Any) -> dict[str, str]:
+    """Where *trigger*'s results go, as the list names it (`listing.reports_to`)."""
+    return listing.reports_to(
+        session=str(getattr(trigger, "session", "") or ""),
+        delivery=str(getattr(trigger, "delivery", "") or ""),
+    )
+
+
+def _with_thread_title(
+    state: DashboardState, out: dict[str, str], *, app: str = ""
+) -> dict[str, str]:
+    """*out* with the thread's title while the gateway holds the thread, so the row can name it.
+
+    Read by *app*, a thread names itself only when that app started the conversation
+    (``DashboardState.session_creating_app``, the check the conversations list filters on): any
+    other is ``{"kind": "thread"}`` alone, with neither its key nor its title, since an app reads
+    only the conversations it started.
+    """
+    if out.get("kind") != "thread":
+        return out
+    if app and state.session_creating_app(out.get("session", "")) != app:
+        return {"kind": "thread"}
+    from personalclaw.session_organize import _title_of
+
+    sessions = getattr(state, "_sessions", None)
+    live = sessions.get(out["session"]) if isinstance(sessions, dict) else None
+    title = _title_of(live) if live is not None else ""
+    return {**out, "title": _redact(title)} if title else out
 
 
 def _unreadable_sources() -> list[dict[str, str]]:

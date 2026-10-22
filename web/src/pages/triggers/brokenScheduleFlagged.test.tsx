@@ -27,6 +27,7 @@ const SCHED = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { STATE } = vi.hoisted(() => ({ STATE: { jobs: [] as unknown[] } }))
 
 vi.mock('../../lib/api', async (orig) => ({
@@ -36,6 +37,8 @@ vi.mock('../../lib/api', async (orig) => ({
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve([]),
     callbacks: () => Promise.resolve([]),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: () => Promise.resolve([]),
     actionProviders: () => Promise.resolve([]),
     autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),

@@ -68,7 +68,7 @@ relative to `PersonalClaw/src/personalclaw/`.
 - **`schedule_history.py`** — run history; **`schedule_script.py`** /
   **`schedule_trigger.py`** — script- and trigger-shaped jobs.
 - **Event triggers** — a `kind: "event"` row in the one trigger store
-  (`triggers.json`), made by the Triggers page's **Data event** form, the
+  (`triggers.json`), made by the Automations page's **Data event** form, the
   chat's `automation_create` or `POST /api/triggers`. It fires when
   PersonalClaw's own state changes: a memory write (`MemoryUpdate`,
   `MemoryKeyPattern` — a key glob such as `project.acme.*`, `ContentMatch` — a
@@ -156,7 +156,7 @@ relative to `PersonalClaw/src/personalclaw/`.
   and a run with nothing to run (no app running here
   provides its action, a secret in it does not resolve, or it names no
   action) is a `refused` run (`triggers/cannot_run.py`): its row and its last
-  run on the Triggers page say which, naming the app or the secret and never
+  run on the Automations page say which, naming the app or the secret and never
   a value, and its owner hears of it once on its failure route, until a run
   gets through or it is refused for another reason. The unattended dispatch
   waits for the apps to start before it decides an app's action is missing.
@@ -201,7 +201,7 @@ relative to `PersonalClaw/src/personalclaw/`.
   now, naming who saved each version since, so the owner is asked again. The
   CLI's `--yes` answers a question an earlier command printed and cannot say
   which version that showed, so `cron update` sends a workflow's Allow to the
-  Triggers page. The wire carries
+  Automations page. The wire carries
   `workflow_version`, the version a fire runs and any newer one waiting, its
   steps' too, and what Use vN sends back. PersonalClaw's own triggers
   are granted by the code that makes them, since each runs an action it fixes
@@ -274,7 +274,7 @@ relative to `PersonalClaw/src/personalclaw/`.
   lifecycle trigger store (`hooks.json`, `hooks.ScriptHookStore`) is the
   owner's, and a store that meets an entry that is not a trigger skips it
   rather than failing to load. A callback follows the grant rule: registered
-  switched off, listed on the Triggers page as a **Callback**, and allowed by
+  switched off, listed on the Automations page as a **Callback**, and allowed by
   switching it on, which asks first and names the context the page read (its
   seal), so a callback registered again with other context waits again. A post
   naming a callback the owner has not allowed answers `403 not_allowed`. The
@@ -320,7 +320,7 @@ in a `uv tool` install and the desktop app too.
 **`run-prompt` runs its saved Prompt, else its own message, else `loop.md`.**
 An automation the chat makes carries its instruction as the action's `message`
 (`tools.create`), and the provider runs it, framed as an unattended turn; the
-Triggers page shows it as the action's Prompt and lets you edit it as
+Automations page shows it as the action's Prompt and lets you edit it as
 **Message**. Before, the provider read no `message`, so every automation made in
 chat failed on its first fire, or ran the owner's `loop.md` in its place.
 
@@ -339,10 +339,10 @@ connected channel by name, Discord ahead of Telegram.
 **A task's result goes to the channel the owner named, too.** With `message`
 instead of `say`, `via` (and `to`, a chat on that channel by the channel's own
 id) sets the trigger's `delivery` to `channel:<name>[:<chat>]`: the route the
-Triggers page's Notify channel writes, delivered by the same code. Without `to`
+Automations page's Notify channel writes, delivered by the same code. Without `to`
 it is the owner's direct messages there; an id the channel does not take is
 refused in the channel's own words before anything is saved. Without `via`, a
-task's result is a notification (`inbox`), as one made on the Triggers page is;
+task's result is a notification (`inbox`), as one made on the Automations page is;
 only words in `say`, which are their own delivery, are made with `none`.
 
 **A route is checked where it is written.** The chat's and CLI's
@@ -369,7 +369,7 @@ The chained action is told which run ended, how, and what it said it produced
 `when` ("when the research run 9c2c10ab finishes", "when my nightly run
 finishes"): an id is the run, a name the one run going under that workflow, the
 one trigger by that name, or the workflow, and anything it cannot place is
-refused with the runs going now. The Triggers page makes one as **Run
+refused with the runs going now. The Automations page makes one as **Run
 finishes**. A chain carried through a workflow run keeps its depth and path on
 the run, so a loop through a run is refused as a loop. A chain its depth cap or
 a loop refuses leaves a `skipped_gate` row with that reason in the refused
@@ -392,7 +392,7 @@ once on the trigger's failure route (`web_poll.report_checks`,
 `delivery.report_run`), the Inbox by default; a muted route stays muted. A
 check is not a run: only a fire runs the action and writes run history.
 
-**The chat reads an automation as the Triggers page shows it**
+**The chat reads an automation as the Automations page shows it**
 (`triggers/standing.py`). `automation_list` says, for each automation, whether
 it runs now (the sentence `automation_create` and `automation_update` answer
 with, decided in the page's order), when it last ran and how that went (its
@@ -408,7 +408,7 @@ and naming the tool, so a question about the automations reads them rather than
 what the agent remembers of earlier chats. A request that names automations
 also carries the tool's schema (`tool_retrieval`'s hints).
 
-**A Send message action is checked where it is saved.** The Triggers page's
+**A Send message action is checked where it is saved.** The Automations page's
 create and edit (`_action_problem`) and the chat's and CLI's `automation_create`
 and `automation_update` (`tools.unsendable_message_refusal`) ask
 `send_message_provider.config_problem`: its **Send on** must be a chat channel
@@ -435,7 +435,7 @@ the review's Run now) alike. The row
 says what started the run (`source`, `triggers/run_source.py`): `you`, what
 fires the automation on its own (`schedule`, `event`, `webhook`, `view`,
 `chain`, `file`, `page`, `idle`), or who asked for it (`agent`, `app`,
-`automation`, `program`); the run history and the Triggers page show it. It
+`automation`, `program`); the run history and the Automations page show it. It
 carries `started_at` (when the action started), `finished_at` (when it
 returned) and `duration_ms`; a scheduled fire's row used to be written at
 record time with both times the same and 0 ms. In the same write the trigger's
@@ -511,7 +511,7 @@ fire, run count, success, failure and waiting stamps, debounce and park stamps,
 alert dedupe, health and state, its switch, and its grant (`capabilities`), with
 the step keys that loosen whether its agent asks. So it arrives with
 `enabled: false`, and switching it on here asks first for what it runs, as the
-Triggers page asks of any row that holds no grant: a yes is given where the owner
+Automations page asks of any row that holds no grant: a yes is given where the owner
 is shown what runs. A lifecycle hook from another home arrives by the same rule
 (`hooks.hook_arrived_from_another_home`, `HOOK_RUNTIME_FIELDS`), through the `hooks` inventory
 entry, which a sync, a restore's merge and an import all apply (`durability.reconcile.bring_in`
@@ -662,7 +662,7 @@ unreadable, never as empty: every write refuses with `record_files.Unreadable`, 
 stays exactly as it was. A copy of it as it was is kept beside it,
 `<name>.broken-<UTC instant>`; the first read to find it says so in the gateway log, once; and
 the Doctor names it (`automations.store` for `triggers.json`, `durability.store_files` for the
-rest). A read for a list lists nothing, and the Triggers page says why (`GET /api/triggers`'
+rest). A read for a list lists nothing, and the Automations page says why (`GET /api/triggers`'
 `unreadable`), where a list read as empty used to offer "No triggers". A read that would act on
 a row's absence — a fire by id, a review card's automation, an import's list of the rows it
 already has — refuses too, so nothing is decided from a guess: no legacy file is retired as
@@ -908,7 +908,7 @@ having done when it first failed. The repeat used to reach the bell anyway, as
 the agent's own note.
 
 **Silent means silent about the work too.** A trigger whose results route is
-`none` (the Triggers page's Silent) has spoken for a run that went well by
+`none` (the Automations page's Silent) has spoken for a run that went well by
 saying nothing, and `report_run` answers so, so the agent it started posts no
 completion note of its own either: no note reaches the bell, the Inbox or a chat
 channel, and the run's history row says how it went. (An agent a chat's event
@@ -936,7 +936,7 @@ default `failure_delivery`, files the failure there (`delivery.files_in_inbox`,
 through `inbox.emit_attention_item`): one item saying why, whose notification is
 its view, so the bell shows it once, under the owner's rule for the kind, and it
 waits in the Inbox until it is dealt with. It used to be a notification alone,
-which the Inbox never listed. A result is a notification, as the Triggers page
+which the Inbox never listed. A result is a notification, as the Automations page
 says ("It still reaches the dashboard"), and so is a failure whose route is
 "Same as results".
 
@@ -1046,7 +1046,7 @@ the warning.
 changes (`triggers/action_edit.py`): a setting it sends replaces the saved one, a setting sent as
 `null` is removed, and a setting it leaves out stays as saved; naming another provider replaces the
 action, its settings with it. A setting is replaced whole, so a list (the files it may change) or an
-object (a workflow's inputs) is one setting. Every door saves by the one rule: the Triggers page's
+object (a workflow's inputs) is one setting. Every door saves by the one rule: the Automations page's
 editors (a schedule's, a lifecycle trigger's), the chat's `automation_update` and `personalclaw cron
 update`, and each check a save makes (the grant, a loosened posture, the working folder, the files it
 may change) judges the action as it will be saved. The schedule editor shows the Invoke Agent
@@ -1060,7 +1060,7 @@ at its stored `next_fire_at`, so one rule (`arm.next_fire_after_edit`) decides
 it after every edit and switch: a change to when it runs (its cadence, zone, skip
 dates, or a one-shot's time) re-arms it from the new schedule, and a trigger
 left on with no next fire is armed; a rename or a cosmetic save keeps its
-instant. `tools.update` and `tools.set_paused` apply it, and the Triggers page,
+instant. `tools.update` and `tools.set_paused` apply it, and the Automations page,
 the chat's `automation_update` / `automation_resume` and the CLI all go through
 them, so a time changed in chat fires at the new time, as one changed on the
 page does.
@@ -1080,7 +1080,7 @@ automation reached PersonalClaw only after its time (`review.UNSEEN`).
 selection reads every store (`provider.armable` merges the registered providers'
 rows): the clock, the `file`, `web_watch`, `idle` and `view` polls, the event
 router and the chains. A lookup by id (`TriggerStore.get`) finds an app's row,
-as `upsert` and `delete` route its writes, so on the Triggers page its History,
+as `upsert` and `delete` route its writes, so on the Automations page its History,
 Dry run, Run now, switch and Delete work, the missed-run review keeps its card,
 and the gateway's dispatch of its file watch finds it. An edit of one is refused
 with `automation_kept_elsewhere`: the app keeps what the automation is and takes
@@ -1097,7 +1097,7 @@ fire that grants it (`service.tick`): switched off with no next fire, in the sam
 write that records the grant, after its claim is on disk. The gateway's runner
 fires the STORED row (read through `routing.routed`, so a row an app serves is
 found too), and the recorder writes its run. A one-shot that retires after its
-run (`spec.delete_after_run`: the Triggers page's One-shot and a decision's
+run (`spec.delete_after_run`: the Automations page's One-shot and a decision's
 review) leaves the store only then (`service.retire_after_run`), and only for a
 run that did its work: on time, late, or with nothing to do. One whose action
 only started work (an agent, a workflow run) goes when that work ends and its
@@ -1170,7 +1170,7 @@ card names why its slots did not run (`ReviewCard.cause`: `stopped`, `paused`,
 or `stopped_or_paused` once a card holds both), and the notice and the card's
 sentence say it in those words: "while PersonalClaw was not running" is false
 of a laptop whose lid was shut.
-The "Missed scheduled runs" notice points at the Triggers page, where the
+The "Missed scheduled runs" notice points at the Automations page, where the
 cards sit above the list (`GET /api/triggers/review`). It is composed from the
 cards this boot kept (`review.boot_notice`, over the one reading of the report
 the cards come from, `review.missed_by_trigger`), so it counts what waits
@@ -1258,7 +1258,7 @@ the chat makes does. The agent writes this file, as can its shell and an app
 that declared `/api/file-write`, so a task is the agent's words until the owner
 says otherwise, and a pass does not run it: it stays in the file as written,
 and the pass reports how many wait (`no task ran: 1 waiting for your Allow on
-the Triggers page`, an inert `skip` when nothing ran). The owner's yes is sealed
+the Automations page`, an inert `skip` when nothing ran). The owner's yes is sealed
 to the task's text (`grants/heartbeat.json`): a task they type in the Files
 editor is allowed as they save it (`files._allow_heartbeat_tasks_the_owner_wrote`,
 never for an app's write), and any other is listed on the Heartbeat tasks
@@ -1304,7 +1304,7 @@ re-derives only what the report owns on its automation (the cadence and zone in
 `spec`, the switch, the action, the name, the grant) and keeps the rest — where
 its result and failures go, a missed time's catch-up, its skip dates, and what
 the clock wrote (its next fire, runs, health). An edit through `triggers.tools`
-(the Triggers page, the chat's automation tools, the CLI) is asked
+(the Automations page, the chat's automation tools, the CLI) is asked
 `report_schedules.edit_refusal` before it is saved — a rename, another action,
 or a schedule a report cannot hold (a sequence) is refused in words — and
 `report_schedules.adopt` writes the saved cadence, zone and switch into the
@@ -1312,7 +1312,7 @@ report; the clock's autopause hands its paused row there too. Deleting the
 automation leaves the report with no schedule (`adopt_removal`): it stays, and
 runs when you press Run now. The automation's row names its report
 (`report_id`, by the same `report_schedules.owns` rule the edits follow), so its
-panel on the Triggers page says it is a report's schedule and where the report
+panel on the Automations page says it is a report's schedule and where the report
 is renamed or deleted, and its delete dialog says the report stays.
 
 A run that reads its sources and finds nothing new records `nothing_new` and its

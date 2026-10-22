@@ -41,8 +41,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "390": [
@@ -85,8 +87,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "412": [
@@ -129,8 +133,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "768": [
@@ -173,8 +179,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ]
     },
@@ -227,8 +235,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "390": [
@@ -271,8 +281,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "412": [
@@ -315,8 +327,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ],
       "768": [
@@ -359,8 +373,10 @@
         "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
+        "button[role=radio] \"Workflows\"",
         "input \"Search workflows\""
       ]
     },

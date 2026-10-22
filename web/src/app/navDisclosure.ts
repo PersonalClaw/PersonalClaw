@@ -59,11 +59,13 @@ const ABSENT: NavDisclosure = { mode: 'expert', pinned: [] }
 
 /** Rail ids whose pages moved under another row, each with the row that holds them now.
  *  Knowledge, Files and Artifacts were rows a starter rail showed once visited, and are Library's
- *  tabs (#3815); Tasks was one too, and a project's tasks are a view of the project (#3818). The pins
- *  this browser wrote still name them, so a pin is read as the row its page went to: the rail keeps
- *  a row for every surface it had reached, and the next write stores it. */
+ *  tabs (#3815); Tasks was one too, and a project's tasks are a view of the project (#3818); Triggers
+ *  and Workflows are Automations (#3816). The pins this browser wrote still name them, so a pin is
+ *  read as the row its page went to: the rail keeps a row for every surface it had reached, and the
+ *  next write stores it. */
 const MOVED_TO: ReadonlyMap<string, string> = new Map([
   ['knowledge', 'library'], ['files', 'library'], ['artifacts', 'library'], ['tasks', 'projects'],
+  ['triggers', 'automations'], ['workflows', 'automations'],
 ])
 
 /** The stored pins as today's rail ids: a moved page's pin is its destination's, each id once,

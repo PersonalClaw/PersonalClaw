@@ -1,14 +1,13 @@
 import { useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Send } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PresetEmptyState } from '../../ui/PresetEmptyState'
 import { Button } from '../../ui/Button'
 import { TRIGGER_PRESETS } from './triggerPresets'
-import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { Segmented } from '../../ui/Segmented'
 import { WeekGridView } from './WeekGridView'
@@ -20,6 +19,8 @@ import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSo
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type ActionProvider, type TriggerSourceUnreadable } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
+import { SelectedRun } from '../schedule/selectedRun'
+import { placeRows, reportsToLabel } from '../automations/listGroups'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { CallbackDetail } from './CallbackDetail'
@@ -72,10 +73,14 @@ const FILTERS: Array<{ key: string; label: string }> = [
 // One row, one call: `triggerStatusMeta(t)`. The converters put each fact in the field named for its
 // vocabulary and `scheduleMeta` owns the precedence, so a fifth kind cannot re-open this.
 
-/** Unified Triggers list — schedule + lifecycle triggers in one view, with a
- *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
- *  verbatim; LifecycleDetail for lifecycle triggers). Backed by the unified
- *  /api/triggers facade (api.schedules()/api.hooks() project it per kind). */
+/** The Automations list (#3816): everything that runs without you, in one list, each row with
+ *  its next run, its last result and where it reports. One read of `GET /api/triggers`, which
+ *  states the list's named order (`triggers/listing.py`): Needs you, then Next to run, then Not on a
+ *  clock, shown as served under their headings (`placeRows`). A type filter and a search narrow it.
+ *  The selected automation opens beside the list (`?open=<id>`) with its run history, and the run it
+ *  has open is in the address too (`?run=<run id>`), so a reload, Back and Forward and a copied link
+ *  open both. Detail opens the right inspector per kind (ScheduleDetail for a clock, StoreTriggerDetail
+ *  for a store row or a data event, CallbackDetail, LifecycleDetail). */
 export function TriggersListPage({ onCreate, query, setQuery }: {
   /** Opens the create flow. With a preset id, the flow opens SEEDED from that preset. */
   onCreate: (presetId?: string) => void
@@ -84,31 +89,32 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
+  // The run the open automation's history has open: in the address, so Back closes it and a copied
+  // link opens it. Choosing another automation closes it.
+  const [runRaw, setRun] = useQueryParam(query, setQuery, 'run', '')
+  const runSelection = useMemo(() => ({ run: runRaw || null, setRun: (id: string | null) => setRun(id ?? '') }), [runRaw, setRun])
   const [editing, setEditing] = useEditFlag(query, setQuery)
   // List | Week. URL-addressable, unlike the run-detail toggle: a week grid is something
   // you send someone ("look at Thursday"), and the section is already query-state driven.
   const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
 
-  // Schedules carry live next-run/running state → persist:false (instant in-app
-  // revisit, but never stale across a hard reload). Hooks + action providers are
-  // lifecycle config that rarely changes → persist:true so they survive a reload.
-  const { data: scheduleList, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules(), { persist: false })
-  const schedules = scheduleList?.jobs
+  // Every automation in ONE read, in the order the route states. It was four reads, one per kind,
+  // merged here, so the page could not show the route's order: each read came back on its own, and
+  // a schedule list that answered first was laid out before the rest arrived. Live next-run, running
+  // and health state → persist:false (instant in-app revisit, never stale across a hard reload).
+  // A data-event trigger is a store row, so it arrives with them; `storeToTrigger` presents it by
+  // the pattern it listens for. Callbacks the agent registered come too: the agent can register one
+  // at any moment, and its switch is the owner's yes to it.
+  const { data: listed, error: listErr, refresh: refreshList } = useQuery('automations:list', () => api.automations(), { persist: false })
+  const schedules = listed?.jobs
+  const hooks = listed?.hooks
+  const stores = listed?.stores
+  const callbacks = listed?.callbacks
   // The files this page lists from that cannot be read, said above the list: a list read from one
-  // as empty is not "no triggers". Every `/api/triggers` read names them; the schedules read is the
-  // one taken here.
-  const unreadable = scheduleList?.unreadable ?? NONE_UNREADABLE
-  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
+  // as empty is not "no triggers". Every `/api/triggers` read names them.
+  const unreadable = listed?.unreadable ?? NONE_UNREADABLE
   // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
   const catalog = useTriggerVariables()
-  // Store triggers (file/web_watch/idle/…, and data events) carry live enabled/health state →
-  // persist:false, like schedules: instant in-app revisit but never stale across a hard reload. A
-  // data-event trigger is a row in the same store, so it arrives here too; `storeToTrigger` presents
-  // it by the pattern it listens for.
-  const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
-  // Callbacks the agent registered (`hook_register`): live, because the agent can register one — or
-  // register it again with other context — at any moment, and the switch is the owner's yes to it.
-  const { data: callbacks, error: callbacksErr, refresh: refreshCallbacks } = useQuery('triggers:callbacks', () => api.callbacks(), { persist: false })
   const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // What a restart left for you to decide: missed runs and interrupted runs. Live, like schedules.
   const { data: review = [], error: reviewErr, refresh: refreshReview } = useQuery('triggers:review', () => api.triggerReview(), { persist: false })
@@ -121,19 +127,17 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const { ladder } = useAutonomyLadder()
   const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
 
-  const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
-  const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
-  const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
-  const loadCallbacks = () => { invalidateKeys('triggers:callbacks'); refreshCallbacks() }
+  // One read, so a change to any row re-reads the list: its order can move with it.
+  const loadList = () => { invalidateKeys('automations:list'); refreshList() }
   const loadReview = () => { invalidateKeys('triggers:review'); refreshReview() }
-  // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
-  useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
+  // Keep next-run/running fresh, paused while hidden and slower while nobody is here.
+  useVisiblePoll(refreshList, 10_000, { immediate: false })
   // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
   // tab) reached the status strip's count on its next poll and never reached this page: only
   // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
   // `crons` whenever the trigger store changes, and every source re-reads on it, and on the socket
   // coming back, which lost any `crons` sent while it was down.
-  const loadAll = () => { loadSchedules(); loadHooks(); loadStores(); loadCallbacks(); loadReview() }
+  const loadAll = () => { loadList(); loadReview() }
   useChatSocket((m: WsMessage) => {
     if (refreshKinds(m).includes('crons')) loadAll()
   }, loadAll)
@@ -152,10 +156,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const reviewPanel = (
     <>
       <UnreadableNotice sources={unreadable} />
-      <RestoreHoldNotice holds={restoreHolds} onResumed={() => { loadSchedules(); loadStores() }} />
+      <RestoreHoldNotice holds={restoreHolds} onResumed={loadList} />
       <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
-        onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
-        onOpen={(openId) => setQuery({ open: openId, edit: null, view: 'list' })} />
+        onDecided={() => { loadReview(); loadList() }}
+        onOpen={(openId) => setQuery({ open: openId, edit: null, run: null, view: 'list' })} />
     </>
   )
 
@@ -183,18 +187,41 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
   // `LoadError` exists to end (its docstring: "A failed fetch and a genuinely empty collection are
   // different facts"). The catches are gone; a rejection now reaches the hook's `error`. This flag is
-  // true only when NOTHING has composed yet (so we are not hiding a good cached list) and a source
-  // actually failed — a partial success still renders, because a working schedule list should not be
-  // hidden because the event feed hiccuped.
-  const loadFailed = triggers === null &&
-    !!(schedulesErr || hooksErr || storesErr || callbacksErr)
+  // true only when NOTHING has composed yet, so a good cached list is not hidden by a failed refresh.
+  const loadFailed = triggers === null && !!listErr
+
+  // The list laid out in the route's order, under its groups' headings.
+  const groups = useMemo(() => placeRows(triggers ?? []), [triggers])
+
+  // The selected automation's detail and run history, beside the list where the room allows and in
+  // its place where it does not (`ListBesideDetail`, the 840 px rule of the information
+  // architecture), its Back returning to the list.
+  const detail: CapabilityDetail | null = open && {
+    id: open.id, title: open.name,
+    icon: <open.whenIcon size={18} style={{ color: open.whenTone }} />,
+    onClose: () => setQuery({ open: null, edit: null, run: null }),
+    body: (
+      <SelectedRun.Provider value={runSelection}>
+        {open.kind === 'schedule' && open.schedule
+          ? <ScheduleDetail job={open.schedule} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadList} onChanged={loadList} onDeleted={() => { setOpenId(""); loadList() }} />
+          // A data-event trigger IS a store row: the same inspector, run history and Run now.
+          : (open.kind === 'store' || open.kind === 'event') && open.store
+          ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadList} onDeleted={() => { setOpenId(""); loadList() }} />
+          : open.kind === 'callback' && open.callback
+          ? <CallbackDetail callback={open.callback} onChanged={loadList} onDeleted={() => { setOpenId(""); loadList() }} />
+          : open.hook
+          ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadList} onDeleted={() => { setOpenId(""); loadList() }} />
+          : null}
+      </SelectedRun.Provider>
+    ),
+  }
 
   return (
-    <WorkbenchLayout
-      topBar={
+    <ListBesideDetail noun="automations" detail={detail}
+      header={
         <TopBar
           keepCornerPadding
-          left={<PageTitle>Triggers</PageTitle>}
+          left={<PageTitle>Automations</PageTitle>}
           right={
             /* `() => onCreate()`, NOT `onCreate` — the blank path must pass NO preset id.
                `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
@@ -232,22 +259,6 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
             } satisfies FilterSectionDef]} />}
           </ListControls>
         : undefined}
-      panel={
-        open && (
-          <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
-            {open.kind === 'schedule' && open.schedule
-              ? <ScheduleDetail job={open.schedule} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
-              // A data-event trigger IS a store row: the same inspector, run history and Run now.
-              : (open.kind === 'store' || open.kind === 'event') && open.store
-              ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
-              : open.kind === 'callback' && open.callback
-              ? <CallbackDetail callback={open.callback} onChanged={loadCallbacks} onDeleted={() => { setOpenId(""); loadCallbacks() }} />
-              : open.hook
-              ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
-              : null}
-          </SidePanel>
-        )
-      }
     >
       {view === 'week' ? (
         <>
@@ -256,15 +267,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
           )}
           {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
               and a row lead to one inspector rather than two surfaces that drift apart. */}
-          <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+          <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, run: null, view: 'list' })} />
         </>
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {reviewPanel}
         {loadFailed ? (
-          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || callbacksErr}
-            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); loadCallbacks() }} />
-        ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
+          <LoadError what="automations" error={listErr} onRetry={loadList} />
+        ) : triggers === null ? <ListSkeleton rows={6} what="automations" /> : triggers.length === 0 ? (
               // Nothing listed because a file could not be read is not an empty list: the notice
               // above says what it stops and what to do, and a "No triggers" here would say the
               // opposite.
@@ -309,8 +319,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
               />
               )
             ) : (
-              <div className="flex flex-col gap-s">
-                {triggers.map((t) => {
+              <div className="flex flex-col gap-l">
+                {groups.map((g) => (
+                <section key={g.id} aria-labelledby={g.heading ? `automations-${g.id}` : undefined} className="flex flex-col gap-s">
+                {g.heading && <h2 id={`automations-${g.id}`} data-type="label-m" className="text-on-surface-var">{g.heading}</h2>}
+                {g.rows.map((t) => {
                   // ONE call for every kind. The per-kind ternary that used to live here was the
                   // defect: each branch chose a MAPPER, so adding a kind meant picking a vocabulary
                   // again — and the event branch picked the run-outcome mapper for a row that has no
@@ -342,12 +355,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // does a CALLBACK: its context is the agent's, saved by `hook_register`. Nor a row
                   // an app serves: the app keeps what it is, and its panel says where it is changed.
                   const menuItems: ContextMenuItem[] = [
-                    { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
-                    ...(t.readOnly || t.servedBy || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                    { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null, run: null }) },
+                    ...(t.readOnly || t.servedBy || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1', run: null }) }]),
                   ]
+                  // Where its results go, in the row's words: the thread it reports to, else its route.
+                  const reports = reportsToLabel(t.reportsTo)
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
-                    <ListRow accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
+                    <ListRow accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null, run: t.id === openId ? runRaw || null : null })} label={t.name}>
                       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-s">
@@ -421,6 +436,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
                           <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
+                          {reports && <span className="inline-flex items-center gap-1"><Send size={11} /> {reports}</span>}
                           {/* No countdown on a row someone else wrote: it runs on their computer, never on this one. */}
                           {t.kind === 'schedule' && t.enabled && !t.readOnly && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
                           {/* The rung chip: what this automation may do on its own, and why.
@@ -477,10 +493,12 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                     </ContextMenu>
                   )
                 })}
+                </section>
+                ))}
               </div>
             )}
       </div>
       )}
-    </WorkbenchLayout>
+    </ListBesideDetail>
   )
 }

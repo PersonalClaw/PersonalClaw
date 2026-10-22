@@ -25,10 +25,11 @@ export const ROUTES: RouteEntry[] = [
   // Library opens its first tab, Knowledge; each tab's own address is in VIEW_ROUTES below.
   { route: 'library', label: 'Library', needsData: true },
   { route: 'inbox', label: 'Inbox', needsData: true },
-  { route: 'triggers', label: 'Triggers', needsData: true },
+  // Automations opens its first tab, the one list; the list's old address and the Workflows tab are
+  // in VIEW_ROUTES below.
+  { route: 'automations', label: 'Automations', needsData: true },
   // Capabilities opens its first tab, Agents; each tab's own address is in VIEW_ROUTES below.
   { route: 'capabilities', label: 'Capabilities', needsData: true },
-  { route: 'workflows', label: 'Workflows', needsData: true },
   { route: 'settings', label: 'Settings' },
 ]
 
@@ -78,7 +79,8 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
 // A destination's tabs that keep addresses of their own are its surfaces too: Capabilities' Agents,
 // Skills, Learning, Tools, Prompts and Apps (#3817) are each at the route their page has always
 // had, so each keeps the visual baseline and the scans it had as a sidebar row, and so are Library's
-// Knowledge, Files and Artifacts (#3815). Their routes are not nav ids, and
+// Knowledge, Files and Artifacts (#3815), and Automations' Workflows tab and the list at the
+// address it had as Triggers (#3816). Their routes are not nav ids, and
 // `routeManifestParity.test.ts` counts this tier among the scanned ones.
 export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'agents', id: 'agents', label: 'Capabilities › Agents', needsData: true },
@@ -97,6 +99,8 @@ export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'terminal', id: 'terminal', label: 'Terminal (full page)' },
   { route: 'files', id: 'files', label: 'Library › Files', needsData: true },
   { route: 'artifacts', id: 'artifacts', label: 'Library › Artifacts', needsData: true },
+  { route: 'triggers', id: 'triggers', label: 'Automations, at #/triggers', needsData: true },
+  { route: 'workflows', id: 'workflows', label: 'Automations › Workflows', needsData: true },
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
   // The reading experience, reached at `#/knowledge/item/<id>?read=1` — the sharable
   // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
@@ -146,7 +150,7 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'knowledge?view=tags', id: 'knowledge-tags', label: 'Knowledge › tags', needsData: true },
   { route: 'knowledge?view=conflicts', id: 'knowledge-conflicts', label: 'Knowledge › conflicts', needsData: true },
   { route: 'knowledge?view=decisions', id: 'knowledge-decisions', label: 'Knowledge › decisions', needsData: true },
-  { route: 'workflows?tab=defs', id: 'workflows-defs', label: 'Workflows › definitions', needsData: true },
+  { route: 'workflows?tab=defs', id: 'workflows-defs', label: 'Automations › Workflows › definitions', needsData: true },
   { route: 'prompts?tab=system', id: 'prompts-system', label: 'Prompts › system', needsData: true },
   { route: 'prompts?tab=bundled', id: 'prompts-bundled', label: 'Prompts › bundled', needsData: true },
   { route: 'prompts?tab=snippets', id: 'prompts-snippets', label: 'Prompts › snippets', needsData: true },
@@ -154,11 +158,11 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'skills?mode=proposals', id: 'skills-proposals', label: 'Skills › proposals', needsData: true },
   { route: 'apps?view=native', id: 'apps-native', label: 'Capabilities › Apps › native', needsData: true },
   { route: 'apps?view=store', id: 'apps-store', label: 'Capabilities › Store', needsData: true },
-  { route: 'triggers?view=week', id: 'triggers-week', label: 'Triggers › week', needsData: true },
-  { route: 'triggers/new', id: 'triggers-new', label: 'Triggers › new › schedule', needsData: true },
-  { route: 'triggers/new?kind=lifecycle', id: 'triggers-new-lifecycle', label: 'Triggers › new › lifecycle', needsData: true },
-  { route: 'triggers/new?kind=event', id: 'triggers-new-event', label: 'Triggers › new › event', needsData: true },
-  { route: 'triggers/new?kind=run_completed', id: 'triggers-new-run_completed', label: 'Triggers › new › run_completed', needsData: true },
+  { route: 'triggers?view=week', id: 'triggers-week', label: 'Automations › week', needsData: true },
+  { route: 'triggers/new', id: 'triggers-new', label: 'Automations › new › schedule', needsData: true },
+  { route: 'triggers/new?kind=lifecycle', id: 'triggers-new-lifecycle', label: 'Automations › new › lifecycle', needsData: true },
+  { route: 'triggers/new?kind=event', id: 'triggers-new-event', label: 'Automations › new › event', needsData: true },
+  { route: 'triggers/new?kind=run_completed', id: 'triggers-new-run_completed', label: 'Automations › new › run_completed', needsData: true },
   { route: 'chat/history', id: 'chat-history', label: 'Chat › history', needsData: true },
   { route: 'chat/history?view=board', id: 'chat-history-board', label: 'Chat › history › board', needsData: true },
   // Where two pages that left the sidebar went (#3818): the notification feed is a filter of the

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName, type RestoreHold, type AutomationWorkflowVersion } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName, type RestoreHold, type AutomationWorkflowVersion, type AutomationGroup, type ListPlace, type ReportsTo } from '../../lib/api'
 import { dispatchedProvider } from '../../lib/rungs'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
@@ -322,6 +322,16 @@ export interface Trigger {
    *  row carrying one would open the wrong inspector. */
   eventPattern?: string
   eventMatcher?: string
+  /** Where the Automations list places it (`ListPlace`): the server's group and its place in the
+   *  whole list, and where its results go. Passed through; the page never derives them. */
+  group?: AutomationGroup
+  rank?: number
+  reportsTo?: ReportsTo
+}
+
+/** The list's place fields of a wire row, under the view-model's names. */
+function placeOf(row: ListPlace): Pick<Trigger, 'group' | 'rank' | 'reportsTo'> {
+  return { group: row.group, rank: row.rank, reportsTo: row.reports_to }
 }
 
 /** The row `?open=<id>` names on the Triggers page, or null.
@@ -384,6 +394,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     needsGrant: j.needs_grant ?? [],
     workflowVersion: j.workflow_version ?? null,
     restoreHold: j.enabled ? '' : (j.restore_hold ?? ''),
+    ...placeOf(j),
   }
 }
 /** Humanize an event name for a list label without needing the fetched catalog
@@ -410,6 +421,7 @@ export function hookToTrigger(h: HookItem): Trigger {
     needsGrant: h.needs_grant ?? [],
     workflowVersion: h.workflow_version ?? null,
     schedule: undefined, hook: h,
+    ...placeOf(h),
   }
 }
 
@@ -459,6 +471,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     needsGrant: t.needs_grant ?? [],
     workflowVersion: t.workflow_version ?? null,
     restoreHold: t.enabled ? '' : (t.restore_hold ?? ''),
+    ...placeOf(t),
   }
 }
 
@@ -474,6 +487,7 @@ export function callbackToTrigger(c: CallbackRow): Trigger {
     author: c.created_by,
     needsGrant: c.needs_grant ?? [],
     callback: c,
+    ...placeOf(c),
   }
 }
 

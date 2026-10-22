@@ -15,6 +15,7 @@ import { TRIGGER_PRESETS } from './triggerPresets'
 // show presets. Offering a starter to someone with a full library who mistyped a search
 // answers a question they did not ask — the `emptyStateNoMatch` contract.
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { EMPTY } = vi.hoisted(() => ({ EMPTY: [] as unknown[] }))
 
 vi.mock('../../lib/api', async (orig) => ({
@@ -25,6 +26,8 @@ vi.mock('../../lib/api', async (orig) => ({
     hooks: () => Promise.resolve(EMPTY),
     storeTriggers: () => Promise.resolve(EMPTY),
     callbacks: () => Promise.resolve([]),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: () => Promise.resolve([]),
     actionProviders: () => Promise.resolve(EMPTY),
     autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
@@ -67,14 +70,14 @@ describe('the Triggers empty state on a fresh home', () => {
     const { navigate } = mount()
     const card = await waitFor(() => screen.getByRole('button', { name: /^Morning briefing/ }))
     await userEvent.click(card)
-    expect(navigate).toHaveBeenCalledWith('triggers/new?kind=schedule&preset=morning-briefing')
+    expect(navigate).toHaveBeenCalledWith('automations/new?kind=schedule&preset=morning-briefing')
   })
 
   it('navigates the blank path to the create URL with NO preset', async () => {
     const { navigate } = mount()
     const blank = await waitFor(() => screen.getByRole('button', { name: /Start from scratch/ }))
     await userEvent.click(blank)
-    expect(navigate).toHaveBeenCalledWith('triggers/new')
+    expect(navigate).toHaveBeenCalledWith('automations/new')
   })
 
   it('offers no presets when the list is merely filtered to nothing', async () => {

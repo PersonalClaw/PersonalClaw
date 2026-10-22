@@ -12,12 +12,15 @@ import type { ScheduleJob } from '../../lib/api'
 
 type Row = Record<string, unknown>
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { API } = vi.hoisted(() => ({
   API: {
     schedules: vi.fn(() => Promise.resolve({ jobs: [] })),
     hooks: vi.fn(() => Promise.resolve([])),
     storeTriggers: vi.fn(() => Promise.resolve([] as Row[])),
     callbacks: vi.fn(() => Promise.resolve([])),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: vi.fn(() => Promise.resolve([])),
     actionProviders: vi.fn(() => Promise.resolve([])),
     autonomyLadder: vi.fn(() => Promise.reject(new Error('no ladder in this test'))),

@@ -11,8 +11,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Mon, Nov 2 08:00\"",
@@ -32,8 +34,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Sat, Nov 7 22:00\"",
@@ -51,8 +55,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Sat, Nov 7 22:00\""
@@ -67,14 +73,16 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Triggers\" clips at #%: #x# in #x#"
+        "<h#> \"Automations\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -90,8 +98,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Mon, Nov 2 08:00\"",
@@ -111,8 +121,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Sat, Nov 7 22:00\"",
@@ -130,8 +142,10 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\"",
         "td[role=button] \"Fri, Nov 6 08:00\"",
         "td[role=button] \"Fri, Nov 6 17:00\"",
         "td[role=button] \"Sat, Nov 7 22:00\""
@@ -146,14 +160,16 @@
         "button \"Previous week\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Triggers\" clips at #%: #x# in #x#"
+        "<h#> \"Automations\" clips at #%: #x# in #x#"
       ]
     }
   }

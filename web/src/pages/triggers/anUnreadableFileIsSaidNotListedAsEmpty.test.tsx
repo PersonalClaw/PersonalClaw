@@ -18,6 +18,7 @@ const SAID = '~/.personalclaw/triggers.json could not be read (it is not valid J
 const REMEDY = 'Repair the file, restore it from a snapshot under Settings → Durability, or remove it to start '
   + 'over; the copy keeps what it held. Every automation in it is listed and runs again as soon as it can be read.'
 
+const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { API } = vi.hoisted(() => ({
   API: {
     discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
@@ -25,6 +26,8 @@ const { API } = vi.hoisted(() => ({
     hooks: vi.fn(() => Promise.resolve([])),
     storeTriggers: vi.fn(() => Promise.resolve([])),
     callbacks: vi.fn(() => Promise.resolve([])),
+    // The page's one read, composed from the four above (#3816).
+    get automations() { return automationsFrom(this) },
     triggerReview: vi.fn(() => Promise.resolve([])),
     actionProviders: vi.fn(() => Promise.resolve([])),
     autonomyLadder: vi.fn(() => Promise.reject(new Error('no ladder in this test'))),

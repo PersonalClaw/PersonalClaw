@@ -235,7 +235,7 @@ describe('the sidebar has no Terminal row', () => {
   it('the full sidebar lists no Terminal, and the corner\'s toggle and ⌘K still reach it', async () => {
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: [] }))
     await openChat(SESSION, /RUN THIS ONE/)
-    expect(railRows()).toContain('Triggers')
+    expect(railRows()).toContain('Automations')
     expect(railRows()).not.toContain('Terminal')
     expect(screen.getByRole('button', { name: 'Open terminal' }), 'the corner\'s toggle').toBeInTheDocument()
     const row = rows.find((r) => r.id === 'go:terminal')
@@ -246,9 +246,9 @@ describe('the sidebar has no Terminal row', () => {
   })
 
   it('a starter sidebar that pinned Terminal shows no row for it', async () => {
-    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['triggers', 'terminal'] }))
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['automations', 'terminal'] }))
     await openChat(SESSION, /RUN THIS ONE/)
-    expect(railRows()).toContain('Triggers')
+    expect(railRows()).toContain('Automations')
     expect(railRows()).not.toContain('Terminal')
   })
 

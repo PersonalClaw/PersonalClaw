@@ -26,7 +26,7 @@ import {
 //     "deep-linking a hidden surface renders it" RED: `Unable to find an accessible element with
 //     the role "heading" and name "Triggers"`.
 //   • auto-pin made a no-op (`return` before `pinNav`) → 3 RED, incl. "…and pins it into the
-//     rail": `expect(pinned).toContain('triggers')` / `Unable to find … link "Triggers"`.
+//     rail": `expect(pinned).toContain('automations')` / `Unable to find … link "Triggers"`.
 //
 // jsdom notes: the WS liveness hook has no gateway to connect to and its reconnect backoff would
 // outlive the test, and every `api.*` read is stubbed to resolve empty — the pages under test
@@ -147,38 +147,39 @@ describe('the disclosure store', () => {
 
   it('pinning is idempotent and survives a fresh read', () => {
     setNavMode('starter')
-    pinNavSurface('triggers')
-    pinNavSurface('triggers')
-    expect(readNavDisclosure().pinned).toEqual(['triggers'])
+    pinNavSurface('automations')
+    pinNavSurface('automations')
+    expect(readNavDisclosure().pinned).toEqual(['automations'])
   })
 
   it('pinning does not silently flip an expert install back to starter', () => {
     // `pinNavSurface` writes the WHOLE record, so it has to carry the mode it read — otherwise
     // the first pin on an install with no record would mint `{pinned:[…]}`, which reads back as
     // starter, and an upgraded user's rail would collapse behind them.
-    pinNavSurface('triggers')
+    pinNavSurface('automations')
     expect(readNavDisclosure().mode).toBe('expert')
   })
 
   it('isDisclosed: starter shows the starter set, pins, and app tiles — nothing else', () => {
     for (const id of STARTER_NAV_IDS) expect(isDisclosed(id, 'starter', [])).toBe(true)
-    expect(isDisclosed('triggers', 'starter', [])).toBe(false)
-    expect(isDisclosed('triggers', 'starter', ['triggers'])).toBe(true)
+    expect(isDisclosed('automations', 'starter', [])).toBe(false)
+    expect(isDisclosed('automations', 'starter', ['automations'])).toBe(true)
     // A contributed app's tile is already an explicit per-app pin (`nav-apps`); disclosure has
     // nothing to reveal for it and must not undo that choice.
     expect(isDisclosed('app/weather', 'starter', [])).toBe(true)
     // Expert shows everything, including a surface nobody pinned.
-    expect(isDisclosed('triggers', 'expert', [])).toBe(true)
+    expect(isDisclosed('automations', 'expert', [])).toBe(true)
   })
 
   it('a pin of a page that became a Library tab reads as the Library row, once, in arrival order', () => {
     // Knowledge, Files and Artifacts were rail rows, and a starter browser pinned each by visiting
-    // it. They are Library's tabs now (#3815), so the record still names ids the rail no longer has.
+    // it. They are Library's tabs now (#3815), so the record still names ids the rail no longer has;
+    // so does a pin of Triggers, which is Automations (#3816).
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['triggers', 'files', 'knowledge', 'artifacts'] }))
-    expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['triggers', 'library'] })
+    expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['automations', 'library'] })
     // The next write keeps what it read, so the record itself moves to the new row.
     pinNavSurface('terminal')
-    expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['triggers', 'library', 'terminal'])
+    expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['automations', 'library', 'terminal'])
   })
 
   it('a visit to a page that moved pins the row it moved to, and the next visit writes nothing', () => {
@@ -195,9 +196,9 @@ describe('the disclosure store', () => {
   })
 
   it('undisclosedCount counts only what starter holds back', () => {
-    const ids = [...STARTER_NAV_IDS, 'triggers', 'workflows', 'app/weather']
+    const ids = [...STARTER_NAV_IDS, 'automations', 'projects', 'app/weather']
     expect(undisclosedCount(ids, [])).toBe(2)
-    expect(undisclosedCount(ids, ['triggers'])).toBe(1)
+    expect(undisclosedCount(ids, ['automations'])).toBe(1)
   })
 })
 
@@ -214,7 +215,7 @@ describe('the rail a fresh install sees', () => {
     })
     for (const label of ['Home', 'Chat', 'Inbox', 'Capabilities', 'Settings']) expect(names).toContain(label)
     // The vacuity guard for every assertion below: something really is hidden.
-    for (const label of ['Triggers', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
+    for (const label of ['Automations', 'Library', 'Projects']) expect(names).not.toContain(label)
   })
 
   it('drops the section headers, which have nothing left to group', async () => {
@@ -255,10 +256,10 @@ describe('the rail a fresh install sees', () => {
     // which is the moment to classify it.
     localStorage.setItem('nav-disclosure', JSON.stringify({
       mode: 'starter',
-      pinned: ['projects', 'library', 'tasks', 'triggers', 'terminal', 'workflows'],
+      pinned: ['projects', 'library', 'tasks', 'automations', 'terminal'],
     }))
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Workflows'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
     expect(screen.queryByRole('button', { name: /^Everything, show/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Show fewer/ })).toBeNull()
   })
@@ -283,7 +284,7 @@ describe('a starter rail pinned before Library', () => {
         'learning', 'workflows'],
     }))
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Workflows'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
     expect(railLinks()).toContain('Library')
     expect(screen.queryByRole('button', { name: /^Everything, show/ })).toBeNull()
   })
@@ -294,52 +295,52 @@ describe('a hidden surface is hidden from the RAIL, never from the app', () => {
   beforeEach(() => setNavMode('starter'))
 
   it('deep-linking a hidden surface renders it — and pins it into the rail', async () => {
-    // The clause the whole change rests on. `#/triggers` is a Platform surface, so under
-    // starter mode it has no rail row at all.
-    expect(isDisclosed('triggers', 'starter', [])).toBe(false)
+    // The clause the whole change rests on. `#/triggers` opens Automations (#3816), a Platform
+    // surface, so under starter mode it has no rail row at all.
+    expect(isDisclosed('automations', 'starter', [])).toBe(false)
     location.hash = '#/triggers'
     renderApp()
 
     // 1. It RENDERED. Asserted on the page's own h1, not on the route string — a blank page and
     //    a rendered page both "navigate", and a disclosure filter applied to the route would
     //    produce the blank one (or a silent fall back to the dashboard).
-    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Automations', level: 1 })).toBeInTheDocument()
 
     // 2. It PINNED. This is what makes hiding safe: the rail grows with use.
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('automations'))
 
     // 3. And the pin reached the rail, not just the store.
-    await waitFor(() => expect(railLinks()).toContain('Triggers'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
   })
 
   it('the pin survives a reload', async () => {
     location.hash = '#/triggers'
     renderApp()
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('automations'))
     cleanup()
 
     // A fresh mount at a DIFFERENT route — the row is there because it was persisted, not
     // because the surface happens to be on screen.
     location.hash = '#/dashboard'
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Triggers'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
   })
 
   it('the command palette offers every surface, including the hidden ones', async () => {
     const user = userEvent.setup()
     renderApp()
-    await waitFor(() => expect(railLinks()).not.toContain('Triggers'))
+    await waitFor(() => expect(railLinks()).not.toContain('Automations'))
 
     await user.keyboard('{Meta>}k{/Meta}')
     const search = await screen.findByLabelText('Search pages, actions and content')
-    await user.type(search, 'Triggers')
+    await user.type(search, 'Automations')
     // Present in the palette even though the rail has no row for it — the always-open door.
-    const hit = await screen.findByRole('option', { name: /^Triggers/ })
+    const hit = await screen.findByRole('option', { name: /^Automations/ })
     await user.click(hit)
 
     // Reached through the palette, the surface renders and pins exactly as a deep link does.
-    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
-    await waitFor(() => expect(railLinks()).toContain('Triggers'))
+    expect(await screen.findByRole('heading', { name: 'Automations', level: 1 })).toBeInTheDocument()
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
   })
 })
 
@@ -354,7 +355,7 @@ describe('expert mode', () => {
 
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Triggers', 'Workflows', 'Projects', 'Library']) {
+      for (const label of ['Automations', 'Projects', 'Library']) {
         expect(names).toContain(label)
       }
     })
@@ -377,7 +378,7 @@ describe('expert mode', () => {
     setNavMode('expert')
     location.hash = '#/triggers'
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Automations', level: 1 })).toBeInTheDocument()
     expect(readNavDisclosure().pinned).toEqual([])
   })
 
@@ -387,7 +388,7 @@ describe('expert mode', () => {
     renderApp()
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Home', 'Chat', 'Triggers', 'Workflows', 'Settings']) {
+      for (const label of ['Home', 'Chat', 'Automations', 'Settings']) {
         expect(names).toContain(label)
       }
     })
@@ -415,7 +416,7 @@ describe('at a mobile viewport', () => {
     await user.keyboard('{Enter}')
 
     await waitFor(() => expect(readNavDisclosure().mode).toBe('expert'))
-    await waitFor(() => expect(railLinks()).toContain('Triggers'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
   })
 
   it('the drawer carries the phone companion, so a phone never has to type its address', async () => {
@@ -474,11 +475,11 @@ describe('the Appearance toggle', () => {
     expect(sw).toHaveAttribute('aria-checked', 'false')
     await user.click(sw)
 
-    await waitFor(() => expect(railLinks()).toContain('Workflows'))
+    await waitFor(() => expect(railLinks()).toContain('Automations'))
     expect(readNavDisclosure().mode).toBe('expert')
     // And back — the rail keeps the starter set, so turning it off is not a trap either.
     await user.click(await screen.findByRole('switch', { name: 'Show every surface' }))
-    await waitFor(() => expect(railLinks()).not.toContain('Workflows'))
+    await waitFor(() => expect(railLinks()).not.toContain('Automations'))
     expect(railLinks()).toContain('Settings')
   })
 })

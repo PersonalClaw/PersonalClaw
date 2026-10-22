@@ -18,9 +18,11 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "390": [
@@ -40,10 +42,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "412": [
@@ -63,10 +67,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "768": [
@@ -86,10 +92,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ]
     },
@@ -119,9 +127,11 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "390": [
@@ -141,10 +151,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "412": [
@@ -164,10 +176,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ],
       "768": [
@@ -187,10 +201,12 @@
         "button \"Pick an action…\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Automations\"",
         "button[role=radio] \"Data event\"",
         "button[role=radio] \"Lifecycle event\"",
         "button[role=radio] \"Run finishes\"",
         "button[role=radio] \"Schedule\"",
+        "button[role=radio] \"Workflows\"",
         "input"
       ]
     },
