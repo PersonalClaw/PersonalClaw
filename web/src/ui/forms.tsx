@@ -61,12 +61,14 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **377** hinted publishers render today — **323** DIRECT call sites (Field 163,
- *  settingsUI's Row 92, NumberRow 68) plus **54** that arrive through seven local wrappers which
+ *  expected to follow. **397** hinted publishers render today — **344** DIRECT call sites (Field 175,
+ *  settingsUI's Row 98, NumberRow 71) plus **53** that arrive through seven local wrappers which
  *  forward a hint into one of those three (ToggleRow 34, StrListField 5, SelectRow 4, TextRow 4,
- *  CheckList 3, EnumRow 2, SegRow 2). Recounted **2026-09-29** with the depth-tracking scan
- *  `fieldHintCounts.test.ts` runs; the 357/305 reading of 2026-09-26 (Field 152, Row 87, NumberRow 66)
- *  is stale — three days of feature work added 20 hinted publishers, one of them the settings list
+ *  CheckList 3, SegRow 2, EnumRow 1). Recounted **2026-10-21** with the depth-tracking scan
+ *  `fieldHintCounts.test.ts` runs; the 377/323 reading of 2026-09-29 (Field 163, Row 92, NumberRow 68)
+ *  is stale — three weeks of feature work added 20 hinted publishers, one of them Settings › Chat's
+ *  "Keep my question in view". The 357/305 reading of 2026-09-26 (Field 152, Row 87, NumberRow 66) is
+ *  staler, three days of work before that having added 20 more, one of them the settings list
  *  editor's. The 336/284 reading of 2026-09-19 (Field 133, Row 84, NumberRow 67) is staler, and the
  *  289/253 (Field 132, Row 82, NumberRow 39) reading before it staler again — closing the nine config
  *  sections that were PATCH-editable with no Settings control (#752,
@@ -81,7 +83,7 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  reds on healthy growth is a rail someone weakens. The floor catches the failure that matters — the
  *  scan breaking, or publishers disappearing — and the test names the command to refresh the prose.
  *
- *  None of the 377 has to change — the id is published here and claimed by the same controls that
+ *  None of the 397 has to change — the id is published here and claimed by the same controls that
  *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }
