@@ -27,8 +27,18 @@ class _State:
         self.frames.append((kind, data))
 
 
+@web.middleware
+async def _signed_in(request: web.Request, handler: Any) -> web.StreamResponse:
+    """The auth middleware's part: every request it admits carries a user (as in auth mode
+    ``none``, where every loopback request does), and an app's token names its app."""
+    request["user"] = "you"
+    if request.headers.get("X-Test-App"):
+        request["app"] = request.headers["X-Test-App"]
+    return await handler(request)
+
+
 def _app(state: _State) -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_signed_in])
     app["state"] = state
     register_listening_routes(app)
     return app
@@ -57,6 +67,30 @@ async def test_the_shell_s_report_is_kept_served_and_sent_once_per_change():
         ("listening", True, ["dictation", "recorder"]),
         ("listening", False, []),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "who",
+    [
+        # An agent's tool server presents the internal secret with the session it acts for.
+        {"X-Internal-Secret": "the gateway's", "X-Session-Key": "dashboard:a-chat"},
+        {"X-Test-App": "an-app"},
+    ],
+    ids=["an agent", "an app"],
+)
+async def test_only_you_report_it_and_another_s_report_changes_nothing(who):
+    """Only the shell, signed in as you, says whether the microphone is live: an agent posting
+    "off" while it is live would have your pages say you are not being heard."""
+    state = _State()
+    async with TestClient(TestServer(_app(state))) as http:
+        assert (await http.post("/api/listening", json={"on": True, "sources": ["dictation"]})).ok
+        r = await http.post("/api/listening", json={"on": False, "sources": []}, headers=who)
+        assert r.status == 403
+        assert (await r.json())["error"]["code"] == "listening_owner_only"
+        said = await (await http.get("/api/listening")).json()
+        assert said["on"] is True and said["sources"] == ["dictation"]
+    assert [(k, d["on"]) for k, d in state.frames] == [("listening", True)]
 
 
 @pytest.mark.asyncio
