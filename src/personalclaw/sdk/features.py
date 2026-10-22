@@ -78,6 +78,10 @@ about each call past the deny-list and before it approves or asks about it
 (``personalclaw.sdk.channel.ask_pre_tool_hooks``), and refuses a call they refuse. A channel app
 that asks them declares it.
 
+``RUNNING_LIST``: the live work is one list, ``GET /api/running``, each row saying what its work is
+doing, and a ``running_changed`` frame says it moved. An app that reads the list declares it, with
+``/api/running`` in its manifest.
+
 ``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
 before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
 call it refuses. A channel app that asks it declares it.
@@ -92,6 +96,10 @@ that saves its turns or imports a thread with them declares it.
 (``with personalclaw.sdk.channel.turn_asked_by(session_key, arrived_on(thread, sender, channel)):``
 around the turn), and what its tools would change of the owner's memory waits for her own word
 unless that sender is the owner. A channel app that runs a conversation's turns itself declares it.
+
+``WAITING_LIST``: everything waiting on the owner is one list, ``GET /api/waiting``, every kind with
+its brief and the route it is answered through, and a ``waiting_changed`` frame says it moved. An
+app that reads the list declares it, with ``/api/waiting`` in its manifest.
 """
 
 from personalclaw.apps.core_features import (
@@ -110,9 +118,11 @@ from personalclaw.apps.core_features import (
     MODEL_EFFORTS,
     PAIRED_OWNER,
     PRE_TOOL_HOOKS,
+    RUNNING_LIST,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
+    WAITING_LIST,
     core_has,
 )
 
@@ -132,8 +142,10 @@ __all__ = [
     "MODEL_EFFORTS",
     "PAIRED_OWNER",
     "PRE_TOOL_HOOKS",
+    "RUNNING_LIST",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",
+    "WAITING_LIST",
     "core_has",
 ]

@@ -32,9 +32,11 @@ from personalclaw.sdk.features import (
     MODEL_EFFORTS,
     PAIRED_OWNER,
     PRE_TOOL_HOOKS,
+    RUNNING_LIST,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
+    WAITING_LIST,
     core_has,
 )
 
@@ -58,9 +60,11 @@ OFFERED_ONCE = {
     "model-efforts",
     "paired-owner",
     "pre-tool-hooks",
+    "running-list",
     "tool-call-screen",
     "turns-name-their-channel",
     "turns-name-who-asked",
+    "waiting-list",
 }
 
 
@@ -81,9 +85,11 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "MODEL_EFFORTS",
         "PAIRED_OWNER",
         "PRE_TOOL_HOOKS",
+        "RUNNING_LIST",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_WHO_ASKED",
+        "WAITING_LIST",
         "core_has",
     }
     assert ADAPTIVE_THINKING == "adaptive-thinking"
@@ -103,6 +109,8 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
+    assert RUNNING_LIST == "running-list"
+    assert WAITING_LIST == "waiting-list"
     for name in (
         ADAPTIVE_THINKING,
         APPROVAL_ANSWERS,
@@ -117,9 +125,11 @@ def test_the_sdk_publishes_the_names_and_the_question():
         MODEL_EFFORTS,
         PAIRED_OWNER,
         PRE_TOOL_HOOKS,
+        RUNNING_LIST,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
+        WAITING_LIST,
     ):
         assert name in CORE_FEATURES
         assert core_has(name) is True
@@ -872,6 +882,207 @@ def _adaptive_thinking_holds() -> None:
         assert thinks_adaptively(model_id) is False, model_id
 
 
+#: The two probe apps the lists are read as: one that declares both routes, one that declares
+#: neither.
+_LISTS_READER, _LISTS_BLIND = "lists-reader", "lists-blind"
+
+
+def _read_the_lists(read) -> None:
+    """Run *read(get)* against the real list routes behind the real permission middleware, on a real
+    ``DashboardState`` in a scratch home holding the two probe apps and one running loop, with one
+    approval waiting: ``await get(path, app="")`` answers ``(status, body)`` as the owner, or as
+    *app*. *read* gets the loop's id as its second argument."""
+    import asyncio
+    import json
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from unittest.mock import MagicMock, patch
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.apps import manager
+    from personalclaw.dashboard.handlers.running import api_running, api_running_count
+    from personalclaw.dashboard.handlers.waiting import api_waiting
+    from personalclaw.dashboard.server import app_permission_middleware
+    from personalclaw.dashboard.state import DashboardState
+    from personalclaw.history import ConversationLog
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import Loop, LoopStatus
+
+    def gateway(state, app: str) -> web.Application:
+        @web.middleware
+        async def identity(request, handler):
+            request["user"] = "owner"
+            if app:
+                request["app"] = app
+            return await handler(request)
+
+        gw = web.Application(middlewares=[identity, app_permission_middleware])
+        gw["state"] = state
+        gw.router.add_get("/api/waiting", api_waiting)
+        gw.router.add_get("/api/running", api_running)
+        gw.router.add_get("/api/running/count", api_running_count)
+        return gw
+
+    async def scenario(home: Path) -> None:
+        for name, api in (
+            (_LISTS_READER, ["/api/waiting", "/api/running", "/api/running/count"]),
+            (_LISTS_BLIND, ["/api/chat"]),
+        ):
+            folder = home / "apps" / name
+            folder.mkdir(parents=True)
+            manifest = {"name": name, "version": "1.0.0", "displayName": name, "description": "x"}
+            (folder / "app.json").write_text(json.dumps({**manifest, "permissions": {"api": api}}))
+            installed = {"name": name, "version": "1.0.0", "enabled": True}
+            (folder / "installed.json").write_text(json.dumps(installed))
+        state = DashboardState(
+            sessions=MagicMock(count=0),
+            start_time=0.0,
+            conversation_log=ConversationLog(base_dir=home / "conversations"),
+        )
+        state.broadcast_ws = lambda *_a, **_k: None
+        loop = store.create(
+            Loop(
+                id="",
+                name="Witness",
+                kind="goal",
+                task="investigate",
+                project_id="p-1",
+                kind_config={"goal_type": "open_ended", "granularity": "balanced"},
+            )
+        )
+        store.update_status(loop.id, LoopStatus.RUNNING)
+        ask = asyncio.create_task(
+            state.request_approval(
+                "bg-witness",
+                "cron",
+                "shell",
+                tool_input={"command": "rm -rf build"},
+                risk_level="destructive",
+            )
+        )
+        for _ in range(50):
+            await asyncio.sleep(0)
+
+        async def get(path: str, app: str = ""):
+            async with TestClient(TestServer(gateway(state, app))) as http:
+                resp = await http.get(path)
+                json_body = resp.content_type == "application/json"
+                return resp.status, await (resp.json() if json_body else resp.text())
+
+        try:
+            await read(get, loop.id)
+        finally:
+            ask.cancel()
+
+    with TemporaryDirectory() as scratch:
+        home = Path(scratch)
+        with (
+            patch("personalclaw.config.loader.config_dir", return_value=home),
+            patch.object(manager, "config_dir", return_value=home),
+        ):
+            asyncio.run(scenario(home))
+
+
+def _waiting_list_holds() -> None:
+    """Everything waiting on the owner is one list at ``GET /api/waiting``: an approval is an item
+    with every field the list promises and the route it is answered through. An app that declares
+    the route reads it with nothing that answers it, and its socket hears the list's ring; one
+    that does not is refused both."""
+    from personalclaw import waiting
+    from personalclaw.dashboard import ws_state
+
+    promised = (
+        "id",
+        "kind",
+        "work",
+        "session",
+        "brief",
+        "consequence",
+        "risk",
+        "asked_at",
+        "age_secs",
+        "expires_at",
+        "current",
+        "interrupt",
+        "answer",
+        "route",
+    )
+    assert waiting.ITEM_FIELDS == promised
+    assert waiting.CONSEQUENCES == ("destructive", "changes", "asks")
+
+    async def read(get, _loop_id: str) -> None:
+        status, mine = await get("/api/waiting")
+        assert status == 200, mine
+        assert set(mine) == {"waiting", "unreadable"}
+        (item,) = [i for i in mine["waiting"] if i["id"] == "approval:bg-witness"]
+        assert set(item) == set(promised)
+        assert (item["kind"], item["consequence"]) == ("approval", "destructive")
+        assert item["answer"]["path"] == "/api/approvals/bg-witness/{answer}"
+        assert item["brief"]["tool"] == "shell"
+
+        status, theirs = await get("/api/waiting", _LISTS_READER)
+        assert status == 200, theirs
+        (seen,) = [i for i in theirs["waiting"] if i["id"] == "approval:bg-witness"]
+        assert seen["answer"]["path"] == "" and seen["answer"]["takes"] == ["approve", "reject"]
+        status, _ = await get("/api/waiting", _LISTS_BLIND)
+        assert status == 403
+
+        assert waiting.CHANGED in ws_state.WAITING_LIST_FRAMES
+        assert ws_state.frame_subject(waiting.CHANGED, {}) == ("waiting", "")
+        may_read = ws_state.DashboardWebSocketState._app_may_read
+        assert may_read(_LISTS_READER, ws_state.WAITING_LIST_ROUTE) is True
+        assert may_read(_LISTS_BLIND, ws_state.WAITING_LIST_ROUTE) is False
+
+    _read_the_lists(read)
+
+
+def _running_list_holds() -> None:
+    """The live work is one list at ``GET /api/running``: a running loop is a row with every field
+    the list promises, its phase and the route that opens it, and the count counts it. An app that
+    declares the route reads the list, of only the work its socket hears of; one that does not is
+    refused."""
+    from personalclaw import running_now
+    from personalclaw.dashboard import ws_state
+
+    promised = (
+        "work",
+        "kind",
+        "name",
+        "agent",
+        "phase",
+        "line",
+        "since",
+        "started_at",
+        "route",
+        "session",
+        "blocked",
+        "waiting",
+    )
+    assert running_now.ROW_FIELDS == promised
+    assert running_now.CHANGED in ws_state.RUNNING_LIST_FRAMES
+
+    async def read(get, loop_id: str) -> None:
+        status, mine = await get("/api/running")
+        assert status == 200, mine
+        assert set(mine) == {"running", "finished"}
+        (row,) = [r for r in mine["running"] if r["work"] == f"loop:{loop_id}"]
+        assert set(promised) <= set(row)
+        assert (row["kind"], row["name"], row["route"]) == ("loop", "Witness", f"#/loops/{loop_id}")
+        assert row["phase"] and row["line"]
+        status, count = await get("/api/running/count")
+        assert status == 200 and count["live"] == len(mine["running"]), count
+
+        status, theirs = await get("/api/running", _LISTS_READER)
+        assert status == 200, theirs
+        assert theirs == {"running": [], "finished": []}, "no work its chats started"
+        status, _ = await get("/api/running", _LISTS_BLIND)
+        assert status == 403
+
+    _read_the_lists(read)
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     ADAPTIVE_THINKING: _adaptive_thinking_holds,
@@ -888,9 +1099,11 @@ WITNESSES = {
     MODEL_EFFORTS: _model_efforts_hold,
     PAIRED_OWNER: _paired_owner_holds,
     PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
+    RUNNING_LIST: _running_list_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
     TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,
+    WAITING_LIST: _waiting_list_holds,
 }
 
 
