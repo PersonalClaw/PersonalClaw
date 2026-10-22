@@ -932,7 +932,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             its nudge, while it has a next cycle to guide. ── */}
         <div className="shrink-0 px-2xl pb-l flex flex-col gap-s" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
           <LoopProgressStrip status={c.status} totalCycles={c.total_cycles} maxCycles={c.max_cycles} onAction={act}
-            sources={loopActionSources(c)} report={c.report} onReport={isRunBackedKind(c.kind ?? 'goal') ? undefined : changeReport} />
+            sources={loopActionSources(c)} mode={{ label: loopModeLabel(c.attended), meaning: loopModeMeaning(c.attended, c.kind) }} report={c.report} onReport={isRunBackedKind(c.kind ?? 'goal') ? undefined : changeReport} />
           {active && (
             <div className="rounded-lg bg-surface-container p-m">
               {/* Raw: a bare text surface inside the composer card; TextArea draws its own fill, padding and radius. */}

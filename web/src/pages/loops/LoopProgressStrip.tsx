@@ -21,10 +21,13 @@ export function cycleLabel(status: string, totalCycles: number, maxCycles: numbe
  *  passes `sources={loopActionSources(loop)}`, the run's own map. Stop is terminal (a stopped loop does not
  *  resume), so its first press arms it as "Stop for good?" and only the second sends it.
  *
+ *  It says the loop's Mode (Attended or Unattended) beside its cycle, as a chat's composer footer
+ *  says its permission mode (#3808), with what the Mode means on the word.
+ *
  *  Given `onReport`, it also carries how the loop reports, the choice its start asked for, to change
  *  while the loop still has cycles ahead of it; a loop no action can move on has nothing left to
  *  report. */
-export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction, report, onReport, sources = LOOP_ACTION_SOURCE_STATUSES }: {
+export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction, report, onReport, sources = LOOP_ACTION_SOURCE_STATUSES, mode }: {
   status: string
   totalCycles: number
   maxCycles: number
@@ -32,6 +35,8 @@ export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction, re
   report?: LoopReport
   onReport?: (report: LoopReport) => void
   sources?: Readonly<Record<LoopAction, ReadonlySet<string>>>
+  /** The loop's Mode in a word, and what it means (`loopModeLabel`, `loopModeMeaning`). */
+  mode?: { label: string; meaning: string }
 }) {
   const [stopArmed, setStopArmed] = useState(false)
   useEffect(() => {
@@ -45,6 +50,7 @@ export function LoopProgressStrip({ status, totalCycles, maxCycles, onAction, re
   return (
     <div role="toolbar" aria-label="This loop" className="flex min-h-11 flex-wrap items-center gap-s rounded-lg bg-surface-container/60 px-m py-1.5">
       <span data-type="caption" className="tabular-nums text-on-surface-var">{cycleLabel(status, totalCycles, maxCycles)}</span>
+      {mode && <span data-type="caption" className="text-on-surface-low" title={mode.meaning}>{mode.label}</span>}
       {onReport && ahead && <LoopReportPill value={report ?? DEFAULT_REPORT} onChange={onReport} />}
       <span className="flex-1" />
       {can('start') && <Button size="sm" onClick={() => onAction('start')}><Play size={14} /> Start</Button>}

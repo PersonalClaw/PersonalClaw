@@ -123,6 +123,15 @@ describe('the strip above the composer', () => {
   )
 })
 
+describe('the loop\'s mode, at the foot of its thread', () => {
+  // A chat says its permission mode in its composer's footer (#3808); a loop's composer says its own.
+  it.each([[true, 'Attended'], [false, 'Unattended']] as const)('attended %s reads %s in the strip', async (attended, label) => {
+    const { strip } = await mount(fixture('running', { attended }))
+    const said = within(strip()).getByText(label)
+    expect(said.getAttribute('title'), 'what the mode means, on the word').toMatch(new RegExp(`^${label}:`))
+  })
+})
+
 describe('how the loop reports, in the strip', () => {
   it('shows the choice the loop holds, and a change is saved on the loop', async () => {
     const loop = fixture('running', { report: 'as_it_goes' })

@@ -1,7 +1,7 @@
 import { ArrowUpRight } from 'lucide-react'
 import { api, type LoopReport } from '../../../lib/api'
 import { loopActionSources, loopStatusLabel } from '../../../lib/loopStatus'
-import { isRunBackedKind } from '../../../lib/loopMode'
+import { isRunBackedKind, loopModeLabel, loopModeMeaning } from '../../../lib/loopMode'
 import { reportActionFailure } from '../../../app/reportingWrite'
 import { TextLink } from '../../../ui/TextLink'
 import { LoopProgressStrip, type StripAction } from '../../loops/LoopProgressStrip'
@@ -49,7 +49,7 @@ export function LoopBeside({ id }: { id: string }) {
       </dl>
 
       <LoopProgressStrip status={entity.status} totalCycles={entity.total_cycles} maxCycles={entity.max_cycles}
-        onAction={act} sources={loopActionSources(entity)}
+        onAction={act} sources={loopActionSources(entity)} mode={{ label: loopModeLabel(entity.attended), meaning: loopModeMeaning(entity.attended, kind) }}
         report={entity.report} onReport={isRunBackedKind(kind) || entity.run_id ? undefined : changeReport} />
 
       {attention && (

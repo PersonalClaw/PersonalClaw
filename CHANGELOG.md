@@ -46,6 +46,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A loop's cycle opens in a pane beside its thread, where it used to replace the Details list: the list stays, with that cycle marked, so the next is one press away, and the address (`?details=1&sel=cycle-N`) opens it again. The Findings Log and the returns per cycle still open in Details; closing the pane stops nothing.**
 - **Home is what needs you, what is running and what finished: Needs You lists everything waiting on your answer, most consequential first and then oldest, each answered from its card; Running Now lists each piece of live work with its phase and its last update; and Recent and completed lists what just finished and your latest threads. A selected item opens beside them, or in their place in a narrow window. One badge in the toolbar counts what waits on you on every page, View › Overview keeps the Agent world, the live views, tasks, Discover, pinned artifacts and recent activity, and `#/mission-control` opens Home.**
 - **Work incident mode holds says what moves it again: "Held until incident mode is off", on Home, the phone, the menu bar and everywhere else that lists what is running.**
+- **A loop's page says its Mode, Attended or Unattended, in the strip above its composer, as a chat's composer says its permission mode, with what the Mode means on the word; the loop's detail tile beside a chat says it too.**
 
 ### Fixed
 
