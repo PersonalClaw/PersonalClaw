@@ -1070,6 +1070,26 @@ async def _the_broadcast_session_list_carries_rows_and_nothing_else(state, socks
         assert set(frame) == {"type", "data"}, f"{who}'s session list carries {sorted(frame)}"
 
 
+#: How far you have seen a chat (``chat_seen_routes``), which APP declares beside every frame.
+SEEN = "chat_seen"
+
+
+async def _how_far_you_have_seen_a_chat_reaches_no_app(state, socks) -> None:
+    """It names the chat but is about you: the app that started the chat, declaring the frame,
+    hears nothing of when you read it."""
+    for conversation in ("mine", "ours", "*"):
+        state.broadcast_ws(SEEN, {"session": conversation, "seen_through": "2026-01-01T09:00:00Z"})
+    for app in (APP, OTHER, RELAY, WAITER):
+        assert [
+            f for f in _frames(socks[app]) if f["type"] == SEEN
+        ] == [], f"{app} read your receipts"
+    assert [f["data"]["session"] for f in _frames(socks["yours"]) if f["type"] == SEEN] == [
+        "mine",
+        "ours",
+        "*",
+    ], "your socket still hears every one"
+
+
 #: The socket rows, by what each shows.
 SOCKET_ROWS: dict[str, Any] = {
     **{
@@ -1116,6 +1136,7 @@ SOCKET_ROWS: dict[str, Any] = {
     "the broadcast session list carries rows and nothing else": (
         _the_broadcast_session_list_carries_rows_and_nothing_else
     ),
+    "how far you have seen a chat reaches no app": _how_far_you_have_seen_a_chat_reaches_no_app,
 }
 
 
@@ -1123,9 +1144,9 @@ SOCKET_ROWS: dict[str, Any] = {
 async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
     """The three apps installed once, in this test's home; every row on sockets and a state of its
     own, the home as the install left it after every row."""
-    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 14, "a frame or a case was left out"
+    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 15, "a frame or a case was left out"
     with _home(tmp_path):
-        _install(tmp_path, APP, {"api": ["/api/ws"], "events": [*EVERY_FRAME, WAITING_RING]})
+        _install(tmp_path, APP, {"api": ["/api/ws"], "events": [*EVERY_FRAME, WAITING_RING, SEEN]})
         _install(tmp_path, OTHER, {"api": ["/api/ws"], "events": [*EVERY_FRAME, WAITING_RING]})
         _install(tmp_path, WAITER, {"api": ["/api/waiting", "/api/ws"], "events": [WAITING_RING]})
         _install(

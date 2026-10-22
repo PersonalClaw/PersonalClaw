@@ -566,6 +566,18 @@ INVENTORY: tuple[StateEntry, ...] = (
     # only remaining copy of the transcript lines it holds, so excluding it would lose the
     # older half of a long-running room while appearing to back the room up.
     StateEntry(
+        id="chat_seen",
+        kind=KIND_JSON_FILE,
+        path="chat_seen.json",
+        domain=DOMAIN_WORK,
+        merge=MERGE_LWW,
+        help="how far you have seen each chat, which unread reads (`chat_seen`)",
+        records=Shape(key="chats"),
+        # What this machine's windows showed you: another machine's record of what it showed you
+        # says nothing of what you have read here.
+        machine_local=True,
+    ),
+    StateEntry(
         id="rooms",
         kind=KIND_TREE,
         path="rooms",

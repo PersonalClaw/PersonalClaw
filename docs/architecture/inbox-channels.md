@@ -736,6 +736,37 @@ past answering, an item leaves the list.
   Every surface reads the ids it answers with off the item's own route through one parser,
   `web/src/lib/waitingAnswer.ts`.
 
+## A chat you have not seen
+
+Whether you have seen a chat's last reply is the gateway's fact, so every window and the phone
+agree on it. `chat_seen.json` (`personalclaw/chat_seen.py`, its one writer) keeps, per chat, the
+instant you last had it in front of you (`seen_through`), and `since`, the instant every chat has
+been seen through: when the record began, so the replies every chat held before it are not all
+unread at once, and then the last time you marked every chat seen.
+
+- **It moves forward only.** `POST /api/chat/sessions/{session}/seen` advances one chat and
+  `POST /api/chat/seen` every chat, each to `through` or now, never past now; an older
+  instant changes nothing. Each advance is said in a `chat_seen {session, seen_through}` frame
+  (`session` is `"*"` for every chat), so another window clears its mark at once. Only you advance
+  it: an app's token and an agent's credential are refused (`seen_owner_only`), since either could
+  clear a mark you never saw.
+- **It is about you, not the chat.** The `chat_seen` frame reaches no app's socket, not even the
+  app that started the chat (`ws_state.OWNER_FRAMES`), and an app reading its own chats gets their
+  rows with no `unread`: when you read them is yours.
+- **The chat page marks it only while it is in front of you:** its page visible and its window
+  focused, on opening, on coming back into view and when a turn ends in view
+  (`web/src/pages/chat/useSeenWhileInView.ts`). A chat open in a background tab is not seen.
+- **Every row says what needs you**, derived on each `GET /api/chat/sessions` and never stored:
+  `attention: {unread, needs_you, your_turn}` (`dashboard/chat_seen_routes.py`). `unread` is a last
+  turn that ended after `seen_through`, never one you stopped yourself; `needs_you` is anything in
+  the waiting list shown in the chat, a helper's ask among them, and seeing the chat never clears
+  it; `your_turn` is a finished reply with nothing running or waiting.
+- **The sidebar shows one mark**, by precedence: waiting on you, running, failed, unread. A failed
+  chat you have seen shows none.
+- **An unreadable record reads as nothing seen**, so every finished reply shows unread and the
+  failure is logged; the file is kept as it is and a mark is refused (`seen_unreadable`) rather
+  than written over it.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

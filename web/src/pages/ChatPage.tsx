@@ -17,6 +17,7 @@ import { ChatComposer } from './chat/composer/ChatComposer'
 import { ComposerFold, FOLD_ROOM } from './chat/composer/ComposerFold'
 import { PRIVATE_THREAD_TINT } from './chat/memoryModeCopy'
 import { useChatStream } from './chat/useChatStream'
+import { useSeenWhileInView } from './chat/useSeenWhileInView'
 import { useTranscript } from './chat/transcript/useTranscript'
 import { Transcript } from './chat/transcript/Transcript'
 import { MessagesSkeleton } from './chat/transcript/MessagesSkeleton'
@@ -127,6 +128,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     loadingHistory, missing, loadFailure, setLoadAttempt,
   } = stream
   const started = turns.length > 0
+  // The chat is seen while it is in front of you, on the gateway's record (`chat/useSeenWhileInView`).
+  useSeenWhileInView(sessionRef.current ?? sessionId, stream.streaming)
   // The composer: the draft and what it carries, the selection, Stop, and `send`, which every region
   // sends through (`chat/composer/useChatComposer`).
   const composer = useChatComposer({

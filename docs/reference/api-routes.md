@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **939 registrations** over **763 distinct paths** — 932 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **943 registrations** over **766 distinct paths** — 936 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,11 +20,11 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 130 families the surface divides into, largest first.
+The 131 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 86 | 73 |
+| `/api/chat` | 88 | 75 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -95,6 +95,7 @@ The 130 families the surface divides into, largest first.
 | `/api/computer-use` | 2 | 2 |
 | `/api/guardrails` | 2 | 1 |
 | `/api/heartbeat` | 2 | 2 |
+| `/api/listening` | 2 | 1 |
 | `/api/running` | 2 | 2 |
 | `/api/session` | 2 | 2 |
 | `/api/stt` | 2 | 2 |
@@ -157,7 +158,7 @@ The 130 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 932 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 936 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -311,6 +312,7 @@ The 932 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/chat/screen-frame` | can this session share its screen? |
 | `POST` | `/api/chat/screen-frame` | stage one screen frame for the next chat turn. |
 | `POST` | `/api/chat/screen-frame/pin` | promote one frame to an ordinary attachment. |
+| `POST` | `/api/chat/seen` | you have seen every chat through ``through`` (now when absent): every |
 | `GET` | `/api/chat/sessions` | list all chat sessions. |
 | `POST` | `/api/chat/sessions` | create a new chat session. |
 | `POST` | `/api/chat/sessions/auto-archive` | run (or preview) the auto-archive rule. |
@@ -360,6 +362,7 @@ The 932 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/resume` | load a history session into a session. |
 | `GET` | `/api/chat/sessions/{session}/rewind` | what a rewind would do. Read-only. |
 | `POST` | `/api/chat/sessions/{session}/rewind` | restore files to the end of turn N. |
+| `POST` | `/api/chat/sessions/{session}/seen` | you have seen the chat through ``through`` (now |
 | `POST` | `/api/chat/sessions/{session}/share` | a redacted, read-only artifact of a chat. |
 | `POST` | `/api/chat/sessions/{session}/side/close` | drop the buffer + destroy |
 | `POST` | `/api/chat/sessions/{session}/side/open` | open (or reset) the side buffer. |
@@ -616,6 +619,8 @@ The 932 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term you added, or one learned from a fix. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
+| `GET` | `/api/listening` | whether the microphone is live, and which sources hold it. |
+| `POST` | `/api/listening` | the shell's report: ``{"on": bool, "sources": [...]}``. |
 | `POST` | `/api/logout` | sign every dashboard session out, everywhere. |
 | `GET` | `/api/logs` | SSE stream of live log entries. |
 | `GET` | `/api/logs/level` | current backend logger level. |

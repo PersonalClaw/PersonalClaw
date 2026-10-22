@@ -736,6 +736,11 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     # outside the gateway's session scope, so each call asks before it hands anything to a model.
     # Registered here for the same capture hazard.
     app.router.add_get("/api/chat/sessions/model-reach", chat.api_chat_session_model_reach)
+    # How far you have seen each chat (`chat_seen`): one chat, and every chat at once (⇧Esc).
+    from personalclaw.dashboard import chat_seen_routes
+
+    app.router.add_post("/api/chat/seen", chat_seen_routes.api_chat_seen_all)
+    app.router.add_post("/api/chat/sessions/{session}/seen", chat_seen_routes.api_chat_session_seen)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     # The durable session map: the in-session index's marks + per-turn telemetry,
     # served without hydrating the whole transcript client-side.

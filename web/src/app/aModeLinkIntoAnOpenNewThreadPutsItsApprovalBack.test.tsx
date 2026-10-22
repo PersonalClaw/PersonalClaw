@@ -86,7 +86,9 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-const posted = () => requests.filter((r) => !r.startsWith('GET '))
+// The chat marked seen while it is in front of you (`chat/useSeenWhileInView`) is no write of the
+// link's, nor of its send.
+const posted = () => requests.filter((r) => !r.startsWith('GET ') && !r.endsWith('/seen'))
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)) })
 /** What the desktop does with a link once the app is open: it assigns the window's hash. */
 const deliver = (hash: string) => act(async () => {
