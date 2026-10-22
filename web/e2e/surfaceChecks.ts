@@ -91,6 +91,11 @@ export const MIN_NON_TEXT_CONTRAST = 3
 export const TAB_CAP = 60
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
+/** The buddy's surfaces also run WCAG 2.2 AA (#3902), whose rule axe checks is `target-size`: Gate D
+ *  holds the buddy to it now, and the 44 px compact check below goes further. The rest of the app
+ *  joins it under the shared UI quality check (#3811). */
+const BUDDY_AXE_TAGS = [...AXE_TAGS, 'wcag22aa']
+export const isBuddyRoute = (route: string) => /^(buddy(\/|\?|$)|settings\/buddy$)/.test(route)
 const BLOCKING = new Set(['serious', 'critical'])
 
 export const STEPS = {
@@ -294,11 +299,11 @@ export interface Pcq {
 // ── 1. axe, the non-axe detectors, the accessibility tree ────────────────────────────────────────
 
 /** axe's serious and critical violations: the blocking bar, unchanged from the a11y sweep. */
-export async function axeFindings(page: Page): Promise<string[]> {
+export async function axeFindings(page: Page, route = ''): Promise<string[]> {
   // The cast is the type of the one argument: `@axe-core/playwright` declares its `Page` from a
   // second copy of playwright-core in this tree, structurally the same as the runner's.
   type AxePage = ConstructorParameters<typeof AxeBuilder>[0]['page']
-  const results = await new AxeBuilder({ page: page as unknown as AxePage }).withTags(AXE_TAGS).analyze()
+  const results = await new AxeBuilder({ page: page as unknown as AxePage }).withTags(isBuddyRoute(route) ? BUDDY_AXE_TAGS : AXE_TAGS).analyze()
   return results.violations
     .filter((v) => BLOCKING.has(v.impact ?? ''))
     .map((v) => `[${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s): ` +
@@ -806,7 +811,7 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
   await page
     .waitForFunction(() => !document.body.innerText.includes('Loading…'), null, { timeout: 5_000 })
     .catch(() => {})
-  await baselined(STEPS.axe, () => axeFindings(page))
+  await baselined(STEPS.axe, () => axeFindings(page, ctx.route))
   await step(STEPS.detectors, () => detectorFindings(page))
   await step(STEPS.tree, async () => {
     measured.tree = await accessibilityTree(page)

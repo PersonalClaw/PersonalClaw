@@ -68,7 +68,7 @@ const orbOf = (container: HTMLElement) => container.querySelector('[data-buddy-o
 /** The line beside the art: the text node that follows the orb's canvas in the same row, or null
  *  when there is none to read. */
 function lineBesideArt(container: HTMLElement): string | null {
-  const art = container.querySelector('[data-buddy-orb] canvas[role="img"]')
+  const art = container.querySelector('[data-buddy-orb] canvas[aria-hidden="true"]')
   const line = art?.parentElement?.nextElementSibling
   if (!art || !line?.hasAttribute('data-buddy-line')) return null
   return line.textContent?.trim() || null
@@ -81,7 +81,9 @@ describe('the exact line sits beside every family pose and the focused card', ()
       const { container } = render(<BuddyOrb state={state} line={line} size={48} />)
       expect(orbOf(container).dataset.buddyFamily).toBe(family)
       expect(lineBesideArt(container)).toBe(line)
-      expect(container.querySelector('canvas')?.getAttribute('aria-label')).toBe(wordsOf(state))
+      // The drawing is decoration (#3902): the line beside it says its state.
+      expect(container.querySelector('canvas')?.getAttribute('aria-hidden')).toBe('true')
+      expect(container.querySelector('canvas')?.getAttribute('role')).toBeNull()
     })
   }
 
