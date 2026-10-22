@@ -256,6 +256,9 @@ export const NON_NAV_ROUTES: RouteEntry[] = [
   // The buddy playground (#3892), a full-screen shell route like `#/companion`: its Play tab, with
   // the stage, the controls and the log. It reads nothing from the gateway.
   { route: 'buddy/playground', id: 'buddy-playground', label: 'Buddy › Playground' },
+  // The buddy's live presence (#3832), what the buddy window shows: with one piece of work running
+  // and the four kinds the waiting list stubs, it shows the first of them expanded, with its card.
+  { route: 'buddy', id: 'buddy', label: 'Buddy', needsData: true },
 ]
 
 /** The routes above that the shell renders full-screen, without its NavRail (`SHELL_ROUTES` in

@@ -11,13 +11,10 @@
 import type { ReactNode } from 'react'
 import { BuddyCard } from '../../ui/BuddyCard'
 import { BuddyOrb } from '../../ui/BuddyOrb'
-import { Morph } from '../../ui/motion/Morph'
 import { Eyebrow } from '../../ui/Eyebrow'
-import { orbStateOf, type BuddyState as OrbState } from '../../ui/buddy/orbPoses'
-import { focusedWork, viewOf, type BuddyState, type Truth } from '../../lib/buddy/machine'
-import { lineOf } from '../../lib/buddy/lines'
+import { focusedWork, viewOf, type BuddyState } from '../../lib/buddy/machine'
+import { BuddyPresence, orbOf } from './BuddyPresence'
 import type { StepWindows } from '../../lib/buddy/steps'
-import type { BuddySurface } from '../../lib/buddy/copy'
 import { phaseLabel } from '../../lib/workPhase'
 import { cardPropsOf, type StageAnswer } from './stageCard'
 
@@ -26,16 +23,6 @@ export const STAGE_WIDTHS = ['320', '390', '412', 'full'] as const
 export type StageWidth = (typeof STAGE_WIDTHS)[number]
 
 const ALERT_WORDS = { approval: 'Approval', input: 'Question', error: 'Error' } as const
-
-/** The orb's state for a truth, over the focused work's own phase for the lines the machine adds
- *  of its own (connected again, answered elsewhere, the return summary). */
-function orbOf(truth: Truth, machine: BuddyState): OrbState {
-  return orbStateOf(truth, focusedWork(machine)?.phase ?? 'idle')
-}
-
-function Line({ truth, surface }: { truth: Truth; surface: BuddySurface }) {
-  return <>{lineOf(truth, surface)}</>
-}
 
 function Section({ title, children, count }: { title: string; children: ReactNode; count?: number }) {
   return (
@@ -64,41 +51,21 @@ function Card({ machine, steps, onAnswer }: Pick<StageProps, 'machine' | 'steps'
   return <BuddyCard {...cardPropsOf(machine, steps, onAnswer)} state={orbOf(truth, machine)} orbId={ORB_ID} />
 }
 
-/** The screen: the island on its top edge, or the floating orb. */
+/** The screen: the buddy as it shows, on a frame the width being played. */
 function Screen({ machine, width, steps, onAnswer }: StageProps) {
   const view = viewOf(machine)
-  const truth = view.truth
   return (
     <div
       data-stage-screen="" data-room={view.room ?? 'none'}
       className="relative flex min-h-64 w-full min-w-0 flex-col items-center overflow-hidden rounded-xl border border-outline-variant bg-surface-low p-m"
       style={width === 'full' ? undefined : { maxWidth: `${Number(width) / 16}rem` }}
     >
-      {!view.shows || !truth ? (
+      {!view.shows || !view.truth ? (
         <p data-type="body-s" className="m-auto text-on-surface-var">
           {machine.enabled ? 'Nothing shows: the buddy is hidden.' : 'Nothing shows: Buddy status is off.'}
         </p>
-      ) : machine.docked ? (
-        <div data-stage-island="" className="flex w-full min-w-0 max-w-md flex-col items-center">
-          {view.room === 'peek' ? (
-            <BuddyOrb state={orbOf(truth, machine)} line="" size={18} />
-          ) : view.room === 'expanded' ? (
-            <Card machine={machine} steps={steps} onAnswer={onAnswer} />
-          ) : (
-            <div className="flex w-full min-w-0 max-w-sm items-center gap-s rounded-full bg-surface-high px-m py-xs">
-              <Morph id={ORB_ID} className="flex min-w-0 flex-1"><BuddyOrb state={orbOf(truth, machine)} line={lineOf(truth, 'topEdgeCompact')} size={24} /></Morph>
-              {view.inSight ? <span data-type="label-s" className="shrink-0 text-on-surface-var">+{view.inSight}</span> : null}
-            </div>
-          )}
-        </div>
       ) : (
-        <div data-stage-floating="" className="mt-auto flex w-full min-w-0 flex-col items-end gap-s">
-          {machine.card === 'open' ? <Card machine={machine} steps={steps} onAnswer={onAnswer} /> : null}
-          {machine.card === 'hover' || machine.shown ? (
-            <p data-type="body-s" className="max-w-full rounded-lg bg-surface-high px-m py-xs text-on-surface"><Line truth={truth} surface="floatingBubble" /></p>
-          ) : null}
-          <BuddyOrb state={orbOf(truth, machine)} line="" size={48} />
-        </div>
+        <BuddyPresence machine={machine} orbId={ORB_ID} card={<Card machine={machine} steps={steps} onAnswer={onAnswer} />} />
       )}
     </div>
   )

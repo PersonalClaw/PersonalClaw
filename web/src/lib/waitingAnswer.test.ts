@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WaitingItem, WaitingKind } from './api'
-import { waitingAnswerId, waitingQuestion, waitingReply } from './waitingAnswer'
+import { waitingAnswerId, waitingQuestion, waitingQuestionRef, waitingReply } from './waitingAnswer'
 import { waitingItem } from '../test/waiting'
 
 // ── An item is answered on its own route's exact shape, or not at all (#3888) ──────────────────
@@ -48,6 +48,17 @@ const BROKEN = [
   '/x/api/triggers/t-1/answer',
   '/api/loops/l-1/answer',
   '/api/triggers/t-1/resume',
+  // An agent's question's route, broken, climbing out, or a lookalike of another source's.
+  '/api/chat/sessions//questions/q-1/answer',
+  '/api/chat/sessions/c-1/questions//answer',
+  '/api/chat/sessions/%2E%2E/questions/q-1/answer',
+  '/api/chat/sessions/c-1/questions/%2e%2e/answer',
+  '/api/chat/sessions/c%2F1/questions/q-1/answer',
+  '/api/chat/sessions/c-1/questions/q-1/answer/',
+  '/x/api/chat/sessions/c-1/questions/q-1/answer',
+  'https://elsewhere.example/api/chat/sessions/c-1/questions/q-1/answer',
+  '/api/loops/x/questions/y/answer',
+  '/api/chat/c-1/questions/q-1/answer',
 ]
 
 /** The kinds answered in place, each with the route it answers on and what it answers with. */
@@ -57,6 +68,8 @@ const ANSWERED: { kind: WaitingKind; own: string[]; answered: (w: WaitingItem) =
   { kind: 'bridge_confirmation', own: [ROUTES.bridge_confirmation], answered: waitingAnswerId },
   { kind: 'gate', own: [ROUTES.gate_resume, ROUTES.gate_confirm], answered: (w) => waitingQuestion(w)?.runId ?? '' },
   { kind: 'park', own: [ROUTES.park], answered: (w) => waitingQuestion(w)?.triggerId ?? '' },
+  // The buddy answers an agent's question in place (#3832), through the chat and question its route names.
+  { kind: 'question', own: [ROUTES.question], answered: (w) => { const r = waitingQuestionRef(w); return r ? `${r.session}/${r.question}` : '' } },
 ]
 
 const on = (kind: WaitingKind, path: string) =>
@@ -88,6 +101,13 @@ describe('each kind is answered on its own route alone', () => {
     expect(waitingQuestion(on('park', ROUTES.park))?.triggerId).toBe('schedule:clock:nightly')
     expect(waitingQuestion(on('gate', ROUTES.gate_confirm))).toMatchObject({ runId: 'r-1', confirm: true, approval: true })
     expect(waitingQuestion(on('gate', ROUTES.gate_resume))).toMatchObject({ runId: 'r-1', confirm: false })
+    expect(waitingQuestionRef(on('question', '/api/chat/sessions/dashboard%3Aui/questions/q%3A1/answer'))).toEqual({ session: 'dashboard:ui', question: 'q:1' })
+  })
+
+  it('a question\'s chat and id come from no route of another kind\'s, even one shaped like it', () => {
+    for (const kind of ['approval', 'loop_question', 'gate', 'park', 'plan_review'] as const) {
+      expect(waitingQuestionRef(on(kind, ROUTES.question)), kind).toBeNull()
+    }
   })
 
   it('the kinds answered by opening their page are answered in place nowhere', () => {

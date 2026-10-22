@@ -132,7 +132,7 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
   `terminal`, `capabilities`, `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`,
   `apps`, `settings`, `notifications`, `discover`, `loop`, `loops`, `code`, `app` or
   `mission-control`. `threads` is another name for `chat`. Names
-  are lower case. The app's three shell pages, `onboarding`, `companion` and the buddy playground (`buddy`), are not on the list: a
+  are lower case. The app's three shell pages, `onboarding`, `companion` and the buddy (`buddy`, its presence and its playground), are not on the list: a
   link to any of them is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
   `. _ : @ ~ -`.
@@ -521,6 +521,30 @@ when the gateway restarts. A route it opens, such as the chat that is waiting on
 main window. Its page can reach the app only through a handful of named calls (where the pointer
 is, a drag of the buddy, the room it needs, and opening a route), and the app checks each one; it
 has none of the main window's desktop capabilities.
+
+### What it shows, and when it asks
+
+Its page is `#/buddy`, and a browser tab can open it too.
+
+- **When it shows.** Nothing while nothing is happening; a compact line while work runs; and
+  when something waits on you, one request at a time, expanded with its brief, in the order
+  every surface lists them (what it lets happen first, then the oldest), with how many more wait.
+- **It never answers by itself.** An answer is sent only from the request's own controls (Allow or
+  Deny, an option and Send, Dismiss) or ⌘Enter (Ctrl+Enter) while the request has focus. Nothing
+  is sent when a request arrives, on a hover, when a timer runs out, or for a key pressed in another
+  app. A request that names a second confirmation asks it first, and Escape closes it, deciding
+  nothing. Each answer goes where the request's own card sends it, with its words.
+- **It keeps a request until it is decided.** One answered somewhere else leaves saying so, and one
+  past answering leaves as expired. No timer takes it away, and while you are dictating, or
+  PersonalClaw cannot be reached, its controls are held.
+- **It reads, it does not poll.** It reads what is running and what waits on you again whenever
+  either changes, so a missed update never leaves it showing something stale.
+- Approvals and agents' questions are answered in the buddy. A workflow's gate, a parked
+  automation and the other kinds open in PersonalClaw.
+
+For now, a buddy with nothing to say keeps its window open with nothing drawn on it, so every
+click passes through, rather than hiding: the app cannot yet show a hidden buddy again when
+something starts.
 
 **On Linux** the area that takes clicks is the window's shape, and the dock and float land
 without a move. Linux offers an app no way to keep a window out of a capture, so a screenshot or a
