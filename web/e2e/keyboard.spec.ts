@@ -1,4 +1,6 @@
 /** Every key in the keymap, pressed in the built app, and the approval key held to its rules.
+ *  `src/app/everyBindingHasAKeyboardCase.test.ts` holds every keymap chord to a press here (or in the
+ *  spec a row names, or an exemption that says why).
  *
  *  The approval cases answer every request in the page, so the test counts exactly what each key
  *  sent: one approve per decision, nothing on Enter alone on the card or Escape, nothing before a
@@ -63,6 +65,24 @@ test.describe('the keymap, in the built app', () => {
     await expect(page.getByRole('button', { name: 'Hide terminal', exact: true })).toBeVisible()
     await page.keyboard.press(`${MOD}+J`)
     await expect(page.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible()
+  })
+
+  test('⌘` opens and closes the terminal drawer too', async ({ page }) => {
+    await gotoRoute(page, 'dashboard')
+    await page.keyboard.press(`${MOD}+Backquote`)
+    await expect(page.getByRole('button', { name: 'Hide terminal', exact: true })).toBeVisible()
+    await page.keyboard.press(`${MOD}+Backquote`)
+    await expect(page.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible()
+  })
+
+  test("⌘⇧E shows and hides the chat's working folder", async ({ page }) => {
+    await gotoRoute(page, 'chat/new')
+    await driveScriptedTurns(page, 'Say your scripted line for the working folder key.')
+    const folder = page.getByRole('region', { name: 'Working folder' })
+    await page.keyboard.press(`${MOD}+Shift+E`)
+    await expect(folder).toBeVisible()
+    await page.keyboard.press(`${MOD}+Shift+E`)
+    await expect(folder).toBeHidden()
   })
 
   test('⌘N starts a new chat', async ({ page }) => {
