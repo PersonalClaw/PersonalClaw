@@ -7330,6 +7330,15 @@ export type TaskMode = 'agent' | 'ask' | 'plan' | 'build'
 export type ReasoningEffort = '' | 'low' | 'medium' | 'high' | 'max'
 export type MemoryMode = 'persistent' | 'incognito' | 'temporary'
 
+/** One part of what fills a chat's context, as the gateway measured it where the request is
+ *  assembled (`context_parts.parts_said`): its kind, its tokens, and the action that frees it. A
+ *  kind the gateway did not measure is absent. */
+export interface ContextPart {
+  kind: 'instructions' | 'memory' | 'files' | 'conversation' | 'tool_results'
+  tokens: number
+  action: 'tools' | 'memory' | 'files' | 'compact'
+}
+
 export interface NudgeLoop {
   id: string; session_name: string; message: string; idle_secs: number
   max_cycles: number; cycle_count: number; active: boolean
@@ -9140,7 +9149,7 @@ export const api = {
     stream_seq?: number
     /** What the context ring was last told — the `context_usage` frame's reading and window
      *  (`null` window = none declared or served) — or null before any turn said anything. */
-    context_usage?: { pct: number | null; window?: number | null } | null
+    context_usage?: { pct: number | null; window?: number | null; parts?: ContextPart[] | null } | null
     /** The Settings → Models chain a turn here runs on when no model is picked for it, as the
      *  Models page names it: "Code & tools" for a chat working in a folder of its own while that
      *  chain binds a model, else "Chat". The model pill's Auto says it. */

@@ -239,6 +239,15 @@ class AgentProvider(ABC):
         """Unknown by default — a provider that measures nothing reports nothing."""
         return None
 
+    def stage_context_parts(self, parts: dict[str, int] | None) -> None:
+        """The next turn's assembly, split by part (``context_parts.assembly_parts``). Ignored by
+        default: a runtime that keeps its own history (an agent CLI) cannot split it."""
+
+    def context_parts(self) -> list[dict] | None:
+        """What fills the context, part by part (``context_parts.parts_said``), or ``None`` when
+        this runtime measures none. An agent CLI holds its own history, so it measures none."""
+        return None
+
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:
         return "no_turn"
 

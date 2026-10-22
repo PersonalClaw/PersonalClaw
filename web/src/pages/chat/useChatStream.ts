@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { playCue } from '../../design/soundCues'
 import { isAChatsPhase, workPhaseOf, type WorkPhase } from '../../lib/workPhase'
-import { api, ApiError, type RunState } from '../../lib/api'
+import { api, ApiError, type ContextPart, type RunState } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../../lib/data'
 import { useStreamCoalescer } from './useStreamCoalescer'
@@ -262,6 +262,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // The window the gateway named with its reading: `null` = none is declared or served,
   // `undefined` = not said yet. It is what lets the unmeasured dot say WHY (`AgentModelPill`).
   const [contextWindow, setContextWindow] = useState<number | null | undefined>(undefined)
+  // What fills the context, part by part, with the reading it came with: `null` when the gateway
+  // measured no parts, `undefined` before it has said anything.
+  const [contextParts, setContextParts] = useState<ContextPart[] | null | undefined>(undefined)
   // A reading that arrived live outranks the one a later snapshot carries, which is older.
   const contextSaidLive = useRef(false)
   // The Settings → Models chain a turn here runs on when no model is picked ("Code & tools" for a
@@ -271,9 +274,11 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // The folder the chat works in, which its Working directory prompt opens on: from session detail,
   // from the answer to setting it, and from `session_binding` when it moves.
   const [workingDir, setWorkingDir] = useState('')
-  const takeContextUsage = (u: { pct?: number | null; window?: number | null }) => {
+  const takeContextUsage = (u: { pct?: number | null; window?: number | null; parts?: ContextPart[] | null }) => {
     setContextPct(typeof u.pct === 'number' ? u.pct : undefined)
     if ('window' in u) setContextWindow(typeof u.window === 'number' ? u.window : null)
+    // The parts go with their reading: a reading said without them measured none.
+    setContextParts(typeof u.pct === 'number' && Array.isArray(u.parts) ? u.parts : null)
   }
   // Branch lineage: when this session was branched off another, the parent's
   // persisted history key + the parent's title, both read from session detail on every
@@ -850,7 +855,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // ring rather than leaving a stale or fabricated percentage on screen. A frame
         // without `window` (a restart at the threshold) leaves the window it last named.
         contextSaidLive.current = true
-        takeContextUsage(d as { pct?: number | null; window?: number | null })
+        takeContextUsage(d as { pct?: number | null; window?: number | null; parts?: ContextPart[] | null })
         break
       // A title resolved server-side (auto-titled after the first turn, or renamed
       // from elsewhere). Reflect it live in the header of the open session, so the
@@ -1229,7 +1234,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     queued, setQueued, steered, setSteered, subagents, setSubagents,
     sideMsgs, setSideMsgs, sideBusy, setSideBusy, sideOpenedRef,
     followups, setFollowups, followupsNeed, setFollowupsNeed, checkWorkOffer, setCheckWorkOffer,
-    contextPct, contextWindow, autoChain, setAutoChain, workingDir, setWorkingDir,
+    contextPct, contextWindow, contextParts, autoChain, setAutoChain, workingDir, setWorkingDir,
     sessionBindingRef, bindingToldRef, bindingNonce,
     title, setTitle, titleNeed, setTitleNeed, sessionCost,
     branchedFrom, startedBy, investigateOrigin,

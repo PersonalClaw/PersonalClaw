@@ -22,6 +22,7 @@ import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
 import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText } from '../chatTypes'
 import { readCachedDetail, writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
+import { contextReport } from '../../../ui/composer/ContextDisclosure'
 import { repliesToSpeak } from '../useChatVoice'
 
 // ── The composer's controller ─────────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ const SLASH_HELP = [
   '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
   '- `/rewind-to-turn N` — put back the files the agent edited after turn N, with its own file tools or as an agent CLI that asked first (preview first; add `--confirm` to apply). A command\'s changes, and an agent CLI\'s edits made without asking, have no backup: the preview lists the files they changed in the chat\'s folder, and those stay. The conversation is not rewound.',
   '- `/compact` — compact the conversation to free up context',
+  '- `/context` — show what fills the context window, part by part',
   '',
   'Type `/` in the message box any time to see and filter the full list.',
 ].join('\n')
@@ -386,6 +388,11 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       case '/help':
         setInput('')
         setTurns((prev) => [...prev, userTurn(t), assistantTurn(SLASH_HELP)])
+        return true
+      case '/context':
+        // The same rows the Context control lists, from the same reading, so the two agree.
+        setInput('')
+        setTurns((prev) => [...prev, userTurn(t), assistantTurn(contextReport({ pct: stream.contextPct, window: stream.contextWindow, parts: stream.contextParts }))])
         return true
       default:
         return false

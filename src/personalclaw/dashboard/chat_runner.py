@@ -37,8 +37,9 @@ from personalclaw.approval_confirms import call_confirms
 from personalclaw.audit_subject import FILE_CHANGE_KINDS, log_title
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_IDLE_LIMIT
-from personalclaw.context_engine import assemble_context, check_headroom
+from personalclaw.context_engine import assemble_context, check_headroom, headroom_components
 from personalclaw.context_headroom import HeadroomState, resolve_window
+from personalclaw.context_parts import assembly_parts
 from personalclaw.dashboard import (
     chat_phase,
     chat_questions,
@@ -92,6 +93,7 @@ from personalclaw.dashboard.chat_utils import (
     chat_model_axis,
     chat_usage,
     compact_before_opening,
+    context_parts_of,
     model_substitution_notice,
     runs_as_command,
     stream_slash_command,
@@ -3250,6 +3252,7 @@ async def run_chat(
                 )
 
         _window = None  # the window an assembled turn resolves below
+        _assembled = None  # the turn's assembly, when it has one (a command's turn has none)
         # What fed it ({kind, text}), said live and stamped on its answer at the end.
         _context_fed: dict[str, str] = {}
         if is_command:
@@ -3663,6 +3666,14 @@ async def run_chat(
             announce_failover = getattr(client, "announce_failover", None)
             if callable(announce_failover):
                 announce_failover()
+            # What fills this turn's message, by part, for a runtime that keeps the conversation
+            # and measures it whole (`context_parts`); one that keeps its own ignores it.
+            _stage_parts = getattr(client, "stage_context_parts", None)
+            if callable(_stage_parts) and _assembled is not None:
+                try:
+                    _stage_parts(assembly_parts(headroom_components(_assembled)))
+                except Exception:  # noqa: BLE001 — a breakdown never costs a turn
+                    logger.debug("context parts staging failed", exc_info=True)
             event_stream = client.stream(full_message)
         # Its model is asked now: the turn thinks (plans, in plan mode) until a step says more.
         chat_phase.say(state, session, chat_phase.thinking(session))
@@ -5264,7 +5275,9 @@ async def run_chat(
                 msg = "Compaction timed out."
             await _say_compaction_notice(state, session, msg)
             # Update context usage after compaction
-            state.say_context_usage(session, client.context_usage_pct())
+            state.say_context_usage(
+                session, client.context_usage_pct(), parts=context_parts_of(client)
+            )
 
         # ── A turn that wrote no reply ──────────────────────────────────────
         # A BLANK turn (no text AND no tool calls) that is not a benign no-op
@@ -5456,7 +5469,10 @@ async def run_chat(
         # measured nothing, and the ring then shows no percentage — and goes out with the
         # window this turn was served with (a slash turn assembled nothing, so it asks now).
         state.say_context_usage(
-            session, pct, window=_window or await resolve_window(model_label, serving=client)
+            session,
+            pct,
+            window=_window or await resolve_window(model_label, serving=client),
+            parts=context_parts_of(client),
         )
         if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)

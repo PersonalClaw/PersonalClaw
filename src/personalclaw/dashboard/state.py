@@ -1212,7 +1212,12 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             )
 
     def say_context_usage(
-        self, session: _ChatSession, pct: float | None, *, window: "Window | None" = None
+        self,
+        session: _ChatSession,
+        pct: float | None,
+        *,
+        window: "Window | None" = None,
+        parts: list[dict] | None = None,
     ) -> None:
         """Tell a chat's context ring how full its context is, and keep it for session detail.
 
@@ -1221,10 +1226,18 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``context_headroom.Window``; its ``tokens`` go out as the frame's ``window``, ``None``
         when nothing declared or served one, which is the one state in which the ring sends the
         user to declare it. Omitted, the window last said stands: a restart at the threshold
-        clears the reading, not the window the model is served with.
+        clears the reading, not the window the model is served with. *parts* are what fills the
+        context (``context_parts.parts_said``), or ``None`` when nothing measured them, and then the
+        frame carries none. They go with the reading, so a cleared reading clears them too and
+        none is left as current.
         """
         usage = dict(session.context_usage or {})
         usage["pct"] = None if pct is None else round(pct, 1)
+        # A frame without parts measured none: the key is left out rather than said empty.
+        if parts is not None and pct is not None:
+            usage["parts"] = parts
+        else:
+            usage.pop("parts", None)
         if window is not None:
             usage["window"] = window.tokens
         session.context_usage = usage

@@ -41,7 +41,7 @@ export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   replyStyle, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -204,7 +204,10 @@ export function Composer({
       {hostPills}
       {/* Context and cost, collapsed until opened: no number shows until the owner opens this or
           pins it to the status line. */}
-      {hasContext && <ContextDisclosure pct={contextPct} window={contextWindow} cost={sessionCost} pin={contextPin} />}
+      {hasContext && (
+        <ContextDisclosure pct={contextPct} window={contextWindow} parts={contextParts} cost={sessionCost} pin={contextPin}
+          actionFor={(a) => (a === 'compact' && (streaming || processing) ? undefined : contextActions?.[a])} />
+      )}
     </>
   )
 
