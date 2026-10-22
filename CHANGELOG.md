@@ -71,6 +71,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A permission prompt's Deny and its Destructive chip are readable in both themes: the danger red is the same hue, a step darker in light and a step brighter in dark, and meets 4.5:1 on its tint over the card on every page ground.**
 - **Plan Review's stage title, condition and task fields are named for a screen reader by their stage and task, where only a placeholder named them (#3821).**
 - **A chat's Background tasks lists the loops and workflow runs it started, as it lists its helpers: a loop records the chat it was made for, a loop a chat's helper makes included, and each row names that chat; a loop opens beside the chat with its strip, a run as its run. An agent reads its own chat's loops and runs, and an app the ones its own chats started, and no other.**
+- **⌘Enter (Ctrl+Enter elsewhere) approves only in the window that has focus: with focus left on the buddy's approval card after you switched to another window, a key that still reached the card approved it (#3832).**
 
 ## [0.2.5] — 2026-10-22
 

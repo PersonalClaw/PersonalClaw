@@ -169,9 +169,11 @@ export function ApprovalPrompt({
     send(choice)
   }
 
-  // ⌘Enter (Ctrl+Enter elsewhere) approves THIS request, only while focus is inside it: never from
-  // a text field, never on a hidden or detached card, never while its answer is on its way or once
-  // it landed, and a held key sends nothing more. Armed, the key sends only from the confirm
+  // ⌘Enter (Ctrl+Enter elsewhere) approves THIS request, only while focus is inside it and its
+  // window has focus: never from a text field, never on a hidden or detached card, never while its
+  // answer is on its way or once it landed, and a held key sends nothing more. A window keeps the
+  // element it focused after another window takes focus, and a key can still be put to its page
+  // (the buddy's window stays on screen, unfocused, over the app the owner works in). Armed, the key sends only from the confirm
   // itself, and anywhere else in the card it does nothing. Escape steps back from the confirm and
   // decides nothing. Enter alone, and every other key, decide nothing here; Enter or Space on a
   // focused button presses that button, as a click does.
@@ -191,7 +193,7 @@ export function ApprovalPrompt({
     if (!approving || !matchBinding(e, 'approve-focused')) return
     e.preventDefault()
     e.stopPropagation()
-    if (!onTheCard || e.repeat || typesText(e.target)) return
+    if (!onTheCard || e.repeat || typesText(e.target) || !document.hasFocus()) return
     if (armed) {
       if (e.target === yesRef.current) send(approving)
       return

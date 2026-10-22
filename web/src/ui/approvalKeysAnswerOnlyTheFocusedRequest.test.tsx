@@ -1,15 +1,15 @@
 /** ⌘Enter (Ctrl+Enter elsewhere) approves the request that has keyboard focus, and nothing else.
  *
- *  A key must never approve something the owner did not see. So the key acts only on the card
- *  that holds focus, never from a text field, never on a request that has ended or is being
- *  answered, never on a card that is hidden, and a held or repeated key sends one request. Enter
- *  alone on the card and Escape never decide; Enter or Space on a focused button presses that
- *  button, as a click does. Decline is a button with no key of its own. A delete, a write outside
- *  the workspace, a send to other people, spending, and a call to a tool that says nothing about
- *  what it does each wait for a second confirmation, and nothing is sent before it: pressing Allow
- *  again, by a double-click or a held Enter, only asks again. One request per decision: once an
- *  answer landed the card sends nothing more while it is still on the page. A request that fails
- *  leaves the card answerable. Arrival never moves focus onto an approval action.
+ *  A key must never approve something the owner did not see. So the key acts only on the card that
+ *  holds focus, in a window that has focus, never from a text field, never on a request that has
+ *  ended or is being answered, never on a card that is hidden, and a held or repeated key sends one
+ *  request. Enter alone on the card and Escape never decide; Enter or Space on a focused button
+ *  presses that button, as a click does. Decline is a button with no key of its own. A delete, a
+ *  write outside the workspace, a send to other people, spending, and a call to a tool that says
+ *  nothing about what it does each wait for a second confirmation, and nothing is sent before it:
+ *  pressing Allow again, by a double-click or a held Enter, only asks again. One request per
+ *  decision: once an answer landed the card sends nothing more while it is still on the page. A
+ *  request that fails leaves the card answerable. Arrival never moves focus onto an approval action.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -66,6 +66,18 @@ describe('the approval key', () => {
     modEnter(document.body)
     expect(approve).not.toHaveBeenCalled()
     outside.remove()
+  })
+
+  it("does nothing while its window does not have focus, focus still inside the card; with it, approves", () => {
+    const { approve, group } = card()
+    group.focus()
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    modEnter(group)
+    expect(approve, 'another window has focus: the buddy over the app the owner works in').not.toHaveBeenCalled()
+    hasFocus.mockReturnValue(true)
+    modEnter(group)
+    expect(approve).toHaveBeenCalledTimes(1)
+    hasFocus.mockRestore()
   })
 
   it('does nothing from a text field, even one inside the card', () => {
