@@ -23,6 +23,7 @@ function fakeWindowClass() {
       this.position = [options.x ?? 0, options.y ?? 0];
       this.bounds = { x: options.x, y: options.y, width: options.width, height: options.height };
       this.handlers = {};
+      this.webContents = { setBackgroundThrottling: (on) => this.record("setBackgroundThrottling", on) };
       made.push(this);
     }
     record(name, ...args) { this.calls.push([name, ...args]); }
@@ -107,6 +108,24 @@ describe("screen capture", () => {
     assert.deepEqual(win.calls.at(-1), ["setContentProtection", false]);
     const again = make("darwin", store);
     assert.deepEqual(again.win.calls.find((c) => c[0] === "setContentProtection"), ["setContentProtection", false], "the machine's choice holds");
+  });
+});
+
+describe("what the page reads of its window", () => {
+  // An unfocused window on macOS can be read as occluded while it is on screen, and the page would
+  // read itself hidden and unmount the buddy (#3832): the real-Electron answer tier caught the card
+  // gone for seconds after an answer. Shown, the page reads visible; hidden, it reads hidden again.
+  it("shown, the page is not throttled as a background page; hidden, it is, before the window hides", () => {
+    const { buddy, win } = make("darwin");
+    buddy.show();
+    const show = win.calls.map((c) => c[0]);
+    assert.ok(show.indexOf("setBackgroundThrottling") > show.indexOf("showInactive"), "after it is on screen");
+    assert.deepEqual(win.calls.filter((c) => c[0] === "setBackgroundThrottling").at(-1), ["setBackgroundThrottling", false]);
+    win.calls.length = 0;
+    buddy.hide();
+    const hide = win.calls.map((c) => c[0]);
+    assert.deepEqual(win.calls.filter((c) => c[0] === "setBackgroundThrottling"), [["setBackgroundThrottling", true]]);
+    assert.ok(hide.indexOf("setBackgroundThrottling") < hide.indexOf("hide"), "throttled again before it hides, so the page reads hidden");
   });
 });
 
