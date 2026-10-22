@@ -18,11 +18,18 @@ import type { UiDoc } from './uiDoc'
 
 const UI_DIR = join(process.cwd(), 'src', 'ui')
 
-// Eagerly import every co-located doc module. Each default-exports a UiDoc or a
+// Import every co-located doc module. Each default-exports a UiDoc or a
 // UiDoc[] (multi-component files like HeaderActions/forms/ListScaffold).
-const docModules = import.meta.glob<{ default: UiDoc | UiDoc[] }>('./*.doc.ts', {
-  eager: true,
-})
+// The folder is read live, as the extractor below reads it: an `import.meta.glob`
+// is expanded into this file's cached transform, so under vitest's module cache a
+// doc file added since the last run went unseen while the extractor saw its
+// component, and the two halves of this guard disagreed about the same tree.
+const docFiles = readdirSync(UI_DIR).filter((f) => f.endsWith('.doc.ts')).sort()
+const docModules: Record<string, { default: UiDoc | UiDoc[] }> = Object.fromEntries(
+  await Promise.all(
+    docFiles.map(async (f) => [`./${f}`, await import(/* @vite-ignore */ join(UI_DIR, f))] as const),
+  ),
+)
 
 // name → authored UiDoc, flattened across single- and multi-component doc files.
 const authored = new Map<string, UiDoc>()
