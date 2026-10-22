@@ -59,6 +59,11 @@ updates:
       # grammar"). Added after #3282 proposed `<7` and was closed on the merits.
       - dependency-name: croniter
         versions: [">=3"]
+      # `python-dateutil>=2.8,<3`: every botocore release requires python-dateutil<3, and the app
+      # installer refuses an app whose dependencies would move a gateway dependency, so a 3.x in
+      # core's environment shuts out every app built on botocore. Widen it when botocore does.
+      - dependency-name: python-dateutil
+        versions: [">=3"]
       # `isort>=8,<9`: isort 9 reorders imports this tree already formats to a byte-clean state
       # under 8 — measured at 8 files flagged on an untouched tree — so a major here reds the
       # lint gate for every contributor on a change none of them made.
