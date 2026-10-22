@@ -1242,6 +1242,75 @@ async def api_loop_kept_work_discard(request: web.Request) -> web.Response:
     return await _kept_work_act(request, "discard")
 
 
+#: The longest commit message a code session's Commit takes. A subject and a body of some length;
+#: past that it is a paste, not a message.
+COMMIT_MESSAGE_CAP = 5000
+
+
+async def api_loop_commit(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/commit {message} — its owner commits the code session's changes.
+
+    Everything the loop's workspace holds and has not committed, untracked files included, is
+    committed with *message*, as git is configured to commit there (``worktree.commit_workspace``);
+    nothing is pushed. The workspace is the loop's own, read here, never a path the request names.
+    Only you commit (``approval_answer``): an agent's tool and an app are refused. A loop still at
+    work is refused, since its supervisor commits each stage and merges each task into that tree,
+    as a merge of its kept work is (``kept_work.has_ended``). The audit row names the loop and the
+    commit."""
+    from personalclaw.loop import kept_work, worktree
+    from personalclaw.sel import sel
+
+    if approval_answer.of_request(request).kind != approval_answer.OWNER:
+        return json_error("commit_owner_only", status=403)
+    loop = _kept_loop(request)
+    if isinstance(loop, web.Response):
+        return loop
+    body = await json_object_body(request)
+    raw = body.get("message")
+    message = raw.strip() if isinstance(raw, str) else ""
+    if not message:
+        return json_error("commit_message_required", status=400)
+    if len(message) > COMMIT_MESSAGE_CAP:
+        return json_error(
+            "commit_message_too_long",
+            message=f"A commit message is at most {COMMIT_MESSAGE_CAP} characters",
+            status=400,
+        )
+    if not kept_work.has_ended(loop):
+        return json_error(
+            "loop_still_at_work",
+            message=(
+                "This loop is still at work and commits into its workspace; commit once it ends."
+            ),
+            status=409,
+        )
+    ws = (loop.workspace_dir or "").strip()
+    if not ws or not await asyncio.to_thread(worktree.has_base_commit, ws):
+        return json_error("commit_no_workspace", status=409)
+    if not await asyncio.to_thread(worktree.has_uncommitted_changes, ws, untracked=True):
+        return json_error("nothing_to_commit", status=409)
+    if await asyncio.to_thread(worktree.commit_identity, ws) is None:
+        return json_error("commit_no_identity", status=409)
+    sha = await asyncio.to_thread(worktree.commit_workspace, ws, message)
+    if not sha:
+        return json_error("commit_failed", status=500)
+    try:
+        sel().log_api_access(
+            caller="dashboard:code-session",
+            operation="loop.commit",
+            outcome="allowed",
+            source="dashboard",
+            resources=f"loop={loop.id},sha={sha}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("SEL audit failed for a code session's commit", exc_info=True)
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop commit publish failed", exc_info=True)
+    return web.json_response({"ok": True, "sha": sha})
+
+
 async def api_loop_nudge(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/nudge {text, task_id?} — steer; resume if awaiting input."""
     cid = request.match_info["id"]
@@ -1991,6 +2060,7 @@ def register_unified_loop_routes(app: web.Application) -> None:
     app.router.add_delete("/api/loops/{id}", api_loop_delete)
     app.router.add_get("/api/loops/{id}/kept-work", api_loop_kept_work)
     app.router.add_post("/api/loops/{id}/kept-work/{task_id}/merge", api_loop_kept_work_merge)
+    app.router.add_post("/api/loops/{id}/commit", api_loop_commit)
     app.router.add_delete("/api/loops/{id}/kept-work/{task_id}", api_loop_kept_work_discard)
     app.router.add_post("/api/loops/{id}/nudge", api_loop_nudge)
     app.router.add_post("/api/loops/{id}/queue", api_loop_queue)

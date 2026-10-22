@@ -555,7 +555,14 @@ The supervisor does not take the worker's word for it:
   She merges each task at exactly the commit she reviewed (`POST …/kept-work/{task_id}/merge` with
   `tip` and `{"confirm": true}`), by the same rules: git's configured identity, nothing committed
   under another name, a branch that moved is read again (`loop_merge_moved`), and the merge is
-  recorded on the page (`files.record_merge`). Or she discards it. Stopping a loop whose finished
+  recorded on the page (`files.record_merge`). Or she discards it. Once a code loop has ended, she
+  can also commit what its workspace holds and has not committed, untracked files included, with a
+  message she writes, from the session's header (`POST /api/loops/{id}/commit`,
+  `worktree.commit_workspace`): the loop's own workspace, never a path a request names; only her,
+  never an agent's tool or an app; refused while the loop is still at work (`loop_still_at_work`),
+  since its supervisor commits each stage and merges each task into that tree; as git is
+  configured to commit there, with no hook run (as every git here runs), and nothing pushed. Its
+  audit row names the loop and the commit. Stopping a loop whose finished
   work waits for her merge keeps that work the same way and clears the merge question. Only a delete
   discards it unasked, and its dialog names it. Each of
   these touches only the loop's own tasks' worktrees, so two loops under one Project (which share a
