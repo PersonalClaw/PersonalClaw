@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from 'react'
 import { CornerLeftUp } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useQuery } from '../../../lib/data'
+import { TileButton } from '../../../ui/TileButton'
 
 /** "Keep my question in view" (Settings › Chat, off by default; #3820): while a reply taller than
  *  the window streams, the reading column pins a one-line banner with the owner's latest question.
@@ -40,13 +41,17 @@ export function QuestionInView({ streaming, question, node, scrollRef }: {
   if (!watching || !outAbove) return null
   const firstLine = question.split('\n').find((l) => l.trim())?.trim() ?? ''
   if (!firstLine) return null
+  // A TileButton, not a Button: Button is a centred no-wrap pill whose label row cannot shrink, so a
+  // long first line would be clipped rather than end in an ellipsis. The tile owns the border and the
+  // hover; the row inside it lays out the glyph and the line.
   return (
-    <button type="button" onClick={() => node?.scrollIntoView({ block: 'start' })}
-      aria-label={`Your question: ${firstLine}. Scroll to it`}
-      data-type="body-s"
-      className="sticky top-0 z-10 flex w-full min-w-0 items-center gap-s rounded-md border border-outline-variant/40 bg-surface px-m py-s text-left text-on-surface-var shadow-sm hover:text-on-surface">
-      <CornerLeftUp size={14} aria-hidden className="shrink-0 text-on-surface-low" />
-      <span className="min-w-0 truncate">{firstLine}</span>
-    </button>
+    <TileButton onClick={() => node?.scrollIntoView({ block: 'start' })}
+      ariaLabel={`Your question: ${firstLine}. Scroll to it`}
+      className="sticky top-0 z-10 w-full min-w-0 text-on-surface-var shadow-sm hover:text-on-surface">
+      <span data-type="body-s" className="flex min-w-0 items-center gap-s px-m py-s">
+        <CornerLeftUp size={14} aria-hidden className="shrink-0 text-on-surface-low" />
+        <span className="min-w-0 truncate">{firstLine}</span>
+      </span>
+    </TileButton>
   )
 }
