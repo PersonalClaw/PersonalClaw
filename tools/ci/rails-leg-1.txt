@@ -97,6 +97,7 @@ tests/rails/test_pre_edit_read_gate_tree.py
 tests/rails/test_private_home_file_modes_tree.py
 tests/rails/test_provider_boundary_residue.py
 tests/rails/test_release_pipeline_compares_versions_tree.py
+tests/rails/test_release_rehearsal_tree.py
 tests/rails/test_release_tag_semantics_tree.py
 tests/rails/test_request_boolean_census_tree.py
 tests/rails/test_routing_mute_reachable_tree.py

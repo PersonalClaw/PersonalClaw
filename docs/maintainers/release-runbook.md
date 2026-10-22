@@ -193,9 +193,27 @@ and never force-push it: release tags are cut from `main`, and the git kind's
 
 ### 5. Rehearse the tag-only jobs (no publish)
 
-No PR or `main` workflow builds the dmg, the AppImage or the deb, so the first time a
-desktop dependency bump is packaged would otherwise be the tag. Dispatch the release
-workflow on `main` after the bump lands:
+The release rehearsal (`.github/workflows/release-rehearsal.yml`, #3942) runs every Monday on
+`main`, and after a bump lands you can run it yourself:
+
+```bash
+gh workflow run release-rehearsal.yml -R PersonalClaw/PersonalClaw --ref main
+```
+
+It builds every artifact the tag builds, as the tag this tree's version names, through
+`release-artifacts.yml`, the build half of `release.yml`:
+- the wheel and sdist with the wheel's SBOM and its contract;
+- the gateway image's dashboard smoke;
+- both images for both arches with their attestations, to an OCI layout;
+- the dmg, the AppImage and the deb.
+
+It smokes each as the release does, then writes and verifies one digest-bound manifest of them
+all, with a planted mismatch that must fail. It publishes nothing: no environment, no registry
+login or push, no token beyond reading the tree, and every file only as a workflow artifact kept
+3 days (`tests/rails/test_release_rehearsal_tree.py`). A green run is the expected result. Check
+that the desktop artifacts carry the bumped version in their file names.
+
+The older way still works, and runs less. Dispatch the release workflow on `main`:
 
 ```bash
 gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref main
@@ -467,8 +485,9 @@ Not verified from a dev machine: the GHCR image pull (needs `docker login` or a
 Revised before v0.2.1 from the code and from v0.2.0's release run, the only `release.yml`
 run on record: there `desktop-linux` failed, so `notes`, `attest` and `website-follow`
 were skipped and the Release was made by hand. `notes` in its current form, `attest`
-with only `build` before it, and `website-follow` have still never run, and the
-rehearsal (step 5) does not run them either: the next tag is their first run.
+with only `build` before it, and `website-follow` have still never run. The rehearsal
+(step 5) runs every build and smoke before them, but not those publishing jobs: the next tag
+is their first run.
 
 ## Notes
 
