@@ -1,5 +1,7 @@
-import { useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
+import { useChatSocket } from '../lib/useChatSocket'
 import { contextLineSaid, type ContextReading } from '../ui/composer/ContextDisclosure'
+import { useGatewayConnection } from './gatewayConnection'
 
 /** The context the owner pinned to the status line (#3823's approved update: the thin status line
  *  carries only connection, sync and the context the owner pinned; cost and context stay collapsed
@@ -10,8 +12,8 @@ import { contextLineSaid, type ContextReading } from '../ui/composer/ContextDisc
  *    every tab, set from the composer's Context control.
  *  - **The reading** is the open chat's, published by its composer while it is mounted and cleared
  *    when it goes. The line shows only that: no chat open, nothing shown; a chat whose context the
- *    gateway has not measured says so. It never shows a reading kept from an earlier chat or an
- *    earlier load as if it were current. */
+ *    gateway has not measured says so. It never shows a reading kept from an earlier chat, an
+ *    earlier load, or from before a dropped link as if it were current. */
 
 const PIN_KEY = 'pc:status:context-pinned'
 
@@ -51,10 +53,32 @@ export function publishContextReading(next: ContextReading | null): void {
   emit()
 }
 
-/** The status line's right slot: the open chat's reading, when the owner pinned it. */
+/** Whether the tab's live-update link is open: `null` before it first opens, then `true` while it
+ *  is and `false` from a drop until it reopens (`useChatSocket`'s status). */
+function useLiveLink(): boolean | null {
+  const [open, setOpen] = useState<boolean | null>(null)
+  useChatSocket(ignoreFrame, null, setOpen)
+  return open
+}
+const ignoreFrame = () => {}
+
+/** The status line's right slot (#3823: the line is ambient: the connection, sync, and the context
+ *  the owner pinned).
+ *
+ *  - **Sync**, the tab's live-update link, is quiet while it is open. From a drop until it reopens
+ *    it says so, unless the gateway itself is lost, which the left slot already says.
+ *  - **The pinned context** shows the open chat's reading while the link is open. While it is down
+ *    a reading may have been missed (a compaction's), so the line says the link is reconnecting
+ *    instead of showing the last reading as current; once it is back the chat reads itself again
+ *    and publishes what the snapshot says. */
 export function PinnedContextReading() {
   const pinned = useContextPinned()
   const current = useSyncExternalStore(subscribe, () => reading, () => null)
+  const link = useLiveLink()
+  const { state } = useGatewayConnection()
+  if (link === false) {
+    return state === 'disconnected' ? null : <span className="min-w-0 truncate">Reconnecting live updates…</span>
+  }
   if (!pinned || !current) return null
   const { line, sentence } = contextLineSaid(current)
   return <span className="min-w-0 truncate tabular-nums" title={sentence}>{line}</span>

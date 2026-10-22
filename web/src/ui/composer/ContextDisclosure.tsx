@@ -70,7 +70,7 @@ export function nearLimitSaid(pct: number): string {
 /** The status line's pinned reading, short ("Context 34% · $0.0123 · 46k tokens"), with the whole
  *  of it in words for its title. */
 export function contextLineSaid(r: ContextReading): { line: string; sentence: string } {
-  const parts = [r.pct !== undefined ? `Context ${clamp(r.pct).toFixed(0)}%` : 'Context not measured yet']
+  const parts = [r.pct !== undefined ? `Context ${clamp(r.pct).toFixed(0)}%` : r.window === null ? 'Context window unknown' : 'Context not measured yet']
   if (r.cost) parts.push(r.cost.priced ? money(r.cost.cost) : 'unpriced', `${fmtTokens(r.cost.tokens)} tokens`)
   const said = r.pct !== undefined ? readingSaid(r.pct, r.window) : unmeasuredSaid(r.window)
   return { line: parts.join(' · '), sentence: `${said}. ${costSaid(r.cost)}`.replace(/\.\./g, '.') }
@@ -93,15 +93,17 @@ export function ContextDisclosure({ pct, window: windowTokens, cost, pin }: Cont
       {() => (
         <div role="dialog" aria-label="Context" className="flex flex-col gap-s p-m">
           <p data-type="label-m" className="text-on-surface">Context</p>
-          {pct !== undefined ? (
-            <>
-              <Meter label="Context used" pct={pct} tone={tone} />
-              <p data-type="body-s" className={near ? 'text-warn' : 'text-on-surface-var'}>{readingSaid(pct, windowTokens)}</p>
-            </>
-          ) : (
-            <p data-type="body-s" className="text-on-surface-var">{unmeasuredSaid(windowTokens)}</p>
-          )}
-          <p data-type="body-s" className="text-on-surface-var">{costSaid(cost)}</p>
+          {pct !== undefined && <Meter label="Context used" pct={pct} tone={tone} />}
+          {/* Each reading under its label, every state in words: the bar's colour adds nothing the
+              text does not say (near the limit is said, not only tinted). */}
+          <dl className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs" data-type="body-s">
+            <dt className="text-on-surface-low">Context window</dt>
+            <dd className={near ? 'text-warn' : 'text-on-surface-var'}>
+              {pct !== undefined ? `${readingSaid(pct, windowTokens)}${near ? ', near the limit' : ''}` : unmeasuredSaid(windowTokens)}
+            </dd>
+            <dt className="text-on-surface-low">Cost so far</dt>
+            <dd className="text-on-surface-var">{costSaid(cost)}</dd>
+          </dl>
           {pin && (
             <div className="flex items-center justify-between gap-s border-t border-outline-variant/30 pt-s">
               <span data-type="body-s" className="text-on-surface">Pin to the status line</span>

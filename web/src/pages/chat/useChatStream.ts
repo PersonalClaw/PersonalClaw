@@ -1115,6 +1115,10 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   const resync = useCallback(() => {
     const s = sessionRef.current
     if (!s) return
+    // A context reading said live before the drop is no newer than this read: frames sent while
+    // the link was down (a compaction's) are lost, so the snapshot's reading is the current one.
+    // Frames arriving during the read are held and replayed on top, so a newer live one still wins.
+    contextSaidLive.current = false
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
       // A turn that ended while the socket was down is said as the snapshot reports it ended.

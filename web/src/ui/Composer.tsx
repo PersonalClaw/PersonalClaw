@@ -15,6 +15,7 @@ import { useIsMobile } from '../app/useIsMobile'
 import { usePersonality } from '../app/personality'
 import { api } from '../lib/api'
 import { cx } from './cx'
+import { Button } from './Button'
 import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
 import { MicCaptureChip } from './MicCaptureChip'
@@ -40,7 +41,7 @@ export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   replyStyle, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -416,7 +417,14 @@ export function Composer({
           {/* Near the limit the composer says so, pinned or not: the one context reading that is
               never collapsed, because it is the one that needs a decision. */}
           {nearLimit(contextPct) && (
-            <p role="status" data-type="caption" className="px-xs text-warn">{nearLimitSaid(contextPct!)}</p>
+            <div className="flex items-center gap-s px-xs">
+              <p role="status" data-type="caption" className="text-warn">{nearLimitSaid(contextPct!)}</p>
+              {/* The fix beside the reading: the conversation compacted, as `/compact` does. Only
+                  while no turn runs, when the gateway can take it. */}
+              {onCompact && !streaming && !processing && (
+                <Button variant="ghost-accent" size="xs" onClick={onCompact}>Compact now</Button>
+              )}
+            </div>
           )}
 
           {/* live-markdown editor (CodeMirror 6): the caret line shows raw
