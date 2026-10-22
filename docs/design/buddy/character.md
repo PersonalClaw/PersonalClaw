@@ -159,7 +159,10 @@ them, and a test holds the committed files to what the table draws.
 - **Sizes.** A pose is drawn at the room its surface gives the orb
   ([`surfaces.md`](surfaces.md#the-room-budget)): 48 px for the families, the focused card and the
   answers, 22 for the peek and the compact island, and 56 floating. Below 24 px the badge drops its
-  ring of dots and its mark fills it, since a ring that small reads as a blur.
+  ring of dots and its mark fills it, since a ring that small reads as a blur. A waiting badge (the
+  "!" and the "?") is solid there instead: one dot of the badge's size in the full warn or info
+  tone, its mark cut out of it, so the badge alone tells a still waiting orb from an active one, in
+  colour and as a template, where motion cannot.
 - **The tray's and the dock's stills** are `poses/tray-<still>-<size>.svg` at 16, 18 and 22 px,
   each its family's still with the badge inside the square, and beside each a `-template.svg`: black
   on clear with no wash, for the macOS menu bar, which recolours it. The rasters the tray and the
@@ -184,8 +187,9 @@ the stills at each size with their template versions) and holds `poses/` to it: 
 none for a pose this file does not name, and a motion frame beside each pose that moves. It holds
 each source to its parts, its tokens and its round outline. At 18 px it tells the four families
 apart by their dots, at least a quarter more of them or 5% of the orb's size in how far they reach
-from its centre or where their middle sits, and by their badge, in colour and as templates; and it
-holds the contact sheets to every pose at its sizes in both modes, with its words.
+from its centre or where their middle sits, and by their badge, in colour and as templates, with
+waiting's badge at full strength and at least four times the ink of active's mark; and it holds
+the contact sheets to every pose at its sizes in both modes, with its words.
 `web/src/buddyRig/poseSources.test.ts` holds the files to the table and the table to the phase
 contract. After a change to the table, redraw them from `web/`:
 

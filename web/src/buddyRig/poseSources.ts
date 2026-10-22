@@ -13,13 +13,14 @@ import { resolvePreset } from 'thinking-orbs/engine'
 import type { PhaseTone } from '../lib/workPhase'
 import { tokenValue, type Mode } from '../design/tokenSheet'
 import { modeOf, poseFrame } from './arrange'
-import { PAD, badgeDots, washDots } from './inPlaceParts'
+import { PAD, SOLID_MARKS, badgeDots, solidBadge, washDots } from './inPlaceParts'
 import { FAMILIES, FAMILY_STATES, TRAY_SIZES, TRAY_STATES, familyOf, poseSet, stillOf, wordsOf, type Frame, type PoseSpec, type TrayStill } from './poseSet'
 import { tunedDrawingFor } from './poses'
 
 /** The instant a moving frame's dots are drawn at, in the drawing's own seconds. */
 export const MOVING_AT = 2.1
-/** The badge has its ring of dots from this orb size up; below it, its mark fills it. */
+/** The badge has its ring of dots from this orb size up; below it, its mark fills it, and a waiting
+ *  mark's badge is solid (`solidBadge`). */
 export const RING_FROM = 24
 /** A dot fainter than this is not drawn. */
 const FAINT = 0.03
@@ -67,16 +68,25 @@ export function drawOrb(frame: Frame, size: number, { id, template = false }: { 
   let defs = ''
   let clip = ''
   if (frame.mark && frame.badge > 0) {
-    const badge = badgeDots(size, frame.mark, 0, size >= RING_FROM)
+    const ring = size >= RING_FROM
+    const solid = !ring && SOLID_MARKS.has(frame.mark)
+    const badge = solid ? solidBadge(size, frame.mark, 0) : badgeDots(size, frame.mark, 0, ring)
     const hole = badge.radius * 1.15 * frame.badge
     const box = `M${num(-pad)} ${num(-pad)}H${num(size + pad)}V${num(size + pad)}H${num(-pad)}Z`
     const circle = `M${num(badge.cx - hole)} ${num(badge.cy)}a${num(hole)} ${num(hole)} 0 1 0 ${num(hole * 2)} 0a${num(hole)} ${num(hole)} 0 1 0 ${num(-hole * 2)} 0Z`
     defs = `<clipPath id="${id}-knockout"><path clip-rule="evenodd" d="${box}${circle}"/></clipPath>`
     clip = ` clip-path="url(#${id}-knockout)"`
     const fold = frame.badge === 1 ? '' : ` transform="translate(${num(badge.cx)} ${num(badge.cy)}) scale(${num(frame.badge)}) translate(${num(-badge.cx)} ${num(-badge.cy)})" opacity="${num(frame.badge)}"`
-    parts.push(
-      `<g data-part="badge" data-mark="${frame.mark}" style="${fill(toneToken(frame.tone), template)}"${fold}>${badge.dots.map((d) => `<circle cx="${num(d.x)}" cy="${num(d.y)}" r="${num(d.r)}"/>`).join('')}</g>`,
-    )
+    let marks: string
+    if ('holes' in badge) {
+      // The mark is cut out of the one dot: a template keeps it, being one colour with holes.
+      const disc = (x: number, y: number, r: number) => `M${num(x - r)} ${num(y)}a${num(r)} ${num(r)} 0 1 0 ${num(r * 2)} 0a${num(r)} ${num(r)} 0 1 0 ${num(-r * 2)} 0Z`
+      defs += `<clipPath id="${id}-mark"><path clip-rule="evenodd" d="${disc(badge.cx, badge.cy, badge.radius)}${badge.holes.map((d) => disc(d.x, d.y, d.r)).join('')}"/></clipPath>`
+      marks = `<circle cx="${num(badge.cx)}" cy="${num(badge.cy)}" r="${num(badge.radius)}" clip-path="url(#${id}-mark)"/>`
+    } else {
+      marks = badge.dots.map((d) => `<circle cx="${num(d.x)}" cy="${num(d.y)}" r="${num(d.r)}"/>`).join('')
+    }
+    parts.push(`<g data-part="badge" data-mark="${frame.mark}"${solid ? ' data-solid="true"' : ''} style="${fill(toneToken(frame.tone), template)}"${fold}>${marks}</g>`)
   }
   if (frame.wash > 0.01 && !template) {
     const wash = washDots(size, frame.wash, 0).filter((d) => (d.a ?? 1) >= FAINT)

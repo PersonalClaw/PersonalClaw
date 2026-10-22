@@ -39,8 +39,11 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
   template's is black, which the menu bar recolours); and no transform squashes or stretches it.
 * **At 18 px the four families are told apart** by the orb's density and arrangement and by its
   badge, in colour and as templates, and every tray still as a template differs from the others
-  by its badge or its dots. The contact sheets show every pose at 18, 24, 48 and 96 px and every
-  still at its size, in light and dark, each with its words beside it, for the owner to look at.
+  by its badge or its dots. Waiting's badge holds it apart from active by its weight too: drawn
+  at full strength, with several times the ink of active's mark, so a still waiting orb (the
+  tray's, or under reduced motion) never reads as an active one. The contact sheets show every
+  pose at 18, 24, 48 and 96 px and every still at its size, in light and dark, each with its words
+  beside it, for the owner to look at.
 
 Each check returns what is wrong, as sentences. The last test plants one defect for each check and
 sees it reported, so none of them can pass by looking at nothing.
@@ -52,6 +55,7 @@ import collections
 import copy
 import itertools
 import json
+import math
 import re
 import shutil
 import xml.etree.ElementTree as ET
@@ -221,6 +225,9 @@ SMALLEST = 18
 #: of the orb's size in how far they reach from its centre or where their middle sits.
 DENSITY_APART = 1.25
 ARRANGEMENT_APART = 0.05
+#: How many times the ink of active's badge waiting's carries at the smallest size: its badge's
+#: dots' area, measured on the drawing.
+BADGE_APART = 4.0
 #: The properties that carry a colour, and the one ink a template image is drawn in, which the
 #: menu bar recolours.
 COLOUR_PROPERTIES = ("fill", "stroke", "stop-color", "color")
@@ -685,12 +692,16 @@ class Named(NamedTuple):
 
 class Look(NamedTuple):
     """What a drawn orb shows at a glance: how many dots, how far they reach from the orb's
-    centre and how far their middle sits below it (each in orb sizes), and the badge's mark."""
+    centre and how far their middle sits below it (each in orb sizes), the badge's mark, the ink
+    its badge carries (its dots' area, in orb sizes squared), and whether any of the badge is
+    drawn under full strength."""
 
     dots: int
     reach: float
     height: float
     badge: str
+    badge_ink: float = 0.0
+    badge_faint: bool = False
 
 
 def _slug(words: str) -> str:
@@ -877,11 +888,15 @@ def look_of(path: Path) -> Look:
         for e in _parts(root, "dots")[0].iter()
         if _local(e) == "circle"
     ]
+    badge = [e for part in _parts(root, "badge") for e in part.iter()]
+    ink = sum(math.pi * float(e.get("r", 0)) ** 2 for e in badge if _local(e) == "circle") / size**2
+    faint = any(float(e.get("opacity", 1)) < 1 for e in badge)
+    mark = root.get("data-badge") or ""
     if not dots:
-        return Look(0, 0.0, 0.0, root.get("data-badge") or "")
+        return Look(0, 0.0, 0.0, mark, ink, faint)
     reach = sum(((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 for x, y in dots) / len(dots) / size
     height = (sum(y for _, y in dots) / len(dots) - cy) / size
-    return Look(len(dots), reach, height, root.get("data-badge") or "")
+    return Look(len(dots), reach, height, mark, ink, faint)
 
 
 def _apart(a: Look, b: Look) -> bool:
@@ -894,8 +909,9 @@ def _apart(a: Look, b: Look) -> bool:
 def small_size_problems(brief: str, folder: Path) -> list[str]:
     """Where two families' stills can be mistaken at the tray's smallest sizes, each a sentence.
     At 18 px each family's first still in the brief (in colour and as a template) differs from
-    each other family's by its dots' density or arrangement, and by its badge. As templates, at
-    every size, each of the stills differs from every other by its badge or its dots, since a
+    each other family's by its dots' density or arrangement, and by its badge, and waiting's
+    badge is drawn at full strength with ``BADGE_APART`` times the ink of active's. As templates,
+    at every size, each of the stills differs from every other by its badge or its dots, since a
     template carries the state in shape alone."""
     named, found = brief_sources(brief)
     stills = {stem: n for stem, n in named.items() if n.kind == "still"}
@@ -920,6 +936,15 @@ def small_size_problems(brief: str, folder: Path) -> list[str]:
                 )
             if looks[a].badge == looks[b].badge:
                 found.append(f"at {SMALLEST} px{as_what}, {a} and {b} have the same badge")
+        waiting, active = looks["waiting"], looks["active"]
+        if waiting.badge_faint:
+            found.append(f"at {SMALLEST} px{as_what}, waiting's badge is drawn under full strength")
+        if waiting.badge_ink < BADGE_APART * active.badge_ink:
+            weight = waiting.badge_ink / active.badge_ink if active.badge_ink else 0.0
+            found.append(
+                f"at {SMALLEST} px{as_what}, waiting's badge carries {weight:.1f} times the ink of"
+                f" active's, under {BADGE_APART:g}: a still waiting orb reads as an active one"
+            )
     sizes = sorted({n.size for n in stills.values()})
     for size in sizes:
         drawn = {
@@ -1084,6 +1109,16 @@ def _replaced(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text, f"{old!r} is no longer in {path.name}, so nothing would be planted"
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def _faint_badge(path: Path) -> None:
+    """*path* with its badge drawn the way the waiting badges were below 24 px before #3830's
+    review: the mark's own dots, a dot's width apart, in the tone."""
+    text = path.read_text(encoding="utf-8")
+    faint = "".join(f'<circle cx="14" cy="{y}" r="0.5"/>' for y in (-0.12, 1.08, 2.28, 4.68))
+    planted = re.sub(r'(<g data-part="badge"[^>]*>).*?(</g>)', rf"\g<1>{faint}\g<2>", text, count=1)
+    assert planted != text, f"{path.name} has no badge, so nothing would be planted"
+    path.write_text(planted, encoding="utf-8")
 
 
 def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> None:
@@ -1289,6 +1324,16 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             "at 18 px, waiting and blocked have the same density and arrangement",
         ),
         (
+            "waiting's badge as faint as active's at 18 px",
+            lambda: small_size_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "faint", lambda f: _faint_badge(f / "tray-needs-you-18.svg")
+                ),
+            ),
+            "at 18 px, waiting's badge carries",
+        ),
+        (
             "the contact sheet missing a pose in dark",
             lambda: sheet_problems(
                 brief,
@@ -1304,7 +1349,7 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             "the contact sheet does not show quiet-idle at 18 px in dark",
         ),
     ]
-    assert len(planted) == 24, "a planted defect was dropped from the table"
+    assert len(planted) == 25, "a planted defect was dropped from the table"
     for name, check, expected in planted:
         with table_rows.row(subtests, defect=name):
             reported = check()

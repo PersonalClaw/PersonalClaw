@@ -69,3 +69,23 @@ export function badgeDots(size: number, mark: Mark, dy: number, ring = true): { 
   }))
   return { cx, cy, radius, dots }
 }
+
+/** The marks of the waiting family. Below 24 px their badge is solid: one dot in the tone, its
+ *  mark cut out of it, so the badge alone tells a still waiting orb from an active one, in colour
+ *  and as a template (#3830, the 18 px review). */
+export const SOLID_MARKS: ReadonlySet<Mark> = new Set<Mark>(['approval', 'input'])
+
+/** A solid badge: one dot of the badge's own size on the orb's upper edge, and the mark's dots to
+ *  cut out of it, each a hair under its cell so the cuts never overlap and the mark reads as solid
+ *  strokes. */
+export function solidBadge(size: number, mark: Mark, dy: number): { cx: number; cy: number; radius: number; holes: Dot[] } {
+  const { cx, cy, radius } = badgeAt(size, dy)
+  const rows = GLYPHS[mark]
+  const cols = rows[0].length
+  const cell = (radius * 1.6) / Math.max(rows.length, cols)
+  const holes: Dot[] = []
+  rows.forEach((row, j) => [...row].forEach((on, i) => {
+    if (on === '1') holes.push(dot(cx + (i - (cols - 1) / 2) * cell, cy + (j - (rows.length - 1) / 2) * cell, cell * 0.48, 1))
+  }))
+  return { cx, cy, radius, holes }
+}
