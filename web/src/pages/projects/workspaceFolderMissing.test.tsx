@@ -53,7 +53,8 @@ afterEach(() => { vi.restoreAllMocks() })
 describe('the project page and a workspace folder that is gone', () => {
   it('🔑 says the folder no longer exists, names it, and says what to do', async () => {
     mount(() => Promise.reject(new ApiError('No such directory', 404)))
-    const line = await screen.findByRole('status')
+    // The workspace's line, not the threads' loading line beside it.
+    const line = (await screen.findByText(/Folder missing/)).closest('[role="status"]')!
     expect(line.textContent).toMatch(/Folder missing/)
     expect(line.textContent).toContain('garden-planner')
     expect(line.textContent).toContain(`no longer exists at ${DEAD}`)
@@ -64,7 +65,7 @@ describe('the project page and a workspace folder that is gone', () => {
 
   it('stops offering to open a folder that is not there', async () => {
     mount(() => Promise.reject(new ApiError('No such directory', 404)))
-    await screen.findByRole('status')
+    await screen.findByText(/Folder missing/)
     // The path is still SHOWN (it is the thing that is wrong), but no longer as a peek button, and
     // "Open Workspace in Files" is gone — both would open the dead path.
     expect(screen.getAllByText(DEAD).some((el) => el.tagName === 'CODE')).toBe(true)

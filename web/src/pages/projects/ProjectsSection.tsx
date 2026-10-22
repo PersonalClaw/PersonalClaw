@@ -14,6 +14,9 @@ import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
 import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
+import { cx } from '../../ui/cx'
+import { useThreads } from '../../lib/useThreads'
+import { ProjectThreads, projectThreads } from './ProjectThreads'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
@@ -679,6 +682,10 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
   // the rest of the detail page uses — the board paints from cache, then swaps in the
   // fresh projection when it lands.
   const { data: work, loading: workLoading } = useQuery(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
+  // The project's threads, as the sidebar lists them under it (#3814): the page is the project's
+  // thread list beside its detail.
+  const threadsRead = useThreads()
+  const threadCount = projectThreads(threadsRead, id).length
   // Every row opens the work it is, where its own page is (`workRoute`), and a loop at work can
   // be stopped from it: a loop that showed here as "Working" offered nothing to click.
   const openWork = (row: WorkRow) => navigate(workRoute(row))
@@ -1024,20 +1031,28 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
             <WorkBoardColumn work={work} loading={workLoading} onResume={resumeWork} onOpen={openWork} onStop={stopWork} />
           </HubColumn>
 
-          {/* TASKS — a plain list of task lists; clicking one opens its tasks in the
-              side panel (no inline expansion). */}
-          <HubColumn title={`Tasks · ${lists?.length ?? 0} list${(lists?.length ?? 0) === 1 ? '' : 's'}`}>
-            {(lists ?? []).length === 0 ? (
-              <p className="text-on-surface-low text-[0.8125rem]">No task lists yet — Goal Loop and Code attach their work here when scoped to this project.</p>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {(lists as TaskListItem[]).map((tl) => (
-                  <TaskListRow key={tl.id} list={tl} active={panel?.kind === 'tasks' && panel.list.id === tl.id}
-                    onOpen={() => setPanel({ kind: 'tasks', list: tl })} />
-                ))}
-              </div>
-            )}
-          </HubColumn>
+          {/* THREADS over TASKS, sharing the secondary column: the project's chats, goal loops and
+              code sessions as the sidebar lists them, then its task lists. */}
+          <div className="min-h-0 flex flex-col gap-px bg-outline-variant/20">
+            <HubColumn title={`Threads · ${threadCount}`} className="max-h-[50%] shrink-0">
+              <ProjectThreads projectId={id} read={threadsRead} onOpen={navigate} />
+            </HubColumn>
+
+            {/* TASKS — a plain list of task lists; clicking one opens its tasks in the
+                side panel (no inline expansion). */}
+            <HubColumn title={`Tasks · ${lists?.length ?? 0} list${(lists?.length ?? 0) === 1 ? '' : 's'}`} className="flex-1">
+              {(lists ?? []).length === 0 ? (
+                <p className="text-on-surface-low text-[0.8125rem]">No task lists yet — Goal Loop and Code attach their work here when scoped to this project.</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {(lists as TaskListItem[]).map((tl) => (
+                    <TaskListRow key={tl.id} list={tl} active={panel?.kind === 'tasks' && panel.list.id === tl.id}
+                      onOpen={() => setPanel({ kind: 'tasks', list: tl })} />
+                  ))}
+                </div>
+              )}
+            </HubColumn>
+          </div>
         </div>
       </div>
 
@@ -1050,9 +1065,9 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
 }
 
 /** One scrollable region of the project hub grid. */
-function HubColumn({ title, children }: { title: string; children: React.ReactNode }) {
+function HubColumn({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="min-h-0 flex flex-col bg-surface">
+    <div className={cx('min-h-0 flex flex-col bg-surface', className)}>
       <div className="shrink-0 px-l pt-3 pb-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</div>
       <div className="min-h-0 flex-1 overflow-y-auto px-l pb-l">{children}</div>
     </div>
