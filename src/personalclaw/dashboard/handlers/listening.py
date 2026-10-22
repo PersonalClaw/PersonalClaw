@@ -10,7 +10,9 @@ message. A plain browser tab has no shell and reports nothing.
 
 Both routes are the owner's (``apps.permissions.OWNER_ONLY_API_PATHS``), and the frame reaches
 the owner's sockets only (``ws_state.OWNER_FRAMES``): what the microphone is doing is never an
-app's to hear.
+app's to hear. Only you report it: the shell posts signed in as you, and an agent's tool server,
+which holds the internal secret, is refused, so nothing but the shell can tell your pages the
+microphone is off while it is live.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import approval_answer
 from personalclaw.http_errors import json_error
 from personalclaw.instants import utc_now_iso
 
@@ -43,6 +46,8 @@ async def api_listening(request: web.Request) -> web.Response:
 
 async def api_listening_report(request: web.Request) -> web.Response:
     """POST /api/listening — the shell's report: ``{"on": bool, "sources": [...]}``."""
+    if approval_answer.of_request(request).kind != approval_answer.OWNER:
+        return json_error("listening_owner_only", status=403)
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 — any unreadable body is the same refusal

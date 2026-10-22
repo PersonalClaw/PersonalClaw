@@ -365,6 +365,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── security audit (handlers/security_audit.py) ──
     "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
+    # ── listening (handlers/listening.py) ──
+    "listening_owner_only": "Only the desktop shell, signed in as you, says whether the microphone "
+    "is live; an agent or its tools cannot.",
     # the SEL rotate (handlers/core.py `api_sel_rotate`)
     "sel_archive_failed": "The audit log could not be moved into its archive, so it was kept "
     "as it is and no new chain was started.",
