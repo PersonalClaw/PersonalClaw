@@ -268,7 +268,9 @@ export function BuddyCard({
   alert: CardAlert | null
   /** How many more wait behind the alert that shows. */
   waiting?: number
-  inSight: readonly CardWork[]
+  /** Every other piece of live work; null where one piece of work owns the screen and the rest is
+   *  not in sight (the phone's view two, #3898), and the section is left out. */
+  inSight: readonly CardWork[] | null
   /** The running list's last endings: each row's phase is how it ended. */
   finished?: readonly CardWork[]
   /** Work a restart cut off. */
@@ -314,9 +316,11 @@ export function BuddyCard({
         </EntranceRegion>
         {focus && !done ? <EntranceRegion><StepLines steps={steps} /></EntranceRegion> : null}
         {alert ? <EntranceRegion><AlertArea alert={alert} waiting={waiting} onAnswer={onAnswer} /></EntranceRegion> : null}
-        <EntranceRegion>
-          <InSight rows={inSight} finished={finished} interrupted={interrupted} list={list} roomy={done} />
-        </EntranceRegion>
+        {inSight ? (
+          <EntranceRegion>
+            <InSight rows={inSight} finished={finished} interrupted={interrupted} list={list} roomy={done} />
+          </EntranceRegion>
+        ) : null}
         <EntranceRegion>
           <footer className="flex min-w-0 flex-col gap-xs">
             <TextLink href={openHref} ink="emphasis" size="sm" className={TARGET}>Open in PersonalClaw</TextLink>

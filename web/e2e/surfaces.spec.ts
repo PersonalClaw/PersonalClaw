@@ -51,6 +51,7 @@ const FIXED_CLOCK: Record<string, string> = {
   // What waits on you says how long each item has waited.
   'mission-control': '2026-11-02T12:00:00Z',
   companion: '2026-11-02T12:00:00Z',
+  'companion?approval=ap-0a1b2c3d': '2026-11-02T12:00:00Z',
 }
 
 /** The one project the Tasks view row opens, with three of its tasks; the run's home has none. */
@@ -207,6 +208,26 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     // The same four, as the phone lists them first. Its behavior is held by
     // `src/pages/companion/thePhoneListsEverythingWaitingOnYou.test.tsx`.
     json: FIXED_WAITING,
+    why: "the run's home has nothing waiting on you",
+  }, {
+    url: /\/api\/notifications(\?.*)?$/,
+    // An empty log: its Recent section listed whatever the other specs' runs had raised and read,
+    // which differed between two runs of one build. Its rows are held by
+    // `src/pages/companion/companionSections.test.tsx`.
+    json: { notifications: [], unread: 0 },
+    why: "the run's home's notifications are whatever the other specs raised first",
+  }],
+  // View two on the first of them, the destructive approval, as the push link opens it (#3898),
+  // under the route catalogue's sample approval id (`shippedRoutes.ts`). Its behavior is held by
+  // `src/pages/companion/viewTwoGivesOnePieceOfWorkTheScreen.test.tsx`.
+  'companion?approval=ap-0a1b2c3d': [{
+    url: /\/api\/waiting(\?.*)?$/,
+    json: {
+      ...FIXED_WAITING,
+      waiting: FIXED_WAITING.waiting.map((w) => (w.id === 'approval:e2e-ap-1'
+        ? { ...w, id: 'approval:ap-0a1b2c3d', answer: { ...w.answer, path: '/api/approvals/ap-0a1b2c3d/{answer}' } }
+        : w)),
+    },
     why: "the run's home has nothing waiting on you",
   }],
   settings: [{

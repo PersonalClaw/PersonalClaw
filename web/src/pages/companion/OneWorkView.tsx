@@ -149,7 +149,7 @@ export function OneWorkView({ opened, rows, onBack, onDecide, onAnswered }: {
         state={opened.item ? waitingOrbState(opened.item) : focus.phase}
         steps={steps}
         alert={alert}
-        inSight={[]}
+        inSight={null}
         openHref={focus.route || '#/dashboard'}
         orbId={orbIdOf(key)}
         orbSize={96}

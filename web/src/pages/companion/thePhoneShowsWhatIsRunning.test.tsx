@@ -184,7 +184,9 @@ describe('each row says what the work is doing, and opens it', () => {
     await card(/Plan the garden/)
     running.mockResolvedValue(list([row({ phase: 'streaming', line: 'Writing' })]))
     say({ type: 'running_changed', data: { changed: [{ work: 'chat:c1', session: 'c1' }] } })
-    expect(await within(section()).findByText('Writing')).toBeTruthy()
+    // The row's phase, and its buddy line in its new phase's template (#3898).
+    expect((await within(section()).findAllByText('Writing')).length).toBeGreaterThan(0)
+    expect(await within(section()).findByText('Plan the garden: writing')).toBeTruthy()
   })
 })
 
