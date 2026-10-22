@@ -47,6 +47,17 @@ _ONE_MACHINES = {
     "crons": {"jobs": []},
     "event_triggers": {"triggers": []},
     "autonudge": {"loops": {}},
+    "chat_seen": {
+        "v": 1,
+        "since": "2026-09-28T00:00:00Z",
+        "chats": [
+            {
+                "id": "c1",
+                "seen_through": "2026-09-28T02:00:00Z",
+                "updated_at": "2026-09-28T02:00:00Z",
+            }
+        ],
+    },
     "digest_channels": {"version": 1, "channels": {"slack": {"channel": "D1", "run_id": "r-1"}}},
 }
 

@@ -84,6 +84,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/knowledge.py", "update_item", "is_pinned"): "required",
     ("dashboard/handlers/knowledge.py", "update_item", "reingest"): True,
     ("dashboard/handlers/knowledge.py", "update_watched_source", "enabled"): "optional",
+    ("dashboard/handlers/listening.py", "api_listening_report", "on"): "checked",
     ("dashboard/handlers/local_model.py", "api_local_model_bind", "bind_chat"): "checked",
     ("dashboard/handlers/loop_routes.py", "_build_loop_from_body", "attended"): True,
     (
