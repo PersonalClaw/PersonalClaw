@@ -116,7 +116,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
   // Automations (#3816): one sidebar row, whose tabs are the one list and Workflows. The list's
   // address from before, `#/triggers`, opens it still.
-  { route: 'automations', from: ['router', 'palette', 'documented'], since: UNRELEASED },
+  { route: 'automations', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'triggers', from: ['router', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
   { route: 'files', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   { route: 'artifacts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.3' },
