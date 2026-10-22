@@ -686,7 +686,7 @@ id = "web-build"
 tiers = ["merge"]
 inputs = [":(glob)**"]
 external_inputs = []
-toolchain = ["node", "npm-ci"]
+toolchain = ["node", "npm-ci", "electron"]
 cache = ["npm"]
 security = "ordinary"
 reuse = "tree"
@@ -696,6 +696,7 @@ command = [
   { argv = ["npm", "run", "build"] },
   { argv = ["python3", "scripts/check_asset_licenses.py", "--built-web"] },
   { argv = ["python3", "scripts/spa_dist_freshness.py", "stamp"] },
+  { argv = ["npm", "run", "test:desktop:built"], env = { PCLAW_REQUIRE_ELECTRON = "1" } },
 ]
 
 [[job]]

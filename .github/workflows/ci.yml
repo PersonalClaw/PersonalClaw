@@ -1087,18 +1087,11 @@ jobs:
       # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
       - name: npm ci (root)
         run: npm ci
-      # `npm ci` does not run electron's download script, so the desktop tier's real-Electron
-      # legs had no binary here and skipped. Its install script fetches the build the locked
-      # package names and checks it against the checksums that package ships (#3831).
-      # Ubuntu's AppArmor rule (kernel.apparmor_restrict_unprivileged_userns) withholds the user
-      # namespaces Chromium's own sandbox needs, so Electron falls back to its setuid sandbox helper,
-      # and aborts unless that helper is root's with mode 4755. The helper is the one binary given
-      # the bit; the renderer sandbox stays on, and no kernel setting is loosened for the job.
+      # `npm ci` does not run electron's download script (#3831). One script for CI and `run-job` (tools/ci/install_electron.sh): it fetches the checksum-pinned
+      # binary and, on this runner, gives Chromium's setuid sandbox helper the bit Ubuntu's AppArmor
+      # rule makes it need, the renderer sandbox staying on.
       - name: electron's binary, for the desktop tier's real-Electron legs
-        run: |
-          node node_modules/electron/install.js
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+        run: sh tools/ci/install_electron.sh
       # The run's one typecheck: `npm run build` below is `vite build` alone, and nothing else in
       # this workflow typechecks the web.
       - name: typecheck
@@ -1176,6 +1169,12 @@ jobs:
       # here is the `smoke` project, which an `e2e-shard` leg runs.
       - name: stamp the build (scripts/spa_dist_freshness.py)
         run: python3 scripts/spa_dist_freshness.py stamp
+      # The desktop tier's built-page legs (desktop/test/built/): the buddy's real window on this
+      # build. Here, after the build and its stamp, and required: a missing or stale build fails them.
+      - name: test (desktop built pages, node --test)
+        env:
+          PCLAW_REQUIRE_ELECTRON: "1"
+        run: npm run test:desktop:built
       # `include-hidden-files`: the stamp is `web/dist/.build-inputs.json`, and upload-artifact
       # leaves dotfiles out by default, which would hand the browser legs an unstamped dist that
       # their preview refuses.

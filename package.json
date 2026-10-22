@@ -14,6 +14,7 @@
     "ui:ratchet": "npm run ui:ratchet --workspace=web",
     "generate:schemes": "npm run generate:schemes --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
+    "test:desktop:built": "npm run test:built --workspace=desktop",
     "test:mobile": "npm run test --workspace=mobile",
     "validate:apps": "node scripts/app_ui_validate.mjs",
     "hooks:install": "sh scripts/install_git_hooks.sh",

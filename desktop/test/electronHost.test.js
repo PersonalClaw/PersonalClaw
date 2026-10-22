@@ -58,7 +58,7 @@ describe("launchDetail", () => {
   });
 });
 
-describe("a tier wired as bridgeLoads.test.js, buddyIdle.test.js and buddyAnswer.test.js are", () => {
+describe("a tier wired as the real ones are", () => {
   /** Run a tier file shaped like the real ones, whose host cannot start Electron. */
   function runTier(env) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pclaw-tier-"));
@@ -95,11 +95,18 @@ describe("a tier wired as bridgeLoads.test.js, buddyIdle.test.js and buddyAnswer
   });
 
   it("is how every real tier is wired", () => {
-    for (const name of ["bridgeLoads.test.js", "buddyIdle.test.js", "buddyAnswer.test.js"]) {
+    for (const name of ["bridgeLoads.test.js", "buddyIdle.test.js"]) {
       const src = fs.readFileSync(path.join(__dirname, name), "utf8");
       assert.match(src, /const \{ skip, fail \} = electronTier\(/, name);
       assert.match(src, /if \(fail\) it\("starts a real Electron on this host", \(\) => assert\.fail\(fail\)\);/, name);
       assert.doesNotMatch(src, /\{ skip \}/, `${name}: every leg skips on \`skipped\`, so none runs without Electron`);
+    }
+    // The built-page legs take the built-page tier, which fails a missing build too (`builtPage.js`).
+    for (const name of fs.readdirSync(path.join(__dirname, "built")).filter((f) => f.endsWith(".test.js"))) {
+      const src = fs.readFileSync(path.join(__dirname, "built", name), "utf8");
+      assert.match(src, /const \{ skip, fail \} = builtPageTier\(/, name);
+      assert.match(src, /if \(fail\) it\("runs the built page in a real Electron on this host", \(\) => assert\.fail\(fail\)\);/, name);
+      assert.doesNotMatch(src, /\{ skip \}/, name);
     }
   });
 });

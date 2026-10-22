@@ -209,7 +209,7 @@ directions:
   the list holds only lines that exist. No line is a step of two entries. An entry mapped to a
   job in each workflow (`security`) holds each workflow's lines on its own.
 - An install is toolchain, never a step: `uv sync`, `npm ci`, the Playwright browser install and
-  Electron's binary (`node node_modules/electron/install.js`, which `npm ci` does not run) are
+  Electron's binary (`sh tools/ci/install_electron.sh`, which `npm ci` does not run) are
   refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`, `chromium`,
   `electron`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
   leans on another job's installs.
