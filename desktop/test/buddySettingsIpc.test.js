@@ -29,7 +29,7 @@ function fakeIpcMain() {
   };
 }
 
-function wired({ store = memoryStore(), controller = null } = {}) {
+function wired({ store = memoryStore(), controller = null, platform = "darwin" } = {}) {
   const ipcMain = fakeIpcMain();
   const app = { id: "main window" };
   const logs = [];
@@ -40,6 +40,7 @@ function wired({ store = memoryStore(), controller = null } = {}) {
     store: () => store,
     isAppWindow: (sender) => sender === app,
     log: (m) => logs.push(m),
+    platform,
   });
   return { ipcMain, app, store, logs, unregister };
 }
@@ -109,6 +110,25 @@ describe("main answers the app's own windows only", () => {
     assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddySetHideFromCapture, app, true), true);
     assert.deepEqual(seen, [false, true], "the live window took each real change");
     assert.equal(logs.filter((l) => /outside its shape/.test(l)).length, 2);
+  });
+
+  it("on Linux says hiding from capture is not available, and a change there sets nothing", async () => {
+    const seen = [];
+    const store = memoryStore();
+    const controller = { resetPlacement: () => {}, setHideFromCapture: (on) => seen.push(on) };
+    const { ipcMain, app, logs } = wired({ store, controller, platform: "linux" });
+    assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddyGetHideFromCapture, app), null, "null: this computer cannot");
+    assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddySetHideFromCapture, app, false), null);
+    assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddySetHideFromCapture, app, true), null);
+    assert.deepEqual(seen, [], "the window was asked for nothing");
+    assert.equal(CAPTURE_KEY in store.data, false, "the store keeps no switch that does nothing");
+    assert.equal(logs.filter((l) => /not available on linux/.test(l)).length, 2);
+  });
+
+  it("on Windows it reads and sets as on macOS", async () => {
+    const { ipcMain, app } = wired({ platform: "win32" });
+    assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddyGetHideFromCapture, app), true);
+    assert.equal(await ipcMain.invoke(IPC_CHANNELS.buddySetHideFromCapture, app, false), false);
   });
 
   it("unregisters all four", () => {

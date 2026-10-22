@@ -54,7 +54,8 @@ type BuddyBridge = NonNullable<DesktopBridge['buddy']>
  *  the desktop app, and each change moves the live window at once. */
 function ThisComputer({ bridge }: { bridge: BuddyBridge }) {
   const [place, setPlace] = useState<BuddyPlace | null>(null)
-  const [hidden, setHidden] = useState<boolean | null>(null)
+  // Undefined while it is read; null where this computer cannot keep a window out of a capture.
+  const [hidden, setHidden] = useState<boolean | null | undefined>(undefined)
   const failed = (what: string) => (e: unknown) => notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
   useEffect(() => {
     bridge.getPlace().then(setPlace, failed('read where the buddy sits'))
@@ -71,11 +72,17 @@ function ThisComputer({ bridge }: { bridge: BuddyBridge }) {
             {floating && <Button size="sm" variant="secondary" onClick={() => bridge.resetPlace().then(setPlace, failed('dock the buddy'))}>Dock it</Button>}
           </div>
         </Row>
-        <Row label="Hide from screen sharing and screenshots"
-          hint="Keeps what is waiting on you out of a share or a screenshot. Linux offers no way to keep a window out of a capture.">
-          <Toggle on={hidden === true} disabled={hidden === null} disabledReason="Reading this computer’s setting" size="sm" label="Hide from screen sharing and screenshots"
-            onChange={(v) => bridge.setHideFromCapture(v).then(setHidden, failed('change whether screen capture sees the buddy'))} />
-        </Row>
+        {hidden === null ? (
+          <Row label="Hide from screen sharing and screenshots"
+            hint="This computer cannot keep a window out of a share or a screenshot, so the buddy shows in them.">
+            <span data-type="body-s" className="text-on-surface-var">Not available on this computer</span>
+          </Row>
+        ) : (
+          <Row label="Hide from screen sharing and screenshots" hint="Keeps what is waiting on you out of a share or a screenshot.">
+            <Toggle on={hidden === true} disabled={hidden === undefined} disabledReason="Reading this computer’s setting" size="sm" label="Hide from screen sharing and screenshots"
+              onChange={(v) => bridge.setHideFromCapture(v).then(setHidden, failed('change whether screen capture sees the buddy'))} />
+          </Row>
+        )}
       </RowGroup>
     </Section>
   )

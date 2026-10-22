@@ -134,9 +134,10 @@ export interface DesktopBridge {
     getPlace: () => Promise<BuddyPlace>
     /** Back to the dock; resolves where it is now. */
     resetPlace: () => Promise<BuddyPlace>
-    getHideFromCapture: () => Promise<boolean>
-    /** Resolves the value that holds after the change. */
-    setHideFromCapture: (on: boolean) => Promise<boolean>
+    /** Null where this computer cannot keep a window out of a capture (Linux). */
+    getHideFromCapture: () => Promise<boolean | null>
+    /** Resolves the value that holds after the change; null where it cannot be set. */
+    setHideFromCapture: (on: boolean) => Promise<boolean | null>
   }
   capabilities: {
     names: () => string[]

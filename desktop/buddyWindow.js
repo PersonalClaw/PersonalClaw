@@ -19,6 +19,7 @@
  *   (`makeBuddyPresence`), and it never keeps the app running by itself (`buddyOutlivesClose`).
  */
 
+const { captureHidingSupported } = require("./capabilities");
 const placement = require("./buddyPlacement");
 const { SCHEME, parseDeepLink } = require("./deepLinks");
 
@@ -414,9 +415,10 @@ function placeShown(store) {
  * Answer the four calls. `buddy()` is the controller (`makeBuddyWindow`) once main has made it,
  * else null; `store()` the shell's store; `isAppWindow(sender)` whether a call came from one of
  * the app's own bridged windows. A call from anywhere else is refused, and a value outside its
- * shape changes nothing.
+ * shape changes nothing. Where the platform cannot keep a window out of capture (Linux), hiding
+ * from capture reads null, which Settings shows as not available, and a change sets nothing.
  */
-function registerBuddySettingsIpc({ ipcMain, channels, buddy, store, isAppWindow, log = () => {} }) {
+function registerBuddySettingsIpc({ ipcMain, channels, buddy, store, isAppWindow, log = () => {}, platform = process.platform }) {
   const answer = (channel, act) => {
     ipcMain.handle(channel, (event, ...args) => {
       if (!event || !isAppWindow(event.sender)) {
@@ -436,8 +438,13 @@ function registerBuddySettingsIpc({ ipcMain, channels, buddy, store, isAppWindow
     else placement.writePlacement(shell, { mode: "docked" });
     return placeShown(shell);
   });
-  answer(channels.buddyGetHideFromCapture, (shell) => captureOn(shell));
+  const canHide = captureHidingSupported(platform);
+  answer(channels.buddyGetHideFromCapture, (shell) => (canHide ? captureOn(shell) : null));
   answer(channels.buddySetHideFromCapture, (shell, on) => {
+    if (!canHide) {
+      log(`buddy settings: hiding from capture is not available on ${platform}, unchanged`);
+      return null;
+    }
     if (typeof on !== "boolean") {
       log("buddy settings: hide-from-capture outside its shape, unchanged");
       return captureOn(shell);

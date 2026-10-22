@@ -133,12 +133,12 @@ describe('what the buddy follows, shown and not set here', () => {
 
 describe('this computer\'s rows, in the desktop app only', () => {
   afterEach(() => { delete (window as { pclawDesktop?: unknown }).pclawDesktop })
-  const shell = (place: 'docked' | 'floating', hidden: boolean) => {
+  const shell = (place: 'docked' | 'floating', hidden: boolean | null) => {
     const bridge = {
       getPlace: vi.fn(() => Promise.resolve({ mode: place })),
       resetPlace: vi.fn(() => Promise.resolve({ mode: 'docked' as const })),
       getHideFromCapture: vi.fn(() => Promise.resolve(hidden)),
-      setHideFromCapture: vi.fn((on: boolean) => Promise.resolve(on)),
+      setHideFromCapture: vi.fn((on: boolean) => Promise.resolve(hidden === null ? null : on)),
     }
     ;(window as { pclawDesktop?: unknown }).pclawDesktop = { buddy: bridge }
     return bridge
@@ -169,6 +169,23 @@ describe('this computer\'s rows, in the desktop app only', () => {
     expect(bridge.setHideFromCapture).toHaveBeenCalledWith(false)
     await waitFor(() => expect(keep).toHaveAttribute('aria-checked', 'false'))
     expect(patched.some(([p]) => p.includes('capture') || p.includes('place')), 'nothing of it goes to the gateway').toBe(false)
+  })
+
+  it('where this computer cannot keep a window out of a capture, it says so and offers no switch', async () => {
+    const bridge = shell('docked', null)
+    await mount()
+    expect(await screen.findByText('Not available on this computer')).toBeInTheDocument()
+    expect(screen.getByText(/This computer cannot keep a window out of a share or a screenshot/)).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Hide from screen sharing and screenshots' })).toBeNull()
+    expect(bridge.setHideFromCapture).not.toHaveBeenCalled()
+  })
+
+  it('where it can, the row names no platform that cannot', async () => {
+    shell('docked', true)
+    await mount()
+    await screen.findByRole('switch', { name: 'Hide from screen sharing and screenshots' })
+    expect(screen.queryByText(/Linux/)).toBeNull()
+    expect(screen.queryByText('Not available on this computer')).toBeNull()
   })
 })
 

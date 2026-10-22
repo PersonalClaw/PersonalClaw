@@ -8,6 +8,7 @@ const {
   GRANT_STATES,
   IPC_CHANNELS,
   IPC_PREFIX,
+  captureHidingSupported,
   makeCapabilities,
   registerCapabilityIpc,
 } = require("../capabilities");
@@ -447,5 +448,18 @@ describe("gateway registration keeps the shell token out of reach", () => {
     const uses = [...src.matchAll(/shellToken/g)];
     assert.ok(uses.length >= 4, "expected the token to be declared, set, checked and sent");
     assert.match(src, /"X-Shell-Token": (shellToken|token)/);
+  });
+});
+
+describe("hiding a window from screen capture", () => {
+  it("is available where Electron can keep a window out of a capture: macOS and Windows", () => {
+    assert.equal(captureHidingSupported("darwin"), true);
+    assert.equal(captureHidingSupported("win32"), true);
+  });
+
+  it("is not on Linux, or on a platform the shell does not know", () => {
+    assert.equal(captureHidingSupported("linux"), false);
+    assert.equal(captureHidingSupported(""), false);
+    assert.equal(captureHidingSupported(undefined), false);
   });
 });
