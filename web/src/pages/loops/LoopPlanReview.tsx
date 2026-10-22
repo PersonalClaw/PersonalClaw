@@ -477,10 +477,12 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
           so a rename made now would be left out of what it launches. Off, with the reason, until
           the change is settled; a soft-off keeps the tab stop the way Back and Launch below do. */}
       {editingTitle && !held ? (
-        // Raw: TextInput takes no onBlur, and leaving the field ends the edit.
-        <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
-          data-type="body-m" className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        // Leaving the field ends the edit.
+        <div className="min-w-[16rem]">
+          <TextInput autoFocus ariaLabel="Edit the plan title" value={title} onChange={setTitle}
+            onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
+            size="lg" surface="high" />
+        </div>
       ) : (
         // Raw: the title is its own rename control, and no primitive draws bare title-m text.
         <button type="button" onClick={() => setEditingTitle(true)} {...unavailableWhen(held, HELD_REASON, { title: 'Edit title' })}
@@ -684,13 +686,9 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
           command instead of launching a loop that can never self-complete. */}
       {goalType === 'verifiable' && (
         <Section label="Verify command">
-          {/* Raw: TextInput takes no spellCheck, and a shell command must not be spell-checked. */}
-          <input
-            value={verifyCommand}
-            onChange={(e) => setVerifyCommand(e.target.value)}
-            placeholder="e.g. make ci · npm test · 0 lint warnings"
-            spellCheck={false}
-            data-type="body-s" className="w-full h-9 rounded-lg bg-surface-container px-m font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          {/* A shell command must not be spell-checked. */}
+          <TextInput value={verifyCommand} onChange={setVerifyCommand} ariaLabel="Verify command"
+            placeholder="e.g. make ci · npm test · 0 lint warnings" spellCheck={false} mono size="md" />
           <p data-type="caption" className="mt-1.5 text-on-surface-low">
             {verifyCommand.trim()
               ? 'The supervisor runs this each cycle; exit code 0 means done.'
