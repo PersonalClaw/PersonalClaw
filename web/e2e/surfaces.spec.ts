@@ -48,6 +48,9 @@ const FIXED_CLOCK: Record<string, string> = {
   // zone a runner has.
   'inbox?filter=notifications': '2026-11-02T12:00:00Z',
   'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
+  // What waits on you says how long each item has waited.
+  'mission-control': '2026-11-02T12:00:00Z',
+  companion: '2026-11-02T12:00:00Z',
 }
 
 /** The one project the Tasks view row opens, with three of its tasks; the run's home has none. */
@@ -61,6 +64,42 @@ const FIXED_TASKS = [
   fixedTask('t-e2e-2', 'Plant the beans', 'in_progress', 'medium'),
   fixedTask('t-e2e-3', 'Fix the gate latch', 'done', 'low'),
 ]
+
+/** What waits on you (`GET /api/waiting`), one of each shape a reader draws: a destructive approval,
+ *  a workflow's confirmation gate, a trigger's parked action and a loop's question, asked minutes
+ *  before the rows' fixed noon and waiting until answered. */
+const fixedWaiting = (over: Record<string, unknown>) => ({
+  work: '', session: '', risk: '', expires_at: null, current: true, interrupt: 'deliver', age_secs: 0, ...over,
+})
+const FIXED_WAITING = {
+  waiting: [
+    fixedWaiting({
+      id: 'approval:e2e-ap-1', kind: 'approval', consequence: 'destructive', risk: 'destructive',
+      asked_at: '2026-11-02T11:58:00+00:00', route: '',
+      brief: { tool: 'bash', tool_input: 'rm -rf build', tool_purpose: 'Clear the build folder', source_label: 'automation “Nightly”', confirms: ['deletes'] },
+      answer: { method: 'POST', path: '/api/approvals/e2e-ap-1/{answer}', takes: ['approve', 'reject'], body: {} },
+    }),
+    fixedWaiting({
+      id: 'gate:r-e2e:conf-1:0', kind: 'gate', work: 'workflow:r-e2e', consequence: 'changes',
+      asked_at: '2026-11-02T11:50:00+00:00', route: '#/workflows/runs/r-e2e',
+      brief: { workflow: 'release', node_id: 'approve', ask: { kind: 'approval', prompt: 'Ship v1.2?', choices: [] } },
+      answer: { method: 'POST', path: '/api/workflows/runs/r-e2e/confirm', takes: ['approve', 'reject'], body: { resume_token: 'tok-e2e' } },
+    }),
+    fixedWaiting({
+      id: 'park:schedule:clock:e2e', kind: 'park', work: 'trigger:schedule:clock:e2e', consequence: 'changes',
+      asked_at: '2026-11-02T11:55:00+00:00', route: '#/triggers?open=schedule%3Aclock%3Ae2e',
+      brief: { trigger_name: 'Bank statements', question: 'Sign in to the bank’s site', card: {} },
+      answer: { method: 'POST', path: '/api/triggers/schedule%3Aclock%3Ae2e/answer', takes: [true, false], body: { resume_token: 'tok-park' } },
+    }),
+    fixedWaiting({
+      id: 'loop_question:l-e2e', kind: 'loop_question', work: 'loop:l-e2e', consequence: 'asks',
+      asked_at: '2026-11-02T11:40:00+00:00', route: '#/loops/l-e2e',
+      brief: { name: 'Sort the inbox', question: 'May I archive last year’s mail?' },
+      answer: { method: 'POST', path: '/api/loops/l-e2e/nudge', takes: ['text'], body: {} },
+    }),
+  ],
+  unreadable: [],
+}
 
 /** The feed the Notifications filter lists: one unread and one read note today, one read yesterday. */
 const fixedNote = (ts: string, title: string, acked: boolean) => ({ kind: 'job_completed', title, body: `${title}.`, ts, acked })
@@ -132,6 +171,22 @@ function fixedWeek(clock: string) {
  *  hold one of several states on any run, or one the run's home can only answer empty. Each state
  *  the stub hides is held by a unit test instead, named here. */
 const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[]> = {
+  'mission-control': [{
+    url: /\/api\/waiting(\?.*)?$/,
+    // One item of each shape the lanes draw. The run's home has nothing waiting on you, so the
+    // lanes drew only their empty lines, and the approval card, a gate's and a park's verbs and an
+    // Open link went unchecked. The lanes' behavior is held by
+    // `src/pages/dashboard/missionControlReadsWhatWaitsOnYou.test.tsx`.
+    json: FIXED_WAITING,
+    why: "the run's home has nothing waiting on you",
+  }],
+  companion: [{
+    url: /\/api\/waiting(\?.*)?$/,
+    // The same four, as the phone lists them first. Its behavior is held by
+    // `src/pages/companion/thePhoneListsEverythingWaitingOnYou.test.tsx`.
+    json: FIXED_WAITING,
+    why: "the run's home has nothing waiting on you",
+  }],
   settings: [{
     url: /\/api\/usage\/totals(\?.*)?$/,
     // One fixed day with turns: the hub's Usage tile shows today's totals, and the shared home's

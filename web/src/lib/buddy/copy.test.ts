@@ -23,9 +23,10 @@ import {
   BUDDY_LINES, BUDDY_SURFACES, NAME_FLOOR, SURFACE_LIMITS, approvalAnswers, fitLine, fitParts, lineFor,
   type BuddyState, type BuddySurface, type LinePart,
 } from './copy'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 // The phone's prompt is rendered for real, so its page's reads are stubbed as its own test does: the
-// approvals queue answers with the fixture row, and the sections under it with nothing.
+// waiting list answers with the fixture row as its approval, and the sections under it with nothing.
 vi.mock('../useChatSocket', () => ({ useChatSocket: () => {} }))
 const approvals = vi.fn()
 vi.mock('../api', async (orig) => {
@@ -35,6 +36,7 @@ vi.mock('../api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => approvals(),
+      waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
       resolveApproval: () => Promise.resolve(),
       uLoops: () => Promise.resolve([]),
       tasks: () => Promise.resolve({ tasks: [], total: 0 }),

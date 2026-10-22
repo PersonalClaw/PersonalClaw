@@ -10,8 +10,9 @@ import { blastRadiusOf, confirmsOf, establishedFacets } from './approvalMeta'
 // same wherever the row is answered. Each surface brings its own choices and density.
 
 /** The prompt's brief for `ap`: the tool, its arguments, why, where it came from, the context
- *  block and the second confirmation the row names. */
-export function approvalRowFields(ap: PendingApproval): {
+ *  block and the second confirmation the row names. *stale* when it can no longer be answered
+ *  (past the waiting list's `expires_at`): the block says so in place of how long it waited. */
+export function approvalRowFields(ap: PendingApproval, { stale = false }: { stale?: boolean } = {}): {
   tool: string
   args?: string
   purpose?: string
@@ -24,7 +25,7 @@ export function approvalRowFields(ap: PendingApproval): {
     args: argsText(ap.tool_input),
     purpose: ap.tool_purpose,
     source: ap.source_label || undefined,
-    meta: <ApprovalMeta ap={ap} />,
+    meta: <ApprovalMeta ap={ap} stale={stale} />,
     // The second confirmation the row names, as every other surface asks it.
     confirms: confirmsOf(ap.confirms, ap.risk),
   }
@@ -44,10 +45,11 @@ export function approvalRowFields(ap: PendingApproval): {
  *  Facets render as their own row rather than as chips: this list is `roomy` density on a
  *  phone, where a dl row reads better than a wrapped chip strip. The words are shared; the
  *  presentation is per-surface, exactly as the toast already does it. */
-function ApprovalMeta({ ap }: { ap: PendingApproval }) {
+function ApprovalMeta({ ap, stale = false }: { ap: PendingApproval; stale?: boolean }) {
   const rows: [string, string][] = []
   const waited = waitedFor(ap.ts)
-  if (waited) rows.push(['Waiting', waited])
+  if (stale) rows.push(['Expired', 'It can no longer be answered.'])
+  else if (waited) rows.push(['Waiting', waited])
   // `establishedFacets` returns ONLY what is positively established, so an empty list
   // means "nothing could be established" and must not render as a reassurance.
   const facets = establishedFacets(blastRadiusOf(ap.blast_radius))
@@ -85,7 +87,7 @@ function argsText(input: unknown): string | undefined {
 
 /** Coarse elapsed time from the approval's epoch-seconds `ts`. Coarse on purpose: the useful
  *  fact is "this has been blocked a while", and approvals time out in minutes. */
-function waitedFor(ts: number | undefined): string {
+export function waitedFor(ts: number | undefined): string {
   if (!ts) return ''
   const secs = Math.max(0, Math.round(Date.now() / 1000 - ts))
   if (secs < 60) return `${secs}s`

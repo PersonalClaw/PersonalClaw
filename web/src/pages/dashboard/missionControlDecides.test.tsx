@@ -30,6 +30,8 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
+    // Mission Control's lanes are the waiting list's, which carries each approval as its brief.
+    waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
     // Nothing is running in these scenarios: the Working lane is the running list.
     running: () => Promise.resolve({ running: [], finished: [] }),
     status: () => Promise.resolve({}),
@@ -45,6 +47,7 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({
 }))
 
 import { MissionControl } from './MissionControl'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 /** The registry entry a cancelled-run repro left behind (day 8), as `GET /api/approvals` serves it. */
 const PENDING: PendingApproval = {

@@ -23,6 +23,8 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
+    // Mission Control's lanes are the waiting list's, which carries each approval as its brief.
+    waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
     running: () => running(),
     status: () => Promise.resolve({ start_time: 1 }),
     // No skill proposals waiting: this suite is about the other sources.
@@ -38,6 +40,7 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({
 }))
 
 import { MissionControl } from './MissionControl'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 function run(over: Partial<RunningRow> = {}): RunningRow {
   return {

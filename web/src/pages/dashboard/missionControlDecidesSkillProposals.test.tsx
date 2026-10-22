@@ -25,6 +25,7 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: () => Promise.resolve([]),
+    waiting: () => Promise.resolve(waitingList()),
     // Nothing is running in these scenarios: the Working lane is the running list.
     running: () => Promise.resolve({ running: [], finished: [] }),
     status: () => Promise.resolve({}),
@@ -37,6 +38,7 @@ vi.mock('../../lib/api', async (orig) => ({
 vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 
 import { MissionControl } from './MissionControl'
+import { waitingList } from '../../test/waiting'
 
 function proposal(id: string, slug: string, description: string): SkillProposal {
   return {

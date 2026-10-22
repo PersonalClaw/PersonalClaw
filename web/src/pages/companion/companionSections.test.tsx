@@ -3,6 +3,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { InboxSection, RecentSection, RunningSection, TasksSection } from './CompanionSections'
 import { CompanionPage } from './CompanionPage'
+import { waitingApproval, waitingList } from '../../test/waiting'
 import { invalidateKeys } from '../../lib/data'
 import type { InboxItem, Loop, NotificationItem, TaskItem } from '../../lib/api'
 
@@ -45,6 +46,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => approvals(),
+      // The phone's first lane is the waiting list, which carries each approval as its brief.
+      waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
       running: () => running(),
       status: () => Promise.resolve({}),
       uLoops: () => uLoops(),
@@ -472,7 +475,7 @@ describe('the Recent section — the notification feed', () => {
 describe('the companion page as one column', () => {
   const route = { sub: '', navigate: vi.fn(), navEpoch: 0, query: {}, setQuery: vi.fn() }
 
-  it('carries all five sections, approvals FIRST, and no "not yet" stub', async () => {
+  it('carries all five sections, what waits on you FIRST, and no "not yet" stub', async () => {
     approvals.mockResolvedValue([])
     uLoops.mockImplementation(() => Promise.resolve([]))
     tasks.mockImplementation(() => Promise.resolve({ tasks: [], total: 0 }))
@@ -486,7 +489,7 @@ describe('the companion page as one column', () => {
       return hs
     })
     // Order IS the priority order: a blocked run is the only row another person waits on.
-    expect(headings).toEqual(['Approvals', 'Running', 'Tasks', 'Inbox', 'Recent'])
+    expect(headings).toEqual(['Waiting on you', 'Running', 'Tasks', 'Inbox', 'Recent'])
     // The stub list that shipped first is DELETED, not hidden behind a flag.
     expect(screen.queryByText('Not on the phone yet')).toBeNull()
   })

@@ -4,6 +4,7 @@ import type { InboxItem, Loop, NotificationItem, PendingApproval, TaskItem } fro
 import type { WsMessage } from '../../lib/useChatSocket'
 import { invalidateKeys } from '../../lib/data'
 import { CompanionPage } from './CompanionPage'
+import { waitingApproval, waitingList } from '../../test/waiting'
 
 // ── A companion page left open shows what is true now, in every lane ─────────────────────────────
 //
@@ -30,6 +31,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => { reads.approvals++; return Promise.resolve(world.approvals.map((a) => ({ ...a }))) },
+      // The phone's first lane is the waiting list, which carries each approval as its brief.
+      waiting: () => { reads.approvals++; return Promise.resolve(waitingList(...world.approvals.map((a) => waitingApproval({ ...a })))) },
       running: () => Promise.resolve({ running: [], finished: [] }),
       status: () => Promise.resolve({}),
       uLoops: () => { reads.loops++; return Promise.resolve(world.loops.map((l) => ({ ...l }))) },
@@ -90,7 +93,7 @@ const ROW = {
 } as InboxItem
 const NOTE: NotificationItem = { kind: 'info', title: 'Morning brief finished', body: 'Three things today', ts: '2026-10-05T07:15:00Z', acked: false }
 
-const LANE_KEYS = ['companion:approvals', 'loops-companion', 'tasks-companion', 'inbox-companion', 'notifications-companion']
+const LANE_KEYS = ['companion:waiting', 'loops-companion', 'tasks-companion', 'inbox-companion', 'notifications-companion']
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -185,7 +188,16 @@ describe('each lane follows the frames about its list', () => {
     expect(screen.getByText('Inbox clear')).toBeTruthy()
   })
 
-  it('an approval answered elsewhere leaves Approvals and takes its Inbox row along', async () => {
+  it('anything answered elsewhere leaves Waiting on you on the list’s own ring', async () => {
+    await openThePage()
+    world.approvals = []
+    gateway().frame({ type: 'waiting_changed', data: {} })
+    await afterTheBurst()
+    expect(screen.queryByRole('button', { name: 'Allow edit_file' })).toBeNull()
+    expect(screen.getByText('Nothing waiting on you')).toBeTruthy()
+  })
+
+  it('an approval answered elsewhere leaves Waiting on you and takes its Inbox row along', async () => {
     await openThePage()
     world.approvals = []
     world.inbox = [{ ...ROW, status: 'handled' }]

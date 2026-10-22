@@ -36,6 +36,8 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
+    // Mission Control's lanes are the waiting list's, which carries each approval as its brief.
+    waiting: async () => waitingList(...((await approvals()) as Parameters<typeof waitingApproval>[0][]).map((a) => waitingApproval(a))),
     // The Working lane is the running list (`GET /api/running`).
     running: (...a: unknown[]) => running(...a),
     status: () => Promise.resolve({}),
@@ -66,6 +68,7 @@ vi.mock('../../lib/attentionLanes', () => ({
 const LANES_FIXTURE = ['needs-approval', 'your-turn', 'working', 'idle'] as const
 
 import { MissionControl, LANE_REFS, MISSION_CONTROL_VIEW_ID, questionOf } from './MissionControl'
+import { waitingApproval, waitingList } from '../../test/waiting'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -375,7 +378,7 @@ describe('a failed read', () => {
 
 // ── The vacuity floor ───────────────────────────────────────────────────────────────────────
 describe('the lane split comes from lib/attentionLanes, not from this view', () => {
-  it('consults the mocked toLanes with the items and the approvals, and none of the work that runs', async () => {
+  it('consults the mocked toLanes with the items and what waits on you, and none of the work that runs', async () => {
     // Without this, a component that classified items itself — ignoring the sibling entirely —
     // would pass every test above, because the fixtures would still be on screen.
     const item = questionItem()
@@ -385,7 +388,8 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     running.mockResolvedValue({ running: [runningRow()], finished: [] })
     render(<MissionControl />)
 
-    await waitFor(() => expect(toLanes).toHaveBeenCalledWith([item], [appr], [], [], []))
+    // What waits on you is the waiting list's, approvals among it (#3888): no approvals read beside it.
+    await waitFor(() => expect(toLanes).toHaveBeenCalledWith([item], [], [], [], [], [waitingApproval(appr)]))
   })
 
   it('🔑 Working is the running list, never a lane the sibling derived', async () => {
@@ -428,10 +432,10 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     render(<MissionControl />)
 
     await waitFor(() => expect(toLanes).toHaveBeenCalled())
-    const [gotItems, gotApprovals] = toLanes.mock.calls[toLanes.mock.calls.length - 1]
+    const call = toLanes.mock.calls[toLanes.mock.calls.length - 1]
     // Each list arrives whole and separate: no concatenation, no de-duplication done here.
-    expect(gotItems).toEqual([mirror])
-    expect(gotApprovals).toEqual([appr])
+    expect(call[0]).toEqual([mirror])
+    expect(call[5]).toEqual([waitingApproval(appr)])
   })
 
   it('feeds the Working lane from the running list, not from the attention store', async () => {

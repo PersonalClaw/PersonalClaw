@@ -236,6 +236,9 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
 // minting a visual baseline that would need platform-qualified review.
 export const NON_NAV_ROUTES: RouteEntry[] = [
   { route: 'mission-control', label: 'Mission Control', needsData: true },
+  // The phone companion: a full-screen page the shell returns early for (`App.tsx`), reached from a
+  // push notification or its own address. It lists what waits on you first (#3888).
+  { route: 'companion', label: 'Companion', needsData: true },
   // Library's Memory tab (#3815), the page Settings › Memory was, at an address of its own. Scanned
   // as it was as a Settings page; like the Settings pages, it has no visual golden yet.
   { route: 'memory', label: 'Library › Memory', needsData: true },
@@ -260,7 +263,7 @@ export const NON_NAV_ROUTES: RouteEntry[] = [
  *  which `gotoRoute` waits for in place of the rail. The shell renders one only once the owner
  *  is onboarded, so the mark proves what the rail does: the harness reached the route, not the
  *  onboarding screen. */
-export const FULL_SCREEN_ROUTES: readonly string[] = ['buddy']
+export const FULL_SCREEN_ROUTES: readonly string[] = ['buddy', 'companion']
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]

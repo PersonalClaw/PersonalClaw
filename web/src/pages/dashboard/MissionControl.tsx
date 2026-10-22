@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type InboxItem, type PendingApproval, type RunningList, type SkillProposal } from '../../lib/api'
+import { api, ApiError, hasApiCode, type InboxItem, type RunningList, type SkillProposal, type WaitingList } from '../../lib/api'
+import { WAITING_KIND_LABEL, useStaleAt } from '../../lib/waitingList'
+import { waitingQuestion, type CardQuestion } from '../../lib/waitingAnswer'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -89,7 +91,9 @@ const ATTENTION_KEY = 'dashboard:mission-control'
 
 interface Attention {
   items: InboxItem[]
-  approvals: PendingApproval[]
+  /** `GET /api/waiting`: everything waiting on you, the Needs-approval and Your-turn lanes' items,
+   *  approvals among them, each once and in the list's one order (#3888). */
+  waiting: WaitingList
   /** `GET /api/running`: the Working lane, and its just-finished tail. */
   running: RunningList
   /** The skill proposals waiting on a yes or no — Home's To triage reads the same list, so a
@@ -110,22 +114,21 @@ interface Attention {
  *  lanes, and four empty lanes is this surface's "all clear" — the single most misleading thing it
  *  could show. The error reaches `useQuery` and the view says it could not load.
  *
- *  The approvals and the Inbox are handed to `toLanes` UNMERGED, and that is a correctness
- *  requirement rather than a stylistic one: the pending-approval registry raises an
- *  `agent_request` inbox row for every pending approval, carrying `refs.approval = <registry id>` —
- *  and `PendingApproval.id` IS that id. So a pending approval is already on the wire TWICE.
- *  De-duplicating it is `toLanes`' job (it drops the mirror when the approval is in the same
- *  snapshot and KEEPS it when it is not, because losing a row is worse than a stale one).
- *  Concatenating the lists here would double-count every mirrored approval and make each lane's
- *  count a lie. */
+ *  What waits on you and the Inbox are handed to `toLanes` UNMERGED, and that is a correctness
+ *  requirement rather than a stylistic one: most of what waits on you raises an Inbox row too (an
+ *  approval's `agent_request` row carries `refs.approval`, a question's `refs.question`, a gate's
+ *  and a park's the token that answers it), so each is already on the wire TWICE. De-duplicating it
+ *  is `toLanes`' job (it drops the row when its item is in the same snapshot and KEEPS it when it
+ *  is not, because losing a row is worse than a stale one). Concatenating the lists here would
+ *  double-count every one and make each lane's count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, running, proposals] = await Promise.all([
+  const [items, waiting, running, proposals] = await Promise.all([
     api.inboxOpen(),
-    api.approvals(),
+    api.waiting(),
     api.running(),
     api.skillProposals(),
   ])
-  return { items, approvals, running, proposals: proposals.proposals }
+  return { items, waiting, running, proposals: proposals.proposals }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -149,20 +152,6 @@ async function readAttention(): Promise<Attention> {
  *  A PARKED run is not a question at all (`block_kind: 'event'` — an `event` gate, like a monitor
  *  waiting between checks): it carries on when what it waits for happens, so its card offers only
  *  to wake it now. */
-export interface CardQuestion {
-  runId: string
-  /** A trigger's action that stopped for you (`triggers.parks`): answered at the trigger, which
-   *  has no run. Empty for a run's question. */
-  triggerId: string
-  nodeId: string
-  resumeToken: string
-  prompt: string
-  choices: string[]
-  approval: boolean
-  /** Parked until something wakes it (an `event` gate): the card wakes it, and decides nothing. */
-  event: boolean
-}
-
 export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | undefined): CardQuestion | null {
   const refs = item?.refs
   if (!refs || typeof refs !== 'object') return null
@@ -183,6 +172,8 @@ export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | un
     choices,
     // A trigger's park asks Approve or Deny by construction (`parks._raise_row`).
     approval: payload.block_kind === 'approval' || !!triggerId,
+    // An Inbox row's run is answered by its resume, as the run page answers it.
+    confirm: false,
     event: payload.block_kind === 'event' && !triggerId,
   }
 }
@@ -236,7 +227,7 @@ function endedText(err: unknown): string | null {
 function refreshesAttention(m: WsMessage): boolean {
   const type = m.type
   return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
-    || type === 'running_changed'
+    || type === 'running_changed' || type === 'waiting_changed'
 }
 
 export function MissionControl() {
@@ -259,15 +250,19 @@ export function MissionControl() {
   useChatSocket(onMessage, cut.onReconnect, cut.onStatus)
 
   const items = data?.items ?? []
-  const approvals = data?.approvals ?? []
+  const waiting = data?.waiting.waiting ?? []
+  const unreadable = data?.waiting.unreadable ?? []
   const proposals = data?.proposals ?? []
+  // Read again the moment the next card stops being answerable, so its verbs go at once.
+  const now = useStaleAt(waiting)
   const rows = data?.running.running ?? []
   const finished = data?.running.finished ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
-  // Working is the running list's, so it hands `toLanes` none of the work that runs.
+  // Working is the running list's, so it hands `toLanes` none of the work that runs; what waits
+  // on you is the waiting list's, approvals among it.
   const lanes = useMemo(
-    () => toLanes(items, approvals, [], [], proposals),
-    [items, approvals, proposals],
+    () => toLanes(items, [], [], [], proposals, waiting),
+    [items, waiting, proposals],
   )
 
   const mark = useCallback((key: string, o: Outcome) => {
@@ -335,7 +330,9 @@ export function MissionControl() {
       mark(cardKey, { state: 'busy' })
       const sent = q.triggerId
         ? api.answerTriggerPark(q.triggerId, { resume_token: q.resumeToken, answer: value === true })
-        : api.resumeWorkflowRun(q.runId, { answer: value, resume_token: q.resumeToken || undefined })
+        : q.confirm
+          ? api.confirmWorkflowRun(q.runId, { verb: value === true ? 'approve' : 'reject', resume_token: q.resumeToken || undefined })
+          : api.resumeWorkflowRun(q.runId, { answer: value, resume_token: q.resumeToken || undefined })
       sent
         .then((res) => {
           // A refusal the Run button honours (incident mode, the kill switch) answers 200 with
@@ -388,6 +385,14 @@ export function MissionControl() {
           </div>
         ) : null}
 
+        {/* A source the gateway could not read is said, never shown as nothing waiting. */}
+        {unreadable.length > 0 ? (
+          <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+            Some of what may be waiting on you could not be read: {unreadable.map((k) => WAITING_KIND_LABEL[k] ?? k).join(', ')}.
+          </p>
+        ) : null}
+
         {LANES.map((lane) => lane === 'working' ? (
           <RunningLane
             key={lane}
@@ -405,6 +410,7 @@ export function MissionControl() {
             lane={lane}
             cards={lanes[lane] ?? []}
             loading={loading}
+            now={now}
             outcomes={outcomes}
             onResolve={resolve}
             onAnswer={answer}
@@ -422,6 +428,7 @@ function AttentionLaneSection({
   lane,
   cards,
   loading,
+  now,
   outcomes,
   onResolve,
   onAnswer,
@@ -430,6 +437,7 @@ function AttentionLaneSection({
   lane: Lane
   cards: LaneCard[]
   loading: boolean
+  now: number
   outcomes: Record<string, Outcome>
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
@@ -463,6 +471,7 @@ function AttentionLaneSection({
             <li key={c.key} className="min-w-0">
               <AttentionCard
                 card={c}
+                stale={(c.origin === 'waiting' && c.waiting.current === false) || (c.expiresAt != null && c.expiresAt <= now)}
                 outcome={outcomes[c.key]}
                 onResolve={onResolve}
                 onAnswer={onAnswer}
@@ -478,12 +487,15 @@ function AttentionLaneSection({
 
 function AttentionCard({
   card,
+  stale = false,
   outcome,
   onResolve,
   onAnswer,
   onProposal,
 }: {
   card: LaneCard
+  /** Past answering (the waiting list's `expires_at`): the card keeps no verb that could send. */
+  stale?: boolean
   outcome: Outcome | undefined
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
@@ -494,9 +506,10 @@ function AttentionCard({
   const approval = card.origin === 'approval' ? card.approval : null
   const proposal = card.origin === 'proposal' ? card.proposal : null
   const item = card.origin === 'inbox' ? card.item : null
-  const question = questionOf(item)
-  // Answered, or nothing left to answer: either way the verbs go.
-  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
+  const listed = card.origin === 'waiting' ? card.waiting : null
+  const question = listed ? waitingQuestion(listed) : questionOf(item)
+  // Answered, nothing left to answer, or past answering: the verbs go.
+  const settled = outcome?.state === 'done' || outcome?.state === 'ended' || stale
   const busy = outcome?.state === 'busy'
 
   if (approval) {
@@ -511,6 +524,7 @@ function AttentionCard({
           <PendingApprovalCard approval={approval} busy={busy} opensSource
             onDecide={(action) => onResolve(card.key, approval.id, action)} />
         )}
+        {stale ? <Expired /> : null}
         <CardOutcome outcome={outcome} />
       </div>
     )
@@ -551,6 +565,14 @@ function AttentionCard({
           Answer it in the chat
         </TextLink>
       ) : null}
+      {/* Every other item waiting on you is answered on its own page, where its card is. */}
+      {listed && !question && listed.route && !stale ? (
+        <TextLink href={listed.route} ink="emphasis" size="sm"
+          aria-label={`Open ${WAITING_KIND_LABEL[listed.kind].toLowerCase()}: ${subject}`}>
+          Open it to answer
+        </TextLink>
+      ) : null}
+      {stale ? <Expired /> : null}
       {/* What the proposal would write is on the Skills page's proposals, where Home's row opens. */}
       {proposal ? (
         <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>
@@ -602,6 +624,16 @@ function AttentionCard({
         </div>
       )}
     </div>
+  )
+}
+
+/** A card past answering says so, in words: its verbs are gone, as an answered card's are. */
+function Expired() {
+  return (
+    <p data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-low">
+      <Ban size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      Expired — it can no longer be answered.
+    </p>
   )
 }
 

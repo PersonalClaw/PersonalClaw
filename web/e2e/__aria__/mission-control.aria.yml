@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -34,11 +31,35 @@
     - region "Needs approval":
       - heading "Needs approval" [level=#]
       - text: "#"
-      - paragraph: Nothing is waiting on your approval.
+      - list:
+        - listitem:
+          - group "Permission needed to run bash":
+            - alert: Permission needed
+            - text: Destructive bash(rm -rf build)
+            - paragraph: Clear the build folder
+            - paragraph: From automation “Nightly”
+            - button "Allow bash — automation “Nightly” — Clear the build folder": Allow
+            - button "Deny bash — automation “Nightly” — Clear the build folder": Deny
+        - listitem:
+          - paragraph: Workflow “release”
+          - paragraph: Ship v#.#?
+          - button "Approve Ship v#.#? — Workflow “release”": Approve
+          - button "Deny Ship v#.#? — Workflow “release”": Deny
+        - listitem:
+          - paragraph: Automation “Bank statements”
+          - paragraph: Sign in to the bank’s site
+          - button "Approve Sign in to the bank’s site — Automation “Bank statemen…": Approve
+          - button "Deny Sign in to the bank’s site — Automation “Bank statemen…": Deny
     - region "Your turn":
       - heading "Your turn" [level=#]
       - text: "#"
-      - paragraph: Nothing is waiting on an answer from you.
+      - list:
+        - listitem:
+          - paragraph: Loop “Sort the inbox”
+          - paragraph: May I archive last year’s mail?
+          - 'link "Open loop: May I archive last year’s mail? — Loop “Sort the inbox”"':
+            - /url: "#/loops/l-e#e"
+            - text: Open it to answer
     - region "Working":
       - heading "Working" [level=#]
       - text: "#"

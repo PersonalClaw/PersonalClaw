@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CompanionPage } from './CompanionPage'
+import { waitingApproval, waitingList } from '../../test/waiting'
 import { invalidateKeys } from '../../lib/data'
 import type { PendingApproval } from '../../lib/api'
 
@@ -39,6 +40,8 @@ vi.mock('../../lib/api', async (orig) => {
     api: {
       ...real.api,
       approvals: () => approvals(),
+      // The phone's first lane is the waiting list, which carries each approval as its brief.
+      waiting: async () => waitingList(...((await approvals()) as PendingApproval[]).map((a) => waitingApproval(a))),
       resolveApproval: (id: string, action: string) => resolveApproval(id, action),
       running: () => Promise.resolve({ running: [], finished: [] }),
       status: () => Promise.resolve({}),
@@ -197,7 +200,7 @@ describe('the companion approvals queue', () => {
     approvals.mockRejectedValue(new Error('probe-induced failure'))
     render(<CompanionPage {...route} />)
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain("Couldn't load your approvals")
+    expect(alert.textContent).toContain("Couldn't load your list of what waits on you")
     expect(alert.textContent).toContain('probe-induced failure')
     // The empty state must NOT be what a failure paints.
     expect(screen.queryByText('Nothing waiting on you')).toBeNull()
@@ -243,13 +246,13 @@ describe('the companion approvals queue', () => {
   // is not weakened — its subject no longer exists. The honesty requirement it enforced moved
   // with the sections: `companionSections.test.tsx` asserts, per section, that a failed fetch
   // announces rather than falling through to an empty state.
-  it('keeps the approvals queue FIRST once the other sections are on the page', async () => {
+  it('keeps what waits on you FIRST once the other sections are on the page', async () => {
     approvals.mockResolvedValue([])
     render(<CompanionPage {...route} />)
     await screen.findByText('Nothing waiting on you')
     // A blocked run is the only row here another person is waiting on, so it stays at the top
     // of the column no matter how much else the companion grows.
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)[0]).toBe('Approvals')
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)[0]).toBe('Waiting on you')
     expect(screen.queryByText('Not on the phone yet')).toBeNull()
   })
 })

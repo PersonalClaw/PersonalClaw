@@ -14,9 +14,12 @@ app not connected" and none of this applies.
 The shell puts an icon in the macOS menu bar and keeps it there while PersonalClaw is
 running. Its menu is live, refreshed every few seconds from the local gateway:
 
-- **Approvals waiting** — how many tool approvals are pending. Clicking the row opens
-  the chat surface where they are answered. It stays clickable at zero, so it is a way
-  in rather than a row that greys out the moment you catch up.
+- **Waiting on you** — how many things wait on your answer: approvals, an agent's
+  questions, a loop's question, a workflow's gate, an automation's parked action, a
+  browser grant, a plan to review and a control-bridge confirmation, the one list every
+  surface counts (`GET /api/waiting`). Clicking the row opens Mission Control, which lists
+  each with its answer. It stays clickable at zero, so it is a way in rather than a row
+  that greys out the moment you catch up.
 - **Running** — everything running now, the same list Mission Control's Working lane
   shows (`GET /api/running`): a chat's turn, a helper, a loop, a workflow run, an
   automation's fire and a webhook's turn, each once. Each entry says the work's name, its

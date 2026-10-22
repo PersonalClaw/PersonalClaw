@@ -27,6 +27,7 @@ vi.mock('../../lib/api', async (orig) => ({
   api: {
     inboxOpen: () => inboxOpen(),
     approvals: () => Promise.resolve([]),
+    waiting: () => Promise.resolve(waitingList()),
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     running: () => running(),
     status: () => status(),
@@ -46,6 +47,7 @@ vi.mock('../../lib/useChatSocket', () => ({
 }))
 
 import { MissionControl } from './MissionControl'
+import { waitingList } from '../../test/waiting'
 
 const UPDATED = '2026-10-21T10:04:00Z'
 

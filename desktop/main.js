@@ -101,7 +101,7 @@ const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
 const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
-/** How often the menu bar refreshes its approvals count and what is running. */
+/** How often the menu bar refreshes its count of what waits on you and what is running. */
 const PRESENCE_REFRESH_MS = 5000;
 /** How long quit waits for the gateway to stop before escalating. */
 const GATEWAY_GRACE_MS = 8000;
@@ -517,8 +517,8 @@ const systemBrowser = makeSystemBrowser({ shell, log: (msg) => console.warn(msg)
  * whose whole job is to be noticed without being sought.
  *
  * The title has exactly ONE writer (`composeTrayTitle` in
- * `trayPresence.js`), because the approvals badge wants the same pixels. Capture wins
- * there: an approvals count can wait a second, a live-microphone indicator cannot.
+ * `trayPresence.js`), because the waiting badge wants the same pixels. Capture wins
+ * there: a waiting count can wait a second, a live-microphone indicator cannot.
  *
  * ORDERING: `trayPresence` is declared further down this file, so this function must
  * not be called during module evaluation. It cannot be — `onCapturing` fires only from
@@ -1205,7 +1205,7 @@ function getGateway(pathname) {
 }
 
 /**
- * Refresh the live counts. `GET /api/approvals` is a bare array; `GET /api/running` is
+ * Refresh the live counts. `GET /api/waiting` is `{waiting: [...], unreadable: [...]}`; `GET /api/running` is
  * `{running: [...], finished: [...]}` — both are folded by `summarizePresence`, which renders a
  * failed poll as "not connected" rather than as a zero that looks like good news, and
  * `carryPresence` carries the last rows over a poll that could not read them. Which start of the
@@ -1215,9 +1215,9 @@ function getGateway(pathname) {
 async function refreshPresence() {
   if (!trayPresence.available) return;
   const before = gatewayStarts;
-  const [approvals, running] = await Promise.all([getGateway("/api/approvals"), getGateway("/api/running")]);
+  const [waiting, running] = await Promise.all([getGateway("/api/waiting"), getGateway("/api/running")]);
   const boot = bootRead(before, gatewayStarts);
-  trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(approvals, running), { boot }));
+  trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(waiting, running), { boot }));
 }
 
 /** Start the presence poll. Polling the loopback API (not the WS) is deliberate: the

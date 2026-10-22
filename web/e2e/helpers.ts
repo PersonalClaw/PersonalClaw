@@ -43,7 +43,7 @@ export const SHELL_SELECTOR = 'nav[data-tour="rail"]'
  *  Every entry in `routes.ts` is shell-bearing but the full-screen routes (`FULL_SCREEN_ROUTES`),
  *  which the shell renders without its NavRail once the owner is onboarded: for one of those,
  *  `route` names it and the page's own `data-full-screen` mark stands in for the rail.
- *  `#/companion` and `?embed=1` also render WITHOUT a NavRail, and neither is in the manifest. */
+ *  `?embed=1` also renders WITHOUT a NavRail, and is not in the manifest. */
 export async function assertShellMounted(page: Page, route = ''): Promise<void> {
   const fullScreen = fullScreenOf(route)
   if (fullScreen) {
