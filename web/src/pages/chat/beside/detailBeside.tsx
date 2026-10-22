@@ -5,7 +5,7 @@ import { Button } from '../../../ui/Button'
 import { Markdown } from '../../../ui/Markdown'
 import { ChatFileViewer } from '../ChatFilePanel'
 import { WorkflowProgressCard } from '../WorkflowProgressCard'
-import { useHelper } from '../transcript/TurnHelpers'
+import { useHelper, type HelperRef } from '../transcript/TurnHelpers'
 import type { ChatOutput } from '../inspector/chatOutputs'
 import type { SubagentCard } from '../chatTypes'
 
@@ -40,10 +40,13 @@ const LABELS: Record<DetailKind, string> = { artifact: 'artifact', file: 'file',
 
 /** The pane for a detail address, or null for an address that names none (a block's, or nothing
  *  open). `back`, on a phone, returns to the inspector the detail replaced. */
-export function detailPane({ address, outputs, subagents, session, ready, open, onClose, back }: {
+export function detailPane({ address, outputs, subagents, helpers = [], session, ready, open, onClose, back }: {
   address: string | null
   outputs: ChatOutput[]
   subagents: SubagentCard[]
+  /** The helpers the chat's calls started, as their results named them: a helper's name before a
+   *  live frame or a read of it says more (after a reload). */
+  helpers?: HelperRef[]
   session?: string
   /** Whether the chat's turns are on screen. */
   ready: boolean
@@ -57,10 +60,11 @@ export function detailPane({ address, outputs, subagents, session, ready, open, 
   const { kind, id } = detail
   const made = outputs.find((o) => o.address === address)
   const helper = subagents.find((s) => s.id === id)
+  const named = helpers.find((r) => r.id === id)
   const title = kind === 'artifact' ? (made?.name || id)
     : kind === 'file' ? (made?.name || id.split('/').pop() || id)
       : kind === 'run' ? 'Workflow run'
-        : (helper?.title || helper?.task || 'Helper')
+        : (helper?.title || helper?.task || named?.task || 'Helper')
   const frame = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {back && (
@@ -88,13 +92,13 @@ export function detailPane({ address, outputs, subagents, session, ready, open, 
             <WorkflowProgressCard refObj={{ runId: id, created: false }} inPane />
           </div>
         )
-        : <HelperDetail id={id} live={helper} session={session} />
+        : <HelperDetail id={id} live={helper} named={named} session={session} />
   return { id: address!, title, label: LABELS[kind], icon: ICONS[kind] ?? SearchX, onClose, body: frame(body) }
 }
 
 /** A helper, beside the thread: what it was asked, by which agent, how it stands, and its report. */
-function HelperDetail({ id, live, session }: { id: string; live?: SubagentCard; session?: string }) {
-  const { sub, gone, readError } = useHelper({ id, agent: live?.agent ?? '', task: live?.task ?? '' }, session, live)
+function HelperDetail({ id, live, named, session }: { id: string; live?: SubagentCard; named?: HelperRef; session?: string }) {
+  const { sub, gone, readError } = useHelper({ id, agent: live?.agent ?? named?.agent ?? '', task: live?.task ?? named?.task ?? '' }, session, live)
   const unrun = sub.done && !!sub.neverRan
   const stopped = sub.done && !!sub.stopped && !unrun
   const failed = sub.done && !!sub.error && !unrun && !stopped

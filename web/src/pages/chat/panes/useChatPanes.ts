@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { reportActionFailure } from '../../../app/reportingWrite'
 import { onToolResultFull } from '../toolResultBridge'
-import { deriveActivity } from '../chatTypes'
+import { deriveActivity, type ToolSegment } from '../chatTypes'
 import { chatOutputs } from '../inspector/chatOutputs'
+import { helpersFromTool } from '../transcript/TurnHelpers'
 import { api } from '../../../lib/api'
 import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 import { useIsMobile } from '../../../app/useIsMobile'
@@ -129,6 +130,9 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   const activity = useMemo(() => deriveActivity(turns), [turns])
   // What the chat made, for the inspector's Outputs and the detail tile's titles.
   const outputs = useMemo(() => chatOutputs(turns), [turns])
+  // The helpers the chat's calls started, by the names their results gave them (the tile's title).
+  const helperRefs = useMemo(() => turns.flatMap((t) => t.segments.flatMap((s) =>
+    s.kind === 'tool' && (s as ToolSegment).done ? helpersFromTool((s as ToolSegment).tool, (s as ToolSegment).output) : [])), [turns])
 
   // Kill EVERY running subagent of this chat's fan-out in one click.
   // Optimistically mark the running cards done; the subagent_done WS events reconcile. A batch's
@@ -168,7 +172,7 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   }
   return {
     activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile, treeOpen, setTreeOpen, beside, setBeside,
-    resultRef, setResultRef, resultToolRef, resultBody, activity, outputs, killFanout, openSide, askSide,
+    resultRef, setResultRef, resultToolRef, resultBody, activity, outputs, helperRefs, killFanout, openSide, askSide,
   }
 }
 

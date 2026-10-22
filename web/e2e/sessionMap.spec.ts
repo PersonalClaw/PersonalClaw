@@ -685,19 +685,20 @@ test.describe('Session Map — it is the session\'s ONLY index', () => {
     ).toBe(true)
     await page.getByRole('button', { name: 'Activity', exact: true }).click()
 
-    // ── CLAUSE 1: the panel has no Index tab and opens on Files ──────────────────────────────
-    // CONTROL FIRST: the panel really opened, on the tab that is now its default. Without it, a
-    // panel that never rendered would satisfy every absence below.
+    // ── CLAUSE 1: the panel has no Index section ──────────────────────────────────────────────
+    // CONTROL FIRST: the panel really opened, with its Files section among the session inspector's
+    // sections (#3820). Without it, a panel that never rendered would satisfy every absence below.
+    const panel = page.locator('[data-inspector]')
     await expect(
-      page.locator('#act-panel-files'),
-      'the Activity panel did not open on its Files tab',
+      panel.getByRole('region', { name: 'Files' }),
+      'the Activity panel did not open with its Files section',
     ).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('#act-panel-index'), 'the Activity panel still mounts an index tabpanel').toHaveCount(0)
+    await expect(panel.getByRole('region', { name: 'Index' }), 'the Activity panel still renders an "Index" section').toHaveCount(0)
     await expect(page.getByRole('tab', { name: 'Index' }), 'the Activity panel still renders an "Index" tab').toHaveCount(0)
-    // The list body, by content: a reinstated outline under any other tab name still fails here.
-    // The panel is scoped so the assertion cannot be satisfied by the transcript's own copy of the
+    // The list body, by content: a reinstated outline under any other name still fails here. The
+    // panel is scoped so the assertion cannot be satisfied by the transcript's own copy of the
     // prompt, which is on screen throughout.
-    const panel = page.locator('#act-panel-files')
     await expect(
       panel.getByText(PROMPT, { exact: false }),
       'the Activity panel still lists user turns as jump anchors',

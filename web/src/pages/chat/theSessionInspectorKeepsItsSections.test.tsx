@@ -25,6 +25,7 @@ const MESSAGES: HistMsg[] = [
   { role: 'user', content: 'Draft the launch plan and start the digest.', ts: '2026-10-20T09:00:00Z' },
   toolRow('tc-1', 'artifact_save', '{"name":"Launch plan","kind":"markdown"}', "Saved artifact 'Launch plan' (slug: launch-plan, version 1, base 9f2c)."),
   toolRow('tc-2', 'write_file', '{"path":"notes/todo.md","content":"- ship"}', 'Wrote notes/todo.md'),
+  toolRow('tc-4', 'subagent_run', '{}', 'Spawned 1 subagent(s). Results will arrive as completion events:\n  aaaa1111 (researcher): Read up on LSM trees'),
   toolRow('tc-3', 'workflow_start', '{"workflow":"digest"}', '{"run_id": "a1b2c3d4", "workflow": "digest", "status": "running"}'),
   { role: 'assistant', content: 'The plan is saved and the digest is running.', ts: '2026-10-20T09:00:09Z' },
 ]
@@ -271,6 +272,12 @@ describe('the detail tile', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Open digest beside the conversation' }))
     expect(query.beside).toBe('run:a1b2c3d4')
     expect(await screen.findByRole('region', { name: 'Workflow run' })).toBe(tile())
+  })
+
+  it('names a helper\'s tile by the task its call gave it, after a reload with no frame', async () => {
+    await openChat({ beside: 'helper:aaaa1111' })
+    const pane = await screen.findByRole('region', { name: 'Read up on LSM trees' })
+    await waitFor(() => expect(pane.textContent).toMatch(/Running · web_search/))
   })
 
   it('opens what a copied address names', async () => {

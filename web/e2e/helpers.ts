@@ -1,6 +1,7 @@
 import { type ConsoleMessage, type Page, expect } from '@playwright/test'
 import { FULL_SCREEN_ROUTES, type Theme } from './routes'
 import { STREAM_HEAL_WARNING } from '../src/pages/chat/streamStall'
+import { idleRunState } from '../src/lib/workPhase'
 
 // ── Harness helpers ─────────────────────────────────────────────────────────
 
@@ -566,6 +567,50 @@ async function clickRowBody(page: Page): Promise<OpenResult> {
   return true
 }
 
+/** A chat the run's home does not hold, answered by route stubs, so the session inspector and the
+ *  detail tile beside the thread have something to show (#3820): an artifact it saved, a file it
+ *  wrote, a run still going and one that ended, and a helper whose report is in. Everything else
+ *  the page reads (the tool servers among it) is the home's own. */
+const INSPECTED = 'chat-inspected-1790000000'
+export async function openTheInspectedChat(page: Page, query: string): Promise<OpenResult> {
+  const at = new Date(Date.now() - 79_000).toISOString()
+  const tool = (id: string, name: string, input: string, output: string) => ({
+    role: 'tool', content: name, ts: '2026-10-20T09:00:02+00:00',
+    meta: { tool_call_id: id, purpose: '', input, kind: 'other', done: true, output },
+  })
+  const detail = {
+    key: INSPECTED, title: 'The launch plan', queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
+    run_state: idleRunState(INSPECTED),
+    messages: [
+      { role: 'user', content: 'Draft the launch plan, note what is left and start the digest.', ts: '2026-10-20T09:00:00+00:00' },
+      tool('tc-1', 'artifact_save', '{"name":"Launch plan","kind":"markdown"}', "Saved artifact 'Launch plan' (slug: launch-plan, version 1, base 9f2c)."),
+      tool('tc-2', 'write_file', '{"path":"notes/todo.md","content":"- ship"}', 'Wrote notes/todo.md'),
+      tool('tc-3', 'subagent_run', '{"tasks":[{"task":"Read up on LSM trees"}]}', 'Spawned 1 subagent(s). Results will arrive as completion events:\n  aaaa1111 (researcher): Read up on LSM trees'),
+      { role: 'assistant', content: 'The plan is saved, the list is written and the digest is running.', ts: '2026-10-20T09:00:09+00:00' },
+    ],
+  }
+  const row = (work: string, kind: string, name: string, phase: string, line: string) => ({
+    work, kind, session: INSPECTED, phase, line, since: at, name, agent: '', started_at: at, route: '', blocked: false, waiting: [],
+  })
+  await page.route(`**/api/chat/sessions/${INSPECTED}`, (route) =>
+    route.request().method() === 'GET' ? route.fulfill({ json: detail }) : route.fallback())
+  await page.route(/\/api\/running(\?.*)?$/, (route) => route.fulfill({
+    json: { running: [row('workflow:a1b2c3d4', 'workflow', 'Nightly digest', 'working', 'Step 2 of 4')], finished: [row('workflow:0ld0ld00', 'workflow', 'Yesterday’s digest', 'complete', '')] },
+  }))
+  await page.route('**/api/spawn/aaaa1111', (route) => route.fulfill({
+    json: { id: 'aaaa1111', task: 'Read up on LSM trees', title: '', agent: 'researcher', done: true, started: at, result: 'LSM trees trade read cost for write throughput.', error: '', stopped: false },
+  }))
+  await gotoRoute(page, `chat/${INSPECTED}${query}`)
+  const inspector = page.locator('[data-inspector]')
+  if (query.includes('activity=1') && !query.includes('beside=')) {
+    if (!(await inspector.count())) return { skip: 'the inspected chat opened no inspector' }
+    // Every section open, so the whole column is what the matrix reads.
+    const folded = inspector.locator('section > div > button[aria-expanded="false"]')
+    for (let n = await folded.count(); n > 0; n = await folded.count()) await folded.first().click()
+  }
+  return true
+}
+
 /** The recipes, all proven by hand in audits before being wired in here. */
 export const OPENERS: Opener[] = [
   {
@@ -605,6 +650,10 @@ export const OPENERS: Opener[] = [
       return true
     },
   },
+  // The chat's session inspector with every section open, and the detail tile beside the thread
+  // holding a helper the chat started (#3820).
+  { label: 'chat session inspector', route: 'chat', open: (page) => openTheInspectedChat(page, '?activity=1') },
+  { label: 'chat detail tile', route: 'chat', open: (page) => openTheInspectedChat(page, '?activity=1&beside=helper:aaaa1111') },
   { label: 'knowledge peek dock', route: 'knowledge', open: clickRowBody },
   { label: 'inbox peek dock', route: 'inbox', open: clickRowBody },
   {

@@ -230,9 +230,12 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           INNER (left) corners — the edge facing the content — to read as a floating
           panel rather than a full-bleed column. Radius via a token (--radius-xl); the
           outer (right) edge stays flush to the browser edge (square). */}
-      <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+      <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative flex shrink-0 justify-end overflow-hidden border-l border-outline-variant/40 bg-surface"
         style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
-        initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
+        // `dockW + 1`: the dock's 1 px left border is inside its width, so a dock only `dockW` wide
+        // left its `dockW`-wide body running 1 px past the window's edge, header and Close with it
+        // (the UI quality check's overflow step, on the chat's session inspector at 1440 px).
+        initial={{ width: 0, opacity: 0 }} animate={{ width: dockW + 1, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
         {/* left-edge resize handle — the visible seam springs thicker + brighter on
             hover (scaled by expr) so it telegraphs "drag to resize" with a little
             life instead of a bare 1px color swap. It is the WAI-ARIA window-splitter:
@@ -256,7 +259,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           // left edge — `Mark criterion incomplete`, `Mark step incomplete`, `Mark step done`, `Edit` —
           // which is the stolen-target defect this repo already has on file, made worse. Getting to 24px
           // needs the panel content indented by ~18px, which changes layout across all 46 consumers.
-          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group hit-24-x">
+          className="absolute left-0 top-0 bottom-0 w-1.5 max-w-full cursor-ew-resize z-20 outline-none group hit-24-x">
           <motion.span
             className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
             initial={false}
@@ -267,7 +270,10 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
         </div>
         {/* flex column: the header stays PINNED (shrink-0) while only the content
             region scrolls — the panel title/close never scroll away. */}
-        <div className="flex h-full flex-col" style={{ width: dockW }}>
+        {/* Held to the dock's right edge (`justify-end` above, `shrink-0` here): while the dock opens
+            and closes, its width runs between 0 and `dockW` and the body keeps its own, so the body
+            slides in from the window's edge rather than running past it. */}
+        <div className="flex h-full shrink-0 flex-col" style={{ width: dockW }}>
           {header}
           <div ref={slotRef} className="min-h-0 flex-1 overflow-y-auto px-l py-l" />
         </div>

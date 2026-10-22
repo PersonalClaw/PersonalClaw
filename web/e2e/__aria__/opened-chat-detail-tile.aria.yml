@@ -1,0 +1,134 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to chat history"
+  - button "The launch plan"
+  - button "Regenerate title"
+  - button "Share"
+  - button "Session map"
+  - button "Activity"
+  - button "More actions"
+  - text: Draft the launch plan, note what is left and start the digest.
+  - button "Copy"
+  - button "Edit & resend"
+  - button "Rewind to here"
+  - button "Branch from here"
+  - button "Worked for #s · # steps"
+  - paragraph: The plan is saved, the list is written and the digest is running.
+  - list "What this turn made":
+    - listitem:
+      - text: Launch plan Artifact
+      - button "Open Launch plan beside the conversation": Beside
+      - link "Open Launch plan in the Library":
+        - /url: "#/artifacts/launch-plan"
+        - text: Open
+  - button "Copy"
+  - button "Regenerate"
+  - button "Branch from here"
+  - button "Speak"
+  - status
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Optimize prompt (⌘↵)" [disabled]
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - region "Read up on LSM trees":
+    - heading "Read up on LSM trees" [level=#]
+    - text: Docked on the right of the work
+    - status
+    - button "Move helper"
+    - button "Expand helper"
+    - button "Close helper"
+    - group "The helper, beside the conversation":
+      - term: Task
+      - definition: Read up on LSM trees
+      - term: Agent
+      - definition: researcher
+      - term: State
+      - definition: Done
+      - paragraph: LSM trees trade read cost for write throughput.
+    - separator "Resize helper — arrow keys to resize"
+  - region "Activity":
+    - separator "Resize panel — arrow keys to resize"
+    - heading "Activity" [level=#]
+    - button "Expand to full width"
+    - button "Close"
+    - region "Environment":
+      - button "Environment Normal · the workspace · Not read"
+      - button "Move Environment up" [disabled]
+      - button "Move Environment down"
+    - region "Context":
+      - button "Context Context not measured yet"
+      - button "Move Context up"
+      - button "Move Context down"
+    - region "Connectors":
+      - button "Connectors # ready"
+      - button "Move Connectors up"
+      - button "Move Connectors down"
+    - region "Outputs":
+      - button "Outputs"
+      - button "Move Outputs up"
+      - button "Move Outputs down"
+      - list:
+        - listitem:
+          - button "Open todo.md"
+          - text: todo.md notes/todo.md
+        - listitem:
+          - button "Open Launch plan"
+          - text: Launch plan Artifact
+    - region "Files":
+      - button "Files # file"
+      - button "Move Files up"
+      - button "Move Files down"
+    - region "Sources":
+      - button "Sources"
+      - button "Move Sources up"
+      - button "Move Sources down"
+      - paragraph: "No sources yet: a link shows here once an answer cites a page its turn searched or read."
+    - region "Background tasks":
+      - button "Background tasks"
+      - button "Move Background tasks up"
+      - button "Move Background tasks down"
+      - list "Running":
+        - listitem:
+          - button "Open Nightly digest"
+          - text: Nightly digest Step # of # · for #m #s
+          - button "Stop Nightly digest": Stop
+      - paragraph: # finished
+      - list "Just finished":
+        - listitem: Yesterday’s digest complete
+    - region "Side question":
+      - button "Side question Ask beside the chat"
+      - button "Move Side question up"
+      - button "Move Side question down" [disabled]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
