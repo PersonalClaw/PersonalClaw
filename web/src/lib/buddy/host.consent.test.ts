@@ -49,13 +49,18 @@ function world(running: RunningList, waiting: WaitingList) {
   let now = T0
   let seq = 0
   const timers = new Map<number, { at: number; fire: () => void }>()
-  const lists = { running, waiting, listening: false }
-  const reads = { running: 0, waiting: 0 }
+  const lists = { running, waiting, listening: false, show: true, window: true, policyFails: false }
+  const reads = { running: 0, waiting: 0, policy: 0 }
   const answers: unknown[][] = []
   const deps: HostDeps = {
     running: async () => { reads.running++; return lists.running },
     waiting: async () => { reads.waiting++; return lists.waiting },
     listening: async () => ({ on: lists.listening }),
+    policy: async () => {
+      reads.policy++
+      if (lists.policyFails) throw new Error('the gateway did not answer')
+      return { show: lists.show, surfaces: { window: lists.window && lists.show, tray: lists.show, dock: lists.show, notifications: lists.show } }
+    },
     resolveApproval: async (...a) => { answers.push(['approval', ...a]); return { ok: true } },
     answerChatQuestion: async (...a) => { answers.push(['question', ...a]); return { ok: true } },
     now: () => now,
@@ -114,6 +119,8 @@ describe('the buddy sends no answer for anything but an explicit answer', () => 
     const situations = new Set<string>()
     for (let round = 0; round < 3; round++) {
       for (const input of NOT_AN_ANSWER) {
+        // Buddy status arrives as the policy says it, read on the ring below.
+        if (input.type === 'enabled') w.lists.show = input.on
         w.host.send(input)
         w.host.hold(round % 2 === 0)
         w.host.ring()
@@ -218,11 +225,50 @@ describe('the buddy sends no answer for anything but an explicit answer', () => 
 })
 
 describe('the doorbell, levels and timers', () => {
-  it('a burst of rings is one read of each list', async () => {
+  it('a burst of rings is one read of each list, and of the policy', async () => {
     const w = world(LIVE, WAITING)
     for (let i = 0; i < 10; i++) w.host.ring()
     await w.settle()
-    expect(w.reads).toEqual({ running: 1, waiting: 1 })
+    expect(w.reads).toEqual({ running: 1, waiting: 1, policy: 1 })
+  })
+
+  it("Buddy status, as the policy says it: off, nothing shows and the alert waits; on again, it shows", async () => {
+    const w = world(LIVE, WAITING)
+    w.lists.show = false
+    w.host.ring()
+    await w.settle()
+    expect(w.state().enabled).toBe(false)
+    expect(w.state().presence).toBe('hidden')
+    expect(w.state().shown).toBeNull()
+    expect(w.state().queue.map((a) => a.id), 'the alert waits').toContain('approval:ap-1')
+    w.lists.show = true
+    w.host.ring()
+    await w.settle()
+    expect(w.state().enabled).toBe(true)
+    expect(w.state().shown).toBe('approval:ap-1')
+    expect(w.answers).toEqual([])
+  })
+
+  it("the window's own surface off is off too, whatever Buddy status says", async () => {
+    const w = world(LIVE, WAITING)
+    w.lists.window = false
+    w.host.ring()
+    await w.settle()
+    expect(w.state().enabled).toBe(false)
+    expect(w.state().presence).toBe('hidden')
+  })
+
+  it('a policy read that fails keeps what the last one said, and the lists are still read', async () => {
+    const w = world(LIVE, WAITING)
+    w.lists.show = false
+    w.host.ring()
+    await w.settle()
+    w.lists.show = true
+    w.lists.policyFails = true
+    w.host.ring()
+    await w.settle()
+    expect(w.state().enabled, 'still off, as the last answer said').toBe(false)
+    expect(w.reads.waiting).toBe(2)
   })
 
   it('listening is a level too: read on the ring, it holds the alert, and its end lets it go', async () => {

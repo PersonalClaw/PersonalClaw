@@ -27,6 +27,7 @@ const lists: { running: RunningList; waiting: WaitingList } = {
   waiting: { waiting: [], unreadable: [] } as WaitingList,
 }
 const reads = { running: 0, waiting: 0 }
+const policy = { show: true }
 const resolveApproval = vi.fn()
 const answerChatQuestion = vi.fn()
 vi.mock('../../lib/api', async (orig) => {
@@ -38,6 +39,12 @@ vi.mock('../../lib/api', async (orig) => {
       running: async () => { reads.running++; return lists.running },
       waiting: async () => { reads.waiting++; return lists.waiting },
       listening: async () => ({ on: false, sources: [], since: null }),
+      buddyPolicy: async () => ({
+        show: policy.show,
+        surfaces: { window: policy.show, tray: policy.show, dock: policy.show, notifications: policy.show },
+        away_after_secs: 180,
+        notifications: { muted: false, quiet_now: false, may_interrupt: true, changes_at: null },
+      }),
       resolveApproval: (id: string, action: string) => resolveApproval(id, action),
       answerChatQuestion: (...a: unknown[]) => answerChatQuestion(...a),
       approvals: async () => [],
@@ -79,6 +86,7 @@ beforeEach(() => {
   lists.waiting = waitingFor(AP)
   reads.running = 0
   reads.waiting = 0
+  policy.show = true
   resolveApproval.mockReset().mockResolvedValue({ ok: true })
   answerChatQuestion.mockReset()
   onFrame = null
@@ -148,6 +156,19 @@ describe('the buddy presence', () => {
     await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="expanded"]')).not.toBeNull())
     expect(resolveApproval).not.toHaveBeenCalled()
     expect(answerChatQuestion).not.toHaveBeenCalled()
+  })
+
+  it('with Buddy status off, as the policy says it, shows nothing; turned on, the alert is there', async () => {
+    policy.show = false
+    const { container } = render(<BuddyPage {...route} />)
+    await waitFor(() => expect(reads.waiting).toBe(1))
+    await act(async () => { await Promise.resolve() })
+    expect(container.querySelector('[data-buddy-island], [data-buddy-floating]')).toBeNull()
+    expect(screen.queryByRole('group', { name: /^Permission needed/ })).toBeNull()
+    policy.show = true
+    await act(async () => { onFrame?.({ type: 'buddy_policy_changed', data: {} }) })
+    expect(await prompt()).toBeTruthy()
+    expect(resolveApproval).not.toHaveBeenCalled()
   })
 
   it('shows nothing when nothing runs and nothing waits', async () => {

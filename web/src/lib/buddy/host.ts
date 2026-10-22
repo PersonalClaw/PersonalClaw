@@ -19,7 +19,7 @@
 // While the owner holds the card (the pointer or the keyboard focus on it), its folds wait
 // ("No timed loss of content"), and they start over when it is let go.
 
-import { api, type QuestionAnswer, type RunningList, type RunningRow, type WaitingItem, type WaitingList } from '../api'
+import { api, type BuddyPolicy, type QuestionAnswer, type RunningList, type RunningRow, type WaitingItem, type WaitingList } from '../api'
 import { approvalOf, isStale, waitingText, WAITING_KIND_LABEL } from '../waitingList'
 import { waitingQuestionRef } from '../waitingAnswer'
 import { confirmsOf } from '../../pages/chat/approvalMeta'
@@ -38,6 +38,9 @@ export interface HostDeps {
   waiting(): Promise<WaitingList>
   /** Whether the microphone is live (`GET /api/listening`). */
   listening(): Promise<{ on: boolean }>
+  /** Buddy status and the surfaces it shows on (`GET /api/buddy/policy`, #3901), for the buddy's
+   *  own page (`BUDDY_DEPS`). A host without it, the phone's one-work view, is always on. */
+  policy?(): Promise<Pick<BuddyPolicy, 'show' | 'surfaces'>>
   resolveApproval(id: string, action: 'approve' | 'reject'): Promise<unknown>
   answerChatQuestion(session: string, question: string, body: QuestionBody): Promise<unknown>
   now(): number
@@ -82,6 +85,12 @@ export const LIVE_DEPS: Omit<HostDeps, 'now' | 'setTimer' | 'clearTimer'> = {
   listening: () => api.listening(),
   resolveApproval: (id, action) => api.resolveApproval(id, action),
   answerChatQuestion: (session, question, body) => api.answerChatQuestion(session, question, body),
+}
+
+/** The buddy page's: the live reads and Buddy status as the gateway keeps it. */
+export const BUDDY_DEPS: Omit<HostDeps, 'now' | 'setTimer' | 'clearTimer'> = {
+  ...LIVE_DEPS,
+  policy: () => api.buddyPolicy(),
 }
 
 /** The folds that wait while the owner holds the card. */
@@ -294,8 +303,18 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     try {
       do {
         again = false
+        // Read beside the lists, settled on its own: a policy read that fails leaves Buddy status
+        // as the last one said it, and the lists are still read.
+        const policyRead = deps.policy ? Promise.allSettled([Promise.resolve().then(() => deps.policy!())]) : null
         const [running, waiting, listening] = await Promise.all([deps.running(), deps.waiting(), deps.listening()])
+        const [policy] = policyRead ? await policyRead : []
         if (stopped) return
+        // Buddy status is the gateway's (`buddy.show`), and the window's surface is off while it
+        // is: the policy says both, as the shell, the menu bar and Settings read them.
+        if (policy?.status === 'fulfilled') {
+          const on = policy.value.show && policy.value.surfaces.window
+          if (on !== machine.enabled) apply({ type: 'enabled', on })
+        }
         if (listening.on !== machine.listening) apply({ type: listening.on ? 'listen' : 'unlisten' })
         levels(running, waiting)
         readOnce = true

@@ -18,7 +18,8 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { type RouteProps } from '../../app/useQueryState'
-import { createBuddyHost, LIVE_DEPS, type BuddyHost, type HostSnapshot } from '../../lib/buddy/host'
+import { BUDDY_POLICY_CHANGED } from '../../lib/api'
+import { createBuddyHost, BUDDY_DEPS, type BuddyHost, type HostSnapshot } from '../../lib/buddy/host'
 import { viewOf, type BuddyState } from '../../lib/buddy/machine'
 import { buddyBridge, type BuddyBridge, type BuddyPresentation } from '../../lib/desktopBridge'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -41,8 +42,8 @@ export function presentationOf(machine: BuddyState): BuddyPresentation {
   return 'peek'
 }
 
-/** The frames that say a list moved: a doorbell, carrying nothing the page reads. */
-const RINGS = new Set(['running_changed', 'waiting_changed', 'listening'])
+/** The frames that say a list or the buddy's policy moved: a doorbell, carrying nothing the page reads. */
+const RINGS = new Set(['running_changed', 'waiting_changed', 'listening', BUDDY_POLICY_CHANGED])
 
 type HostRef = { current: BuddyHost | null }
 
@@ -145,7 +146,7 @@ export function BuddyPage(_: RouteProps) {
 
   useEffect(() => {
     const host = createBuddyHost({
-      ...LIVE_DEPS,
+      ...BUDDY_DEPS,
       now: () => Date.now(),
       setTimer: (fire, ms) => window.setTimeout(fire, ms),
       clearTimer: (handle) => window.clearTimeout(handle as number),
