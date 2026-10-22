@@ -22,7 +22,7 @@ file and the app differ.
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
 | `#/triggers` | Automations | Automations, its Automations tab | none | `lib/api.ts`, `pages/automations/automationTabs.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx` and 5 more |
 | `#/files` | Files | Library, its Files tab | Files | `pages/artifacts/ArtifactsSection.tsx`, `pages/loops/LoopCockpitPage.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/TopBar.tsx` |
-| `#/artifacts` | Artifacts | Library, its Artifacts tab | Artifacts | `pages/chat/history/useChatHistory.ts`, `pages/dashboard/PinnedTiles.tsx`, `pages/dashboard/widgets/PinnedArtifacts.tsx`, `pages/files/FilesSection.tsx` and 6 more |
+| `#/artifacts` | Artifacts | Library, its Artifacts tab | Artifacts | `pages/chat/history/useChatHistory.ts`, `pages/chat/transcript/TurnArtifacts.tsx`, `pages/dashboard/PinnedTiles.tsx`, `pages/dashboard/widgets/PinnedArtifacts.tsx` and 7 more |
 | `#/terminal` | Terminal | not in the sidebar | Terminal | none |
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/settings/PacksPanel.tsx` |

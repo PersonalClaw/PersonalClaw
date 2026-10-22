@@ -23,7 +23,8 @@ export function InspectorSection({ title, summary, open, onToggle, onMove, first
   const bodyId = `inspector-${id}`
   return (
     <section aria-labelledby={`${bodyId}-title`} className="border-b border-outline-variant/40 last:border-b-0">
-      <div className="group flex items-center gap-xs pr-xs">
+      {/* `pr-s`: the rail clips at its edge, and the last control's focus ring needs its 4 px. */}
+      <div className="group flex items-center gap-xs pr-s">
         <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={bodyId}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-s px-m py-s text-left transition-colors duration-(--duration-short) hover:bg-surface-high focus-visible:-outline-offset-2">
           {open

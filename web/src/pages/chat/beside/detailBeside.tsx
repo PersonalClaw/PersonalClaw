@@ -84,7 +84,7 @@ export function detailPane({ address, outputs, subagents, session, ready, open, 
       ? <div className="flex min-h-0 flex-1 flex-col"><ChatFileViewer path={id} /></div>
       : kind === 'run'
         ? (
-          <div tabIndex={0} role="group" aria-label="The run, beside the conversation" className="min-h-0 flex-1 overflow-auto px-m">
+          <div tabIndex={0} role="group" aria-label="The run, beside the conversation" className="min-h-0 flex-1 overflow-auto px-m focus-visible:-outline-offset-2">
             <WorkflowProgressCard refObj={{ runId: id, created: false }} inPane />
           </div>
         )
@@ -102,7 +102,7 @@ function HelperDetail({ id, live, session }: { id: string; live?: SubagentCard; 
     : !sub.done ? `Running${sub.lastTool ? ` · ${sub.lastTool}` : ''}`
       : unrun ? (sub.declined ? 'Not started: you declined' : 'Not started') : stopped ? 'Stopped' : failed ? `Failed: ${sub.error}` : 'Done'
   return (
-    <div tabIndex={0} role="group" aria-label="The helper, beside the conversation" className="flex min-h-0 flex-1 flex-col gap-s overflow-auto px-l py-m">
+    <div tabIndex={0} role="group" aria-label="The helper, beside the conversation" className="flex min-h-0 flex-1 flex-col gap-s overflow-auto px-l py-m focus-visible:-outline-offset-2">
       <dl className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs" data-type="body-s">
         <dt className="text-on-surface-low">Task</dt><dd className="min-w-0 break-words text-on-surface">{sub.task || '(not said)'}</dd>
         <dt className="text-on-surface-low">Agent</dt><dd className="text-on-surface-var">{sub.agent || 'helper'}</dd>
