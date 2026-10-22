@@ -266,9 +266,17 @@ export function backgroundSummary(helpersRunning: number, running: RunningRow[],
   return [live ? `${live} running` : '', ended ? `${ended} finished` : ''].filter(Boolean).join(' · ')
 }
 
+/** The detail tile a row opens in: a run, and a loop backed by one, as the run (`run:<id>`); a loop
+ *  as the loop (`loop:<id>`); null for work the tile shows nothing of, which opens its own page. */
+export function besideOf(row: Pick<RunningRow, 'kind' | 'work'>): string | null {
+  if (row.work.startsWith('workflow:')) return `run:${idOf(row.work)}`
+  if (row.kind === 'loop' && row.work.startsWith('loop:')) return `loop:${idOf(row.work)}`
+  return null
+}
+
 /** The chat's runs and loops: each running one with how long it has run and its Stop (a run's, the
  *  call its own page makes) or its page, and the count and the last few of the ones that ended. A
- *  run opens in the detail tile; anything else opens its own page. */
+ *  run or a loop opens in the detail tile (`besideOf`); anything else opens its own page. */
 export function BackgroundRuns({ running, finished, loadError, read, open, current, navigate }: Omit<ReturnType<typeof useChatBackground>, 'helperStarts'> & {
   open: (address: string) => void; current: string | null; navigate: (p: string) => void
 }) {
@@ -280,7 +288,8 @@ export function BackgroundRuns({ running, finished, loadError, read, open, curre
   }
   const tail = useMemo(() => finished.slice(0, 3), [finished])
   const go = (row: RunningRow) => {
-    if (row.kind === 'workflow') open(`run:${idOf(row.work)}`)
+    const beside = besideOf(row)
+    if (beside) open(beside)
     else if (row.route) navigate(row.route.replace(/^#\/?/, ''))
   }
   if (loadError && !running.length) return <InlineError onRetry={read}>{`The chat's runs were not read: ${loadError instanceof Error ? loadError.message : String(loadError)}`}</InlineError>
@@ -291,7 +300,7 @@ export function BackgroundRuns({ running, finished, loadError, read, open, curre
         <ul aria-label="Running" className="flex flex-col gap-px">
           {running.map((row) => (
             <li key={row.work} tabIndex={-1} onClick={() => go(row)} className={ROW}>
-              <RowHitTarget label={`Open ${row.name || row.kind}`} selected={current === `run:${idOf(row.work)}`} />
+              <RowHitTarget label={`Open ${row.name || row.kind}`} selected={!!current && current === besideOf(row)} />
               <span className="min-w-0 flex-1">
                 <span data-type="body-s" className="block truncate text-on-surface">{row.name || row.kind}</span>
                 <span data-type="caption" className="block truncate text-on-surface-low">

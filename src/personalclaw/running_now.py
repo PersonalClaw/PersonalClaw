@@ -351,7 +351,8 @@ def _loop_row(snap: Snapshot, loop: Any) -> dict[str, Any]:
         agent=str(loop.agent or ""),
         started_at=_iso(loop.started_at or loop.created_at),
         route=_loop_route(loop),
-        session="",
+        # The chat it was made for, so that chat lists it among its work (`Loop.origin_session`).
+        session=str(getattr(loop, "origin_session", "") or ""),
         fallback=loop_phase(status, held=held_reason(status), reason=str(loop.error_message or "")),
         waiting=snap.waits.get(work, ()),
         # Created, not started: a loop's start is reset each time it resumes.
@@ -370,6 +371,7 @@ def _loops(snap: Snapshot) -> list[dict[str, Any]]:
 
 
 def _run_row(snap: Snapshot, run: Any) -> dict[str, Any]:
+    from personalclaw.dashboard import work_phases
     from personalclaw.loop.loop import held_reason
     from personalclaw.workflows.models import stamp_epoch
 
@@ -390,7 +392,8 @@ def _run_row(snap: Snapshot, run: Any) -> dict[str, Any]:
         agent="",
         started_at=_iso(stamp_epoch(stamp)) if stamp else None,
         route=f"#/workflows/runs/{run.id}",
-        session="",
+        # The chat that started it, by its own name, as a helper's row names its parent.
+        session=work_phases.chat_of(str(run.origin.session_key or "")),
         fallback=fallback,
         waiting=snap.waits.get(work, ()),
         order=stamp_epoch(run.created_at) if run.created_at else 0.0,
