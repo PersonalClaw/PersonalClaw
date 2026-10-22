@@ -5920,6 +5920,12 @@ export interface AuthStatus { mode: string; bind_host: string; valid: boolean; m
 // reads: GET /api/approvals and the `approval` WS event carry the SAME shape, for a chat's
 // approval and a background one alike. Home's count and To triage, the phone companion and the
 // Inbox row all describe this entry; `POST /api/approvals/{id}/{action}` answers it.
+/** Whether something waiting on you may interrupt you now, decided once by the gateway from mute,
+ *  quiet hours and its kind's notification rule (`waiting.INTERRUPTS`): `deliver` it may (a toast,
+ *  a cue, a ping); `quiet` and `hush` not now; `drop` not at all. It decides what interrupts, never
+ *  what is listed or counted. */
+export type Interrupt = 'deliver' | 'quiet' | 'hush' | 'drop'
+
 export interface PendingApproval {
   /** The REGISTRY id — unique across every chat, and what `resolveApproval` takes. */
   id: string
@@ -5969,6 +5975,10 @@ export interface PendingApproval {
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */
   trigger_name?: string
+  /** Whether it may interrupt you now, decided once by the gateway when it was asked
+   *  (`waiting.interrupt_for`): the toast and the cue follow it. Absent from an older gateway,
+   *  which read as `deliver`. */
+  interrupt?: Interrupt
   /** Where the call came from, in the words every surface names it by
    *  (`approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
    *  `workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`,

@@ -695,12 +695,20 @@ loop's step, a plan ready to launch, a chat's step) and a control-bridge confirm
 past answering, an item leaves the list.
 
 - **One item shape:** `{id, kind, work, session, brief, consequence, risk, asked_at, age_secs,
-  expires_at, current, answer, route}`. `brief` is the source's own words, exactly as its own card
+  expires_at, current, interrupt, answer, route}`. `brief` is the source's own words, exactly as its own card
   shows them, and `answer` its own route (`{method, path, takes, body}`), with that route's guards
   unchanged. The list has no answer route of its own, so nothing is answered through it that its
   source would refuse.
 - **One order:** by consequence (`destructive`, then `changes`, then `asks`), then age, oldest
   first, on every surface.
+- **May it interrupt you now:** `interrupt` is decided once, by the gateway, from mute, quiet hours
+  and the kind's notification rule (`waiting.interrupt_for`; an approval is `approval/requested`,
+  everything else `loop/needs_input`): `deliver` it may; `quiet` and `hush` not now (the gate's two
+  answers inside quiet hours, and `quiet` under a rule that keeps the kind quiet, a badge or the
+  digest); `drop` not at all (mute, the severity floor, a rule that says never). It decides what
+  interrupts, never what is listed or counted. An approval's push and its ask on the channel you
+  chose for approvals follow it, and so do the dashboard's toast and cue, from the `interrupt` its
+  registry row and frame carry; the chat's own channel still shows its card, as the chat does.
 - **A source that cannot be read** is named in `unreadable`, never shown as nothing waiting.
 - **Who reads what:** you read everything. An app reads the list only when its manifest declares
   `/api/waiting`, and then all of it, as the approval relay reads every approval, without a route

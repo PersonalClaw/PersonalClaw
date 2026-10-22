@@ -845,7 +845,11 @@ async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(
 
 
 @pytest.mark.asyncio
-async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, _short_window):
+async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, monkeypatch):
+    # A window wide enough that the ten asks land inside it on a loaded machine: each one reads the
+    # notification settings to decide whether it may interrupt (`waiting.interrupt_for`).
+    burst = 0.5
+    monkeypatch.setattr(waiting, "WINDOW_SECS", burst)
     w = _World(tmp_path, _held(asyncio.Event()))
     asks = [
         asyncio.create_task(w.state.request_approval(f"bg-{n}", "cron", "shell")) for n in range(10)
@@ -853,12 +857,12 @@ async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, _short_window
     try:
         await _until(lambda: len(w.state._pending_approvals) == 10, "the ten approvals")
         assert _rings(w) == [], "nothing rings before its window closes"
-        await _a_window()
+        await asyncio.sleep(burst * 2)
         assert _rings(w) == [{}], "ten asks, one frame, with nothing in it to render"
 
         for n in range(10):
             w.state.resolve_approval(f"bg-{n}", True, by=_owner())
-        await _a_window()
+        await asyncio.sleep(burst * 2)
         assert len(_rings(w)) == 2, "ten answers, one more frame"
     finally:
         for t in asks:

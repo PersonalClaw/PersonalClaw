@@ -682,7 +682,14 @@ class DashboardApprovalState:
         out-of-context nudge render; the push wakes a phone; the Inbox row is the durable
         listing. They are written together so no surface can learn of an approval another does
         not list — the defect this replaced was a chat approval that reached only its own chat.
+
+        It carries whether it may interrupt you now (``interrupt``, ``waiting.interrupt_for``):
+        the push and the channel chosen for approvals follow it here, and the dashboard's toast
+        and cue follow it from the row and the frame.
         """
+        from personalclaw import waiting
+
+        entry["interrupt"] = waiting.interrupt_for("approval")
         self._pending_approvals[entry["id"]] = entry
         self.broadcast_ws("approval", entry)
         # The chat it is asked in waits on the owner's yes now: its phase says so (`chat_phase`).
@@ -1166,15 +1173,18 @@ class DashboardApprovalState:
 
         Routed through the notification rules rather than pushed unconditionally: the user owns
         "does a blocked run reach my phone", and ``approval/requested`` is a real row in the
-        rules matrix (it ships with ``push`` among its default targets). A ``never`` mode or
-        a targets list without ``push`` silences this and nothing else.
+        rules matrix (it ships with ``push`` among its default targets). A targets list without
+        ``push`` silences this and nothing else. And only when the approval may interrupt you now
+        (its ``interrupt``, decided once with mute, quiet hours and the row's mode): it was pushed
+        under mute and inside quiet hours alike, which only a ``never`` mode stopped.
 
         NOT routed through :meth:`notify`: that would add a desktop toast beside the approval
         card the dashboard already renders — a behaviour change to every existing user, in
         exchange for nothing the phone needs.
 
         A chat channel asks too (:meth:`_ask_on_a_channel`), with Approve/Deny where it has them:
-        the channel the chat is on, whatever the rule says, and the rule's ``channel_dm``
+        the channel the chat is on, whatever the rule says, as the chat's own card is shown
+        whatever it says, and, when the approval may interrupt you, the rule's ``channel_dm``
         target adds the owner's "Send approvals to" (:meth:`_asking_channels`).
         """
         try:
@@ -1182,7 +1192,8 @@ class DashboardApprovalState:
 
             registered = notification_kinds.kind_for_legacy(notification_kinds.APPROVAL)
             rule = notification_rules.resolve_rule(registered.source, registered.kind)
-            pings = rule.mode != "never"
+            entry = self._pending_approvals.get(approval_id) or {}
+            pings = entry.get("interrupt", "deliver") == "deliver"
             if pings and "push" in rule.targets:
                 push.deliver_async("approval", approval_id)
             asking = self._asking_channels(approval_id, pings and "channel_dm" in rule.targets)

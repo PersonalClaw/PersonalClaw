@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { api } from '../lib/api'
+import { api, type Interrupt } from '../lib/api'
 import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
@@ -18,8 +18,16 @@ import { blastRadiusOf } from '../pages/chat/approvalMeta'
  *  to it — see `approvalDestination`, which reads the place the approval carries because the
  *  session key is only an openable thing for a chat.
  *
+ *  It follows the gateway's one decision of whether the approval may interrupt you now
+ *  (`interrupt`): under mute, inside quiet hours or under a rule that keeps approvals quiet there
+ *  is no toast and no cue, and the approval is listed and counted as ever.
+ *
  *  `activeSession` is the chat key currently on screen ("" when not on a chat).
  */
+/** The gateway's answers that an approval may not interrupt you now (`Interrupt`). Anything else,
+ *  an older gateway's row without one included, nudges as it always did. */
+const NOT_NOW: ReadonlySet<string> = new Set<Interrupt>(['quiet', 'hush', 'drop'])
+
 export function useApprovalToasts(activeSession: string) {
   const activeRef = useRef(activeSession)
   activeRef.current = activeSession
@@ -33,6 +41,7 @@ export function useApprovalToasts(activeSession: string) {
     const id = String(d.id ?? '')
     if (!session || !id) return
     if (session === activeRef.current) return  // visible inline — no nudge
+    if (NOT_NOW.has(String(d.interrupt ?? ''))) return  // not now, or not at all: no nudge
     if (seen.current.has(id)) return
     seen.current.add(id)
     if (seen.current.size > 200) seen.current = new Set([...seen.current].slice(-100))
