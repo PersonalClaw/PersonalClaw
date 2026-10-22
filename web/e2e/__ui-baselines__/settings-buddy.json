@@ -1,0 +1,152 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "390": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "412": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "768": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "390": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "412": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ],
+      "768": [
+        "a \"Settings → Notifications\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button \"When you’re away: # min\"",
+        "button[role=switch] \"Alert notifications\"",
+        "button[role=switch] \"Buddy status\"",
+        "button[role=switch] \"Buddy window\"",
+        "button[role=switch] \"Dock face\"",
+        "button[role=switch] \"Tray face\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}
