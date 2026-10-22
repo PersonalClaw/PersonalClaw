@@ -237,6 +237,27 @@ phase.
   `running_changed` frame ([agent-activity-feed.md](agent-activity-feed.md)); Home reads the
   phase from the chat list, rung by `work_phase`.
 
+## One tone per phase
+
+A surface paints what an agent is doing in its phase's tone and in no tone of its own,
+reading it from `web/src/lib/workPhase.ts` (`phaseColor`, `phaseToken`, `phaseText`,
+`phaseAccent`):
+
+- **A loop's and a workflow run's status** are painted as the phase the gateway says
+  they are (`LOOP_STATUS_PHASES` and `RUN_STATUS_PHASES`, the web's copies of
+  `work_phase.py`'s, which `tests/test_work_phase_vocabulary.py` pins equal): her plan
+  waiting for launch is warn, a run or a loop waiting on her answer info, queued and
+  held work coral, a stop and a cancel ok, a failure and an early end danger.
+- **An agent world's states** are painted as the phase each stands for
+  (`WORLD_PHASE`): working is coral, and live work held up is queued's coral, told
+  apart by its ring, its pace and its word.
+- **A needs-you row** in the Inbox, the bell and the Projects board is painted by what
+  it waits on: her yes (approval, warn) or her answer (input, info).
+- **The microphone chip** is listening's warn, the system's own microphone dot.
+
+`web/src/lib/everySurfacePaintsAPhaseInItsTone.test.ts` holds each of these to its
+phase's tone, with a planted off-tone row as its control.
+
 ## The running list
 
 `GET /api/running` lists every piece of live work once (`src/personalclaw/running_now.py`):

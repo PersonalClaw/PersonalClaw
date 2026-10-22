@@ -81,6 +81,53 @@ export const phaseFamily = (phase: WorkPhase): PhaseFamily => WORK_PHASE_LOOKS[p
 export const phaseWorld = (phase: WorkPhase): AgentActivityState => WORK_PHASE_LOOKS[phase].world
 export const phaseLabel = (phase: WorkPhase): string => WORK_PHASE_LOOKS[phase].label
 
+// ── One tone per phase, on every surface (#3833) ────────────────────────────────────────────────
+//
+// A surface paints what an agent is doing in its phase's tone and in no tone of its own: Agent
+// World, a loop's and a run's status, the Inbox's and the bell's needs-you rows, the Projects
+// board and the microphone chip. Each reads it here, in the form it paints with.
+
+/** Each tone's colour token. `neutral` is low-emphasis on-surface, never an attention hue. */
+const TONE_TOKEN: Record<PhaseTone, string> = {
+  primary: '--color-primary', warn: '--color-warn', info: '--color-info', ok: '--color-ok', danger: '--color-danger',
+  neutral: '--color-on-surface-low',
+}
+/** Each tone as a text class. */
+const TONE_TEXT: Record<PhaseTone, string> = {
+  primary: 'text-primary', warn: 'text-warning', info: 'text-info', ok: 'text-success', danger: 'text-danger',
+  neutral: 'text-on-surface-low',
+}
+/** A phase's colour token (`--color-…`), for a canvas or an inline style that names one. */
+export const phaseToken = (phase: WorkPhase): string => TONE_TOKEN[WORK_PHASE_LOOKS[phase].tone]
+/** A phase's colour, as a CSS value. */
+export const phaseColor = (phase: WorkPhase): string => `var(${phaseToken(phase)})`
+/** A phase's accent: its colour, or `''` for a phase with no tone (nothing running, paused). */
+export const phaseAccent = (phase: WorkPhase): string => (WORK_PHASE_LOOKS[phase].tone === 'neutral' ? '' : phaseColor(phase))
+/** A phase's tone as a text class. */
+export const phaseText = (phase: WorkPhase): string => TONE_TEXT[WORK_PHASE_LOOKS[phase].tone]
+
+/** The phase each ambient world state stands for, which its tone is read from: the world of each
+ *  is the state itself (`world` above). Live work held up is painted as queued work is. */
+export const WORLD_PHASE: Record<AgentActivityState, WorkPhase> = {
+  working: 'thinking', waiting_approval: 'approval', needs_input: 'input', error: 'error', blocked: 'queued', idle: 'idle',
+}
+
+/** The phase each workflow run status reads as, the gateway's own (`work_phase.py`,
+ *  `RUN_STATUS_PHASES`): a cancel and a decline are done, a failure and an escalation errors.
+ *  `tests/test_work_phase_vocabulary.py` pins it to the gateway's in both directions. A loop's are
+ *  beside its words, in `loopStatus.ts`, the one loop-status registry. */
+export const RUN_STATUS_PHASES: Readonly<Record<string, WorkPhase>> = {
+  draft: 'queued',
+  running: 'thinking',
+  paused: 'idle',
+  needs_input: 'input',
+  complete: 'done',
+  failed: 'error',
+  cancelled: 'done',
+  escalated: 'error',
+  declined: 'done',
+}
+
 /** The run state the gateway serves a chat that has never run (`chat_phase.idle_payload`): what a
  *  page holds for a chat it has just made, before the gateway has said anything of it. */
 export function idleRunState(session: string): RunState {

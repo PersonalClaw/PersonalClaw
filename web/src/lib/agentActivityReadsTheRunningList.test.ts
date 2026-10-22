@@ -3,6 +3,7 @@ import { foldAgentActivity, type AgentActivitySources } from './useAgentActivity
 import type { ChatSessionSummary, Loop, PendingApproval, RunningRow } from './api'
 import { STATE_VISUAL, layoutScene, sceneSummary } from '../pages/dashboard/world/worldScene'
 import { runState } from '../test/runState'
+import { phaseToken } from './workPhase'
 
 // ── The world reads the running list (#3889) ─────────────────────────────────────────────────────
 //
@@ -68,9 +69,11 @@ describe('every row of the list is painted, as the kind of work it is', () => {
     const queued = row({ work: 'subagent:h4', kind: 'subagent', phase: 'queued', line: 'Waiting to start', blocked: true })
     const [helper] = fold(sources({ running: { running: [queued], finished: [] } }))
     expect(helper.state).toBe('blocked')
-    // Its own tone and ring, apart from working's.
-    expect(STATE_VISUAL.blocked.tone).not.toBe(STATE_VISUAL.working.tone)
+    // Its own ring and pace, apart from working's; its tone is queued work's, as one tone per phase
+    // paints it (#3833), so the ring, the pace and the summary's word tell it from working.
+    expect(STATE_VISUAL.blocked.tone).toBe(phaseToken('queued'))
     expect(STATE_VISUAL.blocked.ring).not.toBe(STATE_VISUAL.working.ring)
+    expect(STATE_VISUAL.blocked.speed).toBeLessThan(STATE_VISUAL.working.speed)
     const [placed] = layoutScene([helper])
     expect(placed.tone).toBe(STATE_VISUAL.blocked.tone)
     expect(sceneSummary([helper], 0)).toBe('1 blocked.')

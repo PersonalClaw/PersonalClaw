@@ -1,4 +1,5 @@
 import type { AgentActivityEntity, AgentActivityKind, AgentActivityState } from '../../../lib/useAgentActivity'
+import { WORLD_PHASE, phaseToken } from '../../../lib/workPhase'
 
 // ── The world's scene model ──────────────────────────
 // Everything here is PURE: entities in, geometry out. No canvas, no DOM, no rAF,
@@ -29,14 +30,15 @@ export const STATE_VISUAL: Record<AgentActivityState, {
    *  the only state where something is actually happening. */
   speed: number
 }> = {
-  needs_input: { tone: '--color-info', ring: 0.20, pulse: 1.00, speed: 0.50 },
-  waiting_approval: { tone: '--color-warn', ring: 0.32, pulse: 0.80, speed: 0.40 },
-  error: { tone: '--color-danger', ring: 0.46, pulse: 0.30, speed: 0.15 },
-  working: { tone: '--color-ok', ring: 0.62, pulse: 0.55, speed: 1.00 },
+  needs_input: { tone: phaseToken(WORLD_PHASE.needs_input), ring: 0.20, pulse: 1.00, speed: 0.50 },
+  waiting_approval: { tone: phaseToken(WORLD_PHASE.waiting_approval), ring: 0.32, pulse: 0.80, speed: 0.40 },
+  error: { tone: phaseToken(WORLD_PHASE.error), ring: 0.46, pulse: 0.30, speed: 0.15 },
+  working: { tone: phaseToken(WORLD_PHASE.working), ring: 0.62, pulse: 0.55, speed: 1.00 },
   // Live and held up (queued for a slot, retrying, waiting on a busy model): a ring of its own just
   // outside working's, slow and barely breathing, so a stalled helper never reads as one at work.
-  blocked: { tone: '--color-on-surface-var', ring: 0.71, pulse: 0.20, speed: 0.25 },
-  idle: { tone: '--color-on-surface-low', ring: 0.80, pulse: 0.00, speed: 0.10 },
+  // Its tone is queued work's, as every state's is its phase's (`WORLD_PHASE`, #3833).
+  blocked: { tone: phaseToken(WORLD_PHASE.blocked), ring: 0.71, pulse: 0.20, speed: 0.25 },
+  idle: { tone: phaseToken(WORLD_PHASE.idle), ring: 0.80, pulse: 0.00, speed: 0.10 },
 }
 
 /** Node size by kind, 0..1 of the scene's base node radius. A loop and a workflow run are whole

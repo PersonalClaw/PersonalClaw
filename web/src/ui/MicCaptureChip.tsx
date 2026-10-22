@@ -1,4 +1,5 @@
 import { Mic } from 'lucide-react'
+import { phaseToken } from '../lib/workPhase'
 
 /**
  * "Listening" — the in-app half of the microphone-capture indicator.
@@ -38,6 +39,9 @@ import { Mic } from 'lucide-react'
  * 24px for the same reason `ScreenShareChip` holds it — this is the control that stops a
  * microphone, so it is the last one that should be fiddly to hit.
  */
+/** The chip's tone: listening's, the system's own microphone warn (`lib/workPhase`, #3833). */
+export const MIC_TONE = phaseToken('listening')
+
 export function MicCaptureChip({ onStop }: { onStop: () => void }) {
   return (
     <button
@@ -48,15 +52,15 @@ export function MicCaptureChip({ onStop }: { onStop: () => void }) {
       data-type="caption"
       className="inline-flex min-h-6 -my-px shrink-0 items-center gap-1.5 rounded-pill px-2 py-0.5 transition-colors hover:brightness-110"
       style={{
-        background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)',
-        color: 'var(--color-warn)',
+        background: `color-mix(in srgb, var(${MIC_TONE}) 16%, transparent)`,
+        color: `var(${MIC_TONE})`,
       }}
     >
       <span className="relative grid size-2.5 place-items-center">
-        <span className="size-1.5 rounded-full" style={{ background: 'var(--color-warn)' }} />
+        <span className="size-1.5 rounded-full" style={{ background: `var(${MIC_TONE})` }} />
         <span
           className="status-pulse absolute inline-flex size-1.5 rounded-full"
-          style={{ background: 'var(--color-warn)' }}
+          style={{ background: `var(${MIC_TONE})` }}
         />
       </span>
       <Mic size={12} className="shrink-0" />

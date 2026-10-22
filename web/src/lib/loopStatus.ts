@@ -1,3 +1,4 @@
+import { phaseAccent, type WorkPhase } from './workPhase'
 import type { CSSProperties } from 'react'
 
 // ── ONE loop-status registry ───────────────────────────────────────────────────
@@ -19,10 +20,12 @@ import type { CSSProperties } from 'react'
 // terminal label, railed by `pages/workflows/terminalSuccessLabel.test.ts`; this
 // registry was the file that rail could not see) and `needs_input` → "Needs you".
 //
-// The tones say one thing each: primary = in flight, ok = finished well, info = it is your
-// turn (actionable, waits on the user), warn = stalled or a non-genuine finish, danger =
-// failed. `paused`/`stopped` carry NO accent on purpose — a state the user deliberately
-// parked must not borrow an attention colour.
+// The tones are the phase contract's (#3833): each status is painted in the tone of the phase the
+// gateway says it is (`LOOP_STATUS_PHASES`, below), and in no tone of its own. Live work, queued
+// and held included, is coral; her plan waiting for her launch is her OK (warn); stalled, blocked
+// and a question wait on her answer (info); a finish, stopped included, is ok; a failure and an
+// early end are danger. `paused` carries NO accent: nothing runs, and a state she parked must not
+// borrow an attention colour.
 export interface LoopStatusLook {
   /** The word a user reads for this state. */
   label: string
@@ -39,21 +42,45 @@ const NEUTRAL_ACCENT = 'var(--color-on-surface-low)'
 //: deadline or cost ran out, DoD unmet) — and `held`, a `running` loop incident mode is holding
 //: (its view's `held` sentence says why). `tests/test_loop_status_vocabulary.py` rails this table
 //: against the backend enum in both drift directions, so a new status cannot ship unnamed here.
+/** The phase each loop status reads as, the gateway's own (`work_phase.py`, `LOOP_STATUS_PHASES`),
+ *  with the two statuses a loop's views derive: `held` and `ended_early`. Its plan waiting for her
+ *  launch is her OK; stalled, blocked and a question wait on her answer; her pause is quiet.
+ *  `tests/test_work_phase_vocabulary.py` pins it to the gateway's in both directions. */
+export const LOOP_STATUS_PHASES: Readonly<Record<string, WorkPhase>> = {
+  intake: 'thinking',
+  planning: 'planning',
+  review: 'approval',
+  ready: 'queued',
+  running: 'thinking',
+  paused: 'idle',
+  stagnant: 'input',
+  blocked: 'input',
+  needs_input: 'input',
+  complete: 'done',
+  failed: 'error',
+  stopped: 'done',
+  held: 'queued',
+  ended_early: 'error',
+}
+
+/** A status's accent: its phase's. */
+const accentOf = (status: string): string => phaseAccent(LOOP_STATUS_PHASES[status])
+
 const LOOP_STATUS: Record<string, LoopStatusLook> = {
-  intake: { label: 'Analyzing', accent: 'var(--color-primary)' },
-  planning: { label: 'Planning', accent: 'var(--color-primary)' },
-  review: { label: 'Review', accent: 'var(--color-info)' },
-  ready: { label: 'Ready', accent: 'var(--color-info)' },
-  running: { label: 'Running', accent: 'var(--color-primary)' },
-  paused: { label: 'Paused', accent: '' },
-  stagnant: { label: 'Stalled', accent: 'var(--color-warn)' },
-  blocked: { label: 'Blocked', accent: 'var(--color-warn)' },
-  needs_input: { label: 'Needs you', accent: 'var(--color-info)' },
-  complete: { label: 'Completed', accent: 'var(--color-ok)' },
-  failed: { label: 'Failed', accent: 'var(--color-danger)' },
-  stopped: { label: 'Stopped', accent: '' },
-  ended_early: { label: 'Ended early', accent: 'var(--color-warn)' },
-  held: { label: 'Held', accent: 'var(--color-warn)' },
+  intake: { label: 'Analyzing', accent: accentOf('intake') },
+  planning: { label: 'Planning', accent: accentOf('planning') },
+  review: { label: 'Review', accent: accentOf('review') },
+  ready: { label: 'Ready', accent: accentOf('ready') },
+  running: { label: 'Running', accent: accentOf('running') },
+  paused: { label: 'Paused', accent: accentOf('paused') },
+  stagnant: { label: 'Stalled', accent: accentOf('stagnant') },
+  blocked: { label: 'Blocked', accent: accentOf('blocked') },
+  needs_input: { label: 'Needs you', accent: accentOf('needs_input') },
+  complete: { label: 'Completed', accent: accentOf('complete') },
+  failed: { label: 'Failed', accent: accentOf('failed') },
+  stopped: { label: 'Stopped', accent: accentOf('stopped') },
+  ended_early: { label: 'Ended early', accent: accentOf('ended_early') },
+  held: { label: 'Held', accent: accentOf('held') },
 }
 
 /** Label + accent for a loop/code status. An unmapped/future status keeps its raw wire

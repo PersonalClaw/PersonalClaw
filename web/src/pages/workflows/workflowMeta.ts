@@ -1,6 +1,8 @@
 import { CircleCheck, CircleDashed, CircleSlash, Clock, Gauge, Hand, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
 import type { WorkflowRunStatus } from '../../lib/api'
 import { fmtElapsed } from '../../lib/duration'
+import { LOOP_STATUS_PHASES } from '../../lib/loopStatus'
+import { RUN_STATUS_PHASES, phaseText } from '../../lib/workPhase'
 
 // The app's one duration format lives in `lib/duration`, so every surface reads one helper; the
 // workflow pages keep importing it from here.
@@ -13,37 +15,37 @@ export { fmtElapsed }
 export interface StatusLook { label: string; icon: LucideIcon; tone: string; spin?: boolean }
 
 const RUN_LOOK: Record<WorkflowRunStatus, StatusLook> = {
-  draft: { label: 'Draft', icon: CircleDashed, tone: 'text-on-surface-low' },
-  running: { label: 'Running', icon: Loader2, tone: 'text-on-surface', spin: true },
-  paused: { label: 'Paused', icon: Pause, tone: 'text-on-surface-low' },
-  // needs_input is the only status a user can ACT on, so it is the only one that gets a
-  // warning tone in the list — everything else is informational.
-  needs_input: { label: 'Needs you', icon: TriangleAlert, tone: 'text-warning' },
+  draft: { label: 'Draft', icon: CircleDashed, tone: phaseText(RUN_STATUS_PHASES.draft) },
+  running: { label: 'Running', icon: Loader2, tone: phaseText(RUN_STATUS_PHASES.running), spin: true },
+  paused: { label: 'Paused', icon: Pause, tone: phaseText(RUN_STATUS_PHASES.paused) },
+  // Each status is painted in its phase's tone (`RUN_STATUS_PHASES`, #3833): a run waiting on her
+  // answer is info, live work coral, a finish ok and a failure danger.
+  needs_input: { label: 'Needs you', icon: TriangleAlert, tone: phaseText(RUN_STATUS_PHASES.needs_input) },
   // "Completed", not "Complete" — the past-tense form the other two status registries already use
   // for this exact wire value (`lib/loopStatus.complete` and `taskMeta`'s terminal `done`). A run
   // that has finished is being DESCRIBED, and "Complete" reads as an adjective (or worse, as the
   // imperative verb TasksListPage uses for its "Complete this task" action), so the same backend
   // `"complete"` was narrated three different ways across three surfaces a user moves between.
-  complete: { label: 'Completed', icon: CircleCheck, tone: 'text-success' },
-  failed: { label: 'Failed', icon: OctagonAlert, tone: 'text-danger' },
-  cancelled: { label: 'Cancelled', icon: CircleSlash, tone: 'text-on-surface-low' },
-  escalated: { label: 'Escalated', icon: TriangleAlert, tone: 'text-danger' },
-  // A person refused an approval the run needed. Informational like `cancelled`: it is a decision
-  // someone made, not a fault to look for, so it never takes the danger tone.
-  declined: { label: 'Declined', icon: CircleSlash, tone: 'text-on-surface-low' },
+  complete: { label: 'Completed', icon: CircleCheck, tone: phaseText(RUN_STATUS_PHASES.complete) },
+  failed: { label: 'Failed', icon: OctagonAlert, tone: phaseText(RUN_STATUS_PHASES.failed) },
+  cancelled: { label: 'Cancelled', icon: CircleSlash, tone: phaseText(RUN_STATUS_PHASES.cancelled) },
+  escalated: { label: 'Escalated', icon: TriangleAlert, tone: phaseText(RUN_STATUS_PHASES.escalated) },
+  // A person refused an approval the run needed: a decision someone made, not a fault to look for,
+  // so it ends done, as `cancelled` does, and never takes the danger tone.
+  declined: { label: 'Declined', icon: CircleSlash, tone: phaseText(RUN_STATUS_PHASES.declined) },
 }
 
 /** A `running` run incident mode is holding (`held`, the sentence its status carries): it starts no
  *  step and makes no model call, so it must not read "Running" with a spinner. The loop surfaces'
  *  word and tone for the same state (`lib/loopStatus`'s `held`). Its status stays `running` on the
  *  wire — a hold is not a pause, and the run carries on by itself — which is why it is derived. */
-const HELD_LOOK: StatusLook = { label: 'Held', icon: Hand, tone: 'text-warning' }
+const HELD_LOOK: StatusLook = { label: 'Held', icon: Hand, tone: phaseText(LOOP_STATUS_PHASES.held) }
 
 /** An `escalated` run, or loop step, that stopped at the budget it was given
- *  (`attentionMeta.stoppedAtBudget`). It did not fail and gave nothing up, so it must not read
- *  "Escalated" in the danger tone: the bell says "Loop stopped at its budget" for the same run, and
- *  the loop surfaces "Ended early" in the warning accent this shares. */
-const BUDGET_LOOK: StatusLook = { label: 'Stopped at its budget', icon: Gauge, tone: 'text-warning' }
+ *  (`attentionMeta.stoppedAtBudget`). It must not read "Escalated": the bell says "Loop stopped at
+ *  its budget" for the same run, and the loop surfaces say "Ended early", whose phase and tone this
+ *  shares (`LOOP_STATUS_PHASES.ended_early`, #3833). Its words say it stopped at its budget. */
+const BUDGET_LOOK: StatusLook = { label: 'Stopped at its budget', icon: Gauge, tone: phaseText(LOOP_STATUS_PHASES.ended_early) }
 
 /** The look for a run's status, or Held for a running run incident mode holds (`held`), or
  *  Stopped at its budget for an escalated run whose loop used the budget it was given
