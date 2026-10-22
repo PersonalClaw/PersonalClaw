@@ -55,6 +55,9 @@ _CREATES_BY_DESIGN: dict[str, str] = {
         "name=None — a fork mints a NEW key; the PARENT it reads is resolved and 404s"
     ),
     "dashboard/chat_fork.py::api_chat_session_fork_rewound": ("name=None — same as the fork above"),
+    "dashboard/chat_plan.py::_run_in_a_fresh_chat": (
+        "name=None — a plan approved to run in a fresh chat mints that new chat (#3821)"
+    ),
     # ── the explicit create route ──
     "dashboard/chat_handlers.py::api_chat_session_create": (
         "POST /api/chat/sessions IS the create verb — this is the one route whose job "
