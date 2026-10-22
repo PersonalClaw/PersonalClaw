@@ -35,15 +35,19 @@ function makeCfg(projectId: string): WalkthroughConfig {
   }
 }
 
-export function CodePlanningView({ projectId, onReady, onBack, onCancel, onStop }: {
+export function CodePlanningView({ projectId, onReady, onBack, onCancel, onStop, planned, actions }: {
   projectId: string
+  /** The plan has landed and is in review beside the walkthrough (`PlanningWalkthrough`'s). */
+  planned?: boolean
+  /** The host's header controls, before Stop. */
+  actions?: React.ReactNode
   onReady: (project: Loop) => void
   onBack: () => void
   onCancel: () => Promise<boolean>
   onStop: () => Promise<boolean>
 }) {
   return (
-    <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack} onCancel={onCancel} onStop={onStop}
+    <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack} onCancel={onCancel} onStop={onStop} planned={planned} actions={actions}
       approvals={<LoopApprovals loopId={projectId} />}
       onReady={() => { api.uLoop(projectId).then(onReady).catch(() => {}) }} />
   )

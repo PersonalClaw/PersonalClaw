@@ -16,6 +16,8 @@ const docs: UiDoc[] = [
       { name: 'onCancel', description: 'The Cancel control (cfg.copy.cancel, "Cancel and edit the task"): the host deletes the draft, which ends its planner, and opens the composer with the task as typed. Resolves true once it has left, false when the cancel did not go through and the walkthrough stays.' },
       { name: 'onStop', description: 'The Stop control: the host confirms, stops the loop (its planner with it; the plan so far is kept) and opens the stopped loop\'s page. Resolves true once it has left, false when it did not stop.' },
       { name: 'approvals', description: 'What the planner is waiting on you for, shown at the top of the main column: the host passes the loop\'s approval cards (`LoopApprovals`), so an Attended loop\'s planner is answered on the page you plan it on.' },
+      { name: 'planned', description: 'The plan has landed and its Plan Review is open beside the walkthrough (`PlanBesideItsPlanning`): the header says "Plan ready" with a check, in place of the planner\'s state, and drops the subtitle that asks to approve each step.' },
+      { name: 'actions', description: 'The host\'s header controls, drawn before Stop: where `PlanBesideItsPlanning` offers "Review the plan" back once its pane is closed.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for PlanningWalkthrough for any gated stepwise planning flow rather than rebuilding one — inject the feature specifics through cfg (WS key, API calls, copy, artifact renderer).' },
