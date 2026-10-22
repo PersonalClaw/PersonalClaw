@@ -3,9 +3,9 @@ import { GitBranch } from 'lucide-react'
 import { Button } from '../../../../ui/Button'
 import { Eyebrow } from '../../../../ui/Eyebrow'
 import { api, type LoopMerge } from '../../../../lib/api'
-import { useVisiblePoll } from '../../../../lib/useVisiblePoll'
-import { useGitStatus } from '../../../files/filesData'
 import { MergedWork } from '../../MergeReview'
+import { changeLabel, changePath, openChange } from './changes'
+import { useWorkspaceChanges } from './useWorkspaceChanges'
 
 // ── The cockpit's changes ──────────────────────────────────────────────────────────────────────
 //
@@ -16,23 +16,11 @@ import { MergedWork } from '../../MergeReview'
  *  review what the agent did. Clicking a file opens it in the editor. Polls on
  *  mount + a manual refresh; git status is keyed by path. */
 export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }: { ws: string; running: boolean; isProjectDir?: boolean; merges?: LoopMerge[] }) {
-  const [nonce, setNonce] = useState(0)
   // A no-workspace project's "ws" is its engine files dir, which is NOT a git repo,
   // so git status there is meaningless — running it would render a misleading
-  // "(no branch) · working tree clean". Skip git entirely + say so plainly.
-  const gitWs = isProjectDir ? null : (ws || null)
-  const { branch, statuses, state, repoRoot } = useGitStatus(gitWs, nonce)
-  // While the worker runs it edits files + the supervisor commits each stage; the
-  // status + history would otherwise stay stale until a manual refresh. Slow-poll
-  // (visible only) so the Changes tab tracks the work live, like the file tree.
-  useVisiblePoll(() => { if (gitWs) setNonce((n) => n + 1) }, running && gitWs ? 8000 : null)
-  // A manual editor save → refresh the Changes tab now (the poll only runs while
-  // running; a save on a paused/idle project would otherwise show stale status).
-  useEffect(() => {
-    const onSaved = () => { if (gitWs) setNonce((n) => n + 1) }
-    window.addEventListener('ne:code-file-saved', onSaved)
-    return () => window.removeEventListener('ne:code-file-saved', onSaved)
-  }, [gitWs])
+  // "(no branch) · working tree clean". Skip git entirely + say so plainly. The status
+  // and history poll while the worker runs and are read again after an editor save.
+  const { branch, statuses, state, repoRoot, gitWs, nonce, refresh } = useWorkspaceChanges(ws, isProjectDir, running)
   // 🔴 A NEGATIVE ABOUT THE ROOT IS NOT A NEGATIVE ABOUT THE WORKSPACE. `repoRoot` is empty
   // whenever the bound root ITSELF is not a repo — but a project checked out one level down
   // is the normal layout, and this panel then told the user their work "isn't version-tracked"
@@ -81,40 +69,6 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
     )
   }
   const entries = Object.entries(statuses)
-  // git status codes → a short, readable label + tone.
-  const label = (code: string): { text: string; color: string } => {
-    const c = code.trim()
-    if (c === '??') return { text: 'new', color: 'var(--color-ok)' }
-    // UNMERGED (conflict) — porcelain XY where either side is 'U', or the AA/DD
-    // double forms. The worker merges parallel task worktrees, so conflicts are a real
-    // state here, and they need RESOLUTION — must not read as a bland "modified".
-    // Checked before the D/A letter rules (DD/AU/UD all contain D or A).
-    if (c.includes('U') || c === 'AA' || c === 'DD') return { text: 'conflict', color: 'var(--color-danger)' }
-    if (c.includes('D')) return { text: 'deleted', color: 'var(--color-danger)' }
-    if (c.includes('A')) return { text: 'added', color: 'var(--color-ok)' }
-    if (c.includes('R')) return { text: 'renamed', color: 'var(--color-primary)' }
-    return { text: 'modified', color: 'var(--color-warn)' }
-  }
-  // git-status keys are absolute paths whose root may differ from `ws` by a
-  // realpath prefix (e.g. /tmp vs /private/tmp on macOS). Relativize by the
-  // workspace's LAST path segment so the display is clean regardless.
-  const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-  const rel = (p: string) => {
-    const marker = `/${wsBase}/`
-    const i = wsBase ? p.lastIndexOf(marker) : -1
-    return i >= 0 ? p.slice(i + marker.length) : p
-  }
-  // Open a working-vs-HEAD DIFF (under `ws`, not the git realpath, so the editor's
-  // workspace-scoped guards apply). A modifier-less click reviews the change as a
-  // diff; this is the natural action in the Changes tab.
-  const open = (gitPath: string, code: string) => {
-    const r = rel(gitPath)
-    const path = `${ws.replace(/\/$/, '')}/${r}`
-    // A deleted file has no working copy — tell the diff so it treats the missing
-    // read as expected (all-removed) rather than a load error.
-    const deleted = code.includes('D')
-    window.dispatchEvent(new CustomEvent('ne:code-open-diff', { detail: { name: r.split('/').pop(), path, deleted } }))
-  }
   return (
     <div className="flex flex-col">
       <div data-type="caption" className="flex items-center justify-between gap-2 px-3 py-2 text-on-surface-low">
@@ -123,7 +77,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
           <span className="truncate text-on-surface-var">{branch || (state === 'loaded' ? '(no branch)' : '…')}</span>
         </span>
         {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-        <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
+        <Button variant="ghost" size="xs" onClick={refresh} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
       </div>
       {/* A merge leaves the tree clean, so what the loop merged is said here, not left to the log. */}
       <MergedWork merges={merges} />
@@ -135,7 +89,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
         ) : state === 'error' ? (
           <div data-type="body-s" className="flex flex-col items-center gap-2 px-3 py-6 text-center">
             <span style={{ color: 'var(--color-warn)' }}>Couldn't read git status for this workspace.</span>
-            <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)}>Retry</Button>
+            <Button variant="ghost" size="xs" onClick={refresh}>Retry</Button>
           </div>
         ) : (
           <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No uncommitted changes — the working tree is clean.</p>
@@ -147,17 +101,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
           <Eyebrow className="px-3 pt-1 pb-1">
             Changes ({entries.length})
           </Eyebrow>
-          {entries.map(([path, code]) => {
-            const l = label(code)
-            // Raw: a full-row clickable list item, which no primitive draws.
-            return (
-              <button key={path} type="button" onClick={() => open(path, code)}
-                data-type="body-s" className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high">
-                <span data-type="caption" className="w-[58px] shrink-0" style={{ color: l.color }}>{l.text}</span>
-                <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel(path)}</span>
-              </button>
-            )
-          })}
+          <ChangeList ws={ws} changes={entries} />
         </div>
       )}
       {/* per-stage commit history — the reviewable timeline (supervisor + worker
@@ -184,5 +128,31 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
         </div>
       )}
     </div>
+  )
+}
+
+/** The uncommitted changes, each opening its diff in the review pane. `shown` is the one the pane
+ *  shows, marked as the current row. */
+export function ChangeList({ ws, changes, shown, className = '' }: {
+  ws: string; changes: [string, string][]; shown?: string; className?: string
+}) {
+  return (
+    <ul aria-label="Uncommitted changes" className={`flex flex-col ${className}`}>
+      {changes.map(([path, code]) => {
+        const l = changeLabel(code)
+        const rel = changePath(ws, path)
+        const on = rel === shown
+        return (
+          <li key={path} className="flex flex-col">
+            {/* Raw: a full-row clickable list item, which no primitive draws. */}
+            <button type="button" onClick={() => openChange(ws, path, code)} aria-current={on ? 'true' : undefined}
+              data-type="body-s" className={`flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high ${on ? 'bg-primary/15' : ''}`}>
+              <span data-type="caption" className="w-[58px] shrink-0" style={{ color: l.color }}>{l.text}</span>
+              <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel}</span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
   )
 }

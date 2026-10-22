@@ -6,6 +6,8 @@ import type { DraftEntry } from '../../../ui/content/ContentSurface'
 import { useFileTabs } from '../../files/browse/useFileTabs'
 import { useMode } from '../../../app/theme'
 import type { RouteProps } from '../../../app/useQueryState'
+import { useWorkspaceChanges } from './files/useWorkspaceChanges'
+import { closeReviewInTab, useReviewOnOpen } from './useReviewOnOpen'
 import { centerFromQuery, centerPatch, fromReviewPath, isReviewCommit, toReviewPath, type Center } from './reviewState'
 
 /** A center's identity, for comparing what the address names with what is shown. */
@@ -25,8 +27,8 @@ const centerKey = (c: Center | null | 'invalid'): string =>
 // a giant DOM string + janks, with no readability payoff for machine-generated bulk.
 const REVEAL_MAX_CHARS = 40_000
 
-export function useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery }: {
-  ws: string; showTerm: boolean; onCloseTerm: () => void
+export function useCenterEditor({ ws, isProjectDir = false, running = false, showTerm, onCloseTerm, query, setQuery }: {
+  ws: string; isProjectDir?: boolean; running?: boolean; showTerm: boolean; onCloseTerm: () => void
 } & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   // Latch: once the terminal is opened it stays MOUNTED (toggled via CSS) so the header
   // Hide/Show button preserves the PTY + running process + scrollback. The terminal's
@@ -430,9 +432,15 @@ export function useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery }: 
     if (moved || !ws || !setQueryRef.current || shownKey === wantedKey) return
     setQueryRef.current(centerPatch(shown), { replace: true })
   }, [shownKey, wantedKey, ws]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The review pane lists the workspace's uncommitted changes, and a session opened at its bare
+  // address opens it on the first of them (see `useReviewOnOpen`).
+  const { statuses, state: changesState } = useWorkspaceChanges(ws, isProjectDir, running)
+  const changes = Object.entries(statuses)
+  useReviewOnOpen({ ws, query: setQuery ? query : undefined, changes, state: changesState, diffOpen: !!diff, commitOpen: !!commit })
+  const closeReview = useCallback(() => { closeReviewInTab(ws); setDiff(null) }, [ws])
   return {
     termOpened, closeTerm, tabs, active, activePath, dirty, open, closeNow, setActivePath, markDirty,
     requestClose, viewerRef, draftStore, collapsedLeft, collapsedRight, reopenPanel, saveFileAsArtifact,
-    diff, setDiff, commit, setCommit, mode, reveal, setReveal, tabLabels, activeTabRef,
+    diff, setDiff, commit, setCommit, mode, reveal, setReveal, tabLabels, activeTabRef, changes, closeReview,
   }
 }

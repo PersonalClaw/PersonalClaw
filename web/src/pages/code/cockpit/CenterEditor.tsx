@@ -4,7 +4,7 @@ import { IconButton } from '../../../ui/IconButton'
 import { Centered } from '../../../ui/Centered'
 import { PaneHost } from '../../../ui/PaneHost'
 import { type FsEntry } from '../../../lib/api'
-import { DiffView } from '../DiffView'
+import { ReviewChanges } from './ReviewChanges'
 import { FileViewer } from '../../files/browse/FileViewer'
 import { TypingReveal } from '../TypingReveal'
 import { DiffReveal } from '../DiffReveal'
@@ -20,14 +20,14 @@ import type { RouteProps } from '../../../app/useQueryState'
 // with the diff under review in the pane host beside it and the terminal drawer beneath.
 // `useCenterEditor` keeps what it shows and does.
 
-export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query, setQuery }: {
-  ws: string; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null
+export function CenterEditor({ ws, isProjectDir = false, showTerm, onCloseTerm, running, runCmd, query, setQuery }: {
+  ws: string; isProjectDir?: boolean; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null
 } & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   const {
     termOpened, closeTerm, tabs, active, activePath, dirty, open, closeNow, setActivePath, markDirty,
     requestClose, viewerRef, draftStore, collapsedLeft, collapsedRight, reopenPanel, saveFileAsArtifact,
-    diff, setDiff, commit, setCommit, mode, reveal, setReveal, tabLabels, activeTabRef,
-  } = useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery })
+    diff, setDiff, commit, setCommit, mode, reveal, setReveal, tabLabels, activeTabRef, changes, closeReview,
+  } = useCenterEditor({ ws, isProjectDir, running, showTerm, onCloseTerm, query, setQuery })
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       {/* editor tabs + pull-out re-open tabs for any collapsed side panel. Render the
@@ -79,14 +79,16 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query
           ))}
         </div>
       )}
-      {/* The diff under review docks beside the editor in the shared pane host, at the width the
-          cockpit last left it; its close gives focus back to the row it was opened from. Whether
-          it is open is the address's `diff` (see `reviewState`), as before. */}
+      {/* The review pane docks beside the editor in the shared pane host, at the width the cockpit
+          last left it: the uncommitted changes over the diff of the one under review. Its close
+          gives focus back to the row it was opened from. Whether it is open, and on which change,
+          is the address's `diff` (see `reviewState`); a session opened at its bare address opens
+          it on its first change. */}
       <div className="flex min-h-0 flex-1">
         <PaneHost surface="code"
           pane={diff ? {
-            id: diff.path, title: `Diff — ${diff.name}`, label: 'diff', icon: GitBranch, onClose: () => setDiff(null),
-            body: <DiffView path={diff.path} name={diff.name} ws={ws} deleted={diff.deleted} />,
+            id: diff.path, title: `Diff — ${diff.name}`, label: 'diff', icon: GitBranch, onClose: closeReview,
+            body: <ReviewChanges ws={ws} diff={diff} changes={changes} />,
           } : null}>
         {reveal ? (
           <div className="flex h-full flex-col">
