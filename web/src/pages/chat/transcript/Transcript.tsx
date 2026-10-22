@@ -42,7 +42,7 @@ const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--
 
 export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn }: {
   transcript: ReturnType<typeof useTranscript>
-  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'turnPhase' | 'turnLine' | 'turnEnding' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer'>
+  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'turnPhase' | 'turnLine' | 'turnEnding' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer' | 'subagents'>
   sessionId: string | null
   memoryMode: string
   navigate: (p: string, opts?: { replace?: boolean }) => void
@@ -160,7 +160,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                       onSwitchVariant={isLast ? switchVariant : undefined}
                       speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                   )}>
-                    <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} workedMs={workedMs(turn.runs)} />
+                    <AssistantSegments segments={turn.segments} liveCards={liveCards} helpers={stream.subagents} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} workedMs={workedMs(turn.runs)} />
                   </MessageAssistant>
                 )}
                 {/* Follow-up chips under the last assistant turn only,

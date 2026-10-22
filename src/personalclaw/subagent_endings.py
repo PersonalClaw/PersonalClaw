@@ -47,8 +47,9 @@ def _masked(text: str) -> str:
 def done_event(info: Any) -> dict[str, Any]:
     """The ``subagent_done`` event of the helper *info*, masked, as its chat's Subagents list shows
     it. One that ran says how long it took, what it returned and what it cost (the figures its
-    completion carried); one that never ran says so (``never_ran``, and ``declined`` for her Deny),
-    and the list shows it beside the helpers that ran."""
+    completion carried), and whether it was stopped (``stopped``); one that never ran says so
+    (``never_ran``, and ``declined`` for her Deny), and the list shows it beside the helpers
+    that ran."""
     event: dict[str, Any] = {
         "error": _masked(info.error) if info.error else None,
         "task": _masked(info.task),
@@ -65,6 +66,8 @@ def done_event(info: Any) -> dict[str, Any]:
         "result": result,
         "cost_usd": round(info.cost_usd, 6),
         "tokens": info.input_tokens + info.output_tokens,
+        # A stop ends it with its reason as its error; this says the error is a stop, not a failure.
+        "stopped": info.cancelled is True,
     }
 
 

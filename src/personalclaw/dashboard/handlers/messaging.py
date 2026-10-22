@@ -221,6 +221,7 @@ async def api_spawn_status(request: web.Request) -> web.Response:
         "id": info.id,
         "task": _redact(info.task),
         "title": _redact(info.title),
+        "agent": info.agent,
         "done": info.done,
     }  # type: dict[str, object]
     data["started"] = info.started
@@ -228,6 +229,8 @@ async def api_spawn_status(request: web.Request) -> web.Response:
         # Its report, whole (`SubagentInfo.result`).
         data["result"] = _redact(info.result)
         data["error"] = _redact(info.error) if info.error else ""
+        # Stopped, not failed: a stop ends it with its reason as its error.
+        data["stopped"] = info.cancelled is True
     else:
         data["turns"] = info.turns
         data["last_tool"] = _redact(info.last_tool)

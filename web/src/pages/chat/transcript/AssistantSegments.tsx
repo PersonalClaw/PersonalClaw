@@ -18,10 +18,11 @@ import { ApprovalCard } from '../ApprovalCard'
 import { QuestionCard, type QuestionReply } from '../QuestionCard'
 import { ThinkingBlock } from '../ThinkingBlock'
 import { ContextLedger } from '../ContextLedger'
+import { TurnHelpers, helpersFromTool } from './TurnHelpers'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
-import { type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
+import { type SubagentCard, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
 
 // ── An assistant turn, as the transcript draws it ────────────────────────────────────────────────
 //
@@ -51,10 +52,12 @@ export function answerQueued(id: string, action: ApproveAction) {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-export function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel, workedMs }: {
+export function AssistantSegments({ segments, liveCards, helpers, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel, workedMs }: {
   segments: Segment[]; isLast: boolean
   /** The tool results of the whole chat that show a run's live card, one per run. */
   liveCards: Set<Segment>
+  /** The chat's live helper cards, which a call's helper rows read first. */
+  helpers?: SubagentCard[]
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void | Promise<unknown>
@@ -138,6 +141,16 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
       // Run now, the button she asked for.
       const manual = t.done && t.ok !== false ? manualAutomationFromTool(t.tool, t.output) : null
       if (manual) return <ManualAutomationCard key={seg.id || i} refObj={manual} />
+      // The helpers a `subagent_run` call started, each a row under the call (#3820).
+      const started = t.done ? helpersFromTool(t.tool, t.output) : []
+      if (started.length) {
+        return (
+          <Fragment key={seg.id || i}>
+            <ToolCard seg={t} />
+            <TurnHelpers refs={started} live={helpers ?? []} session={chatSessionKey} />
+          </Fragment>
+        )
+      }
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
