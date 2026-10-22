@@ -49,6 +49,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Only you answer what waits on you, at every door: an app whose manifest declared `/api/browse` could approve a browser grant, and an agent's tool could answer the question it asked you, approve the plan it drafted, or answer a loop's question, merge, conflict, plan step or launch. Each is now refused, as an approval always was.**
 - **Approval pings now honour mute and quiet hours: under mute, inside quiet hours, or with the Approval needed rule set to a badge or the digest, an approval no longer wakes your phone, asks on the channel you chose for approvals, or raises the dashboard's toast and sound; it waits in the list and every count, and the chat's own channel still shows it. Everything waiting on you says whether it may interrupt you now, decided once.**
 - **A docked side panel no longer runs a pixel past the window's edge, and slides in from it as it opens and closes; a helper opened beside the conversation after a reload is named by the task its call gave it.**
+- **A permission prompt's Deny and its Destructive chip are readable in both themes: the danger red is the same hue, a step darker in light and a step brighter in dark, and meets 4.5:1 on its tint over the card on every page ground.**
 
 ## [0.2.5] — 2026-10-22
 

@@ -9,8 +9,8 @@ import { loadTokenSheets, tokenValue, type Mode } from './tokenSheet'
 // a LIGHT red so it reads on near-black, light uses a DEEP red so it reads on near-white. The
 // consequence is that no single ink can sit on both:
 //
-//     dark   --color-danger #f66c66   white #ffffff → 2.89:1  ✗   deep ember #3f1008 → 5.63:1 ✓
-//     light  --color-danger #af2f29   white #ffffff → 6.44:1  ✓
+//     dark   --color-danger #ff8179   white #ffffff → 2.42:1  ✗   deep ember #3f1008 → 6.72:1 ✓
+//     light  --color-danger #a62621   white #ffffff → 7.19:1  ✓
 //
 // `--color-on-danger` was defined ONCE, as `#ffffff`, in the dark block — the theme where white
 // is exactly wrong — with no light override. Measured on a live seeded gateway, the two
@@ -51,14 +51,14 @@ describe('--color-on-danger', () => {
     ).toBeTruthy()
   })
 
-  it('is NOT white in dark (white on #f66c66 is 2.89:1)', () => {
+  it('is NOT white in dark (white on #ff8179 is 2.42:1)', () => {
     const ink = valueIn(blocks().dark, '--color-on-danger')!.toLowerCase()
     expect(ink).not.toBe('#ffffff')
     expect(ink).not.toBe('#fff')
     expect(ink).not.toBe('white')
   })
 
-  it('IS white in light (white on #af2f29 is 6.44:1)', () => {
+  it('IS white in light (white on #a62621 is 7.19:1)', () => {
     // The counterpart direction. Flipping both themes to a dark ink would trade one failure for
     // another — light's deep red needs white, and this pins that half so a later "simplify the
     // token" edit cannot quietly collapse the two values back into one.

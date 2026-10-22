@@ -50,12 +50,12 @@
   --red-252: #3f1008;
   --red-324: #5a1d12;
   --red-428: #8d240b;
-  --red-503: #af2f29;
+  --red-478: #a62621;
   --red-504: #b12e18;
   --red-602: #c85a48;
   --red-649: #e85a3f;
-  --red-699: #f66c66;
   --red-709: #ff6b5b;
+  --red-744: #ff8179;
   --red-784: #ff9a7a;
   --red-786: #ff9a86;
   --red-930: #ffe0d6;
@@ -126,7 +126,12 @@
   /* ── layer 2: status tones ── */
   --color-ok: var(--green-697);
   --color-warn: var(--orange-755);
-  --color-danger: var(--red-699);
+  /* Brightened from #f66c66, same hue (OKLCH 25°), to the least pale step that clears AA where
+     the approval card paints it: Deny's 14% and the risk chip's 16% tint, over the card's 8% warn
+     wash, over each resting ground. The old value read 3.91 there (the chip on surface-container).
+     Chroma is given up (0.171 → 0.155) only because sRGB cannot hold it this light. The light
+     block's note carries the rest. Rail: `design/approvalCardContrast.test.ts`. */
+  --color-danger: var(--red-744);
   --color-info: var(--blue-702);
   /* Light-mode values live in the .light block below — they are DARKER shades
      of the same hues so status text passes WCAG AA on white and on the 14–16%
@@ -169,11 +174,11 @@
   --color-warning: var(--color-warn);
   --color-error: var(--color-danger);
   /* Ink for text/icons ON a solid danger surface (destructive buttons/badges).
-     DARK's `--color-danger` is a LIGHT red (#f66c66), so white on it is only 2.89:1 — well
-     under AA. The deep-ember ink is 5.63:1 and is the same value `--color-on-primary-container`
+     DARK's `--color-danger` is a LIGHT red (#ff8179), so white on it is only 2.42:1 — well
+     under AA. The deep-ember ink is 6.72:1 and is the same value `--color-on-primary-container`
      already uses for dark-on-warm, so this stays inside the existing palette rather than
-     inventing a shade. Light overrides it back to white (its danger is a DEEP red, #af2f29,
-     where white measures 6.44:1) — the two themes genuinely need opposite inks, which is why a
+     inventing a shade. Light overrides it back to white (its danger is a DEEP red, #a62621,
+     where white measures 7.19:1) — the two themes genuinely need opposite inks, which is why a
      single value could never satisfy both. */
   --color-on-danger: var(--red-252);
 
@@ -510,13 +515,18 @@
   /* semantic status hues, AA-dark for light surfaces (see tokenRegistry.ts) */
   --color-ok: var(--green-472);
   --color-warn: var(--orange-498);
-  --color-danger: var(--red-503);
+  /* Darkened from #af2f29, same hue (OKLCH 27.6°, chroma held), to the nearest step that clears
+     AA where the approval card paints it: Deny's 14% and the risk chip's 16% tint, over the
+     card's own 8% warn wash, over each resting ground. The old value read 4.12 there (the risk
+     chip on the canvas), and axe flagged the chip and Deny on #/mission-control and #/companion.
+     Now 4.51 at worst. Rail: `design/approvalCardContrast.test.ts`. */
+  --color-danger: var(--red-478);
   /* Darkened from #145cbf (4.41 → 4.56 over its own 18% tint on the canvas). The dark block's
      note carries the whole measurement; light needs the OPPOSITE nudge to dark's for the same
      reason `--color-on-danger` needs the opposite ink — a tint moves the ground toward the ink in
      both modes, so "away from the mid-tone" means darker here and brighter there. */
   --color-info: var(--blue-483);
-  /* Light's danger is a DEEP red, so the ink flips back to white (6.44:1). See the dark
+  /* Light's danger is a DEEP red, so the ink flips back to white (7.19:1). See the dark
      block's note: the two themes need opposite inks on this fill. */
   --color-on-danger: var(--gray-1000);
   --shadow-composer: 0 2px 8px -2px rgb(96 110 130 / 0.18);

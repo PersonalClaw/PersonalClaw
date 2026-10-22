@@ -63,10 +63,6 @@
         "pre[role=group] \"Tool arguments\""
       ]
     },
-    "known": {
-      "axe (WCAG 2 AA)": [
-        "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): button[title=\"Deny bash\"]"
-      ]
-    }
+    "known": {}
   }
 }

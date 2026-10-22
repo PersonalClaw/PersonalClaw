@@ -120,7 +120,7 @@ export const TOKENS: Token[] = [
   // the nudged ones; the derivation is in `tokens.css` beside `--color-info`.
   c('--color-ok', 'Success', 'Semantic', '#0ebc5f', '#076e37'),
   c('--color-warn', 'Warning', 'Semantic', '#ff8d41', '#954c19'),
-  c('--color-danger', 'Danger', 'Semantic', '#f66c66', '#af2f29'),
+  c('--color-danger', 'Danger', 'Semantic', '#ff8179', '#a62621'),
   c('--color-info', 'Info', 'Semantic', '#629efe', '#1059bc'),
 
   // ── Glow & gradient (the wave surface + spark + ring) ──
