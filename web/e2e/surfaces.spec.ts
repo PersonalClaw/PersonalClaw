@@ -43,6 +43,34 @@ export const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES, ...NON_N
  *  a fixed instant makes it the same week, and the same cells, on every run. */
 const FIXED_CLOCK: Record<string, string> = {
   'triggers?view=week': '2026-11-02T09:00:00',
+  // The feed groups its notes under Today, Yesterday and Earlier in the browser's zone, and a task
+  // row says how long ago it changed. A zoned noon, so the same notes fall on the same days in any
+  // zone a runner has.
+  'inbox?filter=notifications': '2026-11-02T12:00:00Z',
+  'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
+}
+
+/** The one project the Tasks view row opens, with three of its tasks; the run's home has none. */
+const FIXED_PROJECT = { id: 'p-0a1b2c3d', name: 'Garden', status: 'active', task_list_count: 0, created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00' }
+const fixedTask = (id: string, title: string, status: string, priority: string) => ({
+  id, title, status, priority, project: 'Garden', tags: [],
+  created_at: '2026-10-30T09:00:00+00:00', updated_at: '2026-11-01T15:00:00+00:00',
+})
+const FIXED_TASKS = [
+  fixedTask('t-e2e-1', 'Order the soil', 'open', 'high'),
+  fixedTask('t-e2e-2', 'Plant the beans', 'in_progress', 'medium'),
+  fixedTask('t-e2e-3', 'Fix the gate latch', 'done', 'low'),
+]
+
+/** The feed the Notifications filter lists: one unread and one read note today, one read yesterday. */
+const fixedNote = (ts: string, title: string, acked: boolean) => ({ kind: 'job_completed', title, body: `${title}.`, ts, acked })
+const FIXED_NOTIFICATIONS = {
+  notifications: [
+    fixedNote('2026-11-02T11:40:00+00:00', 'Weekly backup finished', false),
+    fixedNote('2026-11-02T10:15:00+00:00', 'Morning briefing is ready', true),
+    fixedNote('2026-11-01T12:00:00+00:00', 'Inbox digest sent', true),
+  ],
+  unread: 1,
 }
 
 /** Settings › updates' fixed CHANGELOG: the file's own shape (its front matter, an unreleased
@@ -183,6 +211,35 @@ const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[
     // answer is "No fires this week") and its copy by `weekGridEmptyStateCopy.test.ts`.
     json: fixedWeek(FIXED_CLOCK['triggers?view=week']),
     why: "the run's home has every trigger switched off, so the real week has no fire to draw",
+  }],
+  'inbox?filter=notifications': [{
+    url: /\/api\/notifications(\?.*)?$/,
+    // A fixed feed under the row's fixed clock. The shared home's feed is whatever other specs raised
+    // first (a finished turn, a trigger's fire), so the filter listed a different set on each run.
+    // What the filter does with the feed (its Show menu, unread first, the acknowledge) is held by
+    // `src/app/notificationsAreAFilterOfTheInbox.test.tsx`.
+    json: FIXED_NOTIFICATIONS,
+    why: 'the shared home\'s feed is whatever other specs raised before this row loaded',
+  }],
+  'projects/p-0a1b2c3d?tab=tasks': [{
+    url: /\/api\/projects(\?.*)?$/,
+    // One project and its tasks. The run's home has no project, so the Tasks view could only draw
+    // "not found". The view's own behavior (held to the project, its board, the scope All tasks
+    // remembers) is held by `src/app/tasksAreAViewOfEachProject.test.tsx`.
+    json: { projects: [FIXED_PROJECT] },
+    why: "the run's home has no project",
+  }, {
+    url: /\/api\/projects\/p-0a1b2c3d(\?.*)?$/,
+    json: FIXED_PROJECT,
+    why: "the run's home has no project",
+  }, {
+    url: /\/api\/projects\/p-0a1b2c3d\/work(\?.*)?$/,
+    json: { board: [], sections: [], completeness: 'complete', attention: 0, loadedAt: 0 },
+    why: "the run's home has no project",
+  }, {
+    url: /\/api\/tasks(\?.*)?$/,
+    json: { tasks: FIXED_TASKS, total: FIXED_TASKS.length, complete: true, owner: '' },
+    why: "the run's home has no project, so no task of one",
   }],
 }
 
