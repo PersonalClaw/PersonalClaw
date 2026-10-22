@@ -30,6 +30,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **⇧Esc marks every chat as read: every unread mark in the sidebar clears, on every window and the phone, while a chat with something waiting on you keeps its mark. The palette lists it with its key.**
 - **The buddy shows what your agents are doing, and asks only when something needs you: `#/buddy` shows the work running, then one request at a time in the waiting list's order, and it never answers without your click or key press, each answer going to the request's own route.**
 - **The buddy's settings have one home, in the gateway's config: Buddy status (`buddy.show`, off until you turn it on), which surfaces show it (its window, its tray and dock faces, its alerts' notifications) and how long you are away before it steps back. `GET /api/buddy/policy` answers all of it with the notification posture its alerts follow (muted, in quiet hours now, whether an alert may interrupt, and when that next changes), so every window and every machine follows one answer; it is yours alone, and a change rings your windows once (`buddy_policy_changed`) to read it again.**
+- **The buddy follows the desktop: drag it to float or dock it, rest the pointer on the top edge to make a docked buddy peek, and over a full-screen PersonalClaw window it shows only requests, as a quiet peek.**
 
 ### Changed
 

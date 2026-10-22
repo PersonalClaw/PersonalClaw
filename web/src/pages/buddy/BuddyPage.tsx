@@ -8,9 +8,11 @@
  *  item's own route.
  *
  *  In the buddy's own window the doorbell is the shell's (`desktop/doorbell.js`): its one socket
- *  rings the page and says its connection, and the page holds no socket of its own. With nothing
- *  to show it asks for `hidden`, and the shell shows the window again for an item that may
- *  interrupt you. In a browser tab the page's own socket is the doorbell: `running_changed`,
+ *  rings the page and says its connection, and the page holds no socket of its own. The shell
+ *  also says where the window is (a drag docks or floats the machine with it) and whether one of
+ *  the app's own windows is full screen (over which only alerts show, as a quiet peek). Docked with
+ *  nothing to show, the window stays as the top-edge zone; otherwise it asks for `hidden`, and the
+ *  shell shows the window again for an item that may interrupt you. In a browser tab the page's own socket is the doorbell: `running_changed`,
  *  `waiting_changed` and `listening` each ring it, carrying nothing it reads, and the socket's
  *  state is the connection, with an announced restart said as restarting. */
 
@@ -26,11 +28,13 @@ import { liveCardPropsOf } from './liveCard'
 
 const ORB_ID = 'buddy-presence-orb'
 
-/** The size the buddy's window takes for where the machine stands: `hidden` with nothing to show,
- *  which the shell's doorbell undoes when something may interrupt you. */
+/** The size the buddy's window takes for where the machine stands. With nothing to show, a docked
+ *  buddy keeps the peek's strip as its top-edge zone, which draws nothing and takes no click; one
+ *  hidden by the owner, switched off or floating is `hidden`, which the shell's doorbell undoes for
+ *  something that may interrupt you. */
 export function presentationOf(machine: BuddyState): BuddyPresentation {
   const view = viewOf(machine)
-  if (!view.shows) return 'hidden'
+  if (!view.shows) return machine.enabled && machine.docked && !machine.muted ? 'peek' : 'hidden'
   if (view.room === 'expanded' || machine.card === 'open') return 'expanded'
   if (view.room === 'compact' || view.room === 'floating' || view.room === 'sleeping') return 'compact'
   return 'peek'
@@ -57,14 +61,48 @@ function SocketDoorbell({ hostRef }: { hostRef: HostRef }) {
   return null
 }
 
-/** The buddy window's doorbell: the shell's one socket, heard through the window's bridge. */
-function WindowDoorbell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridge }) {
+/** The buddy window's shell: its doorbell (the shell's one socket, heard through the window's
+ *  bridge), where the window is, whether one of the app's own windows is full screen, and the
+ *  top-edge zone. */
+function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridge }) {
   useEffect(() => {
-    const stopRing = bridge.onRing(() => hostRef.current?.ring())
-    const stopConnection = bridge.onConnection((state) => hostRef.current?.send({ type: 'connection', state: state === 'up' ? 'back' : state }))
+    const machine = () => hostRef.current?.snapshot().machine
+    const stops = [
+      bridge.onRing(() => hostRef.current?.ring()),
+      bridge.onConnection((state) => hostRef.current?.send({ type: 'connection', state: state === 'up' ? 'back' : state })),
+      // A drag the shell is moving, then where it settled; on each load, where the window is.
+      bridge.onPlacement((where) => {
+        const m = machine()
+        if (!m) return
+        if (where === 'moving') {
+          if (!m.dragging) hostRef.current?.send({ type: 'drag', phase: 'start' })
+        } else if (m.dragging || m.docked !== (where === 'docked')) {
+          hostRef.current?.send({ type: 'drag', phase: 'end', docked: where === 'docked' })
+        }
+      }),
+      bridge.onFullScreen((on) => hostRef.current?.fullScreen(on)),
+    ]
+    // The top-edge zone: docked with nothing to show, the window stays up as a strip that takes no
+    // click, and the pointer resting on it is the machine's `zone` (a peek). On macOS the shell
+    // forwards the pointer's moves to it; nothing samples the pointer on a timer.
+    let inZone = false
+    const onMove = () => {
+      const m = machine()
+      if (inZone || !m || !m.docked || m.presence !== 'hidden') return
+      inZone = true
+      hostRef.current?.send({ type: 'pointer', at: 'zone' })
+    }
+    const onLeave = () => {
+      if (!inZone) return
+      inZone = false
+      hostRef.current?.send({ type: 'pointer', at: 'away' })
+    }
+    document.addEventListener('mousemove', onMove, { passive: true })
+    document.documentElement.addEventListener('mouseleave', onLeave)
     return () => {
-      stopRing()
-      stopConnection()
+      for (const stop of stops) stop()
+      document.removeEventListener('mousemove', onMove)
+      document.documentElement.removeEventListener('mouseleave', onLeave)
     }
   }, [bridge, hostRef])
   return null
@@ -118,7 +156,7 @@ export function BuddyPage(_: RouteProps) {
   return (
     <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} className="flex h-full min-w-0 flex-col items-center p-s">
       <h1 className="sr-only">Buddy</h1>
-      {bridge ? <WindowDoorbell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
+      {bridge ? <WindowShell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
       {snap && host ? (
         <BuddyPresence
           machine={snap.machine}

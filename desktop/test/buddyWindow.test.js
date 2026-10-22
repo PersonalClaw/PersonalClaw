@@ -56,9 +56,10 @@ const fakeScreen = (displays = [NOTCHED, EXTERNAL]) => ({ getAllDisplays: () => 
 
 function make(platform = "darwin", store = memoryStore()) {
   const { FakeWindow, made } = fakeWindowClass();
-  const buddy = makeBuddyWindow({ BrowserWindowCtor: FakeWindow, screen: fakeScreen(), store, preload: "/app/buddyPreload.js", platform });
+  const placed = [];
+  const buddy = makeBuddyWindow({ BrowserWindowCtor: FakeWindow, screen: fakeScreen(), store, preload: "/app/buddyPreload.js", platform, onPlacement: (p) => placed.push(p) });
   buddy.create("http://127.0.0.1:10000/#/buddy");
-  return { buddy, win: made[0], made, store };
+  return { buddy, win: made[0], made, store, placed };
 }
 const names = (win) => win.calls.map((c) => c[0])
 
@@ -155,6 +156,21 @@ describe("dragging", () => {
     assert.equal(JSON.parse(store.data[PLACEMENT_KEY]).mode, "floating");
     assert.deepEqual(win.calls.at(-1).slice(0, 1), ["setBounds"]);
     assert.equal(win.calls.at(-1)[2], false, "instant under reduced motion");
+  });
+
+  it("tells the page once the drag moves it and where it settled, and nothing for a press that never moved", () => {
+    const { buddy, placed } = make();
+    buddy.show();
+    buddy.beginDrag();
+    buddy.endDrag({ instant: true });
+    assert.deepEqual(placed, [], "a press on the face is a click, not a drag");
+    buddy.beginDrag();
+    buddy.dragBy(0, UNDOCK_DISTANCE - 10);
+    assert.deepEqual(placed, [], "held in the dock, it has not moved");
+    buddy.dragBy(1200, 400);
+    buddy.dragBy(5, 5);
+    buddy.endDrag({ instant: true });
+    assert.deepEqual(placed, ["moving", "floating"]);
   });
 
   it("comes back floating on that display after a restart", () => {

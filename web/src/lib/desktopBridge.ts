@@ -156,9 +156,13 @@ export type BuddyPresentation = 'hidden' | 'peek' | 'compact' | 'expanded'
 /** The doorbell's connection, as the shell tells the buddy's page (`desktop/doorbell.js`). */
 export type BuddyConnection = 'up' | 'lost' | 'restarting'
 
+/** Where the buddy's window is: a drag moving it, or where it settled (`desktop/buddyWindow.js`). */
+export type BuddyPlacement = 'moving' | 'docked' | 'floating'
+
 /** `window.pclawBuddy`: only in the buddy's own window (`desktop/buddyPreload.js`, #3831), never
- *  beside `pclawDesktop`. Seven sends, which the shell checks each one again, and two pushes back
- *  from its doorbell (#3832): a ring that carries nothing, and the connection. */
+ *  beside `pclawDesktop`. Seven sends, which the shell checks each one again, and four pushes back
+ *  (#3832): its doorbell's ring, which carries nothing, and connection; where the window is; and
+ *  whether one of the app's own windows is full screen. */
 export interface BuddyBridge {
   /** macOS: the forwarded pointer is over the face or the open card (take clicks), or not. */
   pointerOver: (hit: boolean) => void
@@ -176,6 +180,11 @@ export interface BuddyBridge {
   onRing: (cb: () => void) => () => void
   /** The doorbell's connection changed. */
   onConnection: (cb: (state: BuddyConnection) => void) => () => void
+  /** A drag moved the window (`moving`), or it settled, docked or floating; and, on each load,
+   *  where it is. */
+  onPlacement: (cb: (placement: BuddyPlacement) => void) => () => void
+  /** One of the app's own windows went full screen, or left it; and, on each load, whether one is. */
+  onFullScreen: (cb: (on: boolean) => void) => () => void
 }
 
 declare global {

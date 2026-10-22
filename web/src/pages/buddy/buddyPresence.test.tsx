@@ -162,15 +162,21 @@ describe('the buddy presence', () => {
 describe("in the buddy's own window", () => {
   let ring: (() => void) | null = null
   let connection: ((s: 'up' | 'lost' | 'restarting') => void) | null = null
+  let placement: ((p: 'moving' | 'docked' | 'floating') => void) | null = null
+  let fullScreen: ((on: boolean) => void) | null = null
   const bridge = {
     pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(),
     onRing: vi.fn((cb: () => void) => { ring = cb; return () => { ring = null } }),
     onConnection: vi.fn((cb: (s: 'up' | 'lost' | 'restarting') => void) => { connection = cb; return () => { connection = null } }),
+    onPlacement: vi.fn((cb: (p: 'moving' | 'docked' | 'floating') => void) => { placement = cb; return () => { placement = null } }),
+    onFullScreen: vi.fn((cb: (on: boolean) => void) => { fullScreen = cb; return () => { fullScreen = null } }),
   }
   beforeEach(() => {
     for (const f of Object.values(bridge)) f.mockClear()
     ring = null
     connection = null
+    placement = null
+    fullScreen = null
     window.pclawBuddy = bridge
   })
   afterEach(() => { delete window.pclawBuddy })
@@ -194,13 +200,58 @@ describe("in the buddy's own window", () => {
     expect(group.closest('[data-buddy-shape]')).not.toBeNull()
   })
 
-  it('with nothing to show it asks to be hidden, but only after it has read the lists', async () => {
+  it('docked with nothing to show it keeps the top-edge zone, and only after it has read the lists', async () => {
+    lists.running = { running: [], finished: [] }
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    expect(bridge.setPresentation, 'nothing before the first read').not.toHaveBeenCalled()
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
+    expect(container.querySelector('[data-buddy-shape]'), 'the zone takes no click').toBeNull()
+  })
+
+  it('the pointer resting on the zone peeks, and leaving it lets the peek go; neither answers', async () => {
+    lists.running = { running: [], finished: [] }
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    await act(async () => { document.dispatchEvent(new MouseEvent('mousemove')) })
+    await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="peek"]')).not.toBeNull())
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('floating, its orb stays on the screen with nothing running, and the window keeps its size', async () => {
     lists.running = { running: [], finished: [] }
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     render(<BuddyPage {...route} />)
-    expect(bridge.setPresentation, 'nothing before the first read').not.toHaveBeenCalled()
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('hidden'))
-    expect(bridge.setPresentation).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(placement).not.toBeNull())
+    await act(async () => { placement?.('floating') })
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('compact'))
+  })
+
+  it('where a drag the shell moved settles docks or floats the buddy, and the alert goes with it', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    await act(async () => { placement?.('moving') })
+    await act(async () => { placement?.('floating') })
+    await waitFor(() => expect(container.querySelector('[data-buddy-floating]')).not.toBeNull())
+    await act(async () => { placement?.('moving') })
+    await act(async () => { placement?.('docked') })
+    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull())
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('over a full-screen app window an alert arrives as a quiet peek, and answers nothing', async () => {
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    await waitFor(() => expect(fullScreen).not.toBeNull())
+    await waitFor(() => expect(reads.waiting).toBe(1))
+    await act(async () => { fullScreen?.(true) })
+    lists.waiting = waitingFor(AP)
+    await act(async () => { ring?.() })
+    await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="peek"]')).not.toBeNull())
+    expect(screen.queryByRole('group', { name: /^Permission needed/ }), 'not expanded over the full screen').toBeNull()
+    expect(resolveApproval).not.toHaveBeenCalled()
   })
 
   it('a restart the shell says keeps the alert, and sends nothing', async () => {
