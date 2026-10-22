@@ -51,6 +51,11 @@ supported width, 320 to 1440 px (#3812):
 5. The keyboard: the keys in the brief's
    [keyboard model](../../web/REDESIGN.md#6-keyboard-model).
 
+[The feature map](../feature-map.md) lists every page the router serves with each way to it: its
+place in the sidebar, the palette rows that open it and the pages that link to it, and the pages
+only a typed address opens. It is generated (`npm run docs:feature-map`), and a test fails when it
+and the app differ.
+
 The rail toggles from the toolbar, ⌘B and the palette, and comes back as it was: its open state,
 its width, each project's disclosure and how far it was scrolled are kept on the device, and the
 thread it lights is the address's. Opening it puts focus on the row that last had it, else the lit

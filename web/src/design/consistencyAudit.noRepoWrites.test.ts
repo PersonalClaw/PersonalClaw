@@ -50,6 +50,10 @@ const MAY_WRITE: Record<string, string> = {
     'The generator for the committed scheme override sheets (design/schemes/*.css), gated on ' +
     'PC_WRITE_SCHEMES=1 and invoked only by `npm run generate:schemes`. A plain test run only ' +
     'compares the committed sheets with what their tables generate.',
+  'app/featureMap.test.tsx':
+    'The generator for the committed feature map (docs/feature-map.md), gated on ' +
+    'PC_WRITE_FEATURE_MAP=1 and invoked only by `npm run docs:feature-map`. A plain test run only ' +
+    'compares the committed map with what the router, the sidebar, the palette and the links give.',
   'buddyRig/poseSources.test.ts':
     'The generator for the committed buddy pose sources and contact sheets ' +
     '(docs/design/buddy/poses/), gated on PC_WRITE_BUDDY_POSES=1. A plain test run only compares ' +

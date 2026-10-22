@@ -9,6 +9,7 @@
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
     "audit:consistency": "npm run audit:consistency --workspace=web",
+    "docs:feature-map": "npm run docs:feature-map --workspace=web",
     "design:detect": "npm run design:detect --workspace=web",
     "generate:schemes": "npm run generate:schemes --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
