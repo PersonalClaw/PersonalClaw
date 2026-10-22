@@ -14,6 +14,7 @@ import { markerFor } from './pasteBlocks'
 import type { TurnPaste } from './PasteChip'
 // `turnRuns` imports ChatTurn from here as `import type` too.
 import { rowRuns, storedMs, type TurnRun } from './turnRuns'
+import { chatSources, type TurnSource } from './turnSources'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -541,7 +542,7 @@ export interface SubagentCard {
   stopped?: boolean
 }
 
-// ── activity-panel derivation (Files / Links) — all client-side from turns ──
+// ── activity-panel derivation (Files / Sources) — all client-side from turns ──
 //
 // There is no `index` here. The panel used to derive a user-message outline whose rows jumped to
 // a turn; the Session Map (the `sessionMapMarks`) is that index now — it marks tool calls,
@@ -549,12 +550,12 @@ export interface SubagentCard {
 // behind a panel tab. The outline was deleted and this model with it, so the session has ONE
 // index rather than two that have to be kept saying the same thing.
 export interface FileEntry { path: string; name: string }
-export interface LinkEntry { url: string; label: string }
-export interface ChatActivity { files: FileEntry[]; links: LinkEntry[] }
+/** `sources`: the links the chat's prose cites that its own turns retrieved (`turnSources`, #3820).
+ *  A link written from memory is no source, so it is not listed. */
+export interface ChatActivity { files: FileEntry[]; sources: TurnSource[] }
 
 // file-ish path: /a/b.ext, ~/a/b.ext, or workspace-relative a/b.ext (has an ext).
 const ACT_FILE_RE = /(?:^|[\s(`'"])((?:~|\/)[\w./\-]+\.\w{1,8}|[\w./\-]+\/[\w./\-]+\.\w{1,8})/g
-const ACT_URL_RE = /\bhttps?:\/\/[^\s)<>"'`\]]+/g
 const baseNameOf = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p
 // git-diff artifacts that look like paths but aren't openable files.
 const DIFF_NOISE = /^(?:[ab]\/|\/dev\/null$)/
@@ -562,12 +563,11 @@ const DIFF_NOISE = /^(?:[ab]\/|\/dev\/null$)/
 /** Derive the activity-panel data from the conversation turns:
  *   - Files: file paths from tool inputs/outputs + paths mentioned in assistant
  *     text (deduped, first-seen order).
- *   - Links: http(s) URLs surfaced in assistant text (deduped).
+ *   - Sources: the links the chat's prose cites that its turns retrieved (`chatSources`).
  *  User turns contribute neither (they are the reader's own text), so they are skipped
  *  whole — see the `role === 'user'` early return below. */
 export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   const files = new Map<string, FileEntry>()
-  const links = new Map<string, LinkEntry>()
 
   const addFile = (raw: string) => {
     let p = raw.trim().replace(/[).,;:]+$/, '')
@@ -588,14 +588,10 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
         }
       } else if (seg.kind === 'text') {
         for (const m of seg.text.matchAll(ACT_FILE_RE)) addFile(m[1])
-        for (const m of seg.text.matchAll(ACT_URL_RE)) {
-          const url = m[0].replace(/[).,;:]+$/, '')
-          if (!links.has(url)) { try { links.set(url, { url, label: new URL(url).hostname.replace(/^www\./, '') }) } catch { links.set(url, { url, label: url }) } }
-        }
       }
     }
   })
-  return { files: [...files.values()], links: [...links.values()] }
+  return { files: [...files.values()], sources: chatSources(turns) }
 }
 
 export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }

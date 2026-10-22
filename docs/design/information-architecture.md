@@ -148,7 +148,11 @@ Top to bottom:
   pane on demand.
 - **Approval and question cards** sit where the agent asked. A card states the action and its
   consequence plainly, so the owner can answer from it alone.
-- **Sources** are inline citations at the answer, with the full list in the right pane.
+- **Sources** are the links the answer cites that its own turn retrieved: a result of its web
+  searches or a page its fetches read, matched on scheme, host and path with tracking parameters
+  dropped. Each is numbered beside its link in the text and listed under the answer by the title
+  the search or the fetch returned; the right pane's Sources tab lists the chat's. A link the
+  model wrote from memory is no source and stays a plain link. Showing them fetches nothing.
 - **The composer** is the anchor: attachments, `@` mentions and `/` commands in it, and Brief the
   agent in its `+` menu; the one agent-and-model pill, the task mode and the reply style in its
   footer; and the Execution Boundary control beside them, which shows the permission mode, the

@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Activity, AlertTriangle, ArrowRight, Bot, ChevronRight, ShieldAlert, Shuffle, Sparkles, Scissors, Wrench } from 'lucide-react'
 import { fvs } from '../../../design/fontWeight'
@@ -19,6 +19,8 @@ import { QuestionCard, type QuestionReply } from '../QuestionCard'
 import { ThinkingBlock } from '../ThinkingBlock'
 import { ContextLedger } from '../ContextLedger'
 import { TurnHelpers, helpersFromTool } from './TurnHelpers'
+import { SourcesRow } from './SourcesRow'
+import { sourceKey, turnSources } from '../turnSources'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
@@ -84,6 +86,15 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   workedMs?: number
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
+  // The links its prose cites that the turn itself retrieved (#3820): the row under the answer, and
+  // each one's number beside it in the text. One function per set of sources, so the prose keeps its
+  // components while the turn re-renders.
+  const sources = useMemo(() => turnSources(segments), [segments])
+  const sourceOf = useMemo(() => {
+    if (!sources.length) return undefined
+    const byKey = new Map(sources.map((src) => [sourceKey(src.url), src.n]))
+    return (href: string) => byKey.get(sourceKey(href))
+  }, [sources])
   // A restricted-mode turn may OFFER a one-click escalation to Agent.
   const { switchTo } = parseSwitchToAgent(fullText)
 
@@ -189,7 +200,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
       if (!body) return null
       // `beside`: the answer's code, diffs and tables open beside the reading, where the chat gives
       // them a place.
-      const prose = <Markdown key={i} widgets beside={answer} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown>
+      const prose = <Markdown key={i} widgets beside={answer} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations} sourceOf={sourceOf}>{body}</Markdown>
       return seg === cutHere ? <Fragment key={i}>{prose}<ReplyCutNote cut="incomplete" /></Fragment> : prose
     }
     return null
@@ -245,6 +256,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
           folded into the collapsed work disclosure. */}
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
+      <SourcesRow sources={sources} />
       {cutOff === 'length' && !streaming && <ReplyCutNote cut="length" />}
       {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}
 

@@ -11,7 +11,7 @@ import type { SubagentCard } from './chatTypes'
 // at all. The gateway now hands their events to that chat, named by their step and marked with the
 // batch's run, and the panel shows them, beside the chat's own.
 
-const ACTIVITY = { files: [], links: [] }
+const ACTIVITY = { files: [], sources: [] }
 
 const own: SubagentCard = { id: 'own1', task: 'Summarise the notes', agent: 'general-purpose', done: false }
 const batchTask: SubagentCard = {
