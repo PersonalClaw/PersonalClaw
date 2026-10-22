@@ -32,8 +32,8 @@ describe("electronTier", () => {
   });
 });
 
-describe("a tier wired as bridgeLoads.test.js and buddyIdle.test.js are", () => {
-  /** Run a tier file shaped like the two real ones, whose host cannot start Electron. */
+describe("a tier wired as bridgeLoads.test.js, buddyIdle.test.js and buddyAnswer.test.js are", () => {
+  /** Run a tier file shaped like the real ones, whose host cannot start Electron. */
   function runTier(env) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pclaw-tier-"));
     const file = path.join(dir, "tier.test.js");
@@ -68,8 +68,8 @@ describe("a tier wired as bridgeLoads.test.js and buddyIdle.test.js are", () => 
     assert.match(res.stdout, /# SKIP no display on linux/);
   });
 
-  it("is how both real tiers are wired", () => {
-    for (const name of ["bridgeLoads.test.js", "buddyIdle.test.js"]) {
+  it("is how every real tier is wired", () => {
+    for (const name of ["bridgeLoads.test.js", "buddyIdle.test.js", "buddyAnswer.test.js"]) {
       const src = fs.readFileSync(path.join(__dirname, name), "utf8");
       assert.match(src, /const \{ skip, fail \} = electronTier\(/, name);
       assert.match(src, /if \(fail\) it\("starts a real Electron on this host", \(\) => assert\.fail\(fail\)\);/, name);
