@@ -128,6 +128,9 @@ describe('the declaration-implies-implementation census', () => {
       'ui/HeaderActions.tsx',
       'ui/ProjectPicker.tsx',
       'ui/Segmented.tsx',
+      // A chat plan's ways to approve (the split button's menu): each choice approves the plan, so
+      // moving must never choose either.
+      'ui/chat/ChatPlanGate.tsx',
       'ui/motion/ContextMenu.tsx',
     ])
   })
