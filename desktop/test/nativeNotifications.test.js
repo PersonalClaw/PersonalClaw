@@ -7,8 +7,11 @@ const {
   makeNativeNotifications,
   registerNativeNotificationIpc,
   normalizeRoute,
+  normalizeIcon,
+  ALERT_KINDS,
   MAX_TITLE,
   MAX_BODY,
+  MAX_ICON,
 } = require("../nativeNotifications");
 const { IPC_CHANNELS } = require("../capabilities");
 
@@ -55,6 +58,7 @@ function make(opts = {}) {
   const focused = [];
   const sent = [];
   const logs = [];
+  const icons = [];
   const native = makeNativeNotifications({
     Notification,
     focusWindow: () => {
@@ -62,9 +66,13 @@ function make(opts = {}) {
       return opts.hasWindow !== false;
     },
     sendToRenderer: (p) => sent.push(p),
+    createIcon: opts.createIcon ?? ((url) => {
+      icons.push(url);
+      return { image: url };
+    }),
     log: (m) => logs.push(m),
   });
-  return { native, Notification, focused, sent, logs };
+  return { native, Notification, focused, sent, logs, icons };
 }
 
 describe("makeNativeNotifications", () => {
@@ -226,5 +234,97 @@ describe("preload notifications surface", () => {
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     assert.ok(code.includes("notifications:"), "the scan must still see the code");
     assert.ok(!/token/i.test(code), "the bridge must not reach the token");
+  });
+});
+
+// ── A buddy alert (#3897): the kind's still orb, one line, and no sound ─────────────────────
+//
+// An approval, a question or an error the gateway marked as an alert is raised silent in v0.3.0
+// (sound is later work, #3900), with the alert kind's still orb as its icon when the renderer
+// sent one, and with no actions: an answer needs its brief, so the banner only opens the alert.
+// Every other native note keeps today's sound.
+
+/** A PNG data URL as the renderer sends one: a still orb, painted to a canvas. */
+const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+describe("a buddy alert", () => {
+  for (const alert of ["approval", "question", "error"]) {
+    it(`a${alert === "approval" || alert === "error" ? "n" : ""} ${alert} is silent, carries its still orb and no actions`, () => {
+      const { native, Notification, icons } = make();
+      const res = native.show({ title: "PersonalClaw", body: "Release notes needs your OK: shell", route: "chat/c1", alert, icon: PNG });
+      assert.strictEqual(res.ok, true);
+      const opts = Notification.raised[0].opts;
+      assert.strictEqual(opts.silent, true);
+      assert.deepStrictEqual(opts.icon, { image: PNG });
+      assert.deepStrictEqual(icons, [PNG]);
+      assert.ok(!("actions" in opts), "a buddy alert offers no answer on the banner");
+      assert.ok(!("hasReply" in opts));
+    });
+  }
+
+  it("a native note that is not a buddy alert keeps today's sound and no icon", () => {
+    const { native, Notification, icons } = make();
+    native.show({ title: "Backup finished", body: "", route: "notifications", icon: PNG });
+    assert.strictEqual(Notification.raised[0].opts.silent, false);
+    assert.ok(!("icon" in Notification.raised[0].opts));
+    assert.deepStrictEqual(icons, [], "only an alert's icon is read");
+  });
+
+  it("a kind it does not know is no alert, and sounds as before", () => {
+    const { native, Notification } = make();
+    native.show({ title: "Loop progress", body: "", route: "loops", alert: "progress" });
+    assert.strictEqual(Notification.raised[0].opts.silent, false);
+    assert.deepStrictEqual(ALERT_KINDS, ["approval", "question", "error"]);
+  });
+
+  it("is still raised, silent, when its icon is missing, malformed or cannot be read", () => {
+    for (const icon of [undefined, "", "https://example.com/orb.png", "file:///etc/passwd", "data:image/svg+xml;base64,PHN2Zz4=", `${PNG}"`, "data:image/png;base64," + "A".repeat(MAX_ICON)]) {
+      const { native, Notification, icons } = make();
+      native.show({ title: "PersonalClaw", body: "x", route: "", alert: "question", icon });
+      assert.strictEqual(Notification.raised.length, 1, String(icon).slice(0, 40));
+      assert.strictEqual(Notification.raised[0].opts.silent, true);
+      assert.ok(!("icon" in Notification.raised[0].opts), String(icon).slice(0, 40));
+      assert.deepStrictEqual(icons, []);
+    }
+    const throwing = make({ createIcon: () => { throw new Error("bad image"); } });
+    throwing.native.show({ title: "PersonalClaw", body: "x", route: "", alert: "error", icon: PNG });
+    assert.strictEqual(throwing.Notification.raised.length, 1);
+    assert.ok(!("icon" in throwing.Notification.raised[0].opts));
+    const empty = make({ createIcon: () => null });
+    empty.native.show({ title: "PersonalClaw", body: "x", route: "", alert: "error", icon: PNG });
+    assert.ok(!("icon" in empty.Notification.raised[0].opts));
+  });
+
+  it("a tap only opens the alert's route: it sends no answer", () => {
+    const { native, Notification, focused, sent } = make();
+    native.show({ title: "PersonalClaw", body: "x needs your OK: shell", route: "chat/c1", alert: "approval", icon: PNG });
+    Notification.raised[0].tap();
+    assert.deepStrictEqual(focused, [true]);
+    assert.deepStrictEqual(sent, [{ route: "chat/c1" }]);
+  });
+});
+
+describe("normalizeIcon", () => {
+  it("takes a bounded PNG data URL and nothing else", () => {
+    assert.strictEqual(normalizeIcon(PNG), PNG);
+    for (const bad of [null, 7, "", "data:image/png;base64,", "data:image/jpeg;base64,AAAA", "data:image/png,AAAA", "data:image/png;base64,AA AA", "data:image/png;base64,AAAA\n", "data:image/png;base64," + "A".repeat(MAX_ICON)]) {
+      assert.strictEqual(normalizeIcon(bad), "", String(bad).slice(0, 40));
+    }
+  });
+});
+
+describe("main.js wiring, for a buddy alert", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+  it("reads an alert's icon as an image, from the data URL alone", () => {
+    assert.match(main, /createIcon:\s*\(url\)\s*=>/);
+    assert.match(main, /nativeImage\.createFromDataURL\(url\)/);
+  });
+});
+
+describe("preload notifications surface, for a buddy alert", () => {
+  const preload = fs.readFileSync(path.join(__dirname, "..", "preload.js"), "utf8");
+  it("passes an alert's kind and icon through, as strings", () => {
+    assert.match(preload, /alert: String\(\(note && note\.alert\) \?\? ""\)/);
+    assert.match(preload, /icon: String\(\(note && note\.icon\) \?\? ""\)/);
   });
 });

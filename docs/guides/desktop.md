@@ -486,6 +486,14 @@ Clicking a notification brings PersonalClaw forward and opens the surface the no
 from — an inbox alert opens Inbox, a loop's progress opens Loops, a skill proposal opens
 Skills. A kind with no surface of its own opens the notifications feed.
 
+**Approvals, questions and errors look like the buddy.** Their banner is silent, its icon is the
+buddy's still orb for that alert (waiting with a "!" for an approval, a "?" for a question, settled
+with a red mark for an error), and its text is the one line the buddy would say, such as
+"Chat “Release notes” needs your OK: shell.run", up to 120 characters. The line says what changed
+on its own, so the banner reads the same without its icon. Clicking it opens the item the alert is
+about: the chat with the approval, the loop with the question. There are no answer buttons on the
+banner, since an answer needs its whole brief. Every other kind of notification sounds as before.
+
 macOS never tells an app whether notifications are authorized, so PersonalClaw cannot show
 you a truthful "granted" state for this one and does not pretend to (Settings → Security →
 Desktop capabilities says as much). The first notification asks; after that, **System

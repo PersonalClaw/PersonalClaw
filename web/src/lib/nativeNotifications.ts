@@ -22,8 +22,11 @@
  *  bell that runs anyway IS the fallback, which is why the fallback needed no code.
  */
 import { useEffect } from 'react'
-import { desktopBridge } from './desktopBridge'
+import { ALERT_STATE, alertBanner, alertOf, itemOfNote, type AlertKind } from './alertBanner'
+import { api, type WaitingItem, type WaitingList } from './api'
+import { desktopBridge, type DesktopBridge } from './desktopBridge'
 import { useChatSocket, type WsMessage } from './useChatSocket'
+import { stillOrbPng } from '../ui/buddy/paintOrb'
 
 /** Where a tap should land, by notification SOURCE.
  *
@@ -100,6 +103,38 @@ export function shouldDeliverNatively(note: Record<string, unknown>): boolean {
 /** Every route this module will ever navigate to. A tap payload outside it is dropped. */
 const KNOWN_ROUTES = new Set(Object.values(NOTIFICATION_SOURCE_ROUTES))
 
+/** The item routes this window's alert banners named (the chat, the run, the loop an alert is
+ *  about): a tap may open one of those too, and nothing else. The most recent few only. */
+const ISSUED_ROUTES: string[] = []
+const MAX_ISSUED = 32
+
+/** The waiting item *note* is about, read from the list now; null when the list holds none, or
+ *  when it cannot be read, and the banner says what the note itself says. Never "nothing waits":
+ *  the banner is raised either way, and the bell and Home say what the read could not. */
+async function itemFor(note: Record<string, unknown>): Promise<WaitingItem | null> {
+  let list: WaitingList
+  try {
+    list = await api.waiting()
+  } catch {
+    return null
+  }
+  return itemOfNote(note, list)
+}
+
+/** Raise a buddy alert's banner (#3897): the item it is about, read from the waiting list the
+ *  moment it arrives, its one line, its kind's still orb, and its route. The list is read rather
+ *  than trusted from the note: what the line names is what waits. A list that cannot be read
+ *  leaves the line to the note's own words. */
+async function raiseAlert(bridge: NonNullable<DesktopBridge['notifications']>, note: Record<string, unknown>, alert: AlertKind) {
+  const banner = alertBanner(note, alert, await itemFor(note))
+  const route = banner.route || routeForNote(note)
+  if (banner.route) {
+    ISSUED_ROUTES.push(banner.route)
+    if (ISSUED_ROUTES.length > MAX_ISSUED) ISSUED_ROUTES.shift()
+  }
+  await bridge.show({ ...banner, route, alert, icon: stillOrbPng(ALERT_STATE[alert]) })
+}
+
 /**
  * Raise native OS notifications for notes whose rule named the `native` target, and
  * navigate when one is tapped. Mounted ONCE, in the app shell.
@@ -115,6 +150,9 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
     if (!bridge?.notifications) return
     const note = m.data || {}
     if (!shouldDeliverNatively(note)) return
+    const alert = alertOf(note)
+    // A refused banner is not an error worth surfacing here either: the bell has the note.
+    if (alert) return void raiseAlert(bridge.notifications, note, alert).catch(() => {})
     bridge.notifications
       .show({
         title: String(note.title ?? ''),
@@ -131,7 +169,7 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
     if (!bridge?.notifications) return
     return bridge.notifications.on((payload) => {
       const route = payload?.route ?? ''
-      if (KNOWN_ROUTES.has(route)) navigate(route)
+      if (KNOWN_ROUTES.has(route) || ISSUED_ROUTES.includes(route)) navigate(route)
     })
   }, [navigate])
 }

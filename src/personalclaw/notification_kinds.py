@@ -228,6 +228,29 @@ def kind_for_legacy(kind: str) -> NotificationKind:
     return resolve_kind(*ident)
 
 
+#: The buddy's alerts (#3897): the notes a native banner shows as the buddy does, with the alert
+#: kind's still orb, one line of what changed, and no sound in v0.3.0. Only a decision or an error
+#: is one, the two kinds that interrupt by default (above), so the rest stay ambient.
+ALERT_KINDS = ("approval", "question", "error")
+
+
+def alert_of(kind: str, refs: dict | None = None) -> str:
+    """The buddy alert a note of wire *kind* is, or "" for a note that is none.
+
+    ``approval`` for a decision that names the pending approval it is a view of
+    (``refs["approval"]``, the approval's Inbox row), ``question`` for any other decision (a
+    question, a loop's ask, a gate, a parked action), ``error`` for an error, and "" for the rest.
+    Whether the note may interrupt now is not decided here: the gate in ``DashboardState.notify``
+    decides that for every note, and this only names the alert a banner shows.
+    """
+    k = kind_for_legacy(kind)
+    if k.decision:
+        return "approval" if (refs or {}).get("approval") else "question"
+    if k.default_severity >= SEV_ERROR:
+        return "error"
+    return ""
+
+
 def _pair_of_key(flat: str) -> tuple[str, str] | None:
     """The registered pair whose key *flat* is — the wire string of a pair registered at run
     time (:func:`kind_for_legacy_pair`) — or ``None``."""

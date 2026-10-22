@@ -13,16 +13,17 @@
  *  phone's views all draw this one component. */
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
-import { paintFrame, resolvePreset } from 'thinking-orbs/engine'
+import { resolvePreset } from 'thinking-orbs/engine'
 import { useMode } from '../app/theme'
 import { prefersReducedMotion } from '../design/motion'
 import { runtime } from '../design/runtime'
 import { onEditorTokensChange } from '../design/editorTheme'
 import { modeOf, poseFrame } from '../buddyRig/arrange'
-import { PAD, RING_FROM, SOLID_MARKS, badgeDots, dot, solidBadge, washDots } from '../buddyRig/inPlaceParts'
+import { PAD } from '../buddyRig/inPlaceParts'
 import { tunedDrawingFor, type BuddySize } from '../buddyRig/poses'
 import { inkOf, onOrbMediaChange, orbContrast, useInk } from './AgentOrb'
 import { familyOf, poseOf, stillOf, transitionOf, wordsOf, type BuddyState } from './buddy/orbPoses'
+import { paintOrb } from './buddy/paintOrb'
 import { useOrbPose } from './buddy/useOrbPose'
 import { runDots, tintOf, useOnScreen } from './orbDots'
 
@@ -87,38 +88,10 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
     let inkTint = tintOf(ink)
     let toneTint = tintOf(tone)
     const mark = frameOf.mark
-    const paint = (t: number) => {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, box, box)
-      ctx.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr)
-      ctx.globalAlpha = frameOf.dim
-      paintFrame(ctx, frame(size, t, preset.opts), dark, inkTint)
-      ctx.globalAlpha = 1
-      const dy = values.lift.get() * size
-      const wash = values.wash.get()
-      if (wash > 0.01) paintFrame(ctx, { dots: washDots(size, wash, dy), lines: [] }, dark, toneTint)
-      if (!mark) return
-      const solid = size < RING_FROM && SOLID_MARKS.has(mark)
-      const badge = solid ? solidBadge(size, mark, dy) : badgeDots(size, mark, dy, size >= RING_FROM)
-      ctx.globalCompositeOperation = 'destination-out'
-      ctx.beginPath()
-      ctx.arc(badge.cx, badge.cy, badge.radius * 1.15, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.globalCompositeOperation = 'source-over'
-      if ('holes' in badge) {
-        // A waiting badge below 24 px is one solid dot in the tone with its mark cut out of it.
-        paintFrame(ctx, { dots: [dot(badge.cx, badge.cy, badge.radius, 1)], lines: [] }, dark, toneTint)
-        ctx.globalCompositeOperation = 'destination-out'
-        for (const hole of badge.holes) {
-          ctx.beginPath()
-          ctx.arc(hole.x, hole.y, hole.r, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        ctx.globalCompositeOperation = 'source-over'
-      } else {
-        paintFrame(ctx, { dots: badge.dots, lines: [] }, dark, toneTint)
-      }
-    }
+    const paint = (t: number) => paintOrb(ctx, frame(size, t, preset.opts), {
+      size, pad, dpr, dark, ink: inkTint, tone: toneTint,
+      dim: frameOf.dim, lift: values.lift.get(), wash: values.wash.get(), mark,
+    })
     // A scheme change reaches the painter as the change lands: the tokens are read again and the
     // dots repainted at once, moving or still.
     const retint = () => {
