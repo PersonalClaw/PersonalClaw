@@ -844,9 +844,12 @@ class DashboardApprovalState:
             self._log.debug("could not say the phase for %s", entry.get("id"), exc_info=True)
 
     def _say_list_waits(self, entry: dict[str, Any]) -> None:
-        """The rows *entry* waits on the owner for moved (``running_now.asked``). Best-effort, as
-        :meth:`_say_helper_waits` is: a failure saying it must not block, end or change the
-        approval it is about."""
+        """The rows *entry* waits on the owner for moved (``running_now.asked``), and so did the
+        list of what waits on her (``waiting.changed``). Best-effort, as :meth:`_say_helper_waits`
+        is: a failure saying it must not block, end or change the approval it is about."""
+        from personalclaw import waiting
+
+        waiting.changed(self)
         try:
             from personalclaw import running_now
 

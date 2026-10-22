@@ -402,7 +402,15 @@ def save_continuation(cont: Continuation) -> Continuation:
     path = _dir(cont.run_id) / f"{cont.token}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(cont.to_dict(), indent=2, ensure_ascii=False))
+    _waiting_moved()
     return cont
+
+
+def _waiting_moved() -> None:
+    """A gate was asked, answered or dropped: the list of what waits on you moved."""
+    from personalclaw import waiting
+
+    waiting.changed_elsewhere()
 
 
 def create_continuation(
@@ -507,6 +515,7 @@ def consume_continuation(run_id: str, token: str) -> Continuation | None:
         # Missing, already claimed, or unreadable — all the same outcome: this caller does not
         # own the answer.
         return None
+    _waiting_moved()
     try:
         raw = claimed.read_text(encoding="utf-8")
     except OSError:
@@ -541,6 +550,8 @@ def drop_continuations(run_id: str, *, instance_prefix: str = "") -> int:
             dropped += 1
         except OSError:
             logger.debug("run %s: could not drop continuation %s", run_id, cont.token)
+    if dropped:
+        _waiting_moved()
     return dropped
 
 

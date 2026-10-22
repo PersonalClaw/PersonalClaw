@@ -395,7 +395,8 @@ async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) 
     """Ask *approval_id* through the real registry, in a home of its own (*tmp_path*), and end it
     as *ending*, with the helper's phase hook replaced by *hook*: every effect the registry has, in
     order, and what each party was answered, with the helper's own frames left out, and the
-    running list's ring, which goes out on its own clock once its window closes."""
+    running list's and the waiting list's rings, which go out on their own clock once their window
+    closes."""
     from personalclaw import auto_denials, inbox
     from personalclaw.dashboard import work_phases
     from personalclaw.triggers import lifecycle_fire
@@ -405,7 +406,7 @@ async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) 
     effects: list[Any] = []
     w.state.broadcast_ws = lambda kind, data=None: (
         effects.append(("frame", kind, _plain(data)))
-        if kind not in ("work_phase", "running_changed")
+        if kind not in ("work_phase", "running_changed", "waiting_changed")
         else None
     )
     audit = MagicMock()

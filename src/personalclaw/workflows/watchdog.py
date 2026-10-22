@@ -292,6 +292,12 @@ class WorkflowWatchdog:
                 state.say_run(run_id, event, payload)
             except Exception:  # a broken observer must never kill a run
                 logger.debug("workflow %s: saying its phase failed", run_id, exc_info=True)
+            if event == "workflow_run_update":
+                # A run's gates are listed while it needs input: the list of what waits on you
+                # moves with its status (`waiting`).
+                from personalclaw import waiting
+
+                waiting.changed(state)
             self._coalescer.publish(key, event, payload)
             if event == "workflow_run_update" and payload.get("status") in _TERMINAL_VALUES:
                 # A terminal run publishes nothing further, so any batch still accumulating

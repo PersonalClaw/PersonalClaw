@@ -740,6 +740,12 @@ EVERY_FRAME = CHAT_FRAMES + [
 #: YOUR approvals, and `GET /api/approvals` already serves it every pending one.
 RELAY = "probe-relay"
 
+#: An app whose manifest declares the waiting list (``GET /api/waiting``) and its ring.
+WAITER = "probe-waiter"
+
+#: The waiting list's ring, which the two apps declare beside every frame, without its route.
+WAITING_RING = "waiting_changed"
+
 
 def _socket() -> MagicMock:
     return MagicMock(closed=False, send_str=AsyncMock())
@@ -758,8 +764,9 @@ def _sockets(home: Path) -> tuple[Any, dict[str, MagicMock]]:
     _resident(state, "ours", OWN_LINE, creator=APP)
     _resident(state, "theirs", "the other app's line", creator=OTHER)
     socks = {"yours": _socket(), APP: _socket(), OTHER: _socket(), RELAY: _socket()}
+    socks[WAITER] = _socket()
     state.register_ws(socks["yours"])
-    for name in (APP, OTHER, RELAY):
+    for name in (APP, OTHER, RELAY, WAITER):
         state.register_ws(socks[name], app=name)
     return state, socks
 
@@ -899,6 +906,24 @@ async def _the_running_list_rings_an_app_only_for_its_own_work(state, socks) -> 
     assert [f["data"] for f in _frames(socks[OTHER])] == [{"changed": [changed[3]]}]
     assert _frames(socks[RELAY]) == [], "the approval relay hears no ring: a ring is no approval"
     assert [f["data"]["changed"] for f in _frames(socks["yours"])] == [changed, changed[-2:]]
+
+
+async def _the_waiting_list_rings_an_app_only_when_it_may_read_the_list(state, socks) -> None:
+    """The waiting list's doorbell (``waiting.changed``) says only that the list moved, and the
+    list reads an app all of it when its manifest declares ``/api/waiting``. So the ring reaches
+    the app that declares the route, whatever the frame names, and no app that declares the frame
+    alone, nor the approval relay. Your socket hears every ring."""
+    from personalclaw import waiting
+
+    state.broadcast_ws(WAITING_RING, {})
+    state.broadcast_ws(WAITING_RING, {"session": "ours"})
+    state.broadcast_ws(WAITING_RING, None)
+    waiting.changed(state)
+    await asyncio.sleep(waiting.WINDOW_SECS * 3)
+    assert [f["data"] for f in _frames(socks[WAITER])] == [{}, {"session": "ours"}, None, {}]
+    for app in (APP, OTHER, RELAY):
+        assert _frames(socks[app]) == [], f"{app} declared the ring, not the list"
+    assert len(_frames(socks["yours"])) == 4
 
 
 async def _a_helper_no_chat_started_reaches_no_app(state, socks) -> None:
@@ -1076,6 +1101,9 @@ SOCKET_ROWS: dict[str, Any] = {
         _an_app_that_may_read_the_loops_hears_none_of_their_phases
     ),
     "a helper no chat started reaches no app": _a_helper_no_chat_started_reaches_no_app,
+    "the waiting list rings an app only when it may read the list": (
+        _the_waiting_list_rings_an_app_only_when_it_may_read_the_list
+    ),
     "the running list rings an app only for its own work": (
         _the_running_list_rings_an_app_only_for_its_own_work
     ),
@@ -1095,10 +1123,11 @@ SOCKET_ROWS: dict[str, Any] = {
 async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
     """The three apps installed once, in this test's home; every row on sockets and a state of its
     own, the home as the install left it after every row."""
-    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 13, "a frame or a case was left out"
+    assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 14, "a frame or a case was left out"
     with _home(tmp_path):
-        _install(tmp_path, APP, {"api": ["/api/ws"], "events": EVERY_FRAME})
-        _install(tmp_path, OTHER, {"api": ["/api/ws"], "events": EVERY_FRAME})
+        _install(tmp_path, APP, {"api": ["/api/ws"], "events": [*EVERY_FRAME, WAITING_RING]})
+        _install(tmp_path, OTHER, {"api": ["/api/ws"], "events": [*EVERY_FRAME, WAITING_RING]})
+        _install(tmp_path, WAITER, {"api": ["/api/waiting", "/api/ws"], "events": [WAITING_RING]})
         _install(
             tmp_path,
             RELAY,

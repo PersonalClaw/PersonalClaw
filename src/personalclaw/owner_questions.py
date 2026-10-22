@@ -587,8 +587,12 @@ class OwnerQuestions:
                 say(chat)
             except Exception:
                 logger.debug("could not say what chat %s waits on", chat, exc_info=True)
-        # What waits on her for the work the chat runs (its own, its loop's, its run's) changed,
-        # whether or not its phase did: the running list moved (`running_now`).
+        # What waits on her changed: the list of it moved (`waiting`), and so did the running
+        # list, for the work the chat runs (its own, its loop's, its run's), whether or not its
+        # phase did (`running_now`).
+        from personalclaw import waiting
+
+        waiting.changed(self._state)
         try:
             from personalclaw import running_now
 

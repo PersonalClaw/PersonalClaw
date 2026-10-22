@@ -46,10 +46,19 @@ confirmation's token are yours alone (:func:`for_reader`).
 
 The gateway's memory is read on its event loop (:func:`taken`), and the stores and files off it
 (:func:`read`), so nothing the loop changes is read from another thread.
+
+**The list says it moved** in one ``waiting_changed`` frame per window (:data:`WINDOW_SECS`), a
+doorbell carrying nothing (``{}``): a reader reads the list again (:func:`changed`). It rings from
+each place an item is asked or ends: an approval asked or answered, a question asked or ended, a
+loop's status, question or plan written, a gate's continuation written, claimed or dropped, a
+run's status, a park raised, withdrawn or claimed, a browser grant asked or answered, a chat's
+plan written or cleared, a bridge confirmation minted or taken. An app's socket hears it only when
+its manifest declares ``/api/waiting`` (``ws_state.WAITING_LIST_FRAMES``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -65,6 +74,12 @@ logger = logging.getLogger(__name__)
 
 #: The clock ages and expiries are read on: the gateway's own, which a test replaces.
 _now = time.time
+
+#: The frame that says the list moved, and how long a burst of changes is gathered for: the
+#: running list's window (``running_now.WINDOW_SECS``), short enough that an ask reads at once,
+#: long enough that a burst is one read of the list.
+CHANGED = "waiting_changed"
+WINDOW_SECS = 0.15
 
 #: What answering an item lets happen, most consequential first: the list's first order.
 CONSEQUENCES = ("destructive", "changes", "asks")
@@ -689,3 +704,69 @@ def reach_of(request: Any, state: Any) -> Reach:
     if reader.everyone:
         return Reach(everyone=True)
     return Reach(chat=reader.chat)
+
+
+# ── the list moved ───────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _Bell:
+    """The ring due at the end of this window, and the event loop it is due on."""
+
+    handle: asyncio.TimerHandle | None = None
+    loop: asyncio.AbstractEventLoop | None = None
+
+
+def changed(state: Any) -> None:
+    """Something waiting on you was asked or ended: the list rings once its window closes. Called
+    from any thread: off the event loop, the change is handed to it. Never raises: an ask or an
+    answer must not fail for its ring."""
+    try:
+        _changed(state)
+    except Exception:  # noqa: BLE001 — a lost ring leaves the readers' slow poll, never a failure
+        logger.debug("waiting list: could not ring", exc_info=True)
+
+
+def _changed(state: Any) -> None:
+    if state is None:
+        return
+    home = getattr(state, "_ws_loop", None)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if home is not None and loop is not home:
+        # Off the gateway's loop (a thread, or a loop of its own): the change is handed to it.
+        if not home.is_closed():
+            home.call_soon_threadsafe(changed, state)
+        return
+    if loop is None:
+        return
+    bell = getattr(state, "_waiting_bell", None)
+    if not isinstance(bell, _Bell):
+        bell = _Bell()
+        state._waiting_bell = bell
+    if bell.handle is not None and (bell.loop is None or bell.loop.is_closed()):
+        bell.handle = None  # due on a loop that is gone: it will never ring
+    if bell.handle is None:
+        bell.loop = loop
+        bell.handle = loop.call_later(WINDOW_SECS, _ring, state)
+
+
+def _ring(state: Any) -> None:
+    state._waiting_bell.handle = None
+    state.broadcast_ws(CHANGED, {})
+
+
+def changed_elsewhere() -> None:
+    """Something waiting on you was asked or ended where no dashboard state is to hand (a loop's
+    files, a run's gate, a park, a browser grant, a bridge confirmation): the gateway's list
+    rings, when this process is the gateway's."""
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+    except Exception:  # noqa: BLE001 — as changed(): never a failure for a ring
+        return
+    if state is not None:
+        changed(state)

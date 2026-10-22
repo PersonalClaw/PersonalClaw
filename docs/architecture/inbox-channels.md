@@ -708,6 +708,14 @@ past answering, an item leaves the list.
   way. Every door an item names refuses an app and an agent (`approval_answer`): the chat's
   question, the loop's question, merge, conflict, plan step and launch, the run's gate, the
   trigger's park, the browser grant, the chat's plan step and the bridge confirmation.
+- **The list says it moved** in one `waiting_changed` frame per 150 ms window, a doorbell carrying
+  nothing (`{}`): a reader reads the list again and renders nothing from the frame. It rings from
+  each place an item is asked or ends: an approval asked or answered, a question asked or ended, a
+  loop's status, question or plan written, a gate's continuation written, claimed or dropped, a
+  run's status, a park raised, withdrawn or claimed, a browser grant asked or answered, a chat's
+  plan written or cleared, and a bridge confirmation minted, taken or expired. An app's socket
+  hears it only when its manifest declares `/api/waiting` (`ws_state.WAITING_LIST_FRAMES`), the
+  one exception beside the approval relay's (`docs/security/limitations.md`).
 
 ## Notifications
 

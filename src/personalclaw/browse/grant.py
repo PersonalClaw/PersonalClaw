@@ -478,6 +478,9 @@ def _signal_grants() -> None:
         broadcast_grants(len(_pending))
     except Exception:
         logger.debug("browse grant: pending-grant signal failed", exc_info=True)
+    from personalclaw import waiting
+
+    waiting.changed_elsewhere()  # the list of what waits on you moved
 
 
 def _audit(

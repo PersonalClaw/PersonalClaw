@@ -200,6 +200,7 @@ def withdraw(trigger_id: str, *, state: Any = None) -> bool:
         _path(trigger_id).unlink()
     except OSError:
         return False
+    _waiting_moved()
     close_row(state if state is not None else _dashboard_state(), trigger_id)
     return True
 
@@ -252,6 +253,7 @@ def claim(trigger_id: str, token: str) -> TriggerPark | None:
         return None
     with contextlib.suppress(OSError):
         claimed.unlink()
+    _waiting_moved()
     return park
 
 
@@ -270,6 +272,14 @@ def _write(park: TriggerPark) -> None:
     path = _path(park.trigger_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(park.to_dict(), indent=2))
+    _waiting_moved()
+
+
+def _waiting_moved() -> None:
+    """A park was raised, withdrawn or claimed: the list of what waits on you moved."""
+    from personalclaw import waiting
+
+    waiting.changed_elsewhere()
 
 
 def _dashboard_state() -> Any:
