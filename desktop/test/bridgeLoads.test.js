@@ -38,7 +38,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { electronCommand, electronTier, electronUnavailable } = require("./helpers/electronHost");
+const { electronCommand, electronTier, electronUnavailable, launchDetail } = require("./helpers/electronHost");
 
 const ROOT = path.resolve(__dirname, "..");
 const { CAPABILITIES, IPC_CHANNELS } = require("../capabilities");
@@ -174,7 +174,7 @@ function probe({ preload, sandboxOff, namespace }) {
     // requires no shell module, so that is the HOST, not this repo.
     return {
       launchFailed: true,
-      detail: `status=${res.status} signal=${res.signal} stderr=${(res.stderr || "").slice(-400)}`,
+      detail: launchDetail(res),
     };
   }
   return JSON.parse(line.slice("PC_PROBE ".length));

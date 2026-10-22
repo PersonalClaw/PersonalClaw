@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { electronCommand, electronTier, electronUnavailable } = require("./helpers/electronHost");
+const { electronCommand, electronTier, electronUnavailable, launchDetail } = require("./helpers/electronHost");
 
 // ── The buddy's window, in a real Electron (#3831) ─────────────────────────────────────────────
 //
@@ -32,7 +32,7 @@ function probe(page, idleMs) {
     env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
   });
   const line = (res.stdout || "").split("\n").find((l) => l.startsWith("PC_PROBE "));
-  if (!line) return { launchFailed: true, detail: `status=${res.status} signal=${res.signal} stderr=${(res.stderr || "").slice(-400)}` };
+  if (!line) return { launchFailed: true, detail: launchDetail(res) };
   return JSON.parse(line.slice("PC_PROBE ".length));
 }
 
@@ -57,6 +57,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.shown.focused, false);
     assert.equal(root.shown.focusedWindowIsBuddy, false);
     assert.equal(root.shown.alwaysOnTop, true);
+    // Null on Linux, where Electron cannot keep a window out of capture (electronHost's contentProtection).
     if (root.shown.contentProtected !== null) assert.equal(root.shown.contentProtected, true);
     assert.equal(root.shown.documentHidden, false);
     assert.ok(root.shown.frames > 0, "shown, the page draws");

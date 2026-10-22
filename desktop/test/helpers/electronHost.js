@@ -31,6 +31,28 @@ function onPath(name) {
 
 const needsDisplay = () => process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY;
 
+/** The switch a host sets when it must run the real-Electron tiers. */
+const REQUIRE_ELECTRON = "PCLAW_REQUIRE_ELECTRON";
+
+/**
+ * What is wrong with Electron's setuid sandbox helper, or null. On a Linux host whose kernel
+ * withholds user namespaces (Ubuntu's AppArmor rule, `kernel.apparmor_restrict_unprivileged_userns`),
+ * Chromium's sandbox runs through `chrome-sandbox` beside the binary, which must be root's with mode
+ * 4755, or Electron aborts rather than run unsandboxed. `stat` is injected for the test.
+ */
+function sandboxHelperProblem(bin, stat = fs.statSync) {
+  const helper = path.join(path.dirname(bin), "chrome-sandbox");
+  let st;
+  try {
+    st = stat(helper);
+  } catch {
+    return `no setuid sandbox helper at ${helper}`;
+  }
+  const mode = st.mode & 0o7777;
+  if (st.uid === 0 && mode === 0o4755) return null;
+  return `the setuid sandbox helper ${helper} is uid ${st.uid}, mode ${mode.toString(8)}: it must be root's with mode 4755 where the kernel withholds user namespaces`;
+}
+
 /** Why Electron cannot be driven here, or `null` if it can. */
 function electronUnavailable() {
   let bin = null;
@@ -45,6 +67,8 @@ function electronUnavailable() {
   if (needsDisplay() && !onPath("xvfb-run")) {
     return "no display on linux, and no xvfb-run to give it one";
   }
+  // Where the host must run the tiers, a sandbox that cannot start is named before Electron is.
+  if (process.platform === "linux" && process.env[REQUIRE_ELECTRON] === "1") return sandboxHelperProblem(bin);
   return null;
 }
 
@@ -56,8 +80,15 @@ function electronCommand(args) {
   return { command: bin, args };
 }
 
-/** The switch a host sets when it must run the real-Electron tiers. */
-const REQUIRE_ELECTRON = "PCLAW_REQUIRE_ELECTRON";
+/**
+ * Why a probe run printed no result line: its exit, and the end of what it wrote. Both streams,
+ * since `xvfb-run` hands the program's stderr to its stdout, where Chromium's fatal line (a sandbox
+ * it cannot start, a library it cannot load) would otherwise be lost.
+ */
+function launchDetail(res) {
+  const tail = (text) => String(text || "").trim().slice(-600);
+  return `status=${res.status} signal=${res.signal} stderr=${tail(res.stderr)} stdout=${tail(res.stdout)}`;
+}
 
 /**
  * What a tier does with why Electron cannot start (`reason`, or null when it can): skip, saying
@@ -72,4 +103,17 @@ function electronTier(reason, env = process.env) {
   return { skip: reason, fail: null };
 }
 
-module.exports = { REQUIRE_ELECTRON, electronUnavailable, electronCommand, electronTier };
+/** The platforms where Electron can keep a window out of screen capture (`setContentProtection`). */
+const CONTENT_PROTECTION_PLATFORMS = ["darwin", "win32"];
+
+/**
+ * A window's content protection as a probe reports it: the window's own answer where Electron can
+ * set it, and null elsewhere (Linux, where `isContentProtected()` reads false whatever was asked),
+ * so a leg checks it only where it means something.
+ */
+function contentProtection(win, platform = process.platform) {
+  if (!CONTENT_PROTECTION_PLATFORMS.includes(platform) || typeof win.isContentProtected !== "function") return null;
+  return win.isContentProtected();
+}
+
+module.exports = { REQUIRE_ELECTRON, contentProtection, electronUnavailable, electronCommand, electronTier, launchDetail, sandboxHelperProblem };

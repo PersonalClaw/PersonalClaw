@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { REQUIRE_ELECTRON, electronTier } = require("./helpers/electronHost");
+const { REQUIRE_ELECTRON, contentProtection, electronTier, launchDetail, sandboxHelperProblem } = require("./helpers/electronHost");
 
 // ── A real-Electron tier skips where it cannot run, except where the host must run it ─────────
 //
@@ -29,6 +29,32 @@ describe("electronTier", () => {
     const { skip, fail } = electronTier("electron did not start: status=1 signal=null stderr=No usable sandbox!", { [REQUIRE_ELECTRON]: "1" });
     assert.equal(skip, false);
     assert.match(fail, /^PCLAW_REQUIRE_ELECTRON=1, and this host cannot start Electron: electron did not start: .*No usable sandbox!$/);
+  });
+});
+
+describe("sandboxHelperProblem", () => {
+  const BIN = "/repo/node_modules/electron/dist/electron";
+  const at = (uid, mode) => () => ({ uid, mode: 0o100000 | mode });
+
+  it("passes a helper that is root's with mode 4755", () => {
+    assert.equal(sandboxHelperProblem(BIN, at(0, 0o4755)), null);
+  });
+
+  it("names a helper the runner left as it unpacked it, or with the wrong bits, or missing", () => {
+    assert.match(sandboxHelperProblem(BIN, at(1001, 0o755)), /chrome-sandbox is uid 1001, mode 755: it must be root's with mode 4755/);
+    assert.match(sandboxHelperProblem(BIN, at(0, 0o755)), /uid 0, mode 755/);
+    assert.match(sandboxHelperProblem(BIN, at(1001, 0o4755)), /uid 1001, mode 4755/);
+    assert.match(sandboxHelperProblem(BIN, () => { throw new Error("ENOENT"); }), /no setuid sandbox helper at \/repo\/node_modules\/electron\/dist\/chrome-sandbox/);
+  });
+});
+
+describe("launchDetail", () => {
+  it("says why from either stream, since xvfb-run hands stderr to stdout", () => {
+    const fatal = "[123:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox!";
+    const viaXvfb = launchDetail({ status: 133, signal: null, stderr: "", stdout: `noise\n${fatal}\n` });
+    assert.match(viaXvfb, /^status=133 signal=null stderr= stdout=noise\n.*No usable sandbox!$/s);
+    assert.match(launchDetail({ status: 1, signal: null, stderr: fatal, stdout: "" }), /stderr=.*No usable sandbox!/);
+    assert.ok(launchDetail({ status: 1, signal: null, stderr: "x".repeat(5000), stdout: "" }).length < 700, "a tail, not the whole output");
   });
 });
 
@@ -75,5 +101,36 @@ describe("a tier wired as bridgeLoads.test.js, buddyIdle.test.js and buddyAnswer
       assert.match(src, /if \(fail\) it\("starts a real Electron on this host", \(\) => assert\.fail\(fail\)\);/, name);
       assert.doesNotMatch(src, /\{ skip \}/, `${name}: every leg skips on \`skipped\`, so none runs without Electron`);
     }
+  });
+});
+
+// ── Content protection is read only where Electron can set it ─────────────────────────────────
+//
+// `setContentProtection` works on macOS and Windows only, so on Linux `isContentProtected()` reads
+// false whatever the window asked for. The probe reports null there, and buddyIdle.test.js skips
+// that one check; where it can be set, a window left unprotected still fails the leg.
+
+describe("contentProtection", () => {
+  const win = (value) => ({ isContentProtected: () => value });
+
+  it("reads null on Linux, so a false there is neither a pass nor a failure", () => {
+    assert.equal(contentProtection(win(false), "linux"), null);
+    assert.equal(contentProtection(win(true), "linux"), null);
+  });
+
+  it("reads the window's own answer on macOS and Windows, so an unprotected window fails there", () => {
+    for (const platform of ["darwin", "win32"]) {
+      assert.equal(contentProtection(win(false), platform), false, platform);
+      assert.equal(contentProtection(win(true), platform), true, platform);
+    }
+  });
+
+  it("reads null from a window with no reading", () => {
+    assert.equal(contentProtection({}, "darwin"), null);
+  });
+
+  it("is what the buddy's probe reports", () => {
+    const src = fs.readFileSync(path.join(__dirname, "helpers", "buddyProbe.js"), "utf8");
+    assert.match(src, /contentProtected: contentProtection\(win\)/);
   });
 });

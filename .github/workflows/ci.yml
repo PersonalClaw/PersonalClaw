@@ -1090,8 +1090,15 @@ jobs:
       # `npm ci` does not run electron's download script, so the desktop tier's real-Electron
       # legs had no binary here and skipped. Its install script fetches the build the locked
       # package names and checks it against the checksums that package ships (#3831).
+      # Ubuntu's AppArmor rule (kernel.apparmor_restrict_unprivileged_userns) withholds the user
+      # namespaces Chromium's own sandbox needs, so Electron falls back to its setuid sandbox helper,
+      # and aborts unless that helper is root's with mode 4755. The helper is the one binary given
+      # the bit; the renderer sandbox stays on, and no kernel setting is loosened for the job.
       - name: electron's binary, for the desktop tier's real-Electron legs
-        run: node node_modules/electron/install.js
+        run: |
+          node node_modules/electron/install.js
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       # The run's one typecheck: `npm run build` below is `vite build` alone, and nothing else in
       # this workflow typechecks the web.
       - name: typecheck
@@ -1140,9 +1147,12 @@ jobs:
         # here, headless, on this runner. Tier 2 confirms that model against a real Electron
         # renderer, and `buddyIdle.test.js` checks the buddy's window there: shown without taking
         # focus, and hidden for 60 s with no timer, no frame and no CPU (#3831). Both run on the
-        # binary the step above installs, under `xvfb-run` (the runner has no display). Where
-        # Electron cannot start they skip and say why, unless PCLAW_REQUIRE_ELECTRON=1 makes that
-        # a failure (`desktop/test/helpers/electronHost.js`).
+        # binary the step above installs, under `xvfb-run` (the runner has no display). This job
+        # must run them: PCLAW_REQUIRE_ELECTRON=1 turns a can't-start (no binary, no display, a
+        # sandbox the kernel refuses) into a failure with the reason, where a host that need not
+        # run them skips (`desktop/test/helpers/electronHost.js`).
+        env:
+          PCLAW_REQUIRE_ELECTRON: "1"
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
