@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **All tasks opens again for someone whose sidebar still shows the starter set: the visit kept re-pinning Tasks, which reads back as Projects, until the page stopped with an error.**
+
 ## [0.2.5] — 2026-10-22
 
 A patch release on 0.2.4. A new install can add `bedrock-models`, and every other app built on

@@ -234,6 +234,27 @@ describe('the old shell\'s local state opens the new home with what it held', ()
     expect(railRows()).not.toContain('Tasks')
   })
 
+  it('a starter sidebar opens #/tasks, keeps a row for Projects, and writes its record once', async () => {
+    // The visit pinned `tasks`, the record read the pin back as `projects`, and the next render
+    // pinned `tasks` again: thousands of writes a second until the page hit React's update limit.
+    // Under `act` that loop never yields, so the twentieth change stops it as React's limit does.
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: [] }))
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
+    const dispatch = window.dispatchEvent.bind(window)
+    let changes = 0
+    const limit = vi.spyOn(window, 'dispatchEvent').mockImplementation((event) => {
+      if (event.type === 'ne:nav-disclosure' && ++changes > 20) throw new Error('the record is rewritten in a loop')
+      return dispatch(event)
+    })
+    await open('tasks')
+    limit.mockRestore()
+    expect(heading()).toBe('All tasks')
+    expect(writes.mock.calls.filter(([key]) => key === 'nav-disclosure').length, 'the record is not rewritten in a loop').toBeLessThanOrEqual(1)
+    expect(railRows()).toContain('Projects')
+    expect(railRows()).not.toContain('Tasks')
+    writes.mockRestore()
+  })
+
   it('the remembered list view and scope still shape #/tasks', async () => {
     localStorage.setItem('tasks-view', 'board')
     localStorage.setItem('tasks-scope', 'House move')

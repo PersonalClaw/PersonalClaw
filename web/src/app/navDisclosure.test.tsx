@@ -181,6 +181,19 @@ describe('the disclosure store', () => {
     expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['triggers', 'library', 'terminal'])
   })
 
+  it('a visit to a page that moved pins the row it moved to, and the next visit writes nothing', () => {
+    setNavMode('starter')
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
+    pinNavSurface('tasks')
+    expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['projects'])
+    pinNavSurface('tasks')
+    pinNavSurface('knowledge')
+    pinNavSurface('library')
+    expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['projects', 'library'])
+    expect(writes.mock.calls.filter(([key]) => key === 'nav-disclosure')).toHaveLength(2)
+    writes.mockRestore()
+  })
+
   it('undisclosedCount counts only what starter holds back', () => {
     const ids = [...STARTER_NAV_IDS, 'triggers', 'workflows', 'app/weather']
     expect(undisclosedCount(ids, [])).toBe(2)
