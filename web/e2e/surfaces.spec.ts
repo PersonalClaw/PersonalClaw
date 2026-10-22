@@ -69,7 +69,7 @@ const FIXED_TASKS = [
 /** What waits on you (`GET /api/waiting`), one of each shape a reader draws: a destructive approval,
  *  a workflow's confirmation gate, a trigger's parked action and a loop's question, asked minutes
  *  before the rows' fixed noon and waiting until answered. */
-const fixedWaiting = (over: Record<string, unknown>) => ({
+const fixedWaiting = <T extends Record<string, unknown>>(over: T) => ({
   work: '', session: '', risk: '', expires_at: null, current: true, interrupt: 'deliver', age_secs: 0, ...over,
 })
 const FIXED_WAITING = {
