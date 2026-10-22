@@ -11,8 +11,7 @@
  *   personalclaw://<route>[/<segment>...][?<parameter>=<value>&...]
  *
  * - `<route>` is one of the app's routes by its own name (`ROUTES`, kept equal to the dashboard's
- *   list by `test/deepLinks.test.js`), or one of two aliases: `threads` (the chat route) and
- *   `automations` (the triggers route). Lower case only.
+ *   list by `test/deepLinks.test.js`), or the alias `threads` (the chat route). Lower case only.
  * - Up to four `<segment>`s follow: a thread's key, a settings panel, an item's id. Each is
  *   percent-decoded and must then be made of letters, digits and `. _ : @ ~ -`, so an encoded
  *   `/`, `#`, `?`, quote or backslash cannot become structure on the other side.
@@ -36,6 +35,7 @@ const ROUTES = new Set([
   "memory",
   "tasks",
   "inbox",
+  "automations",
   "triggers",
   "files",
   "artifacts",
@@ -59,7 +59,7 @@ const ROUTES = new Set([
 ]);
 
 /** Names a link may use for a route, beside the routes' own names. */
-const ALIASES = Object.freeze({ threads: "chat", automations: "triggers" });
+const ALIASES = Object.freeze({ threads: "chat" });
 
 const LIMITS = Object.freeze({
   /** The whole link, checked before anything else is read. */

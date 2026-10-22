@@ -128,10 +128,10 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
 ```
 
 - **The page** is one of the dashboard's pages, by the name its address uses: `dashboard`, `chat`,
-  `projects`, `library`, `knowledge`, `memory`, `tasks`, `inbox`, `triggers`, `files`, `artifacts`,
+  `projects`, `library`, `knowledge`, `memory`, `tasks`, `inbox`, `automations`, `triggers`, `files`, `artifacts`,
   `terminal`, `capabilities`, `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`,
   `apps`, `settings`, `notifications`, `discover`, `loop`, `loops`, `code`, `app` or
-  `mission-control`. `threads` is another name for `chat` and `automations` for `triggers`. Names
+  `mission-control`. `threads` is another name for `chat`. Names
   are lower case. The app's three shell pages, `onboarding`, `companion` and the buddy playground (`buddy`), are not on the list: a
   link to any of them is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and

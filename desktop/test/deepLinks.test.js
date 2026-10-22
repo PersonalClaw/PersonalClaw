@@ -39,7 +39,8 @@ describe("parseDeepLink — the links the issue names", () => {
     assert.equal(ok("personalclaw://settings"), "#/settings");
     assert.equal(ok("personalclaw://settings/providers"), "#/settings/providers");
     assert.equal(ok("personalclaw://skills"), "#/skills");
-    assert.equal(ok("personalclaw://automations"), "#/triggers");
+    assert.equal(ok("personalclaw://automations"), "#/automations");
+    assert.equal(ok("personalclaw://triggers"), "#/triggers");
   });
 
   it("carries a thread's project, mode, pane and review file into its hash", () => {
@@ -787,7 +788,7 @@ describe("main.js wires the links (loaded under Electron stand-ins)", () => {
     assert.equal(prevented, 1);
     assert.ok(logs.includes(opened("skills")), logs.join(" | "));
     fire("second-instance", {}, ["/app", "personalclaw://automations"], "/");
-    assert.ok(logs.includes(opened("triggers")), logs.join(" | "));
+    assert.ok(logs.includes(opened("automations")), logs.join(" | "));
   });
 
   it("offers a held link again when a page finishes loading", () => {
