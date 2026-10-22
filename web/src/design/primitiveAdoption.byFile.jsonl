@@ -28,7 +28,7 @@
 {"file":"pages/chat/inspector/InspectorSection.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/AssistantSegments.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/UserEditor.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
-{"file":"pages/code/CodePlanReview.tsx","raw-button":2,"raw-input":4,"raw-dialog":0}
+{"file":"pages/code/CodePlanReview.tsx","raw-button":2,"raw-input":3,"raw-dialog":0}
 {"file":"pages/code/CodeSection.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/code/CodeToast.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/code/WorkspacePicker.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
@@ -66,7 +66,7 @@
 {"file":"pages/loops/CockpitPromptBar.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/loops/DesignCockpitPage.tsx","raw-button":4,"raw-input":1,"raw-dialog":0}
 {"file":"pages/loops/LoopCockpitPage.tsx","raw-button":7,"raw-input":2,"raw-dialog":0}
-{"file":"pages/loops/LoopPlanReview.tsx","raw-button":2,"raw-input":2,"raw-dialog":0}
+{"file":"pages/loops/LoopPlanReview.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/projects/ProjectThreads.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/projects/ProjectsSection.tsx","raw-button":9,"raw-input":1,"raw-dialog":0}
 {"file":"pages/prompts/PromptDetail.tsx","raw-button":1,"raw-input":4,"raw-dialog":0}

@@ -632,6 +632,8 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
   const [crit, setCrit] = useState('')
   const [taskTitle, setTaskTitle] = useState('')
   const typed = SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number])
+  // What this stage's fields are named by: its title, else its type, else its place.
+  const named = stage.title?.trim() || (stage.stage ? sdlcStageLabel(stage.stage) : '') || `stage ${index + 1}`
   function addCrit() {
     const c = crit.trim()
     if (!c) return
@@ -670,7 +672,8 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
-              <TextInput value={stage.title} onChange={(v) => onPatch({ title: v })} placeholder="Stage title" size="sm" surface="high" />
+              <TextInput value={stage.title} onChange={(v) => onPatch({ title: v })} placeholder="Stage title" size="sm" surface="high"
+                ariaLabel={`Title of stage ${index + 1}`} />
             </div>
             {/* Stage type — the canonical SDLC id (drives capabilities + gate
                 tracking). Editable so a user can re-type a stage or fix an added
@@ -694,12 +697,10 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               </div>
             ))}
             {/* Commit on blur too — else a criterion typed but not Enter'd is silently
-                lost when the user clicks Launch (which just blurs this input). Raw for
-                that reason: TextInput takes no onBlur. */}
-            <input value={crit} onChange={(e) => setCrit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCrit() } }}
-              onBlur={addCrit}
-              placeholder="Add a concrete, checkable condition…"
-              data-type="body-s" className="rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
+                lost when the user clicks Launch (which just blurs this input). */}
+            <TextInput value={crit} onChange={setCrit} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCrit() } }}
+              onBlur={addCrit} ariaLabel={`Add a condition to ${named}`}
+              placeholder="Add a concrete, checkable condition…" size="sm" surface="high" />
           </div>
           {/* Quality gate — the per-stage metric bar (metric_pass/metric_hold). The
               exit criteria are the structural gate (met/not-met); the quality bar is the
@@ -719,11 +720,13 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
                 <div className="flex min-w-0 flex-1 flex-col">
                   {/* Raw, with the description below: two fill-less fields sharing this row's box, and TextInput always draws its own fill and height. */}
                   <input value={t.title} onChange={(e) => patchTask(ti, { title: e.target.value })}
+                    aria-label={`Task ${ti + 1} of ${named}`}
                     placeholder="Task…"
                     className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
                   {/* the task's substance — visible + editable, not hidden in a hover
                       tooltip, so the user reviews WHAT each task does, not just its name. */}
                   <input value={t.description ?? ''} onChange={(e) => patchTask(ti, { description: e.target.value })}
+                    aria-label={`What task ${ti + 1} of ${named} does`}
                     placeholder="how / details (optional)…"
                     data-type="caption" className="min-w-0 flex-1 bg-transparent text-on-surface-low outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary" />
                 </div>
@@ -732,9 +735,9 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
             ))}
             <div className="flex items-center gap-1.5 rounded-md px-2 py-1">
               <span className="size-3 shrink-0 rounded-full border border-dashed border-outline-variant/50" />
-              {/* Raw: it commits on blur, and TextInput takes no onBlur. */}
+              {/* Raw: fill-less, in a row that draws its own box, and TextInput always draws its own fill and height. */}
               <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
-                onBlur={addTask}
+                onBlur={addTask} aria-label={`Add a task to ${named}`}
                 placeholder="Add a task…"
                 data-type="body-s" className="min-w-0 flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>

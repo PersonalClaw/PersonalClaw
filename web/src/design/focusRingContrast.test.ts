@@ -176,8 +176,10 @@ describe('no focus ring may carry an alpha', () => {
     // with this floor left at 61), and the chat's auto-nudge settings then left the population (67 → 66)
     // because their three rings were on fields that are a `TextArea` and two `NumberField`s now.
     // 🔻 66 → 65: Home's launcher composer left with the old Home, its ring with it.
+    // 🔻 65 → 64, the same migration as the fields above: `pages/loops/LoopPlanReview.tsx`'s two rings
+    // were on its title edit and its verify command, now `TextInput`s.
     const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
-    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(65)
+    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(64)
   })
 
   it('is scoped to focus states, and only to them', () => {

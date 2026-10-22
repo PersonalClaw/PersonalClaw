@@ -243,12 +243,16 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, step, autoComplete = 'off' }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, onBlur, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, spellCheck, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, step, autoComplete = 'off' }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   autoFocus?: boolean
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  /** Leaving the field. For a field whose entry commits when focus moves on (a condition or a
+   *  title typed and not Enter'd would otherwise be lost to the next click), which had to drop to a
+   *  raw `<input>` for want of it. */
+  onBlur?: () => void
   name?: string
   /** An explicit DOM id, for a call-site that publishes its OWN visible `<label htmlFor>` rather
    *  than wrapping the control in a `Field`. Without it the id is internal (`name` or a generated
@@ -293,6 +297,9 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   type?: 'text' | 'password' | 'number'
   /** Monospace — technical values (commands, endpoints, keys). Mirrors TextArea's. */
   mono?: boolean
+  /** Native `spellcheck`. Off for a shell command, a path or a key, where the browser's red
+   *  underline marks every flag as a misspelling. Unset, the browser's default. */
+  spellCheck?: boolean
   /** A leading glyph (typically a search icon) pinned inside the left edge. Adds
    *  the canonical left inset (pl-9) that clears the fixed left-3 icon; the caller
    *  passes the raw icon (e.g. `<Search size={14} />`) and it inherits the muted
@@ -342,7 +349,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
       maxLength={maxLength} minLength={minLength} pattern={pattern} min={min} max={max} step={step}
       disabled={disabled}
       title={disabled ? disabledReason || undefined : undefined}
-      onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} onBlur={onBlur} spellCheck={spellCheck} placeholder={placeholder}
       data-type={FIELD_ROLE[size]}
       className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], padX, mono && 'font-mono', disabled && 'opacity-50')} />
   )
