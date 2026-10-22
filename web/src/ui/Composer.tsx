@@ -14,6 +14,7 @@ import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
 import { usePersonality } from '../app/personality'
 import { api } from '../lib/api'
+import { cx } from './cx'
 import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
 import { MicCaptureChip } from './MicCaptureChip'
@@ -161,8 +162,21 @@ export function Composer({
   }
 
   const sel = selection
-  const pills = (
-    <div className="flex items-center gap-xs min-w-0 flex-wrap">
+  // The footer's controls in two groups: what the next message is (`+`, and who answers it), then
+  // how the turn runs (the reply style, and the host's task mode and Execution Boundary). Wide, they
+  // share one wrapping row beside the send cluster. On a phone (#3808: at 390 the footer wrapped a
+  // row per control, `+` alone on the first, and the composer grew from 276 px to 316) the first
+  // group keeps the first row beside the send cluster, the pill truncating its label rather than
+  // wrapping under `+`, and the second group takes the row below, its pills capped at 6rem (4.75rem
+  // below 360 px) so three share it. The send cluster drops to a line of its own only when the first
+  // row cannot hold it beside `+` and the shortest pill (320 px). One tree in both layouts, switched
+  // by classes alone, so crossing the breakpoint keeps every control mounted and Send keeps its focus.
+  const hasLead = !!controls.attach || !!controls.agent || !!controls.model
+  const hasRest = !!controls.approval || !!replyStyle || !!hostPills
+  // A host with no first group (the loop composer) keeps the one wrapping row at every width.
+  const twoRows = isMobile && hasLead
+  const lead = (
+    <div data-composer-lead className={cx('flex min-w-0 flex-nowrap items-center gap-xs', twoRows && 'flex-1 basis-[6.5rem]')}>
       {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
       {/* One pill for who answers: the agent, the model and, for a model that declares levels,
           the reasoning effort. `/agent`, `/model` and `/effort` each open it; `/effort` opens its
@@ -174,6 +188,10 @@ export function Composer({
           openSignal={(openAgentSignal ?? 0) + (openModelSignal ?? 0) + (openReasoningSignal ?? 0)} effortSignal={openReasoningSignal}
           onSelect={(p) => onSelect?.(p)} />
       )}
+    </div>
+  )
+  const rest = (
+    <>
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
       {/* Reply style — feature-detected on the prop, not a `controls` flag:
           it needs a conversation to scope itself to, and the goal composer has none.
@@ -181,7 +199,7 @@ export function Composer({
           read is attributable to a control the owner can see. */}
       {replyStyle && <ReplyStylePill {...replyStyle} />}
       {hostPills}
-    </div>
+    </>
   )
 
   // Right-hand action cluster: optimize · voice · send/stop/queue.
@@ -407,9 +425,20 @@ export function Composer({
             sendOnEnter={sendOnEnter}
           />
 
-          <div className="flex items-end justify-between gap-s">
-            {pills}
-            {actions}
+          <div data-composer-footer={twoRows ? 'two-rows' : 'one-row'}
+            className={cx('flex items-end justify-between', twoRows ? 'flex-wrap gap-x-s gap-y-xs' : 'gap-s')}>
+            <div data-composer-row={twoRows ? undefined : 'lead'} className={twoRows ? 'contents' : 'flex min-w-0 flex-wrap items-center gap-xs'}>
+              <div data-composer-row={twoRows ? 'lead' : undefined} className="contents">{lead}</div>
+              {hasRest && (
+                <div data-composer-row={twoRows ? 'rest' : undefined}
+                  className={twoRows ? cx('order-last flex min-w-0 basis-full flex-wrap items-center gap-xs',
+                    '[--composer-pill-max:6rem] [--composer-pill-max-wide:6rem]',
+                    'max-[359px]:[--composer-pill-max:4.75rem] max-[359px]:[--composer-pill-max-wide:4.75rem]') : 'contents'}>
+                  {rest}
+                </div>
+              )}
+            </div>
+            <div data-composer-actions className="ml-auto">{actions}</div>
           </div>
 
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = e.target.files; if (f && onAttach) onAttach(Array.from(f)); e.target.value = '' }} />

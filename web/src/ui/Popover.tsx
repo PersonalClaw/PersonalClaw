@@ -41,7 +41,7 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  occlusion the side placement is for. Horizontal overflow is handled the way it
  *  already is for the other two — `portalPos` clamps `left` into the viewport. */
 export function Popover({
-  trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false,
+  trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false, className,
 }: {
   trigger: (open: boolean, toggle: () => void) => ReactNode
   children: (close: () => void) => ReactNode
@@ -54,6 +54,8 @@ export function Popover({
   openSignal?: number
   /** Render the flyout via a body portal (see doc above). */
   portal?: boolean
+  /** Extra classes on the wrapper, e.g. `flex min-w-0` so a trigger in a tight row can shrink. */
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -275,7 +277,7 @@ export function Popover({
   )
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className={className ? `relative ${className}` : 'relative'}>
       {trigger(open, toggle)}
       {portal ? createPortal(flyout, document.body) : flyout}
     </div>

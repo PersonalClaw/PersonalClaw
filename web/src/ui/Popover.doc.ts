@@ -40,6 +40,7 @@ const docs: UiDoc[] = [
       { name: 'openSignal', description: 'Monotonic counter — each increment forces the popover open (mount / 0 ignored). Lets a host open it programmatically (e.g. a "/model" slash command) without making it fully controlled.' },
       { name: 'placement', description: "'top' (default, opens above) or 'bottom' (opens below) — use 'bottom' for a top-bar trigger." },
       { name: 'portal', description: 'Render the flyout via a <body> portal with position:fixed, anchored to the trigger rect, viewport-clamped, closing on any scroll. Set it when the trigger sits inside an overflow-clipping/scrolling container (e.g. a kanban column); default off leaves existing consumers untouched.' },
+      { name: 'className', description: 'Extra classes on the wrapper round the trigger. `flex min-w-0` makes the trigger a flex item that may shrink, so a pill in a tight row (the composer footer on a phone) truncates its label instead of wrapping or overlapping its neighbour. Omit it and the wrapper keeps its content width.' },
       { name: 'width', description: 'Fixed flyout width in px (min 200); omit to let it size to content within the min.' },
     ],
     bestPractices: [
