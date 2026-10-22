@@ -18,6 +18,7 @@
  */
 
 const placement = require("./buddyPlacement");
+const { SCHEME, parseDeepLink } = require("./deepLinks");
 
 /** "Hide from screen sharing and screenshots": on unless this is `"0"`. */
 const CAPTURE_KEY = "buddy:hideFromCapture";
@@ -178,4 +179,90 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
   };
 }
 
-module.exports = { CAPTURE_KEY, buddyWindowOptions, makeBuddyWindow };
+// ── The buddy's bridge (main side) ─────────────────────────────────────────────────────────────
+//
+// The page reaches the shell through five named sends and nothing else (`buddyPreload.js` copies
+// the names, sandboxed preloads cannot require them). Each is heard only from the buddy window's own
+// web contents, and each payload is checked here whatever the preload sent: a page that is not the
+// buddy's, or a value outside its shape, changes nothing.
+
+const BUDDY_PREFIX = "pclaw-buddy:";
+const BUDDY_CHANNELS = Object.freeze({
+  pointer: `${BUDDY_PREFIX}pointer`,
+  regions: `${BUDDY_PREFIX}regions`,
+  drag: `${BUDDY_PREFIX}drag`,
+  presentation: `${BUDDY_PREFIX}presentation`,
+  open: `${BUDDY_PREFIX}open`,
+});
+
+/** At most this many rectangles make the window's shape (the face, the card and their parts). */
+const MAX_REGIONS = 8;
+/** No rectangle or drag step is larger than the largest display the shell has met. */
+const MAX_EXTENT = 16384;
+/** The longest route the buddy may ask the main window to open. */
+const MAX_ROUTE = 512;
+
+/** A route the buddy may open in the main window, in the form the page wrote it (`#/chat/abc`):
+ *  exactly the routes and parameters a `pclaw://` link may open, checked by the same parser, and
+ *  handed on in that parser's own spelling. */
+function openableRoute(route) {
+  if (typeof route !== "string" || route.length > MAX_ROUTE || !route.startsWith("#/")) return null;
+  const link = parseDeepLink(`${SCHEME}://${route.slice(2)}`);
+  return link.ok ? link.hash : null;
+}
+
+const finite = (v, limit = MAX_EXTENT) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= limit;
+const plain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** The checked form of each payload, or null for one outside its shape. Exported for the test. */
+const BUDDY_PAYLOADS = Object.freeze({
+  pointer: (p) => (plain(p) && typeof p.hit === "boolean" ? { hit: p.hit } : null),
+  regions: (p) => {
+    if (!plain(p) || !Array.isArray(p.rects) || p.rects.length > MAX_REGIONS) return null;
+    const rects = p.rects.filter((r) => plain(r) && finite(r.x) && finite(r.y) && finite(r.width) && finite(r.height) && r.width >= 0 && r.height >= 0);
+    return rects.length === p.rects.length ? { rects: rects.map(({ x, y, width, height }) => ({ x, y, width, height })) } : null;
+  },
+  drag: (p) => {
+    if (!plain(p) || !["start", "move", "end"].includes(p.phase)) return null;
+    if (p.phase === "move") return finite(p.dx) && finite(p.dy) ? { phase: "move", dx: p.dx, dy: p.dy } : null;
+    if (p.phase === "end") return { phase: "end", instant: p.instant === true };
+    return { phase: "start" };
+  },
+  presentation: (p) => (plain(p) && typeof p.presentation === "string" && Object.prototype.hasOwnProperty.call(placement.SIZES, p.presentation) ? { presentation: p.presentation } : null),
+  open: (p) => {
+    const route = plain(p) ? openableRoute(p.route) : null;
+    return route ? { route } : null;
+  },
+});
+
+/**
+ * Hear the buddy's five sends. `isBuddy(sender)` says whether a send came from the buddy window's own
+ * web contents; `openRoute(hash)` opens a route of this app in the main window (`main.js`'s
+ * `deepLink`, which shows the window and assigns the hash through `hashAssignmentScript`). A send
+ * from anywhere else, or a payload outside its shape, is dropped and logged.
+ */
+function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, log = () => {} }) {
+  const hear = (name, act) => {
+    ipcMain.on(BUDDY_CHANNELS[name], (event, payload) => {
+      if (!event || !isBuddy(event.sender)) return log(`buddy: ${name} from a page that is not the buddy's, dropped`);
+      const checked = BUDDY_PAYLOADS[name](payload);
+      if (!checked) return log(`buddy: ${name} outside its shape, dropped`);
+      act(checked);
+    });
+  };
+  hear("pointer", ({ hit }) => buddy.pointerOver(hit));
+  hear("regions", ({ rects }) => buddy.setRegions(rects));
+  hear("drag", (d) => {
+    if (d.phase === "start") buddy.beginDrag();
+    else if (d.phase === "move") buddy.dragBy(d.dx, d.dy);
+    else buddy.endDrag({ instant: d.instant });
+  });
+  hear("presentation", ({ presentation }) => {
+    if (presentation === "hidden") buddy.hide();
+    else buddy.setPresentation(presentation);
+  });
+  hear("open", ({ route }) => openRoute(route));
+  return () => { for (const channel of Object.values(BUDDY_CHANNELS)) ipcMain.removeAllListeners(channel); };
+}
+
+module.exports = { CAPTURE_KEY, BUDDY_CHANNELS, BUDDY_PAYLOADS, buddyWindowOptions, makeBuddyWindow, registerBuddyIpc };

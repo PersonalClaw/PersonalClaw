@@ -97,9 +97,10 @@ function preloadOf(block) {
  * records the channel and resolves nothing. This observes the bridge's SHAPE, not its
  * behaviour — the behaviour is already covered against real stubs elsewhere. A test that does
  * want a call answered passes `invoke(channel, ...args)`: the main-process half it stands for,
- * so a bridge call can be driven from the page's side to the handler that answers it.
+ * so a bridge call can be driven from the page's side to the handler that answers it. A test that
+ * wants what a fire-and-forget call sent passes `send(channel, ...args)` the same way.
  */
-function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined) } = {}) {
+function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined), send = () => {} } = {}) {
   const src = fs.readFileSync(file, "utf8");
   const exposed = Object.create(null);
   const channels = [];
@@ -115,8 +116,9 @@ function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined) 
         channels.push(channel);
       },
       removeListener: () => {},
-      send: (channel) => {
+      send: (channel, ...args) => {
         channels.push(channel);
+        send(channel, ...args);
       },
       invoke: (channel, ...args) => {
         channels.push(channel);
