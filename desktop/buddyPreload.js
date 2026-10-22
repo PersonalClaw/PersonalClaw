@@ -1,11 +1,13 @@
 /**
  * Preload for the buddy's window (#3831).
  *
- * Five named sends and nothing else. Deliberately NOT `preload.js`: the buddy has no business
+ * Five named sends, two named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
  * reaching the capability bridge (the microphone, notifications, the login item), so it gets a
  * surface of its own, the smallest that drives its window: where the pointer is, the shape that
  * takes clicks, a drag of the face, the room it needs, and opening a route of this app in the main
- * window. No `send` or `invoke` of the page's choosing is exposed, and nothing comes back.
+ * window. No `send` or `invoke` of the page's choosing is exposed. What comes back is main's
+ * doorbell: a ring that carries nothing (the lists moved: read them again), and its connection, one
+ * of three words.
  *
  * The window is sandboxed, and a sandboxed preload's `require` resolves `electron` and three
  * builtins only, so the channel names are copied here; `buddyBridge.test.js` holds them equal to
@@ -23,6 +25,21 @@ const BUDDY_CHANNELS = Object.freeze({
   presentation: `${BUDDY_PREFIX}presentation`,
   open: `${BUDDY_PREFIX}open`,
 });
+const BUDDY_PUSHES = Object.freeze({
+  ring: `${BUDDY_PREFIX}ring`,
+  connection: `${BUDDY_PREFIX}connection`,
+});
+const BUDDY_CONNECTIONS = ["up", "lost", "restarting"];
+
+/** Hear *channel*, handing *cb* only what *shape* lets through; returns the way to stop. */
+function hear(channel, cb, shape) {
+  const listener = (_event, value) => {
+    const checked = shape(value);
+    if (checked !== undefined) cb(checked);
+  };
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
 const rect = (r) => ({ x: num(r && r.x), y: num(r && r.y), width: num(r && r.width), height: num(r && r.height) });
@@ -41,4 +58,8 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
   setPresentation: (presentation) => ipcRenderer.send(BUDDY_CHANNELS.presentation, { presentation: String(presentation) }),
   /** Open a route of this app (`#/chat/…`) in the main window: the focused work. */
   openInApp: (route) => ipcRenderer.send(BUDDY_CHANNELS.open, { route: String(route) }),
+  /** The doorbell rang: something running or waiting changed. Carries nothing. */
+  onRing: (cb) => hear(BUDDY_PUSHES.ring, () => cb(), () => null),
+  /** The doorbell's connection: `up`, `lost` or `restarting`. */
+  onConnection: (cb) => hear(BUDDY_PUSHES.connection, cb, (v) => (BUDDY_CONNECTIONS.includes(v) ? v : undefined)),
 });

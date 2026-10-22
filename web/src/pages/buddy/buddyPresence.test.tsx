@@ -16,9 +16,10 @@ import { BuddyPage } from './BuddyPage'
 // a frame reads both lists again, and the approval reads word for word as the phone's.
 
 let onFrame: ((m: WsMessage) => void) | null = null
+let sockets = 0
 vi.mock('../../lib/useChatSocket', async (orig) => ({
   ...(await orig<typeof import('../../lib/useChatSocket')>()),
-  useChatSocket: (onMessage: (m: WsMessage) => void) => { onFrame = onMessage },
+  useChatSocket: (onMessage: (m: WsMessage) => void) => { sockets++; onFrame = onMessage },
 }))
 
 const lists: { running: RunningList; waiting: WaitingList } = {
@@ -81,6 +82,7 @@ beforeEach(() => {
   resolveApproval.mockReset().mockResolvedValue({ ok: true })
   answerChatQuestion.mockReset()
   onFrame = null
+  sockets = 0
   invalidateKeys('companion:', true)
 })
 afterEach(() => cleanup())
@@ -158,26 +160,55 @@ describe('the buddy presence', () => {
 })
 
 describe("in the buddy's own window", () => {
-  const bridge = { pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn() }
+  let ring: (() => void) | null = null
+  let connection: ((s: 'up' | 'lost' | 'restarting') => void) | null = null
+  const bridge = {
+    pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(),
+    onRing: vi.fn((cb: () => void) => { ring = cb; return () => { ring = null } }),
+    onConnection: vi.fn((cb: (s: 'up' | 'lost' | 'restarting') => void) => { connection = cb; return () => { connection = null } }),
+  }
   beforeEach(() => {
-    for (const f of Object.values(bridge)) f.mockReset()
+    for (const f of Object.values(bridge)) f.mockClear()
+    ring = null
+    connection = null
     window.pclawBuddy = bridge
   })
   afterEach(() => { delete window.pclawBuddy })
 
-  it('sizes the window to the room, and marks the open card as the shape that takes clicks', async () => {
+  it('holds no socket of its own: the shell\'s doorbell rings it, and a ring reads the lists again', async () => {
+    render(<BuddyPage {...route} />)
+    await prompt()
+    expect(sockets, 'the window opens no socket').toBe(0)
+    expect(ring).not.toBeNull()
+    const before = { ...reads }
+    await act(async () => { ring?.() })
+    await waitFor(() => expect(reads.waiting).toBe(before.waiting + 1))
+    expect(reads.running).toBe(before.running + 1)
+  })
+
+  it('sizes the window to the room once it has read, and marks the open card as the shape', async () => {
     render(<BuddyPage {...route} />)
     const group = await prompt()
     await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('expanded'))
+    expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
     expect(group.closest('[data-buddy-shape]')).not.toBeNull()
-    expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
-    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+  })
+
+  it('with nothing to show it asks to be hidden, but only after it has read the lists', async () => {
     lists.running = { running: [], finished: [] }
-    await act(async () => { onFrame?.({ type: 'running_changed', data: {} }) })
-    await waitFor(() => expect(screen.queryByRole('group', { name: /^Permission needed/ })).toBeNull())
-    // Nothing in the shell shows the window again yet, so the page never hides it: with nothing to
-    // say it draws nothing, and every click passes through.
-    expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    render(<BuddyPage {...route} />)
+    expect(bridge.setPresentation, 'nothing before the first read').not.toHaveBeenCalled()
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('hidden'))
+    expect(bridge.setPresentation).toHaveBeenCalledTimes(1)
+  })
+
+  it('a restart the shell says keeps the alert, and sends nothing', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    await act(async () => { connection?.('restarting') })
+    expect(container.querySelector('[data-buddy-island]')).not.toBeNull()
+    expect(resolveApproval).not.toHaveBeenCalled()
   })
 
   it('the face is the shape and the drag handle; a link to the app opens in the main window', async () => {

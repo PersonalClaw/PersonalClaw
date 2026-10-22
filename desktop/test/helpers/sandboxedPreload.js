@@ -104,6 +104,8 @@ function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined),
   const src = fs.readFileSync(file, "utf8");
   const exposed = Object.create(null);
   const channels = [];
+  /** What the preload listens for, so a test can push as main does (`emit`). */
+  const listeners = new Map();
 
   const electron = {
     contextBridge: {
@@ -112,10 +114,13 @@ function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined),
       },
     },
     ipcRenderer: {
-      on: (channel) => {
+      on: (channel, fn) => {
         channels.push(channel);
+        if (typeof fn === "function") listeners.set(channel, [...(listeners.get(channel) || []), fn]);
       },
-      removeListener: () => {},
+      removeListener: (channel, fn) => {
+        listeners.set(channel, (listeners.get(channel) || []).filter((f) => f !== fn));
+      },
       send: (channel, ...args) => {
         channels.push(channel);
         send(channel, ...args);
@@ -140,7 +145,8 @@ function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined),
   // eslint-disable-next-line no-new-func -- executing the preload IS the assertion.
   const run = new Function("require", "module", "exports", "__filename", "__dirname", src);
   run(shimRequire, mod, mod.exports, file, require("node:path").dirname(file));
-  return { exposed, channels };
+  const emit = (channel, ...args) => { for (const fn of listeners.get(channel) || []) fn({}, ...args); };
+  return { exposed, channels, emit };
 }
 
 module.exports = {

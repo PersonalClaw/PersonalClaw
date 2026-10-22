@@ -54,6 +54,8 @@ export interface HostSnapshot {
   items: ReadonlyMap<string, WaitingItem>
   /** The beats the last change asked for, for the orb to play. */
   beats: readonly Beat[]
+  /** The lists have been read at least once, so what the machine says is the gateway's. */
+  read: boolean
 }
 
 export interface BuddyHost {
@@ -129,6 +131,7 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
   let beats: Beat[] = []
   let held = false
   let stopped = false
+  let readOnce = false
   const timers = new Map<TimerName, unknown>()
   /** The folds asked for while held, started when the card is let go. */
   const waitingFolds = new Set<TimerName>()
@@ -207,7 +210,7 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
 
   const publish = () => {
     if (stopped) return
-    onChange({ machine, steps, rows, items, beats })
+    onChange({ machine, steps, rows, items, beats, read: readOnce })
     beats = []
   }
 
@@ -271,6 +274,7 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
         if (stopped) return
         if (listening.on !== machine.listening) apply({ type: listening.on ? 'listen' : 'unlisten' })
         levels(running, waiting)
+        readOnce = true
         publish()
       } while (again)
     } catch {
@@ -334,7 +338,7 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
         if (!isHidden(machine)) for (const name of resume) start(name)
       }
     },
-    snapshot: () => ({ machine, steps, rows, items, beats }),
+    snapshot: () => ({ machine, steps, rows, items, beats, read: readOnce }),
     timers: () => timers.size,
     stop() {
       stopped = true

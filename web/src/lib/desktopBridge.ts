@@ -139,8 +139,12 @@ export interface BuddyRect { x: number; y: number; width: number; height: number
 /** The buddy's room: `hidden` hides its window until the shell shows it again. */
 export type BuddyPresentation = 'hidden' | 'peek' | 'compact' | 'expanded'
 
+/** The doorbell's connection, as the shell tells the buddy's page (`desktop/doorbell.js`). */
+export type BuddyConnection = 'up' | 'lost' | 'restarting'
+
 /** `window.pclawBuddy`: only in the buddy's own window (`desktop/buddyPreload.js`, #3831), never
- *  beside `pclawDesktop`. Seven sends and nothing back; the shell checks each one again. */
+ *  beside `pclawDesktop`. Seven sends, which the shell checks each one again, and two pushes back
+ *  from its doorbell (#3832): a ring that carries nothing, and the connection. */
 export interface BuddyBridge {
   /** macOS: the forwarded pointer is over the face or the open card (take clicks), or not. */
   pointerOver: (hit: boolean) => void
@@ -153,6 +157,11 @@ export interface BuddyBridge {
   setPresentation: (presentation: BuddyPresentation) => void
   /** Open a route of this app (a chat, a run) in the main window, as a hash route. */
   openInApp: (route: string) => void
+  /** The doorbell rang: something running or waiting changed, so read the lists again. Returns
+   *  the way to stop hearing it. */
+  onRing: (cb: () => void) => () => void
+  /** The doorbell's connection changed. */
+  onConnection: (cb: (state: BuddyConnection) => void) => () => void
 }
 
 declare global {
