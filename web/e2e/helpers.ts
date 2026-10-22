@@ -1,5 +1,5 @@
 import { type ConsoleMessage, type Page, expect } from '@playwright/test'
-import type { Theme } from './routes'
+import { FULL_SCREEN_ROUTES, type Theme } from './routes'
 import { STREAM_HEAL_WARNING } from '../src/pages/chat/streamStall'
 
 // ── Harness helpers ─────────────────────────────────────────────────────────
@@ -40,15 +40,33 @@ export const SHELL_SELECTOR = 'nav[data-tour="rail"]'
  *  visiting a surface no user ever sees. Only `command palette [opened]` noticed, and it
  *  blamed the palette. This floor makes the harness's own breakage the loud failure.
  *
- *  Every entry in `routes.ts` is shell-bearing. `#/companion` and `?embed=1` deliberately
- *  render WITHOUT a NavRail — adding either to the manifest needs an opt-out here. */
-export async function assertShellMounted(page: Page): Promise<void> {
+ *  Every entry in `routes.ts` is shell-bearing but the full-screen routes (`FULL_SCREEN_ROUTES`),
+ *  which the shell renders without its NavRail once the owner is onboarded: for one of those,
+ *  `route` names it and the page's own `data-full-screen` mark stands in for the rail.
+ *  `#/companion` and `?embed=1` also render WITHOUT a NavRail, and neither is in the manifest. */
+export async function assertShellMounted(page: Page, route = ''): Promise<void> {
+  const fullScreen = fullScreenOf(route)
+  if (fullScreen) {
+    await expect(
+      page.locator(`[data-full-screen="${fullScreen}"]`),
+      `#/${route} is a full-screen route, and its page (data-full-screen="${fullScreen}") is not\n` +
+        `mounted: the shell shows it only once the owner is onboarded, so this is most likely the\n` +
+        `ONBOARDING screen. See playwright.config.ts.`,
+    ).toBeVisible({ timeout: 10_000 })
+    return
+  }
   await expect(
     page.locator(SHELL_SELECTOR),
     `the app shell (${SHELL_SELECTOR}) is not mounted — this is the ONBOARDING screen, not\n` +
       `the route under test. The harness gateway is unreachable, unauthenticated or not\n` +
       `onboarded; any clean result measured here is meaningless. See playwright.config.ts.`,
   ).toBeVisible({ timeout: 10_000 })
+}
+
+/** The full-screen route `route` is on (its first segment), or '' for a shell-bearing one. */
+export function fullScreenOf(route: string): string {
+  const first = route.split('?')[0].split('/')[0]
+  return FULL_SCREEN_ROUTES.includes(first) ? first : ''
 }
 
 /** How long `gotoRoute` may spend waiting for each stage of a surface to come to rest.
@@ -111,7 +129,7 @@ export async function gotoRoute(
   await page.waitForTimeout(400)
   // Every caller measures the route it just navigated to; none of them can tell an
   // onboarding hijack from a clean surface on their own.
-  await assertShellMounted(page)
+  await assertShellMounted(page, route)
   // Then the SHELL's own async chrome, then the route's content, then its layout, then the
   // fades — in that order, and the order is the point. Each stage can only resolve once the
   // previous one has: the shell's polls cannot answer before the shell mounts, a route's
@@ -119,7 +137,8 @@ export async function gotoRoute(
   // content that moves it has landed, and an entrance fade cannot be waited for before the
   // element that fades in exists.
   const exhausted: string[] = []
-  if (!(await settleShellChrome(page, budget.chromeMs))) exhausted.push('settleShellChrome')
+  // A full-screen route has no shell chrome to wait for: its system-status button is the rail's.
+  if (!fullScreenOf(route) && !(await settleShellChrome(page, budget.chromeMs))) exhausted.push('settleShellChrome')
   if (!(await settleDom(page, undefined, budget.settleMs))) {
     // Name WHICH half of the barrier was still unsatisfied. "The page never went quiet" and
     // "eleven cards are still skeletons" are different diagnoses with different next actions,

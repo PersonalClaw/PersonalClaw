@@ -86,6 +86,7 @@ const DashboardPage = lazy(() => import('../pages/dashboard/DashboardPage').then
 const MissionControl = lazy(() => import('../pages/dashboard/MissionControl').then((m) => ({ default: m.MissionControl })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
+const PlaygroundPage = lazy(() => import('../pages/buddy/PlaygroundPage').then((m) => ({ default: m.PlaygroundPage })))
 
 const NAV: NavItem[] = [
   // Primary group (no section header): the Dashboard is the home, then Chat,
@@ -125,15 +126,16 @@ const NAV: NavItem[] = [
 // do Library's four (`libraryTabs.ts`).
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
- *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
- *  destination) and every bit as real as the ones inside it.
+ *  `#/onboarding`, `#/companion` and the buddy playground, `#/buddy/playground`. Deliberately
+ *  outside `NAV`/`ROUTABLE` (none is a rail destination) and every bit as real as the ones inside
+ *  it.
  *
  *  🔴 The URL corrector MUST consult this as well as `ROUTABLE` (#3506). Testing `ROUTABLE` alone
  *  made it treat both as typos, which measured as two dead ends: `#/companion` — the PWA
  *  `start_url` — silently settling on `#/dashboard`, and EVERY onboarding exit deep-link landing
  *  on the dashboard, because the correction fires on the handoff commit while `route` is still the
  *  stale `'onboarding'`. */
-const SHELL_ROUTES = new Set(['onboarding', 'companion'])
+const SHELL_ROUTES = new Set(['onboarding', 'companion', 'buddy'])
 /** The phone's own surface, as a row of the rail's DRAWER — the phone form only (`railItems`).
  *  `#/companion` is a shell route rendered full-screen, not a desktop destination, so it stays out
  *  of `NAV`; without this row a phone that left it for the full dashboard (its footer's "Open the
@@ -739,6 +741,22 @@ function AppInner() {
         </ErrorBoundary>
         {/* Outside the boundary: a resolve failure is announced through the toast host, so it
             must survive a page-level crash rather than being replaced by the fallback. */}
+        <Toaster />
+      </>
+    )
+  }
+
+  // `#/buddy/playground` — the buddy playground (#3892), full-screen with no NavRail, like
+  // `#/companion`: the owner plays the buddy's state machine and orb with made-up inputs, and the
+  // page reaches nothing on the gateway. Reachable by its address only, in every build.
+  if (route === 'buddy') {
+    return (
+      <>
+        <ErrorBoundary resetKey={`buddy:${sub}`}>
+          <Suspense fallback={<PageFallback />}>
+            <PlaygroundPage sub={sub} navigate={navigate} navEpoch={navEpoch} query={query} setQuery={setQuery} />
+          </Suspense>
+        </ErrorBoundary>
         <Toaster />
       </>
     )

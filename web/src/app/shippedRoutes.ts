@@ -143,6 +143,11 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'onboarding', from: ['router', 'documented'], since: 'v0.1.0', home: 'new', lands: 'onboarding/name' },
   { route: 'onboarding', from: ['router', 'documented'], since: 'v0.1.0', lands: 'dashboard' },
   { route: 'companion', from: ['router', 'gateway', 'documented'], since: 'v0.2.0' },
+  // The buddy playground (#3892), at its address only; `#/buddy` alone opens it too.
+  { route: 'buddy', from: ['router'], since: UNRELEASED },
+  { route: 'buddy/playground', from: ['documented'] },
+  { route: 'buddy/playground?tab=day', from: ['documented'] },
+  { route: 'buddy/playground?tab=poses', from: ['documented'] },
 
   // ── Home ──────────────────────────────────────────────────────────────────────────────────────
   { route: 'dashboard?safe=1', from: ['documented'] },

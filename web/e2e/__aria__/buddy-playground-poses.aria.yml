@@ -1,0 +1,184 @@
+- main:
+  - heading "Buddy playground" [level=#]
+  - paragraph: "The buddy's real state machine and orb, played with made-up work. Nothing here reaches the gateway: an answer is only written in the log."
+  - radiogroup "Playground view":
+    - radio "Play"
+    - radio "A day"
+    - radio "Poses" [checked]
+  - group "Look":
+    - heading "Look" [level=#]
+    - paragraph: These are the app's own settings, as in Settings → Design.
+    - radiogroup "Colour scheme":
+      - radio "Coral" [checked]
+      - radio "Jade"
+      - radio "Mono"
+    - radiogroup "<theme> or <theme>":
+      - radio "<theme>" [checked]
+      - radio "<theme>"
+    - text: Bounciness
+    - slider "Bounciness": "#"
+    - text: Expressiveness
+    - slider "Expressiveness": "#.#"
+    - paragraph: Reduced motion is off, from your <theme>'s setting.
+  - region "The quiet family":
+    - heading "The quiet family" [level=#]
+    - list:
+      - listitem:
+        - img "Done"
+        - text: Done
+        - img "Done"
+        - text: Done
+        - img "Done"
+        - text: Done
+        - img "Done"
+        - text: Done
+      - listitem:
+        - img "Nothing running"
+        - text: Nothing running
+        - img "Nothing running"
+        - text: Nothing running
+        - img "Nothing running"
+        - text: Nothing running
+        - img "Nothing running"
+        - text: Nothing running
+  - region "The active family":
+    - heading "The active family" [level=#]
+    - list:
+      - listitem:
+        - img "Waiting to start"
+        - text: Waiting to start
+        - img "Waiting to start"
+        - text: Waiting to start
+        - img "Waiting to start"
+        - text: Waiting to start
+        - img "Waiting to start"
+        - text: Waiting to start
+      - listitem:
+        - img "Thinking"
+        - text: Thinking
+        - img "Thinking"
+        - text: Thinking
+        - img "Thinking"
+        - text: Thinking
+        - img "Thinking"
+        - text: Thinking
+      - listitem:
+        - img "Searching"
+        - text: Searching
+        - img "Searching"
+        - text: Searching
+        - img "Searching"
+        - text: Searching
+        - img "Searching"
+        - text: Searching
+      - listitem:
+        - img "Working"
+        - text: Working
+        - img "Working"
+        - text: Working
+        - img "Working"
+        - text: Working
+        - img "Working"
+        - text: Working
+      - listitem:
+        - img "Planning"
+        - text: Planning
+        - img "Planning"
+        - text: Planning
+        - img "Planning"
+        - text: Planning
+        - img "Planning"
+        - text: Planning
+      - listitem:
+        - img "Handing off"
+        - text: Handing off
+        - img "Handing off"
+        - text: Handing off
+        - img "Handing off"
+        - text: Handing off
+        - img "Handing off"
+        - text: Handing off
+      - listitem:
+        - img "Writing"
+        - text: Writing
+        - img "Writing"
+        - text: Writing
+        - img "Writing"
+        - text: Writing
+        - img "Writing"
+        - text: Writing
+      - listitem:
+        - img "Listening"
+        - text: Listening
+        - img "Listening"
+        - text: Listening
+        - img "Listening"
+        - text: Listening
+        - img "Listening"
+        - text: Listening
+      - listitem:
+        - img "PersonalClaw is restarting"
+        - text: PersonalClaw is restarting
+        - img "PersonalClaw is restarting"
+        - text: PersonalClaw is restarting
+        - img "PersonalClaw is restarting"
+        - text: PersonalClaw is restarting
+        - img "PersonalClaw is restarting"
+        - text: PersonalClaw is restarting
+  - region "The waiting family":
+    - heading "The waiting family" [level=#]
+    - list:
+      - listitem:
+        - img "Needs your OK"
+        - text: Needs your OK
+        - img "Needs your OK"
+        - text: Needs your OK
+        - img "Needs your OK"
+        - text: Needs your OK
+        - img "Needs your OK"
+        - text: Needs your OK
+      - listitem:
+        - img "Waiting for your answer"
+        - text: Waiting for your answer
+        - img "Waiting for your answer"
+        - text: Waiting for your answer
+        - img "Waiting for your answer"
+        - text: Waiting for your answer
+        - img "Waiting for your answer"
+        - text: Waiting for your answer
+  - region "The blocked family":
+    - heading "The blocked family" [level=#]
+    - list:
+      - listitem:
+        - img "Stopped"
+        - text: Stopped
+        - img "Stopped"
+        - text: Stopped
+        - img "Stopped"
+        - text: Stopped
+        - img "Stopped"
+        - text: Stopped
+      - listitem:
+        - img "Can't reach PersonalClaw"
+        - text: Can't reach PersonalClaw
+        - img "Can't reach PersonalClaw"
+        - text: Can't reach PersonalClaw
+        - img "Can't reach PersonalClaw"
+        - text: Can't reach PersonalClaw
+        - img "Can't reach PersonalClaw"
+        - text: Can't reach PersonalClaw
+  - region "The focused card's orb":
+    - heading "The focused card's orb" [level=#]
+    - list:
+      - listitem:
+        - img "Done"
+        - text: Done
+      - listitem:
+        - img "Working"
+        - text: Working
+      - listitem:
+        - img "Needs your OK"
+        - text: Needs your OK
+      - listitem:
+        - img "Stopped"
+        - text: Stopped

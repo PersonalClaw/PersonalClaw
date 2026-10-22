@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **The buddy playground, at `#/buddy/playground`: the desktop buddy's state machine and orb, played with made-up work before the buddy ships, with a control for every input, a clock that fires its timers, an event log where an answer is written and never sent, a scripted day to play at speed, pause or step, and every pose at four sizes; it reads nothing from the gateway, and nothing links to it but its address.**
+
 ### Changed
 
 - **Opening the sidebar, or the phone's navigation drawer, puts focus on the row that last had it (else the thread the page shows), and closing it puts focus back on its toggle, so focus never falls to the page; neither takes focus from a field you are typing in.**

@@ -57,6 +57,7 @@ registerBuiltinContentTypes()
 const NO_ROW: Readonly<Record<string, string>> = {
   app: 'it names no app: each installed app\'s page is a row of its own, built from the apps the home has',
   companion: 'the phone\'s own page, full screen and not a desktop destination: the phone\'s drawer lists it',
+  buddy: 'the buddy playground, reached by its address only until the buddy ships (#3892)',
 }
 
 /** An address's page: its path, without `#/` or its query. */

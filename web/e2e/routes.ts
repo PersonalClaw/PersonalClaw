@@ -166,6 +166,10 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // whatever other specs raised first, so both reads are fixed for these rows (`surfaces.spec.ts`).
   { route: 'inbox?filter=notifications', id: 'inbox-notifications', label: 'Inbox › Notifications', needsData: true },
   { route: 'projects/p-0a1b2c3d?tab=tasks', id: 'project-tasks', label: 'Projects › a project › Tasks', needsData: true },
+  // The buddy playground's other two tabs: the scripted day, and the pose sheet the buddy orb's
+  // snapshots are taken from (#3892).
+  { route: 'buddy/playground?tab=day', id: 'buddy-playground-day', label: 'Buddy › Playground › a day' },
+  { route: 'buddy/playground?tab=poses', id: 'buddy-playground-poses', label: 'Buddy › Playground › poses' },
 ]
 
 // ── Non-nav routable pages — the THIRD axis ─────────────────────────────────
@@ -240,7 +244,17 @@ export const NON_NAV_ROUTES: RouteEntry[] = [
   // installed into the e2e home by playwright.config.ts; the boot fails if it is not there, because
   // an absent app would silently fall back to the shell's 404 branch on the line above.
   { route: 'app/e2e-ui-fixture', id: 'app-host-contributed-ui', label: 'App host › contributed UI', needsData: true },
+  // The buddy playground (#3892), a full-screen shell route like `#/companion`: its Play tab, with
+  // the stage, the controls and the log. It reads nothing from the gateway.
+  { route: 'buddy/playground', id: 'buddy-playground', label: 'Buddy › Playground' },
 ]
+
+/** The routes above that the shell renders full-screen, without its NavRail (`SHELL_ROUTES` in
+ *  App.tsx), by their first segment. Each page marks its root `data-full-screen="<segment>"`,
+ *  which `gotoRoute` waits for in place of the rail. The shell renders one only once the owner
+ *  is onboarded, so the mark proves what the rail does: the harness reached the route, not the
+ *  onboarding screen. */
+export const FULL_SCREEN_ROUTES: readonly string[] = ['buddy']
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
