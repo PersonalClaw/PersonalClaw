@@ -126,8 +126,8 @@ describe('view one', () => {
     const glyphs = all.map((h) => h.querySelector('[data-kind-glyph]')?.getAttribute('data-kind-glyph') ?? null)
     expect(glyphs).toEqual(['chat', 'workflow', 'loop', 'chat'])
     // The exact phase, in the phase table's words.
-    expect(screen.getAllByText('Needs your OK').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Waiting for your answer').length).toBe(2)
+    expect([...document.querySelectorAll('[data-phase]')].map((p) => p.textContent))
+      .toEqual(['Needs your OK', 'Waiting for your answer', 'Waiting for your answer'])
     // The asks come before what runs.
     const firstRunning = all[3]
     for (const ask of all.slice(0, 3)) {
@@ -135,12 +135,15 @@ describe('view one', () => {
     }
   })
 
-  it('every orb on the list holds still', async () => {
+  it('every orb on the list holds still, and is decorative beside the words that say the same', async () => {
     render(<CompanionPage {...route()} />)
     await screen.findByText('Fix the flaky test: Running the tests')
-    for (const orb of document.querySelectorAll('[data-work-head] [data-buddy-orb]')) {
+    const orbs = [...document.querySelectorAll('[data-work-head] [data-buddy-orb]')]
+    expect(orbs.length).toBe(4)
+    for (const orb of orbs) {
       expect(orb.getAttribute('data-buddy-moving')).toBe('false')
+      expect(orb.closest('[aria-hidden="true"]'), 'the line and the phase say it').toBeTruthy()
     }
-    expect(within(document.body).queryAllByRole('img').length).toBeGreaterThanOrEqual(4)
+    expect(within(document.body).queryAllByRole('img')).toHaveLength(0)
   })
 })

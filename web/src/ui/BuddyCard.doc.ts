@@ -13,7 +13,7 @@ const doc: UiDoc = {
     { name: 'steps', description: "The focused work's step window, folded from its phase events." },
     { name: 'alert', description: "What waits on the owner: an approval's waiting-list row with the host's choices, a question's segment, or an error's work, reason and route." },
     { name: 'waiting', description: 'How many more wait behind the alert that shows.' },
-    { name: 'inSight', description: 'Every other piece of live work, in start order.' },
+    { name: 'inSight', description: 'Every other piece of live work, in start order; null leaves the section out, where one piece of work owns the screen (the phone’s view two).' },
     { name: 'finished', description: "The running list's last endings, each row's phase saying how it ended." },
     { name: 'interrupted', description: 'Work a restart cut off, which the gateway kept no ending of.' },
     { name: 'list', description: "The running list's own state: live, reconnecting or failed." },

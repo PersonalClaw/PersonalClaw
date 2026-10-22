@@ -77,7 +77,8 @@ export function WorkHead({ id, state, kind, line, onOpen }: {
 }) {
   const inner = (
     <>
-      <Morph id={orbIdOf(id)} className="shrink-0"><BuddyOrb state={state} size={24} line="" still /></Morph>
+      {/* Decorative beside the words that say the same: the line and the phase under it. */}
+      <Morph id={orbIdOf(id)} className="shrink-0"><span aria-hidden="true"><BuddyOrb state={state} size={24} line="" still /></span></Morph>
       {kind ? <span className="mt-0.5"><KindGlyph kind={kind} /></span> : null}
       <p data-type="body-m" className="min-w-0 break-words text-on-surface">{line}</p>
     </>

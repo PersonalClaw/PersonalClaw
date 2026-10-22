@@ -8,6 +8,9 @@
   - text: on the gateway.
 - region "Waiting on you (#)":
   - heading "Waiting on you (#)" [level=#]
+  - 'button "Show Automation “Nightly” needs your OK: bash"'
+  - paragraph: "Automation “Nightly” needs your OK: bash"
+  - paragraph: Needs your OK
   - group "Permission needed to run bash":
     - alert: Permission needed
     - text: bash
@@ -19,16 +22,25 @@
     - button "Allow bash": Allow
     - button "Deny bash": Deny
   - 'article "Workflow: Ship v#.#?"':
+    - 'button "Show Workflow “release” asks: Ship v#.#?"'
+    - paragraph: "Workflow “release” asks: Ship v#.#?"
+    - paragraph: Waiting for your answer
     - paragraph: Workflow · workflow “release”
     - paragraph: Ship v#.#?
     - paragraph: Waiting #m
     - 'button "Open workflow: Ship v#.#?"': Open
   - 'article "Automation: Sign in to the bank’s site"':
+    - 'button "Show Automation… asks: Sign in to the bank’s site"'
+    - paragraph: "Automation… asks: Sign in to the bank’s site"
+    - paragraph: Waiting for your answer
     - paragraph: Automation · automation “Bank statements”
     - paragraph: Sign in to the bank’s site
     - paragraph: Waiting #m
     - 'button "Open automation: Sign in to the bank’s site"': Open
   - 'article "Loop: May I archive last year’s mail?"':
+    - 'button "Show Loop “Sort… asks: May I archive last year’s…"'
+    - paragraph: "Loop “Sort… asks: May I archive last year’s…"
+    - paragraph: Waiting for your answer
     - paragraph: Loop · loop “Sort the inbox”
     - paragraph: May I archive last year’s mail?
     - paragraph: Waiting #m
@@ -46,12 +58,10 @@
   - heading "Inbox" [level=#]
   - heading "Inbox clear" [level=#]
   - paragraph: Messages and requests waiting on you appear here.
-- region "Recent (#)":
-  - heading "Recent (#)" [level=#]
-  - paragraph: Backup restore drill passed
-  - paragraph: "personalclaw-snapshot-#T#Z.tar.gz: # database(s) verified"
-  - paragraph: Notice
-  - button "Mark \"Backup restore drill passed\" read": Mark read
+- region "Recent":
+  - heading "Recent" [level=#]
+  - heading "Nothing recent" [level=#]
+  - paragraph: Notifications your agent raises appear here.
 - contentinfo:
   - button "Open the full dashboard"
   - button "Paired devices"

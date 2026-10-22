@@ -109,6 +109,8 @@ describe('a tap opens one piece of work', () => {
     expect(two.querySelector('[data-buddy-orb][data-buddy-state="approval"] canvas')?.getAttribute('style')).toMatch(/width: 1\d\dpx/)
     // Only this piece of work: the rest of the page is gone while it owns the screen.
     expect(screen.queryByRole('heading', { name: /Waiting on you/ })).toBeNull()
+    // Nor does the card claim nothing else runs: the rest is not in sight here, so it says nothing.
+    expect(within(two).queryByRole('region', { name: /^In sight/ })).toBeNull()
     await userEvent.click(within(two).getByRole('button', { name: 'Back to everything' }))
     expect(viewTwo()).toBeNull()
     expect(await screen.findByRole('heading', { name: /Waiting on you/ })).toBeTruthy()
