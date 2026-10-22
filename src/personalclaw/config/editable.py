@@ -975,6 +975,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # per request, so flipping it off closes the write immediately — the UI hiding the
     # editor is the second layer, not the only one.
     "dashboard.document_editing": {"type": "bool"},
+    # "Keep my question in view" (Settings › Chat, default OFF): a display preference, editable
+    # here as well as through the dashboard config route so `personalclaw config set` reaches it.
+    "dashboard.keep_question_in_view": {"type": "bool"},
     # Opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
     # raw dict from config.json by handlers/terminal.py::_get_config — a 3-part nested path.
     "dashboard.terminal.persist": {"type": "bool"},
