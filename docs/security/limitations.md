@@ -162,9 +162,12 @@ answers an approval raised in its own conversation. Its background agent tasks a
 same way, and what one finishes goes back to the app alone, never into a turn of your own
 agent. It reaches you through a proposal, which the inbox labels with the app's name, and
 `/api/reveal` opens only a file in its own data folder. The exception is the relay you install
-for approvals: an app that declares `/api/approvals` (the menu-bar companion does) can approve
-or reject your pending approvals one at a time, and the gateway cannot tell whether an answer it
-relays was yours.
+for approvals: an app that declares `/api/approvals` (the menu-bar companion does) reads every
+approval waiting on you, in any conversation, so it can show you each one. It answers none, not
+even to relay your answer: only you answer an approval (`approval_answer`). The waiting list is
+the same kind of exception: an app that declares `/api/waiting` reads everything waiting on you,
+from every source, each with its brief and the choices it takes, but with no route to answer it
+by and no token that answers it, and it answers none.
 
 What your conversations say is yours to read, too. An app reads only the conversations it
 started: a transcript, its map, a tool's full output, an export, a draft skill or a

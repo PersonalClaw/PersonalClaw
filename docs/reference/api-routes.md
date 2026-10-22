@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **938 registrations** over **762 distinct paths** — 931 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **939 registrations** over **763 distinct paths** — 932 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 129 families the surface divides into, largest first.
+The 130 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -152,11 +152,12 @@ The 129 families the surface divides into, largest first.
 | `/api/suggestions` | 1 | 1 |
 | `/api/surfaces` | 1 | 1 |
 | `/api/token` | 1 | 1 |
+| `/api/waiting` | 1 | 1 |
 | `/confirm` | 1 | 1 |
 
 ## Agent-callable routes
 
-The 931 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 932 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -1041,6 +1042,7 @@ The 931 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/voice/profiles/{id}/unlock` | variation returns. |
 | `GET` | `/api/voice/resolve` | which level wins, and why. |
 | `POST` | `/api/voice/synthesize` | sentence-chunked Piper TTS. |
+| `GET` | `/api/waiting` | everything waiting on you to answer, from every source. |
 | `GET` | `/api/workflows` | _(no summary)_ |
 | `POST` | `/api/workflows` | validate a definition and, unless ``save: false``, save it. |
 | `POST` | `/api/workflows/agent-plans` | an agent's ``workflow_plan``, planned here. |

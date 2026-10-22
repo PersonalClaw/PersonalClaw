@@ -645,11 +645,17 @@ class TestAnsweringAPendingGrant:
 
 
 class _FakeReq:
-    """Enough of an aiohttp request for these handlers: a ``match_info`` and an empty app."""
+    """Enough of an aiohttp request for these handlers: a ``match_info``, an empty app, and yours,
+    as the auth middleware admits it (only you answer a grant, ``approval_answer``)."""
 
     def __init__(self, **match_info) -> None:
         self.match_info = dict(match_info)
         self.app: dict = {}
+        self.headers: dict = {}
+        self._admitted = {"user": "owner"}
+
+    def get(self, key, default=None):
+        return self._admitted.get(key, default)
 
     async def json(self):
         raise ValueError("no body")

@@ -532,6 +532,7 @@ def _call(handler, state, method, path, body=None, **match_info):
         tip = worktree.branch_tip(loop.workspace_dir, match_info["task_id"]) if loop else ""
         body = {"confirm": True, "tip": tip}
     req = make_mocked_request(method, path, match_info=match_info, app=_app(state))
+    req["user"] = "owner"  # yours, as the auth middleware admits it: only you answer a loop
     if body is not None:
 
         async def _json():

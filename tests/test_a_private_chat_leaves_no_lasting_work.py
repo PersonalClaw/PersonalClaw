@@ -471,6 +471,7 @@ def _answering(cid: str, body: dict[str, Any]) -> Any:
     request = make_mocked_request(
         "POST", f"/api/loops/{cid}/answer", match_info={"id": cid}, app=app
     )
+    request["user"] = "owner"  # yours, as the auth middleware admits it: only you answer
 
     async def _json() -> dict[str, Any]:
         return body

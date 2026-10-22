@@ -411,6 +411,11 @@ class OwnerQuestions:
             self._card(a) for a in self._asked.values() if a.session == chat and a.outcome is None
         ]
 
+    def pending(self) -> list[dict[str, Any]]:
+        """The cards of every question any chat is waiting on, as their frames carried them: the
+        waiting list's read (``waiting``)."""
+        return [self._card(a) for a in self._asked.values() if a.outcome is None]
+
     def waiting(self, session_key: str) -> bool:
         """Whether the chat's turn is waiting on its owner's answer to a question."""
         return bool(self.pending_for(session_key))

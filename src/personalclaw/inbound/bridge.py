@@ -70,6 +70,7 @@ import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
 from aiohttp import web
@@ -447,6 +448,28 @@ def _mint_confirmation(action: Action, params: dict, *, asked_by: str) -> str:
         "asked_by": asked_by,
     }
     return token
+
+
+def pending_confirmations() -> list[dict[str, Any]]:
+    """Every confirmation waiting on you, as the waiting list reads it (``waiting``): its token,
+    the action, what its Inbox row asks you, who asked, and when it was asked and expires on the
+    wall clock. ``created`` is held on the monotonic clock, so a wall-clock jump never ages one."""
+    _reap()
+    mono, wall = time.monotonic(), time.time()
+    out = []
+    for token, row in list(_pending.items()):
+        asked_at = wall - (mono - float(row["created"]))
+        out.append(
+            {
+                "token": token,
+                "action": row["action"],
+                "body": _confirmation_body(SimpleNamespace(name=row["action"]), row["params"]),
+                "asked_by": row["asked_by"],
+                "asked_at": asked_at,
+                "expires_at": asked_at + CONFIRM_TTL_SECS,
+            }
+        )
+    return out
 
 
 def take_confirmation(token: str) -> dict[str, Any] | None:

@@ -76,7 +76,8 @@ async def api_browse_grant_resolve(request: web.Request) -> web.Response:
     404 when nothing is waiting on that id — the honest answer for a grant that already resolved,
     timed out, or never existed, and NOT an error the caller should retry. Unlike the kill-switch
     release this needs no ``{confirm: true}``: the request IS the confirmation, a reject is the
-    fail-closed direction, and an approve is only reachable with the owner's own credentials.
+    fail-closed direction, and either is reachable only with the owner's own credentials: an app or
+    an agent is refused, as at every door to an ask (``approval_answer``).
 
     NOT separately SEL-audited. :func:`~personalclaw.browse.grant.request_grant` writes the
     ``browser_grant`` decision row when the gate resolves, so a row here would double-count one
@@ -92,6 +93,14 @@ async def api_browse_grant_resolve(request: web.Request) -> web.Response:
             message=f"action must be one of {', '.join(_GRANT_ACTIONS)}",
         )
     request_id = str(request.match_info["request_id"] or "").strip()
+    # Only you answer, never an app, nor an agent's tool (`approval_answer`): the route is in no
+    # security family, so an app whose manifest declared `/api/browse` reached it and approved a
+    # grant, though every other door to an ask refuses one.
+    from personalclaw import approval_answer
+
+    refused = approval_answer.forbidden(request, what=f"browse_grant:{request_id}", asked_by="")
+    if refused is not None:
+        return refused
     resolved = approve_grant(request_id) if action == "approve" else reject_grant(request_id)
     if not resolved:
         return json_error(

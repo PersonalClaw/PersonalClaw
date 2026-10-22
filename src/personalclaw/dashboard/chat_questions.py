@@ -127,6 +127,15 @@ async def api_chat_question_answer(request: web.Request) -> web.Response:
     name = request.match_info["session"]
     if state.get_session(name) is None:
         return json_error("session_not_found", status=404)
+    # Only you answer what an agent asks you, never the agent that asked nor an app
+    # (`approval_answer`): the route checked who may reach it, not who may answer.
+    from personalclaw import approval_answer
+
+    refused = approval_answer.forbidden(
+        request, what=f"question:{request.match_info['question']}", asked_by=""
+    )
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     skip = bool_field(body, "skip", default=False)
     try:
