@@ -702,7 +702,22 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   cycle in the trail marks its check (passed, failed, could not run), its detail
   shows the command, the folder, the exit code and the end of what it printed as
   plain text, and the latest cycle's `cannot_judge` is said at the top while the
-  loop runs;
+  loop runs. The page is the loop's thread (#3824): its plan on top, its cycles
+  below, and at its foot the progress strip (`LoopProgressStrip.tsx`) over the
+  loop's composer, which is its nudge (`POST /api/loops/{id}/nudge`). The strip
+  says the cycle it is on and its Mode, carries Start, Pause or Resume and a
+  two-step Stop, each offered exactly when the action route accepts it
+  (`loopActionSources`, the mirror of the route's guard), and how the loop reports
+  (`Loop.report`, changed with `PUT /api/loops/{id} {report}`); the header keeps
+  the title, its link, Delete once the loop has ended, and Details. A cycle picked
+  from Details opens in the pane host beside the thread (`?details=1&sel=cycle-N`),
+  and Details keeps its list;
+- a loop a chat started shows in that chat as one compact card
+  (`pages/chat/SdlcProgressCard.tsx`, where the chat first names it) with its phase
+  matrix (`LoopMatrix.tsx`, every cell's state in words), and its Details opens the
+  loop in the chat's detail tile (`?beside=loop:<id>`, `pages/chat/beside/LoopBeside.tsx`),
+  which carries the same strip. The card changes nothing about the loop, and closing
+  the tile stops nothing;
 - code loops additionally get the mini-IDE at
   `web/src/pages/code/CodeCockpitPage.tsx` — Monaco-based edit/save,
   PTY-backed build/test commands, and the SDLC stage trail.
