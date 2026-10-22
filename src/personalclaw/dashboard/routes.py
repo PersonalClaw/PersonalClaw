@@ -745,6 +745,12 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
 
     app.router.add_post("/api/chat/seen", chat_seen_routes.api_chat_seen_all)
     app.router.add_post("/api/chat/sessions/{session}/seen", chat_seen_routes.api_chat_session_seen)
+    # The messages bookmarked on a chat's Session Map (`chat_bookmarks`).
+    from personalclaw.dashboard import chat_bookmarks
+
+    app.router.add_put(
+        "/api/chat/sessions/{session}/bookmarks", chat_bookmarks.api_chat_session_bookmarks
+    )
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     # The durable session map: the in-session index's marks + per-turn telemetry,
     # served without hydrating the whole transcript client-side.

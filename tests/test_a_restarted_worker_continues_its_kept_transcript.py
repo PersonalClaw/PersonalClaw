@@ -581,6 +581,8 @@ _RECORD: dict[str, Any] = {
     # A chosen style that went away and that the chat has said so about (`notice_once`).
     "reply_style_noticed": "acme:formal",
     "tags": ["home", "spring"],
+    # The owner's messages bookmarked on the Session Map, by their `ts` (#4776).
+    "bookmarks": ["2026-09-01T10:00:00+00:00"],
     "lifecycle": "archived",
     "last_activity_at": 1_791_067_183.0,
     "never_archive": True,

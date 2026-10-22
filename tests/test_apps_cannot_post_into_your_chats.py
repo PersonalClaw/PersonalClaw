@@ -332,6 +332,7 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("POST", "/api/chat/sessions/{session}/seen", {}),
     ("PATCH", "/api/chat/sessions/{session}/folder", {"folder_id": ""}),
     ("PUT", "/api/chat/sessions/{session}/tags", {"remove": ["t1"]}),
+    ("PUT", "/api/chat/sessions/{session}/bookmarks", {"remove": ["2026-10-22T07:00:00+00:00"]}),
     ("POST", "/api/chat/sessions/{session}/drop", {"column_id": "c"}),
     ("PATCH", "/api/chat/sessions/{session}/lifecycle", {"lifecycle": "archived"}),
     ("POST", "/api/chat/sessions/{session}/organize/accept", {}),

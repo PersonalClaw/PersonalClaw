@@ -1502,6 +1502,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # that control, so it is older than the mode the chat is in and nothing changed. The error's
     # `detail` names the number taken (`{"last": n}`).
     "stale_pick": "A later pick of this mode was already taken, so this older one changed nothing.",
+    # ── a chat's bookmarks (dashboard/chat_bookmarks.py) ──
+    # 400: a bookmark asked for a message the owner did not send in this conversation.
+    "unknown_message": "The request names a message this conversation does not hold.",
 }
 
 

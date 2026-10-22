@@ -242,6 +242,7 @@ class _ChatSession(ChatQueue):
         "folder_id",
         "pinned",
         "tags",
+        "bookmarks",
         "lifecycle",
         "last_activity_at",
         "never_archive",
@@ -431,6 +432,9 @@ class _ChatSession(ChatQueue):
         self.folder_id: str = ""  # project folder assignment
         self.pinned: bool = False  # pinned to top of sidebar
         self.tags: list[str] = []  # assigned tag ids (see DashboardState._tags)
+        # The owner's messages bookmarked on the Session Map, by each message's `ts`, in the
+        # order they were bookmarked (`chat_bookmarks`).
+        self.bookmarks: list[str] = []
         # Session LIFECYCLE (distinct from history JSONL rotation, which is storage):
         # "active" | "archived". Archiving declutters the list without deleting or
         # de-indexing anything — an archived session stays fully searchable, which is
@@ -883,6 +887,7 @@ class _ChatSession(ChatQueue):
             "folder_id": self.folder_id,
             "pinned": self.pinned,
             "tags": list(self.tags),
+            "bookmarks": list(self.bookmarks),
             "lifecycle": self.lifecycle,
             "last_activity_at": self.last_activity_at,
             "never_archive": self.never_archive,

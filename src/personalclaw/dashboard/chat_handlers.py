@@ -834,6 +834,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 ),
                 "pinned": bool(meta.get("pinned")),
                 "tags": [t for t in meta.get("tags", []) if isinstance(t, str)],
+                "bookmarks": [t for t in meta.get("bookmarks", []) if isinstance(t, str)],
                 "color_index": meta.get("color_index"),
                 "memory_mode": meta.get("memory_mode", "persistent"),
                 "origin": origin,
@@ -1087,6 +1088,8 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "context_usage": session.context_usage,
             "messages": prepared,
             "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
+            # The messages bookmarked on its Session Map, by their `ts` (`chat_bookmarks`).
+            "bookmarks": list(session.bookmarks),
             "total": total,
             "has_more": has_more,
             # Where a live answer resumes: a client continuing the in-flight `streaming`

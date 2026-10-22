@@ -660,6 +660,9 @@ def continue_kept_chat(
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
+    raw_bookmarks = meta.get("bookmarks")
+    if isinstance(raw_bookmarks, list):
+        session.bookmarks = [t for t in raw_bookmarks if isinstance(t, str) and t]
     # Session lifecycle. Tolerant: an old session has none of these keys and
     # reads as an active, never-yet-touched, non-exempt session.
     _lc = meta.get("lifecycle")
@@ -1022,6 +1025,8 @@ def save_session_to_history(
             meta_line["reply_style_noticed"] = _noticed
         if session.tags:
             meta_line["tags"] = list(session.tags)
+        if session.bookmarks:
+            meta_line["bookmarks"] = list(session.bookmarks)
         # Lifecycle. Written only when non-default, matching every field above —
         # an active, untouched, non-exempt session adds no keys, so existing meta lines
         # are byte-identical and the rollout is invisible until something changes.
