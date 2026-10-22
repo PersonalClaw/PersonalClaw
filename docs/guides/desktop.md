@@ -550,9 +550,18 @@ Its page is `#/buddy`, and a browser tab can open it too.
 - Approvals and agents' questions are answered in the buddy. A workflow's gate, a parked
   automation and the other kinds open in PersonalClaw.
 
-With nothing to say, the buddy hides its window. The app shows it again when something waits on
-you that may interrupt you now, the same decision every other surface makes for that item: in quiet
-hours, or muted, it waits in the menu bar instead. The app holds one connection to the gateway for
+- **Over a full-screen window of PersonalClaw's own,** only requests show, each as a quiet peek
+  (the face and its badge), until you rest the pointer on it or click it. The app cannot see
+  another app's full screen.
+- **Drag it** to float it or dock it again, and the buddy goes with the window: a drag that moves
+  it is never also a click.
+
+Docked with nothing to say, the buddy keeps a strip at the top edge that draws nothing and passes
+every click through; rest the pointer there and it peeks. On macOS the app forwards the pointer's
+moves to that strip, and nothing samples the pointer on a timer. Floating with nothing to say, or
+switched off, it hides its window, and the app shows it again when something waits on you that
+may interrupt you now, the same decision every other surface makes for that item: in quiet hours,
+or muted, it waits in the menu bar instead. The app holds one connection to the gateway for
 the menu bar and the buddy, and reads the lists when it says they moved, so nothing polls while it
 is connected; while it is down, the menu bar reads them every five seconds until it is back.
 

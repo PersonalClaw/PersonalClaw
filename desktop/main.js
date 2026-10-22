@@ -1065,7 +1065,17 @@ function makeWindow() {
     ...windowChrome.options(),
   });
   win.on("closed", () => setImmediate(releaseBuddyIfAlone));
+  // Over a full-screen window of the app's own the buddy shows only alerts, as a quiet peek
+  // (`docs/design/buddy/state-machine.md`). Another app's full screen is not visible to the shell.
+  win.on("enter-full-screen", tellBuddyFullScreen);
+  win.on("leave-full-screen", tellBuddyFullScreen);
+  win.on("closed", () => setImmediate(tellBuddyFullScreen));
   return win;
+}
+
+/** Tell the buddy's page whether one of the app's own windows is full screen. */
+function tellBuddyFullScreen() {
+  pushToBuddy(buddy?.window, "fullScreen", appWindows().some((w) => w.isFullScreen()));
 }
 
 /** The app's own windows, the main window and its tabs: every window but the buddy's. */
@@ -1698,6 +1708,9 @@ function startBuddy() {
     screen,
     store: shellStore,
     preload: path.join(__dirname, "buddyPreload.js"),
+    // A drag that moves the window, and where it settles, are the page's to hear: its machine
+    // docks or floats with it.
+    onPlacement: (where) => pushToBuddy(buddy?.window, "placement", where),
     log: (msg) => console.warn(`desktop: ${msg}`),
   });
   registerBuddyIpc({
@@ -1733,6 +1746,11 @@ function syncBuddyToTray() {
 /** The buddy's page stays on the gateway it came from and opens no window of any kind. */
 function guardBuddyContents(win) {
   const wc = win.webContents;
+  // Each load of the page hears where the window is and whether an app window is full screen.
+  wc.on("did-finish-load", () => {
+    pushToBuddy(win, "placement", buddy?.placement?.mode === "floating" ? "floating" : "docked");
+    tellBuddyFullScreen();
+  });
   const onGateway = (url) => {
     try {
       return new URL(url).origin === originOf(localGatewayUrl);

@@ -67,6 +67,8 @@ export interface BuddyHost {
   answer(id: string, choice: AnswerChoice, opts?: { reply?: QuestionBody; confirmed?: boolean }): Promise<boolean>
   /** The pointer or the keyboard focus is on the card, or has left it. */
   hold(held: boolean): void
+  /** One of the app's own windows went full screen, or left it. */
+  fullScreen(on: boolean): void
   snapshot(): HostSnapshot
   /** How many timers the host holds: none while hidden. */
   timers(): number
@@ -132,6 +134,10 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
   let held = false
   let stopped = false
   let readOnce = false
+  /** Whether the first waiting alert may interrupt you, from the last read; `null` with none. */
+  let firstMayInterrupt: boolean | null = null
+  /** One of the app's own windows is full screen (the desktop shell's). */
+  let fullScreen = false
   const timers = new Map<TimerName, unknown>()
   /** The folds asked for while held, started when the card is let go. */
   const waitingFolds = new Set<TimerName>()
@@ -214,6 +220,13 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     beats = []
   }
 
+  /** The machine's quiet hours: the gateway's decision for the first alert, or the app full screen,
+   *  over which only alerts appear, as a quiet peek. With no alert and no full screen, it stands. */
+  const syncQuiet = () => {
+    const quiet = fullScreen || firstMayInterrupt === false
+    if ((fullScreen || firstMayInterrupt !== null || machine.quietHours) && quiet !== machine.quietHours) apply({ type: 'quietHours', on: quiet })
+  }
+
   /** One read of each list, as levels. */
   const levels = (running: RunningList, waiting: WaitingList) => {
     const now = deps.now()
@@ -246,8 +259,8 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     // Quiet hours, as the gateway decided for what would interrupt now: an alert arrives as a quiet
     // peek when the first of them may not interrupt you (`interrupt`, #3888).
     const first = [...alerts].sort(byWaitingOrder).map((a) => nextItems.get(a.id))[0]
-    const quiet = Boolean(first && first.interrupt !== 'deliver')
-    if (first && quiet !== machine.quietHours) apply({ type: 'quietHours', on: quiet })
+    firstMayInterrupt = first ? first.interrupt === 'deliver' : null
+    syncQuiet()
     // In the list's one order whatever order they came in, so the first to show is the first due.
     alerts.sort(byWaitingOrder)
     for (const alert of alerts) {
@@ -337,6 +350,12 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
         waitingFolds.clear()
         if (!isHidden(machine)) for (const name of resume) start(name)
       }
+    },
+    fullScreen(on) {
+      if (on === fullScreen) return
+      fullScreen = on
+      syncQuiet()
+      publish()
     },
     snapshot: () => ({ machine, steps, rows, items, beats, read: readOnce }),
     timers: () => timers.size,

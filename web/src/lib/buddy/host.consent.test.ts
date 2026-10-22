@@ -276,6 +276,21 @@ describe('the doorbell, levels and timers', () => {
     expect(w.state().presence).toBe('peek')
   })
 
+  it('over a full-screen app window an alert arrives as a quiet peek; leaving it lifts the quiet', async () => {
+    const w = world(LIVE, { waiting: [], unreadable: [] } as WaitingList)
+    w.host.ring()
+    await w.settle()
+    w.host.fullScreen(true)
+    expect(w.state().quietHours).toBe(true)
+    w.lists.waiting = { waiting: [approval('ap-1')], unreadable: [] } as WaitingList
+    w.host.ring()
+    await w.settle()
+    expect(w.state().presence).toBe('peek')
+    w.host.fullScreen(false)
+    expect(w.state().quietHours, 'a deliver item, no full screen: not quiet').toBe(false)
+    expect(w.answers).toEqual([])
+  })
+
   it('hidden, the host holds no timer', async () => {
     const w = world({ running: [], finished: [] }, { waiting: [], unreadable: [] } as WaitingList)
     w.host.ring()

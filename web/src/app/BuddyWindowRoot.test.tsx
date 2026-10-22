@@ -40,6 +40,8 @@ function fakeBridge() {
     openInApp: vi.fn(),
     onRing: vi.fn(() => () => {}),
     onConnection: vi.fn(() => () => {}),
+    onPlacement: vi.fn(() => () => {}),
+    onFullScreen: vi.fn(() => () => {}),
   } satisfies BuddyBridge
 }
 

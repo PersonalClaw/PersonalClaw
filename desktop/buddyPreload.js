@@ -1,13 +1,14 @@
 /**
  * Preload for the buddy's window (#3831).
  *
- * Five named sends, two named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
+ * Five named sends, four named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
  * reaching the capability bridge (the microphone, notifications, the login item), so it gets a
  * surface of its own, the smallest that drives its window: where the pointer is, the shape that
  * takes clicks, a drag of the face, the room it needs, and opening a route of this app in the main
  * window. No `send` or `invoke` of the page's choosing is exposed. What comes back is main's
- * doorbell: a ring that carries nothing (the lists moved: read them again), and its connection, one
- * of three words.
+ * doorbell, a ring that carries nothing (the lists moved: read them again) and its connection, one
+ * of three words; where the window is (moving, docked or floating); and whether one of the app's own
+ * windows is full screen.
  *
  * The window is sandboxed, and a sandboxed preload's `require` resolves `electron` and three
  * builtins only, so the channel names are copied here; `buddyBridge.test.js` holds them equal to
@@ -28,8 +29,11 @@ const BUDDY_CHANNELS = Object.freeze({
 const BUDDY_PUSHES = Object.freeze({
   ring: `${BUDDY_PREFIX}ring`,
   connection: `${BUDDY_PREFIX}connection`,
+  placement: `${BUDDY_PREFIX}placement`,
+  fullScreen: `${BUDDY_PREFIX}full-screen`,
 });
 const BUDDY_CONNECTIONS = ["up", "lost", "restarting"];
+const BUDDY_PLACEMENTS = ["moving", "docked", "floating"];
 
 /** Hear *channel*, handing *cb* only what *shape* lets through; returns the way to stop. */
 function hear(channel, cb, shape) {
@@ -62,4 +66,8 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
   onRing: (cb) => hear(BUDDY_PUSHES.ring, () => cb(), () => null),
   /** The doorbell's connection: `up`, `lost` or `restarting`. */
   onConnection: (cb) => hear(BUDDY_PUSHES.connection, cb, (v) => (BUDDY_CONNECTIONS.includes(v) ? v : undefined)),
+  /** Where the window is: `moving` once a drag moves it, then `docked` or `floating` where it settled. */
+  onPlacement: (cb) => hear(BUDDY_PUSHES.placement, cb, (v) => (BUDDY_PLACEMENTS.includes(v) ? v : undefined)),
+  /** Whether one of the app's own windows is full screen. */
+  onFullScreen: (cb) => hear(BUDDY_PUSHES.fullScreen, cb, (v) => (typeof v === "boolean" ? v : undefined)),
 });

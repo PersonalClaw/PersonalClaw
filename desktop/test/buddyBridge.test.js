@@ -3,20 +3,21 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { BUDDY_CHANNELS, BUDDY_CONNECTIONS, BUDDY_PAYLOADS, BUDDY_PUSHES, buddyWindowOptions, pushToBuddy, registerBuddyIpc } = require("../buddyWindow");
+const { BUDDY_CHANNELS, BUDDY_CONNECTIONS, BUDDY_PAYLOADS, BUDDY_PLACEMENTS, BUDDY_PUSHES, buddyWindowOptions, pushToBuddy, registerBuddyIpc } = require("../buddyWindow");
 const { loadPreloadSandboxed, unsandboxableRequires } = require("./helpers/sandboxedPreload");
 
 // ── The buddy's bridge (#3831) ─────────────────────────────────────────────────────────────────
 //
 // Desktop security surface. The buddy's page reaches the shell through seven named calls on
 // `window.pclawBuddy` and nothing else: no `send` or `invoke` of its choosing, nothing from the
-// capability bridge. Two more hear main's doorbell (#3832): a ring that carries nothing, and its
-// connection, one of three words. Main hears the five channels behind them only from the buddy window's own web
+// capability bridge. Four more hear main (#3832): the doorbell's ring, which carries nothing, and its
+// connection, one of three words; where the window is, one of three words; and whether one of the
+// app's own windows is full screen, a boolean. Main hears the five channels behind them only from the buddy window's own web
 // contents, and checks every payload whatever the preload sent. A route it opens is one a
 // `pclaw://` link may open, checked by the deep-link parser itself.
 
 const PRELOAD = path.join(__dirname, "..", "buddyPreload.js");
-const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onConnection", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"];
+const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onConnection", "onFullScreen", "onPlacement", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"];
 
 /** The preload loaded as the sandboxed buddy window loads it, with every send it makes recorded. */
 function loadBuddyBridge() {
@@ -63,7 +64,7 @@ function wired() {
 }
 
 describe("the buddy's preload", () => {
-  it("loads in a sandbox and exposes exactly the nine named calls, under its own name", () => {
+  it("loads in a sandbox and exposes exactly the eleven named calls, under its own name", () => {
     assert.deepEqual(unsandboxableRequires(fs.readFileSync(PRELOAD, "utf8")), []);
     const { exposed } = loadBuddyBridge();
     assert.deepEqual(Object.keys(exposed), ["pclawBuddy"], "not the capability bridge, and nothing else");
@@ -72,14 +73,27 @@ describe("the buddy's preload", () => {
     assert.equal("send" in exposed.pclawBuddy || "invoke" in exposed.pclawBuddy || "on" in exposed.pclawBuddy, false, "no generic channel");
   });
 
-  it("hears only main's two pushes, each in its shape, and stops hearing when asked", () => {
+  it("hears where the window is and whether an app window is full screen, each only in its shape", () => {
+    const { exposed, emit } = loadBuddyBridge();
+    const b = exposed.pclawBuddy;
+    const placed = [];
+    const full = [];
+    b.onPlacement((p) => placed.push(p));
+    b.onFullScreen((f) => full.push(f));
+    for (const p of [...BUDDY_PLACEMENTS, "docked; drop", { toString: () => "docked" }, null]) emit(BUDDY_PUSHES.placement, p);
+    for (const f of [true, false, "true", 1, null]) emit(BUDDY_PUSHES.fullScreen, f);
+    assert.deepEqual(placed, [...BUDDY_PLACEMENTS]);
+    assert.deepEqual(full, [true, false]);
+  });
+
+  it("hears the doorbell's two pushes, each in its shape, and stops hearing when asked", () => {
     const { exposed, channels, emit } = loadBuddyBridge();
     const b = exposed.pclawBuddy;
     const rings = [];
     const states = [];
     const stopRing = b.onRing((...args) => rings.push(args));
     b.onConnection((s) => states.push(s));
-    assert.deepEqual(channels.filter((c) => Object.values(BUDDY_PUSHES).includes(c)).sort(), Object.values(BUDDY_PUSHES).sort(), "the preload's copy of the names is main's");
+    assert.deepEqual(channels.filter((c) => Object.values(BUDDY_PUSHES).includes(c)).sort(), [BUDDY_PUSHES.connection, BUDDY_PUSHES.ring].sort(), "the preload's copy of the names is main's");
     emit(BUDDY_PUSHES.ring, { phase: "approval", secret: "x" });
     assert.deepEqual(rings, [[]], "a ring hands the page nothing, whatever came with it");
     for (const s of [...BUDDY_CONNECTIONS, "pwned", { toString: () => "up" }, null]) emit(BUDDY_PUSHES.connection, s);
@@ -214,7 +228,16 @@ describe("main's two pushes to the buddy", () => {
     for (const s of BUDDY_CONNECTIONS) assert.equal(pushToBuddy(w, "connection", s), true);
     assert.equal(pushToBuddy(w, "connection", "pwned"), false);
     assert.equal(pushToBuddy(w, "open", "#/chat/x"), false, "no other push");
+    assert.equal(pushToBuddy(w, "placement", "sideways"), false);
+    assert.equal(pushToBuddy(w, "fullScreen", "yes"), false);
     assert.deepEqual(w.sent, [[BUDDY_PUSHES.ring], ...BUDDY_CONNECTIONS.map((s) => [BUDDY_PUSHES.connection, s])]);
+  });
+
+  it("sends where the window is and whether an app window is full screen, only in their shapes", () => {
+    const w = win();
+    for (const p of BUDDY_PLACEMENTS) assert.equal(pushToBuddy(w, "placement", p), true);
+    assert.equal(pushToBuddy(w, "fullScreen", true), true);
+    assert.deepEqual(w.sent, [...BUDDY_PLACEMENTS.map((p) => [BUDDY_PUSHES.placement, p]), [BUDDY_PUSHES.fullScreen, true]]);
   });
 
   it("sends nothing to a window that is gone", () => {

@@ -56,7 +56,7 @@ function buddyWindowOptions({ bounds, preload }) {
   };
 }
 
-function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, log = () => {} }) {
+function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, onPlacement = () => {}, log = () => {} }) {
   let win = null;
   let presentation = "compact";
   let current = placement.readPlacement(store);
@@ -161,7 +161,7 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
     beginDrag() {
       if (!win) return;
       const [x, y] = win.getPosition();
-      drag = { x, y, out: current.mode === "floating" };
+      drag = { x, y, out: current.mode === "floating", moved: false };
     },
     /** A docked buddy holds its place until the drag takes it past the undock distance. */
     dragBy(dx, dy) {
@@ -174,18 +174,29 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
         drag.out = true;
       }
       win.setPosition(Math.round(drag.x), Math.round(drag.y));
+      // The page hears that the window is moving once, when it first moves: a press that never
+      // moves it is a click, not a drag.
+      if (!drag.moved) {
+        drag.moved = true;
+        onPlacement("moving");
+      }
     },
     /** The drop: dock in the dock zone, else float where it fell; saved for this machine. `instant`
      *  under reduced motion. */
     endDrag({ instant = false } = {}) {
       if (!win || !drag) return;
-      const out = drag.out;
+      const { out, moved } = drag;
       const [x, y] = win.getPosition();
       drag = null;
-      if (!out) return place();
+      if (!out) {
+        place();
+        if (moved) onPlacement(current.mode);
+        return;
+      }
       current = placement.settleDrop({ faceTopLeft: { x, y }, displays: displays(), primary: primary() });
       placement.writePlacement(store, current);
       place(!instant);
+      if (moved) onPlacement(current.mode);
     },
     /** Back to the dock, for this machine: Settings' reset. */
     resetPlacement() {
@@ -270,19 +281,27 @@ const BUDDY_CHANNELS = Object.freeze({
 const BUDDY_PUSHES = Object.freeze({
   ring: `${BUDDY_PREFIX}ring`,
   connection: `${BUDDY_PREFIX}connection`,
+  placement: `${BUDDY_PREFIX}placement`,
+  fullScreen: `${BUDDY_PREFIX}full-screen`,
 });
 
 /** The doorbell's connection states the page hears (`doorbell.js`). */
 const BUDDY_CONNECTIONS = Object.freeze(["up", "lost", "restarting"]);
 
+/** Where the window is, as the page hears it: a drag moving it, or where it settled. */
+const BUDDY_PLACEMENTS = Object.freeze(["moving", "docked", "floating"]);
+
 /**
- * Tell the buddy's page *name* (`ring`, or `connection` with one of `BUDDY_CONNECTIONS`). Nothing
- * else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
+ * Tell the buddy's page *name*: `ring`; `connection`, one of `BUDDY_CONNECTIONS`; `placement`, one
+ * of `BUDDY_PLACEMENTS`; or `fullScreen`, whether one of the app's own windows is full screen.
+ * Nothing else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
  */
 function pushToBuddy(win, name, value) {
   if (!win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return false;
   if (name === "ring") win.webContents.send(BUDDY_PUSHES.ring);
   else if (name === "connection" && BUDDY_CONNECTIONS.includes(value)) win.webContents.send(BUDDY_PUSHES.connection, value);
+  else if (name === "placement" && BUDDY_PLACEMENTS.includes(value)) win.webContents.send(BUDDY_PUSHES.placement, value);
+  else if (name === "fullScreen" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.fullScreen, value);
   else return false;
   return true;
 }
@@ -419,6 +438,7 @@ module.exports = {
   BUDDY_CHANNELS,
   BUDDY_CONNECTIONS,
   BUDDY_PAYLOADS,
+  BUDDY_PLACEMENTS,
   BUDDY_PUSHES,
   pushToBuddy,
   buddyWindowOptions,
