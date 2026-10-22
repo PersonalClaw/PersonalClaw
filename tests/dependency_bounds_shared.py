@@ -29,6 +29,11 @@ _MUST_BE_BOUNDED = {
         "providers pass the egress-guarded httpx.AsyncClient, so whole-tree mypy fails where an "
         "unlocked install resolved 3.x"
     ),
+    "python-dateutil": (
+        "every botocore release requires python-dateutil<3, and the app installer refuses an app "
+        "whose dependencies would move a gateway dependency, so with 3.0.0 (2026-10-21) in a fresh "
+        "install no app built on botocore could be added"
+    ),
 }
 
 

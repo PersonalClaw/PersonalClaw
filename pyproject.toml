@@ -55,6 +55,13 @@ dependencies = [
     # frontend/backend expression corpus, never a version bump. See
     # `docs/maintainers/local-pytest-determinism.md`, "Installer-dependent cron grammar".
     "croniter>=2.0,<3",
+    # python-dateutil is not imported here: croniter, dateparser and htmldate pull it in, none
+    # bounded. The `<3` keeps a fresh install open to every app built on botocore, which requires
+    # python-dateutil<3 in every release, because the app installer refuses an app whose
+    # dependencies would move a gateway dependency. 3.0.0 (2026-10-21) made a fresh install
+    # resolve it, and adding such an app then failed. Widen it when botocore does; the rail is
+    # `tests/test_dependency_bounds.py`.
+    "python-dateutil>=2.8,<3",
     # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
     # memory app (native-vector-memory), which ships INSIDE core, so its deps are
     # baked in (not shed). It's small + NOT excluded from the desktop bundle
