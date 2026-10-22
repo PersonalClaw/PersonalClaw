@@ -47,6 +47,7 @@ import { notify } from '../../app/appSdk'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { useUnsavedGuard } from '../../lib/useUnsavedGuard'
 import { MemoryPartitionContext, MemoryPartitionPicker, partitionKey, useMemoryPartition } from './MemoryPartitionPicker'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -629,7 +630,8 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             ) : (
               <EmptyState icon={Brain} title="No memories yet"
                 hint="Facts, lessons and past episodes an agent can recall. Add one, or let a chat record them for you."
-                action={{ label: 'Add a fact', onClick: () => { setAddMode('fact'); setSelUid(null) }, icon: Plus }} />
+                action={{ label: 'Add a fact', onClick: () => { setAddMode('fact'); setSelUid(null) }, icon: Plus }}
+                footer={<DiscoverTip here="memory" />} />
             )
           ) : shown.map((it) => {
             const on = it.uid === selUid

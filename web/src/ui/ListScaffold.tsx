@@ -95,11 +95,13 @@ export function LoadError({ what, error, onRetry }: {
 }
 
 /** Uniform empty state — claw mark, headline, subline, optional CTA. */
-export function EmptyState({ icon: Icon, title, hint, action }: {
+export function EmptyState({ icon: Icon, title, hint, action, footer }: {
   icon?: LucideIcon
   title: string
   hint?: string
   action?: { label: string; onClick: () => void; icon?: LucideIcon }
+  /** Under the action: what else the page offers while it is empty, such as a Discover tip. */
+  footer?: ReactNode
 }) {
   return (
     <div className="flex flex-col items-center gap-l py-2xl text-center">
@@ -111,6 +113,7 @@ export function EmptyState({ icon: Icon, title, hint, action }: {
       {action && (
         <Button onClick={action.onClick}>{action.icon && <action.icon size={16} />} {action.label}</Button>
       )}
+      {footer}
     </div>
   )
 }

@@ -34,6 +34,7 @@ const promptForm = vi.fn(async (opts: { fields: Array<{ name: string; initial?: 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
+    discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     workflowDefs: () => Promise.resolve({ defs: Object.values(KIND_TO_TEMPLATE).map((name) => ({ name, description: '' })), total: 5 }),
     workflowRuns: () => Promise.resolve({ runs: [], total: 0 }),
     workflowSurfacing: () => Promise.resolve({ defs: [], total: 0, findings: [] }),

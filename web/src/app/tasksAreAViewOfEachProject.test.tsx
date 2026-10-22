@@ -64,6 +64,7 @@ beforeAll(async () => {
     import('../pages/tasks/TasksSection'),
     import('../pages/projects/ProjectsSection'),
     import('../pages/dashboard/DashboardPage'),
+    import('../pages/discover/DiscoverPage'),
   ])
 }, 120_000)
 
@@ -240,5 +241,18 @@ describe('the old shell\'s local state opens the new home with what it held', ()
     expect(checked(screen.getByRole('radiogroup', { name: 'View' }))).toEqual(['Kanban board'])
     expect(shown('Book the movers')).toBe(true)
     expect(shown('Order the soil')).toBe(false)
+  })
+
+  it('a Discover deep link the old shell wrote opens Discover, with the tips the home still holds', async () => {
+    answers.discover = {
+      enabled: true, visible_count: 1, total: 2, dismissed_count: 1,
+      areas: [{ area: 'Stay organized', tips: [
+        { id: 'projects', area: 'Stay organized', title: 'Group related work into a project', lesson: 'One place for it.', try_it: { route: 'projects', label: 'Open Projects' } },
+      ] }],
+    }
+    await open('discover')
+    expect(location.hash).toBe('#/discover')
+    expect(heading()).toMatch(/^Discover/)
+    expect(shown('Group related work into a project')).toBe(true)
   })
 })

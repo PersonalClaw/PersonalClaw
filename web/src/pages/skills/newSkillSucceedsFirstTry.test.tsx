@@ -36,6 +36,7 @@ const createSkill = vi.fn<(name: string, content: string) => Promise<{ ok: boole
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
+    discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     skills: () => Promise.resolve([]),
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     learningSummary: () => Promise.resolve(null),

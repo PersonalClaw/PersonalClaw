@@ -146,6 +146,7 @@ const docs: UiDoc[] = [
       'The uniform empty state for a list/panel — a centered icon (the Spark claw mark by default, or a supplied Lucide icon in a tinted tile), a headline, an optional subline, and an optional call-to-action Button. Use it wherever a collection is empty so every zero state reads the same.',
     props: [
       { name: 'action', description: 'Optional CTA ({ label, onClick, icon? }) rendered as a Button below the text.' },
+      { name: 'footer', description: 'Optional content under the action: what else the page offers while it is empty, such as a Discover tip.' },
       { name: 'hint', description: 'Optional subline explaining the empty state or how to fill it.' },
       { name: 'icon', description: 'Optional Lucide icon shown in a tinted tile; omit to fall back to the Spark claw mark.' },
       { name: 'title', description: 'The empty-state headline.' },
@@ -154,7 +155,7 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'Reach for EmptyState for any empty collection rather than hand-rolling centered text, so zero states stay consistent across pages.' },
       { guidance: true, description: 'Give an `action` when there is an obvious next step (create the first item) so the empty state is a launchpad, not a dead end.' },
     ],
-    anatomy: ['centered column', 'icon tile (Lucide) or Spark claw mark', 'headline + optional hint', 'optional CTA Button'],
+    anatomy: ['centered column', 'icon tile (Lucide) or Spark claw mark', 'headline + optional hint', 'optional CTA Button', 'optional footer'],
   },
   {
     name: 'Loading',

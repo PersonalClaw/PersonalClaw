@@ -23,6 +23,7 @@ import { suggestTemplate } from './templateSuggest'
 import { workflowPresets } from './workflowPresets'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
 import { PageTitle } from '../../ui/PageTitle'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 const TABS = [
   { key: 'runs', label: 'Runs' },
@@ -292,6 +293,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                 title="No workflow definitions yet"
                 hint="A workflow is a repeatable plan an agent runs step by step. Start from a template and describe what you want, or ask in chat to author one."
                 action={{ label: 'Start from template', onClick: startFromTemplate, icon: Sparkles }}
+                footer={<DiscoverTip here="workflows" />}
               />
             )
           ) : (
@@ -392,11 +394,12 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               hint="A run is one execution of a workflow — every step, its output, and where it stopped. Pick a starting point and the next screen asks for what it needs."
               presets={presets}
               onPick={(template) => { void start(template) }}
-              footer={
+              footer={<>
                 <Button variant="ghost" size="sm" onClick={() => setTab('defs')}>
                   <Workflow size={15} /> Browse all definitions
                 </Button>
-              }
+                <DiscoverTip here="workflows" />
+              </>}
             />
           ) : (
             // No bundled templates on this install, so there is nothing to offer as a card.
@@ -407,6 +410,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               title="No workflow runs yet"
               hint="A run is one execution of a workflow — every step, its output, and where it stopped. Pick a definition to start your first."
               action={{ label: 'Browse definitions', onClick: () => setTab('defs'), icon: Workflow }}
+              footer={<DiscoverTip here="workflows" />}
             />
           )
         ) : (

@@ -37,6 +37,7 @@ import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 // 'home' is the library HOME: the shelves — recently added, continue reading, favorites,
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
@@ -650,7 +651,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
         ) : itemsData === undefined && itemsErr ? (
               <LoadError what={collectionTok ? 'shelf items' : 'knowledge items'} error={itemsErr} onRetry={load} />
             ) : items === null ? (itemsLoading ? <ListSkeleton what={collectionTok ? 'shelf items' : 'knowledge items'} /> : null) : empty ? (
-              <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
+              <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} footer={<DiscoverTip here="knowledge" />} />
             ) : view === 'conflicts' ? (
               <ConflictPanel />
             ) : view === 'tags' ? (

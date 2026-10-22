@@ -446,6 +446,7 @@ describe('on-ramp sweep · the expert path is unchanged when the list is not emp
     vi.doMock('../lib/api', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
       api: {
+        discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
         workflowDefs: () => Promise.resolve({ defs, total: defs.length }),
         workflowRuns: () => Promise.resolve({ runs, total: runs.length }),
         workflowSurfacing: () => Promise.reject(new Error('not needed')),

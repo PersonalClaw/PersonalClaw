@@ -33,6 +33,7 @@ import {
   ORDER as STEP_ORDER, TITLES as STEP_TITLES, SLUGS, STORED, type StepId,
   furthestOf, isUnlocked, nextOf, pathOf, previousOf, resolveStep, stepFromSlug, stepFromStored,
 } from './onboarding/steps'
+import { DiscoverTip } from '../pages/discover/DiscoverTip'
 
 // Re-stated as local bindings because the live region and every row heading read them by these
 // names; `onboarding/steps.ts` is the single definition. `stepProgressAnnounced.test.ts` rails the
@@ -1101,6 +1102,10 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
           </div>
         </Pointer>
       </div>
+
+      {/* One thing to try next, from Discover, which is no longer a sidebar row: it leaves through
+          the same way out as the pointers above. */}
+      <DiscoverTip here="onboarding" onGo={onExitTo} />
 
       {/* The flow's two last doors, in the bar with every step's: the tour is offered rather than
           imposed — it finishes setup either way, and every stop is skippable once it starts

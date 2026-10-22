@@ -23,6 +23,7 @@ import { MarketplaceDetail } from './MarketplaceDetail'
 import { SkillProposals } from './SkillProposals'
 import { LearningSummaryBlock } from './LearningSummaryBlock'
 import { PageTitle } from '../../ui/PageTitle'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 /** The New-skill dialog's starting SKILL.md. `name:` is deliberately empty: it is filled from the
  *  Name field, the skill's one identity, by `withFrontmatterName` as the user types. */
@@ -168,7 +169,7 @@ function Installed({ toggle, onBrowse, query, setQuery }: { toggle: React.ReactN
           {items === undefined && itemsErr ? (
             <LoadError what="installed skills" error={itemsErr} onRetry={load} />
           ) : filtered === null ? <ListSkeleton rows={6} what="installed skills" /> : filtered.length === 0 ? (
-            <EmptyState icon={Sparkles} title={q ? 'No matching skills' : 'No skills installed'} hint={q ? 'Try a different term.' : 'Skills extend what agents can do. Browse the marketplace to install some.'} action={!q ? { label: 'Browse skills', onClick: onBrowse, icon: Store } : undefined} />
+            <EmptyState icon={Sparkles} title={q ? 'No matching skills' : 'No skills installed'} hint={q ? 'Try a different term.' : 'Skills extend what agents can do. Browse the marketplace to install some.'} action={!q ? { label: 'Browse skills', onClick: onBrowse, icon: Store } : undefined} footer={!q && <DiscoverTip here="skills" />} />
           ) : (
             <div className="flex flex-col gap-s">
               {filtered.map((s) => {
