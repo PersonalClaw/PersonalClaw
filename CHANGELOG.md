@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The sidebar comes back to where it was scrolled after a reload or a collapse, as it already kept its width, its open state and each project's disclosure; when that place would hide the thread the page shows, it scrolls just far enough to show it.**
 - **While the gateway isn't answering, the sidebar's threads say Offline, keep the threads it last listed and offer Retry, instead of saying the read failed or that there are no threads.**
 - **A project's page lists its threads beside its detail: its chats, goal loops and code sessions as the sidebar lists them under it, each with its mark (running, waiting on you, failed), and a click opens the thread at its own address.**
+- **Collapsing the sidebar and opening it again keeps what you typed in its search, and the threads it found; a reload starts with an empty search.**
 
 ### Fixed
 

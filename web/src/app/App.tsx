@@ -580,6 +580,10 @@ function AppInner() {
   // lit, the destination its route belongs to (Chat, Projects) is not lit beside it: one row says
   // where you are. A hook, so it sits above the early returns (React #310).
   const [threadLit, setThreadLit] = useState(false)
+  // The sidebar's search, kept here and not in the rail: collapsing the rail unmounts its threads,
+  // and a collapse changes chrome only (#3812), so opening it again gives back what was typed. A
+  // reload starts with none.
+  const [railSearch, setRailSearch] = useState('')
 
   // Auto-pin on visit. Reaching a surface is the strongest signal it belongs in your rail, so
   // a visit to one the starter rail is holding back REVEALS it permanently. This is what makes
@@ -900,7 +904,7 @@ function AppInner() {
                   // Its own boundary: threads that throw leave a notice in their place, and the
                   // destinations around them keep working.
                   <WidgetBoundary what="your threads" className="mx-s">
-                    <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} />
+                    <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} search={railSearch} onSearch={setRailSearch} />
                   </WidgetBoundary>
                 )}
                 disclosure={{

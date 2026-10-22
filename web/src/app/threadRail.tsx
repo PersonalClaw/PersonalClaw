@@ -146,10 +146,13 @@ export function useThreadRail(route: string, sub: string): ThreadRailRead {
  *  its own, so the lists are read only while a rail that shows them is mounted: not in the
  *  collapsed rail, an embedded page, the companion or setup. `onLit` tells the shell whether a
  *  thread is lit, so the destination its route belongs to is not lit beside it. */
-export function ShellThreadRail({ route, sub, onOpen, onLit }: {
+export function ShellThreadRail({ route, sub, onOpen, onLit, search, onSearch }: {
   route: string
   sub: string
   onOpen: (route: string) => void
+  /** The rail's search, kept by the shell so a collapse gives it back (`ThreadRail`'s `search`). */
+  search: string
+  onSearch: (query: string) => void
   /** Called with whether a thread is lit; with false when the rail unmounts. Keep it stable. */
   onLit: (lit: boolean) => void
 }) {
@@ -162,6 +165,6 @@ export function ShellThreadRail({ route, sub, onOpen, onLit }: {
   return (
     <ThreadRail groups={rail.groups} selectedKey={rail.selectedKey} status={rail.status}
       failure={rail.failure} onOpen={onOpen} onRetry={rail.retry}
-      onNewThread={() => onOpen('chat/new')} onShown={onShown} />
+      onNewThread={() => onOpen('chat/new')} onShown={onShown} search={search} onSearch={onSearch} />
   )
 }

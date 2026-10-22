@@ -147,7 +147,7 @@ export function shownThreads(sections: readonly RailSection[]): Thread[] {
  *  and tooltip, and wraps while the row has keyboard focus. Loading, a failed read and an empty
  *  project each have a row of their own. A group's rows window past the shared threshold
  *  (`WindowedList`), so hundreds of threads keep the rail fast and keep their keyboard order. */
-export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown }: {
+export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown, search, onSearch }: {
   /** The groups in the order they show, each with its threads in order. */
   groups: ThreadRailGroup[]
   /** The key of the open thread, or '' when the page is no thread. */
@@ -164,16 +164,21 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   /** Told the rows the rail shows, top to bottom, whenever they change; `null` while it shows none it
    *  has read (loading, or a failed first read). Keep it stable. */
   onShown?: (threads: Thread[] | null) => void
+  /** The search, when the caller keeps it: the shell does, so a collapse, which unmounts the rail,
+   *  gives it back as it was typed. Unset, the rail keeps its own. */
+  search?: string
+  onSearch?: (query: string) => void
 }) {
   const base = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState<Record<string, boolean>>(readGroupsOpen)
-  const [query, setQuery] = useState('')
+  const [ownQuery, setOwnQuery] = useState('')
+  const query = search ?? ownQuery
   // The groups closed during this search, which the next change of the search forgets.
   const [searchOpen, setSearchOpen] = useState<Record<string, boolean>>({})
   const searching = searchWords(query) !== ''
-  const changeQuery = (v: string) => { setQuery(v); setSearchOpen({}) }
+  const changeQuery = (v: string) => { (onSearch ?? setOwnQuery)(v); setSearchOpen({}) }
   const sections = useMemo(() => railSections(groups, open, query, searchOpen), [groups, open, query, searchOpen])
   const toggle = (s: RailSection) => {
     const id = s.group.projectId

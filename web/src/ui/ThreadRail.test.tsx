@@ -124,6 +124,18 @@ describe('the thread rail', () => {
     expect(list.textContent).toBe('No threads yet')
   })
 
+  it('a thread whose mark changes keeps its place and the focus on its row', () => {
+    const view = rail()
+    const order = () => [...document.querySelectorAll('[data-thread-key]')].map((r) => r.getAttribute('data-thread-key'))
+    const before = order()
+    const row = screen.getByRole('button', { name: 'Plan the garden' })
+    row.focus()
+    const running: ThreadRailGroup = { ...GARDEN, threads: GARDEN.threads.map((t) => (t.key === 'chat:chat-1' ? { ...t, pip: 'running' } : t)) }
+    view.rerender(<ThreadRail groups={[running, EMPTY, LOOSE]} selectedKey="" status="ready" onOpen={view.onOpen} onRetry={view.onRetry} onNewThread={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Plan the garden, running' }), 'the row says its new state').toBe(document.activeElement)
+    expect(order(), 'and nothing moved').toEqual(before)
+  })
+
   it('a long name is cut short on screen and whole in its name and tooltip', () => {
     const title = 'Find a supplier for heritage tomato seeds that ships to the north before the frost'
     rail({ groups: [{ ...GARDEN, threads: [thread({ key: 'chat:long', title })] }] })
