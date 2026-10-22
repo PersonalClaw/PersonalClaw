@@ -34,7 +34,7 @@ kept :data:`TAIL_SECS`, newest first. Dismissing it is a reader's own business; 
 deletes a record.
 
 **Who reads what** is the frame's rule (:class:`Reach`): an app reads a row when the rule its socket
-hears that work's phase frame by lets it (``ws_state.frame_subject``, ``_app_may_hear_about``), so
+hears that work's phase frame by lets it (the state's ``_app_hears_of``), so
 its own chats and the helpers working for them, and no work no chat started; an agent reads its
 own chat's work; you read everything. The count and the tail are cut the same way.
 
@@ -296,7 +296,7 @@ def _route_of(work: str) -> str:
 
 
 def _helper_row(info: Any, payload: Any, waits: Mapping[str, list[str]]) -> dict[str, Any]:
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     work = work_ref("subagent", str(info.id))
     session = (
@@ -371,7 +371,7 @@ def _loops(snap: Snapshot) -> list[dict[str, Any]]:
 
 
 def _run_row(snap: Snapshot, run: Any) -> dict[str, Any]:
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.loop.loop import held_reason
     from personalclaw.workflows.models import stamp_epoch
 
@@ -639,7 +639,7 @@ class Snapshot:
 
 def taken(state: Any) -> Snapshot:
     """The list's reading of the gateway's memory. On the event loop, reading no store."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     waits = _waits(state)
     said = {
@@ -739,11 +739,8 @@ class Reach:
             return True
         session = str(row.get("session") or "")
         if self.app:
-            from personalclaw.dashboard.ws_state import frame_subject
-
-            subject = frame_subject("work_phase", {"work": row.get("work"), "session": session})
-            return subject is not None and self.state._app_may_hear_about(
-                self.app, "work_phase", subject
+            return self.state._app_hears_of(
+                self.app, "work_phase", {"work": row.get("work"), "session": session}
             )
         return bool(self.chat) and session == self.chat.removeprefix(session_keys.DASHBOARD.prefix)
 
@@ -840,7 +837,7 @@ def chat_said(state: Any, session: Any, *, again: bool) -> None:
 def asked(state: Any, entry: Mapping[str, Any]) -> None:
     """The approval *entry* was asked or answered: each row it waits on the owner for moved, the
     chat's in its chat, a helper's in the chat its own frames name (the chat it works for)."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     raw = str(entry.get("session") or "")
     for work in approval_work(entry):

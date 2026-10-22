@@ -17,12 +17,19 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from personalclaw import bounded_log, record_files, restart_request, started_work, trust_mode
+from personalclaw import (
+    bounded_log,
+    record_files,
+    restart_request,
+    started_work,
+    trust_mode,
+    work_phases,
+)
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.dashboard import channel_links, chat_phase, work_phases
+from personalclaw.dashboard import channel_links, chat_phase
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.chat_queue import ChatQueue
 from personalclaw.dashboard.desktop_registry import DesktopRegistry

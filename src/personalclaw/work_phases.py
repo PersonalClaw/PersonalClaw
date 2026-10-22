@@ -42,12 +42,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw import session_keys
-from personalclaw.dashboard.chat_phase import LINE_LIMIT
 from personalclaw.instants import utc_iso
 from personalclaw.security import redact_for_display
 from personalclaw.textfmt import clip_words
 from personalclaw.work_phase import (
     HELD,
+    LINE_LIMIT,
     RUN_STATUS_PHASES,
     WorkPhase,
     classify_call,

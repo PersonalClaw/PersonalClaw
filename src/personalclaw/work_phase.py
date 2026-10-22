@@ -32,6 +32,9 @@ from typing import Any
 
 from personalclaw.auth.lifetimes import duration_words
 
+#: The longest line a phase frame carries. Each surface cuts it shorter, to its own room.
+LINE_LIMIT = 160
+
 
 class WorkPhase(str, Enum):
     """What a piece of work is doing now."""
@@ -182,9 +185,9 @@ def _stopped(reason: str) -> str:
 PHASE_PRODUCERS: Mapping[str, str] = MappingProxyType(
     {
         "chat": "personalclaw.dashboard.chat_phase",
-        "subagent": "personalclaw.dashboard.work_phases",
-        "loop": "personalclaw.dashboard.work_phases",
-        "workflow": "personalclaw.dashboard.work_phases",
+        "subagent": "personalclaw.work_phases",
+        "loop": "personalclaw.work_phases",
+        "workflow": "personalclaw.work_phases",
     }
 )
 

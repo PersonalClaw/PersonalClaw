@@ -19,14 +19,14 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
-from personalclaw import approval_answer, session_keys
+from personalclaw import approval_answer, session_keys, work_phases
 from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.approval_confirms import UNDECLARED, call_confirms
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.dashboard import chat_phase, work_phases
+from personalclaw.dashboard import chat_phase
 from personalclaw.run_bounds import reach_note, session_folder
 from personalclaw.security import redact_field
 from personalclaw.sel import sel

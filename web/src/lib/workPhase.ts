@@ -139,7 +139,7 @@ export function idleRunState(session: string): RunState {
 }
 
 /** Whether a `work_phase` frame is a chat's own run state. The gateway sends one frame type for every
- *  kind of work (`dashboard/work_phases.py`): a helper's names the chat it works for in `session`, as
+ *  kind of work (`work_phases.py`): a helper's names the chat it works for in `session`, as
  *  its other frames do, and a loop's or a workflow run's names no chat. Neither is the chat's turn,
  *  so a page reads a frame as its chat's run state only when this says it is one: a chat's own, or
  *  one that names no other kind. */

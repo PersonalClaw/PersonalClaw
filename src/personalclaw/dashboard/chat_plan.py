@@ -80,8 +80,6 @@ logger = logging.getLogger(__name__)
 #: own kind rather than borrowing one of the Code feature's SDLC kinds.
 PLAN_STEP_KIND = "chat_plan"
 
-_DIR_NAME = "chat_plans"
-
 
 # ── persistence (chat-owned sidecar for the shared PlanSession) ──
 
@@ -90,7 +88,7 @@ def _path(chat_key: str) -> Path:
     # _safe_key is the single filename-sanitization rule already used for a session
     # key (history.ConversationLog._path) — reused rather than re-derived so a chat's
     # plan sidecar and its transcript agree on what a key's filename is.
-    return config_dir() / _DIR_NAME / f"{_safe_key(chat_key)}.json"
+    return config_dir() / PS.CHAT_PLANS_DIR / f"{_safe_key(chat_key)}.json"
 
 
 def read(chat_key: str) -> tuple[PlanSession | None, dict[str, Any]]:

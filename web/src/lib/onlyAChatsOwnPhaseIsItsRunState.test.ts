@@ -7,7 +7,7 @@ import { isAChatsPhase } from './workPhase'
 // ── Only a chat's own phase is its run state ─────────────────────────────────────────────────────
 //
 // One `work_phase` frame type says what every kind of work is doing: a chat's turn, and a helper, a
-// loop and a workflow run (`src/personalclaw/dashboard/work_phases.py`). A helper's frame names the
+// loop and a workflow run (`src/personalclaw/work_phases.py`). A helper's frame names the
 // chat it works for in `session`, as its other frames do, and a loop's or a run's names none. A page
 // that took every `work_phase` frame naming its chat, or naming no chat, as the chat's run state
 // would show a helper's step, or a run's ending, as the chat's turn. So every reader that takes a

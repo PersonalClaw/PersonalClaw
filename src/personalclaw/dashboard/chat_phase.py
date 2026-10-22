@@ -34,7 +34,14 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.instants import utc_iso
 from personalclaw.security import redact_for_display
 from personalclaw.textfmt import clip_words
-from personalclaw.work_phase import ENDINGS, WorkPhase, classify_call, done_in, family_of
+from personalclaw.work_phase import (
+    ENDINGS,
+    LINE_LIMIT,
+    WorkPhase,
+    classify_call,
+    done_in,
+    family_of,
+)
 from personalclaw.workref import work_ref
 
 if TYPE_CHECKING:
@@ -44,9 +51,6 @@ logger = logging.getLogger(__name__)
 
 #: How often a running turn says its phase again, in seconds.
 RESEND_SECS = 15.0
-
-#: The longest line a phase frame carries. Each surface cuts it shorter, to its own room.
-LINE_LIMIT = 160
 
 #: The clock a phase's times are read from, and the wait between two re-sends of a running turn's
 #: phase: the gateway's own, which a test replaces with a clock it moves itself.
@@ -262,7 +266,7 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
     # A running loop's worker is a chat: what its turn does, its loop does (`work_phases`). Only
     # read from the chat's frame, so a failure saying the loop's never stops the chat's own.
     try:
-        from personalclaw.dashboard import work_phases
+        from personalclaw import work_phases
 
         work_phases.worker_said(state, session.key, payload)
     except Exception:

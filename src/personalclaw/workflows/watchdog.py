@@ -287,7 +287,7 @@ class WorkflowWatchdog:
 
         def publish(event: str, payload: dict[str, Any]) -> None:
             # What the run is doing, from each event as it is published, before any batching: its
-            # status, the step it starts, a gate's ask (`dashboard.work_phases`).
+            # status, the step it starts, a gate's ask (`work_phases`).
             try:
                 state.say_run(run_id, event, payload)
             except Exception:  # a broken observer must never kill a run

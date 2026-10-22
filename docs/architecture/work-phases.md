@@ -8,7 +8,7 @@ surface guesses a phase from words, a timer or a flag of its own.
   (web), pinned equal in both directions by `tests/test_work_phase_vocabulary.py`
 - A chat's phases: `src/personalclaw/dashboard/chat_phase.py`, fed by the chat runner
   (`dashboard/chat_runner.py`), the approval registry and the owner's questions
-- A helper's, a loop's and a workflow run's phases: `src/personalclaw/dashboard/work_phases.py`,
+- A helper's, a loop's and a workflow run's phases: `src/personalclaw/work_phases.py`,
   fed by the subagent manager's events, the approval registry, the loop store and a run's
   publisher
 - Work references: `src/personalclaw/workref.py`
