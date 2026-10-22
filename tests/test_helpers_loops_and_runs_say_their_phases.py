@@ -854,7 +854,7 @@ async def test_a_running_loop_says_it_is_held_while_incident_mode_holds_it(tmp_p
             try:
                 await asyncio.sleep(0.05)
                 incident.activate("a drill")
-                await until(("queued", "Held: incident mode is on"))
+                await until(("queued", "Held until incident mode is off"))
                 chat_phase.end(w.state, worker)
                 incident.resume()
                 await until(("thinking", "Running"))
@@ -867,7 +867,7 @@ async def test_a_running_loop_says_it_is_held_while_incident_mode_holds_it(tmp_p
         ("thinking", "Running"),
         ("queued", "Waiting to start"),
         ("searching", "Searching the files"),
-        ("queued", "Held: incident mode is on"),
+        ("queued", "Held until incident mode is off"),
         ("thinking", "Running"),
     ], "held while the switch is on, the worker's turn ending under it too"
 
@@ -989,11 +989,11 @@ async def test_a_held_run_says_it_is_held_and_carries_on(tmp_path):
     publish("workflow_run_update", {"status": "running"})
     await incident_hold.hold(run, wake_secs=1.0)  # type: ignore[arg-type]
     publish("workflow_run_update", {"status": "running"})  # an update that names no hold
-    assert _said(w, "workflow:r4")[-1] == ("queued", "Held: incident mode is on")
+    assert _said(w, "workflow:r4")[-1] == ("queued", "Held until incident mode is off")
     incident_hold.carry_on(run)  # type: ignore[arg-type]
     assert _said(w, "workflow:r4") == [
         ("thinking", "Running"),
-        ("queued", "Held: incident mode is on"),
+        ("queued", "Held until incident mode is off"),
         ("thinking", "Running"),
     ]
 

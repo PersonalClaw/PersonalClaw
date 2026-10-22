@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WaitingItem, WaitingKind } from './api'
-import { waitingAnswerId, waitingQuestion } from './waitingAnswer'
+import { waitingAnswerId, waitingQuestion, waitingReply } from './waitingAnswer'
 import { waitingItem } from '../test/waiting'
 
 // ── An item is answered on its own route's exact shape, or not at all (#3888) ──────────────────
@@ -96,6 +96,56 @@ describe('each kind is answered on its own route alone', () => {
         expect(waitingAnswerId(on(kind, path)), `${kind} on ${path}`).toBe('')
         expect(waitingQuestion(on(kind, path)), `${kind} on ${path}`).toBeNull()
       }
+    }
+  })
+})
+
+// A typed line goes the same way (#3813): a free-text gate through its resume token, a loop's
+// question as its nudge, an agent's one question as your own answer, each read off its own route.
+describe('a typed reply goes to its own route alone', () => {
+  const text = (kind: WaitingKind, path: string, brief: Record<string, unknown> = {}) =>
+    waitingItem({ kind, brief, answer: { method: 'POST', path, takes: ['text'], body: { resume_token: 'tok' } } })
+  const ONE = { questions: [{ question: 'Which version?' }] }
+  const GATE_TEXT = { ask: { kind: 'text', prompt: 'Name it' } }
+  const REPLIED: { kind: WaitingKind; own: string; brief: Record<string, unknown> }[] = [
+    { kind: 'gate', own: ROUTES.gate_resume, brief: GATE_TEXT },
+    { kind: 'loop_question', own: ROUTES.loop_question, brief: {} },
+    { kind: 'question', own: ROUTES.question, brief: ONE },
+  ]
+  const REPLY_BROKEN = [
+    '/api/loops/%2E%2E/nudge',
+    '/api/loops/a%2Fb/nudge',
+    '/api/loops/l-1/nudge/',
+    '/x/api/loops/l-1/nudge',
+    '/api/chat/sessions/%2e%2e/questions/q-1/answer',
+    '/api/chat/sessions/c-1/questions/a%5Cb/answer',
+    '/api/chat/sessions/c-1/questions/q-1/answer/extra',
+  ]
+
+  it.each(REPLIED)('$kind takes a line on its own route, and its ids decoded', ({ kind, own, brief }) => {
+    expect(waitingReply(text(kind, own, brief)), own).not.toBeNull()
+  })
+
+  it.each(REPLIED)('$kind takes no line on another kind’s route, a malformed one, or one that climbs out', ({ kind, own, brief }) => {
+    for (const path of [...Object.values(ROUTES).filter((p) => p !== own && !(kind === 'gate' && p === ROUTES.gate_confirm)), ...BROKEN, ...REPLY_BROKEN]) {
+      expect(waitingReply(text(kind, path, brief)), `${kind} on ${JSON.stringify(path)}`).toBeNull()
+    }
+  })
+
+  it('reads the route’s own ids', () => {
+    expect(waitingReply(text('gate', ROUTES.gate_resume, GATE_TEXT))).toEqual({ kind: 'gate', runId: 'r-1', resumeToken: 'tok' })
+    expect(waitingReply(text('loop_question', '/api/loops/loop%3A7/nudge'))).toEqual({ kind: 'loop', loopId: 'loop:7' })
+    expect(waitingReply(text('question', ROUTES.question, ONE))).toEqual({ kind: 'question', session: 'c-1', questionId: 'q-1' })
+  })
+
+  it('takes no line for an ask answered otherwise: a yes or a no, a choice, a confirmation, a wake, several questions', () => {
+    expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'approval' } }))).toBeNull()
+    expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'choice', choices: ['a', 'b'] } }))).toBeNull()
+    expect(waitingReply(text('gate', ROUTES.gate_confirm, GATE_TEXT))).toBeNull()
+    expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'event' } }))).toBeNull()
+    expect(waitingReply(text('question', ROUTES.question, { questions: [{ question: 'A?' }, { question: 'B?' }] }))).toBeNull()
+    for (const kind of ['approval', 'park', 'browse_grant', 'plan_review', 'bridge_confirmation'] as const) {
+      for (const path of Object.values(ROUTES)) expect(waitingReply(text(kind, path)), `${kind} on ${path}`).toBeNull()
     }
   })
 })

@@ -6,7 +6,9 @@ import {
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { clockTime, sessionRecencyMs } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
-import { waitingAnswerId, waitingQuestion, type CardQuestion } from '../../lib/waitingAnswer'
+import {
+  waitingAnswerId, waitingQuestion, waitingReply, type CardQuestion, type ReplyTarget,
+} from '../../lib/waitingAnswer'
 import { approvalOf, isStale, useStaleAt } from '../../lib/waitingList'
 import { rowSubject } from '../../lib/rowSubject'
 import { phaseOf } from '../../lib/runningRows'
@@ -21,12 +23,14 @@ import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { Segmented } from '../../ui/Segmented'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { TopBar } from '../../ui/TopBar'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
+import { TextInput } from '../../ui/forms'
 import { SurfaceOverlay } from '../../ui/surfaces/SurfaceOverlay'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { StartedByApp, startedByLabel, startedByName } from '../chat/StartedByApp'
@@ -34,6 +38,7 @@ import { FromChannel, channelOf } from '../chat/FromChannel'
 import { HomeOverview } from './DashboardPage'
 import { PinnedTiles } from './PinnedTiles'
 import { FinishedRows, LARGE_LIST, RunningLane, openable } from './RunningLane'
+import { readShown, writeShown } from './homeShown'
 import { Suggestions } from './widgets/Suggestions'
 
 // ── Home: the attention stack ───────────────────────────────────────────────────────────────────
@@ -103,6 +108,13 @@ const GROUP_EMPTY: Record<Group, string> = {
 export const HOME_VIEWS = [
   { key: 'attention', label: 'Attention', icon: Hand },
   { key: 'overview', label: 'Overview', icon: LayoutGrid },
+]
+
+type Shown = 'all' | Group
+
+const SHOWN_OPTIONS = [
+  { key: 'all', label: 'All' },
+  ...GROUPS.map((g) => ({ key: g, label: GROUP_LABEL[g] })),
 ]
 
 /** Your threads shown under Recent and completed. */
@@ -236,6 +248,8 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
   } = useQuery<ChatSessionSummary[]>('chat:sessions:recent', async () => api.chatSessions(), { persist: true })
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
   const [allNeeds, setAllNeeds] = useState(false)
+  const [shown, setShown] = useState<Shown>(() => readShown(GROUPS))
+  const shows = (g: Group) => shown === 'all' || shown === g
 
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {
@@ -315,6 +329,20 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
       void send(key, sent, action === 'accept' ? 'Accepted — the skill is saved.' : 'Rejected.', `${action} this proposal`,
         () => invalidateKeys('skill-proposals', true))
     },
+    reply: (key, target, text) => {
+      if (target.kind === 'gate') {
+        return send(key, api.resumeWorkflowRun(target.runId, { answer: text, resume_token: target.resumeToken || undefined }),
+          `Answered “${text}” — the run is moving again.`, 'send that answer')
+      }
+      if (target.kind === 'loop') return send(key, api.uLoopNudge(target.loopId, text), 'Sent to the loop.', 'send that answer')
+      // The chat's own card sends a typed answer as `other`; one it no longer waits on is ended.
+      const sent = api.answerChatQuestion(target.session, target.questionId, { answers: [{ selected: [], other: text }] })
+        .then((r) => {
+          if (r.outcome === 'answered') return r
+          throw new ApiError('it was answered or ended somewhere else', 404)
+        })
+      return send(key, sent, 'Answered — the agent carries on.', 'send that answer')
+    },
   }), [send])
 
   // ── The selection ──
@@ -376,7 +404,14 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
           </div>
         ) : null}
 
-        <Group group="needs-you" count={needs.data ? needs.rows.length : null}>
+        <StartSomething navigate={route.navigate} />
+
+        <div className="min-w-0">
+          <Segmented size="sm" collapse="scroll" ariaLabel="Show" options={SHOWN_OPTIONS} value={shown}
+            onChange={(k) => { const v = k as Shown; setShown(v); writeShown(v) }} />
+        </div>
+
+        {shows('needs-you') ? <Group group="needs-you" count={needs.data ? needs.rows.length : null}>
           {needs.unreadable.length > 0 ? (
             <p role="status" data-type="body-s" className="text-on-surface">
               {`Could not read ${needs.unreadable.map((k) => SOURCE_WORDS[k] ?? k).join(', ')}: what they hold may be waiting on you and is not shown here.`}
@@ -406,13 +441,13 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
           ) : null}
           {/* The empty state is the one place a suggestion belongs on Home. */}
           {allClear && rows.length === 0 ? <WidgetBoundary what="suggestions"><Suggestions {...route} /></WidgetBoundary> : null}
-        </Group>
+        </Group> : null}
 
-        <RunningLane rows={rows} loading={runningLoading} failed={!!runningError && !runningList}
+        {shows('running-now') ? <RunningLane rows={rows} loading={runningLoading} failed={!!runningError && !runningList}
           empty={GROUP_EMPTY['running-now']} selected={open.startsWith('run:') ? open.slice(4) : undefined}
-          onOpen={(r) => select(`run:${r.work}`)} />
+          onOpen={(r) => select(`run:${r.work}`)} /> : null}
 
-        <Group group="recent" count={null}>
+        {shows('recent') ? <Group group="recent" count={null}>
           <FinishedRows finished={finished} interrupted={cut.interrupted}
             selected={open.startsWith('run:') ? open.slice(4) : undefined} onOpen={(r) => select(`run:${r.work}`)} />
           {threads.length > 0 ? (
@@ -432,7 +467,7 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
               {sessionsLoading || runningLoading ? 'Loading…' : GROUP_EMPTY.recent}
             </p>
           ) : null}
-        </Group>
+        </Group> : null}
 
         {/* What the owner and the agents pinned, and the dashboard's surface overlays, under the
             groups. Each renders nothing when it holds nothing. */}
@@ -466,6 +501,8 @@ interface CardActions {
   grant: (key: string, id: string, action: 'approve' | 'reject') => void
   bridge: (key: string, token: string, run: boolean) => void
   proposal: (key: string, id: string, action: 'accept' | 'reject') => void
+  /** A typed line for a free-text ask; true once it is sent, so the field empties only then. */
+  reply: (key: string, target: ReplyTarget, text: string) => Promise<boolean>
 }
 
 /** One Needs You card in the group: what asked, what it asks, and its answer. The card opens its
@@ -498,9 +535,27 @@ function NeedDetail({ row, outcome, actions, now }: {
   const route = row.origin === 'waiting' ? row.item.route : row.origin === 'proposal' ? '#/skills?mode=proposals'
     : `#/inbox?open=${encodeURIComponent(row.note.id)}`
   const asked = row.origin === 'waiting' ? clockTime(row.item.asked_at) : ''
+  const item = row.origin === 'waiting' ? row.item : null
+  const reply = item ? waitingReply(item) : null
+  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
+  const questions = item?.kind === 'question' && Array.isArray(item.brief.questions) ? item.brief.questions : []
   return (
     <div className="flex min-w-0 flex-col gap-m">
       <NeedBody row={row} outcome={outcome} actions={actions} now={now} />
+      {questions.length > 1 ? (
+        <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
+          {questions.map((q, i) => (
+            <li key={i} data-type="body-s" className="text-on-surface">
+              {typeof (q as { question?: unknown }).question === 'string' ? (q as { question: string }).question : ''}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {item?.session ? <ConversationTail session={item.session} /> : null}
+      {reply && item && !settled && !isStale(item, now) ? (
+        <ReplyField subject={row.title} busy={outcome?.state === 'busy'}
+          onSend={(text) => actions.reply(row.key, reply, text)} />
+      ) : null}
       <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">
         {row.raisedBy ? <><dt className="text-on-surface-low">Asked by</dt><dd>{row.raisedBy}</dd></> : null}
         {asked ? <><dt className="text-on-surface-low">Asked</dt><dd>{asked}</dd></> : null}
@@ -737,6 +792,90 @@ function ThreadDetail({ s }: { s: ChatSessionSummary }) {
     <div className="flex min-w-0 flex-col gap-m">
       {s.last_message ? <p data-type="body-m" className="min-w-0 whitespace-pre-line text-on-surface">{s.last_message}</p> : null}
       <TextLink href={`#/chat/${encodeURIComponent(s.key)}`} ink="emphasis" size="sm">Open the thread</TextLink>
+    </div>
+  )
+}
+
+/** The one-line reply a free-text ask takes, in its detail: Enter sends it to the ask's own route,
+ *  Escape closes the detail (`ListBesideDetail`), and a send that fails keeps the line and says why
+ *  above it. Nothing is sent while the owner types. */
+function ReplyField({ subject, busy, onSend }: {
+  subject: string
+  busy: boolean
+  onSend: (text: string) => Promise<boolean>
+}) {
+  const [text, setText] = useState('')
+  return (
+    <TextInput value={text} onChange={setText} ariaLabel={`Reply to ${subject}`}
+      placeholder="Reply in one line: Enter sends, Escape closes"
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' || e.nativeEvent.isComposing || busy) return
+        e.preventDefault()
+        const line = text.trim()
+        if (!line) return
+        void onSend(line).then((sent) => { if (sent) setText('') })
+      }} />
+  )
+}
+
+/** The last few lines of the conversation an ask came from, read-only: what the agent said before
+ *  it asked, so the owner can answer from here. */
+function ConversationTail({ session }: { session: string }) {
+  const { data, error, refresh } = useQuery(`chat:peek:${session}`, async () => api.chatSessionDetail(session), { persist: false })
+  if (error && !data) return <InlineLoadError what="the conversation it came from" error={error} onRetry={refresh} />
+  const lines = (data?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').slice(-4)
+  if (lines.length === 0) return null
+  return (
+    <section role="region" aria-label="The conversation it came from" className="flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m">
+      {lines.map((m, i) => (
+        <p key={i} data-type="body-s" className={`min-w-0 whitespace-pre-line ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
+          <span className="text-on-surface-low">{m.role === 'user' ? 'You: ' : 'Agent: '}</span>
+          {String(m.content ?? '').slice(0, 400)}
+        </p>
+      ))}
+    </section>
+  )
+}
+
+/** "Start something": one line that starts a new thread with it as the first message, on the
+ *  default agent and model. Enter starts it and opens the thread, through the path the chat's own
+ *  first send takes (`api.createChatSession`, then `api.sendChat`); nothing is sent while the owner
+ *  types, and a start that fails keeps the line and says why. */
+function StartSomething({ navigate }: { navigate: RouteProps['navigate'] }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
+  const start = async (line: string) => {
+    setBusy(true)
+    setFailed('')
+    try {
+      const chat = await api.createChatSession()
+      await api.sendChat(line, chat.key, { client_ts: Date.now() / 1000 })
+      setText('')
+      navigate(`chat/${encodeURIComponent(chat.key)}`)
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
+      setFailed(`Could not start a new thread: ${detail}. Nothing was sent, so try again.`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      <TextInput value={text} onChange={setText} ariaLabel="Start something"
+        placeholder="Start something: type it and press Enter for a new thread"
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing || busy) return
+          e.preventDefault()
+          const line = text.trim()
+          if (line) void start(line)
+        }} />
+      {failed ? (
+        <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+          {failed}
+        </p>
+      ) : null}
     </div>
   )
 }

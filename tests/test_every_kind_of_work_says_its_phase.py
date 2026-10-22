@@ -185,7 +185,7 @@ def test_a_loops_derived_statuses_are_read_from_its_record() -> None:
     held = "Held: incident mode is on, so this loop starts no new cycle. It carries on by itself."
     assert work_phase.loop_phase("running", held=held) == (
         WorkPhase.QUEUED,
-        "Held: incident mode is on",
+        "Held until incident mode is off",
     )
     assert work_phase.loop_phase("running") == (WorkPhase.THINKING, "Running")
     assert work_phase.loop_phase("complete", stop_reason="cycle_budget") == (

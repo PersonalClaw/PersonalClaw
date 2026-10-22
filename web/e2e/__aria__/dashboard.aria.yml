@@ -31,6 +31,13 @@
     - radio "Attention" [checked]
     - radio "Overview"
   - region "Home":
+    - textbox "Start something":
+      - /placeholder: "Start something: type it and press Enter for a new thread"
+    - radiogroup "Show":
+      - radio "All" [checked]
+      - radio "Needs You"
+      - radio "Running Now"
+      - radio "Recent and completed"
     - region "Needs You":
       - heading "Needs You" [level=#]
       - paragraph: Nothing is waiting on you.

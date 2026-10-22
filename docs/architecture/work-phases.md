@@ -177,7 +177,7 @@ worker's turn ending under the hold included, and runs again once the switch is 
 | `complete` | `done` | Done |
 | `failed` | `error` | Stopped: its error |
 | `stopped` | `done` | Stopped |
-| held (running, while incident mode holds it) | `queued` | Held: incident mode is on |
+| held (running, while incident mode holds it) | `queued` | Held until incident mode is off |
 | ended early (complete at a ceiling, not its goal) | `error` | Ended early |
 
 **A workflow run** says the phase of its status, a `tool` for each step it starts (named as its
@@ -198,7 +198,7 @@ run's publisher says it is held, and that it carries on (`workflows/incident_hol
 | `failed`, `escalated` | `error` | Stopped: its error |
 | `cancelled` | `done` | Stopped |
 | `declined` | `done` | the decline's own sentence |
-| held (running, while incident mode holds it) | `queued` | Held: incident mode is on |
+| held (running, while incident mode holds it) | `queued` | Held until incident mode is off |
 
 ## Liveness
 

@@ -396,7 +396,7 @@ async def test_a_loop_incident_mode_holds_is_blocked_and_says_held(tmp_path):
         (row,) = (await _read(w.state))["running"]
     assert (row["phase"], row["line"], row["blocked"]) == (
         "queued",
-        "Held: incident mode is on",
+        "Held until incident mode is off",
         True,
     )
 

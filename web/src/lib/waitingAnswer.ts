@@ -118,3 +118,39 @@ export function waitingAnswerId(item: WaitingItem): string {
   const m = re ? re.exec(path) : null
   return m ? segment(m[1]) : ''
 }
+
+/** Where a free-text ask takes a typed line, read off its own route as `waitingQuestion` reads a
+ *  gate's: a run's gate that asks for text (answered through its resume token), a loop's question
+ *  (its nudge), or an agent's one question in a chat (its answer route, as your own words). */
+export type ReplyTarget =
+  | { kind: 'gate'; runId: string; resumeToken: string }
+  | { kind: 'loop'; loopId: string }
+  | { kind: 'question'; session: string; questionId: string }
+
+const LOOP_NUDGE = /^\/api\/loops\/([^/]+)\/nudge$/
+const CHAT_QUESTION = /^\/api\/chat\/sessions\/([^/]+)\/questions\/([^/]+)\/answer$/
+
+/** The reply a free-text ask takes, or null for one answered otherwise (a yes or a no, a choice, a
+ *  merge, a card of several questions) or whose route is not the shape its kind answers on. */
+export function waitingReply(item: WaitingItem): ReplyTarget | null {
+  const path = text(record(item.answer).path)
+  if (item.kind === 'gate') {
+    const q = waitingQuestion(item)
+    if (!q || q.approval || q.event || q.confirm || q.choices.length > 0) return null
+    return { kind: 'gate', runId: q.runId, resumeToken: q.resumeToken }
+  }
+  if (item.kind === 'loop_question') {
+    const m = LOOP_NUDGE.exec(path)
+    const loopId = m ? segment(m[1]) : ''
+    return loopId ? { kind: 'loop', loopId } : null
+  }
+  if (item.kind === 'question') {
+    const qs = record(item.brief).questions
+    if (!Array.isArray(qs) || qs.length !== 1) return null
+    const m = CHAT_QUESTION.exec(path)
+    const session = m ? segment(m[1]) : ''
+    const questionId = m ? segment(m[2]) : ''
+    return session && questionId ? { kind: 'question', session, questionId } : null
+  }
+  return null
+}
