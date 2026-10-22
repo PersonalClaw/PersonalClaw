@@ -207,6 +207,25 @@ the phase unchanged and `last_step_at` current, as a frame that carries data. A 
 whose model is silent still says it is running. It is one task per running turn
 (named `work_phase:<chat>`), cancelled where the turn's last frame is sent.
 
+## Retries and waits
+
+A retry and a wait on a busy local model are the turn's phase, said from the event that
+measured each and never from a timer:
+
+- **`retrying`**, with `retry: {attempt, of, next_at, reason}`: the native loop's retry of
+  a failed inference (`EVENT_RETRYING` before its backoff, with the provider's failure in
+  `humanize_provider_error`'s sentence, and again as the retry's call is made), its move
+  to the next model of the chain (the line is "Trying <model>", and the next model's
+  answer, `EVENT_MODEL_SUBSTITUTION`, ends it), and an agent CLI sent again after its
+  connection was lost before any step (until the resent turn starts). Live work, coral:
+  a retry is not a failure until it fails.
+- **`waiting_model`**, with `queue: {model, behind}`: the turn's call waits behind other
+  calls on a local model (`guardrails.local_queue`, whose waits count the calls `ahead`).
+  The queue says when a wait starts or ends (`handlers/model_waits.py`), and the chat goes
+  back to thinking when the model takes its call.
+
+Each field is set only in its phase, `null` otherwise.
+
 ## The routes serve the last frame
 
 `GET /api/chat/sessions` rows, `GET /api/chat/sessions/{session}` and the chats of

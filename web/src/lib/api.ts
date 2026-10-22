@@ -1521,6 +1521,11 @@ export interface RunState {
   last_outcome: 'complete' | 'stopped' | 'error' | 'interrupted' | null
   queued_messages: number
   seq: number
+  /** Set only in `retrying`: this attempt of how many, when it is made (`null` once it is, or for a
+   *  fail-over) and why the last one failed, in the provider's sentence. */
+  retry?: { attempt: number; of: number; next_at: string | null; reason: string } | null
+  /** Set only in `waiting_model`: the local model it waits for, and how many calls are ahead. */
+  queue?: { model: string; behind: number } | null
 }
 /** The kinds of live work (`workref.WORK_KINDS`). */
 export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | 'webhook'

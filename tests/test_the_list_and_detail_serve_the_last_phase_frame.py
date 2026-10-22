@@ -54,6 +54,8 @@ def idle(key: str) -> dict:
         "last_outcome": None,
         "queued_messages": 0,
         "seq": 0,
+        "retry": None,
+        "queue": None,
     }
 
 

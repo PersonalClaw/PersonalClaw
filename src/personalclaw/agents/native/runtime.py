@@ -82,6 +82,7 @@ from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_MODEL_SUBSTITUTION,
     EVENT_PERMISSION_REQUEST,
+    EVENT_RETRYING,
     EVENT_SPENT,
     EVENT_STEER,
     EVENT_TEXT_CHUNK,
@@ -1196,6 +1197,17 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             ):
                                 raise
                             fallbacks += 1
+                            # Said while the next model is asked, as the measured event it is.
+                            attempt = 1 + int(inference_retried) + fallbacks
+                            yield AgentEvent(
+                                kind=EVENT_RETRYING,
+                                tool_meta={
+                                    "attempt": attempt,
+                                    "of": attempt + (1 if self._fallback.next_ref() else 0),
+                                    "model": self.served_model_ref.partition(":")[2]
+                                    or self.served_model_ref,
+                                },
+                            )
                             # The fallback's own cache mode, and the history without the
                             # correction note the failed model's retry was given.
                             mode = effective_cache_mode(
@@ -1222,7 +1234,21 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                                 *msgs,
                                 {"role": "user", "content": note, VOLATILE_KEY: True},
                             ]
+                        # Said before the backoff and again as the retry's call is made, so a
+                        # surface shows the retry from what was measured, never from a timer.
+                        yield AgentEvent(
+                            kind=EVENT_RETRYING,
+                            tool_meta={
+                                "attempt": 2,
+                                "of": 2,
+                                "next_in": _INFERENCE_RETRY_BACKOFF_SECS,
+                                "error": exc,
+                            },
+                        )
                         await asyncio.sleep(_INFERENCE_RETRY_BACKOFF_SECS)
+                        yield AgentEvent(
+                            kind=EVENT_RETRYING, tool_meta={"attempt": 2, "of": 2, "started": True}
+                        )
                         assistant_text = ""
                         usage = None
                         continue

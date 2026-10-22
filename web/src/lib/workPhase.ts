@@ -134,6 +134,7 @@ export function idleRunState(session: string): RunState {
   return {
     work: `chat:${session}`, session, kind: 'chat', phase: 'idle', line: '', since: null, turn: null,
     last_step_at: null, stopping: false, steerable: false, last_outcome: null, queued_messages: 0, seq: 0,
+    retry: null, queue: null,
   }
 }
 

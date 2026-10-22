@@ -35,6 +35,8 @@ pytestmark = pytest.mark.asyncio
 #: The event a fallback's sentence arrives in (``llm.events.EVENT_MODEL_SUBSTITUTION``), spelled out
 #: so this file collects on a tree that does not have it yet.
 SUBSTITUTION = "model_substitution"
+#: The retry the loop makes and the next model it asks, said as they happen (#3833).
+RETRYING = "retrying"
 
 DOWN, DOWN_REF = "down-oai", "down-oai:down-1"
 UP, UP_REF = "up-oai", "up-oai:up-1"
@@ -142,8 +144,9 @@ async def _runtime(*, agent: str | None = None, announce: bool = True):
     return rt
 
 
-async def _turn(rt, message: str = "Name a colour.") -> list[LLMEvent]:
-    return [ev async for ev in rt.stream(message)]
+async def _turn(rt, message: str = "Name a colour.", *, retries: bool = False) -> list[LLMEvent]:
+    """The turn's events; with *retries*, the retry events the loop says as it retries too."""
+    return [ev async for ev in rt.stream(message) if retries or ev.kind != RETRYING]
 
 
 def _agent(name: str, model: str) -> None:
@@ -163,10 +166,21 @@ async def test_a_turn_whose_model_fails_before_it_replies_is_answered_by_the_nex
     world.failures[DOWN] = RuntimeError(OVERLOADED)
     rt = await _runtime()
     try:
-        events = await _turn(rt)
+        everything = await _turn(rt, retries=True)
     except Exception as exc:  # noqa: BLE001 — the defect IS the raise
         pytest.fail(f"the turn failed instead of falling back to {UP_REF}: {exc!r}")
 
+    # The retry on the same model, said pending (with why) and started, then the next model asked.
+    retries = [ev.tool_meta for ev in everything if ev.kind == RETRYING]
+    assert [r.get("started") or bool(r.get("model")) or "next_in" in r for r in retries] == [
+        True,
+        True,
+        True,
+    ]
+    assert retries[0]["attempt"] == 2 and isinstance(retries[0]["error"], RuntimeError)
+    assert retries[1] == {"attempt": 2, "of": 2, "started": True}
+    assert retries[2]["model"] == UP_REF.partition(":")[2] and retries[2]["attempt"] == 3
+    events = [ev for ev in everything if ev.kind != RETRYING]
     kinds = [ev.kind for ev in events]
     assert kinds == [SUBSTITUTION, EVENT_TEXT_CHUNK, EVENT_COMPLETE], kinds
     assert events[0].text == (
