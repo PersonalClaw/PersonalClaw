@@ -5,7 +5,7 @@ import {
   ArrowLeft, X, Check, MessageSquarePlus,
   Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle, Repeat,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -21,6 +21,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Spark } from '../../ui/Spark'
 import { Markdown } from '../../ui/Markdown'
 import { SidePanel } from '../../ui/SidePanel'
+import { PaneHost } from '../../ui/PaneHost'
 import { Modal } from '../../ui/Modal'
 import { thinkingGlow } from '../../design/gradients'
 import { duration, spring, physics, messageEnter } from '../../design/motion'
@@ -57,6 +58,9 @@ import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, type LoopRuntime } from '../loop/loopRuntime'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
+/** A cycle's detail reads as a column of prose and checks, so its pane starts narrower than a plan's. */
+const CYCLE_PANE = { def: 480, min: 360, max: 900 }
+
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
   if (!raw) return null
   if (raw === 'log') return { kind: 'log' }
@@ -205,6 +209,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const railOpen = q.details === '1'
   const setRailOpen = (v: boolean) => sq(v ? { details: '1' } : { details: null, sel: null })
   const selected = parseSel(q.sel)
+  // A cycle opens in the pane beside the thread (#3824, the pane host #3821 made), and the rail keeps
+  // its list with that cycle marked; the Findings Log and the returns per cycle open in the rail.
+  const drill = selected && selected.kind !== 'cycle' ? selected : null
+  const cycleSel = railOpen && selected?.kind === 'cycle' ? selected.cycle : null
   const setSelected = (s: { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null) =>
     sq({ sel: !s ? null : s.kind === 'cycle' ? `cycle-${s.cycle}` : s.kind })
   // View surfaces are URL-backed (push, Back closes; refresh/deep-link reopens):
@@ -537,6 +545,28 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // a spend cap paused it.
   const question = c.pending_question ?? null
 
+  // The cycle open beside the thread: what it found, its check and verdict, the nudges it took and,
+  // for the cycle under way, what it is doing. Closing the pane clears `?sel` and stops nothing.
+  const cycleFinding = cycleSel == null ? undefined : findings.find((x) => x.cycle === cycleSel)
+  const cyclePane = cycleSel == null ? null : {
+    id: `cycle-${cycleSel}`, title: `Cycle ${cycleSel}`, label: 'cycle', icon: Repeat, onClose: () => setSelected(null),
+    body: (
+      <div tabIndex={0} role="group" aria-label="The cycle, beside the loop" className="min-h-0 flex-1 overflow-auto px-l py-m focus-visible:-outline-offset-2">
+        {!cycleFinding
+          ? <p data-type="body-s" className="text-on-surface-low">Cycle not found.</p>
+          : (<>
+            {/* Investigate: "what happened on this cycle?" — the finding, its judge verdict, and
+                any nudge, in run context. */}
+            <div className="mb-s flex justify-end">
+              <InvestigateButton kind="loop_cycle" id={`${c.id}:${cycleFinding.cycle}`} backLink={`#/loops/${c.id}`} size={28} />
+            </div>
+            <CycleDetail f={cycleFinding} verdict={verdictByCycle.get(cycleFinding.cycle)} nudges={byCycle.get(cycleFinding.cycle) ?? []}
+              activity={running && c.total_cycles === cycleFinding.cycle ? activity : []} />
+          </>)}
+      </div>
+    ),
+  }
+
   async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
     // 🪤 This used to be `.catch(() => null)`, so every failure was invisible: on a deleted loop
     // the buttons stayed live and each click did nothing, with no way to learn why. The sibling
@@ -760,6 +790,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
 
       <div className="flex-1 min-h-0 flex">
        {/* main column (body); narrows when the Details rail opens */}
+       {/* The thread, with a cycle's detail in the pane beside it (#3824). */}
+       <PaneHost surface="loop-cycle" size={CYCLE_PANE} pane={cyclePane}>
        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
         <div className="shrink-0 px-2xl pt-m pb-m flex flex-col gap-m" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
           {/* Prompt bar — a second, expandable status bar: COLLAPSED shows
@@ -927,21 +959,23 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           )}
         </div>
        </div>
+       </PaneHost>
 
-       {/* ── Details rail: primary list (Findings Log + cycles) → detail in-place ── */}
+       {/* ── Details rail: primary list (Findings Log + cycles; a cycle opens in the pane beside the
+           thread) → the log and the returns per cycle in place ── */}
        <AnimatePresence>
          {railOpen && (
            <SidePanel
              key="details"
              storeKey="loop-rail-w"
              fillHeight
-             icon={selected
+             icon={drill
                ? <SquareIconButton icon={ArrowLeft} iconSize={16} label="Back to list" onClick={() => setSelected(null)} />
                : <PanelRight size={18} />}
-             title={selected == null ? 'Details' : selected.kind === 'log' ? 'Findings Log' : selected.kind === 'roi' ? 'Returns per cycle' : `Cycle ${selected.cycle}`}
+             title={drill == null ? 'Details' : drill.kind === 'log' ? 'Findings Log' : 'Returns per cycle'}
              onClose={() => { setRailOpen(false); setSelected(null) }}
            >
-             {selected == null ? (
+             {drill == null ? (
                // ── primary list: Findings Log first, then cycles (newest first) ──
                <div className="flex flex-col gap-1">
                  <RailRow
@@ -978,7 +1012,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                      const ti = sorted.indexOf(f.ts ?? -1)
                      const prev = ti > 0 ? sorted[ti - 1] : c.started_at ?? undefined
                      const dur = f.ts != null && prev != null ? f.ts - prev : undefined
-                     return <CycleNode key={f.cycle} f={f} verdict={verdictByCycle.get(f.cycle)} dur={dur} hasNudge={!!byCycle.get(f.cycle)?.length} onClick={() => setSelected({ kind: 'cycle', cycle: f.cycle })} delay={idx * 0.02} />
+                     return <CycleNode key={f.cycle} f={f} verdict={verdictByCycle.get(f.cycle)} dur={dur} hasNudge={!!byCycle.get(f.cycle)?.length} current={cycleSel === f.cycle} onClick={() => setSelected({ kind: 'cycle', cycle: f.cycle })} delay={idx * 0.02} />
                    }
                    // The in-progress cycle indicator (pulsing for running). For a
                    // plan it renders INSIDE the active phase group (not as a
@@ -1028,15 +1062,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                </div>
              ) : (
                // ── drilled-in detail: full rail height (Back returns to list) ──
-               selected.kind === 'roi'
+               drill.kind === 'roi'
                  ? (<div className="flex flex-col gap-m">
                      <p data-type="body-s" className="text-on-surface-var">The judge's marginal value per cycle, against your <span className="text-on-surface">{c.granularity}</span> stop threshold. A run of bars below the line is what trips the auto-stop.</p>
                      <div className="rounded-lg bg-surface-container px-m py-l">
                        <RoiRail points={roiPoints} granularity={c.granularity} />
                      </div>
                    </div>)
-                 : selected.kind === 'log'
-                 ? (log
+                 : (log
                    ? (<div className="flex flex-col gap-m">
                        <div className="flex justify-end">
                          <QuietButton onClick={() => downloadText(`${safeFilename(c.name || c.goal, c.id)}-findings.md`, log, 'text/markdown;charset=utf-8')}><Download size={13} /> Download</QuietButton>
@@ -1044,19 +1077,6 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                        <Markdown>{log}</Markdown>
                      </div>)
                    : <p data-type="body-s" className="text-on-surface-low">No findings logged yet — the cumulative trail appears here as cycles complete.</p>)
-                 : (() => {
-                     const f = findings.find((x) => x.cycle === selected.cycle)
-                     if (!f) return <p data-type="body-s" className="text-on-surface-low">Cycle not found.</p>
-                     return (<>
-                       {/* Investigate: "what happened on this cycle?" —
-                           the finding, its judge verdict, and any nudge, in run context. */}
-                       <div className="mb-s flex justify-end">
-                         <InvestigateButton kind="loop_cycle" id={`${c.id}:${f.cycle}`}
-                           backLink={`#/loops/${c.id}`} size={28} />
-                       </div>
-                       <CycleDetail f={f} verdict={verdictByCycle.get(f.cycle)} nudges={byCycle.get(f.cycle) ?? []} activity={running && c.total_cycles === f.cycle ? activity : []} />
-                     </>)
-                   })()
              )}
            </SidePanel>
          )}
@@ -1422,10 +1442,11 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
   )
 }
 
-function CycleNode({ f, verdict, dur, hasNudge, onClick, delay }: { f: LoopFinding; verdict?: LoopVerdict; dur?: number; hasNudge: boolean; onClick: () => void; delay: number }) {
+function CycleNode({ f, verdict, dur, hasNudge, current = false, onClick, delay }: { f: LoopFinding; verdict?: LoopVerdict; dur?: number; hasNudge: boolean; current?: boolean; onClick: () => void; delay: number }) {
   return (
     <motion.button initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay }} onClick={onClick}
-      className="group w-full text-left rounded-lg bg-surface-container px-m py-m hover:bg-surface-high transition-colors">
+      aria-current={current ? 'true' : undefined}
+      className={`group w-full text-left rounded-lg px-m py-m hover:bg-surface-high transition-colors ${current ? 'bg-surface-high' : 'bg-surface-container'}`}>
       <div className="flex items-center gap-s">
         <span data-type="caption" className="shrink-0 inline-flex items-center justify-center size-5 rounded-pill tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-on-surface)' }}>{f.cycle}</span>
         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
