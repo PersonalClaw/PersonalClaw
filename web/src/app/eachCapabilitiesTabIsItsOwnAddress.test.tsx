@@ -295,7 +295,6 @@ const DESTINATIONS = [
   ['Chat', 'chat'],
   ['Projects', 'projects'],
   ['Library', 'library'],
-  ['Tasks', 'tasks'],
   ['Inbox', 'inbox'],
   ['Triggers', 'triggers'],
   ['Terminal', 'terminal'],

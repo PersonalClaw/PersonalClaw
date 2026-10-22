@@ -169,6 +169,9 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
 
   // ── Projects ──────────────────────────────────────────────────────────────────────────────────
   { route: `projects/${S.project}`, from: ['documented'] },
+  // A project's Tasks view (#3818), the task list and board held to it, with #/tasks's keys.
+  { route: `projects/${S.project}?tab=tasks`, from: ['documented'] },
+  { route: `projects/${S.project}?tab=tasks&view=board`, from: ['documented'] },
 
   // ── Knowledge ─────────────────────────────────────────────────────────────────────────────────
   { route: 'knowledge/new', from: ['documented'] },

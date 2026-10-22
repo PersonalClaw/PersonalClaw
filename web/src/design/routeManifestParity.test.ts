@@ -115,8 +115,8 @@ function routableExtras(): string[] {
 describe('e2e route manifest vs NAV', () => {
   it('parses both lists (guards against a silently-empty sweep)', () => {
     // A regex that stops matching would make every assertion below vacuously true.
-    expect(navIds().length).toBeGreaterThan(10)
-    expect(manifestRoutes().length).toBeGreaterThan(10)
+    expect(navIds().length).toBeGreaterThan(8)
+    expect(manifestRoutes().length).toBeGreaterThan(8)
   })
 
   it('covers every nav route', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -90,7 +90,7 @@ const _dueTs = (t: TaskItem) => { const v = t.due ? parseDueDate(t.due) : NaN; r
 const _updTs = (t: TaskItem) => Date.parse(t.updated_at || t.created_at || '') || 0
 
 export function TasksListPage({ onCreate, view: viewProp, filter, openId, setView, setFilter, setOpenId,
-  editing, setEditing,
+  editing, setEditing, inProject,
   q: qProp, sort: sortProp, scope: scopeProp, list: listProp, tag: tagProp, setQ, setSort, setScope, setList, setTag }: {
   onCreate: () => void
   view: string; filter: string; openId: string | null
@@ -99,6 +99,16 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   q: string; sort: string; scope: string; list: string; tag: string
   setQ: (v: string) => void; setSort: (v: string) => void; setScope: (v: string) => void; setList: (v: string) => void
   setTag: (v: string) => void
+  /** The project whose Tasks view this is (#3818): its tasks alone, under its own header. The scope
+   *  is the project, so the Scope filter goes, and the scope All tasks remembers is left as it is. */
+  inProject?: {
+    /** The project's name, the scope its tasks carry. */
+    name: string
+    /** The header's left side: the project's title and its view switch. */
+    title: ReactNode
+    /** Controls beside the page's own, at the header's right. */
+    actions?: ReactNode
+  }
 }) {
   // The list is cache-backed for instant paint on revisit (persist:false — task
   // status is live, must not be stale across a reload), but a LOCAL mirror is kept
@@ -157,7 +167,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // The remembered value is held in REACT STATE, seeded once from the store, rather than read from
   // localStorage during render. That distinction is load-bearing — see chooseScope below.
   const [storedScope, setStoredScope] = useState(() => localStorage.getItem(SCOPE_KEY) ?? SCOPE_ALL)
-  const scope = scopeProp || storedScope
+  const scope = inProject ? inProject.name : scopeProp || storedScope
   // Tag filter: one of the task's `labels`, or TAG_ANY. URL-only (see TAG_ANY).
   const tagFilter = tagProp || TAG_ANY
   //
@@ -252,7 +262,11 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // Persist a scope that arrived from the URL (a deep link / a shared link), and keep the
   // remembered value in step with it so a later bare route and a later reload agree on what the
   // last-used scope was. Converges in one pass: once `storedScope === scope` this is a no-op.
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, scope); setStoredScope(scope) }, [scope])
+  const inAProject = inProject !== undefined
+  useEffect(() => {
+    if (inAProject) return
+    localStorage.setItem(SCOPE_KEY, scope); setStoredScope(scope)
+  }, [scope, inAProject])
   // Clearing the scope (or moving off a single project) drops the list sub-filter.
   // Guard on listProp so it only writes when there's actually a ?list to clear
   // (else it would setQuery every render while unscoped — a no-op churn).
@@ -361,7 +375,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     const tagCounts = new Map<string, number>()
     for (const t of tasks ?? []) for (const l of t.labels ?? []) tagCounts.set(l, (tagCounts.get(l) ?? 0) + 1)
 
-    const sections: FilterSectionDef[] = [{
+    const sections: FilterSectionDef[] = inAProject ? [] : [{
       title: 'Scope', value: scope, defaultKey: SCOPE_ALL, onChange: chooseScope,
       options: [
         { key: SCOPE_ALL, label: 'All tasks', icon: ListChecks, count: tasks?.length },
@@ -403,7 +417,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
     return sections
-  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter])
+  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject])
 
   const filtered = useMemo(() => {
     let base: TaskItem[] | null
@@ -514,7 +528,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       topBar={
         <TopBar
           keepCornerPadding
-          left={<PageTitle>Tasks</PageTitle>}
+          left={inProject ? inProject.title : <PageTitle>All tasks</PageTitle>}
           right={
             // Header keeps only structural controls — the view switcher + the primary
             // action, in the 4-tier cluster so they degrade together (view icon+label →
@@ -524,6 +538,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               <HeaderSegmented ariaLabel="View" value={view} onChange={(v) => setView(v as ViewMode)}
                 options={[{ key: 'list', label: 'List view', icon: List }, { key: 'cards', label: 'Cards view', icon: LayoutGrid }, { key: 'board', label: 'Kanban board', icon: Columns3 }, { key: 'dag', label: 'Dependency graph', icon: GitFork }]} />
               <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />
+              {inProject?.actions}
             </HeaderActions>
           }
         />
