@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { electronCommand, electronTier, electronUnavailable } = require("./helpers/electronHost");
+const { electronCommand, electronTier, electronUnavailable, launchDetail } = require("./helpers/electronHost");
 
 // ── The buddy answers in a real Electron only for the owner's click or focused key (#3832) ──────
 //
@@ -41,7 +41,7 @@ function probe() {
   const { command, args } = electronCommand([path.join(__dirname, "helpers", "buddyAnswerProbe.js")]);
   const res = spawnSync(command, args, { timeout: 90_000, encoding: "utf8", env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "1" } });
   const line = (res.stdout || "").split("\n").find((l) => l.startsWith("PC_PROBE "));
-  if (!line) return { launchFailed: true, detail: `status=${res.status} signal=${res.signal} stderr=${(res.stderr || "").slice(-400)}` };
+  if (!line) return { launchFailed: true, detail: launchDetail(res) };
   return JSON.parse(line.slice("PC_PROBE ".length));
 }
 

@@ -24,6 +24,7 @@
 
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
+const { contentProtection } = require("./electronHost");
 
 const PAGE = process.env.PC_PROBE_PAGE === "ticks" ? "ticks" : "root";
 const IDLE_MS = Number(process.env.PC_PROBE_IDLE_MS) > 0 ? Number(process.env.PC_PROBE_IDLE_MS) : 60_000;
@@ -79,7 +80,7 @@ app.whenReady().then(async () => {
       focused: win.isFocused(),
       focusedWindowIsBuddy: BrowserWindow.getFocusedWindow() === win,
       alwaysOnTop: win.isAlwaysOnTop(),
-      contentProtected: typeof win.isContentProtected === "function" ? win.isContentProtected() : null,
+      contentProtected: contentProtection(win),
       documentHidden: await page("document.hidden"),
       frames: await page("window.__pcCounts.frames"),
     };

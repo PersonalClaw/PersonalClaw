@@ -662,7 +662,7 @@ id = "web-unit"
 tiers = ["change", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
-toolchain = ["node", "npm-ci"]
+toolchain = ["node", "npm-ci", "electron"]
 cache = ["npm"]
 security = "ordinary"
 reuse = "tree"
@@ -676,7 +676,7 @@ command = [
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },
   { argv = ["npm", "run", "design:detect"] },
-  { argv = ["npm", "run", "test:desktop"] },
+  { argv = ["npm", "run", "test:desktop"], env = { PCLAW_REQUIRE_ELECTRON = "1" } },
   { argv = ["npm", "run", "test:mobile"] },
 ]
 
