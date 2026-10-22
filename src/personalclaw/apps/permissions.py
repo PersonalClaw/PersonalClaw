@@ -830,6 +830,9 @@ _TURN_IN_OWN_CHAT = (
 _SETS_OWN_CHAT = "changes a conversation the app started"
 _STOPS_OWN_CHAT = "stops a turn in a conversation the app started"
 _ORGANISES_CHATS = "organising your chats — the folders, tags and board columns are yours"
+_SEES_CHATS = (
+    "how far you have read your chats — an app marking one seen would clear a mark you never saw"
+)
 _CHAT_TEMPLATES = (
     "the session templates your new chats start from — their agent, model and first message"
 )
@@ -1611,6 +1614,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         agent_work=AGENT_TEXT,
     ),
     "POST /api/chat/folders": OwnerOnly(_ORGANISES_CHATS),
+    "POST /api/chat/seen": OwnerOnly(_SEES_CHATS),
+    "POST /api/chat/sessions/{session}/seen": OwnerOnly(_SEES_CHATS),
     "PATCH /api/chat/folders/{id}": OwnerOnly(_ORGANISES_CHATS),
     "DELETE /api/chat/folders/{id}": OwnerOnly(_ORGANISES_CHATS),
     "POST /api/chat/tags": OwnerOnly(_ORGANISES_CHATS),

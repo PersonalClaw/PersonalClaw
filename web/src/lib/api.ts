@@ -1658,7 +1658,16 @@ export interface ChatSessionSummary {
    *  app's id; `created_by_app_name` is the name install consent showed you, which a history
    *  row prints as "Started by …". */
   created_by_app?: string; created_by_app_name?: string
+  /** What the row says needs your attention, derived by the gateway on every read
+   *  (`chat_seen_routes.attention`). Absent from an older gateway. */
+  attention?: ChatAttention
 }
+/** A chat's attention, from the gateway's record of how far you have seen it (`chat_seen`) and
+ *  what waits on you in it: `unread`, its last turn ended after you last saw it (a turn you
+ *  stopped never makes it unread); `needs_you`, something waiting on you is shown in it, its own or
+ *  a helper's it started (seeing it never clears this); `your_turn`, nothing runs or waits there
+ *  and its last turn ended in a reply. */
+export interface ChatAttention { unread: boolean; needs_you: boolean; your_turn: boolean }
 /** The two fields that say which app started a conversation, as the list and the detail send
  *  them. */
 export type AppStarted = Pick<ChatSessionSummary, 'created_by_app' | 'created_by_app_name'>
@@ -9168,6 +9177,13 @@ export const api = {
   // sessions
   chatSessions: (archived = false) =>
     get<ChatSessionSummary[]>(`/api/chat/sessions${archived ? '?archived=1' : ''}`),
+  /** You have seen the chat through `through` (now when omitted): its unread mark clears on every
+   *  window. Monotonic: an older instant changes nothing. */
+  markChatSeen: (session: string, through?: string) =>
+    post<{ ok: boolean; moved: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/seen`, through ? { through } : {}),
+  /** You have seen every chat through `through` (now when omitted): every unread mark clears. */
+  markAllChatsSeen: (through?: string) =>
+    post<{ ok: boolean; moved: boolean }>('/api/chat/seen', through ? { through } : {}),
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
 
   // ── Agent Rooms ──

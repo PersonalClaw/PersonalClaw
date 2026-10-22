@@ -716,6 +716,19 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[str]]:
     return live, list(dict.fromkeys(unreadable))
 
 
+def chats_waiting(snap: Snapshot) -> set[str]:
+    """The chats something waiting on you is shown in (each item's ``session``): an approval, a
+    helper's among them (shown in the chat that started it), a question and a chat's plan step.
+    The other kinds belong to work no chat started. Call off the event loop: a chat's plan is a
+    file."""
+    now = _now()
+    items = _approvals(snap.approvals, snap.window, now) + _questions(
+        snap.questions, snap.window, now
+    )
+    items += _taken("plan_review", lambda: _chat_plans(now), [], [])
+    return {str(i["session"]) for i in items if i["session"] and i["current"]}
+
+
 # ── who reads what ───────────────────────────────────────────────────────────────────────────
 
 

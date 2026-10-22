@@ -41,8 +41,8 @@ export const NO_PROJECT = ''
  *  changes the layout it opens in, never the project it sits under. */
 export type ThreadKind = 'chat' | 'loop' | 'code'
 
-/** The one static marker a row can show. `null` when nothing waits, runs or failed. */
-export type ThreadPip = 'waiting' | 'running' | 'failed'
+/** The one static marker a row can show. `null` when nothing waits, runs, failed or is unread. */
+export type ThreadPip = 'waiting' | 'running' | 'failed' | 'unread'
 
 export interface Thread {
   /** Unique across kinds: `chat:<key>` or `loop:<id>`. */
@@ -56,6 +56,9 @@ export interface Thread {
   /** The route that opens it, without the leading `#/`. */
   route: string
   pip: ThreadPip | null
+  /** Who its pip says waits on you, when that is not the chat's own agent: "A helper is waiting
+   *  for your approval: …". Absent otherwise. */
+  pipNote?: string
   /** The owner pinned it. Only a chat can be pinned; a loop never is. */
   pinned: boolean
   /** When it last did something, in epoch ms, 0 when nothing says. A chat's is its list row's
@@ -72,7 +75,7 @@ export interface ProjectThreads {
 }
 
 /** The chat list's fields the join reads. */
-export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned'>
+export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention'>
 /** The loop list's fields the join reads. */
 export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at'>>
 
@@ -94,11 +97,28 @@ const PIP_OF_LANE: Record<Lane, ThreadPip | null> = {
 }
 
 /** Precedence when one thread's work sits in more than one place: waiting outranks running, which
- *  outranks failed. */
-const RANK: Record<ThreadPip, number> = { waiting: 3, running: 2, failed: 1 }
+ *  outranks failed, which outranks unread. */
+const RANK: Record<ThreadPip, number> = { waiting: 4, running: 3, failed: 2, unread: 1 }
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
+}
+
+/** A helper's approval (`subagent.spawn_approval_id`, `subagent.tool_approval_id`): the ask to
+ *  start one, or one of its tool calls. */
+function isHelpersAsk(id: string): boolean {
+  return id.startsWith('spawn:') || id.startsWith('subagent:')
+}
+
+/** What a chat's own row says of it (`attention`, the gateway's): waiting on you, else failed or
+ *  unread while you have not seen how its last turn ended. A failed chat you have seen shows
+ *  nothing. Home's lanes can raise it (`toThreads`), never lower it. */
+function chatPip(s: ThreadChat): ThreadPip | null {
+  const a = s.attention
+  if (!a) return null
+  if (a.needs_you) return 'waiting'
+  if (!a.unread) return null
+  return s.run_state?.last_outcome === 'error' ? 'failed' : 'unread'
 }
 
 /** An epoch-seconds field of a loop row as ms, 0 when it holds no number. */
@@ -170,7 +190,7 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       title: sessionTitle(s),
       projectId: str(s.project_id),
       route: `chat/${encodeURIComponent(key)}`,
-      pip: null,
+      pip: chatPip(s),
       pinned: s.pinned === true,
       activeAt: sessionRecencyMs(s),
     })
@@ -212,6 +232,11 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
     const pip = PIP_OF_LANE[card.lane]
     const thread = pip ? byKey.get(threadOfCard(card)) : undefined
     if (thread && pip && (thread.pip === null || RANK[pip] > RANK[thread.pip])) thread.pip = pip
+    // A helper's ask waits in the chat that started it: its pip names the helper, so the owner
+    // knows it is not the chat's own agent asking.
+    if (thread && pip === 'waiting' && card.origin === 'approval' && isHelpersAsk(card.id)) {
+      thread.pipNote = `A helper is waiting for your approval: ${card.subtitle || card.title}`
+    }
   }
 
   const groups = new Map<string, Thread[]>()
@@ -252,6 +277,7 @@ function changesThreads(m: WsMessage): boolean {
   const type = m.type
   if (type === 'refresh') return refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs')
   return type === 'sessions' || type === 'work_phase' || type === 'approval' || type === 'approval_resolved'
+    || type === 'chat_seen' || type === 'waiting_changed'
     || type.startsWith('inbox')
 }
 

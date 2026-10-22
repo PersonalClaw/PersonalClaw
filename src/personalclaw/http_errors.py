@@ -1108,6 +1108,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_only": (
         "Only the owner answers an approval, in PersonalClaw or on their paired chat channel."
     ),
+    # A 403: how far a chat has been seen is the owner's to say (`chat_seen_routes`), never an
+    # app's token nor an agent's tool, which could clear a mark the owner has not seen.
+    "seen_owner_only": "Only you can mark a chat as seen.",
+    # A 409: the seen record (`chat_seen.json`) cannot be read, so it is kept as it is rather than
+    # overwritten; every finished reply reads unread until it is repaired.
+    "seen_unreadable": "The record of what you have seen cannot be read, so nothing was marked.",
     # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
     # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call
     # on this machine asks, so no switch may approve one without a person

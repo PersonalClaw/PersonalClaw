@@ -35,6 +35,7 @@ export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   waiting: { family: 'waiting', word: 'waiting on you' },
   running: { family: 'active', word: 'running' },
   failed: { family: 'blocked', word: 'failed' },
+  unread: { family: 'quiet', word: 'unread' },
 }
 
 /** Which groups the owner opened or closed, as stored: what the rail starts from, and what ⌘1 to ⌘9
@@ -317,7 +318,7 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
       type="button" onClick={() => onOpen(thread.route)}
       data-thread-key={thread.key}
       aria-label={pip ? `${thread.title}, ${pip.word}` : thread.title}
-      title={thread.title}
+      title={thread.pipNote ? `${thread.title} — ${thread.pipNote}` : thread.title}
       aria-current={selected ? 'page' : undefined}
       data-type="body-m"
       className={cx(

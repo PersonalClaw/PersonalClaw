@@ -137,8 +137,10 @@ const onlyReads = (name: string) => {
   const source = String(h.real[name])
   return /\bget\(/.test(source) && !/\b(post|put|patch|del|write)\(/.test(source)
 }
-/** The calls the page made that change something on the gateway, with their string arguments. */
-const writes = () => h.calls.filter(([name]) => !onlyReads(name)).map(([name, args]) => [name, args.filter((a) => typeof a === 'string')])
+/** The calls the page made that change something on the gateway, with their string arguments. The
+ *  chat marked seen while it is in front of you (`chat/useSeenWhileInView`) changes nothing about
+ *  how it runs, so it is none of them. */
+const writes = () => h.calls.filter(([name]) => !onlyReads(name) && name !== 'markChatSeen').map(([name, args]) => [name, args.filter((a) => typeof a === 'string')])
 const detail = (task_mode: string) => () => Promise.resolve({
   key: SESSION, title: SESSION, messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }],
   run_state: runState({ session: SESSION }), queue: [], task_mode, approval: 'normal', memory_mode: 'persistent',

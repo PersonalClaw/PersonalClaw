@@ -863,6 +863,22 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     if disk:
         await asyncio.to_thread(_merge_disk)
 
+    # What each row says needs your attention, derived on every read (`chat_seen_routes`): how far
+    # you have seen it, and whether something waiting on you is shown in it. An app reading its own
+    # chats is told nothing of when you read them.
+    from personalclaw import waiting
+    from personalclaw.dashboard.chat_seen_routes import attend
+
+    snap = waiting.taken(state)
+
+    def _attend() -> None:
+        try:
+            attend(out, waiting.chats_waiting(snap), yours=not request_app)
+        except Exception:  # noqa: BLE001 — a row with no attention still lists its chat
+            logger.warning("chat list: could not say what needs your attention", exc_info=True)
+
+    await asyncio.to_thread(_attend)
+
     return web.json_response(text=await asyncio.to_thread(json.dumps, out))
 
 
