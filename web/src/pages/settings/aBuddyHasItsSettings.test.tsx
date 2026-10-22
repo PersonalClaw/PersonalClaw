@@ -129,6 +129,47 @@ describe('what the buddy follows, shown and not set here', () => {
   })
 })
 
+describe('this computer\'s rows, in the desktop app only', () => {
+  afterEach(() => { delete (window as { pclawDesktop?: unknown }).pclawDesktop })
+  const shell = (place: 'docked' | 'floating', hidden: boolean) => {
+    const bridge = {
+      getPlace: vi.fn(() => Promise.resolve({ mode: place })),
+      resetPlace: vi.fn(() => Promise.resolve({ mode: 'docked' as const })),
+      getHideFromCapture: vi.fn(() => Promise.resolve(hidden)),
+      setHideFromCapture: vi.fn((on: boolean) => Promise.resolve(on)),
+    }
+    ;(window as { pclawDesktop?: unknown }).pclawDesktop = { buddy: bridge }
+    return bridge
+  }
+
+  it('a browser tab has none of them', async () => {
+    await mount()
+    expect(screen.queryByText('This computer')).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Hide from screen sharing and screenshots' })).toBeNull()
+  })
+
+  it('a floating buddy is docked from here, and the row says where it is now', async () => {
+    const bridge = shell('floating', true)
+    await mount()
+    expect(await screen.findByText('Floating')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Dock it' }))
+    expect(bridge.resetPlace).toHaveBeenCalled()
+    expect(await screen.findByText('Docked')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dock it' })).toBeNull()
+  })
+
+  it('screen capture is kept out by this computer\'s own switch', async () => {
+    const bridge = shell('docked', true)
+    await mount()
+    const keep = await screen.findByRole('switch', { name: 'Hide from screen sharing and screenshots' })
+    await waitFor(() => expect(keep).toHaveAttribute('aria-checked', 'true'))
+    fireEvent.click(keep)
+    expect(bridge.setHideFromCapture).toHaveBeenCalledWith(false)
+    await waitFor(() => expect(keep).toHaveAttribute('aria-checked', 'false'))
+    expect(patched.some(([p]) => p.includes('capture') || p.includes('place')), 'nothing of it goes to the gateway').toBe(false)
+  })
+})
+
 describe('the panel follows a change made anywhere', () => {
   it('reads the policy again when the owner\'s socket says it changed', async () => {
     await mount()

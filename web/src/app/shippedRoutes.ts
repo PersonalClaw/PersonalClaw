@@ -311,6 +311,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'settings/audit', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/chat', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/companion', from: ['documented'], since: 'v0.2.0' },
+  // Every buddy setting in one place (#3901).
+  { route: 'settings/buddy', from: ['documented'], since: UNRELEASED },
   { route: 'settings/design', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/devices', from: ['documented'], since: 'v0.2.0' },
   { route: 'settings/diagnostics', from: ['documented'], since: 'v0.1.0' },

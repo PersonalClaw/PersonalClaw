@@ -539,7 +539,10 @@ gateway (`buddy.*`, see the configuration reference), so every window and every 
 to it follows the same answer, `GET /api/buddy/policy`, and a change applies at once, with no
 restart. The page also shows what the buddy follows from elsewhere, without a second copy of it:
 whether your notifications are muted or in quiet hours (changed in Settings → Notifications), and
-whether your system asks for reduced motion (changed in its accessibility settings).
+whether your system asks for reduced motion (changed in its accessibility settings). In the desktop
+app, its **This computer** rows say where the buddy sits on this computer, dock a floating buddy,
+and choose whether screen sharing and screenshots see it; those two are this computer's own, kept by
+the app, not by the gateway.
 
 A look you choose in one window, its colour scheme, its dials or its personality, is the look of
 every open window at once, the buddy's included.
