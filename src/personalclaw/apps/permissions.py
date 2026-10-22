@@ -1357,6 +1357,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "DELETE /api/loops/{id}/kept-work/{task_id}": OwnerOnly(
         "discarding a loop's kept work from your repository"
     ),
+    "POST /api/loops/{id}/commit": OwnerOnly(
+        "committing a code session's changes in your workspace"
+    ),
     # ── spawn ──
     "POST /api/spawn": OwnerOnly(_STARTS_AGENT_WORK),
     "DELETE /api/spawn": AppMay(_STOPS_WORK),
