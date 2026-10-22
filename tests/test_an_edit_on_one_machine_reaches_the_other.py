@@ -178,11 +178,14 @@ RECORDS: dict[str, _Record] = {
 
 #: Every store a sync merges record by record, by id: each file of an entity directory, and each
 #: record of a store kept in one file. Read off the inventory, so a store added later is in here.
+#: A machine-local store never goes to the other machine (`test_what_stays_on_each_machine.py`
+#: holds that), so it has no edit to carry and is not here.
 MERGED_BY_ID = sorted(
     e.id
     for e in inv.INVENTORY
     if e.merge in (inv.MERGE_UNION_BY_ID, inv.MERGE_LWW)
     and (e.kind == inv.KIND_JSON_ENTITY_DIR or e.records is not None)
+    and not e.machine_local
 )
 
 

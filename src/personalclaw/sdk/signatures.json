@@ -406,6 +406,7 @@
     {"annotation": "LegibilityConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "legibility"},
     {"annotation": "AmbientConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "ambient"},
     {"annotation": "CompanionConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "companion"},
+    {"annotation": "BuddyConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "buddy"},
     {"annotation": "BrowseConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "browse"},
     {"annotation": "MobileConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "mobile"},
     {"annotation": "LocalModelsConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "local_models"},
