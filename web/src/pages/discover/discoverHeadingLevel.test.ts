@@ -106,7 +106,15 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     Identical shape to the three `workflows/` panels already beside it, which are its
     //     siblings on the same run-detail surface. Panel-level, correctly nested: the
     //     classification above still holds.
+    // 2026-10-22, re-done again:
+    //   · `chat/transcript/SourcesRow` JOINED it (#3820, #5125): "Sources" heads the list of links
+    //     an answer's own turn retrieved, a sub-heading inside that turn, not a page area.
+    //   · `ui/BuddyCard` JOINED it (#3893, #5116): the card's title names the card's own region
+    //     (`aria-labelledby`), inside the playground's stage and, later, the buddy's window.
+    //     Panel-level both. Whether each rung sits right under its surface's outline is the axe
+    //     heading-order pass's to measure per surface (#3941), not this file census's.
     expect(withH3.sort(), 'files still using h3').toEqual([
+      'pages/chat/transcript/SourcesRow.tsx',
       // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
       'pages/code/cockpit/tasks/TaskDetailView.tsx',
       'pages/settings/VoicePanel.tsx',
@@ -118,6 +126,7 @@ describe("Discover's area headings sit one rung under the page title", () => {
       'pages/workflows/WorkspacePanel.tsx',
       // `ui/Markdown` is the odd one and is CORRECT: it maps a `###` in authored content to an h3,
       // which is the tag that source asked for. It is not a page chrome decision at all.
+      'ui/BuddyCard.tsx',
       'ui/Markdown.tsx',
     ])
   })
