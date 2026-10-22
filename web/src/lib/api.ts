@@ -9644,6 +9644,9 @@ export const api = {
   /** Everything waiting on you (`waiting.py`): one list every surface reads, read again when a
    *  `waiting_changed` frame says it moved. Each item is answered at its own source's route. */
   waiting: () => get<WaitingList>('/api/waiting'),
+  /** Whether the microphone is live, as the desktop shell said it, and which capture sources hold
+   *  it (`handlers/listening.py`): read again when a `listening` frame says it changed. */
+  listening: () => get<{ on: boolean; sources: string[]; since: string | null }>('/api/listening'),
   resolveApproval: (id: string, action: 'approve' | 'reject') =>
     post<{ ok: boolean }>(`/api/approvals/${encodeURIComponent(id)}/${action}`, {}),
   // Content-free push. `pushStatus` carries the VAPID PUBLIC key

@@ -1,0 +1,22 @@
+- heading "Buddy" [level=#]
+- group "Buddy":
+  - banner:
+    - img "Needs your OK"
+    - heading "Buddy" [level=#]
+    - paragraph: "Approval needs your OK: Clear the build folder"
+  - group "Permission needed to run bash":
+    - alert: Permission needed
+    - text: bash
+    - group "Tool arguments": rm -rf build
+    - paragraph: Clear the build folder
+    - paragraph: From automation “Nightly”
+    - term: Waiting
+    - definition: #s
+    - button "Allow bash": Allow
+    - button "Deny bash": Deny
+  - region "In sight · #":
+    - heading "In sight · #" [level=#]
+    - paragraph: Nothing else is running.
+  - contentinfo:
+    - link "Open in PersonalClaw":
+      - /url: "#/mission-control"

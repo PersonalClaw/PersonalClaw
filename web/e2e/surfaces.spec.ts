@@ -182,6 +182,26 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     json: FIXED_WAITING,
     why: "the run's home has nothing waiting on you",
   }],
+  buddy: [{
+    url: /\/api\/waiting(\?.*)?$/,
+    // The same four, so the buddy shows the first of them, the destructive approval, expanded with
+    // its card and "+3 waiting". Its presence and its alerts are held by
+    // `src/lib/buddy/host.consent.test.ts` and `src/pages/buddy/buddyPresence.test.tsx`.
+    json: FIXED_WAITING,
+    why: "the run's home has nothing waiting on you",
+  }, {
+    url: /\/api\/running(\?.*)?$/,
+    // One chat at work, the approval's: the card's focused work.
+    json: {
+      running: [{
+        work: 'chat:e2e-s1', kind: 'chat', session: 'e2e-s1', phase: 'approval', line: 'Needs your OK to run bash',
+        since: '2026-11-02T11:58:00+00:00', name: 'Tidy the build', agent: '', started_at: '2026-11-02T11:57:00+00:00',
+        route: '#/chat/e2e-s1', blocked: false, waiting: ['e2e-ap-1'],
+      }],
+      finished: [],
+    },
+    why: "the run's home has nothing running",
+  }],
   companion: [{
     url: /\/api\/waiting(\?.*)?$/,
     // The same four, as the phone lists them first. Its behavior is held by

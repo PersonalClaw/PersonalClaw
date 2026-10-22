@@ -126,7 +126,7 @@ const NAV: NavItem[] = [
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control', 'triggers', 'workflows'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
- *  `#/onboarding`, `#/companion` and the buddy playground, `#/buddy/playground`. Deliberately
+ *  `#/onboarding`, `#/companion`, and the buddy (`#/buddy`, and its playground `#/buddy/playground`). Deliberately
  *  outside `NAV`/`ROUTABLE` (none is a rail destination) and every bit as real as the ones inside
  *  it.
  *
@@ -738,9 +738,10 @@ function AppInner() {
     )
   }
 
-  // `#/buddy/playground` — the buddy playground (#3892), full-screen with no NavRail, like
-  // `#/companion`: the owner plays the buddy's state machine and orb with made-up inputs, and the
-  // page reaches nothing on the gateway. Reachable by its address only, in every build.
+  // `#/buddy` — the buddy's live presence (#3832), what the buddy window shows, and
+  // `#/buddy/playground`, the playground (#3892): full-screen with no NavRail, like `#/companion`,
+  // and reachable by their address only, in every build. `buddyRoute.ts` chooses between them, for
+  // this shell and the buddy's own window alike.
   if (route === 'buddy') {
     return (
       <>

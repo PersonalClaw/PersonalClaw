@@ -113,6 +113,12 @@ envelope.
 A socket reopening after a drop forces a full catch-up refetch; a visibility-gated
 60 s poll covers the rest.
 
+The buddy's presence (`#/buddy`, `web/src/lib/buddy/host.ts`) reads the same way:
+`running_changed`, `waiting_changed` and `listening` each ring one read of the running list,
+the waiting list and whether the microphone is live, a burst in one turn of the event loop is
+one read, and no field is read off the frame. Its machine's inputs are those levels, diffed
+against what it last showed.
+
 Why it matters: envelope shapes drift per producer, several producers emit the same
 type with different fields, and a stale process can emit a contradicting one. A surface
 that renders envelope payloads renders whichever producer spoke last.

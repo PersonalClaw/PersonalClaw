@@ -154,3 +154,14 @@ export function waitingReply(item: WaitingItem): ReplyTarget | null {
   }
   return null
 }
+
+/** The chat and the question an agent's question is answered by, read off its own route as
+ *  `waitingAnswerId` reads an approval's. `null` for an item of another kind, or whose route is not
+ *  the shape a question answers on. */
+export function waitingQuestionRef(item: WaitingItem): { session: string; question: string } | null {
+  if (item.kind !== 'question') return null
+  const m = CHAT_QUESTION.exec(text(record(item.answer).path))
+  const session = m ? segment(m[1]) : ''
+  const question = m ? segment(m[2]) : ''
+  return session && question ? { session, question } : null
+}
