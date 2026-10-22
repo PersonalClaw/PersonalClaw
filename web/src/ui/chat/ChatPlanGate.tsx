@@ -8,6 +8,7 @@ import { Markdown } from '../Markdown'
 import { StaleWriteNotice } from '../StaleWriteNotice'
 import { api, type PlanStep, type TaskMode } from '../../lib/api'
 import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useKeptDraft } from '../../lib/useKeptDraft'
 import { useLatestRead } from '../../lib/useLatestRead'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -103,7 +104,6 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   // Whether approving the step on screen completes the plan: every other step is approved. Only
   // then can the plan run in a fresh chat, which runs the whole of it.
   const [completes, setCompletes] = useState(false)
-  const [comment, setComment] = useState('')
   const [editText, setEditText] = useState<string | null>(null)
   const commentFieldId = useId()
   const editFieldId = useId()
@@ -136,8 +136,11 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
     },
     () => { setStep(null); setAwaiting('') },
   )
-  // A new draft replaces whatever was being written about the old one.
-  useEffect(() => { setComment(''); setEditText(null); setErr('') }, [awaiting])
+  // An unsent comment is kept for the draft it is about (`useKeptDraft`), so a reload gives it back.
+  // A new draft of the step is a new revision, which starts with none: a new draft replaces
+  // whatever was being written about the old one.
+  const [comment, setComment, clearComment] = useKeptDraft(`chat-plan:${session}:${step?.id ?? ''}:${step?.revision ?? ''}`)
+  useEffect(() => { setEditText(null); setErr('') }, [awaiting])
 
   const guard = useStaleWriteGuard<string>({
     read: async () => {
@@ -240,7 +243,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
           )}
           <div className="mt-2 flex flex-col gap-2">
             <textarea id={commentFieldId} value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && comment.trim()) { e.preventDefault(); void run(() => api.chatPlanComment(session, step.id, comment.trim())) } }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && comment.trim()) { e.preventDefault(); void run(async () => { await api.chatPlanComment(session, step.id, comment.trim()); clearComment() }) } }}
               aria-label="Comment on this plan"
               placeholder="Comment to refine the plan (⌘↵ to send), or approve as-is…"
               data-type="body-s"
@@ -254,7 +257,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
                 })} />
               <Button size="xs" variant="secondary" disabled={busy || !comment.trim()}
                 disabledReason={!comment.trim() ? 'Write a comment first' : BUSY_REASON}
-                onClick={() => void run(() => api.chatPlanComment(session, step.id, comment.trim()))}>
+                onClick={() => void run(async () => { await api.chatPlanComment(session, step.id, comment.trim()); clearComment() })}>
                 <MessageSquarePlus size={14} /> Send comment &amp; redraft
               </Button>
               <Button size="xs" variant="ghost" disabled={busy} disabledReason={BUSY_REASON}

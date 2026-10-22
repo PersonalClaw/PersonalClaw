@@ -10,6 +10,8 @@
  *     picks up the feedback in context.
  *   - A planning artifact during a loop's planning phase → submit to that loop's
  *     PLANNING agent/session.
+ *   - A change under review while its loop is at work → its NEXT CYCLE, as guidance
+ *     (the loop's nudge), on the task whose work touched it when one did.
  *
  *  The mount site constructs the right `CommentTarget`; the surface + comment
  *  layer stay context-agnostic and just call `target.submit(...)`.
@@ -74,4 +76,11 @@ export function planningTarget(
   send: (message: string, docPaths: string[]) => void | Promise<void>,
 ): CommentTarget {
   return { label: 'Send to planning', submit: ({ message, docPaths }) => send(message, docPaths) }
+}
+
+/** A change under review while its loop is at work: the comment is guidance for the loop's next
+ *  cycle (`POST /api/loops/{id}/nudge`, which also clears a question and re-arms a waiting loop),
+ *  on `taskId`'s task when the change is that task's work. */
+export function nextCycleTarget(loopId: string, taskId?: string): CommentTarget {
+  return { label: 'Send to the agent', submit: async ({ message }) => { await api.uLoopNudge(loopId, message, taskId) } }
 }

@@ -24,6 +24,7 @@ import { CockpitHeader } from './cockpit/header/CockpitHeader'
 import { CockpitNotices } from './cockpit/header/CockpitNotices'
 import { useCodeCockpit } from './cockpit/useCodeCockpit'
 import { cockpitActions } from './cockpit/cockpitActions'
+import { reviewComments } from './cockpit/reviewComments'
 
 // The page's own tests still import these from it, where they used to live.
 export { StageTasks, ProjectFooter, CockpitMeta, resolveTouchedPath, missingCommandNotices, normalizeStageLabel }
@@ -38,7 +39,7 @@ export { StageTasks, ProjectFooter, CockpitMeta, resolveTouchedPath, missingComm
  *  Each region is a controller and its view under `cockpit/`; this page composes them around
  *  `useCodeCockpit`, the cockpit's state.
  */
-export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProject, onStartNew, query, setQuery }: {
+export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProject, onStartNew, navigate, query, setQuery }: {
   id: string
   onBack: () => void
   onDeleted: () => void
@@ -49,6 +50,8 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   onOpenProject?: (projectId: string) => void
   /** Start a brand-new project (finished-state CTA) — routes to the composer. */
   onStartNew?: () => void
+  /** Goes to another page: where a comment on a change of an ended session opens its new chat. */
+  navigate?: (path: string) => void
 } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const {
     project, setProject, showTerm, setShowTerm, pendingRunCmd, setPendingRunCmd, pendingRunNonce, pickWs,
@@ -109,6 +112,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} merges={p.merges} query={query} setQuery={setQuery} />
         </CollapsiblePanel>
         <CenterEditor ws={fileRoot} isProjectDir={!ws} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd}
+          comments={reviewComments({ loopId: p.id, status: p.status, findings: p.findings, root: fileRoot, navigate })}
           query={query} setQuery={setQuery} />
         <CollapsiblePanel side="right" panelKey="code-right" def={340} min={260} max={520}
           icon={ListChecks} label="Tasks">

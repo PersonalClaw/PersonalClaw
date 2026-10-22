@@ -138,7 +138,7 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
     // The cockpit shows its own loader while it fetches the project, so a deep-link
     // to a still-pre-launch project briefly shows that loader, then the resume probe
     // (above) re-routes it to the walkthrough / Plan Review. No wrong content flashes.
-    return <CodeCockpitPage key={seg} id={seg}
+    return <CodeCockpitPage key={seg} id={seg} navigate={navigate}
       onBack={() => navigate('code/history')}
       // Invalidate the cached project list BEFORE navigating to it — else the SWR cache
       // paints the just-deleted project as a ghost row (clickable → "no longer exists")

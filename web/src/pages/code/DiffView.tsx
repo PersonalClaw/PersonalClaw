@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { api } from '../../lib/api'
@@ -10,14 +10,44 @@ import { monacoLang } from '../files/fileMeta'
 import { useDiffTeardown } from '../../ui/useDiffTeardown'
 const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.DiffEditor })))
 
+/** Lines selected on a diff's working-copy side: the first and last line number, and their text. */
+export type SelectedLines = { from: number; to: number; lines: string[] }
+
+/** What this view reads of Monaco's diff editor: its working-copy side's selection and text. */
+type DiffEditorLike = {
+  setModel: (model: null) => void
+  getModifiedEditor: () => {
+    getModel: () => { getLineContent: (n: number) => string } | null
+    onDidChangeCursorSelection: (cb: (e: { selection: { startLineNumber: number; endLineNumber: number; endColumn: number; isEmpty: () => boolean } }) => void) => unknown
+  }
+}
+
 /** Working-vs-HEAD diff for a changed file in the cockpit's Changes tab.
  *  Left = committed (HEAD) version (empty for a newly-added file), right = the
  *  current working copy. Read-only — this is a review surface; edits happen in
  *  the normal editor tab. */
-export function DiffView({ path, name, ws, deleted = false }: { path: string; name: string; ws: string; deleted?: boolean }) {
+export function DiffView({ path, name, ws, deleted = false, onSelectLines }: {
+  path: string; name: string; ws: string; deleted?: boolean
+  /** The lines selected on the working copy's side, whole, as a comment quotes them; null once
+   *  the selection is empty. */
+  onSelectLines?: (selected: SelectedLines | null) => void
+}) {
   // Issue 582: the cockpit conditionally unmounts this view; detach the models first
   // or Monaco throws on every close (same guard as artifacts/ArtifactCompare).
-  const onDiffMount = useDiffTeardown()
+  const onSelectRef = useRef(onSelectLines); onSelectRef.current = onSelectLines
+  const watchSelection = (editor: DiffEditorLike) => {
+    const side = editor.getModifiedEditor()
+    side.onDidChangeCursorSelection(({ selection: sel }) => {
+      const model = side.getModel()
+      if (!model || sel.isEmpty()) { onSelectRef.current?.(null); return }
+      // A selection that ends at the start of a line does not take that line.
+      const to = sel.endColumn === 1 && sel.endLineNumber > sel.startLineNumber ? sel.endLineNumber - 1 : sel.endLineNumber
+      const lines: string[] = []
+      for (let n = sel.startLineNumber; n <= to; n++) lines.push(model.getLineContent(n))
+      onSelectRef.current?.({ from: sel.startLineNumber, to, lines })
+    })
+  }
+  const onDiffMount = useDiffTeardown(watchSelection)
   const [original, setOriginal] = useState<string | null>(null)
   const [modified, setModified] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

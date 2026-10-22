@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A new chat can start a goal loop: type `/goal` and the task, or choose Start a goal loop in its + menu, and the draft goes to the loop composer as a goal loop's task, with the chat's project.**
 - **Mission Control, the phone companion and the menu bar read everything waiting on you, not approvals alone: a workflow's gate, a loop's question and every other kind are listed (Mission Control's Needs approval and Your turn lanes, the phone's first section, in the list's one order, each with its text) and counted (the menu bar's "N waiting on you", which opens Mission Control), and a card past answering says so and keeps nothing that could still send.**
 - **The menu bar's ● Listening shows for every capture, not only the push-to-talk shortcut: the composer's dictation, hands-free and the Knowledge recorder each say when they hold the microphone, every PersonalClaw window and your open pages hear it, and it clears when the window that captured closes or crashes.**
+- **A comment on a change in a code session's review pane reaches the agent as guidance for its next step, quoting the lines you selected in the diff and naming the task whose work touched the file; once the session has ended it opens a new chat about it. A comment is sent only by Send, and an unsent one, there or on a chat's plan step, comes back after a reload (#3821).**
 
 ### Changed
 
