@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { AlertTriangle, BookText, Boxes, Camera, Check, Clock, CornerDownLeft, EyeOff, ListChecks, Loader2, NotebookPen, Pin, Repeat, X } from 'lucide-react'
 import { api } from '../../../lib/api'
@@ -32,6 +33,7 @@ import { PasteCards } from './PasteCards'
 import { QueueStack } from './QueueStack'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
 import { ExecutionBoundary, TaskModePill, useBoundaryReading } from './ExecutionBoundary'
+import { publishContextReading, setContextPinned, useContextPinned } from '../../../app/pinnedContext'
 
 // ── The chat's composer region ────────────────────────────────────────────────────────────────
 //
@@ -83,7 +85,13 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
   speakingTurn: number | null
 }) {
   const { acpFor, activatePlanMode, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
-  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, autoChain, startedBy, workingDir } = stream
+  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, sessionCost, autoChain, startedBy, workingDir } = stream
+  // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
+  const contextPinned = useContextPinned()
+  useEffect(() => {
+    publishContextReading(sessionId ? { pct: contextPct, window: contextWindow, cost: sessionCost } : null)
+  }, [sessionId, contextPct, contextWindow, sessionCost])
+  useEffect(() => () => publishContextReading(null), [])
   // The sandbox and the network of the next turn, the gateway's words: an open chat's once its own
   // read has landed, a new chat's for the agent it is set to.
   const boundaryReading = useBoundaryReading(sessionId, !sessionId || postureKnown, acpFor(selection.agent)?.providerId ?? '')
@@ -312,7 +320,7 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} sessionCost={sessionId ? sessionCost : null} contextPin={{ pinned: contextPinned, onPin: setContextPinned }} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}

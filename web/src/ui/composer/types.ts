@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { AgentDef, AgentProvider, DiscoveredAgent, ModelItem, ApprovalMode, TaskMode, ReasoningEffort } from '../../lib/api'
 import type { WorkPhase } from '../../lib/workPhase'
 import type { AskBeforeSwitch } from './dearerSwitch'
+import type { ContextCost } from './ContextDisclosure'
 
 /** Which controls a composer instance surfaces. Chat enables most; the goal
  *  composer enables only the shared core (send + optimize) and supplies its own
@@ -157,15 +158,22 @@ export interface ComposerProps {
    *  so the host refuses it with this same sentence where the user is looking — a key that did
    *  nothing would explain nothing. A steer into a running turn is not held: it carries no files. */
   sendHeldReason?: string
-  /** 0–100 context-window usage for the bound session → ring on the model pill.
-   *  `undefined` means the backend reported NO measurement — the pill then shows a
-   *  plain dot rather than a fabricated 0%. A measured `0` renders a 0% ring. */
+  /** 0–100 context-window usage for the bound session, read in the composer's Context control
+   *  (`ContextDisclosure`) and nowhere else until the owner pins it. `undefined` means the backend
+   *  reported NO measurement — the control then says why rather than show a fabricated 0%. A
+   *  measured `0` reads 0%. From `CONTEXT_NEAR_LIMIT_PCT` the composer warns in a line of its own. */
   contextPct?: number
   /** The window, in tokens, the bound session's model is served with, as the gateway said with its
    *  last reading. `null` means the gateway said NO window is declared or served — the one state in
-   *  which the unmeasured dot sends the user to declare it; `undefined` means it has said nothing
-   *  yet. Read only while `contextPct` is `undefined`, to say why there is no ring. */
+   *  which the Context control sends the user to declare it; `undefined` means it has said nothing
+   *  yet. Read only while `contextPct` is `undefined`, to say why there is no reading. */
   contextWindow?: number | null
+  /** What the bound session has cost so far, read in the Context control. `null`/absent before any
+   *  usage is recorded; `priced: false` when a model in it has no price, so there is no total. */
+  sessionCost?: ContextCost | null
+  /** The status-line pin for the context reading (`app/pinnedContext`). Absent: the Context control
+   *  offers no pin. */
+  contextPin?: { pinned: boolean; onPin: (pinned: boolean) => void }
   /** The model that answered the bound chat's latest turn and how it was chosen ("from your Code &
    *  tools chain"), which the model pill's Auto names. Absent before any turn named one. */
   servedModel?: { model: string; chosen: string }

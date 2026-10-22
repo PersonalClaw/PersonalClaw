@@ -29,16 +29,30 @@ const DETAIL = {
   memory_mode: 'persistent',
 }
 
+/** The same chat, measured (34% of its window) and with a cost: its composer carries the Context
+ *  control, the one place that reading and cost show (#3823), and its header no cost chip. */
+const MEASURED = { ...DETAIL, context_usage: { pct: 34, window: 200_000 } }
+const USAGE = {
+  since: '', until: '', session: KEY,
+  totals: { input_tokens: 41_000, output_tokens: 5_000, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0.0123, turns: 3, priced: true },
+}
+
 /** The phone widths: the narrowest, common phones, a large phone, and up to the breakpoint. */
 const PHONES = [320, 360, 390, 412, 600, 768] as const
 /** The composer's height at #3804's measurement: no taller than before. */
 const MAX_COMPOSER_H: Record<number, number> = { 390: 276, 1280: 156 }
 
-async function pinTheChat(page: Page): Promise<void> {
+async function pinTheChat(page: Page, measured = false): Promise<void> {
   await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
     route.request().method() === 'GET'
-      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DETAIL) })
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(measured ? MEASURED : DETAIL) })
       : route.fallback())
+  if (measured) {
+    await page.route('**/api/usage/totals?*', (route) =>
+      new URL(route.request().url()).searchParams.get('session') === KEY
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(USAGE) })
+        : route.fallback())
+  }
 }
 
 interface Box { name: string; left: number; right: number; top: number; bottom: number; mid: number }
@@ -73,6 +87,7 @@ async function readFooter(page: Page): Promise<Footer> {
         boundary: find(/^Execution boundary: /),
         style: find(/^Reply style: /),
         runsOn: find(/^Runs on: /),
+        context: find(/^Context$/),
       },
     }
   })
@@ -97,9 +112,9 @@ function expectNothingCollides(f: Footer) {
   }
 }
 
-for (const screen of ['a new chat', 'a chat with a turn'] as const) {
+for (const screen of ['a new chat', 'a chat with a turn', 'a chat with a measured context'] as const) {
   test.describe(screen, () => {
-    test.beforeEach(async ({ page }) => { if (screen === 'a chat with a turn') await pinTheChat(page) })
+    test.beforeEach(async ({ page }) => { if (screen !== 'a new chat') await pinTheChat(page, screen === 'a chat with a measured context') })
     const route = screen === 'a new chat' ? 'chat' : `chat/${KEY}`
 
     for (const width of PHONES) {
@@ -108,14 +123,15 @@ for (const screen of ['a new chat', 'a chat with a turn'] as const) {
         await gotoRoute(page, route)
         await expect(page.getByRole('button', { name: /^Execution boundary: / })).toBeVisible()
         const f = await readFooter(page)
-        const { plus, pill, send, task, boundary, style } = f.byName
+        const { plus, pill, send, task, boundary, style, context } = f.byName
         for (const [k, b] of Object.entries({ plus, pill, send, task, boundary })) expect(b, `${k} is in the composer`).not.toBeNull()
+        if (screen === 'a chat with a measured context') expect(context, 'the Context control is in the composer').not.toBeNull()
         expectNothingCollides(f)
         expect(sameRow(plus!, pill!), `+ and the pill share the first row: ${where(plus!)}, ${where(pill!)}`).toBe(true)
         // The send cluster keeps the first row wherever `+`, the shortest pill and it fit: every
         // phone but the narrowest, where it takes a line of its own rather than collide.
         if (width >= 360) expect(sameRow(pill!, send!), `the send cluster is on the first row: ${where(send!)}`).toBe(true)
-        const rest = [task!, boundary!, ...(style ? [style] : [])]
+        const rest = [task!, boundary!, ...(style ? [style] : []), ...(context ? [context] : [])]
         for (const b of rest) expect(b.top, `${where(b)} is below the first row`).toBeGreaterThanOrEqual(pill!.bottom)
         for (const b of rest) expect(sameRow(b, task!), `${where(b)} shares the second row`).toBe(true)
         if (MAX_COMPOSER_H[width]) {
@@ -151,5 +167,20 @@ for (const width of [390, 600] as const) {
       expect(sameRow(runsOn!, boundary!), `Runs on and the Execution Boundary share a row: ${where(runsOn!)}, ${where(boundary!)}`).toBe(true)
       expect(sameRow(boundary!, send!), `at 600 the loop's footer is one row: ${where(send!)}`).toBe(true)
     }
+  })
+}
+
+// A started chat with nothing else to say about itself (no project, branch, app or investigation)
+// gets its one-row header back once the cost chip leaves it: 56 px, against 88 with the chip.
+for (const width of [390, 1280] as const) {
+  test(`a started chat with a cost, at ${width}: a one-row header, with no cost in it`, async ({ page }) => {
+    await pinTheChat(page, true)
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 })
+    await gotoRoute(page, `chat/${KEY}`)
+    await expect(page.getByRole('button', { name: 'Context' })).toBeVisible()
+    const header = page.locator('header').first()
+    await expect(header).not.toContainText('$0.0123')
+    const h = await header.evaluate((el) => el.getBoundingClientRect().height)
+    expect(h, `the header's height at ${width}`).toBeLessThanOrEqual(56)
   })
 }

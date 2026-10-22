@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react'
-import { Blocks, Coins, FolderKanban, GitBranch, MessageCircleQuestion, type LucideIcon } from 'lucide-react'
+import { Blocks, FolderKanban, GitBranch, MessageCircleQuestion, type LucideIcon } from 'lucide-react'
 import { ScreenShareChip } from '../../ui/ScreenShareChip'
 import { startedByLabel, startedByTitle } from './StartedByApp'
 
 /** The chat header's context line (`TopBar.below`): what this conversation IS — whose permissions
- *  its turns run under, what it is scoped to, where it came from, what it is investigating, what it
- *  has cost — under the title instead of beside it.
+ *  its turns run under, what it is scoped to, where it came from, what it is investigating — under
+ *  the title instead of beside it. What it has cost is not here: cost and context wait behind the
+ *  composer's Context control until the owner pins them (#3823), so a chat with none of these has
+ *  a one-row header.
  *
  *  🔴 THESE CHIPS USED TO SHARE THE TITLE'S ROW, AND IN THAT ROW NOTHING COULD HOLD. Each was
  *  `shrink-0` and none had a bound, so the ONE thing in the row that could shrink was the chat's own
@@ -28,15 +30,6 @@ export interface ChatContext {
   /** What this chat was opened to investigate. No `open` when the source left no link
    *  back — then it is a label, never a button that does nothing. */
   investigate?: { title: string; open?: () => void } | null
-  /** What it has cost so far. `priced: false` = the total mixes a model with no price. */
-  cost?: { cost: number; tokens: number; priced: boolean } | null
-}
-
-/** Compact token count for the cost chip: 940 → "940", 46_000 → "46k", 1_200_000 → "1.2M". */
-export function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
-  return String(n)
 }
 
 /** One fact about the conversation. A pill that can shrink to the line and truncate, with the full
@@ -97,14 +90,6 @@ export function chatContextChips(c: ChatContext): ReactNode[] {
     const { title, open } = c.investigate
     chips.push(<ContextChip key="investigate" icon={MessageCircleQuestion} accent={!!open} label={title}
       title={open ? `Investigating: ${title} — open the source` : `Investigating: ${title}`} onClick={open} />)
-  }
-  // "unpriced" when the total mixes a model with no price row — honest, never a
-  // confidently-complete $0.00. A reading, not a destination, so its glyph is not coral
-  // (DESIGN.md's One Voice Rule).
-  if (c.cost) {
-    const money = c.cost.priced ? `$${c.cost.cost.toFixed(c.cost.cost < 1 ? 4 : 2)}` : 'unpriced'
-    chips.push(<ContextChip key="cost" icon={Coins} label={`${money} · ${fmtTokens(c.cost.tokens)} tokens`}
-      title={c.cost.priced ? 'What this conversation has cost so far' : 'Cost so far — includes a model with no price row, so this is a partial total'} />)
   }
   return chips
 }

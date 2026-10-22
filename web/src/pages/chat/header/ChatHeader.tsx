@@ -21,7 +21,7 @@ import type { ChatHeaderState } from './useChatHeader'
 
 export function ChatHeader({ header, stream, composer, panes, transcript, started, navigate }: {
   header: ChatHeaderState
-  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'sessionCost' | 'branchedFrom' | 'startedBy' | 'investigateOrigin'>
+  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'branchedFrom' | 'startedBy' | 'investigateOrigin'>
   composer: Pick<ReturnType<typeof useChatComposer>, 'memoryMode' | 'screenShare' | 'projectId'>
   panes: Pick<ChatPanesState, 'activityOpen' | 'setActivityOpen' | 'historyOpen' | 'setHistoryOpen'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'setMapOpen'>
@@ -32,11 +32,12 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
     projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
     saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff,
   } = header
-  const { sessionRef, title, titleNeed, sessionCost, branchedFrom, startedBy, investigateOrigin } = stream
+  const { sessionRef, title, titleNeed, branchedFrom, startedBy, investigateOrigin } = stream
   const { memoryMode, screenShare, projectId } = composer
   const { activityOpen, setActivityOpen, historyOpen, setHistoryOpen } = panes
   const { mapOpen, setMapOpen } = transcript
-  // The header's context line: what this conversation IS, under its title (`ChatContextLine`).
+  // The header's context line: what this conversation IS, under its title (`ChatContextLine`). What
+  // it has cost is not on it: cost waits behind the composer's Context control (#3823).
   const contextChips = started ? chatContextChips({
     screenShare: screenShare.sharing ? { onStop: screenShare.toggle } : null,
     startedBy: startedBy?.name,
@@ -52,7 +53,6 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
             : undefined,
         }
       : null,
-    cost: sessionCost,
   }) : []
 
   // The title above reads "Untitled chat" for a reason the chat can fix: the line under it says so

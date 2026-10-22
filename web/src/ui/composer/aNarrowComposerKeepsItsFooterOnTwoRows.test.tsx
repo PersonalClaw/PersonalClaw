@@ -8,7 +8,8 @@ import type { ComposerData } from './types'
 // grew to 316 px against #3804's 276. On a phone the footer is two rows: `+` and the
 // agent-and-model pill on the first, beside the send cluster, the pill truncating its label rather
 // than wrapping under `+`; the composer's other controls (the reply style, the host's task mode and
-// Execution Boundary) on the second, their pills capped so three share it. A host with no first
+// Execution Boundary, and the Context control once there is a reading) on the second, their pills
+// capped so all four share it. A host with no first
 // group (the loop composer) and any wider composer keep the one wrapping row. Both layouts are one
 // tree, so crossing the breakpoint remounts nothing. jsdom lays nothing out, so this pins the
 // structure; `e2e/composerFooterGeometry.spec.ts` measures the rows in a browser.
@@ -104,10 +105,10 @@ describe('on a phone', () => {
     expect(rest.className).toMatch(/\bbasis-full\b/)
   })
 
-  it('caps the second row\'s pills so three share it', () => {
+  it('caps the second row\'s pills so three share it with the Context control', () => {
     composer()
     const rest = document.querySelector('[data-composer-row="rest"]') as HTMLElement
-    for (const cap of ['[--composer-pill-max:6rem]', '[--composer-pill-max-wide:6rem]', 'max-[359px]:[--composer-pill-max:4.75rem]', 'max-[359px]:[--composer-pill-max-wide:4.75rem]']) {
+    for (const cap of ['[--composer-pill-max:5.25rem]', '[--composer-pill-max-wide:5.25rem]', 'max-[359px]:[--composer-pill-max:4.25rem]', 'max-[359px]:[--composer-pill-max-wide:4.25rem]']) {
       expect(rest.className.split(/\s+/), cap).toContain(cap)
     }
     expect(button('Task mode: Agent').className).toContain('max-w-[var(--composer-pill-max,160px)]')
