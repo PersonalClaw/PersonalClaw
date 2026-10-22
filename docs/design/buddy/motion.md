@@ -27,9 +27,9 @@ that move the buddy between its four families.
 | Transition | Trigger | Moves | Preset / curve | Length | Cut | Reduced motion |
 |---|---|---|---|---|---|---|
 | Peek in | pointer on the top-edge zone | the orb slides down from the top edge until its badge clears it | `smooth` | ~200 ms | yes | the orb appears |
-| Compact in | work starts while visible | the island grows out of the edge, the orb enters | `smooth`; the line fades on the effects curve | ~250 ms | yes | instant |
-| Expand | hover, click or an alert | the island grows into the card; the focused orb is the shared element and scales to 48; content follows with a short stagger | open on `playful` (a slight overshoot), content on `regionStagger` | ~320 ms | no | instant |
-| Collapse | the collapse timer or Esc | the card shrinks back into the island | the effects curve, no overshoot | ~220 ms | yes | instant |
+| Compact in | work starts while visible | the pill fades in below the edge as the orb enters; nothing grows out of the edge | `smooth`; the line fades on the effects curve | ~250 ms | yes | instant |
+| Expand | hover, click or an alert | the card takes the pill's place, opening downward from where it was, and the pill's outline never stretches into it; the focused orb is the shared element and scales to 48; content follows with a short stagger | open on `smooth`, with no overshoot; content on `regionStagger` | ~320 ms | no | instant |
+| Collapse | the collapse timer or Esc | the card folds away and the pill comes back in its place | the effects curve, no overshoot | ~220 ms | yes | instant |
 | Phase change | the focused work's phase | the current pose exits, the next enters; the badge swaps with a small pop; the step window scrolls one line | exit and entrance on `snappy`; the badge on `snappy`; the scroll on `smooth` | under `beat` | yes | instant pose and badge change |
 | Working hold | while a tool or step runs | the orb stirs, its dots moving in the agent orb's state for the phase; the current step's label fills with the alive colour | the agent orb's own motion for the dots; the effects curve for the label | loops while working | — | the active still, static label |
 | Alert arrives | an alert | the orb holds for an approval (its dots draw in tight) or raises for a question (it lifts a little), and goes still; the alert badge pops; the wash rises from below | `snappy` for the hold or the raise and the badge; the effects curve for the wash | ~300 ms | only by listening | instant pose, badge and wash |
@@ -38,7 +38,7 @@ that move the buddy between its four families.
 | Error | work fails | the orb droops, its dots sinking toward the lower edge and settling there as they take the neutral; the danger wash rises | `smooth`, then the effects curve | ~600 ms | only by listening | the error pose |
 | Done | the focused work finishes | the badge turns to a check, and the dots flourish once (a swirl around the orb) and come to rest, soft, in the neutral | `playful`, scaled by `expr()` | ~700 ms, then held for `finishedHold` | yes, by an alert or listening | the done pose |
 | Listening | push-to-talk starts | the orb swells a little toward the owner and its dots take the agent orb's listening state; the microphone badge pops | `snappy` | ~200 ms | no | instant |
-| Dock and undock | a drop in or out of the dock zone | the island shape forms from or melts into the orb | `smooth` | ~300 ms | no | instant |
+| Dock and undock | a drop in or out of the dock zone | the orb moves into or out of the pill, which fades in or out around it; no shape melts or forms from another | `smooth` | ~300 ms | no | instant |
 | Doze and wake | sleep, absence, return | the dots slow to a stop and the orb dims; on wake, it brightens and its dots move again | the effects curve | ~600 ms | yes | instant |
 | Badge unfolds | pointer on the badge | the badge widens into the state's words, and folds back | `snappy` open, the effects curve close | ~200 ms | yes | instant |
 

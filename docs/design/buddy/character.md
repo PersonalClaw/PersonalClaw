@@ -74,8 +74,8 @@ colour is the scheme's primary while an agent is alive and Ink Variant where not
 no creature: it has no eyes, mouth or limb. The rest of this file is the design worked out from
 that choice. The v0.3.0 poses are now drawn at real sizes ([the drawn poses](#the-drawn-poses)),
 with contact sheets the maintainer can look at any time; the side-by-side check of what the buddy
-adds and of the whole orb ([the constraints](#constraints)) is recorded here beside them once it is
-made, where the originality record cites it ([#4570]). With no body, the buddy needs no body
+adds and of the whole orb ([the constraints](#constraints)) is recorded beside them
+([the side-by-side check](#the-side-by-side-check)), where the originality record cites it ([#4570]). With no body, the buddy needs no body
 colour: the warm-neutral token the brief asked for is withdrawn, and nothing is added to the design
 system for the buddy.
 
@@ -180,6 +180,24 @@ with the 18 px ones also at four times: [the four families](poses/sheets/familie
 [the focused card's orb](poses/sheets/card.svg), [presence](poses/sheets/presence.svg),
 [the answers](poses/sheets/answers.svg) and [the tray and the dock](poses/sheets/tray.svg). They are
 drawn in the default scheme, for the maintainer to look at whenever they like; they are not a gate.
+
+### The side-by-side check
+
+Made on 2026-10-22 on the written design and the drawn poses ([#4570]), from public material only,
+by the rule in [the constraints](#constraints): what the buddy adds and the whole orb, against other
+products' status indicators and assistant orbs. The dots and their states are the agent orb's
+licensed base and are not judged on their own. Each aspect is a row of the originality record
+([`decisions/originality.md`](decisions/originality.md#the-character)).
+
+| Aspect | Result |
+|---|---|
+| The outline | distinct: a round orb of many small separate dots in one colour, with no glow, no gradient fill and no liquid surface; never a few large dots, never a colour per dot, never a ring |
+| The badge | distinct: a still mark on the orb's upper edge, one of the app's own marks, that unfolds into the state's words; its working mark never pulses dot by dot |
+| The wash | distinct: one alert tone that rises once from under the orb and holds; it never pulses, never takes several colours and never lights the screen's edge |
+| The poses | distinct: the families are told apart by the dots' density and spread and by the badge, in two colours; no colour per state, no spinning arc |
+| The gestures | distinct: motions of one orb's dots; the wave is a ripple out from the centre, and the flourish is one swirl that comes to rest |
+| The presence | changed: the docked pill is the app's raised surface and stands apart from the notch and the edge, the card takes its place rather than growing out of it, with no overshoot, and docking moves the orb rather than melting a shape ([`surfaces.md`](surfaces.md#docking), [`motion.md`](motion.md#transitions)) |
+| The whole orb | distinct: a sphere of dots in the app's primary, with a still badge and a one-tone wash; it reads as the agent orb |
 
 The checks. `tests/rails/test_buddy_design_matrix.py` reads the set from this file's own words (the
 family table's phases, the focused card's orb for each family, the presence and answer lists, and
