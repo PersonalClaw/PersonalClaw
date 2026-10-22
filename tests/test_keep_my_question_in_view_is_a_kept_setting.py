@@ -3,8 +3,9 @@
 An opt-in, off by default: while a reply taller than the window streams, the reading column pins a
 one-line banner with the owner's latest question. It is a display preference kept server-side, as
 every other chat display preference is, so it holds across the owner's browsers: the config
-dataclass with its metadata, ``load()``, ``to_dict()``, the dashboard config route's GET and its
-PUT allowlist (a boolean, refused as anything else), and the Settings control.
+dataclass with its metadata, ``load()``, ``to_dict()``, the ``_EDITABLE_CONFIG`` PATCH allowlist,
+the dashboard config route's GET and its PUT allowlist (a boolean, refused as anything else), and
+the Settings control.
 """
 
 from __future__ import annotations
@@ -44,6 +45,13 @@ def test_it_round_trips_through_the_file(tmp_path, monkeypatch):
     assert cfg.dashboard.keep_question_in_view is True
     cfg.save()
     assert AppConfig.load().dashboard.keep_question_in_view is True
+
+
+def test_it_is_in_the_patch_allowlist_as_a_boolean():
+    """Without this entry the config PATCH (and ``personalclaw config set``) drops the key."""
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG["dashboard.keep_question_in_view"] == {"type": "bool"}
 
 
 @pytest.mark.asyncio
