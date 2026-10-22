@@ -163,7 +163,8 @@ def _connect() -> sqlite3.Connection:
             linked_task_ids TEXT NOT NULL DEFAULT '[]',
             session_key TEXT NOT NULL DEFAULT '',
             asked_by TEXT NOT NULL DEFAULT '{}',
-            report TEXT NOT NULL DEFAULT 'as_it_goes'
+            report TEXT NOT NULL DEFAULT 'as_it_goes',
+            origin_session TEXT NOT NULL DEFAULT ''
         )""")
     # Idempotent column migrations for DBs created before a field was added (the
     # CREATE above is IF NOT EXISTS, so an existing table won't gain new columns).
@@ -193,6 +194,9 @@ def _connect() -> sqlite3.Connection:
             # How it reports (`Loop.report`): a row made before the owner was asked keeps the
             # per-cycle notes it always sent, so nothing an owner started changes under them.
             "report": "TEXT NOT NULL DEFAULT 'as_it_goes'",
+            # The chat it was made for (`Loop.origin_session`): a row made before it was recorded
+            # names none, as a loop made on a page does.
+            "origin_session": "TEXT NOT NULL DEFAULT ''",
         },
     )
     conn.commit()
@@ -249,6 +253,7 @@ _SCALAR_COLS = (
     "stop_reason",
     "tasks_project_id",
     "session_key",
+    "origin_session",
 )
 _JSON_COLS = _LIST_COLS + _DICT_COLS
 
@@ -292,6 +297,17 @@ def _loop_to_params(loop: Loop) -> dict[str, Any]:
 # ── CRUD ──
 
 
+def _origin_chat() -> str:
+    """The chat the current work is done for, by its own name, or ``""`` for work no chat is at
+    the top of (a page's request, a schedule, a loop's worker): ``memory_writes.filed_under``,
+    read as ``dashboard.work_phases.chat_of`` reads a helper's parent."""
+    from personalclaw import memory_writes, session_keys
+
+    name = memory_writes.filed_under().removeprefix(session_keys.DASHBOARD.prefix)
+    kind = session_keys.kind_of(name)
+    return name if name and (kind is None or kind is session_keys.CHAT) else ""
+
+
 def create(loop: Loop) -> Loop:
     """Insert a new loop (assigning an id + created_at if unset). Validates kind.
 
@@ -306,6 +322,8 @@ def create(loop: Loop) -> Loop:
         from personalclaw import memory_writes
 
         loop.asked_by = memory_writes.asker()
+    if not loop.origin_session:
+        loop.origin_session = _origin_chat()
     if not loop.id:
         import uuid
 

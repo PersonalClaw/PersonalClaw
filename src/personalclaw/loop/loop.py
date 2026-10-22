@@ -333,6 +333,11 @@ class Loop:
     #: the source of the message that started the turn it was made in, recorded when it is made
     #: (``store.create``) and never edited. ``{}`` for the owner's own.
     asked_by: dict = field(default_factory=dict)
+    #: The chat the loop was made for: the chat at the top of the chain the work that made it is
+    #: done for (``memory_writes.filed_under``), so a loop a chat's helper makes is that chat's.
+    #: Recorded when it is made (``store.create``) and never edited; ``""`` for a loop made on a
+    #: page, by a schedule or by another loop's worker. The running list names its row by it.
+    origin_session: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

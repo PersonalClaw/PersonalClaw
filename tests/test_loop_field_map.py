@@ -113,12 +113,14 @@ _ROOTS_BY_NAME: dict[str, type] = {}
 
 def _load_nested_types() -> None:
     from personalclaw.guardrails.policy import SafetyProfile
-    from personalclaw.workflows.models import RunBudget, RunDefaults
+    from personalclaw.workflows.models import RunBudget, RunDefaults, RunOrigin
 
     _ROOTS_BY_NAME.update(
         {
             "RunDefaults": RunDefaults,
             "RunBudget": RunBudget,
+            # Where a run says what started it: `origin_session`'s home (#3824's follow-up).
+            "RunOrigin": RunOrigin,
             "SafetyProfile": SafetyProfile,
         }
     )

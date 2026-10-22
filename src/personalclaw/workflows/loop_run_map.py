@@ -148,6 +148,14 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "`extra`, which `lasting_work.asker_of` already reads for a run's steps, so a loop that "
         "IS a run carries it there under the same key.",
     ),
+    FieldHome(
+        "origin_session",
+        RUN,
+        "WorkflowRun.origin.session_key",
+        "The chat the loop was made for, recorded when it is made and never edited. A run records "
+        "the session that started it in its origin, which the running list names its row's chat "
+        "by, so a loop that IS a run carries it there.",
+    ),
     # ── the phased plan ──
     FieldHome(
         "plan",
