@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { FieldError } from '../../ui/forms'
 import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical, Folder, FilePen, ShieldCheck } from 'lucide-react'
@@ -668,6 +668,10 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
   )
 }
 
+/** The workflow-detail tile a run opens everywhere it is shown (`WorkflowProgressCard`), loaded
+ *  when a run that started a workflow is opened. */
+const WorkflowRunTile = lazy(() => import('../chat/WorkflowProgressCard').then((m) => ({ default: m.WorkflowProgressCard })))
+
 /** Lazy-load one run's full record (with trace) on expand. */
 function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: string; preview: ScheduleRun }) {
   const [run, setRun] = useState<ScheduleRun | null>(preview.trace ? preview : null)
@@ -720,9 +724,13 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
         <div className="text-on-surface leading-relaxed">{run.summary}</div>
       )}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
-      {/* The workflow run this run started, on its own page: its steps, its live state and Stop. */}
+      {/* The workflow run this run started, as its own tile: the live card the thread and the
+          session inspector open for a run (#3820's amendment), with its steps, its state and the
+          way to the run's page. Not a run view of this page's own. */}
       {workflowRun && (
-        <TextLink href={`#/workflows/runs/${encodeURIComponent(workflowRun)}`} size="sm" ink="emphasis">Open the workflow run</TextLink>
+        <Suspense fallback={<div data-type="caption" className="text-on-surface-low">Opening the workflow run…</div>}>
+          <WorkflowRunTile refObj={{ runId: workflowRun, created: false }} />
+        </Suspense>
       )}
       {/* `traceErr != null`, not `traceErr &&` — the state is `unknown`, and `unknown && …`
           is `unknown`, which is not a ReactNode. */}

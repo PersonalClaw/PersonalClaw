@@ -111,7 +111,8 @@ row carries its group, its place in the list and where it reports (to an app's r
 of a conversation that app started), and the page shows the groups
 under their headings as served (`web/src/pages/automations/listGroups.ts`). The selected
 automation is `?open=<id>` and the run its history has open `?run=<run id>`; the history is newest
-first by each run's start, ties by run id. `#/triggers` and its sub-routes open the list as they
+first by each run's start, ties by run id, and a run that started a workflow opens the run's
+detail tile (`WorkflowProgressCard`), the one the thread and the session inspector open. `#/triggers` and its sub-routes open the list as they
 always did, inside Automations, so no address is retired.
 
 A list beside a detail shows both from 840 px of content up: the room the page has beside the
