@@ -1,6 +1,6 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { X, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, Check, Maximize2, Minimize2, X, type LucideIcon } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { useResizablePanel } from './useResizablePanel'
 
@@ -18,6 +18,13 @@ import { useResizablePanel } from './useResizablePanel'
 // keeps (`pane-host-<surface>-w`), and none of its controls touches the work: the work beside the
 // pane stays mounted while the pane opens, changes and closes, and a consequential action stays in
 // the content, never on the host's chrome.
+//
+// The host also expands the pane over the work and collapses it back to the split, and moves it to
+// the other side of the work: by pointer (Move, then Place here) or by a keyboard move mode (the
+// arrow keys choose the side, Enter places, Esc cancels), each step said in its live region. The
+// side it was moved to is remembered for the surface (`pane-host-<surface>-dock`), beside its width.
+// Esc on the pane, outside a field, collapses an expanded pane and closes one beside the work. None
+// of these is anything but presentation: the work stays mounted under an expanded pane.
 //
 // A compact surface stacks the pane under the work. Beside the work the pane takes at least its
 // smallest width and the work keeps its own 12rem, so a surface narrower than the two together
@@ -48,6 +55,23 @@ const DEFAULT_SIZE: PaneSize = { def: 480, min: 320, max: 960 }
 /** The width the work keeps beside a pane (`min-w-48`, 12rem). */
 const WORK_MIN = 192
 
+type Side = 'left' | 'right'
+
+/** The side a person moved this surface's pane to, or `fallback`. */
+function readDock(surface: string, fallback: Side): Side {
+  try {
+    const v = localStorage.getItem(`pane-host-${surface}-dock`)
+    return v === 'left' || v === 'right' ? v : fallback
+  } catch { return fallback }
+}
+
+/** Whether a key press is a field's own: text, a choice, an editor. */
+function inAField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || typeof el.closest !== 'function') return false
+  return !!el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], .monaco-editor')
+}
+
 /** Whether `box` is narrower than `room`. Read before the first paint and again whenever the box
  *  changes size. A box with no width (not laid out yet, or hidden while a page loads) has no room
  *  to read, so it keeps the last reading, which starts beside. */
@@ -72,8 +96,9 @@ function useNarrowerThan(box: RefObject<HTMLElement | null>, room: number): bool
 export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, stackInto = null, children }: {
   /** The surface the pane belongs to. Its size is remembered for this surface alone. */
   surface: string
-  /** The side of the work the pane docks on. */
-  dock?: 'left' | 'right'
+  /** The side of the work the pane docks on until a person moves it (then the side they chose,
+   *  remembered for the surface). */
+  dock?: Side
   /** The pane's default, smallest and largest width, in px. */
   size?: PaneSize
   /** What the pane shows, or null while it is closed. */
@@ -84,12 +109,26 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   /** The surface's work, beside the pane. */
   children: ReactNode
 }) {
+  // The side it docks on: the one a person moved it to for this surface, else the feature's.
+  const [placed, setPlaced] = useState<Side>(() => readDock(surface, dock))
+  useEffect(() => { setPlaced(readDock(surface, dock)) }, [surface, dock])
+  // While a move is under way, the side it would go to, drawn there until it is placed or cancelled.
+  const [preview, setPreview] = useState<Side | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [said, setSaid] = useState('')
+  const side: Side = preview ?? placed
   const { width, fitWidth, onHandleDown, onHandleKey, min, max } = useResizablePanel(`pane-host-${surface}`, {
-    def: size.def, min: size.min, max: size.max, side: dock,
+    def: size.def, min: size.min, max: size.max, side,
   })
   const titleId = useId()
+  const whereId = useId()
   const paneRef = useRef<HTMLElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
+  // The header's controls, so a move can hand the focus to Place and back to Move.
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const focusControl = (name: string) => {
+    controlsRef.current?.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)?.focus()
+  }
   const stacked = useNarrowerThan(boxRef, size.min + WORK_MIN)
 
   // ── Focus goes back where it came from ──
@@ -124,27 +163,90 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
     if ((!active || active === document.body) && to?.isConnected) to.focus()
   }, [id])
 
-  const inner = dock === 'right' ? 'left' : 'right'
+  // A pane that closes, or opens other content, opens again beside the work, with no move under way.
+  useEffect(() => { setExpanded(false); setPreview(null); setSaid('') }, [id])
+  // The pane is drawn on the side it would go to, before or after the work as it sits there, so
+  // the reading order follows what is seen; drawing it there again takes the focus with it, which
+  // goes back to Place while the move lasts.
+  useEffect(() => { if (preview) focusControl(`Place ${pane?.label ?? 'pane'} here`) }, [preview]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const what = pane?.label ?? 'pane'
+  const startMove = () => {
+    const to: Side = placed === 'right' ? 'left' : 'right'
+    setPreview(to)
+    setSaid(`Move preview: the ${what} on the ${to} of the work. Arrow keys choose a side, Enter places it, Esc cancels.`)
+  }
+  const choose = (to: Side) => {
+    setPreview(to)
+    setSaid(`Move preview: the ${what} on the ${to} of the work.`)
+  }
+  const place = () => {
+    if (!preview) return
+    setPlaced(preview)
+    try { localStorage.setItem(`pane-host-${surface}-dock`, preview) } catch { /* kept for this page only */ }
+    setSaid(`Moved: the ${what} is on the ${preview} of the work.`)
+    setPreview(null)
+    requestAnimationFrame(() => focusControl(`Move ${what}`))
+  }
+  const cancel = () => {
+    setSaid(`Move cancelled: the ${what} stays on the ${placed} of the work.`)
+    setPreview(null)
+    requestAnimationFrame(() => focusControl(`Move ${what}`))
+  }
+  const onMoveKey = (e: KeyboardEvent) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); choose(e.key === 'ArrowLeft' ? 'left' : 'right') }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel() }
+    // Enter places it from either control: the move mode's commit, whichever button has the focus.
+    else if (e.key === 'Enter') { e.preventDefault(); place() }
+  }
+  const onPaneKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || preview || inAField(e.target)) return
+    e.preventDefault()
+    if (expanded) setExpanded(false)
+    else pane?.onClose()
+  }
+  const layout = expanded ? 'expanded' : stacked ? 'stacked' : 'beside'
+  const where = expanded ? 'Expanded over the work' : stacked ? 'Under the work' : `Docked on the ${side} of the work`
+
+  const inner = side === 'right' ? 'left' : 'right'
   // Beside the work, the pane is drawn at the width chosen for this surface (`fitWidth` keeps it
   // inside the window), and gives way where the surface is narrower than that, so the work keeps
   // its own 12rem beside it and nothing spills past the surface. The chosen width is kept, and
   // drawn again once there is room for it. Stacked, the pane takes the surface's width and half its
   // height, under the work.
-  const edge = stacked ? 'flex-1 border-t' : dock === 'right' ? 'border-l' : 'border-r'
+  const edge = expanded ? 'flex-1' : stacked ? 'flex-1 border-t' : side === 'right' ? 'border-l' : 'border-r'
   const paneEl = pane && (
-    <section ref={paneRef} aria-labelledby={titleId}
+    <section ref={paneRef} aria-labelledby={titleId} aria-describedby={whereId} onKeyDown={onPaneKey}
       className={`relative flex min-h-0 min-w-0 flex-col ${edge} border-outline-variant/40 bg-surface`}
-      style={stacked ? undefined : { width: fitWidth }}>
+      style={stacked || expanded ? undefined : { width: fitWidth }}>
       <div className="flex shrink-0 items-center justify-between gap-1 border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
         <h2 id={titleId} data-type="caption" className="inline-flex min-w-0 items-center gap-1.5 text-on-surface-low" title={pane.title}>
           {pane.icon && <pane.icon size={12} className="shrink-0" />} <span className="truncate">{pane.title}</span>
         </h2>
-        <IconButton icon={X} label={`Close ${pane.label}`} onClick={pane.onClose} size={24} iconSize={13} className="shrink-0" />
+        <span id={whereId} className="sr-only">{where}</span>
+        <span role="status" className="sr-only">{said}</span>
+        {/* Presentation only: where the pane sits and how big. Nothing here acts on the work. */}
+        <div ref={controlsRef} className="flex shrink-0 items-center gap-0.5" onKeyDown={preview ? onMoveKey : undefined}>
+          {preview ? (
+            <>
+              <IconButton icon={Check} label={`Place ${pane.label} here`} onClick={place} size={24} iconSize={13} />
+              <IconButton icon={X} label="Cancel the move" onClick={cancel} size={24} iconSize={13} />
+            </>
+          ) : (
+            <>
+              {!stacked && !expanded && <IconButton icon={ArrowLeftRight} label={`Move ${pane.label}`} onClick={startMove} size={24} iconSize={13} />}
+              <IconButton icon={expanded ? Minimize2 : Maximize2} label={`${expanded ? 'Collapse' : 'Expand'} ${pane.label}`}
+                onClick={() => setExpanded((x) => !x)} size={24} iconSize={13} />
+              <IconButton icon={X} label={`Close ${pane.label}`} onClick={pane.onClose} size={24} iconSize={13} />
+            </>
+          )}
+        </div>
       </div>
       <div className="min-h-0 flex-1">{pane.body}</div>
       {/* The handle sits on the edge that faces the work, so dragging it toward the work, or the
-          arrow key that points there, grows the pane. Stacked, there is no width to choose. */}
-      {!stacked && <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+          arrow key that points there, grows the pane. Stacked or expanded, there is no width to
+          choose. */}
+      {!stacked && !expanded && <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
         tabIndex={0} aria-label={`Resize ${pane.label} — arrow keys to resize`}
         aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
         className="group/handle absolute top-0 bottom-0 z-20 w-2 cursor-col-resize outline-none focus-visible:bg-primary/30"
@@ -157,13 +259,14 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   // open and whether the two sit beside each other or stack, so none of those remounts it. Stacked,
   // the pane goes under the work from either side. `data-pane-host` names the box whose room is
   // read, and `data-pane-layout` says which layout is drawn while a pane is open.
-  const before = dock === 'left' && !stacked
-  const into = stacked ? stackInto : null
+  const before = side === 'left' && !stacked
+  const into = stacked && !expanded ? stackInto : null
+  const workHidden = expanded && !!pane
   return (
-    <div ref={boxRef} data-pane-host={surface} data-pane-layout={pane ? (stacked ? 'stacked' : 'beside') : undefined}
+    <div ref={boxRef} data-pane-host={surface} data-pane-layout={pane ? layout : undefined}
       className={`flex min-h-0 min-w-0 flex-1 ${stacked ? 'flex-col' : ''}`}>
       {before ? paneEl : null}
-      <div className={`min-h-0 flex-1 ${stacked ? 'min-w-0' : 'min-w-48'}`}>{children}</div>
+      <div hidden={workHidden} className={`min-h-0 flex-1 ${stacked ? 'min-w-0' : 'min-w-48'}`}>{children}</div>
       {before || into ? null : paneEl}
       {into && paneEl ? createPortal(paneEl, into) : null}
     </div>

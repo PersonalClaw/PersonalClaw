@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On the Automations page, a run that started a workflow opens that run's live card, the same one its thread and the chat's Activity open, and it stays open while the run finishes (#3816).**
 - **The sidebar shows every destination to everyone, under its sections. The starter set a new install began with is gone, and so are its Everything row and the Show every surface switches in setup and Settings › Design.**
 - **A goal loop's page ends like a chat: a thin strip with the cycles it has used ("cycle 4/10", or "cycle 4 · ongoing") and its Start, Pause or Resume and Stop, and under it a composer that nudges the next cycle, always open while the loop runs. The header keeps Rename, the link, Delete and Details.**
+- **The pane beside a chat or a code session expands over the work and collapses back, moves to the other side by pointer or by a keyboard move mode that says its preview, its placing and its cancel, remembers the side for that page, and closes on Esc; none of it touches the work (#3821).**
 
 ### Fixed
 
