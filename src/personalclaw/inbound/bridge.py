@@ -427,8 +427,18 @@ _pending: dict[str, dict[str, Any]] = {}
 
 def _reap() -> None:
     now = time.monotonic()
-    for token in [t for t, row in _pending.items() if now - row["created"] > CONFIRM_TTL_SECS]:
+    late = [t for t, row in _pending.items() if now - row["created"] > CONFIRM_TTL_SECS]
+    for token in late:
         _pending.pop(token, None)
+    if late:
+        _waiting_moved()
+
+
+def _waiting_moved() -> None:
+    """A confirmation was asked, taken or expired: the list of what waits on you moved."""
+    from personalclaw import waiting
+
+    waiting.changed_elsewhere()
 
 
 def pending_count() -> int:
@@ -447,6 +457,7 @@ def _mint_confirmation(action: Action, params: dict, *, asked_by: str) -> str:
         "created": time.monotonic(),
         "asked_by": asked_by,
     }
+    _waiting_moved()
     return token
 
 
@@ -475,7 +486,10 @@ def pending_confirmations() -> list[dict[str, Any]]:
 def take_confirmation(token: str) -> dict[str, Any] | None:
     """Redeem a token ONCE. Returns the stored intent, or None if unknown/expired."""
     _reap()
-    return _pending.pop(token, None)
+    intent = _pending.pop(token, None)
+    if intent is not None:
+        _waiting_moved()
+    return intent
 
 
 # ── HTTP surface ─────────────────────────────────────────────────────────────

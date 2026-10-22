@@ -177,7 +177,9 @@ your chat folders and tags and the transcripts older versions archived are not a
 to read at all. Its websocket carries a frame about a conversation only if the app started
 it, and an inbox item only if the app raised it (its own proposal). The approval relay is the
 one exception there too: it hears your approvals, which it already reads through
-`/api/approvals`. An app also may not clear your notifications, mark
+`/api/approvals`. The waiting list's ring, `waiting_changed`, is the other: it says only that
+something waiting on you was asked or ended, and an app hears it only when its manifest declares
+`/api/waiting`, the list it already reads whole. An app also may not clear your notifications, mark
 them read or change what reaches you.
 
 What reached you is yours the same way. An app reads the notifications it raised and the

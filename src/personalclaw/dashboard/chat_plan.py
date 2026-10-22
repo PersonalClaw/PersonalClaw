@@ -116,18 +116,24 @@ def read(chat_key: str) -> tuple[PlanSession | None, dict[str, Any]]:
 
 def write(session: PlanSession, binding: dict[str, Any]) -> None:
     """Persist the walkthrough + attachment for the chat named by ``project_id``."""
+    from personalclaw import waiting
+
     f = _path(session.project_id)
     f.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(f, json.dumps({"session": session.to_dict(), "binding": binding}, indent=2))
+    waiting.changed_elsewhere()  # a step drafted for your review, or reviewed
 
 
 def clear(chat_key: str) -> None:
     """Drop the chat's walkthrough entirely (the user cancelled plan mode)."""
+    from personalclaw import waiting
+
     f = _path(chat_key)
     try:
         f.unlink()
     except (FileNotFoundError, OSError):
-        pass
+        return
+    waiting.changed_elsewhere()
 
 
 # ── the chat-side binding over the shared state machine ──

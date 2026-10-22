@@ -530,6 +530,11 @@ def _announce() -> None:
         state = get_dashboard_state()
         if state is not None:
             state.push_refresh("loops")
+            # A loop waiting on you (its question, a plan to launch, a step to review) asks or
+            # ends with its status: the list of what waits on you moved (`waiting`).
+            from personalclaw import waiting
+
+            waiting.changed(state)
     except Exception:
         logger.debug("loops: could not announce a change", exc_info=True)
 

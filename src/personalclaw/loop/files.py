@@ -568,10 +568,19 @@ def task_finding_count(loop_id: str, task_id: str) -> int:
 SCHEDULER_QUESTION = "scheduler"
 
 
+def _waiting_moved() -> None:
+    """What the loop asks you was written or cleared: the list of what waits on you moved, even
+    when the loop's status did not (a scheduler asking again while it waits)."""
+    from personalclaw import waiting
+
+    waiting.changed_elsewhere()
+
+
 def write_question(loop_id: str, question: str, **extra: Any) -> None:
     d = loop_dir(loop_id)
     if d is not None:
         atomic_json_write(d / "questions.json", {"question": question, "ts": time.time(), **extra})
+        _waiting_moved()
 
 
 def pending_question(loop_id: str) -> dict | None:
@@ -599,6 +608,7 @@ def clear_question(loop_id: str) -> None:
     f = d / "questions.json" if d else None
     if f and f.exists():
         f.unlink()
+        _waiting_moved()
 
 
 # Merges (a code loop's): what its scheduler merged into the workspace, for the loop's page.
@@ -727,6 +737,7 @@ def write_plan_session(session) -> None:
     d = loop_dir(session.project_id)
     if d is not None:
         atomic_write(d / _PLAN_SESSION_FILE, json.dumps(session.to_dict(), indent=2))
+        _waiting_moved()  # a step drafted for your review, or reviewed
 
 
 def clear_plan_session(loop_id: str) -> None:
@@ -734,6 +745,7 @@ def clear_plan_session(loop_id: str) -> None:
     f = d / _PLAN_SESSION_FILE if d else None
     if f and f.exists():
         f.unlink()
+        _waiting_moved()
 
 
 # GC: file dirs with no backing DB row (interrupted delete / dev reset).

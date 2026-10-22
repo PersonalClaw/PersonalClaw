@@ -108,8 +108,17 @@ WORK_FRAMES: frozenset[str] = frozenset({"work_phase"})
 #: another app's or work no chat started moved.
 RUNNING_LIST_FRAMES: frozenset[str] = frozenset({"running_changed"})
 
+#: The waiting list's doorbell (``waiting.changed``): ``{}``, saying only that the list of what
+#: waits on you moved. The list reads an app all of it when its manifest declares
+#: ``/api/waiting`` (the permission middleware refuses it otherwise), as the approval relay reads
+#: every approval, so the ring reaches an app's socket on that same check and no other app's,
+#: whatever the frame names: #3888's exception beside the relay's
+#: (``docs/security/limitations.md``).
+WAITING_LIST_FRAMES: frozenset[str] = frozenset({"waiting_changed"})
+WAITING_LIST_ROUTE = "/api/waiting"
+
 #: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,
-#: ``("inbox_item", source)`` or ``("work", name)``.
+#: ``("inbox_item", source)``, ``("work", name)`` or ``("waiting", "")``.
 FrameSubject = tuple[str, str]
 
 
@@ -123,7 +132,10 @@ def frame_subject(event_type: str, data: object) -> FrameSubject | None:
     or that are about a conversation it started. Read as a conversation subject, a note with no
     ``session`` reached every app that declared the type, which is how an app read everything
     that reached you. A phase of work that names no conversation is about that work
-    (:data:`WORK_FRAMES`), which no app hears of."""
+    (:data:`WORK_FRAMES`), which no app hears of. The waiting list's ring is about the list
+    (:data:`WAITING_LIST_FRAMES`), whatever it carries."""
+    if event_type in WAITING_LIST_FRAMES:
+        return ("waiting", "")
     if not isinstance(data, dict) or event_type in NOTIFICATION_FRAMES:
         return None
     if event_type in INBOX_ITEM_FRAMES:
@@ -349,12 +361,15 @@ class DashboardWebSocketState:
 
     def _app_may_hear_about(self, app: str, event_type: str, subject: FrameSubject) -> bool:
         """Whether *app*'s socket may carry a frame about *subject*: an inbox item it raised, a
-        conversation it started, or an approval frame when it holds the approval relay
-        (:data:`APPROVAL_RELAY_FRAMES`). Never one about work no chat started (:data:`WORK_FRAMES`).
+        conversation it started, an approval frame when it holds the approval relay
+        (:data:`APPROVAL_RELAY_FRAMES`), or the waiting list's ring when it may read the list
+        (:data:`WAITING_LIST_FRAMES`). Never one about work no chat started (:data:`WORK_FRAMES`).
         """
         kind, key = subject
         if kind == "work":
             return False
+        if kind == "waiting":
+            return self._app_may_read(app, WAITING_LIST_ROUTE)
         if kind == "inbox_item":
             from personalclaw.proposals_contract import app_source
 
@@ -363,14 +378,18 @@ class DashboardWebSocketState:
             return True
         if event_type not in APPROVAL_RELAY_FRAMES:
             return False
+        return self._app_may_read(app, APPROVAL_REGISTRY_ROUTE)
+
+    @staticmethod
+    def _app_may_read(app: str, route: str) -> bool:
+        """Whether the permission middleware lets *app* read *route*: what a frame that says no
+        more than that route answers may reach its socket by."""
         try:
             from personalclaw.apps.permissions import app_request_denial
 
-            return not app_request_denial(
-                app, APPROVAL_REGISTRY_ROUTE, method="GET", route=APPROVAL_REGISTRY_ROUTE
-            )
-        except Exception:  # noqa: BLE001 — an undecidable relay hears nothing it did not start
-            logger.debug("approval relay check failed for %s", app, exc_info=True)
+            return not app_request_denial(app, route, method="GET", route=route)
+        except Exception:  # noqa: BLE001 — undecidable, the app hears nothing it did not start
+            logger.debug("route read check failed for %s on %s", app, route, exc_info=True)
             return False
 
     def _app_view(self, app: str, event_type: str, data: object) -> object:

@@ -16,12 +16,16 @@ through ``GET /api/waiting`` behind the real permission middleware:
   what answers an item, and an agent reads its own chat's items;
 * nothing can be answered through an item that its own route refuses: an app token and an agent
   credential are refused on every item's answer route;
-* a source that cannot be read is said, never shown as nothing waiting.
+* a source that cannot be read is said, never shown as nothing waiting;
+* the list says it moved in one ``waiting_changed`` frame per window, carrying nothing: each kind
+  rings once as it is asked and once as it leaves, a burst rings once, a change off the event
+  loop is handed to it, a run's status rings and its steps do not, and headless nothing rings.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -569,3 +573,336 @@ async def test_nothing_is_answered_through_an_item_that_its_own_route_refuses(tm
                         )
             _status, after = await _read(w.state)
     assert set(_by_id(after)) == set(_by_id(mine)), "something was answered"
+
+
+# ── the list says it moved ───────────────────────────────────────────────────────────────────
+
+#: A window short enough for a test, the same rule as the gateway's.
+WINDOW = 0.05
+
+
+def _rings(w: Any) -> list[Any]:
+    return [d for k, d in w.frames if k == waiting.CHANGED]
+
+
+async def _a_window() -> None:
+    await asyncio.sleep(WINDOW * 3)
+
+
+async def _ask_approval(w, ids):
+    ids["task"] = asyncio.create_task(w.state.request_approval("bg-9", "cron", "shell"))
+    await _until(lambda: "bg-9" in w.state._pending_approvals, "the approval")
+    return "approval:bg-9"
+
+
+async def _answer_approval(w, ids):
+    from personalclaw.dashboard.handlers import sessions
+
+    answered = [("POST", "/api/approvals/{id}/{action}", sessions.api_approval_resolve)]
+    async with TestClient(TestServer(_gateway(w.state, "", answered))) as http:
+        resp = await http.post("/api/approvals/bg-9/approve")
+        assert resp.status == 200, await resp.text()
+    await ids["task"]
+
+
+async def _ask_question(w, ids):
+    ids["task"] = asyncio.create_task(
+        w.state.owner_questions.ask(
+            f"dashboard:{CHAT}",
+            [{"question": "Which?", "header": "Which", "multiSelect": False, "options": []}],
+            asked_by="agent",
+        )
+    )
+    await _until(lambda: w.state.owner_questions.pending(), "the question")
+    ids["question"] = w.state.owner_questions.pending()[0]["id"]
+    return f"question:{ids['question']}"
+
+
+async def _answer_question(w, ids):
+    w.state.owner_questions.answer(f"dashboard:{CHAT}", ids["question"], skip=True)
+    await ids["task"]
+
+
+async def _ask_loop(w, ids):
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import Loop, LoopStatus
+
+    loop = loops.create(Loop(id="", name="Sort the inbox", kind="goal", task="sort"))
+    loops.update_status(loop.id, LoopStatus.RUNNING)
+    await _a_window()
+    w.frames.clear()
+    loop_files.write_question(loop.id, "May I archive it?")
+    loops.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+    ids["loop"] = loop.id
+    return f"loop_question:{loop.id}"
+
+
+async def _answer_loop(w, ids):
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import LoopStatus
+
+    loop_files.clear_question(ids["loop"])
+    loops.update_status(ids["loop"], LoopStatus.RUNNING)
+
+
+async def _ask_again_while_waiting(w, ids):
+    """A loop already waiting on you asks a new question (a Code loop's scheduler asking a merge
+    after its question): its status does not move, its question does."""
+    from personalclaw.loop import files as loop_files
+
+    key = await _ask_loop(w, ids)
+    await _a_window()
+    w.frames.clear()
+    loop_files.write_question(ids["loop"], "Merge two tasks?", merge={"into": "main", "tasks": []})
+    return key
+
+
+async def _ask_gate(w, ids):
+    from personalclaw.workflows import human_input
+    from personalclaw.workflows import store as runs
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    run = runs.create(WorkflowRun(id="", workflow_name="release", status=RunStatus.NEEDS_INPUT))
+    cont = human_input.create_continuation(
+        run.id, node_id="ask", instance_path="ask", epoch=0, ask={"kind": "input", "prompt": "?"}
+    )
+    ids["run"], ids["token"] = run.id, cont.token
+    return f"gate:{run.id}:ask:0"
+
+
+async def _answer_gate(w, ids):
+    from personalclaw.workflows import human_input
+
+    assert human_input.consume_continuation(ids["run"], ids["token"]) is not None
+
+
+async def _ask_park(w, ids):
+    from personalclaw.triggers import parks
+
+    trigger = SimpleNamespace(id="schedule:clock:nightly", name="Nightly")
+    card = json.dumps({"needs_input": {"blocker": "Sign in"}})
+    result = SimpleNamespace(success=True, outcome="needs_input", stdout=card, stderr="")
+    with patch.object(parks, "_raise_row"):  # its Inbox row is the Inbox's business
+        park = parks.raise_park(trigger, result)
+    assert park is not None
+    ids["token"] = park.token
+    return "park:schedule:clock:nightly"
+
+
+async def _answer_park(w, ids):
+    from personalclaw.triggers import parks
+
+    assert parks.claim("schedule:clock:nightly", ids["token"]) is not None
+
+
+async def _ask_grant(w, ids):
+    from personalclaw.browse import grant
+
+    ids["task"] = asyncio.create_task(grant.request_grant(task="Read", request_id="g9"))
+    await _until(lambda: grant.pending_grants(), "the grant")
+    return "browse_grant:g9"
+
+
+async def _answer_grant(w, ids):
+    from personalclaw.browse import grant
+
+    assert grant.approve_grant("g9")
+    await ids["task"]
+
+
+async def _ask_loop_step(w, ids):
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import Loop
+    from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
+
+    loop = loops.create(Loop(id="", name="Plan", kind="goal", task="plan", status="planning"))
+    await _a_window()
+    w.frames.clear()
+    step = PlanStep(id="s1", kind="design", title="Pick", status=StepStatus.AWAITING_REVIEW.value)
+    ids["loop"], ids["plan"] = loop.id, PlanSession(project_id=loop.id, steps=[step])
+    loop_files.write_plan_session(ids["plan"])
+    return f"plan_review:loop:{loop.id}:s1"
+
+
+async def _approve_loop_step(w, ids):
+    from personalclaw.loop import files as loop_files
+    from personalclaw.planning.session import StepStatus
+
+    ids["plan"].steps[0].status = StepStatus.APPROVED.value
+    loop_files.write_plan_session(ids["plan"])
+
+
+async def _ask_launch(w, ids):
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import Loop, LoopStatus
+
+    loop = loops.create(Loop(id="", name="Tidy", kind="goal", task="tidy", status="planning"))
+    await _a_window()
+    w.frames.clear()
+    loops.update_status(loop.id, LoopStatus.REVIEW)
+    ids["loop"] = loop.id
+    return f"plan_review:loop:{loop.id}"
+
+
+async def _launch(w, ids):
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import LoopStatus
+
+    loops.update_status(ids["loop"], LoopStatus.RUNNING)
+
+
+async def _ask_chat_step(w, ids):
+    from personalclaw.dashboard import chat_plan
+    from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
+
+    step = PlanStep(
+        id="c1",
+        kind=chat_plan.PLAN_STEP_KIND,
+        title="Rename",
+        status=StepStatus.AWAITING_REVIEW.value,
+    )
+    chat_plan.write(PlanSession(project_id=CHAT, steps=[step]), {})
+    return f"plan_review:chat:{CHAT}:c1"
+
+
+async def _end_chat_plan(w, ids):
+    from personalclaw.dashboard import chat_plan
+
+    chat_plan.clear(CHAT)
+
+
+async def _ask_bridge(w, ids):
+    from personalclaw.inbound import bridge
+
+    ids["token"] = bridge._mint_confirmation(
+        SimpleNamespace(name="restart_gateway"), {}, asked_by="bridge:c1"
+    )
+    return f"bridge_confirmation:{waiting._confirmation_ref(ids['token'])}"
+
+
+async def _answer_bridge(w, ids):
+    from personalclaw.inbound import bridge
+
+    assert bridge.take_confirmation(ids["token"]) is not None
+
+
+#: Each kind of thing waiting on you, asked by its own producer and ended its own way.
+ASKED_AND_ENDED = {
+    "approval": (_ask_approval, _answer_approval),
+    "question": (_ask_question, _answer_question),
+    "loop_question": (_ask_loop, _answer_loop),
+    "loop_question asked again": (_ask_again_while_waiting, _answer_loop),
+    "gate": (_ask_gate, _answer_gate),
+    "park": (_ask_park, _answer_park),
+    "browse_grant": (_ask_grant, _answer_grant),
+    "plan_review of a loop's step": (_ask_loop_step, _approve_loop_step),
+    "plan_review of a plan to launch": (_ask_launch, _launch),
+    "plan_review of a chat's step": (_ask_chat_step, _end_chat_plan),
+    "bridge_confirmation": (_ask_bridge, _answer_bridge),
+}
+
+
+@pytest.fixture
+def _short_window(monkeypatch):
+    monkeypatch.setattr(waiting, "WINDOW_SECS", WINDOW)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", sorted(ASKED_AND_ENDED))
+async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(
+    kind, tmp_path, _short_window
+):
+    """Asked, the list rings once and the item is in it; answered or ended at its source, the list
+    rings once more and the item is gone: one read after one frame shows it on every surface."""
+    from personalclaw.inbound import bridge
+
+    ask, end = ASKED_AND_ENDED[kind]
+    w = _World(tmp_path, _held(asyncio.Event()))
+    ids: dict[str, Any] = {}
+    target = "personalclaw.inbox_providers.native_source.get_dashboard_state"
+    try:
+        with patch(target, return_value=w.state):
+            item = await ask(w, ids)
+            await _a_window()
+            assert _rings(w) == [{}], f"{kind}: asking it rang {len(_rings(w))} times"
+            _status, body = await _read(w.state)
+            assert item in _by_id(body), f"{kind}: not listed after its ring"
+
+            w.frames.clear()
+            await end(w, ids)
+            await _a_window()
+            assert _rings(w) == [{}], f"{kind}: ending it rang {len(_rings(w))} times"
+            _status, body = await _read(w.state)
+            assert item not in _by_id(body), f"{kind}: still listed after its ring"
+    finally:
+        task = ids.get("task")
+        if task is not None and not task.done():
+            task.cancel()
+        bridge._pending.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, _short_window):
+    w = _World(tmp_path, _held(asyncio.Event()))
+    asks = [
+        asyncio.create_task(w.state.request_approval(f"bg-{n}", "cron", "shell")) for n in range(10)
+    ]
+    try:
+        await _until(lambda: len(w.state._pending_approvals) == 10, "the ten approvals")
+        assert _rings(w) == [], "nothing rings before its window closes"
+        await _a_window()
+        assert _rings(w) == [{}], "ten asks, one frame, with nothing in it to render"
+
+        for n in range(10):
+            w.state.resolve_approval(f"bg-{n}", True, by=_owner())
+        await _a_window()
+        assert len(_rings(w)) == 2, "ten answers, one more frame"
+    finally:
+        for t in asks:
+            t.cancel()
+        await asyncio.gather(*asks, return_exceptions=True)
+
+
+def _owner():
+    from personalclaw import approval_answer
+
+    return approval_answer.YOU
+
+
+@pytest.mark.asyncio
+async def test_a_change_off_the_event_loop_is_handed_to_it(tmp_path, _short_window):
+    """A loop's files and a run's gate are written from worker threads: the ring is handed to the
+    gateway's loop, and rings there once."""
+    w = _World(tmp_path, _held(asyncio.Event()))
+    w.state._ws_loop = asyncio.get_running_loop()
+    await asyncio.gather(*(asyncio.to_thread(waiting.changed, w.state) for _ in range(5)))
+    await _a_window()
+    assert _rings(w) == [{}]
+
+
+def test_a_ring_with_no_gateway_is_nothing():
+    """Headless (a CLI command, a script), nothing listens: a change rings nothing and raises
+    nothing, so no ask ever fails for its ring."""
+    with patch("personalclaw.inbox_providers.native_source.get_dashboard_state", return_value=None):
+        waiting.changed_elsewhere()
+    broken = SimpleNamespace(_ws_loop=None)
+    waiting.changed(broken)  # no running loop here: nothing to ring on
+
+
+@pytest.mark.asyncio
+async def test_a_runs_status_rings_and_its_steps_do_not(tmp_path, _short_window):
+    """A run's gates are listed while it needs input, so its status moving rings the list; what
+    its steps do between does not."""
+    from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+    w = _World(tmp_path, _held(asyncio.Event()))
+    publish = WorkflowWatchdog(state=w.state)._publisher("r1")
+    publish("workflow_node_update", {"node_id": "a", "status": "running"})
+    await _a_window()
+    assert _rings(w) == [], "a step's progress is no change to what waits on you"
+    publish("workflow_run_update", {"status": "needs_input"})
+    await _a_window()
+    assert _rings(w) == [{}]
