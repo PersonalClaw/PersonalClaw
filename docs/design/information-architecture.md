@@ -95,7 +95,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 |---|---|---|---|---|
 | Home | see what needs you, what is running and what finished | Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed. An approval is answered inline. | New thread, View | the selected item's detail; a compact window opens it in place |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
-| Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, a progress strip above the composer | Pause or resume, Stop, overflow | plan review, cycle detail |
+| Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning, cycle detail |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
 | Library | find and curate what the agent knows or made | tabs for Knowledge, Memory, Files and Artifacts, each a fixed-width list beside a flexible detail; the graph is a view toggle | Add, View, overflow | the item's detail |
 | Automations | trust what runs without you | one list, with each item's next run, last result and the thread it reports to | New, overflow | detail and run history |
@@ -149,6 +149,11 @@ Top to bottom:
 - **Artifacts** the turn saved show as cards under its answer, never folded away with the steps:
   each by the name it was saved under, opening beside the conversation in the detail tile, and
   in the Library.
+- **A loop the chat started** shows as one compact card where the chat first names it, never
+  folded away: its name and status, its kind, cycle, elapsed time and agents, its phase matrix
+  with every cell's state in words, what it needs from you while it waits, and Details, which
+  opens it in the detail tile. The card changes nothing about the loop; the tile carries its
+  strip.
 - **Approval and question cards** sit where the agent asked. A card states the action and its
   consequence plainly, so the owner can answer from it alone.
 - **Sources** are the links the answer cites that its own turn retrieved: a result of its web
@@ -174,8 +179,9 @@ Top to bottom:
   ones that just ended) and the Side question. Opening a section reads; it signs in, reconnects or
   stops nothing.
 - **The detail tile** is the pane host beside the turns (the one a reply's code, table or diff
-  opens in): an output, a run or a helper opened from the inspector, or a run from its card in the
-  thread, under its address (`?beside=artifact:<slug>`, `file:<path>`, `run:<id>`, `helper:<id>`),
+  opens in): an output, a run or a helper opened from the inspector, or a run or a loop from its
+  card in the thread, under its address (`?beside=artifact:<slug>`, `file:<path>`, `run:<id>`,
+  `helper:<id>`, `loop:<id>`),
   so a reload, Back and a copied link open it again. It resizes and remembers its width, gives
   focus back to the row it was opened from, and closing it, or the inspector, stops nothing. On a
   phone the inspector is a drawer, and a detail takes its place with a Back to Activity.

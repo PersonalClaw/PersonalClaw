@@ -1,11 +1,12 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { ArrowLeft, Bot, Box, FilePen, SearchX, Workflow, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, Bot, Box, FilePen, Repeat, SearchX, Workflow, type LucideIcon } from 'lucide-react'
 import type { PaneContent } from '../../../ui/PaneHost'
 import { Button } from '../../../ui/Button'
 import { Markdown } from '../../../ui/Markdown'
 import { ChatFileViewer } from '../ChatFilePanel'
 import { WorkflowProgressCard } from '../WorkflowProgressCard'
 import { useHelper, type HelperRef } from '../transcript/TurnHelpers'
+import { LoopBeside } from './LoopBeside'
 import type { ChatOutput } from '../inspector/chatOutputs'
 import type { SubagentCard } from '../chatTypes'
 
@@ -18,12 +19,13 @@ import type { SubagentCard } from '../chatTypes'
 //   `file:<path>`     a file the chat wrote, in the chat's file viewer
 //   `run:<id>`        a workflow run, as its live card
 //   `helper:<id>`     a helper the chat started: its task, its state and its report
+//   `loop:<id>`       a loop the chat started: its strip, its phase matrix, its steps and cycles
 // The pane host gives focus back to the row it was opened from when it closes, and closing it
 // stops nothing: the work beside it and the work it shows go on.
 
 const ArtifactViewer = lazy(() => import('../../artifacts/ArtifactViewer').then((m) => ({ default: m.ArtifactViewer })))
 
-const KINDS = ['artifact', 'file', 'run', 'helper'] as const
+const KINDS = ['artifact', 'file', 'run', 'helper', 'loop'] as const
 type DetailKind = typeof KINDS[number]
 
 /** The detail `address` names, or null for any other address (a reply's block). */
@@ -35,8 +37,8 @@ export function detailOf(address: string | null): { kind: DetailKind; id: string
   return KINDS.includes(kind) && id ? { kind, id } : null
 }
 
-const ICONS: Record<DetailKind, LucideIcon> = { artifact: Box, file: FilePen, run: Workflow, helper: Bot }
-const LABELS: Record<DetailKind, string> = { artifact: 'artifact', file: 'file', run: 'run', helper: 'helper' }
+const ICONS: Record<DetailKind, LucideIcon> = { artifact: Box, file: FilePen, run: Workflow, helper: Bot, loop: Repeat }
+const LABELS: Record<DetailKind, string> = { artifact: 'artifact', file: 'file', run: 'run', helper: 'helper', loop: 'loop' }
 
 /** The pane for a detail address, or null for an address that names none (a block's, or nothing
  *  open). `back`, on a phone, returns to the inspector the detail replaced. */
@@ -64,6 +66,7 @@ export function detailPane({ address, outputs, subagents, helpers = [], session,
   const title = kind === 'artifact' ? (made?.name || id)
     : kind === 'file' ? (made?.name || id.split('/').pop() || id)
       : kind === 'run' ? 'Workflow run'
+        : kind === 'loop' ? 'Loop'
         : (helper?.title || helper?.task || named?.task || 'Helper')
   const frame = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
@@ -92,7 +95,9 @@ export function detailPane({ address, outputs, subagents, helpers = [], session,
             <WorkflowProgressCard refObj={{ runId: id, created: false }} inPane />
           </div>
         )
-        : <HelperDetail id={id} live={helper} named={named} session={session} />
+        : kind === 'loop'
+          ? <LoopBeside id={id} />
+          : <HelperDetail id={id} live={helper} named={named} session={session} />
   return { id: address!, title, label: LABELS[kind], icon: ICONS[kind] ?? SearchX, onClose, body: frame(body) }
 }
 

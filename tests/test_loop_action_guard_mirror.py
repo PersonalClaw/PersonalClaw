@@ -81,12 +81,16 @@ _LIFECYCLE_SURFACES = (
     "pages/loops/LoopCockpitPage.tsx",
     # A goal loop's Start, Pause or Resume and Stop, in the strip above its composer (#3824).
     "pages/loops/LoopProgressStrip.tsx",
+    # The same strip in a loop's detail tile beside the chat that started it, asking the map for
+    # that loop's backing (#3824).
+    "pages/chat/beside/LoopBeside.tsx",
     "pages/loops/DesignCockpitPage.tsx",
     # The code cockpit's run controls, in its header since the page was split into regions.
     "pages/code/cockpit/header/CockpitHeader.tsx",
 )
 # `pages/chat/SdlcProgressCard.tsx` left this list when it became a status mirror with no
-# controls of its own: its Pause, Stop and Delete live on the loop's page.
+# controls of its own: its Pause, Stop and Delete live on the loop's page, and its Details opens
+# the tile above, where the strip is.
 
 
 def test_every_lifecycle_surface_actually_reaches_the_mirror():
