@@ -148,6 +148,30 @@ describe('approval requested → useApprovalToasts', () => {
     act(() => onMessage!({ type: 'token', data: { session: 's', text: 'hi' } }))
     expect(playCue).not.toHaveBeenCalled()
   })
+
+  // The gateway decides once whether an approval may interrupt you now (`interrupt`, from mute,
+  // quiet hours and the Approval needed rule); the toast and the cue follow it.
+  function toastsDuring(run: () => void): unknown[] {
+    const toasts: unknown[] = []
+    const heard = (e: Event) => toasts.push((e as CustomEvent).detail)
+    window.addEventListener('ne:toast', heard)
+    try { run() } finally { window.removeEventListener('ne:toast', heard) }
+    return toasts
+  }
+
+  it.each(['quiet', 'hush', 'drop'])('raises no toast and no cue for an approval that may not interrupt now (%s)', (interrupt) => {
+    renderHook(() => useApprovalToasts(''))
+    const toasts = toastsDuring(() => act(() => onMessage!(frame({ interrupt }))))
+    expect(toasts).toEqual([])
+    expect(playCue).not.toHaveBeenCalled()
+  })
+
+  it.each([['deliver'], [undefined]])('toasts and cues an approval that may interrupt now (%s)', (interrupt) => {
+    renderHook(() => useApprovalToasts(''))
+    const toasts = toastsDuring(() => act(() => onMessage!(frame(interrupt ? { interrupt } : {}))))
+    expect(toasts).toHaveLength(1)
+    expect(playCue).toHaveBeenCalledWith('approval_needed')
+  })
 })
 
 describe('error toast → Toaster', () => {

@@ -7,7 +7,7 @@ Mission Control made six reads and folded them. This is the one list, served as
 through, with that route's guards unchanged, and the list has no answer route of its own.
 
 **One item per thing waiting on you**, ``{id, kind, work, session, brief, consequence, risk,
-asked_at, age_secs, expires_at, current, answer, route}``:
+asked_at, age_secs, expires_at, current, interrupt, answer, route}``:
 
 - ``kind`` is the source: ``approval`` (a tool call, a helper's start and a tool server's question
   among them), ``question`` (an agent's question in a chat), ``loop_question`` (a loop's, a Code
@@ -29,6 +29,9 @@ asked_at, age_secs, expires_at, current, answer, route}``:
   (ISO, ``None`` for an ask that waits until it is answered). ``current`` is whether it can still
   be answered: an item past answering is never listed, so it is true when read, and a reader that
   holds an item past its ``expires_at`` disables its action itself.
+- ``interrupt`` is whether it may interrupt you now (:func:`interrupt_for`), decided once here from
+  mute, quiet hours and its kind's notification rule, so every surface applies one policy: an
+  approval's push, its toast and its cue follow it, and so does every reader that would ping.
 - ``answer`` is the owner's exact action: ``{method, path, takes, body}``, the source's own route
   and what it takes. ``route`` is the dashboard address that shows it with its card.
 
@@ -81,6 +84,22 @@ _now = time.time
 CHANGED = "waiting_changed"
 WINDOW_SECS = 0.15
 
+#: Whether an item may interrupt you now (:func:`interrupt_for`): ``deliver`` it may (a ping, a
+#: push, a toast, a cue, the buddy's alert); ``quiet`` and ``hush`` not now, the gate's two answers
+#: inside quiet hours (``quiet`` for a kind it records as one you must answer, ``needs_input``;
+#: ``hush`` for the rest, an approval among them), and ``quiet`` too under a rule that keeps its
+#: kind quiet (a badge, the digest); ``drop`` not at all (mute, the severity floor, a rule that
+#: says never). It decides what interrupts, never what is listed: every item is in the list and
+#: every count whatever it says. The words are the notification gate's postures
+#: (``entity_routes.notification_posture``), carried as they are so a reader can tell not now
+#: from not at all.
+INTERRUPTS = ("deliver", "quiet", "hush", "drop")
+
+#: The notification kind an item's kind is decided for: an approval's own, ``approval/requested``;
+#: every other item asks you as a ``needs_input`` row (``loop/needs_input``).
+_NOTIFIED_AS = {"approval": "approval"}
+_NEEDS_INPUT = "needs_input"
+
 #: What answering an item lets happen, most consequential first: the list's first order.
 CONSEQUENCES = ("destructive", "changes", "asks")
 
@@ -97,6 +116,7 @@ ITEM_FIELDS = (
     "age_secs",
     "expires_at",
     "current",
+    "interrupt",
     "answer",
     "route",
 )
@@ -178,10 +198,42 @@ def _item(
         "age_secs": max(0, int(now - asked_at)) if asked_at else None,
         "expires_at": _iso(expires_at),
         "current": not expires_at or now < expires_at,
+        "interrupt": "deliver",
         "answer": dict(answer),
         "route": route,
         "_ts": float(asked_at or 0.0),
     }
+
+
+# ── may it interrupt you now ─────────────────────────────────────────────────────────────────
+
+
+def interrupt_for(kind: str) -> str:
+    """Whether an item of *kind* may interrupt you now (:data:`INTERRUPTS`): the notification
+    gate's posture for the kind it is notified as (mute, the severity floor, quiet hours), then
+    that kind's rule, on the gateway's clock (:data:`_now`). A rule that says never drops it, and
+    one that delivers quietly (a badge, the digest) keeps it from pinging. Never raises: a gate
+    that cannot be read delivers, as ``DashboardState.notify`` does, since a ping too many is
+    recoverable and an ask nobody heard is not."""
+    from datetime import datetime
+
+    from personalclaw import notification_rules
+    from personalclaw.providers import entity_routes
+
+    notified = _NOTIFIED_AS.get(kind, _NEEDS_INPUT)
+    try:
+        posture = entity_routes.notification_posture(notified, now=datetime.fromtimestamp(_now()))
+        if posture == entity_routes.POSTURE_DROP:
+            return posture
+        mode = notification_rules.resolve_rule_for_legacy(notified).mode
+    except Exception:  # noqa: BLE001 — undecidable reads as may, as the gate itself reads it
+        logger.debug("waiting list: could not decide whether %s may interrupt", kind, exc_info=True)
+        return entity_routes.POSTURE_DELIVER
+    if mode == "never":
+        return entity_routes.POSTURE_DROP
+    if mode != "immediate" and posture == entity_routes.POSTURE_DELIVER:
+        return entity_routes.POSTURE_QUIET
+    return posture
 
 
 # ── 1. approvals ─────────────────────────────────────────────────────────────────────────────
@@ -654,8 +706,13 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[str]]:
     items += _bridge_confirmations(snap.confirmations, now)
     live = [i for i in items if i["current"]]
     live.sort(key=_order)
+    decided: dict[str, str] = {}
     for i in live:
         i.pop("_ts", None)
+        notified = _NOTIFIED_AS.get(i["kind"], _NEEDS_INPUT)
+        if notified not in decided:
+            decided[notified] = interrupt_for(i["kind"])
+        i["interrupt"] = decided[notified]
     return live, list(dict.fromkeys(unreadable))
 
 
