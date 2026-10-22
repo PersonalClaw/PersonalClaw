@@ -301,7 +301,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         </div>
 
         <ChatPanes panes={panes} stream={stream} transcript={transcript} started={started} setQuery={setQuery}
-          navigate={navigate} send={send} />
+          navigate={navigate} send={send} mapAudio={mapAudio} />
       </div>
       <ToolResultModal panes={panes} />
     </div>

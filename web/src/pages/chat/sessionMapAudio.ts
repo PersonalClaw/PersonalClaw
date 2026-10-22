@@ -36,8 +36,10 @@ function documentVisible(): boolean {
   return typeof document === 'undefined' || document.visibilityState !== 'hidden'
 }
 
-/** Subscribe the rail while `enabled` and the document is visible; write levels onto `target`. */
-export function useRailAudio(enabled: boolean, target: { current: HTMLElement | null }): RailAudio {
+/** Subscribe the rail while `enabled` and the document is visible; write levels onto `target`.
+ *  With `still` (the touch drawer, which draws no level line) it is told who alone, as under
+ *  reduced motion. */
+export function useRailAudio(enabled: boolean, target: { current: HTMLElement | null }, { still = false }: { still?: boolean } = {}): RailAudio {
   const [visible, setVisible] = useState(documentVisible)
   const [audio, setAudio] = useState<RailAudio>(QUIET)
   const shown = useRef<RailAudio>(QUIET)
@@ -51,7 +53,7 @@ export function useRailAudio(enabled: boolean, target: { current: HTMLElement | 
 
   useEffect(() => {
     if (!enabled || !visible) return
-    const moving = !prefersReducedMotion()
+    const moving = !still && !prefersReducedMotion()
     // The page's own media elements report only while a map watches them.
     const unwatch = watchInAppMedia()
     const stop = subscribeAudioPresence((p) => {
@@ -78,7 +80,7 @@ export function useRailAudio(enabled: boolean, target: { current: HTMLElement | 
       target.current?.style.removeProperty('--map-play-level')
       target.current?.style.removeProperty('--map-mic-level')
     }
-  }, [enabled, visible, target])
+  }, [enabled, visible, target, still])
 
   return audio
 }
