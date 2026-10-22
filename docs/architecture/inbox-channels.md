@@ -685,6 +685,30 @@ agent CLI asks over elicitation (a tool server's own form, a model switch) is an
 she is never asked, so no answer or refusal is claimed for her. A request the ACP client does not
 serve at all is refused with method-not-found, so no turn waits on an answer that never comes.
 
+## Waiting on you: one list of what you must answer
+
+Everything the owner must answer is one list, `GET /api/waiting` (`personalclaw/waiting.py`), read
+from each source's own registry: an approval (a tool call, a helper's start and a tool server's
+question among them), an agent's question, a loop's question (a Code loop's merge and conflict
+among them), a workflow run's gate, a trigger's parked action, a browser grant, a plan review (a
+loop's step, a plan ready to launch, a chat's step) and a control-bridge confirmation. Answered or
+past answering, an item leaves the list.
+
+- **One item shape:** `{id, kind, work, session, brief, consequence, risk, asked_at, age_secs,
+  expires_at, current, answer, route}`. `brief` is the source's own words, exactly as its own card
+  shows them, and `answer` its own route (`{method, path, takes, body}`), with that route's guards
+  unchanged. The list has no answer route of its own, so nothing is answered through it that its
+  source would refuse.
+- **One order:** by consequence (`destructive`, then `changes`, then `asks`), then age, oldest
+  first, on every surface.
+- **A source that cannot be read** is named in `unreadable`, never shown as nothing waiting.
+- **Who reads what:** you read everything. An app reads the list only when its manifest declares
+  `/api/waiting`, and then all of it, as the approval relay reads every approval, without a route
+  to answer an item by or a token that answers one; an agent reads its own chat's items, the same
+  way. Every door an item names refuses an app and an agent (`approval_answer`): the chat's
+  question, the loop's question, merge, conflict, plan step and launch, the run's gate, the
+  trigger's park, the browser grant, the chat's plan step and the bridge confirmation.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

@@ -436,6 +436,15 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
+    # Approving the plan an agent drafted is your answer to it, never that agent's own
+    # (`approval_answer`, rule 2). An app approves in a chat it started (its route row); an
+    # agent's tool approves in none.
+    from personalclaw import approval_answer
+
+    by = approval_answer.of_request(request)
+    if by.kind == approval_answer.AGENT:
+        why = approval_answer.check(by, what=f"plan:{chat.key}", asked_by="")
+        return json_error("approval_owner_only", message=why, status=403)
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:

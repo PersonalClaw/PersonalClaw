@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The buddy playground, at `#/buddy/playground`: the desktop buddy's state machine and orb, played with made-up work before the buddy ships, with a control for every input, a clock that fires its timers, an event log where an answer is written and never sent, a scripted day to play at speed, pause or step, and every pose at four sizes; it reads nothing from the gateway, and nothing links to it but its address.**
 - **The helpers a step starts show under that step, inside the turn that started them: each with its task, its agent and whether it is running (with its latest call), done, failed, stopped or not started, read again after a reload, and with a Stop while it runs; a stopped helper reads Stopped, not failed. The Activity panel's Subagents tab still lists them all.**
+- **Everything waiting on you is one list, `GET /api/waiting`: approvals, an agent's questions, a loop's question, merge and conflict, a workflow run's gate, an automation's parked action, a browser grant, a plan review and a control-bridge confirmation, each with its brief in its source's own words, what answering it lets happen, how long it has waited, until when it can be answered and the route its own source answers it through, by consequence and then age; an app reads it only when its manifest declares the route, and is handed no way to answer an item.**
 
 ### Changed
 
@@ -26,6 +27,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **All tasks opens again for someone whose sidebar still shows the starter set: the visit kept re-pinning Tasks, which reads back as Projects, until the page stopped with an error.**
 - **A link to setup on a home that has finished it opens Home, and Back from there returns to the page you followed it from instead of bringing you back to Home.**
+- **Only you answer what waits on you, at every door: an app whose manifest declared `/api/browse` could approve a browser grant, and an agent's tool could answer the question it asked you, approve the plan it drafted, or answer a loop's question, merge, conflict, plan step or launch. Each is now refused, as an approval always was.**
 
 ## [0.2.5] — 2026-10-22
 

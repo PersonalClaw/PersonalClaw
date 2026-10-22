@@ -991,6 +991,12 @@ async def api_loop_action(request: web.Request) -> web.Response:
     if action not in ACTION_SOURCE_STATES:
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
     loop = store.get(cid)
+    if loop is not None and action == "start" and loop.status == LoopStatus.REVIEW.value:
+        # Launching a plan that waits in review is your answer to it: only you give it, never an
+        # agent's tool nor an app (`approval_answer`), as at every door to an ask.
+        refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+        if refused is not None:
+            return refused
     if loop is None:
         run = _run_backed(cid)
         if run is not None:
@@ -1221,6 +1227,12 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
     if not text:
         return web.json_response({"error": "text required"}, status=400)
     proj = store.get(cid)
+    if proj is not None and proj.status == LoopStatus.NEEDS_INPUT.value:
+        # A nudge to a loop waiting on you is your answer to its question: only you give it,
+        # never an agent's tool nor an app (`approval_answer`), as at every door to an ask.
+        refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+        if refused is not None:
+            return refused
     if proj is None:
         run = _run_backed(cid)
         if run is None:
@@ -1528,6 +1540,11 @@ async def api_loop_merge(request: web.Request) -> web.Response:
     from personalclaw.triggers.nudge import get_instance
 
     cid = request.match_info["id"]
+    # Your answer to what the loop asks you: only you give it, never an agent's tool nor an app
+    # (`approval_answer`), as at every door to an ask.
+    refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+    if refused is not None:
+        return refused
     waiting = _merge_waiting(cid)
     if isinstance(waiting, web.Response):
         return waiting
@@ -1627,6 +1644,11 @@ async def api_loop_conflict(request: web.Request) -> web.Response:
     from personalclaw.triggers.nudge import get_instance
 
     cid = request.match_info["id"]
+    # Your answer to what the loop asks you: only you give it, never an agent's tool nor an app
+    # (`approval_answer`), as at every door to an ask.
+    refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+    if refused is not None:
+        return refused
     waiting = _conflict_waiting(cid)
     if isinstance(waiting, web.Response):
         return waiting
@@ -1778,6 +1800,11 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
+    # Your answer to what the loop asks you: only you give it, never an agent's tool nor an app
+    # (`approval_answer`), as at every door to an ask.
+    refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:

@@ -1270,6 +1270,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     from personalclaw.dashboard.handlers.running import register_running_routes
 
     register_running_routes(app)
+    # Everything waiting on you to answer, from every source (`waiting`).
+    from personalclaw.dashboard.handlers.waiting import register_waiting_routes
+
+    register_waiting_routes(app)
 
     # Local token bootstrap (file-based secret auth in handler, bypasses middleware)
     app.router.add_get("/api/token/local", handlers.api_token_local)
