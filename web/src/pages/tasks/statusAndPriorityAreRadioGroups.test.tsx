@@ -143,15 +143,15 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
   })
 
   it('and every tab role left in the tree belongs to a strip that reveals a pane', () => {
-    // The sweep the issue's scope note asks for. These six are hand-rolled view switchers, each
-    // of which swaps the pane beside it; `Segmented` is deliberately not among them.
+    // The sweep the issue's scope note asks for. These five are hand-rolled view switchers, each
+    // of which swaps the pane beside it; `Segmented` is deliberately not among them. (The chat's
+    // Activity panel left the list when its tabs became the session inspector's sections, #3820.)
     const declaring = walk(SRC)
       .filter((abs) => /\.tsx$/.test(abs) && !/\.(test|doc)\.tsx$/.test(abs))
       .filter((abs) => /role="tab"/.test(codeOf(abs)))
       .map((abs) => abs.slice(SRC.length + 1))
       .sort()
     expect(declaring).toEqual([
-      'pages/chat/ChatActivityPanel.tsx',
       'pages/files/FilesSection.tsx',
       'pages/loops/LoopCockpitPage.tsx',
       'pages/settings/MemoryPanel.tsx',
@@ -176,12 +176,12 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
         const queries = /Role\((['"])tab(list)?\1/.test(code)
           || /\[role=\\?["']tab(list)?\\?["']\]/.test(code)
         if (!queries) return false
-        // The six hand-rolled strips have their own tests, which legitimately query tabs.
+        // The five hand-rolled strips have their own tests, which legitimately query tabs.
         return !/ChatActivityPanel|FilesSection|LoopCockpitPage|MemoryPanel|TerminalPage|TerminalDrawer|tabListKeys/
           .test(code + abs)
       })
       .map((abs) => abs.slice(SRC.length + 1))
       .sort()
-    expect(offenders, 'these query a tab role outside the six real tab strips').toEqual([])
+    expect(offenders, 'these query a tab role outside the five real tab strips').toEqual([])
   })
 })

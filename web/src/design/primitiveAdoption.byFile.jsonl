@@ -9,7 +9,7 @@
 {"file":"pages/artifacts/ArtifactCompare.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/artifacts/ArtifactViewer.tsx","raw-button":3,"raw-input":1,"raw-dialog":0}
 {"file":"pages/chat/AttachmentChips.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
-{"file":"pages/chat/ChatActivityPanel.tsx","raw-button":3,"raw-input":1,"raw-dialog":0}
+{"file":"pages/chat/ChatActivityPanel.tsx","raw-button":2,"raw-input":1,"raw-dialog":0}
 {"file":"pages/chat/ChatContextLine.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/ContextLedger.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/MessageActions.tsx","raw-button":3,"raw-input":0,"raw-dialog":0}
@@ -25,6 +25,7 @@
 {"file":"pages/chat/header/ChatHeader.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/chat/history/ChatHistoryPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/history/SessionPeek.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
+{"file":"pages/chat/inspector/InspectorSection.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/AssistantSegments.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/UserEditor.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/code/CodePlanReview.tsx","raw-button":2,"raw-input":4,"raw-dialog":0}

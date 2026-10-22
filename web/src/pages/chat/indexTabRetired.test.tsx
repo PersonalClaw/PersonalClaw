@@ -1,7 +1,7 @@
 // @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { join, relative, sep } from 'node:path'
-import { render } from '@testing-library/react'
+import { fireEvent, render, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatActivityPanel } from './ChatActivityPanel'
 import { SessionMapRail } from './SessionMapRail'
@@ -75,33 +75,31 @@ describe('The Activity panel renders no Index tab', () => {
     expect(ACTIVITY.sources.length, 'the fixture surfaced no source').toBeGreaterThan(0)
   })
 
-  it('🔑 no tab named "Index" exists, and Files/Sources still do (the control)', () => {
+  it('🔑 no section named "Index" exists, and Files/Sources still do (the control)', () => {
     const panel = render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} />)
-    // CONTROL FIRST: the same query finds the tabs that survive. Without this, a panel that failed
-    // to render — or a renamed role — would report "no Index tab" and look like a pass.
-    expect(panel.getByRole('tab', { name: 'Files' })).toBeTruthy()
-    expect(panel.getByRole('tab', { name: 'Sources' })).toBeTruthy()
+    // CONTROL FIRST: the same query finds the sections that survive. Without this, a panel that
+    // failed to render — or a renamed role — would report "no Index section" and look like a pass.
+    // (The panel was a tab strip; it is the session inspector's column of sections now.)
+    expect(panel.getByRole('region', { name: 'Files' })).toBeTruthy()
+    expect(panel.getByRole('region', { name: 'Sources' })).toBeTruthy()
     // THE CONTRACT.
     expect(
-      panel.queryByRole('tab', { name: 'Index' }),
-      'the Activity panel still renders an "Index" tab — this change deletes it',
+      panel.queryByRole('region', { name: 'Index' }),
+      'the Activity panel still renders an "Index" section — this change deletes it',
     ).toBeNull()
-    // The whole tablist, so a tab reachable under some other accessible name is caught too.
-    const names = panel.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))
-    expect(names).toEqual(['Files', 'Sources'])
+    // The whole column, so a section reachable under some other accessible name is caught too.
+    const names = panel.getAllByRole('region').map((t) => document.getElementById(t.getAttribute('aria-labelledby') ?? '')?.textContent)
+    expect(names).toEqual(['Environment', 'Context', 'Connectors', 'Files', 'Sources', 'Background tasks'])
     panel.unmount()
   })
 
-  it('🔑 the panel OPENS on Files — no index panel is mounted, by default or at all', () => {
+  it('🔑 the panel opens with no index list mounted, by default or at all', () => {
     const panel = render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} />)
     // The default tab was `index`; the reader's first sight of this panel was the outline. That is
-    // the user-visible half of the removal, and it is separate from "no Index tab renders": a tab
-    // strip could lose its Index button while the body still defaulted to the index panel.
-    expect(panel.container.querySelector('#act-panel-files'), 'the Activity panel does not open on Files').toBeTruthy()
-    expect(
-      panel.container.querySelector('#act-panel-index'),
-      'an index tabpanel is still mounted in the Activity panel',
-    ).toBeNull()
+    // the user-visible half of the removal, and it is separate from "no Index section renders": a
+    // column could lose its Index header while the body still showed the outline.
+    expect(panel.getByRole('region', { name: 'Sources' }).querySelector('a'), 'the open Sources section shows its links').toBeTruthy()
+    expect(panel.container.querySelector('#act-panel-index'), 'an index panel is still mounted in the Activity panel').toBeNull()
     expect(panel.container.querySelector('#act-tab-index')).toBeNull()
     panel.unmount()
   })
@@ -110,6 +108,11 @@ describe('The Activity panel renders no Index tab', () => {
     // The tab strip is chrome; the LIST BODY is the thing that navigated. Asserted by content, so a
     // reinstated outline under any other tab name, id or role still fails here.
     const panel = render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} />)
+    // Every section open, so nothing the panel holds is folded out of the search.
+    for (const section of panel.getAllByRole('region')) {
+      const header = within(section).getAllByRole('button')[0]
+      if (header.getAttribute('aria-expanded') === 'false') fireEvent.click(header)
+    }
     // CONTROL: rows ARE findable by their `title` — that is how the Files row is found.
     expect(panel.getByTitle(A_FILE), 'no Files row carries its path as a title, so the absences below prove nothing').toBeTruthy()
     for (const text of USER_TEXTS) {
@@ -135,14 +138,15 @@ describe('The panel owns no navigation at all', () => {
     expect(src, 'ChatActivityPanel grew its own scroll implementation').not.toMatch(/scrollIntoView/)
   })
 
-  it('🔑 the tab union and the tab descriptors carry no index member', () => {
-    const union = src.match(/type Tab = ([^\n]+)/)
-    expect(union, 'no Tab union found in ChatActivityPanel.tsx — widen this reader').not.toBeNull()
-    expect(union![1], `the Tab union still admits an index tab: ${union![1]}`).not.toMatch(/'index'/)
-    // CONTROL: the union is the real one, still naming the surviving tabs.
-    expect(union![1]).toMatch(/'files'/)
-    expect(src).not.toMatch(/label: 'Index'/)
-    expect(src, 'the control pattern found no tab descriptor at all').toMatch(/label: 'Files'/)
+  it('🔑 the section list and its titles carry no index member', () => {
+    const layout = readSource(join(SRC, 'pages/chat/inspector/inspectorLayout.ts'))
+    const list = layout.match(/export const SECTIONS = \[([^\]]+)\]/)
+    expect(list, 'no SECTIONS list found in inspector/inspectorLayout.ts — widen this reader').not.toBeNull()
+    expect(list![1], `the section list still admits an index section: ${list![1]}`).not.toMatch(/'index'/)
+    // CONTROL: the list is the real one, still naming the surviving sections.
+    expect(list![1]).toMatch(/'files'/)
+    expect(layout).not.toMatch(/index: 'Index'/)
+    expect(layout, 'the control pattern found no section title at all').toMatch(/files: 'Files'/)
   })
 
   it('🔑 ChatPage no longer hands the panel a jump handler', () => {
@@ -217,10 +221,10 @@ describe('Nothing in the tree consumes an activity index', () => {
     expect(hits(scanned, /activity\.files/), 'the scanner found no activity.files consumer — it is not reading real source').not.toHaveLength(0)
     expect(hits(scanned, /activity\.sources/)).not.toHaveLength(0)
     expect(hits(scanned, /deriveActivity\(/), 'the scanner found no deriveActivity call at all').not.toHaveLength(0)
-    // …and the id-family pattern DOES hit the panel that would carry a reinstated index id, so the
-    // production-scoped absence below is a real absence and not an unreachable file set.
-    expect(hits(shipped, /act-(?:tab|panel)-/), 'the tab-id pattern matches nothing in production source')
-      .toContain(join('src', 'pages', 'chat', 'ChatActivityPanel.tsx'))
+    // …and the section-title pattern DOES hit the file that would carry a reinstated index section, so
+    // the production-scoped absence below is a real absence and not an unreachable file set.
+    expect(hits(shipped, /SECTION_TITLES/), 'the section pattern matches nothing in production source')
+      .toContain(join('src', 'pages', 'chat', 'inspector', 'inspectorLayout.ts'))
   })
 
   it('🔑 zero consumers of an activity index remain', () => {
@@ -241,6 +245,7 @@ describe('Nothing in the tree consumes an activity index', () => {
       ['the index tab/panel DOM ids', /act-(?:tab|panel)-index/],
       ['an Index tab descriptor', /label: 'Index'/],
       ["an 'index' member of the Tab union", /type Tab = [^\n]*'index'/],
+      ['an Index section title', /index: 'Index'/],
     ]
     for (const [what, re] of surface) {
       expect(hits(shipped, re), `${what} is still shipped from: ${hits(shipped, re).join(', ')}`).toHaveLength(0)

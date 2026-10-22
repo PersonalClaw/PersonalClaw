@@ -68,7 +68,7 @@ function Chat({ workingDir, streaming = false, initial = {}, focus = false }: {
     stream: { sessionRef: { current: 'chat-feed' }, turns: TURNS, setSubagents, sideBusy, setSideBusy, setSideMsgs, sideOpenedRef },
   })
   return (
-    <ChatPanes panes={panes} stream={{ subagents, sideMsgs, sideBusy, workingDir, streaming }} transcript={TRANSCRIPT}
+    <ChatPanes panes={panes} stream={{ subagents, sideMsgs, sideBusy, workingDir, streaming, sessionRef: { current: 'chat-feed' } }} transcript={TRANSCRIPT}
       started setQuery={setQuery} navigate={() => {}} send={() => {}} />
   )
 }

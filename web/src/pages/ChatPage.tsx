@@ -25,6 +25,7 @@ import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
 import { useChatPanes } from './chat/panes/useChatPanes'
 import { ChatPanes, ToolResultModal } from './chat/panes/ChatPanes'
 import { besidePane } from './chat/beside/blockBeside'
+import { detailPane } from './chat/beside/detailBeside'
 import { useChatHeader } from './chat/header/useChatHeader'
 import { ChatHeader } from './chat/header/ChatHeader'
 import { ChatHero } from './chat/hero/ChatHero'
@@ -191,7 +192,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // The block the address opens beside the reading, once the chat's turns have loaded: the split,
   // in the chat's pane host, which remembers its width and stacks the block under the thread where
   // the two do not fit side by side.
-  const beside = besidePane({
+  // A detail the inspector or a card opened (`chat/beside/detailBeside`) takes the same place; on
+  // a phone it stands in for the inspector it was opened from, which its Back brings back.
+  const beside = detailPane({
+    address: panes.beside, outputs: panes.outputs, subagents: stream.subagents, session: sessionRef.current ?? undefined,
+    ready: started && !loadingHistory, open: panes.setBeside, onClose: () => panes.setBeside(null),
+    back: isMobile && panes.activityOpen ? () => panes.setBeside(null) : undefined,
+  }) ?? besidePane({
     address: panes.beside, block: besideBlock, ready: started && !loadingHistory, onClose: () => panes.setBeside(null),
   })
 

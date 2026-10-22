@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { ChatActivityPanel } from './ChatActivityPanel'
 import { foldSubagentEvent } from './subagentCards'
 import type { SubagentCard } from './chatTypes'
@@ -44,7 +43,7 @@ describe('the chat’s Subagents list', () => {
   it('🔴 shows it declined, with why, and not as a failure', async () => {
     const card = foldSubagentEvent([], 'subagent_done', DECLINED)
     render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} subagents={card} onKillFanout={() => {}} />)
-    await userEvent.click(screen.getByRole('tab', { name: 'Subagents' }))
+    expect(screen.getByRole('region', { name: 'Background tasks' })).toBeTruthy()
     expect(screen.getByText(/· declined/)).toBeTruthy()
     const why = screen.getByText('spawn declined, so it never started')
     expect(why.className).not.toContain('text-danger')
@@ -55,7 +54,7 @@ describe('the chat’s Subagents list', () => {
       ...DECLINED, declined: false, error: 'spawn not approved in time: nobody answered within 30 minutes, so it never started',
     })
     render(<ChatActivityPanel activity={ACTIVITY} onOpenFile={() => {}} subagents={card} onKillFanout={() => {}} />)
-    await userEvent.click(screen.getByRole('tab', { name: 'Subagents' }))
+    expect(screen.getByRole('region', { name: 'Background tasks' })).toBeTruthy()
     expect(screen.getByText(/· not started/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Stop fan-out/ })).toBeNull()
   })

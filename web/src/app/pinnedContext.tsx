@@ -53,6 +53,12 @@ export function publishContextReading(next: ContextReading | null): void {
   emit()
 }
 
+/** The open chat's context reading as its composer published it, or `null` while none is open
+ *  (the session inspector's Context section reads the same reading the line shows). */
+export function useContextReading(): ContextReading | null {
+  return useSyncExternalStore(subscribe, () => reading, () => null)
+}
+
 /** Whether the tab's live-update link is open: `null` before it first opens, then `true` while it
  *  is and `false` from a drop until it reopens (`useChatSocket`'s status). */
 function useLiveLink(): boolean | null {

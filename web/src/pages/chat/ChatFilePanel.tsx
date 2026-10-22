@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -70,14 +70,11 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   const { width, fitWidth: dockW, onHandleDown, onHandleKey, min, max } = useResizablePanel(
     'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
-  // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
-  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact | ArtifactCopy; name: string } | null>(null)
   const viewerRef = useRef<FileViewerHandle>(null)
   // An attachment is named as it was attached (`uploads/<uuid-hex>_image.png` is `image.png`):
   // the viewer's title, the name emphasized below and a download all read it. The full path
   // stays in the row's tooltip.
   const name = attachedName(path)
-  const entry: FsEntry = { name, path, is_dir: false }
 
   // ⌘S saves the open file; Esc collapses an expanded panel, else closes.
   useEffect(() => {
@@ -87,23 +84,6 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     }
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])
-
-  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact | ArtifactCopy) => setArtModal({ entry: e, save, name: attachedName(e.path) })
-  const confirmArtifact = async () => {
-    if (!artModal || !artModal.name.trim()) return
-    const { entry: target, save, name } = artModal
-    try {
-      // Closed either way: a save refused as stale leaves the draft under the viewer's notice.
-      if (typeof save === 'function') {
-        await save((content, base) =>
-          api.saveFileAsArtifact({ name: name.trim(), content, source_path: target.path, kind: guessKind(target.name) }, base))
-      } else {
-        // An image or PDF: a copy of the file's bytes, which the gateway reads and checks.
-        await api.saveFileCopyAsArtifact({ name: name.trim(), kind: save.kind, source_path: target.path })
-      }
-      setArtModal(null)
-    } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
-  }
 
   // a dedicated chrome row owns the panel frame (full path + expand/close) so the
   // FileViewer's own compact action bar sits cleanly below it — no overlap, no
@@ -125,21 +105,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   const body = (
     <div className="flex h-full flex-col">
       {chrome}
-      <div className="min-h-0 flex-1">
-        <FileViewer ref={viewerRef} entry={entry} compact={!expanded} onSaved={() => {}} onSaveAsArtifact={saveAsArtifact} commentTarget={commentTarget} />
-      </div>
-      {artModal && (
-        <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
-          <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
-            <p data-type="body-s" className="text-on-surface-low">{artifactSaveNote(artModal.save, artModal.entry.name)}</p>
-            <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
-            <div className="flex justify-end gap-s">
-              <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>
-              <Button size="sm" onClick={confirmArtifact}>Save artifact</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <ChatFileViewer path={path} viewerRef={viewerRef} compact={!expanded} commentTarget={commentTarget} />
     </div>
   )
 
@@ -162,6 +128,54 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
       </div>
       <div className="h-full" style={{ width: dockW }}>{body}</div>
     </motion.div>
+  )
+}
+
+/** The file itself, as the chat shows it: the shared `FileViewer` with its Save as artifact. The
+ *  file panel frames it, and so does the detail tile beside the thread (`beside/detailBeside`). */
+export function ChatFileViewer({ path, viewerRef, compact = true, commentTarget }: {
+  path: string
+  viewerRef?: RefObject<FileViewerHandle | null>
+  compact?: boolean
+  commentTarget?: CommentTarget
+}) {
+  // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact | ArtifactCopy; name: string } | null>(null)
+  const entry: FsEntry = { name: attachedName(path), path, is_dir: false }
+  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact | ArtifactCopy) => setArtModal({ entry: e, save, name: attachedName(e.path) })
+  const confirmArtifact = async () => {
+    if (!artModal || !artModal.name.trim()) return
+    const { entry: target, save, name } = artModal
+    try {
+      // Closed either way: a save refused as stale leaves the draft under the viewer's notice.
+      if (typeof save === 'function') {
+        await save((content, base) =>
+          api.saveFileAsArtifact({ name: name.trim(), content, source_path: target.path, kind: guessKind(target.name) }, base))
+      } else {
+        // An image or PDF: a copy of the file's bytes, which the gateway reads and checks.
+        await api.saveFileCopyAsArtifact({ name: name.trim(), kind: save.kind, source_path: target.path })
+      }
+      setArtModal(null)
+    } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
+  }
+  return (
+    <>
+      <div className="min-h-0 flex-1">
+        <FileViewer ref={viewerRef} entry={entry} compact={compact} onSaved={() => {}} onSaveAsArtifact={saveAsArtifact} commentTarget={commentTarget} />
+      </div>
+      {artModal && (
+        <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
+          <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
+            <p data-type="body-s" className="text-on-surface-low">{artifactSaveNote(artModal.save, artModal.entry.name)}</p>
+            <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
+            <div className="flex justify-end gap-s">
+              <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>
+              <Button size="sm" onClick={confirmArtifact}>Save artifact</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   )
 }
 

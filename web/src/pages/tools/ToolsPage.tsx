@@ -29,6 +29,7 @@ import { readableErrText } from '../../lib/errText'
 import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ImportableTool, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
+import { serverHealth } from './serverHealth'
 import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSave, formatArgs, parseArgs, type McpServerForm } from './mcpServerEnv'
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
@@ -70,23 +71,8 @@ interface Group {
  *  is nothing to install: the only ways it is not serving are a switch-off or a failed load. */
 const MCP_TOOLS_LABEL = 'MCP Tool Servers'
 
-/** Exported for test: which words a server's state comes out as is only observable by rendering. */
-export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
-  // Before `enabled`: a server that waits is off until its Allow, which also switches it on.
-  if (s.status === 'waiting') return { state: 'waiting for your Allow', tone: 'var(--color-warn)', detail: s.error }
-  if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
-  if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
-  // It failed to start again and again, and nothing starts it until Retry (`mcp_status.STOPPED`).
-  if (s.status === 'stopped') return { state: 'failed — stopped retrying', tone: 'var(--color-danger)', detail: s.error }
-  if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
-  if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
-  if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
-  // The gateway is checking it, after a change or for the first time: no result is shown for it
-  // yet, because the last one was about something else (`mcp_discovery._get_cached`). Or it is
-  // still starting, left to finish installing what it runs, and the gateway's sentence says so.
-  if (s.status === 'probing') return { state: 'checking', tone: 'var(--color-on-surface-low)', detail: s.error || undefined }
-  return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
-}
+/** Exported for test (`./serverHealth`): which words a server's state comes out as is only observable by rendering. */
+export { serverHealth }
 
 /** What an MCP server's card says in place of the tools it does not list, and why.
  *

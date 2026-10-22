@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, act, waitFor, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 import { turnSources, sourceKey } from './turnSources'
 import { SourcesRow } from './transcript/SourcesRow'
@@ -144,12 +144,15 @@ describe('a turn that searched and fetched two pages and cites a third it never 
     expect(within(turn()).getByRole('region', { name: 'Sources' }).querySelector('img')).toBeNull()
   })
 
-  it('lists the same two in the Activity pane\'s Sources tab', async () => {
+  it('lists the same two in the Activity pane\'s Sources section', async () => {
     await openChat({ activity: '1' })
-    // The Activity panel's own strip (`ChatActivityPanel`), by the id it gives its Sources tab.
-    fireEvent.click(await waitFor(() => document.getElementById('act-tab-sources') as HTMLElement))
-    const panel = await waitFor(() => document.getElementById('act-panel-sources') as HTMLElement)
-    expect(within(panel).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+    // The session inspector's Sources section, open until she folds it.
+    const section = await waitFor(() => {
+      const inspector = document.querySelector('[data-inspector]') as HTMLElement | null
+      expect(inspector, 'the inspector is open').not.toBeNull()
+      return within(inspector!).getByRole('region', { name: 'Sources' })
+    })
+    expect(within(section).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
       'https://lsm.example.org/paper?id=7#intro', 'https://btree.example.com/notes',
     ])
   })

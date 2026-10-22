@@ -5,6 +5,7 @@ import { withoutFence } from '../../../lib/untrustedFence'
 import { ChatFilePanel } from '../ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../../../ui/content/commentTarget'
 import { ChatActivityPanel } from '../ChatActivityPanel'
+import { detailOf } from '../beside/detailBeside'
 import { WorkingFolderTree } from './WorkingFolderTree'
 import { Modal } from '../../../ui/Modal'
 import type { useTranscript } from '../transcript/useTranscript'
@@ -35,16 +36,19 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
 
 export function ChatPanes({ panes, stream, transcript, started, setQuery, navigate, send }: {
   panes: ChatPanesState
-  stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy' | 'workingDir' | 'streaming'>
+  stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy' | 'workingDir' | 'streaming' | 'sessionRef'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'isMobile' | 'setMapOpen' | 'sessionEntries' | 'pendingMapJump' | 'runPendingMapJump'>
   started: boolean
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
   send: (text: string) => unknown
 }) {
-  const { openFile, setOpenFile, activityOpen, setActivityOpen, treeOpen, setTreeOpen, historyOpen, setHistoryOpen, activity, killFanout, openSide, askSide } = panes
-  const { subagents, sideMsgs, sideBusy, workingDir, streaming } = stream
+  const { openFile, setOpenFile, activityOpen: activityAsked, setActivityOpen, treeOpen, setTreeOpen, historyOpen, setHistoryOpen, activity, outputs, beside, setBeside, killFanout, openSide, askSide } = panes
+  const { subagents, sideMsgs, sideBusy, workingDir, streaming, sessionRef } = stream
   const { mapOpen, isMobile, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
+  // On a phone a detail open beside the reading takes the inspector's place; the address keeps both,
+  // and the detail's Back to Activity brings the inspector back.
+  const activityOpen = activityAsked && !(isMobile && detailOf(beside))
   return (
     <>
       {/* A file opened INSIDE this chat: comments route to THIS session (not a
@@ -83,16 +87,22 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
           </SidePanel>
         )}
       </AnimatePresence>
-      {/* Activity rail — a standard right-docked SidePanel (Files / Links / Side),
-          a flex sibling that pushes the chat narrower (not a floating overlay).
-          URL-bound: ?activity=1 (Back closes; refresh restores). */}
+      {/* Activity rail — the chat's session inspector (`ChatActivityPanel`), a standard right-docked
+          SidePanel, a flex sibling that pushes the chat narrower (not a floating overlay).
+          URL-bound: ?activity=1 (Back closes; refresh restores). Its rows open their detail in the
+          tile beside the thread (?beside). On a phone the tile takes the inspector's place while it
+          is open, and its Back to Activity brings the inspector back: the address keeps both. */}
       <AnimatePresence>
         {activityOpen && started && (
           <SidePanel title="Activity" icon={<Activity size={18} className="text-primary" />} storeKey="chat-activity-w"
             fillHeight urlKey={{ key: 'activity', setQuery }} onClose={() => setActivityOpen(false)}>
             <ChatActivityPanel activity={activity} onOpenFile={setOpenFile} subagents={subagents}
               onKillFanout={killFanout}
-              side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }} />
+              side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }}
+              inspector={{
+                session: sessionRef.current ?? undefined, outputs, openDetail: setBeside, detail: beside,
+                compact: streaming ? undefined : () => { void send('/compact') }, navigate, canMove: !isMobile,
+              }} />
           </SidePanel>
         )}
       </AnimatePresence>

@@ -1263,12 +1263,15 @@ change to one region touches that region's files:
   panel a new chat opens.
 - **The panes** — `web/src/pages/chat/panes/`. `useChatPanes.ts` keeps the
   panels docked beside the chat, each on the URL so Back closes it and a reload
-  reopens it: the Activity rail (`?activity`) with the files and links the
-  transcript touched, the cancel for a fan-out's subagents and the side chat;
-  the open file (`?file`); the new chat's history panel (`?history`); and a
-  tool's full result (`?result`), fetched from the session when its card asks.
-  `ChatPanes.tsx` draws the docked panels, the Session Map's drawer on the
-  mobile form among them, and `ToolResultModal` the full result.
+  reopens it: the Activity rail (`?activity`), the chat's session inspector
+  (`ChatActivityPanel.tsx` with `inspector/`: its sections, kept per browser by
+  `inspectorLayout.ts`); the open file (`?file`); the new chat's history panel
+  (`?history`); a reply's block or a detail beside the reading (`?beside`,
+  `beside/blockBeside.tsx` and `beside/detailBeside.tsx`: an output, a run or a
+  helper, in the chat's pane host); and a tool's full result (`?result`),
+  fetched from the session when its card asks. `ChatPanes.tsx` draws the docked
+  panels, the Session Map's drawer on the mobile form among them, and
+  `ToolResultModal` the full result.
 - **The header** — `web/src/pages/chat/header/`. `useChatHeader.ts` keeps what
   the bar above an open chat does: the bound project's name for its context
   line, renaming the chat inline and regenerating its title, and the actions in

@@ -161,8 +161,9 @@ export function said(reading: ChatBoundary | null | undefined, part: 'sandbox' |
  *  `folder` is the working folder in words (a path, or "the workspace"); `onChangeFolder` opens the
  *  Working directory prompt, for a chat that has started. `onMemoryMode` is given only for a chat
  *  not started yet, whose memory mode is chosen here; a started chat's is shown. `lockedReason` is
- *  why the permission mode is not the owner's to change (an app's conversation). */
-export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMode, onMemoryMode, folder, onChangeFolder, reading }: {
+ *  why the permission mode is not the owner's to change (an app's conversation). `openSignal` opens
+ *  the control each time it goes up (the session inspector's Change). */
+export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMode, onMemoryMode, folder, onChangeFolder, reading, openSignal }: {
   approval: ApprovalMode
   onApproval: Choose<ApprovalMode>
   lockedReason?: string
@@ -171,6 +172,7 @@ export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMo
   folder: string
   onChangeFolder?: () => void
   reading: ChatBoundary | null | undefined
+  openSignal?: number
 }) {
   const [refusal, setRefusal] = useState('')
   const cur = PERMISSION_MODES.find((m) => m.id === approval) ?? PERMISSION_MODES[0]
@@ -193,7 +195,7 @@ export function ExecutionBoundary({ approval, onApproval, lockedReason, memoryMo
   }
   return (
     <span className="inline-flex min-w-0 items-center gap-xs">
-      <Popover portal width={340} trigger={(open, toggle) => (
+      <Popover portal width={340} openSignal={openSignal} trigger={(open, toggle) => (
         <PillButton icon={<Icon size={16} strokeWidth={2} />} label={label} dimension="Execution boundary" open={open}
           wide={memoryMode !== 'persistent'} title={summary} toggle={() => { if (!open) setRefusal(''); toggle() }} />
       )}>

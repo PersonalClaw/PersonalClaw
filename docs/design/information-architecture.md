@@ -151,7 +151,7 @@ Top to bottom:
 - **Sources** are the links the answer cites that its own turn retrieved: a result of its web
   searches or a page its fetches read, matched on scheme, host and path with tracking parameters
   dropped. Each is numbered beside its link in the text and listed under the answer by the title
-  the search or the fetch returned; the right pane's Sources tab lists the chat's. A link the
+  the search or the fetch returned; the session inspector's Sources section lists the chat's. A link the
   model wrote from memory is no source and stays a plain link. Showing them fetches nothing.
 - **The composer** is the anchor: attachments, `@` mentions and `/` commands in it, and Brief the
   agent in its `+` menu; the one agent-and-model pill, the task mode and the reply style in its
@@ -159,7 +159,23 @@ Top to bottom:
   working folder, the sandbox, the network reach and the memory mode, and changes the permission
   mode, the folder and a new chat's memory mode. While a turn runs, the send button is its Stop. In
   reading mode the composer folds away until the owner wants to type.
-- **The right pane** (activity, artifacts, sources) is closed until the owner opens it.
+- **The session inspector** is the right pane, the Activity rail, closed until the owner opens it:
+  a slim column of sections, each a disclosure with a one-line summary while it is folded, which
+  she opens, folds and moves up and down, kept for this browser. Environment (the project, the
+  working folder, the sandbox, the reach, the permission and the memory mode, as the composer's
+  Execution Boundary shows them; its Change opens that control), Context (used and total, free,
+  when Compact is offered, and what fills it part by part), Connectors (the tool servers, the ones
+  that need her first; Reconnect, and the Tools page for a sign-in or an Allow), Outputs (the
+  artifacts the chat saved and the files it wrote), Files, Sources, Background tasks (the helpers,
+  runs and loops the chat started, each running one with how long it has run and its Stop, and the
+  ones that just ended) and the Side question. Opening a section reads; it signs in, reconnects or
+  stops nothing.
+- **The detail tile** is the pane host beside the turns (the one a reply's code, table or diff
+  opens in): an output, a run or a helper opened from the inspector, or a run from its card in the
+  thread, under its address (`?beside=artifact:<slug>`, `file:<path>`, `run:<id>`, `helper:<id>`),
+  so a reload, Back and a copied link open it again. It resizes and remembers its width, gives
+  focus back to the row it was opened from, and closing it, or the inspector, stops nothing. On a
+  phone the inspector is a drawer, and a detail takes its place with a Back to Activity.
 
 ## What leaves Home and the thread header
 
