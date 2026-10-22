@@ -454,9 +454,9 @@ can read the ids-only claim rather than take it on trust.
 
 ### What a tap does
 
-The notification opens `#/companion?approval=<id>` and scrolls that specific card into view with
-the whole decision on screen — tool, full arguments, where it came from, how long it has been
-waiting. Approve or deny, and the run you were pinged about continues. If the approval timed out
+The notification opens `#/companion?approval=<id>` on that one approval, owning the screen, with
+the whole decision on it — tool, full arguments, where it came from, how long it has been waiting —
+and focus on the card, never on Allow. Approve or deny, and the run you were pinged about continues. If the approval timed out
 while your phone was in your pocket, the screen says so rather than leaving you hunting for a card
 that no longer exists.
 
@@ -464,6 +464,9 @@ Every row reads as the desktop buddy says it: the buddy's orb for its state (wai
 an approval, a "?" for a question, its phase for work that runs), the glyph of its kind of work, and
 one line of at most 48 characters, such as "Release notes needs your OK: Bash", with its exact phase
 under it. What waits on you comes first, in the one order every surface keeps, then what runs.
+Tap a row's line to give that one piece of work the screen: its orb large, its exact phase, its steps
+as they happen, its approval or question with the same answers, and **Open in PersonalClaw** for its
+own page. **Everything** takes you back. With reduced motion on, the switch is instant.
 
 Below the approvals are what is running, open tasks, the Inbox and recent notifications. The Running
 list is the one Mission Control and the menu bar read: every chat turn, helper, loop, workflow run,

@@ -257,7 +257,7 @@ function InSight({ rows, finished, interrupted, list, roomy }: {
 
 export function BuddyCard({
   focus, line, state, steps, alert, waiting = 0, inSight, finished = [], interrupted = [], list = 'live',
-  countdown, openHref, orbId, onAnswer, onHold,
+  countdown, openHref, orbId, orbSize = 48, onAnswer, onHold,
 }: {
   focus: CardWork | null
   /** The machine's line for what the card is about (`lineOf(truth, 'expandedCard')`). */
@@ -280,13 +280,16 @@ export function BuddyCard({
   openHref: string
   /** The shared element's id, the same on the island's compact orb. */
   orbId?: string
+  /** The focused orb's size: 48 on the buddy's card, 96 where one piece of work owns the screen
+   *  (the phone's view two, #3898). */
+  orbSize?: 48 | 96
   onAnswer: (answer: CardAnswer) => void
   /** The pointer or the keyboard focus is on the card (true), or has left it (false). */
   onHold?: (held: boolean) => void
 }) {
   const headerId = useId()
   const orbState: OrbState = state ?? focus?.phase ?? 'idle'
-  const orb = <BuddyOrb state={orbState} line="" size={48} />
+  const orb = <BuddyOrb state={orbState} line="" size={orbSize} />
   const done = focus?.phase === 'done'
   return (
     <div

@@ -5,6 +5,8 @@ import { workOf } from '../../lib/buddy/host'
 import { lineOf } from '../../lib/buddy/lines'
 import { WAITING_KIND_LABEL, waitingSource, waitingText } from '../../lib/waitingList'
 import { BuddyOrb } from '../../ui/BuddyOrb'
+import { Morph } from '../../ui/motion/Morph'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { CircleDot } from 'lucide-react'
 import { KIND_GLYPH } from '../../ui/BuddyCard'
 import type { BuddyState } from '../../ui/buddy/orbPoses'
@@ -58,14 +60,37 @@ function KindGlyph({ kind }: { kind: WorkKind }) {
   return <Icon size={14} aria-hidden className="shrink-0 text-on-surface-var" data-kind-glyph={kind} />
 }
 
+/** The shared element's id for one piece of work or one ask: its view-one row's orb and view
+ *  two's are the same object, so switching views moves it rather than cutting it. */
+export const orbIdOf = (key: string) => `companion-orb-${key}`
+
 /** A row's head: the orb, the kind's glyph and the one line, wrapping rather than cut by a style
- *  (the template already cut it). */
-export function WorkHead({ state, kind, line }: { state: BuddyState; kind: WorkKind | null; line: string }) {
-  return (
-    <div className="flex min-w-0 items-start gap-s" data-work-head="">
-      <BuddyOrb state={state} size={24} line="" still />
+ *  (the template already cut it). With `onOpen` the head is the row's tap target: it opens view
+ *  two on the row, a 44 px target or more. */
+export function WorkHead({ id, state, kind, line, onOpen }: {
+  /** What the row is (a waiting item's id, a running row's work): its orb's shared element. */
+  id: string
+  state: BuddyState
+  kind: WorkKind | null
+  line: string
+  onOpen?: () => void
+}) {
+  const inner = (
+    <>
+      <Morph id={orbIdOf(id)} className="shrink-0"><BuddyOrb state={state} size={24} line="" still /></Morph>
       {kind ? <span className="mt-0.5"><KindGlyph kind={kind} /></span> : null}
       <p data-type="body-m" className="min-w-0 break-words text-on-surface">{line}</p>
+    </>
+  )
+  // The row-wide hit target (`RowHitTarget`), a sibling of the head's content, with the focus ring
+  // drawn on the head, as Home's rows open their detail.
+  return onOpen ? (
+    <div tabIndex={-1} onClick={onOpen} data-work-head=""
+      className="relative flex min-h-11 min-w-0 cursor-pointer items-start gap-s rounded-md has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">
+      <RowHitTarget label={`Show ${line}`} />
+      {inner}
     </div>
+  ) : (
+    <div className="flex min-w-0 items-start gap-s" data-work-head="">{inner}</div>
   )
 }

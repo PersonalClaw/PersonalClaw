@@ -190,7 +190,7 @@ function loopIdOf(row: RunningRow): string {
  *  listens only for the socket's drop and return (`useCutOff`). */
 const IGNORE = () => {}
 
-export function RunningSection() {
+export function RunningSection({ onOpen }: { onOpen?: (work: string) => void } = {}) {
   const runningQuery = useQuery<RunningList>('running-companion', () => api.running())
   useLiveLane('running-companion', FOLLOWS.running)
   // Read-only consumption of `loop_routes`: list + PATCH action + nudge, exactly the
@@ -345,7 +345,8 @@ export function RunningSection() {
               .filter(Boolean).join(' · ')
             return (
               <Item key={row.work} title={row.name} sub={phaseLine(row)} meta={meta || undefined}
-                head={<WorkHead state={row.phase} kind={row.kind} line={runningLine(row, now)} />}
+                head={<WorkHead id={row.work} state={row.phase} kind={row.kind} line={runningLine(row, now)}
+                  onOpen={onOpen ? () => onOpen(row.work) : undefined} />}
                 actions={<>
                   <Opens route={row.route} subject={rowSubject([row.name, KIND_WORD[row.kind] ?? row.kind])} />
                   {l ? steering(l) : null}
