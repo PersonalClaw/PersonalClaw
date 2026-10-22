@@ -378,6 +378,16 @@ class _LoopSession:
         return None
 
 
+def _a_running_loop(key: str) -> None:
+    """The loop the worker *key* is the stage worker of, running: a worker whose loop is gone or
+    not running starts no turn (`manager.turn_held`)."""
+    loop_id, _task = manager.worker_ids(key)
+    store.update_status(
+        store.create(Loop(id=loop_id, name="W", kind="goal", task="do one cycle")).id,
+        LoopStatus.RUNNING,
+    )
+
+
 def _drive_one_cycle(tmp_path: Path, on_turn: Any) -> tuple[list[str], list[tuple[str, bool]]]:
     """Fire one cycle through the gateway's REAL cycle driver; return its turns and re-arms."""
     from personalclaw.config.loader import AppConfig
@@ -387,6 +397,7 @@ def _drive_one_cycle(tmp_path: Path, on_turn: Any) -> tuple[list[str], list[tupl
     with patch.object(cfg, "load_credentials", return_value={}):
         orch = GatewayOrchestrator(cfg, no_dashboard=False, no_crons=True, no_open=True)
     key = "loop-abcd1234"
+    _a_running_loop(key)
     session = _LoopSession(key)
     dstate = MagicMock()
     dstate._sessions = {key: session}

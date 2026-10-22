@@ -97,6 +97,10 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 SKIP_NOT_IDLE = "not_idle_yet"
 SKIP_AUTONUDGE = "autonudge_owns_session"
 SKIP_SESSION_BUSY = "session_mid_turn"
+#: A loop worker's nudge whose loop may start no turn now (``loop.manager.turn_held``): it waits on
+#: its owner's answer, is not running, or is at a cap. Nothing is spent, and its state stays
+#: un-advanced, so the cycle fires on the first poll after her answer or her Resume.
+SKIP_LOOP_HELD = "loop_held"
 #: A due nudge row with no nudge service to hand it to (flag off, or an API-only process). The
 #: state stays un-advanced so the fire retries once the service exists — same rule as
 #: `no_session_manager` below, and NEVER a fall-through to the wake path.

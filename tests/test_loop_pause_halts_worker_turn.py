@@ -30,6 +30,16 @@ from personalclaw.loop import manager, store
 from personalclaw.loop.loop import Loop, LoopStatus
 
 
+def _a_running_loop(key: str) -> None:
+    """The loop the worker *key* is the stage worker of, running: a worker whose loop is gone or
+    not running starts no turn (`manager.turn_held`)."""
+    loop_id, _task = manager.worker_ids(key)
+    store.update_status(
+        store.create(Loop(id=loop_id, name="W", kind="goal", task="do one cycle")).id,
+        LoopStatus.RUNNING,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
@@ -215,6 +225,7 @@ def test_a_cycle_abandons_its_reprompts_once_its_loop_is_paused(tmp_path: Path) 
     with patch.object(cfg, "load_credentials", return_value={}):
         orch = GatewayOrchestrator(cfg, no_dashboard=False, no_crons=True, no_open=True)
     key = "loop-abcd1234"
+    _a_running_loop(key)
     session = _LoopSession(key)
     dstate = MagicMock()
     dstate._sessions = {key: session}
@@ -260,6 +271,7 @@ def test_an_armed_cycle_still_reprompts_when_no_finding_appeared(tmp_path: Path)
     with patch.object(cfg, "load_credentials", return_value={}):
         orch = GatewayOrchestrator(cfg, no_dashboard=False, no_crons=True, no_open=True)
     key = "loop-abcd5678"
+    _a_running_loop(key)
     session = _LoopSession(key)
     dstate = MagicMock()
     dstate._sessions = {key: session}
@@ -309,6 +321,7 @@ def test_a_reprompt_turn_reads_as_running_so_a_halt_reaches_it(tmp_path: Path) -
     with patch.object(cfg, "load_credentials", return_value={}):
         orch = GatewayOrchestrator(cfg, no_dashboard=False, no_crons=True, no_open=True)
     key = "loop-abcd9999"
+    _a_running_loop(key)
     session = _LoopSession(key)
     dstate = MagicMock()
     dstate._sessions = {key: session}

@@ -3137,12 +3137,14 @@ class GatewayOrchestrator:
             logger.info("AutoNudge disabled via feature flag")
             return
 
-        async def _fire(loop: NudgeLoop) -> bool:
+        async def _fire(loop: NudgeLoop) -> bool | str:
             """Inject nudge message into the bound chat session.
 
             Returns True if the nudge was actually dispatched, False if skipped
-            (session missing, dashboard not ready, or turn still active). The
-            service uses this to avoid counting skipped cycles toward
+            (session missing, dashboard not ready, or turn still active), and
+            ``idle_poll.SKIP_LOOP_HELD`` when the worker's loop may start no turn
+            now (``manager.turn_held``: it waits on her answer, is not running, or is
+            at a cap). The service uses this to avoid counting skipped cycles toward
             max_cycles.
             """
             # Guard (not assert): stripped under -O; also _init_autonudge() can
@@ -3160,6 +3162,17 @@ class GatewayOrchestrator:
                 )
                 await self.autonudge_svc.remove(loop.id)  # type: ignore[union-attr]
                 return False
+            if getattr(session, "_app", "") == "loop":
+                # A loop spends only while it runs and has budget left: one waiting on its
+                # owner's answer kept taking a paid turn at every idle interval, and the cycle
+                # cap, read off a running loop's new finding only, never stopped it.
+                from personalclaw.loop.manager import turn_held
+                from personalclaw.triggers import idle_poll as _idle_poll
+
+                held = turn_held(session.key)
+                if held:
+                    logger.debug("AutoNudge hold: %s starts no turn: %s", session.key, held)
+                    return _idle_poll.SKIP_LOOP_HELD
             msg = render_nudge_message(loop.message, loop.stop_sentinel_path)
             tagged = f"[auto-nudge cycle {loop.cycle_count + 1}]\n{msg}"
             from personalclaw.dashboard.chat import (  # circular import: gateway -> dashboard.chat -> gateway (chat dispatch references GatewayOrchestrator)  # noqa: E501

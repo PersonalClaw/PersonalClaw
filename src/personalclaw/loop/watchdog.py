@@ -692,15 +692,11 @@ class LoopWatchdog:
         q = loop_files.pending_question(loop_id)
         if not q:
             return False
-        # A question the scheduler asked is asked again while it still holds (a merge waiting, no
-        # git identity), so a running loop drops it rather than stopping on one already settled.
-        # One asked before this running stretch began (*since*) was answered by the Resume that
-        # began it: kept, it paused the loop again on what its owner had just resumed it from.
-        try:
-            settled = float(q.get("ts") or 0.0) < since
-        except (TypeError, ValueError):
-            settled = False
-        if not attended or settled or q.get("asked_by") == loop_files.SCHEDULER_QUESTION:
+        # The one rule a worker's turn is held by too (`manager.question_holds`): a scheduler's
+        # question is asked again while it holds, and one asked before this running stretch began
+        # (*since*) was answered by the Resume that began it. Any other is dropped here, so a
+        # running loop never stops on one already settled.
+        if not manager.question_holds(q, attended=attended, since=since):
             loop_files.clear_question(loop_id)
             return False
         return True
@@ -1567,6 +1563,21 @@ class LoopWatchdog:
                 # its money. They were read only when a finding landed, so a loop that kept
                 # working without one never reached its deadline or its dollar limit.
                 if await self._stop_at_a_ceiling(loop):
+                    continue
+                # And the cycle cap: a loop running at its cap with nothing new (resumed at 3/3)
+                # starts no further cycle (`manager.turn_held`), so it ends here, on the same
+                # terms as the poll that credited its last cycle, rather than running on idle.
+                idle = session is None or not getattr(session, "running", False)
+                if idle and loop.max_cycles > 0 and count >= loop.max_cycles:
+                    genuine = supervisor.budget_stop_is_genuine(
+                        policy_for_kind(loop.kind, loop.kind_config)
+                    )
+                    await self._complete(
+                        cid,
+                        reason="cycle budget reached",
+                        genuine=genuine,
+                        stop_reason=default_stop_reason(genuine),
+                    )
                     continue
                 # 4a. Loop exhausted — autonudge fired its full budget but some
                 # cycles produced no finding (a turn errored before writing one).

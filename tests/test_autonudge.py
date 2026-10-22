@@ -138,6 +138,24 @@ async def test_skip_when_delivery_returns_false(svc, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_held_loops_fire_says_so_and_advances_nothing(svc, tmp_path):
+    """A loop worker whose loop may start no turn (it waits on her answer, or is at a cap) is not a
+    session mid-turn: the skip says it was held, and like any skip it advances nothing, so the
+    cycle fires on the first poll after her answer."""
+
+    async def on_fire_held(loop):
+        return IP.SKIP_LOOP_HELD
+
+    svc._on_fire = on_fire_held
+    loop = await svc.add(session_name="loop-a1b2c3d4", message="go", idle_secs=15)
+    _arm(loop.id, tmp_path)
+    ok, why = await svc.deliver(_row(tmp_path, loop.id).trigger, now=NOW + 16)
+    assert (ok, why) == (False, IP.SKIP_LOOP_HELD)
+    state = IP.load_state(loop.id, base_dir=tmp_path)
+    assert (state.cycle_count, state.last_fire, state.armed_at) == (0, 0.0, NOW)
+
+
+@pytest.mark.asyncio
 async def test_fire_callback_exception_does_not_deactivate(svc, tmp_path):
     """An exception in on_fire is swallowed as not-delivered; the loop stays active."""
 

@@ -14,6 +14,7 @@ legacy loops/code managers it unifies.
 from __future__ import annotations
 
 import logging
+import time
 
 from personalclaw import lasting_work, session_keys
 from personalclaw.config.loader import AppConfig
@@ -118,6 +119,60 @@ def ran_without_tools(state, session) -> str:
     return tool_less_model(sessions.get_provider(dashboard_history_key(key))) if sessions else ""
 
 
+def question_holds(question: dict | None, *, attended: bool, since: float) -> bool:
+    """Whether a loop waits on its owner's answer to *question* (its ``questions.json``).
+
+    Only an Attended loop does: an Unattended one has nobody to ask, so its watchdog discards a
+    stray question. A question the scheduler asked is asked again while it holds (a merge waiting,
+    no git identity), so it is no wait of the worker's; nor is one asked before the loop's running
+    stretch began (*since*), which the Resume that began it answered."""
+    if not question or not attended or question.get("asked_by") == loop_files.SCHEDULER_QUESTION:
+        return False
+    try:
+        return float(question.get("ts") or 0.0) >= since
+    except (TypeError, ValueError):
+        return True
+
+
+def turn_held(key: str) -> str:
+    """Why the loop worker whose session is *key* may start no turn now, ``""`` when it may.
+
+    A loop spends only while it runs and has budget left. A worker's turn starts at its nudge's
+    idle interval (the gateway's cycle driver) and at the re-prompt for a finding its turn did not
+    write (:func:`reprompt_due`), and both ask this first: a loop that is not running (waiting on
+    her answer, paused, held, ended), one whose worker asked her a question it waits on, one at its
+    cycle cap (the stage worker's cycles, as the watchdog counts them), and one at its deadline or
+    its cost budget start none. A key that is no loop worker's is held by nothing here."""
+    loop_id, task_id = worker_ids(key)
+    if not loop_id:
+        return ""
+    loop = store.get(loop_id)
+    if loop is None:
+        return "its loop is gone"
+    if loop.status != LoopStatus.RUNNING.value:
+        return f"its loop is {loop.status}"
+    if question_holds(
+        loop_files.pending_question(loop_id),
+        attended=posture.of(loop).asks,
+        since=float(loop.started_at or 0.0),
+    ):
+        return "its loop waits on your answer"
+    if not task_id and loop.max_cycles > 0 and worker_finding_count(key) >= loop.max_cycles:
+        return f"its loop ran its {loop.max_cycles} cycles"
+    from personalclaw.loop.watchdog import deadline_reached
+
+    if deadline_reached(loop, time.time()) is not None:
+        return "its loop reached its deadline"
+    if loop.max_cost_usd > 0:
+        try:
+            spent = float(loop_spend(loop_id)["dollars_est"])
+        except Exception:
+            spent = 0.0  # an unreadable ledger never stops a loop, as at the watchdog
+        if spent >= loop.max_cost_usd:
+            return "its loop reached its cost budget"
+    return ""
+
+
 async def reprompt_due(session, before: int) -> tuple[bool, str]:
     """Whether worker *session*, whose turn just ended, is asked again for its cycle's finding, and
     its task's title (``""`` for a stage worker).
@@ -133,8 +188,13 @@ async def reprompt_due(session, before: int) -> tuple[bool, str]:
     for the cycle. Asked again, the worker is told to write what she declined, or, on a fresh
     agent session, runs the cycle over and asks her the same thing (``LoopWatchdog.
     hold_after_decline`` ends the cycle saying so). A worker whose turn ran without tools is not
-    asked here at all: the cycle driver ends its cycle first (:func:`ran_without_tools`)."""
+    asked here at all: the cycle driver ends its cycle first (:func:`ran_without_tools`).
+
+    Nor is a worker whose loop may start no turn now (:func:`turn_held`): one that asked her a
+    question this turn waits on her answer, not on a finding."""
     if worker_finding_count(session.key) > before or declined_in_turn(session):
+        return False, ""
+    if turn_held(session.key):
         return False, ""
     _loop_id, task_id = worker_ids(session.key)
     if not task_id:
