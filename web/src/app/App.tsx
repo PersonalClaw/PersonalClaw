@@ -34,6 +34,7 @@ import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
+import { useRailFocus } from './railFocus'
 import { nextNeedsYouRoute } from './globalKeys'
 import { notify } from './appSdk'
 import { TerminalDrawer, fullTerminalRoute } from '../pages/terminal/TerminalDrawer'
@@ -303,6 +304,9 @@ function AppInner() {
   const { focus, setFocus, setReading } = viewModes
   const railHidden = focus && !isMobile
   const toggleNav = () => { if (isMobile) setMobileNavOpen((v) => !v); else if (railHidden) setFocus(false); else setNavCollapsed((v) => !v) }
+  // Opening the rail puts focus on the row that last had it, and closing it puts focus back on the
+  // toggle (`railFocus.ts`).
+  useRailFocus(!railHidden && !railCollapsed)
   // Reading mode belongs to the chat on screen, so a move to another page or chat ends it, and its
   // key and palette row are there only while a chat is.
   useEffect(() => { setReading(false) }, [route, sub, setReading])

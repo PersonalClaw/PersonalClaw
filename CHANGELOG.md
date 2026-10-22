@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **Opening the sidebar, or the phone's navigation drawer, puts focus on the row that last had it (else the thread the page shows), and closing it puts focus back on its toggle, so focus never falls to the page; neither takes focus from a field you are typing in.**
+
 ### Fixed
 
 - **All tasks opens again for someone whose sidebar still shows the starter set: the visit kept re-pinning Tasks, which reads back as Projects, until the page stopped with an error.**
