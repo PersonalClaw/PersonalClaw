@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { SessionMapEntry } from './sessionMap'
 import { SESSION_MAP_MIN_MARKS } from './sessionMap'
-import { SessionMapCard, sessionMapMarkName } from './SessionMapCard'
+import { SessionMapCard, sessionMapMarkName, type MarkAudio } from './SessionMapCard'
+import { useRailAudio } from './sessionMapAudio'
 import { currentMarkRange, useVisibleTurns } from './sessionMapRegion'
 import { MARK_MAX_PX, markLength } from './sessionMapGeometry'
 import { bindingLabel, useKeyBinding } from '../../app/keymap'
@@ -145,6 +146,9 @@ export interface SessionMapRailProps {
   onToggleBookmark?: (entry: SessionMapEntry) => void
   /** The newest question's reply is still on its way (its preview holds a placeholder). */
   replyPending?: boolean
+  /** The owner turned on "Session Map reacts to audio": the rail shows PersonalClaw's own audio
+   *  (`sessionMapAudio.ts`). Off by default. */
+  audioPresence?: boolean
 }
 
 export function SessionMapRail(props: SessionMapRailProps) {
@@ -154,7 +158,7 @@ export function SessionMapRail(props: SessionMapRailProps) {
   return <SessionMapRailBody {...props} />
 }
 
-function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleBookmark, replyPending = false }: SessionMapRailProps) {
+function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleBookmark, replyPending = false, audioPresence = false }: SessionMapRailProps) {
   const visibleTurns = useVisibleTurns(turnNodes, scrollRef, entries.flatMap((e) => e.coords))
   const [regionStart, regionEnd] = currentMarkRange(entries, visibleTurns)
   /** The roving cursor, or `null` while it has never been moved. */
@@ -191,6 +195,13 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleB
   // Entries can shrink under the rail (a rewind), so an index past the end shows nothing.
   const shown = opened && opened.index <= lastIndex ? opened : null
   const waveAt = target !== null && target <= lastIndex ? target : null
+
+  // PersonalClaw's own audio: the reply being read aloud is its question's marker; the microphone
+  // the owner opened listens at the conversation's end, the newest marker. Playing wins a tie.
+  const audio = useRailAudio(audioPresence, navRef)
+  const playingAt = audio.playing === null ? -1 : entries.findIndex((e) => e.coords.includes(audio.playing!))
+  const audioOf = (i: number): MarkAudio | undefined =>
+    i === playingAt ? 'playing' : audio.listening && i === lastIndex ? 'listening' : undefined
 
   const cancel = () => {
     if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null }
@@ -445,7 +456,8 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleB
               data-bookmarked={entry.bookmarked || undefined}
               aria-current={isCurrent ? 'true' : undefined}
               tabIndex={i === tabStop ? 0 : -1}
-              aria-label={sessionMapMarkName(entries, i)}
+              aria-label={sessionMapMarkName(entries, i, audioOf(i))}
+              data-audio={audioOf(i)}
               onClick={() => jump(i)}
               onFocus={() => {
                 focused.current = i
@@ -468,9 +480,25 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleB
               <span
                 aria-hidden
                 data-session-map-mark-line
-                className="block h-0.5 shrink-0 origin-left rounded-pill transition-transform duration-(--duration-short) ease-out motion-reduce:transition-none"
+                // Drawn twice as thick while its audio plays or listens: the still indicator, which
+                // its name says in words.
+                className={`block ${audioOf(i) ? 'h-1' : 'h-0.5'} shrink-0 origin-left rounded-pill transition-transform duration-(--duration-short) ease-out motion-reduce:transition-none`}
                 style={{ width: MARK_MAX_PX, background: 'currentColor', transform: `scaleX(${len / MARK_MAX_PX})` }}
               />
+              {/* THE LEVEL: a line under the marker, scaled by the level the audio presence writes
+                  onto the rail's CSS variables — never through a render. Only while motion is
+                  allowed; under reduced motion the thicker line above is all there is. */}
+              {audioOf(i) && audio.moving ? (
+                <span
+                  aria-hidden
+                  data-session-map-energy={audioOf(i)}
+                  className="absolute left-0 h-0.5 origin-left rounded-pill opacity-60 transition-transform duration-(--duration-short) ease-out motion-reduce:transition-none"
+                  style={{
+                    width: MARK_MAX_PX, top: 'calc(50% + 3px)', background: 'currentColor',
+                    transform: `scaleX(var(${audioOf(i) === 'playing' ? '--map-play-level' : '--map-mic-level'}, 0))`,
+                  }}
+                />
+              ) : null}
               {/* THE BOOKMARK: a dot just past the end of the line, which it follows as the line
                   grows. A shape, so a bookmark is told without its colour. */}
               {entry.bookmarked ? (
@@ -498,7 +526,7 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo, onToggleB
           style={{ width: CARD_WIDTH, marginLeft: CARD_GAP, top: 0 }}
         >
           <SessionMapCard entry={entries[shown.index]} replyPending={replyPending && shown.index === lastIndex}
-            onToggleBookmark={onToggleBookmark}
+            onToggleBookmark={onToggleBookmark} audio={audioOf(shown.index)}
             keys={`${bindingLabel('prev-message')} ${bindingLabel('next-message')} your previous and next message, from anywhere`} />
         </div>
       ) : null}

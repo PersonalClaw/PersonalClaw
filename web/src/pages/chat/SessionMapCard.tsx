@@ -32,10 +32,16 @@ const NAME_SUBJECT_CAP = 40
  *  bookmarked, and a bounded piece of the message — "Message 12 of 40, bookmarked: {first words}",
  *  never the full text. The rail's marker, the drawer's row and the rail's jump announcement all
  *  read this position, so the two forms cannot number a message differently. */
-export function sessionMapMarkName(entries: SessionMapEntry[], index: number): string {
+export function sessionMapMarkName(entries: SessionMapEntry[], index: number, audio?: MarkAudio): string {
   const entry = entries[index]
-  return `Message ${index + 1} of ${entries.length}${entry.bookmarked ? ', bookmarked' : ''}: ${rowSubject([entry.preview], NAME_SUBJECT_CAP)}`
+  return `Message ${index + 1} of ${entries.length}${entry.bookmarked ? ', bookmarked' : ''}${audio ? `, ${audio}` : ''}: ${rowSubject([entry.preview], NAME_SUBJECT_CAP)}`
 }
+
+/** A marker's audio state, in the words its name and its preview say it: its reply is being read
+ *  aloud, or the microphone is listening at the conversation's end. */
+export type MarkAudio = 'playing' | 'listening'
+
+const AUDIO_WORDS: Record<MarkAudio, string> = { playing: 'Playing — this reply is being read aloud', listening: 'Listening — your microphone is on' }
 
 /** How many of an exchange's outputs the preview lists before it counts the rest. */
 export const PREVIEW_OUTPUTS = 2
@@ -64,6 +70,8 @@ export interface SessionMapCardProps {
   /** The keys that move between messages from anywhere, as this platform writes them: the rail's
    *  preview is where they are shown, as a tooltip shows a control's keys. */
   keys?: string
+  /** This message's audio state, said in words (the rail's still indicator, labelled). */
+  audio?: MarkAudio
 }
 
 /** The preview's body. The rail owns where it sits; this owns what is in it.
@@ -72,7 +80,7 @@ export interface SessionMapCardProps {
  *  timestamp, the reply excerpt, what the reply did and the bookmark control), and hiding real
  *  content from assistive tech to dodge a double-read would be trading a whole surface for a
  *  duplicated phrase. */
-export function SessionMapCard({ entry, replyPending = false, onToggleBookmark, keys }: SessionMapCardProps) {
+export function SessionMapCard({ entry, replyPending = false, onToggleBookmark, keys, audio }: SessionMapCardProps) {
   const iso = isoStamp(entry.ts)
   const shown = entry.outputs.slice(0, PREVIEW_OUTPUTS)
   const more = entry.outputs.length - shown.length
@@ -107,6 +115,7 @@ export function SessionMapCard({ entry, replyPending = false, onToggleBookmark, 
           />
         ) : null}
       </div>
+      {audio ? <p data-type="caption" data-session-map-audio={audio} className="mt-xs text-on-surface">{AUDIO_WORDS[audio]}</p> : null}
       <p data-type="body-s" data-session-map-request className="mt-xs line-clamp-2 text-on-surface">
         {entry.preview}
       </p>

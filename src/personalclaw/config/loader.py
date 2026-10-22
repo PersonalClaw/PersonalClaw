@@ -3385,6 +3385,18 @@ class VoiceConfig:
             "garbled homophones instead of confidently misreading them.",
         ),
     )
+    session_map_audio_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Session Map Reacts to Audio",
+            "Let a chat's Session Map move with PersonalClaw's own audio: the reply being read "
+            "aloud, audio or video playing in the chat, and the microphone while you dictate or "
+            "talk hands-free. It only measures a "
+            "microphone you already opened, never opens one itself, and keeps nothing: one "
+            "loudness level a frame, read and dropped in the page. With reduced motion it shows "
+            "a still Playing or Listening mark instead. Off by default.",
+        ),
+    )
 
 
 @dataclass
@@ -5202,6 +5214,7 @@ class AppConfig:
                 duplex_mute_enabled=bool(voice_data.get("duplex_mute_enabled", True)),
                 clean_for_speech_enabled=bool(voice_data.get("clean_for_speech_enabled", True)),
                 voice_disclaimer_enabled=bool(voice_data.get("voice_disclaimer_enabled", True)),
+                session_map_audio_enabled=bool(voice_data.get("session_map_audio_enabled", False)),
             ),
             resilience=ResilienceConfig(
                 # Guard-class: parse fail-safe — missing/unknown ⇒ enabled.

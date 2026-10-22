@@ -586,6 +586,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "voice.duplex_mute_enabled": {"type": "bool"},
     "voice.clean_for_speech_enabled": {"type": "bool"},
     "voice.voice_disclaimer_enabled": {"type": "bool"},
+    # The Session Map's audio presence (#4776): decoration, read in the page and dropped.
+    "voice.session_map_audio_enabled": {"type": "bool"},
     # The desktop push-to-talk chord. An Electron accelerator string, so
     # `max_len` and a whitespace normalise are all this boundary can usefully check:
     # whether the chord is BINDABLE is a question only the shell can answer (another

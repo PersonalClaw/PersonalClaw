@@ -333,6 +333,8 @@ class TestVoiceConfigRoundTrip:
         # shell binds it), which is why its round trip is worth the same ratchet.
         "push_to_talk_chord",
         "voice_disclaimer_enabled",
+        # The Session Map's audio presence (#4776): opt-in, so its default is the one False here.
+        "session_map_audio_enabled",
     )
 
     def test_every_field_has_a_label_and_help(self):
@@ -352,6 +354,7 @@ class TestVoiceConfigRoundTrip:
         assert cfg.clean_for_speech_enabled is True
         assert cfg.push_to_talk_chord == DEFAULT_PUSH_TO_TALK_CHORD
         assert cfg.voice_disclaimer_enabled is True
+        assert cfg.session_map_audio_enabled is False
 
     def test_load_reads_every_field(self, voice_home):
         _write_voice_config(
@@ -363,6 +366,7 @@ class TestVoiceConfigRoundTrip:
             clean_for_speech_enabled=False,
             push_to_talk_chord="Alt+F13",
             voice_disclaimer_enabled=False,
+            session_map_audio_enabled=True,
         )
         cfg = AppConfig.load().voice
         assert cfg.confirmation_phrases == ["engage", "make it so"]
@@ -372,6 +376,7 @@ class TestVoiceConfigRoundTrip:
         assert cfg.clean_for_speech_enabled is False
         assert cfg.push_to_talk_chord == "Alt+F13"
         assert cfg.voice_disclaimer_enabled is False
+        assert cfg.session_map_audio_enabled is True
 
     def test_load_falls_back_to_defaults_on_junk(self, voice_home):
         (voice_home / "config.json").write_text(json.dumps({"voice": "not-a-dict"}))

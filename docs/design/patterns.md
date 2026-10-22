@@ -461,6 +461,39 @@ the drawer, and a finger there scrolls. ⌥↑ / ⌥↓ step from the exchange o
 whose question has scrolled away, ⌥↑ goes to that question first), a second press within 1.5s steps
 on from the first one's target, and each says "Jumped to message N of M".
 
+#### Audio presence — off by default
+
+With Settings › Speech › "Session Map reacts to audio" on (`voice.session_map_audio_enabled`, off by
+default), the rail shows PersonalClaw's own audio (`sessionMapAudio.ts` over `lib/audioPresence.ts`):
+the reply being read aloud, or PersonalClaw's own audio or video playing in a chat turn
+(`lib/mediaPresence.ts`, owned through the turn's `data-turn-coord`), is its question's marker,
+**playing**; the microphone the owner opened for
+dictation or hands-free voice listens at the newest marker, **listening**. Each is said in the
+marker's name ("Message 3 of 9, playing: …"), drawn twice as thick, and named in words on the
+preview; while motion is allowed a level line under the marker moves with the sound.
+
+- **What leaves the capture path:** one level, 0 to 1 in sixteenths, per source, at most once a
+  frame. No samples, spectrum or history, nothing logged, stored or sent.
+- **When anything runs:** a source registers without being measured. Its analyser exists only while
+  a rail subscribes for levels, and the last one leaving detaches it. The rail subscribes only while
+  it is mounted and the document is visible. One frame loop runs only while a subscriber wants levels
+  and a source is live. A level not refreshed for 250 ms is cleared, and a source that goes quiet (a
+  reply ended or stopped, a track ended or muted) clears at once.
+- **The microphone is never opened for this.** The source wraps the stream `useMicRecorder` already
+  holds, and the recording stopping takes it down.
+- **Playing means audible:** from the moment the reading's audio starts, not from the Speak press;
+  a media element only while it plays unmuted above zero volume, never a display capture. A media
+  element is measured through its own `captureStream()`, so its sound is never rerouted, and it is
+  followed by listeners on the element, so one removed mid-play still clears.
+- **Reduced motion:** the rail subscribes for *who* alone. Nothing is measured and no frame runs; the
+  thicker, named marker is the still indicator.
+- **Levels never render the rail:** they are written to `--map-play-level` / `--map-mic-level` on the
+  rail, and the level line scales by them on a short CSS transition. Who is playing or listening is
+  React state, and changes a few times a conversation.
+
+System playback (other apps' audio) is not a source: it needs a native helper and a desktop
+permission decision, and the desktop capability stays "unsupported".
+
 #### Accessibility
 
 - **Landmark, once.** The rail is `<nav aria-label="Session map">`, described by a visually hidden

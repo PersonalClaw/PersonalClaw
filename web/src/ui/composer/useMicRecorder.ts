@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accumulateTranscript } from './duplex'
+import { analyserLevel, registerAudioSource, type AudioSourceHandle } from '../../lib/audioPresence'
 
 export type MicState = 'idle' | 'recording' | 'transcribing'
 
@@ -40,6 +41,10 @@ export function useMicRecorder(
 ) {
   const [state, setState] = useState<MicState>('idle')
   const recRef = useRef<MediaRecorder | null>(null)
+  // The stream this recorder opened, as an audio-presence source for the Session Map: the one
+  // place the map hears the microphone, and only while the owner already holds it open.
+  const presenceRef = useRef<AudioSourceHandle | null>(null)
+  useEffect(() => () => { presenceRef.current?.unregister(); presenceRef.current = null }, [])
   const chunksRef = useRef<BlobPart[]>([])
   const segmentTimerRef = useRef<number | null>(null)
   // Hands-free is a loop, so the callbacks must be read at fire time, not
@@ -79,12 +84,16 @@ export function useMicRecorder(
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const rec = new MediaRecorder(stream)
+      presenceRef.current?.unregister()
+      presenceRef.current = micPresence(stream)
       recRef.current = rec
       chunksRef.current = []
       discardRef.current = false
       rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data) }
       rec.onstop = async () => {
         clearSegmentTimer()
+        presenceRef.current?.unregister()
+        presenceRef.current = null
         stream.getTracks().forEach((t) => t.stop())
         recRef.current = null
         const discarded = discardRef.current
@@ -189,4 +198,35 @@ export function useMicRecorder(
   }, [handsFreeOn])
 
   return { state, toggle, drain, listening: loopingRef.current, muted }
+}
+
+/** The microphone stream a recording ALREADY holds, as an audio-presence source. Nothing is
+ *  opened here: measuring wraps this stream in an analyser only while a Session Map subscribes
+ *  (`lib/audioPresence`), and only its level leaves. Live while its track is live, enabled and not
+ *  muted by the system; an ended or muted track is quiet at once. */
+function micPresence(stream: MediaStream): AudioSourceHandle {
+  const handle = registerAudioSource('microphone', () => {
+    const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctor) return { read: () => null, detach: () => {} }
+    const ctx = new Ctor()
+    const node = ctx.createMediaStreamSource(stream)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    node.connect(analyser)
+    const buf = new Float32Array(analyser.fftSize)
+    return {
+      read: () => analyserLevel(analyser, buf),
+      detach: () => {
+        try { node.disconnect() } catch { /* already gone */ }
+        void ctx.close().catch(() => {})
+      },
+    }
+  })
+  const track = stream.getAudioTracks?.()[0]
+  const live = () => !!track && track.readyState === 'live' && track.enabled && !track.muted
+  handle.setLive(live())
+  track?.addEventListener?.('ended', () => handle.setLive(false))
+  track?.addEventListener?.('mute', () => handle.setLive(false))
+  track?.addEventListener?.('unmute', () => handle.setLive(live()))
+  return handle
 }

@@ -40,7 +40,7 @@ import { QuestionInView } from './QuestionInView'
  *  (A mask reads only alpha, so `black` here is "keep", not a colour.) */
 const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--spacing-2xl)), transparent)'
 
-export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn }: {
+export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn, mapAudio = false }: {
   transcript: ReturnType<typeof useTranscript>
   stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'turnPhase' | 'turnLine' | 'turnEnding' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer' | 'subagents'>
   sessionId: string | null
@@ -54,6 +54,8 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   send: (text: string) => Promise<void>
   speak: (text: string, turnIndex: number) => void
   speakingTurn: number | null
+  /** The owner turned on Settings › Speech › "Session Map reacts to audio". */
+  mapAudio?: boolean
 }) {
   const { scrollRef, endRef, followTurnRef, followEnd, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
   const { sessionRef, turns, streaming, turnPhase, turnLine, turnEnding, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
@@ -85,7 +87,8 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
     <div className="relative flex min-h-0 flex-1">
       {mapOpen && !isMobile && (
         <SessionMapRail entries={sessionEntries} turnNodes={turnNodes.current}
-          scrollRef={scrollRef} onJumpTo={jumpToTurn} onToggleBookmark={toggleBookmark} replyPending={streaming} />
+          scrollRef={scrollRef} onJumpTo={jumpToTurn} onToggleBookmark={toggleBookmark} replyPending={streaming}
+          audioPresence={mapAudio} />
       )}
       {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
           the browser gate can assert scroll-fixity and the jump against the real scroll
@@ -128,7 +131,9 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
               // `data-transcript-turn` names a turn node by its side of the exchange, so the
               // browser gate can put a REPLY on screen without its question and check the
               // Session Map still lights that question — the registry itself is a ref.
-              <div key={i} className="relative" data-transcript-turn={turn.role}
+              // `data-turn-coord` is the turn's map coordinate, so a media element playing inside it
+              // knows which Session Map marker it belongs to (`lib/mediaPresence`).
+              <div key={i} className="relative" data-transcript-turn={turn.role} data-turn-coord={markCoordOf(turn, i)}
                 ref={(el) => {
                   const c = markCoordOf(turn, i)
                   if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c)
