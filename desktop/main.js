@@ -38,6 +38,7 @@ const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pus
 const { makeDoorbell, mayRaise, openGatewaySocket } = require("./doorbell");
 const { makeAbsence, makeBuddyHide } = require("./buddyAway");
 const { pushToBridged } = require("./windowPushes");
+const { cachedPolicy, keepPolicy, readPolicy, showWrite } = require("./buddyPolicy");
 const { loadRegistry } = require("./endpointRegistry");
 const {
   LOCAL_ENDPOINT_ID,
@@ -588,12 +589,13 @@ function readLocalSecret() {
  *
  * The gateway asks every request for a sign-in, so each carries the shell's session as a Bearer
  * header; `signedIn: false` leaves it off, for the one request that must present only the
- * session it ends (`signOutLocalSession`). */
-function postGateway(pathname, body, headers = {}, { signedIn = true } = {}) {
+ * session it ends (`signOutLocalSession`). `method` is POST but for a write the gateway takes as a
+ * PATCH (`PATCH /api/config/personalclaw`, the menu bar's Show Buddy). */
+function postGateway(pathname, body, headers = {}, { signedIn = true, method = "POST" } = {}) {
   return new Promise((resolve) => {
     if (!localGatewayUrl) return resolve(null);
     try {
-      assertLoopbackTarget(localGatewayUrl, `POST ${pathname}`);
+      assertLoopbackTarget(localGatewayUrl, `${method} ${pathname}`);
     } catch (err) {
       console.error(`desktop: ${err.message}`);
       return resolve(null);
@@ -610,7 +612,7 @@ function postGateway(pathname, body, headers = {}, { signedIn = true } = {}) {
         hostname: url.hostname,
         port: url.port,
         path: url.pathname,
-        method: "POST",
+        method,
         timeout: 5000,
         headers: {
           "Content-Type": "application/json",
@@ -1220,8 +1222,7 @@ const trayPresence = makeTrayPresence({
       syncLoginItemToTray();
     },
     toggleBuddy: (next) => {
-      setBuddyEnabled(next);
-      syncBuddyToTray();
+      setBuddyStatus(next).catch((err) => console.warn(`desktop: Show Buddy unchanged: ${err.message}`));
     },
     hideBuddy: (span) => (span === "tomorrow" ? buddyHide?.hideUntilTomorrow() : buddyHide?.hideForAnHour()),
     showBuddyNow: () => buddyHide?.showNow(),
@@ -1284,12 +1285,14 @@ function getGateway(pathname) {
  */
 async function readPresence() {
   const before = gatewayStarts;
-  const [waiting, running] = await Promise.all([getGateway("/api/waiting"), getGateway("/api/running")]);
+  const [waiting, running, policy] = await Promise.all([
+    getGateway("/api/waiting"),
+    getGateway("/api/running"),
+    // Buddy status and its surfaces (#3901), re-read on the same rings: `buddy_policy_changed` is one.
+    getGateway("/api/buddy/policy"),
+  ]);
   const boot = bootRead(before, gatewayStarts);
-  // The buddy's policy (#3901), while there is a buddy: its absence time. Read on every ring, since
-  // `buddy_policy_changed` is one of them.
-  const policy = buddy?.window ? await getGateway("/api/buddy/policy") : null;
-  return { waiting, running, boot, policy };
+  return { waiting, running, policy, boot };
 }
 
 /** The last buddy policy read (`GET /api/buddy/policy`), or null before the first. */
@@ -1347,8 +1350,10 @@ function socketGateway(url, gateway) {
  * to read its own, and its window, hidden, is shown again for an item the gateway says may
  * interrupt you now (`mayRaise`): nothing else raises it.
  */
-function takePresence({ waiting, running, boot, policy }) {
+function takePresence({ waiting, running, policy, boot }) {
+  // The policy's absence time is the buddy's (`buddyAway.js`); its status and surfaces the shell's.
   if (policy) buddyPolicy = policy;
+  followBuddyPolicy(readPolicy(policy));
   if (trayPresence.available) {
     trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(waiting, running), { boot }));
   }
@@ -1799,17 +1804,41 @@ function startBuddy() {
   return buddyPresence.start();
 }
 
-/** "Show Buddy", for this machine: on creates the window (once there is a gateway), off closes
- *  it. Before the app is ready the switch is only kept, and the start picks it up. */
-function setBuddyEnabled(on) {
-  if (buddyPresence) return buddyPresence.setEnabled(on);
-  if (shellStore) shellStore.setItem(ENABLED_KEY, on ? "1" : "0");
-  return false;
+/**
+ * Follow Buddy status as the gateway says it (`buddyPolicy.js`): the window exists only while its
+ * surface is on, and the tray's stills and the dock follow theirs. With no answer (no gateway yet,
+ * or one too old to serve the policy) the last one kept stands.
+ */
+function followBuddyPolicy(policy) {
+  if (!policy) return;
+  keepPolicy(shellStore, policy);
+  trayPresence.setBuddyState({ enabled: policy.show, hidden: Boolean(buddyHide?.hidden), tray: policy.surfaces.tray, dock: policy.surfaces.dock });
+  if (!buddyPresence) return;
+  if (policy.surfaces.window) buddyPresence.start();
+  else buddyPresence.stop();
 }
 
-/** The tray's checkbox reads the store, the one place the switch is kept. */
+/**
+ * The menu bar's Show Buddy: the gateway's `buddy.show`, written as Settings writes it, so every
+ * window and the phone follow one value; the gateway's `buddy_policy_changed` rings the doorbell,
+ * whose read brings the change here too. Read again at once so the menu does not wait for the ring.
+ * Only with no gateway to write to does the switch change what this machine keeps, alone.
+ */
+async function setBuddyStatus(on) {
+  const wrote = await postGateway("/api/config/personalclaw", showWrite(on), {}, { method: "PATCH" });
+  if (wrote) {
+    followBuddyPolicy(readPolicy(await getGateway("/api/buddy/policy")));
+    return;
+  }
+  if (buddyPresence) buddyPresence.setEnabled(on);
+  else if (shellStore) shellStore.setItem(ENABLED_KEY, on ? "1" : "0");
+  syncBuddyToTray();
+}
+
+/** The tray's checkbox at start, before the gateway answers: the last Buddy status kept. */
 function syncBuddyToTray() {
-  trayPresence.setBuddyState({ enabled: Boolean(shellStore) && shellStore.getItem(ENABLED_KEY) === "1", hidden: Boolean(buddyHide?.hidden) });
+  const kept = cachedPolicy(shellStore);
+  trayPresence.setBuddyState({ enabled: kept.show, hidden: Boolean(buddyHide?.hidden), tray: kept.surfaces.tray, dock: kept.surfaces.dock });
 }
 
 /** The buddy's page stays on the gateway it came from and opens no window of any kind. */

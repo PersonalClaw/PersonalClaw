@@ -80,6 +80,7 @@
       "buddyPreload.js",
       "buddy",
       "windowPushes.js",
+      "buddyPolicy.js",
       "connectDialog.html",
       "preload.js",
       "loading.html",

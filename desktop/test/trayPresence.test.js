@@ -710,6 +710,31 @@ describe("makeTrayPresence with the buddy's stills", () => {
     assert.equal(calls.images.at(-1), "trayTemplate.png", "off again: the claw");
   });
 
+  it("follows each surface: no still while the tray's is off, no dock while the dock's is", () => {
+    const { presence, calls } = rig();
+    presence.setBuddyState({ enabled: true, tray: false, dock: false });
+    presence.setPresence(live({ waiting: 2 }));
+    assert.deepEqual(calls.images, [], "the claw stays");
+    assert.deepEqual(calls.dockIcons, []);
+    presence.setBuddyState({ enabled: true, tray: true, dock: true });
+    assert.deepEqual(calls.images, ["tray-needs-youTemplate.png"]);
+    assert.deepEqual(calls.dockIcons, ["dock-needs-you-light.png"]);
+    presence.setBuddyState({ enabled: false, tray: true, dock: true });
+    assert.equal(calls.images.at(-1), "trayTemplate.png", "Buddy status off turns every surface off");
+    assert.equal(calls.dockIcons.at(-1), "icon.png");
+  });
+
+  it("keeps the owner's hide beside the surfaces: Show Buddy Now while hidden, the still all the same", () => {
+    const { presence, calls } = rig();
+    const menus = [];
+    presence.setBuddyState({ enabled: true, hidden: true, tray: true, dock: false });
+    presence.setPresence(live());
+    assert.deepEqual(calls.images, ["tray-offlineTemplate.png", "tray-idleTemplate.png"], "the menu bar keeps telling while the buddy is hidden");
+    const template = buildTrayMenuTemplate({ buddy: { enabled: true, hidden: true }, actions: {} });
+    menus.push(...template.map((r) => r.label).filter(Boolean));
+    assert.ok(menus.includes("Show Buddy Now"));
+  });
+
   it("follows the appearance with the colour stills on Linux", () => {
     let dark = false;
     const calls = { images: [] };
