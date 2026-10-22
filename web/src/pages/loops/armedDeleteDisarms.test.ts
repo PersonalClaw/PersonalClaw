@@ -46,7 +46,7 @@ const strip = (s: string) =>
 const ARMED: { rel: string; setter: string; what: string }[] = [
   { rel: 'pages/loops/DesignCockpitPage.tsx', setter: 'setConfirmDelete', what: "the design loop's findings, deliverable and history" },
   { rel: 'pages/loops/LoopCockpitPage.tsx', setter: 'setConfirmDelete', what: "the loop's findings, deliverable and history" },
-  { rel: 'pages/loops/LoopCockpitPage.tsx', setter: 'setConfirmStop', what: 'a run that then cannot resume' },
+  { rel: 'pages/loops/LoopProgressStrip.tsx', setter: 'setStopArmed', what: 'a run that then cannot resume' },
   { rel: 'pages/loops/LoopsListPage.tsx', setter: 'setConfirmDelete', what: 'a loop, from its row' },
   { rel: 'pages/workflows/WorkflowsListPage.tsx', setter: 'setArmed', what: 'a workflow run and its artifacts' },
   { rel: 'pages/tasks/formControls.tsx', setter: 'setArmed', what: 'a checklist row the user typed' },

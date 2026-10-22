@@ -30,6 +30,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **What an agent is doing is painted in one tone per phase on every surface: Agent World's working agents are coral, not green; a loop or a workflow run waiting on your answer is info and one waiting on your OK warn; queued and held work is coral; a stopped or cancelled loop or run is ok; and the Inbox's Needs you, the Projects board's needs-you group and the notifications read the same table, so a state looks the same wherever you see it.**
 - **On the Automations page, a run that started a workflow opens that run's live card, the same one its thread and the chat's Activity open, and it stays open while the run finishes (#3816).**
 - **The sidebar shows every destination to everyone, under its sections. The starter set a new install began with is gone, and so are its Everything row and the Show every surface switches in setup and Settings › Design.**
+- **A goal loop's page ends like a chat: a thin strip with the cycles it has used ("cycle 4/10", or "cycle 4 · ongoing") and its Start, Pause or Resume and Stop, and under it a composer that nudges the next cycle, always open while the loop runs. The header keeps Rename, the link, Delete and Details.**
 
 ### Fixed
 
