@@ -807,7 +807,12 @@ def _changed(state: Any) -> None:
         bell.handle = None  # due on a loop that is gone: it will never ring
     if bell.handle is None:
         bell.loop = loop
-        bell.handle = loop.call_later(WINDOW_SECS, _ring, state)
+        bell.handle = _call_later(loop, WINDOW_SECS, _ring, state)
+
+
+def _call_later(loop: asyncio.AbstractEventLoop, delay: float, callback: Any, *args: Any) -> Any:
+    """The window's timer: the event loop's, which a test replaces to close a window by hand."""
+    return loop.call_later(delay, callback, *args)
 
 
 def _ring(state: Any) -> None:

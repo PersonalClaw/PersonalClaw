@@ -577,16 +577,37 @@ async def test_nothing_is_answered_through_an_item_that_its_own_route_refuses(tm
 
 # ── the list says it moved ───────────────────────────────────────────────────────────────────
 
-#: A window short enough for a test, the same rule as the gateway's.
-WINDOW = 0.05
-
 
 def _rings(w: Any) -> list[Any]:
     return [d for k, d in w.frames if k == waiting.CHANGED]
 
 
-async def _a_window() -> None:
-    await asyncio.sleep(WINDOW * 3)
+class _Windows:
+    """The bell's window timer (``waiting._call_later``), closed by hand: each window the list
+    opens is held here until the test closes it, so what lands in one window does so by
+    construction, never by how fast a loaded machine ran the asks."""
+
+    def __init__(self) -> None:
+        self.due: list[tuple[Any, tuple[Any, ...]]] = []
+
+    def __call__(self, loop: Any, delay: float, callback: Any, *args: Any) -> Any:
+        self.due.append((callback, args))
+        return SimpleNamespace(cancel=lambda: None)
+
+    async def close(self) -> None:
+        """Close every open window: what was handed to the loop lands first, then each rings."""
+        for _ in range(5):
+            await asyncio.sleep(0)
+        due, self.due = self.due, []
+        for callback, args in due:
+            callback(*args)
+
+
+@pytest.fixture
+def windows(monkeypatch) -> _Windows:
+    shut = _Windows()
+    monkeypatch.setattr(waiting, "_call_later", shut)
+    return shut
 
 
 async def _ask_approval(w, ids):
@@ -630,7 +651,7 @@ async def _ask_loop(w, ids):
 
     loop = loops.create(Loop(id="", name="Sort the inbox", kind="goal", task="sort"))
     loops.update_status(loop.id, LoopStatus.RUNNING)
-    await _a_window()
+    await ids["windows"].close()
     w.frames.clear()
     loop_files.write_question(loop.id, "May I archive it?")
     loops.update_status(loop.id, LoopStatus.NEEDS_INPUT)
@@ -653,7 +674,7 @@ async def _ask_again_while_waiting(w, ids):
     from personalclaw.loop import files as loop_files
 
     key = await _ask_loop(w, ids)
-    await _a_window()
+    await ids["windows"].close()
     w.frames.clear()
     loop_files.write_question(ids["loop"], "Merge two tasks?", merge={"into": "main", "tasks": []})
     return key
@@ -719,7 +740,7 @@ async def _ask_loop_step(w, ids):
     from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 
     loop = loops.create(Loop(id="", name="Plan", kind="goal", task="plan", status="planning"))
-    await _a_window()
+    await ids["windows"].close()
     w.frames.clear()
     step = PlanStep(id="s1", kind="design", title="Pick", status=StepStatus.AWAITING_REVIEW.value)
     ids["loop"], ids["plan"] = loop.id, PlanSession(project_id=loop.id, steps=[step])
@@ -740,7 +761,7 @@ async def _ask_launch(w, ids):
     from personalclaw.loop.loop import Loop, LoopStatus
 
     loop = loops.create(Loop(id="", name="Tidy", kind="goal", task="tidy", status="planning"))
-    await _a_window()
+    await ids["windows"].close()
     w.frames.clear()
     loops.update_status(loop.id, LoopStatus.REVIEW)
     ids["loop"] = loop.id
@@ -805,16 +826,9 @@ ASKED_AND_ENDED = {
 }
 
 
-@pytest.fixture
-def _short_window(monkeypatch):
-    monkeypatch.setattr(waiting, "WINDOW_SECS", WINDOW)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", sorted(ASKED_AND_ENDED))
-async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(
-    kind, tmp_path, _short_window
-):
+async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(kind, tmp_path, windows):
     """Asked, the list rings once and the item is in it; answered or ended at its source, the list
     rings once more and the item is gone: one read after one frame shows it on every surface."""
     from personalclaw.inbound import bridge
@@ -823,17 +837,18 @@ async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(
     w = _World(tmp_path, _held(asyncio.Event()))
     ids: dict[str, Any] = {}
     target = "personalclaw.inbox_providers.native_source.get_dashboard_state"
+    ids["windows"] = windows
     try:
         with patch(target, return_value=w.state):
             item = await ask(w, ids)
-            await _a_window()
+            await windows.close()
             assert _rings(w) == [{}], f"{kind}: asking it rang {len(_rings(w))} times"
             _status, body = await _read(w.state)
             assert item in _by_id(body), f"{kind}: not listed after its ring"
 
             w.frames.clear()
             await end(w, ids)
-            await _a_window()
+            await windows.close()
             assert _rings(w) == [{}], f"{kind}: ending it rang {len(_rings(w))} times"
             _status, body = await _read(w.state)
             assert item not in _by_id(body), f"{kind}: still listed after its ring"
@@ -845,24 +860,23 @@ async def test_each_kind_rings_once_as_it_is_asked_and_once_as_it_leaves(
 
 
 @pytest.mark.asyncio
-async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, monkeypatch):
-    # A window wide enough that the ten asks land inside it on a loaded machine: each one reads the
-    # notification settings to decide whether it may interrupt (`waiting.interrupt_for`).
-    burst = 0.5
-    monkeypatch.setattr(waiting, "WINDOW_SECS", burst)
+async def test_a_burst_of_ten_asks_rings_once_per_window(tmp_path, windows):
+    """However long the ten asks take, they open one window, and it rings once when it closes."""
     w = _World(tmp_path, _held(asyncio.Event()))
     asks = [
         asyncio.create_task(w.state.request_approval(f"bg-{n}", "cron", "shell")) for n in range(10)
     ]
     try:
         await _until(lambda: len(w.state._pending_approvals) == 10, "the ten approvals")
+        assert len(windows.due) == 1, "ten asks open one window"
         assert _rings(w) == [], "nothing rings before its window closes"
-        await asyncio.sleep(burst * 2)
+        await windows.close()
         assert _rings(w) == [{}], "ten asks, one frame, with nothing in it to render"
 
         for n in range(10):
             w.state.resolve_approval(f"bg-{n}", True, by=_owner())
-        await asyncio.sleep(burst * 2)
+        assert len(windows.due) == 1, "ten answers open one more window"
+        await windows.close()
         assert len(_rings(w)) == 2, "ten answers, one more frame"
     finally:
         for t in asks:
@@ -877,13 +891,13 @@ def _owner():
 
 
 @pytest.mark.asyncio
-async def test_a_change_off_the_event_loop_is_handed_to_it(tmp_path, _short_window):
+async def test_a_change_off_the_event_loop_is_handed_to_it(tmp_path, windows):
     """A loop's files and a run's gate are written from worker threads: the ring is handed to the
     gateway's loop, and rings there once."""
     w = _World(tmp_path, _held(asyncio.Event()))
     w.state._ws_loop = asyncio.get_running_loop()
     await asyncio.gather(*(asyncio.to_thread(waiting.changed, w.state) for _ in range(5)))
-    await _a_window()
+    await windows.close()
     assert _rings(w) == [{}]
 
 
@@ -897,7 +911,7 @@ def test_a_ring_with_no_gateway_is_nothing():
 
 
 @pytest.mark.asyncio
-async def test_a_runs_status_rings_and_its_steps_do_not(tmp_path, _short_window):
+async def test_a_runs_status_rings_and_its_steps_do_not(tmp_path, windows):
     """A run's gates are listed while it needs input, so its status moving rings the list; what
     its steps do between does not."""
     from personalclaw.workflows.watchdog import WorkflowWatchdog
@@ -905,8 +919,8 @@ async def test_a_runs_status_rings_and_its_steps_do_not(tmp_path, _short_window)
     w = _World(tmp_path, _held(asyncio.Event()))
     publish = WorkflowWatchdog(state=w.state)._publisher("r1")
     publish("workflow_node_update", {"node_id": "a", "status": "running"})
-    await _a_window()
+    await windows.close()
     assert _rings(w) == [], "a step's progress is no change to what waits on you"
     publish("workflow_run_update", {"status": "needs_input"})
-    await _a_window()
+    await windows.close()
     assert _rings(w) == [{}]
