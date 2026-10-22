@@ -88,9 +88,17 @@ function typesText(el: EventTarget | null): boolean {
   return !['button', 'checkbox', 'radio', 'submit', 'reset'].includes(type)
 }
 
-/** Whether *el* is out of sight or out of reach: under a hidden, inert or aria-hidden ancestor. */
+/** Whether *el* is out of sight or out of reach: under a hidden, inert or aria-hidden ancestor, or
+ *  behind a modal dialog. A modal covers the page whether or not it made the rest inert, and the
+ *  browser can still report focus on a card behind it (a dialog that did not take focus, a key
+ *  that raced its focus trap), so a card no open modal contains is out of reach. A dialog the card
+ *  itself opened counts too: while it is open the card is under it. */
 function unseen(el: HTMLElement): boolean {
-  return el.closest('[hidden],[inert],[aria-hidden="true"]') !== null
+  if (el.closest('[hidden],[inert],[aria-hidden="true"]') !== null) return true
+  // Unquoted: the same selector, and this file declares no dialog (`dialogFocusContract` reads
+  // the attribute as written).
+  const modals = el.ownerDocument.querySelectorAll('[aria-modal=true]')
+  return [...modals].some((m) => m.isConnected && !m.contains(el))
 }
 
 export function ApprovalPrompt({
@@ -170,14 +178,20 @@ export function ApprovalPrompt({
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const root = rootRef.current
     if (!root) return
-    if (e.key === 'Escape' && armed) { e.stopPropagation(); setArmed(false); return }
+    // A dialog portalled from inside the card bubbles its keys here through React, from outside
+    // the card on the page: only a key pressed on the card itself, while nothing covers it, counts.
+    // So Escape in that dialog closes the dialog's detail and leaves the card's confirm as it was.
+    const onTheCard = e.target instanceof Node && root.contains(e.target) && !unseen(root)
+    if (e.key === 'Escape' && armed) {
+      if (!onTheCard) return
+      e.stopPropagation()
+      setArmed(false)
+      return
+    }
     if (!approving || !matchBinding(e, 'approve-focused')) return
     e.preventDefault()
     e.stopPropagation()
-    // A dialog portalled from inside the card bubbles its keys here through React, from outside
-    // the card on the page: only a key pressed on the card itself counts.
-    if (!(e.target instanceof Node) || !root.contains(e.target)) return
-    if (e.repeat || typesText(e.target) || unseen(root)) return
+    if (!onTheCard || e.repeat || typesText(e.target)) return
     if (armed) {
       if (e.target === yesRef.current) send(approving)
       return
