@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # ── Project metadata (PEP 621) ────────────────────────────────────────────────
 [project]
 name = "personalclaw"
-version = "0.2.4"
+version = "0.2.5"
 description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
 # A PEP 639 SPDX expression, emitted as `License-Expression`; the trove classifier it
 # supersedes is gone, and setuptools refuses the pair.
