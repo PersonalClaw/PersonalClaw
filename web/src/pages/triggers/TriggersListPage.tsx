@@ -31,6 +31,7 @@ import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 /** No file the page lists from is unreadable: one array, so the memo inputs keep their identity. */
 const NONE_UNREADABLE: TriggerSourceUnreadable[] = []
@@ -284,11 +285,12 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   hint="A trigger runs an action when something happens. Each of these opens the create form already filled in, ready for you to review and save."
                   presets={TRIGGER_PRESETS}
                   onPick={(prefill) => onCreate(prefill.id)}
-                  footer={
+                  footer={<>
                     <Button variant="ghost" size="sm" onClick={() => onCreate()}>
                       <Plus size={15} /> Start from scratch
                     </Button>
-                  }
+                    <DiscoverTip here="triggers" />
+                  </>}
                 />
               ) : (
               // The hint names the control the user actually touched. One line for "try a

@@ -20,6 +20,7 @@ import { api, type SavedAgent, type DiscoveredAgent } from '../../lib/api'
 import { useConfigFsWatch } from '../../lib/useConfigFsWatch'
 import { useQueryParam, useQueryFlag, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 type Open =
   | { kind: 'native'; name: string }
@@ -202,7 +203,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                       // to a user whose list is full. Same shape the other list pages use.
                       n
                         ? <EmptyState icon={Search} title="No matching agents" hint="Try a different term." />
-                        : <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} />
+                        : <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} footer={<DiscoverTip here="agents" />} />
                     ) : (
                       <div className="flex flex-col gap-s">
                         {shownNative.map((a) => (

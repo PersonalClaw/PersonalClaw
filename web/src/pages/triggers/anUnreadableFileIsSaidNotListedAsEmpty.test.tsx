@@ -20,6 +20,7 @@ const REMEDY = 'Repair the file, restore it from a snapshot under Settings → D
 
 const { API } = vi.hoisted(() => ({
   API: {
+    discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     schedules: vi.fn(() => Promise.resolve({ jobs: [] as unknown[], server_tz: 'UTC', unreadable: [] as unknown[] })),
     hooks: vi.fn(() => Promise.resolve([])),
     storeTriggers: vi.fn(() => Promise.resolve([])),

@@ -44,6 +44,7 @@ let storedHandle = ''
 
 vi.mock('../lib/api', () => ({
   api: {
+    discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     onboarding: () => onboarding(),
     // Kept PENDING deliberately, like the sibling flow tests: the done screen renders the real

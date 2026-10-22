@@ -46,6 +46,7 @@ const { STATE } = vi.hoisted(() => ({ STATE: { jobs: [] as unknown[] } }))
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
+    discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
     schedules: () => Promise.resolve({ jobs: STATE.jobs }),
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve([]),

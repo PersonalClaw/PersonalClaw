@@ -66,6 +66,7 @@ function mockApi() {
   vi.doMock('../../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     api: {
+      discover: () => Promise.resolve({ enabled: false, areas: [] }), // Discover off: no tip under the empty state
       apps: () => Promise.resolve([]),
       appCatalog: () => Promise.resolve(CATALOG),
     },

@@ -57,6 +57,7 @@ import { PageTitle } from '../../ui/PageTitle'
 import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
+import { DiscoverTip } from '../discover/DiscoverTip'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -866,7 +867,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                 ) : (
                   <EmptyState icon={Blocks} title="No apps installed"
                     hint="Browse the Store to add apps, or install one from a local path or git URL."
-                    action={{ label: 'Browse Store', onClick: () => setView('store'), icon: Blocks }} />
+                    action={{ label: 'Browse Store', onClick: () => setView('store'), icon: Blocks }}
+                    footer={<DiscoverTip here="apps" />} />
                 )
               ) : (
                 <EmptyState icon={Blocks} title="No matching apps"
