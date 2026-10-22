@@ -68,10 +68,10 @@ function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridg
   useEffect(() => {
     const machine = () => hostRef.current?.snapshot().machine
     const stops = [
-      bridge.onRing(() => hostRef.current?.ring()),
-      bridge.onConnection((state) => hostRef.current?.send({ type: 'connection', state: state === 'up' ? 'back' : state })),
+      bridge.onRing?.(() => hostRef.current?.ring()),
+      bridge.onConnection?.((state) => hostRef.current?.send({ type: 'connection', state: state === 'up' ? 'back' : state })),
       // A drag the shell is moving, then where it settled; on each load, where the window is.
-      bridge.onPlacement((where) => {
+      bridge.onPlacement?.((where) => {
         const m = machine()
         if (!m) return
         if (where === 'moving') {
@@ -80,7 +80,16 @@ function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridg
           hostRef.current?.send({ type: 'drag', phase: 'end', docked: where === 'docked' })
         }
       }),
-      bridge.onFullScreen((on) => hostRef.current?.fullScreen(on)),
+      bridge.onFullScreen?.((on) => hostRef.current?.fullScreen(on)),
+      // Away and back, as the shell reads the system's idle time; and the owner's hide.
+      bridge.onAway?.((away) => {
+        const m = machine()
+        if (m && m.away !== away) hostRef.current?.send({ type: away ? 'away' : 'return' })
+      }),
+      bridge.onHidden?.((hidden) => {
+        const m = machine()
+        if (m && m.muted !== hidden) hostRef.current?.send({ type: hidden ? 'hide' : 'show' })
+      }),
     ]
     // The top-edge zone: docked with nothing to show, the window stays up as a strip that takes no
     // click, and the pointer resting on it is the machine's `zone` (a peek). On macOS the shell
@@ -100,7 +109,7 @@ function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridg
     document.addEventListener('mousemove', onMove, { passive: true })
     document.documentElement.addEventListener('mouseleave', onLeave)
     return () => {
-      for (const stop of stops) stop()
+      for (const stop of stops) stop?.()
       document.removeEventListener('mousemove', onMove)
       document.documentElement.removeEventListener('mouseleave', onLeave)
     }
@@ -146,6 +155,12 @@ export function BuddyPage(_: RouteProps) {
   const truth = snap ? viewOf(snap.machine).truth : null
   // In the buddy's own window a link to the app (the card's Open, a row's route) opens in the main
   // window: followed here, it would load the app inside the buddy.
+  // In the buddy's own window a right-click on the face or the card is its context menu.
+  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    if (!bridge?.openMenu || !(e.target instanceof Element) || !e.target.closest('[data-buddy-shape]')) return
+    e.preventDefault()
+    bridge.openMenu?.()
+  }
   const onClickCapture = (e: MouseEvent<HTMLDivElement>) => {
     const link = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>('a[href^="#/"]') : null
     if (!bridge || !link) return
@@ -160,9 +175,10 @@ export function BuddyPage(_: RouteProps) {
   }
 
   return (
-    <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} className="flex h-full min-w-0 flex-col items-center p-s">
+    <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} onContextMenu={onContextMenu} className="flex h-full min-w-0 flex-col items-center p-s">
       <h1 className="sr-only">Buddy</h1>
-      {bridge ? <WindowShell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
+      {/* A shell built before its doorbell has no ring to hear: the page keeps its own socket. */}
+      {bridge?.onRing ? <WindowShell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
       {snap && host ? (
         <BuddyPresence
           machine={snap.machine}

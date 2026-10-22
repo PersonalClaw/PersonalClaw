@@ -74,6 +74,7 @@
       "connectDialog.js",
       "connectPreload.js",
       "buddyPlacement.js",
+      "buddyAway.js",
       "buddyWindow.js",
       "doorbell.js",
       "buddyPreload.js",

@@ -1,14 +1,15 @@
 /**
  * Preload for the buddy's window (#3831).
  *
- * Five named sends, four named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
+ * Six named sends, six named pushes back (#3832), and nothing else. Deliberately NOT `preload.js`: the buddy has no business
  * reaching the capability bridge (the microphone, notifications, the login item), so it gets a
  * surface of its own, the smallest that drives its window: where the pointer is, the shape that
  * takes clicks, a drag of the face, the room it needs, and opening a route of this app in the main
  * window. No `send` or `invoke` of the page's choosing is exposed. What comes back is main's
  * doorbell, a ring that carries nothing (the lists moved: read them again) and its connection, one
- * of three words; where the window is (moving, docked or floating); and whether one of the app's own
- * windows is full screen.
+ * of three words; where the window is (moving, docked or floating); and three booleans: whether one
+ * of the app's own windows is full screen, whether the owner is away, and whether they hid the
+ * buddy. The sixth send asks for the buddy's context menu and carries nothing.
  *
  * The window is sandboxed, and a sandboxed preload's `require` resolves `electron` and three
  * builtins only, so the channel names are copied here; `buddyBridge.test.js` holds them equal to
@@ -25,6 +26,7 @@ const BUDDY_CHANNELS = Object.freeze({
   drag: `${BUDDY_PREFIX}drag`,
   presentation: `${BUDDY_PREFIX}presentation`,
   open: `${BUDDY_PREFIX}open`,
+  menu: `${BUDDY_PREFIX}menu`,
 });
 const BUDDY_PUSHES = Object.freeze({
   ring: `${BUDDY_PREFIX}ring`,
@@ -32,6 +34,8 @@ const BUDDY_PUSHES = Object.freeze({
   placement: `${BUDDY_PREFIX}placement`,
   fullScreen: `${BUDDY_PREFIX}full-screen`,
   openAlert: `${BUDDY_PREFIX}open-alert`,
+  away: `${BUDDY_PREFIX}away`,
+  hidden: `${BUDDY_PREFIX}hidden`,
 });
 const BUDDY_CONNECTIONS = ["up", "lost", "restarting"];
 const BUDDY_PLACEMENTS = ["moving", "docked", "floating"];
@@ -98,4 +102,10 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
       stop();
     };
   },
+  /** Whether the owner is away (the system's idle time, a locked screen, sleep). */
+  onAway: (cb) => hear(BUDDY_PUSHES.away, cb, (v) => (typeof v === "boolean" ? v : undefined)),
+  /** Whether the owner hid the buddy (for an hour, or until tomorrow). */
+  onHidden: (cb) => hear(BUDDY_PUSHES.hidden, cb, (v) => (typeof v === "boolean" ? v : undefined)),
+  /** The buddy's context menu, at the pointer: hide it, or open PersonalClaw. */
+  openMenu: () => ipcRenderer.send(BUDDY_CHANNELS.menu, {}),
 });

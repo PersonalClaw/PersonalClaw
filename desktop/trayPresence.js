@@ -265,8 +265,9 @@ function endedLabel(r, { word, line } = {}) {
  * @param {object} opts
  * @param {object} opts.presence `summarizePresence()`, carried by `carryPresence()`
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
- * @param {{enabled: boolean}} [opts.buddy] whether the buddy's window is on for this machine (#3831)
- * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/toggleLoginItem/quit
+ * @param {{enabled: boolean, hidden?: boolean}} [opts.buddy] whether the buddy's window is on for this
+ *        machine (#3831), and whether its owner hid it for a while (#3832)
+ * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/hideBuddy/showBuddyNow/toggleLoginItem/quit
  * @param {Array<{label: string, click?: Function}>} [opts.tiles] ambient
  *        menu-bar tiles. Optional — rendered when supplied,
  *        skipped when not, so the menu never depends on them.
@@ -279,6 +280,8 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
   const quickCapture = actions.quickCapture || noop;
   const toggleLoginItem = actions.toggleLoginItem || noop;
   const toggleBuddy = actions.toggleBuddy || noop;
+  const hideBuddy = actions.hideBuddy || noop;
+  const showBuddyNow = actions.showBuddyNow || noop;
   const quit = actions.quit || noop;
 
   const template = [
@@ -346,6 +349,14 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
       checked: Boolean(buddy.enabled),
       click: (menuItem) => toggleBuddy(menuItem ? Boolean(menuItem.checked) : !buddy.enabled),
     },
+    // Hiding it, for a while: the buddy shows nothing but its listening face until then, and the
+    // menu bar keeps counting (#3832).
+    ...(!buddy.enabled ? [] : buddy.hidden
+      ? [{ label: "Show Buddy Now", click: () => showBuddyNow() }]
+      : [
+          { label: "Hide Buddy for an Hour", click: () => hideBuddy("hour") },
+          { label: "Hide Buddy Until Tomorrow", click: () => hideBuddy("tomorrow") },
+        ]),
     {
       label: "Open at Login",
       type: "checkbox",
@@ -497,9 +508,9 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
       loginItemState = { supported: false, enabled: false, ...(next || {}) };
       render();
     },
-    /** Whether the buddy's window is on, for the checkbox. */
+    /** Whether the buddy's window is on, for the checkbox, and whether it is hidden for a while. */
     setBuddyState(next) {
-      buddyState = { enabled: Boolean(next && next.enabled) };
+      buddyState = { enabled: Boolean(next && next.enabled), hidden: Boolean(next && next.hidden) };
       render();
     },
     /** The microphone indicator, routed through the one title writer. */

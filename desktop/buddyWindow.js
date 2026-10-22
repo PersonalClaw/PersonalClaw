@@ -222,7 +222,7 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
  * before the page loads (main's navigation guards). The window shows once its page has painted,
  * docked or where it was left.
  */
-function makeBuddyPresence({ buddy, store, url, prepare = () => {}, log = () => {} }) {
+function makeBuddyPresence({ buddy, store, url, prepare = () => {}, onStart = () => {}, onStop = () => {}, log = () => {} }) {
   const enabled = () => store.getItem(ENABLED_KEY) === "1";
   function start() {
     if (buddy.window) return true;
@@ -233,10 +233,14 @@ function makeBuddyPresence({ buddy, store, url, prepare = () => {}, log = () => 
     prepare(win);
     win.once("ready-to-show", () => buddy.show());
     win.loadURL(at);
+    onStart();
     log("buddy: the window is up");
     return true;
   }
-  const stop = () => buddy.destroy();
+  const stop = () => {
+    buddy.destroy();
+    onStop();
+  };
   return {
     enabled,
     start,
@@ -274,6 +278,7 @@ const BUDDY_CHANNELS = Object.freeze({
   drag: `${BUDDY_PREFIX}drag`,
   presentation: `${BUDDY_PREFIX}presentation`,
   open: `${BUDDY_PREFIX}open`,
+  menu: `${BUDDY_PREFIX}menu`,
 });
 
 /** What main tells the buddy's page (#3832), the only two messages that go that way: a ring, which
@@ -286,6 +291,8 @@ const BUDDY_PUSHES = Object.freeze({
   // A tap on an alert's notification opens the buddy (#3897): a ring carrying nothing, which the
   // page opens on as a click on the orb opens it, on the alert the one order shows first.
   openAlert: `${BUDDY_PREFIX}open-alert`,
+  away: `${BUDDY_PREFIX}away`,
+  hidden: `${BUDDY_PREFIX}hidden`,
 });
 
 /** The doorbell's connection states the page hears (`doorbell.js`). */
@@ -296,7 +303,8 @@ const BUDDY_PLACEMENTS = Object.freeze(["moving", "docked", "floating"]);
 
 /**
  * Tell the buddy's page *name*: `ring`; `connection`, one of `BUDDY_CONNECTIONS`; `placement`, one
- * of `BUDDY_PLACEMENTS`; `fullScreen`, whether one of the app's own windows is full screen; or
+ * of `BUDDY_PLACEMENTS`; `fullScreen`, whether one of the app's own windows is full screen; `away`,
+ * whether the owner is away; `hidden`, whether the owner hid the buddy (`buddyAway.js`); or
  * `openAlert`, a tap on an alert's notification, carrying nothing.
  * Nothing else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
  */
@@ -307,6 +315,8 @@ function pushToBuddy(win, name, value) {
   else if (name === "placement" && BUDDY_PLACEMENTS.includes(value)) win.webContents.send(BUDDY_PUSHES.placement, value);
   else if (name === "fullScreen" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.fullScreen, value);
   else if (name === "openAlert") win.webContents.send(BUDDY_PUSHES.openAlert);
+  else if (name === "away" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.away, value);
+  else if (name === "hidden" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.hidden, value);
   else return false;
   return true;
 }
@@ -349,15 +359,17 @@ const BUDDY_PAYLOADS = Object.freeze({
     const route = plain(p) ? openableRoute(p.route) : null;
     return route ? { route } : null;
   },
+  // The buddy's context menu: the page asks for it and says nothing else.
+  menu: (p) => (p === undefined || (plain(p) && Object.keys(p).length === 0) ? {} : null),
 });
 
 /**
- * Hear the buddy's five sends. `isBuddy(sender)` says whether a send came from the buddy window's own
+ * Hear the buddy's six sends. `isBuddy(sender)` says whether a send came from the buddy window's own
  * web contents; `openRoute(hash)` opens a route of this app in the main window (`main.js`'s
  * `deepLink`, which shows the window and assigns the hash through `hashAssignmentScript`). A send
  * from anywhere else, or a payload outside its shape, is dropped and logged.
  */
-function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, log = () => {} }) {
+function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, openMenu = () => {}, log = () => {} }) {
   const hear = (name, act) => {
     ipcMain.on(BUDDY_CHANNELS[name], (event, payload) => {
       if (!event || !isBuddy(event.sender)) return log(`buddy: ${name} from a page that is not the buddy's, dropped`);
@@ -378,6 +390,7 @@ function registerBuddyIpc({ ipcMain, buddy, isBuddy, openRoute, log = () => {} }
     else buddy.setPresentation(presentation);
   });
   hear("open", ({ route }) => openRoute(route));
+  hear("menu", () => openMenu());
   return () => { for (const channel of Object.values(BUDDY_CHANNELS)) ipcMain.removeAllListeners(channel); };
 }
 

@@ -164,12 +164,17 @@ describe("in the buddy's own window", () => {
   let connection: ((s: 'up' | 'lost' | 'restarting') => void) | null = null
   let placement: ((p: 'moving' | 'docked' | 'floating') => void) | null = null
   let fullScreen: ((on: boolean) => void) | null = null
+  let away: ((on: boolean) => void) | null = null
+  let hidden: ((on: boolean) => void) | null = null
   const bridge = {
     pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(),
     onRing: vi.fn((cb: () => void) => { ring = cb; return () => { ring = null } }),
     onConnection: vi.fn((cb: (s: 'up' | 'lost' | 'restarting') => void) => { connection = cb; return () => { connection = null } }),
     onPlacement: vi.fn((cb: (p: 'moving' | 'docked' | 'floating') => void) => { placement = cb; return () => { placement = null } }),
     onFullScreen: vi.fn((cb: (on: boolean) => void) => { fullScreen = cb; return () => { fullScreen = null } }),
+    onAway: vi.fn((cb: (on: boolean) => void) => { away = cb; return () => { away = null } }),
+    onHidden: vi.fn((cb: (on: boolean) => void) => { hidden = cb; return () => { hidden = null } }),
+    openMenu: vi.fn(),
   }
   beforeEach(() => {
     for (const f of Object.values(bridge)) f.mockClear()
@@ -177,6 +182,8 @@ describe("in the buddy's own window", () => {
     connection = null
     placement = null
     fullScreen = null
+    away = null
+    hidden = null
     window.pclawBuddy = bridge
   })
   afterEach(() => { delete window.pclawBuddy })
@@ -262,6 +269,42 @@ describe("in the buddy's own window", () => {
     expect(resolveApproval).not.toHaveBeenCalled()
   })
 
+  it('hidden by its owner it shows nothing and asks to be hidden; the hide over, the alert is back', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    await act(async () => { hidden?.(true) })
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('hidden'))
+    expect(container.querySelector('[data-buddy-island], [data-buddy-floating]')).toBeNull()
+    await act(async () => { hidden?.(false) })
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('expanded'))
+    expect(await prompt()).toBeTruthy()
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('away, a docked buddy with work running hides it, keeping the top-edge zone; back, it shows again', async () => {
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull(), { timeout: 2000 })
+    await act(async () => { away?.(true) })
+    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).toBeNull())
+    expect(bridge.setPresentation).toHaveBeenLastCalledWith('peek')
+    await act(async () => { away?.(false) })
+    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull())
+  })
+
+  it('a right-click on the face asks the shell for the context menu, and answers nothing', async () => {
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    const face = await waitFor(() => {
+      const f = container.querySelector('[data-buddy-shape]')
+      expect(f).not.toBeNull()
+      return f!
+    }, { timeout: 2000 })
+    await act(async () => { face.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+    expect(bridge.openMenu).toHaveBeenCalledTimes(1)
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
   it('the face is the shape and the drag handle; a link to the app opens in the main window', async () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
@@ -275,6 +318,17 @@ describe("in the buddy's own window", () => {
     await userEvent.click(open)
     expect(bridge.openInApp).toHaveBeenCalledWith('#/mission-control')
     expect(resolveApproval).not.toHaveBeenCalled()
+  })
+})
+
+describe('in the window of a shell built before its doorbell', () => {
+  afterEach(() => { delete window.pclawBuddy })
+
+  it('the page keeps its own socket, and draws as before', async () => {
+    window.pclawBuddy = { pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn() }
+    render(<BuddyPage {...route} />)
+    expect(await prompt()).toBeTruthy()
+    expect(sockets, 'no ring to hear, so its own socket rings it').toBeGreaterThan(0)
   })
 })
 

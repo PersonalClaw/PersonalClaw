@@ -94,3 +94,32 @@ describe('the system states', () => {
       .toEqual({ family: 'quiet', line: 'Release notes: the request expired' })
   })
 })
+
+// ── Back from a hide and back from away (#3832): what still holds shows again ─────────────────
+
+describe('the end of a hide, and the end of an absence', () => {
+  const last = (inputs: BuddyInput[]) => run(ON, inputs).state
+
+  it('an alert that was showing when the owner hid the buddy expands again when the hide ends', () => {
+    const s = last([{ type: 'alert', alert: A1 }, { type: 'hide' }, { type: 'show' }])
+    expect(s.shown).toBe('a1')
+    expect(s.presence).toBe('expanded')
+  })
+
+  it('in quiet hours it comes back as the quiet peek it arrived as', () => {
+    const s = last([{ type: 'quietHours', on: true }, { type: 'alert', alert: A1 }, { type: 'hide' }, { type: 'show' }])
+    expect(s.presence).toBe('peek')
+  })
+
+  it('back from away with work still running, and nothing new, it shows the work compact', () => {
+    const s = last([...workStarts, { type: 'away' }, { type: 'return' }])
+    expect(s.away).toBe(false)
+    expect(s.presence).toBe('compact')
+    expect(s.returning, 'nothing to sum up').toBe(false)
+  })
+
+  it('back from away with nothing running stays hidden', () => {
+    const s = last([{ type: 'away' }, { type: 'return' }])
+    expect(s.presence).toBe('hidden')
+  })
+})

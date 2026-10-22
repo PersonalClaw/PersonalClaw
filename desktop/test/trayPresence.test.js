@@ -86,6 +86,8 @@ describe("buildTrayMenuTemplate", () => {
       quickCapture: () => calls.push(["quickCapture"]),
       toggleLoginItem: (v) => calls.push(["toggleLoginItem", v]),
       toggleBuddy: (v) => calls.push(["toggleBuddy", v]),
+      hideBuddy: (span) => calls.push(["hideBuddy", span]),
+      showBuddyNow: () => calls.push(["showBuddyNow"]),
       quit: () => calls.push(["quit"]),
     };
   };
@@ -152,6 +154,20 @@ describe("buildTrayMenuTemplate", () => {
     assert.equal(on.checked, true);
     on.click({ checked: false });
     assert.deepStrictEqual(a.calls, [["toggleBuddy", true], ["toggleBuddy", false]]);
+  });
+
+  it("a buddy that is on can be hidden for an hour or until tomorrow, and a hidden one shown now (#3832)", () => {
+    const a = actions();
+    const labels = (buddy) => buildTrayMenuTemplate({ buddy, actions: a }).map((r) => r.label).filter(Boolean);
+    assert.equal(labels({ enabled: false }).some((l) => /Hide Buddy|Show Buddy Now/.test(l)), false, "nothing to hide while it is off");
+    const shown = buildTrayMenuTemplate({ buddy: { enabled: true }, actions: a });
+    assert.deepEqual(labels({ enabled: true }).filter((l) => /Hide Buddy|Show Buddy Now/.test(l)), ["Hide Buddy for an Hour", "Hide Buddy Until Tomorrow"]);
+    shown.find((r) => r.label === "Hide Buddy for an Hour").click();
+    shown.find((r) => r.label === "Hide Buddy Until Tomorrow").click();
+    const hidden = buildTrayMenuTemplate({ buddy: { enabled: true, hidden: true }, actions: a });
+    assert.deepEqual(labels({ enabled: true, hidden: true }).filter((l) => /Hide Buddy|Show Buddy Now/.test(l)), ["Show Buddy Now"]);
+    hidden.find((r) => r.label === "Show Buddy Now").click();
+    assert.deepStrictEqual(a.calls, [["hideBuddy", "hour"], ["hideBuddy", "tomorrow"], ["showBuddyNow"]]);
   });
 
   it("the login-item row is disabled where login items are unsupported", () => {
