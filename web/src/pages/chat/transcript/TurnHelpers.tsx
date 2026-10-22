@@ -54,7 +54,7 @@ function cardOf(ref: HelperRef, s: SpawnedAgentStatus): SubagentCard {
  *  the helper's own frames folded on. A frame for a helper the chat never saw start (a page loaded
  *  after it did) reaches its row this way. `gone`: the gateway no longer knows it (a list cleared,
  *  a helper removed), so its state is not known. */
-function useHelper({ id, agent, task }: HelperRef, session: string | undefined, live: SubagentCard | undefined): { sub: SubagentCard; gone: boolean; readError: string } {
+export function useHelper({ id, agent, task }: HelperRef, session: string | undefined, live: SubagentCard | undefined): { sub: SubagentCard; gone: boolean; readError: string } {
   const [card, setCard] = useState<SubagentCard>({ id, task, agent, done: false })
   const [gone, setGone] = useState(false)
   const [readError, setReadError] = useState('')

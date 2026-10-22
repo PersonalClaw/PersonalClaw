@@ -101,6 +101,12 @@ export function costSaid(cost: ContextCost | null | undefined): string {
 
 const money = (dollars: number) => `$${dollars.toFixed(dollars < 1 ? 4 : 2)}`
 
+/** What is left of the window: "132,000 tokens (66%) free". */
+export function freeSaid(pct: number, windowTokens: number): string {
+  const left = 100 - clamp(pct)
+  return `${Math.round((windowTokens * left) / 100).toLocaleString('en-US')} tokens (${left.toFixed(0)}%) free`
+}
+
 /** The warning line near the limit: "This chat's context is 84% full." */
 export function nearLimitSaid(pct: number): string {
   return `This chat's context is ${clamp(pct).toFixed(0)}% full.`
@@ -126,8 +132,6 @@ export function ContextDisclosure({ pct, window: windowTokens, parts, cost, pin,
   actionFor?: (action: ContextAction) => (() => void) | undefined
 }) {
   const near = nearLimit(pct)
-  const id = useId()
-  const tone = pct !== undefined && clamp(pct) >= 90 ? 'var(--color-danger)' : near ? 'var(--color-warn)' : 'var(--color-primary)'
   return (
     <Popover portal width={300} trigger={(open, toggle) => (
       <IconButton icon={ChartPie} label="Context" expanded={open} size={36} iconSize={18} onClick={toggle}
@@ -136,44 +140,75 @@ export function ContextDisclosure({ pct, window: windowTokens, parts, cost, pin,
       {() => (
         <div role="dialog" aria-label="Context" className="flex flex-col gap-s p-m">
           <p data-type="label-m" className="text-on-surface">Context</p>
-          {pct !== undefined && <Meter label="Context used" pct={pct} tone={tone} />}
-          {/* Each reading under its label, every state in words: the bar's colour adds nothing the
-              text does not say (near the limit is said, not only tinted). */}
-          <dl className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs" data-type="body-s">
-            <dt className="text-on-surface-low">Context window</dt>
-            <dd className={near ? 'text-warn' : 'text-on-surface-var'}>
-              {pct !== undefined ? `${readingSaid(pct, windowTokens)}${near ? ', near the limit' : ''}` : unmeasuredSaid(windowTokens)}
-            </dd>
-            <dt className="text-on-surface-low">Cost so far</dt>
-            <dd className="text-on-surface-var">{costSaid(cost)}</dd>
-          </dl>
-          {/* What fills it, part by part, as the gateway measured it: the same rows `/context`
-              prints. Each measured part offers the action that frees its space. */}
-          <section aria-labelledby={`${id}-parts`} className="flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
-            <p id={`${id}-parts`} data-type="label-s" className="text-on-surface">What fills it</p>
-            <ul className="flex flex-col gap-xs">
-              {contextPartRows({ parts, window: windowTokens }).map((row) => {
-                const run = row.measured ? actionFor?.(row.action) : undefined
-                return (
-                  <li key={row.kind} data-part={row.kind} className="flex items-center justify-between gap-s" data-type="body-s">
-                    <span className="min-w-0">
-                      <span className="text-on-surface">{row.label}</span>
-                      <span className="text-on-surface-low">: {row.said}</span>
-                    </span>
-                    {run && <Button variant="ghost-accent" size="xs" onClick={run}>{row.actionLabel}</Button>}
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-          {pin && (
-            <div className="flex items-center justify-between gap-s border-t border-outline-variant/30 pt-s">
-              <span data-type="body-s" className="text-on-surface">Pin to the status line</span>
-              <Toggle on={pin.pinned} onChange={pin.onPin} label="Pin to the status line" size="sm" />
-            </div>
-          )}
+          <ContextView pct={pct} window={windowTokens} parts={parts} cost={cost} pin={pin} actionFor={actionFor} />
         </div>
       )}
     </Popover>
+  )
+}
+
+/** The context reading itself: the bar, the window and the cost in words, what fills it part by
+ *  part with each part's action, and the pin. The composer's Context control shows it, and so does
+ *  the chat's session inspector. */
+export function ContextView({ pct, window: windowTokens, parts, cost, pin, actionFor }: ContextReading & {
+  pin?: { pinned: boolean; onPin: (pinned: boolean) => void }
+  actionFor?: (action: ContextAction) => (() => void) | undefined
+}) {
+  const near = nearLimit(pct)
+  const id = useId()
+  const tone = pct !== undefined && clamp(pct) >= 90 ? 'var(--color-danger)' : near ? 'var(--color-warn)' : 'var(--color-primary)'
+  return (
+    <>
+      {pct !== undefined && <Meter label="Context used" pct={pct} tone={tone} />}
+      {/* Each reading under its label, every state in words: the bar's colour adds nothing the
+          text does not say (near the limit is said, not only tinted). */}
+      <dl className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs" data-type="body-s">
+        <dt className="text-on-surface-low">Context window</dt>
+        <dd className={near ? 'text-warn' : 'text-on-surface-var'}>
+          {pct !== undefined ? `${readingSaid(pct, windowTokens)}${near ? ', near the limit' : ''}` : unmeasuredSaid(windowTokens)}
+        </dd>
+        {/* What is left and when Compact is offered, only beside a measured reading: a share said
+            beside "not measured" would read as one. */}
+        {pct !== undefined && typeof windowTokens === 'number' && (
+          <>
+            <dt className="text-on-surface-low">Free</dt>
+            <dd className="text-on-surface-var">{freeSaid(pct, windowTokens)}</dd>
+          </>
+        )}
+        {pct !== undefined && (
+          <>
+            <dt className="text-on-surface-low">Compact</dt>
+            <dd className="text-on-surface-var">{`Offered from ${CONTEXT_NEAR_LIMIT_PCT}% full`}</dd>
+          </>
+        )}
+        <dt className="text-on-surface-low">Cost so far</dt>
+        <dd className="text-on-surface-var">{costSaid(cost)}</dd>
+      </dl>
+      {/* What fills it, part by part, as the gateway measured it: the same rows `/context`
+          prints. Each measured part offers the action that frees its space. */}
+      <section aria-labelledby={`${id}-parts`} className="flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
+        <p id={`${id}-parts`} data-type="label-s" className="text-on-surface">What fills it</p>
+        <ul className="flex flex-col gap-xs">
+          {contextPartRows({ parts, window: windowTokens }).map((row) => {
+            const run = row.measured ? actionFor?.(row.action) : undefined
+            return (
+              <li key={row.kind} data-part={row.kind} className="flex items-center justify-between gap-s" data-type="body-s">
+                <span className="min-w-0">
+                  <span className="text-on-surface">{row.label}</span>
+                  <span className="text-on-surface-low">: {row.said}</span>
+                </span>
+                {run && <Button variant="ghost-accent" size="xs" onClick={run}>{row.actionLabel}</Button>}
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+      {pin && (
+        <div className="flex items-center justify-between gap-s border-t border-outline-variant/30 pt-s">
+          <span data-type="body-s" className="text-on-surface">Pin to the status line</span>
+          <Toggle on={pin.pinned} onChange={pin.onPin} label="Pin to the status line" size="sm" />
+        </div>
+      )}
+    </>
   )
 }

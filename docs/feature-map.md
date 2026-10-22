@@ -16,7 +16,7 @@ file and the app differ.
 | `#/projects` | Projects | Projects | Projects | `pages/chat/header/ChatHeader.tsx`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/tasks/TasksSection.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
-| `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/learning/IdentityReportPanel.tsx`, `pages/library/MemoryPage.tsx` and 3 more |
+| `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/learning/IdentityReportPanel.tsx` and 4 more |
 | `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/dashboard/widgets/TasksWidget.tsx` and 8 more |
 | `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
@@ -26,7 +26,7 @@ file and the app differ.
 | `#/terminal` | Terminal | not in the sidebar | Terminal | none |
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/settings/PacksPanel.tsx` |
-| `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts` |
+| `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts`, `pages/chat/inspector/sections.tsx` |
 | `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/MissionControl.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
 | `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |

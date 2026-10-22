@@ -237,7 +237,7 @@ describe('the rail can fail', () => {
   it('a literal put back in an inline style, a class or a transition is caught', () => {
     const plants: [string, string, string, string][] = [
       ['pages/knowledge/KnowledgeGraph.tsx', "'transform var(--duration-effects) ease-out'", "'transform 200ms ease-out'", 'inline style length'],
-      ['pages/chat/ChatActivityPanel.tsx', 'duration-(--duration-short)', 'duration-150', 'Tailwind length'],
+      ['pages/chat/inspector/InspectorSection.tsx', 'duration-(--duration-short)', 'duration-150', 'Tailwind length'],
       ['ui/WavyProgress.tsx', 'duration: duration.loading', 'duration: 1.4', 'framer length'],
       ['ui/widget/BlueprintSkeleton.tsx', 'calc(var(--duration-effects) * ${step})', '${step * 0.2}s', 'inline style length'],
     ]

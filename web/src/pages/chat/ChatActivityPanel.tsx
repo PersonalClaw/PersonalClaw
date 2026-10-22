@@ -1,16 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX, Ban } from 'lucide-react'
+import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX, Ban, CircleStop } from 'lucide-react'
+import { api } from '../../lib/api'
+import { reportActionFailure } from '../../app/reportingWrite'
 import { Markdown } from '../../ui/Markdown'
 import { Button } from '../../ui/Button'
+import { RowHitTarget } from '../../ui/RowHitTarget'
+import { WebLink } from '../../ui/WebLink'
 import { fadeEnter } from '../../design/motion'
 import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
-import { tabListKeys } from '../../lib/tabListKeys'
-
-type Tab = 'files' | 'sources' | 'subagents' | 'side'
+import { SECTION_TITLES, useInspectorLayout, type SectionId } from './inspector/inspectorLayout'
+import { InspectorSection } from './inspector/InspectorSection'
+import type { ChatOutput } from './inspector/chatOutputs'
+import {
+  BackgroundRuns, ConnectorsBody, ContextBody, EnvironmentBody, OutputsBody, backgroundSummary, connectorsSummary,
+  outputsSummary, since, useChatBackground, useConnectors, useContextSummary, useEnvironmentSummary, useNow,
+} from './inspector/sections'
 
 export interface SidePanelData {
   msgs: { q: string; a: string; runId: string; done: boolean }[]
@@ -19,14 +27,46 @@ export interface SidePanelData {
   onOpen: () => void
 }
 
-/** Chat-only activity panel (Stage 5) — the CONTENT of the chat's docked side
- *  panel (the outer `SidePanel` primitive owns the frame: title bar, close, resize,
- *  expand-to-full). Two tabs derived entirely client-side from the conversation:
+/** What the inspector's sections that reach past the transcript need from the chat page. */
+export interface InspectorData {
+  /** The chat's key, whose background work the inspector lists. */
+  session?: string
+  /** What the chat made (`inspector/chatOutputs`). */
+  outputs: ChatOutput[]
+  /** Open a detail beside the thread, in the chat's pane host (`beside/detailBeside`). */
+  openDetail: (address: string) => void
+  /** The address of the detail open now, whose row says so. */
+  detail: string | null
+  /** The chat's `/compact`, absent while a turn runs. */
+  compact?: () => void
+  navigate: (p: string) => void
+  /** Whether the column can be reordered here (not in the phone's drawer). */
+  canMove: boolean
+}
+
+/** The chat's session inspector (#3820's Oct 18 amendment) — the CONTENT of the chat's docked
+ *  Activity rail (the outer `SidePanel` primitive owns the frame: title bar, close, resize,
+ *  expand-to-full). A slim column of sections, each a disclosure with a one-line summary while it
+ *  is folded, which the owner opens, folds and moves up and down; the column keeps that for this
+ *  browser (`inspector/inspectorLayout`):
+ *   • Environment — the project, the working folder, the sandbox, the reach, the permission and the
+ *     memory mode, as the composer's Execution Boundary shows them; its Change opens that control.
+ *   • Context — the composer's Context view: used and total, free, when Compact is offered, and what
+ *     fills it part by part, with each part's action.
+ *   • Connectors — the tool servers, the ones that need something first; Reconnect, and the Tools
+ *     page for a sign-in, an Allow and everything else.
+ *   • Outputs — the artifacts the chat saved and the files it wrote, each opening in the detail
+ *     tile beside the thread.
  *   • Files — files touched this session; click → open in the file side panel.
  *   • Sources — the links the chat's answers cite that its own turns retrieved (a web search's
  *     result, a page a fetch read; `turnSources`), by the titles they came back with. A link the
- *     model wrote from memory is no source and is not listed (#3820).
- *  (+ Side — an isolated throwaway Q&A against the frozen session context.)
+ *     model wrote from memory is no source and is not listed.
+ *   • Background tasks — the helpers the chat started and its runs and loops, each running one with
+ *     how long it has run and its Stop, and the ones that just ended; a helper or a run opens in the
+ *     detail tile.
+ *   • Side question — an isolated throwaway Q&A against the frozen session context.
+ *  Opening a section reads what it shows; none signs in, reconnects or stops anything by being
+ *  opened, and closing the rail or the tile stops nothing.
  *
  *  This panel owns NO navigation. It used to open on an "Index" tab — a user-message
  *  outline whose rows jumped to a turn — and the Session Map superseded it: the
@@ -34,121 +74,114 @@ export interface SidePanelData {
  *  marks tool calls / approvals / errors / subagents as well as user turns. The tab
  *  was deleted rather than kept beside it, so there is exactly one jump surface.
  *  `indexTabRetired.test.tsx` is the rail that keeps it that way. */
-export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKillFanout, side }: {
+export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKillFanout, side, inspector }: {
   activity: ChatActivity
   onOpenFile: (path: string) => void
   subagents?: SubagentCard[]
   onKillFanout?: () => void  // kill EVERY running child of this chat's fan-out
   side?: SidePanelData
+  inspector?: InspectorData
 }) {
-  const [tab, setTab] = useState<Tab>('files')
-  // opening the Side tab opens the throwaway side buffer (lazy).
-  useEffect(() => { if (tab === 'side') side?.onOpen() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
-  const counts = { files: activity.files.length, sources: activity.sources.length }
+  const { layout, toggle, move } = useInspectorLayout()
+  const sideOpen = layout.open.includes('side')
+  // opening the Side section opens the throwaway side buffer (lazy).
+  useEffect(() => { if (sideOpen) side?.onOpen() }, [sideOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  const environment = useEnvironmentSummary()
+  const context = useContextSummary()
+  const connectors = useConnectors()
+  const background = useChatBackground(inspector?.session)
+  const now = useNow(subagents.some((s) => !s.done))
+  const outputs = inspector?.outputs ?? []
+  const open = inspector?.openDetail
+  const current = inspector?.detail ?? null
+  // A batch's tasks stop with their batch's run (its card's Open), not with the chat's fan-out, so
+  // the fan-out's Stop counts and stops the chat's own helpers alone.
+  const ownRunning = subagents.filter((s) => !s.done && !s.run)
+  const helpersRunning = subagents.filter((s) => !s.done).length
 
-  // Ordered tab descriptors — drive both the tablist render and arrow-key nav.
-  // Subagents tab appears only once at least one has been spawned this session: by the chat itself,
-  // or as a task of a batch it started.
-  const TABS: { key: Tab; label: string; icon: typeof FileText; count: number }[] = [
-    { key: 'files', label: 'Files', icon: FileText, count: counts.files },
-    { key: 'sources', label: 'Sources', icon: Link2, count: counts.sources },
-    ...(subagents.length ? [{ key: 'subagents' as Tab, label: 'Subagents', icon: Bot, count: subagents.length }] : []),
-    ...(side ? [{ key: 'side' as Tab, label: 'Side', icon: MessagesSquare, count: side.msgs.length }] : []),
-  ]
-  // This panel's arrow-key handler was the ONLY correct one in the app, so it moved to
-  // `lib/tabListKeys` and three other strips (both terminal ones, the loop cockpit) now read
-  // from the same copy instead of each growing their own. Behaviour here is unchanged: the shared
-  // version resolves tabs from the DOM rather than from `TABS`, which is the same order.
-  const onTabKey = tabListKeys((i) => setTab(TABS[i].key))
+  const sections: Record<SectionId, { summary: string; body: ReactNode } | null> = {
+    environment: { summary: environment, body: <EnvironmentBody /> },
+    context: { summary: context, body: <ContextBody compact={inspector?.compact} navigate={inspector?.navigate ?? (() => {})} /> },
+    connectors: { summary: connectorsSummary(connectors.servers, connectors.loadError), body: <ConnectorsBody {...connectors} /> },
+    outputs: inspector ? { summary: outputsSummary(outputs), body: <OutputsBody outputs={outputs} open={inspector.openDetail} current={current} /> } : null,
+    files: {
+      summary: activity.files.length ? `${activity.files.length} file${activity.files.length === 1 ? '' : 's'}` : 'None yet',
+      body: activity.files.length === 0
+        ? <Empty icon={FileText} text="No files referenced yet." />
+        : <div className="flex flex-col gap-px">
+            {activity.files.map((f) => (
+              <motion.button key={f.path} type="button" onClick={() => onOpenFile(f.path)} title={f.path}
+                variants={fadeEnter} initial="initial" animate="animate"
+                className="group flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-high">
+                <FileText size={14} className="shrink-0 text-on-surface-low" />
+                <span className="min-w-0 flex-1">
+                  <span data-type="body-s" className="block truncate font-mono text-on-surface">{f.name}</span>
+                  <span data-type="caption" className="block truncate text-on-surface-low">{f.path}</span>
+                </span>
+              </motion.button>
+            ))}
+          </div>,
+    },
+    sources: {
+      summary: activity.sources.length ? `${activity.sources.length} source${activity.sources.length === 1 ? '' : 's'}` : 'None yet',
+      body: activity.sources.length === 0
+        ? <Empty icon={Link2} text="No sources yet: a link shows here once an answer cites a page its turn searched or read." />
+        : <div className="flex flex-col gap-px">
+            {/* Each links out the way the answer's own links do (`WebLink`). */}
+            {activity.sources.map((l) => (
+              <motion.div key={l.url} variants={fadeEnter} initial="initial" animate="animate">
+                <WebLink href={l.url} title={l.url}
+                  className="group flex items-center gap-2 rounded-md px-2.5 py-2 transition-colors hover:bg-surface-high">
+                  <Link2 size={14} className="shrink-0 text-on-surface-low" />
+                  <span className="min-w-0 flex-1">
+                    <span data-type="body-s" className="block truncate text-on-surface">{l.title}</span>
+                    <span data-type="caption" className="block truncate text-on-surface-low">{l.url}</span>
+                  </span>
+                  <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
+                </WebLink>
+              </motion.div>
+            ))}
+          </div>,
+    },
+    background: {
+      summary: backgroundSummary(helpersRunning, background.running, background.finished, subagents.length - helpersRunning),
+      body: (
+        <div className="flex flex-col gap-s">
+          {subagents.length === 0 && !background.running.length && !background.finished.length && !background.loadError
+            ? <Empty icon={Bot} text="Nothing in the background: a helper or a run this chat starts shows here." />
+            : null}
+          {onKillFanout && ownRunning.length > 0 && (
+            <Button variant="danger" size="sm" onClick={onKillFanout} className="self-end"
+              title="Stop every running subagent this chat started itself">
+              <OctagonX size={13} /> Stop fan-out ({ownRunning.length})
+            </Button>
+          )}
+          {subagents.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {subagents.map((s) => (
+                <SubagentRow key={s.id} sub={s} now={now} startedAt={background.helperStarts.get(s.id)}
+                  onOpen={open ? () => open(`helper:${s.id}`) : undefined} current={current === `helper:${s.id}`} />
+              ))}
+            </div>
+          )}
+          <BackgroundRuns running={background.running} finished={background.finished} loadError={background.loadError} read={background.read}
+            open={open ?? (() => {})} current={current} navigate={inspector?.navigate ?? (() => {})} />
+        </div>
+      ),
+    },
+    side: side ? { summary: side.msgs.length ? `${side.msgs.length} asked` : 'Ask beside the chat', body: <SideChat side={side} /> } : null,
+  }
+  const shown = layout.order.filter((id) => sections[id])
 
-  // Docked content: full-height flex column that fills the SidePanel body. The tab
-  // strip is sticky at the top; the active tab-panel scrolls below it. No own
-  // frame/close/resize — the SidePanel primitive provides all of that.
   return (
-    <div className="-mx-l -my-l flex h-full flex-col">
-      {/* Segmented tab strip — pill track, raised active tab, centered. */}
-      <div role="tablist" aria-label="Activity" onKeyDown={onTabKey}
-        className="sticky top-0 z-10 flex items-center justify-center border-b border-outline-variant/40 bg-surface/95 px-2 py-1.5">
-        <div className="flex w-full items-center gap-0.5 rounded-pill bg-surface-low p-[3px]">
-          {TABS.map((t) => (
-            <button key={t.key} type="button" role="tab" id={`act-tab-${t.key}`} aria-controls={`act-panel-${t.key}`}
-              aria-selected={tab === t.key} tabIndex={tab === t.key ? 0 : -1} title={t.label} aria-label={t.label}
-              onClick={() => setTab(t.key)}
-              data-type="caption" className={`flex-1 inline-flex items-center justify-center gap-[5px] h-7 rounded-pill border-none cursor-pointer transition-colors duration-(--duration-short) ${
-                tab === t.key
-                  ? 'bg-surface text-on-surface shadow-[0_1px_3px_rgb(0_0_0/0.08)]'
-                  : 'bg-transparent text-on-surface-low'
-              }`}
-              style={fvs(470)}>
-              <t.icon size={13} /> {t.label}
-              {t.count > 0 && (
-                <span data-type="caption" className={`rounded-pill px-[5px] tabular-nums ${
-                  tab === t.key ? 'bg-primary-container text-on-primary-container' : 'bg-surface-highest'
-                }`}>{t.count}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {tab === 'side' && side ? (
-        <div role="tabpanel" id="act-panel-side" aria-labelledby="act-tab-side" className="flex min-h-0 flex-1 flex-col">
-          <SideChat side={side} />
-        </div>
-      ) : (
-      <div role="tabpanel" id={`act-panel-${tab}`} aria-labelledby={`act-tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto p-2">
-        {tab === 'files' && (
-          activity.files.length === 0
-            ? <Empty icon={FileText} text="No files referenced yet." />
-            : <div className="flex flex-col gap-px">
-                {activity.files.map((f) => (
-                  <motion.button key={f.path} type="button" onClick={() => onOpenFile(f.path)} title={f.path}
-                    variants={fadeEnter} initial="initial" animate="animate"
-                    className="group flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-high">
-                    <FileText size={14} className="shrink-0 text-on-surface-low" />
-                    <span className="min-w-0 flex-1">
-                      <span data-type="body-s" className="block truncate font-mono text-on-surface">{f.name}</span>
-                      <span data-type="caption" className="block truncate text-on-surface-low">{f.path}</span>
-                    </span>
-                  </motion.button>
-                ))}
-              </div>
-        )}
-        {tab === 'sources' && (
-          activity.sources.length === 0
-            ? <Empty icon={Link2} text="No sources yet: a link shows here once an answer cites a page its turn searched or read." />
-            : <div className="flex flex-col gap-px">
-                {activity.sources.map((l) => (
-                  <motion.a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" title={l.url}
-                    variants={fadeEnter} initial="initial" animate="animate"
-                    className="group flex items-center gap-2 rounded-md px-2.5 py-2 transition-colors hover:bg-surface-high">
-                    <Link2 size={14} className="shrink-0 text-on-surface-low" />
-                    <span className="min-w-0 flex-1">
-                      <span data-type="body-s" className="block truncate text-on-surface">{l.title}</span>
-                      <span data-type="caption" className="block truncate text-on-surface-low">{l.url}</span>
-                    </span>
-                    <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
-                  </motion.a>
-                ))}
-              </div>
-        )}
-        {tab === 'subagents' && (
-          subagents.length === 0
-            ? <Empty icon={Bot} text="No subagents spawned yet." />
-            : <div className="flex flex-col gap-1.5">
-                {/* A batch's tasks stop with their batch's run (its card's Open), not with the chat's
-                    fan-out, so the button counts and stops the chat's own subagents alone. */}
-                {onKillFanout && subagents.some((s) => !s.done && !s.run) && (
-                  <Button variant="danger" size="sm" onClick={onKillFanout} className="mb-0.5 self-end"
-                    title="Stop every running subagent this chat started itself">
-                    <OctagonX size={13} /> Stop fan-out ({subagents.filter((s) => !s.done && !s.run).length})
-                  </Button>
-                )}
-                {subagents.map((s) => <SubagentRow key={s.id} sub={s} />)}
-              </div>
-        )}
-      </div>
-      )}
+    <div data-inspector className="-mx-l -my-l flex h-full flex-col overflow-y-auto">
+      {shown.map((id, i) => (
+        <InspectorSection key={id} title={SECTION_TITLES[id]} summary={sections[id]!.summary}
+          open={layout.open.includes(id)} onToggle={() => toggle(id)}
+          onMove={inspector?.canMove === false ? undefined : (by) => move(id, by)} first={i === 0} last={i === shown.length - 1}>
+          {sections[id]!.body}
+        </InspectorSection>
+      ))}
     </div>
   )
 }
@@ -163,24 +196,36 @@ function Empty({ icon: Icon, text }: { icon: typeof FileText; text: string }) {
   )
 }
 
-/** A live subagent card: agent + task, running/done/failed status, latest tool
- *  while running, and (on done) an expandable result. Driven by subagent_* WS
+/** A live subagent card: agent + task, running/done/failed/stopped status, latest tool and how
+ *  long it has run while running, and (on done) an expandable result. Driven by subagent_* WS
  *  events; the report of one that ran also starts its turn in the chat. One that never ran (her
  *  Deny of its start, a start nobody allowed in time) is "declined" or "not started", not failed,
- *  and says why. */
-function SubagentRow({ sub }: { sub: SubagentCard }) {
+ *  and says why; one she stopped is "stopped". A running one has its own Stop (`DELETE
+ *  /api/spawn/{id}`, as its row in its turn), and `onOpen` opens it in the detail tile. */
+function SubagentRow({ sub, now, startedAt, onOpen, current = false }: {
+  sub: SubagentCard; now?: number; startedAt?: string | null; onOpen?: () => void; current?: boolean
+}) {
   const [open, setOpen] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const unrun = sub.done && !!sub.neverRan
-  const failed = sub.done && !!sub.error && !unrun
-  const status = unrun ? 'unrun' : failed ? 'failed' : sub.done ? 'done' : 'running'
-  const tone = failed ? 'var(--color-danger)' : sub.done && !unrun ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
+  const stopped = sub.done && !!sub.stopped && !unrun
+  const failed = sub.done && !!sub.error && !unrun && !stopped
+  const status = unrun ? 'unrun' : stopped ? 'stopped' : failed ? 'failed' : sub.done ? 'done' : 'running'
+  const tone = failed ? 'var(--color-danger)' : sub.done && !unrun && !stopped ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
+  const ran = status === 'running' && now !== undefined ? since(startedAt, now) : ''
+  const stop = (e: MouseEvent) => {
+    e.stopPropagation()
+    setStopping(true)
+    api.cancelSpawnedAgent(sub.id).catch(reportActionFailure('stop this helper')).finally(() => setStopping(false))
+  }
   return (
     <motion.div
-      variants={fadeEnter} initial="initial" animate="animate"
-      className="rounded-lg border border-outline-variant/50 bg-surface-high/40 px-2.5 py-2">
+      variants={fadeEnter} initial="initial" animate="animate" tabIndex={onOpen ? -1 : undefined} onClick={onOpen}
+      className={`relative rounded-lg border border-outline-variant/50 bg-surface-high/40 px-2.5 py-2 ${onOpen ? 'has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}>
+      {onOpen && <RowHitTarget label={`Open ${sub.title || sub.task || 'the helper'}`} selected={current} />}
       <div className="flex items-center gap-2">
         <span className="shrink-0" style={{ color: tone }}>
-          {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : unrun ? <Ban size={14} /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
+          {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : unrun ? <Ban size={14} /> : stopped ? <CircleStop size={14} /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
         </span>
         <span className="min-w-0 flex-1">
           <span data-type="label-s" className="block truncate text-on-surface" style={fvs(500)} title={sub.task}>{sub.title || sub.task || '(task)'}</span>
@@ -188,18 +233,24 @@ function SubagentRow({ sub }: { sub: SubagentCard }) {
             {sub.agent || 'subagent'}
             {sub.run ? ' · a task of a batch' : ''}
             {unrun ? (sub.declined ? ' · declined' : ' · not started') : ''}
+            {stopped ? ' · stopped' : ''}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
+            {ran ? ` · ${ran}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
             {sub.done && sub.costUsd !== undefined && sub.costUsd > 0 ? ` · $${sub.costUsd < 0.01 ? sub.costUsd.toFixed(4) : sub.costUsd.toFixed(2)}` : ''}
             {sub.done && sub.tokens ? ` · ${sub.tokens.toLocaleString()} tok` : ''}
             {status === 'running' && !sub.lastTool ? ' · working…' : ''}
           </span>
         </span>
+        {status === 'running' && (
+          <Button variant="ghost" size="xs" loading={stopping} onClick={stop}
+            ariaLabel={`Stop helper: ${sub.title || sub.task || sub.id}`}>Stop</Button>
+        )}
       </div>
       {(failed || unrun) && <div data-type="caption" className={`mt-1.5 ${failed ? 'text-danger' : 'text-on-surface-low'}`}>{sub.error}</div>}
       {sub.done && !failed && sub.result && (
         <div className="mt-1.5">
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+          <button type="button" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} aria-expanded={open}
             data-type="caption" className="text-on-surface-low hover:text-on-surface-var transition-colors">
             {open ? 'Hide result' : 'Show result'}
           </button>

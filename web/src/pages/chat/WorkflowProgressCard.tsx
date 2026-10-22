@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowUpRight, Workflow } from 'lucide-react'
+import { ArrowUpRight, PanelRight, Workflow } from 'lucide-react'
 import { api, ApiError, type PendingApproval, type WorkflowBatchState } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { messageEnter } from '../../design/motion'
@@ -14,6 +14,7 @@ import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/wo
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflows/workflowMeta'
 import { TextLink } from '../../ui/TextLink'
+import { useOpenBeside } from '../../ui/OpenBeside'
 import type { ChatTurn, Segment, ToolSegment } from './chatTypes'
 import { coreToolName } from './coreToolName'
 
@@ -172,13 +173,17 @@ function waitingFor(ask: PendingApproval): string {
  *  A terminal run does not subscribe: its stream closes immediately anyway, and its status
  *  is final. A batch still waiting for its one ask has no run yet: its card follows the batch
  *  until it has one (:func:`BatchStartCard`). */
-export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
+/** `inPane`: the card is the detail tile's own body, so it offers no Beside of its own. */
+export function WorkflowProgressCard({ refObj, inPane = false }: { refObj: WorkflowRunRef; inPane?: boolean }) {
   return refObj.batch && !refObj.runId
     ? <BatchStartCard name={refObj.batch} />
-    : <RunProgressCard refObj={refObj} />
+    : <RunProgressCard refObj={refObj} inPane={inPane} />
 }
 
-function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
+function RunProgressCard({ refObj, inPane }: { refObj: WorkflowRunRef; inPane: boolean }) {
+  // Where the chat gives the run a place beside the thread, the card opens it there: the detail
+  // tile, under the run's address (`run:<id>`), which the session inspector's rows open too.
+  const place = useOpenBeside()
   const [vm, setVm] = useState<WorkflowViewModel | null>(null)
   const [gone, setGone] = useState(false)
   // A fetch miss that is NOT a 404: the run still exists, we just could not read it.
@@ -266,6 +271,12 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           <span data-type="caption" className={`inline-flex shrink-0 items-center gap-xs ${look.tone}`}>
             <StatusIcon size={12} className={look.spin ? 'animate-spin' : ''} /> {look.label}
           </span>
+        )}
+        {place && !inPane && (
+          <TextLink onClick={() => place.open(`run:${refObj.runId}`)} size="xs" icon={PanelRight} iconSize={12}
+            className="shrink-0" title="Open the run beside the conversation" aria-label={`Open ${vm?.workflow || 'the run'} beside the conversation`}>
+            Beside
+          </TextLink>
         )}
         <TextLink href={`#/workflows/runs/${refObj.runId}`} size="xs" icon={ArrowUpRight} iconPosition="trailing" iconSize={12}
           className="shrink-0 transition-colors" title="Open the run">

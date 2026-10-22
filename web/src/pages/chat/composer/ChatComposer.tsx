@@ -32,7 +32,9 @@ import { KnowledgeChips } from './KnowledgeChips'
 import { PasteCards } from './PasteCards'
 import { QueueStack } from './QueueStack'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
-import { ExecutionBoundary, TaskModePill, useBoundaryReading } from './ExecutionBoundary'
+import { ExecutionBoundary, PERMISSION_MODES, TaskModePill, said, useBoundaryReading } from './ExecutionBoundary'
+import { MEMORY_MODES } from '../memoryModeCopy'
+import { publishChatEnvironment, useBoundaryAsks } from '../inspector/chatEnvironment'
 import { publishContextReading, setContextPinned, useContextPinned } from '../../../app/pinnedContext'
 
 // ── The chat's composer region ────────────────────────────────────────────────────────────────
@@ -99,6 +101,19 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   const boundaryReading = useBoundaryReading(sessionId, !sessionId || postureKnown, acpFor(selection.agent)?.providerId ?? '')
   // The working folder in words: the chat's own, else the folder a chat with none works in.
   const folder = workingDir || (!sessionId && projectId ? 'the project’s folder' : 'the workspace')
+  // What the Execution Boundary shows, for the session inspector's Environment section, which opens
+  // the control to change it (`inspector/chatEnvironment`).
+  const approval = selection.approval ?? 'normal'
+  useEffect(() => {
+    publishChatEnvironment({
+      projectId: projectId || '', folder,
+      permission: (PERMISSION_MODES.find((m) => m.id === approval) ?? PERMISSION_MODES[0]).label,
+      memory: (MEMORY_MODES.find((m) => m.id === memoryMode) ?? MEMORY_MODES[0]).label,
+      sandbox: said(boundaryReading, 'sandbox'), reach: said(boundaryReading, 'reach'),
+    })
+  }, [projectId, folder, approval, memoryMode, boundaryReading])
+  useEffect(() => () => publishChatEnvironment(null), [])
+  const boundaryAsks = useBoundaryAsks()
   return (
     // `data-tour="chat"` — the product tour's chat stop points at the composer stage.
     // On the chat route this wrapper is the composer.
@@ -334,7 +349,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
               {/* In an app's conversation the app's grant decides every turn and a choice here
                   would be overwritten by it, so the permission mode shows that grant and is not
                   hers to move (the notice above the composer says why too). */}
-              <ExecutionBoundary approval={selection.approval ?? 'normal'} onApproval={chooseApproval}
+              <ExecutionBoundary approval={approval} onApproval={chooseApproval} openSignal={boundaryAsks}
                 lockedReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
                 memoryMode={memoryMode} onMemoryMode={!sessionId ? setMemoryMode : undefined}
                 folder={folder} onChangeFolder={started && sessionRef.current ? onChangeFolder : undefined}

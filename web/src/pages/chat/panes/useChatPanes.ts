@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { reportActionFailure } from '../../../app/reportingWrite'
 import { onToolResultFull } from '../toolResultBridge'
 import { deriveActivity } from '../chatTypes'
+import { chatOutputs } from '../inspector/chatOutputs'
 import { api } from '../../../lib/api'
 import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 import { useIsMobile } from '../../../app/useIsMobile'
@@ -13,7 +14,8 @@ import type { ChatStream } from '../useChatStream'
 // What the panels beside the chat keep: the Activity rail (`?activity`) with the files and links
 // the transcript touched, the subagents a fan-out started and the side chat; the open file
 // (`?file`); the chat's working folder (`?tree`, ⌘⇧E); the new chat's history panel (`?history`);
-// a block of a reply open beside the reading (`?beside`, `beside/blockBeside`); and a tool's full
+// a block of a reply or a detail open beside the reading (`?beside`, `beside/blockBeside` and
+// `beside/detailBeside`); and a tool's full
 // result (`?result`), fetched when a card asks for it. Each rides the URL, so Back closes it and a
 // reload reopens it. `ChatPanes.tsx` draws them, and the chat page the block beside the reading.
 //
@@ -125,6 +127,8 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
   // the Session Map's rail and drawer are the session's only jump surface.
   const activity = useMemo(() => deriveActivity(turns), [turns])
+  // What the chat made, for the inspector's Outputs and the detail tile's titles.
+  const outputs = useMemo(() => chatOutputs(turns), [turns])
 
   // Kill EVERY running subagent of this chat's fan-out in one click.
   // Optimistically mark the running cards done; the subagent_done WS events reconcile. A batch's
@@ -164,7 +168,7 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   }
   return {
     activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile, treeOpen, setTreeOpen, beside, setBeside,
-    resultRef, setResultRef, resultToolRef, resultBody, activity, killFanout, openSide, askSide,
+    resultRef, setResultRef, resultToolRef, resultBody, activity, outputs, killFanout, openSide, askSide,
   }
 }
 
