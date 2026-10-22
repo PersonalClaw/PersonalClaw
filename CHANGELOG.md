@@ -36,6 +36,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The buddy follows the desktop: drag it to float or dock it, rest the pointer on the top edge to make a docked buddy peek, and over a full-screen PersonalClaw window it shows only requests, as a quiet peek.**
 - **Settings → Buddy: Buddy status, which surfaces show the buddy and when it steps back, each saved as you change it, with the notification posture its alerts follow and whether your system asks for reduced motion, shown with where to change them. In the desktop app it also says where the buddy sits on this computer, docks a floating one, and keeps it out of screen sharing and screenshots. It follows a change made in any window.**
 - **The buddy can be hidden for an hour or until tomorrow, from its own menu or the menu bar, and it steps aside while you are away (three minutes idle unless its absence time is set otherwise, or a locked screen), saying what happened when you are back.**
+- **With Show Buddy on, the menu-bar icon is the buddy's still orb for what is happening (idle, working, needs you, error, listening or offline), the menu's first line and the tooltip say the state in words, and on macOS the dock icon shows the needs-you orb while something waits on you; the menu no longer shows a bare count beside the orb.**
 
 ### Changed
 

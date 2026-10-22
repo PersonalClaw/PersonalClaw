@@ -78,6 +78,7 @@
       "buddyWindow.js",
       "doorbell.js",
       "buddyPreload.js",
+      "buddy",
       "windowPushes.js",
       "connectDialog.html",
       "preload.js",

@@ -12,7 +12,10 @@ app not connected" and none of this applies.
 ## The menu-bar item
 
 The shell puts an icon in the macOS menu bar and keeps it there while PersonalClaw is
-running. Its menu is live, refreshed every few seconds from the local gateway:
+running. Its menu is live, refreshed every few seconds from the local gateway. Its first line
+says the state in words: **Nothing running**, **Working: 2 running**, **Needs you: 1 waiting on
+you**, **Something stopped**, **Listening**, **Not connected to the gateway**, or **PersonalClaw is
+restarting** while a restart you asked for is under way. The tooltip says the same.
 
 - **Waiting on you** — how many things wait on your answer: approvals, an agent's
   questions, a loop's question, a workflow's gate, an automation's parked action, a
@@ -35,10 +38,22 @@ running. Its menu is live, refreshed every few seconds from the local gateway:
 - **Quick Capture Note** — opens the Inbox with its note composer open, the same one the
   Inbox header's **Capture a note** opens. What you write is saved as your own Inbox
   item, up to 4,000 characters; if the save fails, your text stays in the composer.
-- **Open Dashboard**, **Open at Login**, and **Quit PersonalClaw**.
+- **Show Buddy** (see [The buddy](#the-buddy)), **Open PersonalClaw**, **Open at Login**, and
+  **Quit PersonalClaw**.
 
 When the count beside the icon and the "● Listening" capture indicator want the same
 space, **listening always wins** — a live microphone is never hidden behind a badge.
+
+### While the buddy is on
+
+With **Show Buddy** on, the menu-bar icon is the buddy's still orb for the state instead of the
+claw: idle, working, needs you, error, listening or offline. Each keeps its badge and its dots'
+density, so it reads in a one-colour menu bar, in high contrast and with no animation, and the
+first line of the menu and the tooltip say the state in words. No count sits beside it. Listening
+always wins the icon, and an announced restart shows working, never offline. On macOS, the dock
+icon shows the needs-you orb while something waits on you, and goes back to the app icon when
+nothing does; Linux has no dock icon to change. On Linux the orb follows your light or dark
+appearance.
 
 If the gateway cannot be reached the menu says **"not connected"** rather than showing
 zeroes, because a zero looks like good news.

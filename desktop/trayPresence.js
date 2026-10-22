@@ -37,6 +37,8 @@
  *    failed poll must render as "0 / not connected", never as a crash in a menu builder.
  */
 
+const path = require("node:path");
+
 /**
  * SPA deep-link targets. The dashboard is a HASH-routed SPA (`web/src/app/App.tsx`),
  * and these are its real routes — Mission Control lists everything waiting on you, each
@@ -51,6 +53,10 @@ const DEEP_LINKS = {
   settings: "#/settings",
   missionControl: "#/mission-control",
 };
+
+/** A tray menu row's and the tooltip's longest (`docs/design/buddy/copy.md`). */
+const ROW_MAX = 56;
+const TOOLTIP_MAX = 80;
 
 /** Most rows listed inline before the menu stops growing. */
 const MAX_LISTED_ROWS = 8;
@@ -116,6 +122,7 @@ function rowOf(r) {
     work: r.work,
     name: truncateLabel(String(r.name || "Work")),
     phase: PHASE_WORDS[phase] || phase,
+    phaseKey: phase,
     line: truncateLabel(String(r.line || ""), 60),
     since: typeof r.since === "string" ? r.since : "",
     route: typeof r.route === "string" ? r.route : "",
@@ -208,6 +215,83 @@ function truncateLabel(text, max = 48) {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+// ── The buddy's state on the tray (#3896) ──────────────────────────────────────────────────────
+//
+// While Buddy status is on, the menu-bar image is the buddy's still orb for the state, in place of
+// the claw: idle, working, needs you, error, listening or offline. Each is a variant inside one of
+// the phase contract's four families (`docs/design/buddy/surfaces.md`), and listening wins, as the
+// title's capture rule does. The exact state is always in words, in the tooltip and as the menu's
+// first line; a count only supports the words. An announced restart is working, said as
+// restarting, never offline.
+
+/** The still orbs the tray shows, as `docs/design/buddy/render_stills.mjs` renders them. */
+const TRAY_STILLS = Object.freeze(["idle", "working", "needs-you", "error", "listening", "offline"]);
+
+/** Each still's family: the phase contract's four (`web/src/lib/workPhase.ts`). */
+const STILL_FAMILY = Object.freeze({
+  idle: "quiet",
+  working: "active",
+  listening: "active",
+  "needs-you": "waiting",
+  error: "blocked",
+  offline: "blocked",
+});
+
+/** Whether something stopped: a live row blocked with nothing waiting on you for it, an ending in
+ *  error, or work a restart cut off. */
+function somethingStopped({ running = [], finished = [], interrupted = [] }) {
+  return running.some((r) => r.blocked && !(r.waiting > 0)) || finished.some((r) => r.phaseKey === "error") || interrupted.length > 0;
+}
+
+/**
+ * The still for now. Listening wins, then an announced restart (working), then the gateway being
+ * away (offline), then anything waiting on you, then something stopped, then live work.
+ *
+ * @param {object} presence `carryPresence()`'s view
+ * @param {{capturing?: boolean, restarting?: boolean}} [flags]
+ */
+function trayStill(presence, { capturing = false, restarting = false } = {}) {
+  const p = { ...EMPTY_PRESENCE, ...(presence || {}) };
+  if (capturing) return "listening";
+  if (restarting) return "working";
+  if (!p.connected) return "offline";
+  if (p.waiting > 0) return "needs-you";
+  if (somethingStopped(p)) return "error";
+  if (p.running.length > 0) return "working";
+  return "idle";
+}
+
+/** The exact state in words, with the counts that support it. */
+function stateWords(presence, { capturing = false, restarting = false } = {}) {
+  const p = { ...EMPTY_PRESENCE, ...(presence || {}) };
+  const still = trayStill(p, { capturing, restarting });
+  const running = p.stale ? `last known ${p.running.length} running` : `${p.running.length} running`;
+  switch (still) {
+    case "listening": return "Listening";
+    case "offline": return "Not connected to the gateway";
+    case "needs-you": return `Needs you: ${waitingWords(p.waiting)}`;
+    case "error": return p.running.length > 0 ? `Something stopped, ${running}` : "Something stopped";
+    case "working": return restarting ? "PersonalClaw is restarting" : `Working: ${running}`;
+    default: return p.listed || p.stale ? "Nothing running" : "Connected; what is running could not be read";
+  }
+}
+
+/** The menu-bar image's file, beside this module: the still for the state while Buddy status is on
+ *  (a template image on macOS, else the colour one for the system's light or dark appearance), or
+ *  the claw (`trayImageFile`) while it is off. */
+function trayStillFile(still, { platform, dark = false } = {}) {
+  if (!TRAY_STILLS.includes(still)) return trayImageFile(platform);
+  return platform === "darwin" ? `buddy/tray-${still}Template.png` : `buddy/tray-${still}-${dark ? "dark" : "light"}.png`;
+}
+
+/** The dock's image while something needs the owner, or null for the app's own icon. macOS only:
+ *  Linux has no dock icon to change. */
+function dockStillFile(presence, { platform, dark = false, buddyOn = false } = {}) {
+  if (platform !== "darwin" || !buddyOn) return null;
+  const p = { ...EMPTY_PRESENCE, ...(presence || {}) };
+  return p.connected && p.waiting > 0 ? `buddy/dock-needs-you-${dark ? "dark" : "light"}.png` : null;
+}
+
 /**
  * The menu-bar title (macOS shows text beside the icon).
  *
@@ -216,9 +300,10 @@ function truncateLabel(text, max = 48) {
  *
  * @param {{capturing?: boolean, waiting?: number}} state
  */
-function composeTrayTitle({ capturing = false, waiting = 0 } = {}) {
+function composeTrayTitle({ capturing = false, waiting = 0, buddyOn = false } = {}) {
   if (capturing) return "● Listening";
-  if (Number(waiting) > 0) return `${Number(waiting)}`;
+  // While Buddy status is on the still orb says it, and a count never stands alone beside it.
+  if (!buddyOn && Number(waiting) > 0) return `${Number(waiting)}`;
   return "";
 }
 
@@ -228,8 +313,9 @@ function waitingWords(waiting) {
 }
 
 /** Tooltip text — the same facts, spelled out for a hover. */
-function composeTrayTooltip({ capturing = false, waiting = 0, running = [], connected = false, listed = true, stale = false } = {}) {
+function composeTrayTooltip({ capturing = false, waiting = 0, running = [], connected = false, listed = true, stale = false, buddyOn = false, restarting = false, ...rest } = {}) {
   if (capturing) return "PersonalClaw is listening — press the shortcut again to stop";
+  if (buddyOn) return truncateLabel(`PersonalClaw — ${stateWords({ waiting, running, connected, listed, stale, ...rest }, { restarting })}`, TOOLTIP_MAX);
   if (!connected) return "PersonalClaw — not connected to the gateway";
   const parts = [];
   parts.push(waitingWords(waiting));
@@ -267,13 +353,11 @@ function endedLabel(r, { word, line } = {}) {
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
  * @param {{enabled: boolean, hidden?: boolean}} [opts.buddy] whether the buddy's window is on for this
  *        machine (#3831), and whether its owner hid it for a while (#3832)
+ * @param {{capturing?: boolean, restarting?: boolean}} [opts.flags] what the state's words read
  * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/hideBuddy/showBuddyNow/toggleLoginItem/quit
- * @param {Array<{label: string, click?: Function}>} [opts.tiles] ambient
- *        menu-bar tiles. Optional — rendered when supplied,
- *        skipped when not, so the menu never depends on them.
  */
-function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, buddy = { enabled: false }, actions = {}, tiles = [] } = {}) {
-  const { waiting, running, finished, interrupted, connected, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
+function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, buddy = { enabled: false }, flags = {}, actions = {} } = {}) {
+  const { waiting, running, finished, interrupted, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
   const open = actions.open || noop;
   const deepLink = actions.deepLink || noop;
@@ -286,7 +370,8 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
 
   const template = [
     {
-      label: connected ? "PersonalClaw — connected" : "PersonalClaw — not connected",
+      // The exact state in words (#3896), whatever the image shows.
+      label: truncateLabel(`PersonalClaw — ${stateWords(presence, flags)}`, ROW_MAX),
       enabled: false,
     },
     { type: "separator" },
@@ -327,18 +412,8 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
   template.push(
     { type: "separator" },
     { label: "Quick Capture Note…", click: () => quickCapture() },
-    { label: "Open Dashboard", click: () => open() }
+    { label: "Open PersonalClaw", click: () => open() }
   );
-
-  // Ambient tiles, when supplied. Non-blocking by design:
-  // an empty list adds nothing, not an empty section.
-  const validTiles = (Array.isArray(tiles) ? tiles : []).filter((t) => t && typeof t.label === "string");
-  if (validTiles.length > 0) {
-    template.push({ type: "separator" });
-    for (const tile of validTiles) {
-      template.push({ label: tile.label, click: tile.click || noop });
-    }
-  }
 
   template.push(
     { type: "separator" },
@@ -416,15 +491,83 @@ function trayImageFile(platform) {
  * @param {string} deps.trayImagePath the platform's menu-bar image, drawn at 18 points
  *        with an `@2x` beside it (`trayImageFile()`), loaded as it is
  * @param {object} deps.actions passed through to `buildTrayMenuTemplate`
+ * @param {string} [deps.platform] `process.platform`, which picks the stills' files
+ * @param {() => boolean} [deps.isDark] the system's appearance (`nativeTheme.shouldUseDarkColors`)
+ * @param {{setIcon: Function}} [deps.dock] Electron's `app.dock`, on macOS only
+ * @param {string} [deps.appIconPath] the app's own icon, which the dock goes back to
  * @param {(msg: string) => void} [deps.log]
  */
-function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, actions = {}, log = () => {} } = {}) {
+function makeTrayPresence({
+  TrayCtor,
+  MenuCtor,
+  nativeImageMod,
+  trayImagePath,
+  actions = {},
+  platform = process.platform,
+  isDark = () => false,
+  dock = null,
+  appIconPath = null,
+  log = () => {},
+} = {}) {
   let tray = null;
   let presence = { ...EMPTY_PRESENCE };
   let loginItemState = { supported: false, enabled: false };
   let buddyState = { enabled: false };
   let capturing = false;
-  let tiles = [];
+  let restarting = false;
+  /** The files the tray and the dock show now, so an unchanged state sets no image. */
+  let shownTray = trayImagePath || null;
+  let shownDock = null;
+  const images = new Map();
+  const imageDir = trayImagePath ? path.dirname(trayImagePath) : null;
+
+  /** An image beside the claw's, loaded once, or null when it cannot be read. */
+  function imageAt(file) {
+    if (!nativeImageMod || !file) return null;
+    if (images.has(file)) return images.get(file);
+    let image = null;
+    try {
+      image = nativeImageMod.createFromPath(file);
+      if (!image || (typeof image.isEmpty === "function" && image.isEmpty())) image = null;
+    } catch (err) {
+      log(`image ${file} failed to load: ${err.message}`);
+    }
+    images.set(file, image);
+    return image;
+  }
+
+  /** The tray's image and the dock's for the state: the still while Buddy status is on, else the
+   *  claw and the app icon. A still that cannot be read leaves the image as it was. */
+  function showState() {
+    const flags = { capturing, restarting };
+    const dark = Boolean(isDark());
+    const wantTray = buddyState.enabled && imageDir
+      ? path.join(imageDir, trayStillFile(trayStill(presence, flags), { platform, dark }))
+      : trayImagePath;
+    if (wantTray && wantTray !== shownTray) {
+      const image = imageAt(wantTray);
+      if (image) {
+        try {
+          tray.setImage(image);
+          shownTray = wantTray;
+        } catch (err) {
+          log(`tray image not set: ${err.message}`);
+        }
+      }
+    }
+    if (!dock || typeof dock.setIcon !== "function") return;
+    const still = dockStillFile(presence, { platform, dark, buddyOn: buddyState.enabled });
+    const wantDock = still && imageDir ? path.join(imageDir, still) : null;
+    if (wantDock === shownDock) return;
+    const image = imageAt(wantDock || appIconPath);
+    if (!image) return;
+    try {
+      dock.setIcon(image);
+      shownDock = wantDock;
+    } catch (err) {
+      log(`dock icon not set: ${err.message}`);
+    }
+  }
 
   /** Load the menu-bar image, tolerating a missing/corrupt file. Returns null when unusable. */
   function loadIcon() {
@@ -477,10 +620,12 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
   function render() {
     if (!tray) return;
     try {
-      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: buddyState, actions, tiles });
+      const flags = { capturing, restarting };
+      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: buddyState, flags, actions });
       tray.setContextMenu(MenuCtor.buildFromTemplate(template));
-      tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting }));
-      tray.setToolTip(composeTrayTooltip({ capturing, ...presence }));
+      tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting, buddyOn: buddyState.enabled }));
+      tray.setToolTip(composeTrayTooltip({ capturing, ...presence, buddyOn: buddyState.enabled, restarting }));
+      showState();
     } catch (err) {
       // A tray destroyed mid-render during shutdown is the common case here.
       log(`tray render skipped: ${err.message}`);
@@ -518,9 +663,13 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, a
       capturing = Boolean(on);
       render();
     },
-    /** Ambient tiles, when supplied. */
-    setTiles(next) {
-      tiles = Array.isArray(next) ? next : [];
+    /** The gateway announced a restart (the doorbell's `restarting`), until it is up again. */
+    setRestarting(on) {
+      restarting = Boolean(on);
+      render();
+    },
+    /** The system's appearance changed: the colour stills follow it. */
+    appearanceChanged() {
       render();
     },
     destroy() {
@@ -540,6 +689,14 @@ module.exports = {
   MAX_LISTED_ROWS,
   INTERRUPTED_KEPT,
   INTERRUPTED_MS,
+  TRAY_STILLS,
+  STILL_FAMILY,
+  ROW_MAX,
+  TOOLTIP_MAX,
+  trayStill,
+  stateWords,
+  trayStillFile,
+  dockStillFile,
   PHASE_WORDS,
   EMPTY_PRESENCE,
   summarizePresence,
