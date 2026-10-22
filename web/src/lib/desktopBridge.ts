@@ -160,10 +160,21 @@ export type BuddyConnection = 'up' | 'lost' | 'restarting'
 /** Where the buddy's window is: a drag moving it, or where it settled (`desktop/buddyWindow.js`). */
 export type BuddyPlacement = 'moving' | 'docked' | 'floating'
 
+/** The buddy window's one fixed shape (#5216), in the window's own points: the orb's box, and the
+ *  area its card may use beside it, on the side the shell chose where the orb settled. The card is
+ *  anchored to the orb and grows away from it: down from the orb's top, or up from its bottom. */
+export interface BuddyLayout {
+  side: 'right' | 'left' | 'below' | 'above'
+  opens: 'down' | 'up'
+  orb: BuddyRect
+  card: BuddyRect
+}
+
 /** `window.pclawBuddy`: only in the buddy's own window (`desktop/buddyPreload.js`, #3831), never
- *  beside `pclawDesktop`. Eight sends, which the shell checks each one again, and six pushes back
- *  (#3832): its doorbell's ring, which carries nothing, and connection; where the window is; and
- *  whether one of the app's own windows is full screen, the owner is away, or hid the buddy. */
+ *  beside `pclawDesktop`. Eight sends, which the shell checks each one again, and its pushes back
+ *  (#3832, #5216): its doorbell's ring, which carries nothing, and connection; where the window is
+ *  and its shape; and whether one of the app's own windows is full screen, the owner is away, or
+ *  hid the buddy. */
 export interface BuddyBridge {
   // The page is served by the gateway and can be newer than the shell that loads it, so each call
   // the shell added after the window's first seven is optional: a page reads it only where it is.
@@ -198,6 +209,9 @@ export interface BuddyBridge {
   onHidden?: (cb: (hidden: boolean) => void) => () => void
   /** The buddy's context menu, at the pointer: hide it for a while, or open PersonalClaw. */
   openMenu?: () => void
+  /** The window's shape: on each load, and again when a drop or a display change moves the orb to
+   *  another side of its card. Absent from a shell that sizes the window to the room instead. */
+  onLayout?: (cb: (layout: BuddyLayout) => void) => () => void
 }
 
 declare global {

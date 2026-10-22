@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event'
 import type { PendingApproval, RunningList, WaitingList } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
+import type { BuddyLayout } from '../../lib/desktopBridge'
 import type { WsMessage } from '../../lib/useChatSocket'
 import { waitingApproval, waitingList } from '../../test/waiting'
 import { CompanionPage } from '../companion/CompanionPage'
@@ -187,6 +188,7 @@ describe("in the buddy's own window", () => {
   let fullScreen: ((on: boolean) => void) | null = null
   let away: ((on: boolean) => void) | null = null
   let hidden: ((on: boolean) => void) | null = null
+  let layout: ((l: BuddyLayout) => void) | null = null
   const bridge = {
     pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(),
     onRing: vi.fn((cb: () => void) => { ring = cb; return () => { ring = null } }),
@@ -196,6 +198,7 @@ describe("in the buddy's own window", () => {
     onAway: vi.fn((cb: (on: boolean) => void) => { away = cb; return () => { away = null } }),
     onHidden: vi.fn((cb: (on: boolean) => void) => { hidden = cb; return () => { hidden = null } }),
     openMenu: vi.fn(),
+    onLayout: vi.fn((cb: (l: BuddyLayout) => void) => { layout = cb; return () => { layout = null } }),
   }
   beforeEach(() => {
     for (const f of Object.values(bridge)) f.mockClear()
@@ -205,6 +208,7 @@ describe("in the buddy's own window", () => {
     fullScreen = null
     away = null
     hidden = null
+    layout = null
     window.pclawBuddy = bridge
   })
   afterEach(() => { delete window.pclawBuddy })
@@ -313,6 +317,60 @@ describe("in the buddy's own window", () => {
     await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull())
   })
 
+  // ── The shell's layout (#5216): one window of a fixed size, the orb at a fixed box in it and the
+  //    card's area beside it, on the side the shell chose. The page draws there, never elsewhere.
+  const box = (el: Element | null) => {
+    const st = (el as HTMLElement | null)?.style
+    return st ? [st.left, st.top, st.width, st.height].join(' ') : null
+  }
+
+  it('before the shell says where, the orb is at the window\'s corner and the card opens right of it', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    expect(box(container.querySelector('[data-buddy-orb-slot]'))).toBe('0px 0px 56px 56px')
+    const area = container.querySelector('[data-buddy-card-area]')
+    expect(area?.getAttribute('data-side')).toBe('right')
+    expect(box(area)).toBe('64px 0px 420px 560px')
+  })
+
+  it('draws the orb at the layout the shell pushes, and the card in its area, anchored to the orb', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    await act(async () => {
+      layout?.({ side: 'left', opens: 'up', orb: { x: 428, y: 504, width: 56, height: 56 }, card: { x: 0, y: 0, width: 420, height: 560 } })
+    })
+    expect(box(container.querySelector('[data-buddy-orb-slot]'))).toBe('428px 504px 56px 56px')
+    const area = container.querySelector<HTMLElement>('[data-buddy-card-area]')!
+    expect(box(area)).toBe('0px 0px 420px 560px')
+    expect(area.dataset.side).toBe('left')
+    expect(area.dataset.opens).toBe('up')
+    // Up from the orb's bottom, on the orb's side of the area: the card's bottom-right corner.
+    expect(area.className).toContain('justify-end')
+    expect(area.className).toContain('items-end')
+    // The area takes no click; the card in it does, and so does the orb.
+    expect(area.hasAttribute('data-buddy-shape')).toBe(false)
+    expect(area.querySelector('[data-buddy-card-surface][data-buddy-shape]')).not.toBeNull()
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('the orb\'s box is the layout\'s whatever the buddy shows; only a new layout moves it', async () => {
+    lists.waiting = { waiting: [], unreadable: [] } as WaitingList
+    const { container } = render(<BuddyPage {...route} />)
+    await act(async () => {
+      layout?.({ side: 'right', opens: 'down', orb: { x: 0, y: 0, width: 56, height: 56 }, card: { x: 64, y: 0, width: 420, height: 560 } })
+    })
+    const slot = await waitFor(() => { const el = container.querySelector('[data-buddy-orb-slot]'); expect(el).not.toBeNull(); return el! }, { timeout: 2000 })
+    const at = box(slot)
+    lists.waiting = waitingFor(AP)
+    await act(async () => { ring?.() })
+    await prompt()
+    expect(box(container.querySelector('[data-buddy-orb-slot]'))).toBe(at)
+    expect(container.querySelector('[data-buddy-orb-slot]')).toBe(slot)
+    await act(async () => { placement?.('floating') })
+    await act(async () => { fullScreen?.(true) })
+    expect(box(container.querySelector('[data-buddy-orb-slot]'))).toBe(at)
+  })
+
   it('a right-click on the face asks the shell for the context menu, and answers nothing', async () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
@@ -339,6 +397,21 @@ describe("in the buddy's own window", () => {
     await userEvent.click(open)
     expect(bridge.openInApp).toHaveBeenCalledWith('#/mission-control')
     expect(resolveApproval).not.toHaveBeenCalled()
+  })
+})
+
+describe('in the window of a shell built before its layout push', () => {
+  afterEach(() => { delete window.pclawBuddy })
+
+  it('the page lays itself out by the window\'s rule: the orb at its top centre, the card beside it', async () => {
+    window.pclawBuddy = { pointerOver: vi.fn(), setRegions: vi.fn(), dragStart: vi.fn(), dragBy: vi.fn(), dragEnd: vi.fn(), setPresentation: vi.fn(), openInApp: vi.fn(), onRing: vi.fn(() => () => {}) }
+    const { container } = render(<BuddyPage {...route} />)
+    await prompt()
+    const slot = container.querySelector<HTMLElement>('[data-buddy-orb-slot]')!
+    expect(slot.style.left).toBe(`${Math.round(window.innerWidth / 2 - 28)}px`)
+    expect(slot.style.top).toBe('8px')
+    const area = container.querySelector<HTMLElement>('[data-buddy-card-area]')!
+    expect(area.dataset.side).toBe(window.innerWidth >= 2 * (28 + 8 + 420) + 16 ? 'right' : 'below')
   })
 })
 

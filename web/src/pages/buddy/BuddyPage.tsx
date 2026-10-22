@@ -21,11 +21,11 @@ import { type RouteProps } from '../../app/useQueryState'
 import { BUDDY_POLICY_CHANGED } from '../../lib/api'
 import { createBuddyHost, BUDDY_DEPS, type BuddyHost, type HostSnapshot } from '../../lib/buddy/host'
 import { viewOf, type BuddyState } from '../../lib/buddy/machine'
-import { buddyBridge, type BuddyBridge, type BuddyPresentation } from '../../lib/desktopBridge'
+import { buddyBridge, type BuddyBridge, type BuddyLayout, type BuddyPresentation, type BuddyRect } from '../../lib/desktopBridge'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { BuddyCard } from '../../ui/BuddyCard'
-import { BuddyPresence, CARD_WIDTH, ORB_SLOT_WIDTH, orbOf, type PresencePlace } from './BuddyPresence'
-import { cardPlace } from '../../lib/buddy/cardPlacement'
+import { BuddyPresence, orbOf } from './BuddyPresence'
+import { CARD_BUDGET, CARD_GAP, ORB_BOX, layoutAt } from '../../lib/buddy/cardPlacement'
 import { liveCardPropsOf } from './liveCard'
 import { lineOf } from '../../lib/buddy/lines'
 
@@ -152,21 +152,42 @@ function useViewport(): { width: number; height: number } {
   return size
 }
 
-/** The page's padding (`p-s`) above the orb. */
-const PAGE_PAD = 8
+/** Kept clear inside a tab's edges. */
+const PAGE_EDGE = 8
 
-/** Where the card opens: on the side of the orb with room in the page, as tall as the room there,
- *  its content scrolling inside past that, so nothing of it is cut off by the window's edge. */
-function usePlace(): PresencePlace {
+/** Until the shell says where, as the window opens by default: the orb at its corner and the card's
+ *  area right of it, opening down. */
+export const DEFAULT_LAYOUT: BuddyLayout = {
+  side: 'right', opens: 'down',
+  orb: { x: 0, y: 0, width: ORB_BOX, height: ORB_BOX },
+  card: { x: ORB_BOX + CARD_GAP, y: 0, width: CARD_BUDGET.width, height: CARD_BUDGET.maxHeight },
+}
+
+const scaled = (r: BuddyRect, by: number): BuddyRect => ({ x: r.x / by, y: r.y / by, width: r.width / by, height: r.height / by })
+
+/** Where the page draws the orb and its card. In the buddy's window, the shape its shell pushes
+ *  (`onLayout`), in the window's points: the work area and the choice of display live in main, so
+ *  the page follows them and never guesses its own. Zoomed in, the points are divided by the zoom,
+ *  read off the window's own width against the shape's. In a tab, or a window from a shell that
+ *  sizes it to the room, the same rule over the page itself, the orb at its top centre. */
+function useLayout(bridge: BuddyBridge | null): BuddyLayout {
   const view = useViewport()
-  const orb = { x: view.width / 2 - ORB_SLOT_WIDTH / 2, y: PAGE_PAD, width: ORB_SLOT_WIDTH, height: 48 }
-  return cardPlace(orb, view, { width: CARD_WIDTH, height: view.height })
+  const [pushed, setPushed] = useState<BuddyLayout | null>(null)
+  const follows = Boolean(bridge?.onLayout)
+  useEffect(() => bridge?.onLayout?.(setPushed), [bridge])
+  if (follows) {
+    const l = pushed ?? DEFAULT_LAYOUT
+    const width = Math.max(l.orb.x + l.orb.width, l.card.x + l.card.width) - Math.min(l.orb.x, l.card.x)
+    const zoom = view.width > 0 ? Math.max(1, width / view.width) : 1
+    return zoom === 1 ? l : { ...l, orb: scaled(l.orb, zoom), card: scaled(l.card, zoom) }
+  }
+  const area = { x: PAGE_EDGE, y: PAGE_EDGE, width: Math.max(0, view.width - 2 * PAGE_EDGE), height: Math.max(0, view.height - 2 * PAGE_EDGE) }
+  return layoutAt(area, { x: Math.round(view.width / 2 - ORB_BOX / 2), y: PAGE_EDGE })
 }
 
 export function BuddyPage(_: RouteProps) {
   const [snap, setSnap] = useState<HostSnapshot | null>(null)
   const hostRef = useRef<BuddyHost | null>(null)
-  const place = usePlace()
 
   useEffect(() => {
     const host = createBuddyHost({
@@ -187,6 +208,7 @@ export function BuddyPage(_: RouteProps) {
   // In the buddy's own window its size follows the machine, once the lists have been read: before
   // that the machine's hidden is only where it starts.
   const [bridge] = useState(buddyBridge)
+  const layout = useLayout(bridge)
   const presentation = snap?.read ? presentationOf(snap.machine) : null
 
   // A tap on an alert's notification opens the buddy (#3897): the shell shows its window and rings
@@ -222,7 +244,7 @@ export function BuddyPage(_: RouteProps) {
   }
 
   return (
-    <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} onContextMenu={onContextMenu} className="flex h-full min-w-0 flex-col items-center p-s">
+    <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} onContextMenu={onContextMenu} className="relative h-full min-w-0">
       <h1 className="sr-only">Buddy</h1>
       {snap ? <Announcer machine={snap.machine} /> : null}
       {/* A shell built before its doorbell has no ring to hear: the page keeps its own socket. */}
@@ -230,7 +252,7 @@ export function BuddyPage(_: RouteProps) {
       {snap && host ? (
         <BuddyPresence
           machine={snap.machine}
-          place={place}
+          layout={layout}
           onClick={() => host.send({ type: 'click' })}
           onPointer={(at) => host.send({ type: 'pointer', at })}
           card={truth ? <BuddyCard {...liveCardPropsOf(snap, host)} state={orbOf(truth, snap.machine)} /> : null}
