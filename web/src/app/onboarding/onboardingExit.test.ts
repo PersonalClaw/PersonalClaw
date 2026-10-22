@@ -70,7 +70,7 @@ describe('the pending onboarding exit destination', () => {
 describe('the guard consumes it', () => {
   const app = () => readFileSync(join(process.cwd(), 'src/app/App.tsx'), 'utf8')
 
-  it('the exit branch PEEKS, defaulting to the dashboard', () => {
+  it('the exit branch PEEKS, defaulting to the dashboard, and REPLACES', () => {
     // Asserted on the guard's source because the branch only runs inside the full App tree with a
     // live identity provider; a mechanism with no reader is the other defect this pins.
     //
@@ -82,8 +82,11 @@ describe('the guard consumes it', () => {
     //
     // `wantsSetup`, not `onboarded`, is what the branch above returns on: a DELIBERATE re-run
     // (Settings → Account) is an onboarded user who should stay in the flow — see `onboarding/rerun.ts`.
+    //
+    // It replaces: a push left setup's address under where it landed, and Back from there returned
+    // to it and was sent forward again (#3819, `everyShippedRouteResolves.test.tsx`).
     expect(app()).toMatch(
-      /if \(route === 'onboarding'\) \{ navigate\(peekOnboardingExit\(\) \|\| 'dashboard'\); return \}/)
+      /if \(route === 'onboarding'\) \{ navigate\(peekOnboardingExit\(\) \|\| 'dashboard', \{ replace: true \}\); return \}/)
   })
 
   it('the exit branch must NOT consume — a clearing read reintroduces the measured bug', () => {
