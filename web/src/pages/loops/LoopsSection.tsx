@@ -3,6 +3,7 @@ import { LoopsListPage } from './LoopsListPage'
 import type { LoopDraft } from './loopDraft'
 import { LoopPlanReview } from './LoopPlanReview'
 import { LoopPlanningView } from './LoopPlanningView'
+import { PlanBesideItsPlanning } from '../loop/PlanBesideItsPlanning'
 import { cancelPlanningToEdit } from '../loop/editTask'
 import { stopLoop } from '../loop/stopLoop'
 import { LoopCockpitPage } from './LoopCockpitPage'
@@ -86,41 +87,47 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
   }
 
   const activePlanningId = planningId || (resume?.status === 'planning' ? resume.id : null)
-  if (activePlanningId && !review) {
-    return <LoopPlanningView loopId={activePlanningId}
-      // Design's review surface IS its cockpit (phase trail + tokens + Start), NOT the
-      // goal-shaped LoopPlanReview (Goal-type/sub-goals/granularity would mislabel it
-      // and clobber its kind_config on save). Route a finished design walkthrough
-      // straight to the cockpit; every other kind goes to Plan Review.
-      onReady={(l) => { setPlanningId(null); setResume(null); if (l.kind === 'design') navigate(`loops/${l.id}`); else setReview(draftFromLoop(l)) }}
-      onBack={() => { setPlanningId(null); setResume(null); navigate('loops') }}
-      // The composer is another route, so leaving unmounts this section and its planning state.
-      onCancel={async () => {
-        const to = await cancelPlanningToEdit(activePlanningId)
-        if (to === null) return false
-        invalidateKeys('loops'); navigate(to)
-        return true
-      }}
-      onStop={async () => {
-        if (!(await stopLoop(activePlanningId))) return false
-        // The stopped loop's own page (its cockpit), which says it stopped.
-        invalidateKeys('loops'); setPlanningId(null); setResume(null); navigate(`loops/${activePlanningId}`)
-        return true
-      }} />
-  }
-
   // Plan Review — from the create flow's in-memory draft, OR resumed from a
   // `review`-status loop reached by URL/list. Design is excluded (its cockpit is its
   // review): a resumed design loop in `review` opens the cockpit via CockpitRouter below.
   const reviewDraft = review || (resume?.status === 'review' && resume.loop.kind !== 'design' ? draftFromLoop(resume.loop) : null)
-  if (reviewDraft) {
-    // Invalidate the SWR list cache on both exits — the draft was persisted at create
-    // and launch flips ready→running, so the list (useQuery('loops')) would else
+  // The walkthrough runs until the plan lands and stays as the page once it has, with Plan Review
+  // beside it in the pane host (`PlanBesideItsPlanning`), so the planning is still there to read.
+  const walkId = activePlanningId || reviewDraft?.loopId || null
+  if (walkId) {
+    // Invalidate the SWR list cache on both of the review's exits — the draft was persisted at
+    // create and launch flips ready→running, so the list (useQuery('loops')) would else
     // paint a stale snapshot (missing the draft / still 'ready') until its next poll.
     // Mirrors the Code section's fix + the list's own in-place mutations.
-    return <LoopPlanReview draft={reviewDraft}
-      onBack={() => { setReview(null); setResume(null); invalidateKeys('loops'); navigate('loops/history') }}
-      onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('loops'); navigate(`loops/${id}`) }} />
+    return <PlanBesideItsPlanning surface="loop-plan"
+      review={reviewDraft ? <LoopPlanReview embedded draft={reviewDraft}
+        onBack={() => { setReview(null); setResume(null); invalidateKeys('loops'); navigate('loops/history') }}
+        onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('loops'); navigate(`loops/${id}`) }} /> : null}
+      planning={(planned, actions) => <LoopPlanningView loopId={walkId} planned={planned} actions={actions}
+        // Design's review surface IS its cockpit (phase trail + tokens + Start), NOT the
+        // goal-shaped LoopPlanReview (Goal-type/sub-goals/granularity would mislabel it
+        // and clobber its kind_config on save). Route a finished design walkthrough
+        // straight to the cockpit; every other kind opens Plan Review beside it, once (the
+        // walkthrough says it is ready on every poll).
+        onReady={(l) => {
+          if (l.kind === 'design') { setPlanningId(null); setResume(null); navigate(`loops/${l.id}`); return }
+          if (review?.loopId === l.id) return
+          setPlanningId(null); setResume(null); setReview(draftFromLoop(l))
+        }}
+        onBack={() => { setPlanningId(null); setResume(null); setReview(null); navigate('loops') }}
+        // The composer is another route, so leaving unmounts this section and its planning state.
+        onCancel={async () => {
+          const to = await cancelPlanningToEdit(walkId)
+          if (to === null) return false
+          invalidateKeys('loops'); navigate(to)
+          return true
+        }}
+        onStop={async () => {
+          if (!(await stopLoop(walkId))) return false
+          // The stopped loop's own page (its cockpit), which says it stopped.
+          invalidateKeys('loops'); setPlanningId(null); setResume(null); setReview(null); navigate(`loops/${walkId}`)
+          return true
+        }} />} />
   }
 
   // #/loops/history → the goal list (history). A "new goal" button sits on top.

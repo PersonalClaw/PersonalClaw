@@ -79,9 +79,14 @@ function lastSentence(raw: string): string {
   return (parts[parts.length - 1] || '').trim()
 }
 
-export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop, approvals }: {
+export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop, approvals, planned = false, actions }: {
   id: string
   cfg: WalkthroughConfig
+  /** The plan has landed and is in review beside this walkthrough: the header says so, in place of
+   *  the planner's state, since no planner is working any more. */
+  planned?: boolean
+  /** Controls the host adds before Stop in the header (its way back to the review it hid). */
+  actions?: React.ReactNode
   /** The planner's tool calls waiting on you (an Attended loop's planner asks for them as a chat
    *  does), answered here above the plan. */
   approvals?: React.ReactNode
@@ -397,19 +402,23 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
   // A spend ceiling refused the planner: paused, not failed, and nothing runs again until Resume.
   const capPaused = session?.paused?.by === 'spend_cap'
   const paused = stalled || stepFailed || capPaused
-  const headerLabel = awaitingReview ? 'Awaiting your review' : paused ? 'Planning paused' : 'Planning…'
+  const headerLabel = planned ? 'Plan ready' : awaitingReview ? 'Awaiting your review' : paused ? 'Planning paused' : 'Planning…'
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         left={<div className="flex items-center gap-2">
-          {awaitingReview
+          {planned
+            ? <Check size={16} className="text-primary" />
+            : awaitingReview
             ? <CircleDot size={16} className="text-primary" />
             : <Loader2 size={16} className={paused ? 'text-on-surface-low' : 'animate-spin text-primary'} />}
           <span data-type="title-l" className="text-on-surface">{headerLabel}</span>
-          <span data-type="body-s" className="text-on-surface-low">{cfg.copy.subtitle}</span>
+          {/* Once planned, the subtitle's "approve or comment on each" is done; the review is beside. */}
+          {!planned && <span data-type="body-s" className="text-on-surface-low">{cfg.copy.subtitle}</span>}
         </div>}
         right={<div className="flex items-center gap-xs">
+          {actions}
           <button type="button" onClick={() => void leave(onStop)} disabled={busy}
             data-type="body-s" title="End this loop where it is; its plan so far is kept"
             className="inline-flex items-center gap-xs rounded-pill px-m h-9 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">

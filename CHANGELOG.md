@@ -38,6 +38,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The pane beside a chat or a code session expands over the work and collapses back, moves to the other side by pointer or by a keyboard move mode that says its preview, its placing and its cancel, remembers the side for that page, and closes on Esc; none of it touches the work (#3821).**
 - **A code session opens with its review pane on its first uncommitted change, beside the editor, and the pane lists every uncommitted change to step through; a review you close stays closed when the page reloads (#3821).**
 - **A goal loop reports as you ask when it starts: a note each cycle, only its outcome, or only if it gets stuck or fails; a new loop sends only its outcome unless asked, a loop you already started keeps its per-cycle notes, and a loop waiting on you still raises its Inbox item whatever the choice.**
+- **A goal loop's or code project's Plan Review opens in a pane beside its planning walkthrough, which stays on the page saying the plan is ready, instead of replacing it; closing the pane only hides it, and the walkthrough offers it back (#3821).**
 
 ### Fixed
 

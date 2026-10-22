@@ -571,7 +571,10 @@ The supervisor does not take the worker's word for it:
 - **`planning/`** (`session.py` data model + `runner.py` state machine) is the
   shared stepwise **gated planning walkthrough** used before launching Code
   and Goal loops: the plan is presented step by step with approve/comment
-  gates; a comment triggers a redraft of that step. A pass reports how it ended
+  gates; a comment triggers a redraft of that step. Once the plan lands (status `review`) the
+  walkthrough says the plan is ready and stays as the page, with Plan Review, where the loop is
+  launched, in the pane host beside it; closing the pane only hides it, and the walkthrough's
+  header offers it back. A pass reports how it ended
   (`runner.PlannerPass`): a file the kind cannot read is named for what is wrong with it (where
   its JSON breaks), and a pass that ran out of time or ended without writing says that. The one
   automatic retry tells the planner which, and a step that still has no draft keeps the reason

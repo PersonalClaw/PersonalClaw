@@ -84,10 +84,12 @@ function launchSpecOf(p: Loop): Revisioned<LaunchSpec> {
  *  launch. On launch it persists the edited plan (saveULoopSpec) and starts the
  *  loop (uLoopAction 'start'), which provisions the Tasks Project + per-stage
  *  TaskLists and arms the autonomous worker. */
-export function CodePlanReview({ draft, onBack, onLaunched }: {
+export function CodePlanReview({ draft, onBack, onLaunched, embedded = false }: {
   draft: CodeDraft
   onBack: () => void
   onLaunched: (id: string) => void
+  /** In a pane beside the project's planning (`PlanBesideItsPlanning`): no page bar of its own. */
+  embedded?: boolean
 }) {
   const [project, setProject] = useState<Loop | null>(null)
   const [stages, setStages] = useState<CodeStage[]>([])
@@ -272,9 +274,10 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      <TopBar
+      {/* In a pane beside the planning, the pane's header is the title and its close the way out. */}
+      {!embedded && <TopBar
         left={<div className="flex items-center gap-2"><Code2 size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">Review the plan</span></div>}
-        right={<HeaderActions><HeaderControl icon={ChevronLeft} label="Back" onClick={onBack} priority="primary" /></HeaderActions>} />
+        right={<HeaderActions><HeaderControl icon={ChevronLeft} label="Back" onClick={onBack} priority="primary" /></HeaderActions>} />}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
         <div className="mx-auto flex w-full flex-col gap-4" style={{ maxWidth: 'var(--content-width)' }}>

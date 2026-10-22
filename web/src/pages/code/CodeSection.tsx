@@ -3,6 +3,7 @@ import { Code2, Plus, Loader2, Trash2, FolderOpen, Search, Filter, Square } from
 import type { CodeDraft } from './codeDraft'
 import { codeDeleteBody } from './codeMeta'
 import { CodePlanReview } from './CodePlanReview'
+import { PlanBesideItsPlanning } from '../loop/PlanBesideItsPlanning'
 import { CodePlanningView } from './CodePlanningView'
 import { cancelPlanningToEdit } from '../loop/editTask'
 import { canStopLoop, stopLoop } from '../loop/stopLoop'
@@ -93,39 +94,40 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
 
   const activePlanningId = planningId || (resume?.status === 'planning' ? resume.id : null)
 
-  if (activePlanningId && !review) {
-    return <CodePlanningView projectId={activePlanningId}
-      onReady={(p) => { setPlanningId(null); setResume(null); setReview({ projectId: p.id, classification: { stage_plan: p.plan, entry_stage: kindCfg(p).entry_stage, summary: p.summary } as unknown as CodeDraft['classification'], rigor: p.intake_rigor || 'grill', attended: !!p.attended }) }}
-      onBack={() => { setPlanningId(null); setResume(null); navigate('code') }}
-      // The composer is another route, so leaving unmounts this section and its planning state.
-      onCancel={async () => {
-        const to = await cancelPlanningToEdit(activePlanningId)
-        if (to === null) return false
-        invalidateKeys('code:projects'); navigate(to)
-        return true
-      }}
-      onStop={async () => {
-        if (!(await stopLoop(activePlanningId))) return false
-        // The stopped loop's own page (the cockpit), which says it stopped.
-        invalidateKeys('code:projects'); setPlanningId(null); setResume(null); navigate(`code/${activePlanningId}`)
-        return true
-      }} />
-  }
-
   // Plan Review — from the create flow's in-memory draft, OR resumed from a
   // `review`-status project reached by URL/list (build a minimal draft from it).
-  const reviewDraft: CodeDraft | null = review || (resume?.status === 'review'
-    ? { projectId: resume.id, classification: { stage_plan: resume.project.plan, entry_stage: kindCfg(resume.project).entry_stage, summary: resume.project.summary } as unknown as CodeDraft['classification'], rigor: resume.project.intake_rigor || 'grill', attended: !!resume.project.attended }
-    : null)
-  if (reviewDraft) {
-    // Both exits can follow a create/launch mutation (the draft was persisted during
-    // create, and launch flips it ready→running) — invalidate the SWR list cache so the
+  const draftOf = (p: Loop): CodeDraft => ({ projectId: p.id, classification: { stage_plan: p.plan, entry_stage: kindCfg(p).entry_stage, summary: p.summary } as unknown as CodeDraft['classification'], rigor: p.intake_rigor || 'grill', attended: !!p.attended })
+  const reviewDraft: CodeDraft | null = review || (resume?.status === 'review' ? draftOf(resume.project) : null)
+  // The walkthrough runs until the plan lands and stays as the page once it has, with Plan Review
+  // beside it in the pane host (`PlanBesideItsPlanning`), so the planning is still there to read.
+  const walkId = activePlanningId || reviewDraft?.projectId || null
+  if (walkId) {
+    // Both of the review's exits can follow a create/launch mutation (the draft was persisted
+    // during create, and launch flips it ready→running) — invalidate the SWR list cache so the
     // list shows the new project + its fresh status when next visited, instead of the
     // stale snapshot (missing the draft, or showing it still 'ready'). Matches the
     // delete path; the list's mount-revalidate alone would lag a poll behind.
-    return <CodePlanReview draft={reviewDraft}
-      onBack={() => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate('code/history') }}
-      onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate(`code/${id}`) }} />
+    return <PlanBesideItsPlanning surface="code-plan"
+      review={reviewDraft ? <CodePlanReview embedded draft={reviewDraft}
+        onBack={() => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate('code/history') }}
+        onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate(`code/${id}`) }} /> : null}
+      planning={(planned, actions) => <CodePlanningView projectId={walkId} planned={planned} actions={actions}
+        // The walkthrough says it is ready on every poll; Plan Review opens beside it once.
+        onReady={(p) => { if (review?.projectId === p.id) return; setPlanningId(null); setResume(null); setReview(draftOf(p)) }}
+        onBack={() => { setPlanningId(null); setResume(null); setReview(null); navigate('code') }}
+        // The composer is another route, so leaving unmounts this section and its planning state.
+        onCancel={async () => {
+          const to = await cancelPlanningToEdit(walkId)
+          if (to === null) return false
+          invalidateKeys('code:projects'); navigate(to)
+          return true
+        }}
+        onStop={async () => {
+          if (!(await stopLoop(walkId))) return false
+          // The stopped loop's own page (the cockpit), which says it stopped.
+          invalidateKeys('code:projects'); setPlanningId(null); setResume(null); setReview(null); navigate(`code/${walkId}`)
+          return true
+        }} />} />
   }
 
   if (seg === 'history') {

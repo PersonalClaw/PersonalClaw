@@ -220,10 +220,13 @@ function launchSpecOf(raw: Loop): Revisioned<LaunchSpec> {
   return { value: launchSpec(fieldsOf(raw), raw.name, raw.task), revision: raw.revision ?? '' }
 }
 
-export function LoopPlanReview({ draft, onLaunched, onBack }: {
+export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: {
   draft: LoopDraft
   onLaunched: (loopId: string) => void
   onBack: () => void
+  /** In a pane beside the loop's planning (`PlanBesideItsPlanning`): the pane's header carries the
+   *  title and its close, so this draws no page bar and no Back of its own. */
+  embedded?: boolean
 }) {
   const [loop, setLoop] = useState<GoalLoop | null>(null)
   // 🔴 A failed read of the loop used to be `.catch(() => {})`, and `!loop` below then said
@@ -457,40 +460,40 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   if (!loop && loadErr) {
     return (
       <div className="flex h-full flex-col">
-        <TopBar left={<IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />} />
+        {!embedded && <TopBar left={<IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />} />}
         <LoadError what="plan" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} />
       </div>
     )
   }
   if (!loop) return <div data-type="body-s" className="flex h-full items-center justify-center text-on-surface-low">Analyzing the plan…</div>
 
-  // Header: back + (editable) generated title + a compact step indicator.
-  const header = (
-    <TopBar
-      left={
-        <div className="flex items-center gap-s min-w-0">
-          <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />
-          {/* The title is the one field a user can still reach while a refused launch is held (the walk
-              stays on its last step), and Reload and reapply puts back the title as it was at Launch —
-              so a rename made now would be left out of what it launches. Off, with the reason, until
-              the change is settled; a soft-off keeps the tab stop the way Back and Launch below do. */}
-          {editingTitle && !held ? (
-            // Raw: TextInput takes no onBlur, and leaving the field ends the edit.
-            <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
-              onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
-              data-type="body-m" className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-          ) : (
-            // Raw: the title is its own rename control, and no primitive draws bare title-m text.
-            <button type="button" onClick={() => setEditingTitle(true)} {...unavailableWhen(held, HELD_REASON, { title: 'Edit title' })}
-              data-type="title-m" className="truncate text-on-surface hover:text-on-surface-var aria-disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:hover:text-on-surface" style={fvs(500)}>
-              {title || 'Untitled loop'}
-            </button>
-          )}
-        </div>
-      }
-      right={<span data-type="caption" className="text-on-surface-low tabular-nums">Step {step + 1} / {totalSteps}</span>}
-    />
+  // Header: back + (editable) generated title + a compact step indicator. In a pane, the same title
+  // and indicator in a plain row, since the pane's own header is the bar and its close the way out.
+  const titled = (
+    <div className="flex items-center gap-s min-w-0">
+      {!embedded && <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />}
+      {/* The title is the one field a user can still reach while a refused launch is held (the walk
+          stays on its last step), and Reload and reapply puts back the title as it was at Launch —
+          so a rename made now would be left out of what it launches. Off, with the reason, until
+          the change is settled; a soft-off keeps the tab stop the way Back and Launch below do. */}
+      {editingTitle && !held ? (
+        // Raw: TextInput takes no onBlur, and leaving the field ends the edit.
+        <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
+          data-type="body-m" className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      ) : (
+        // Raw: the title is its own rename control, and no primitive draws bare title-m text.
+        <button type="button" onClick={() => setEditingTitle(true)} {...unavailableWhen(held, HELD_REASON, { title: 'Edit title' })}
+          data-type="title-m" className="truncate text-on-surface hover:text-on-surface-var aria-disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:hover:text-on-surface" style={fvs(500)}>
+          {title || 'Untitled loop'}
+        </button>
+      )}
+    </div>
   )
+  const stepOf = <span data-type="caption" className="text-on-surface-low tabular-nums">Step {step + 1} / {totalSteps}</span>
+  const header = embedded
+    ? <div className="flex shrink-0 items-center justify-between gap-s border-b border-outline-variant/30 px-l py-s">{titled}{stepOf}</div>
+    : <TopBar left={titled} right={stepOf} />
 
   return (
     <div className="flex h-full flex-col">
