@@ -44,6 +44,8 @@ IN_SCOPE_SECTIONS = (
     "tools",
     "security",
     "auth",
+    # Born in scope (#3901): every buddy knob has its Settings → Buddy control.
+    "buddy",
 )
 
 

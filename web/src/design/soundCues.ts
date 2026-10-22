@@ -137,6 +137,15 @@ let ctx: AudioContext | null = null
  *  itself is the terminal guard. */
 let armed = false
 
+/** Call *cb* with the switch whenever another window of this app sets it (#3901): playback reads
+ *  it on every cue already, so this is for a control that shows it. Returns the unsubscribe. */
+export function onSoundCuesChange(cb: (on: boolean) => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const onStorage = (e: StorageEvent) => { if (e.key === SOUND_CUES_KEY) cb(soundCuesEnabled()) }
+  window.addEventListener('storage', onStorage)
+  return () => window.removeEventListener('storage', onStorage)
+}
+
 export function soundCuesEnabled(): boolean {
   try {
     return localStorage.getItem(SOUND_CUES_KEY) === ENABLED_VALUE

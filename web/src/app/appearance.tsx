@@ -288,6 +288,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // persist (debounced-ish: on every change; small payload)
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(ov)) } catch { /* ignore */ } }, [ov])
+  // Another window of this app changed the look (#3901): take what it wrote, as the theme mode
+  // does (`theme.tsx`). The browser sends `storage` to every OTHER document of the origin, so the
+  // buddy's window and a second main window retint at once. Writing it back above is a no-op: a
+  // stored value set to itself fires no event.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === KEY) setOv(load()) }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   // Editing a color manually means you've diverged from the named scheme —
   // mark the active scheme as a custom/unsaved edit so the picker reflects it.

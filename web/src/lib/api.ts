@@ -1533,6 +1533,19 @@ export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | '
 /** One piece of live work in `GET /api/running` (`running_now`): the work's last `work_phase`
  *  frame, with the row's own fields beside it. A chat's row is its `run_state`, so it carries that
  *  payload's fields too. */
+/** The buddy's effective policy (`GET /api/buddy/policy`, #3901): every buddy question from one
+ *  place. Each surface is what to draw, so all are off while Buddy status (`show`) is. The
+ *  notification posture is the one the buddy's alerts follow, with when it next changes. */
+export interface BuddyPolicy {
+  show: boolean
+  surfaces: { window: boolean; tray: boolean; dock: boolean; notifications: boolean }
+  away_after_secs: number
+  notifications: { muted: boolean; quiet_now: boolean; may_interrupt: boolean; changes_at: string | null }
+}
+
+/** The frame the owner's sockets hear when the buddy's policy may have changed (#3901). */
+export const BUDDY_POLICY_CHANGED = 'buddy_policy_changed'
+
 export interface RunningRow {
   /** `<kind>:<id>` (`workref.work_ref`). */
   work: string
@@ -8362,6 +8375,8 @@ export const api = {
   // design. `detail` is the sentence to show — the backend owns the wording so this
   // surface never invents a second one for a state it does not own.
   companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
+  /** The buddy's effective policy: its knobs and the notification posture its alerts follow. */
+  buddyPolicy: () => get<BuddyPolicy>('/api/buddy/policy'),
   // ── The device registry ──
   // Settings → Devices is the ONLY device list in the product — every browser, paired device
   // and token signed in, not only the paired ones — and other surfaces link here rather than
