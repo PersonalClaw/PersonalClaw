@@ -85,6 +85,7 @@ describe("buildTrayMenuTemplate", () => {
       deepLink: (href) => calls.push(["deepLink", href]),
       quickCapture: () => calls.push(["quickCapture"]),
       toggleLoginItem: (v) => calls.push(["toggleLoginItem", v]),
+      toggleBuddy: (v) => calls.push(["toggleBuddy", v]),
       quit: () => calls.push(["quit"]),
     };
   };
@@ -139,6 +140,18 @@ describe("buildTrayMenuTemplate", () => {
     assert.equal(on.enabled, true);
     on.click({ checked: false });
     assert.deepStrictEqual(a.calls, [["toggleLoginItem", false]]);
+  });
+
+  it("the buddy row is a checkbox, off until the owner turns it on, and reports the switch (#3831)", () => {
+    const a = actions();
+    const off = buildTrayMenuTemplate({ actions: a }).find((r) => r.label === "Show Buddy");
+    assert.equal(off.type, "checkbox");
+    assert.equal(off.checked, false, "off by default");
+    off.click({ checked: true });
+    const on = buildTrayMenuTemplate({ buddy: { enabled: true }, actions: a }).find((r) => r.label === "Show Buddy");
+    assert.equal(on.checked, true);
+    on.click({ checked: false });
+    assert.deepStrictEqual(a.calls, [["toggleBuddy", true], ["toggleBuddy", false]]);
   });
 
   it("the login-item row is disabled where login items are unsupported", () => {

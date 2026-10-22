@@ -120,8 +120,10 @@ it lands.
 - **Which display:** docked, it lives on the display with the menu bar. Floating, it stays on the
   display it was dropped on and comes back there.
 - **Drag out:** dragging the orb more than `undockDistance` from the top edge undocks it.
-  Dropping it within `dockZone` of the top centre docks it again. Neither distance has a value yet:
-  the playground tunes both and records them here ([#3892]).
+  Dropping it within `dockZone` of the top centre docks it again. The starting values are
+  `undockDistance` 48 points and `dockZone` 96 points, measured from the top centre of the menu-bar
+  display's work area (`desktop/buddyPlacement.js`); the owner's playground session ([#3892]) tunes
+  both, and the values it settles are recorded here.
 - Docked or folded, it covers no menu-bar item and no window control ([#3831]).
 
 ## How a state change travels

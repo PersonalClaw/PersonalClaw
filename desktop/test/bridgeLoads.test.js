@@ -38,6 +38,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { electronUnavailable } = require("./helpers/electronHost");
 
 const ROOT = path.resolve(__dirname, "..");
 const { CAPABILITIES, IPC_CHANNELS } = require("../capabilities");
@@ -143,22 +144,6 @@ function bridgedBlock() {
   return blocks[0];
 }
 
-/** Why Electron cannot be driven here, or `null` if it can. */
-function electronUnavailable() {
-  let bin = null;
-  try {
-    bin = require("electron");
-  } catch (err) {
-    return `electron is not resolvable (${err.code || err.message})`;
-  }
-  if (typeof bin !== "string" || !fs.existsSync(bin)) {
-    return "electron/dist is absent — `npm ci` did not run the download lifecycle script";
-  }
-  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    return "no display on linux (needs Xvfb)";
-  }
-  return null;
-}
 
 /** One probe run. Returns the parsed `PC_PROBE` payload, or `{ launchFailed, detail }`. */
 function probe({ preload, sandboxOff, namespace }) {

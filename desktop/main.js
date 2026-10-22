@@ -34,6 +34,8 @@ const {
 } = require("./gatewayLost");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
+const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, registerBuddyIpc } = require("./buddyWindow");
+const { pushToBridged } = require("./windowPushes");
 const { loadRegistry } = require("./endpointRegistry");
 const {
   LOCAL_ENDPOINT_ID,
@@ -110,6 +112,9 @@ const GATEWAY_GRACE_MS = 8000;
 app.name = "PersonalClaw";
 
 let mainWindow = null;
+/** The buddy's window (`buddyWindow.js`), and whether it exists: made once the app is ready. */
+let buddy = null;
+let buddyPresence = null;
 let gatewayProcess = null;
 let isQuitting = false;
 let presenceTimer = null;
@@ -165,7 +170,7 @@ let startupWarnings = [];
 // ── Backend lifecycle ──
 
 function sendStatus(msg) {
-  mainWindow?.webContents?.send("status", msg);
+  pushToBridged(BaseWindow.getAllWindows(), "status", msg);
 }
 
 /**
@@ -442,11 +447,8 @@ const capabilities = makeCapabilities({
   // without polling) and the gateway (so a browser tab and any app with a
   // `desktop` permission see the same truth).
   onChange: (cap, state) => {
-    try {
-      mainWindow?.webContents?.send(IPC_CHANNELS.state, { capability: cap, state });
-    } catch {
-      /* window may be gone mid-grant */
-    }
+    // Every bridged window and tab, so a second tab draws the same grant (#3831).
+    pushToBridged(BaseWindow.getAllWindows(), IPC_CHANNELS.state, { capability: cap, state });
     pushCapabilityState();
   },
 });
@@ -1047,13 +1049,28 @@ async function noteSessionEvent(details) {
 
 const windowChrome = makeWindowChrome({ platform: process.platform, nativeTheme });
 function makeWindow() {
-  return new BaseWindow({
+  const win = new BaseWindow({
     width: 1280,
     height: 860,
     minWidth: 550, minHeight: 600,
     tabbingIdentifier: "personalclaw",
     ...windowChrome.options(),
   });
+  win.on("closed", () => setImmediate(releaseBuddyIfAlone));
+  return win;
+}
+
+/** The app's own windows, the main window and its tabs: every window but the buddy's. */
+function appWindows() {
+  return BaseWindow.getAllWindows().filter((w) => !w.isDestroyed() && w !== buddy?.window);
+}
+
+/** The buddy never keeps the app running by itself: with no menu-bar item, the last of the app's
+ *  windows closing takes it too, so `window-all-closed` quits as it did before there was one. */
+function releaseBuddyIfAlone() {
+  if (!buddy?.window || !buddyPresence) return;
+  const quitsWithNoWindow = shouldQuitOnAllWindowsClosed({ platform: process.platform, trayAvailable: trayPresence.available });
+  if (!buddyOutlivesClose({ appWindowsLeft: appWindows().length, quitsWithNoWindow })) buddyPresence.stop();
 }
 
 function createWindow() {
@@ -1165,6 +1182,10 @@ const trayPresence = makeTrayPresence({
       const result = loginItem.set(next);
       if (!result.ok && result.reason) console.warn(`login item unchanged: ${result.reason}`);
       syncLoginItemToTray();
+    },
+    toggleBuddy: (next) => {
+      setBuddyEnabled(next);
+      syncBuddyToTray();
     },
     quit: () => {
       isQuitting = true;
@@ -1528,6 +1549,7 @@ async function startAgain() {
   if (hadGateway) return;
   if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
   await registerWithGateway();
+  buddyPresence?.start();
 }
 
 // ── New Tab — opens another view onto the ACTIVE gateway ──
@@ -1615,6 +1637,75 @@ function mergeAllWindows() {
       mainWindow.setHasShadow(true);
     }
   }, 50);
+}
+
+// ── The buddy's window (#3831) ──
+
+/**
+ * The buddy's own window: made once, created only while "Buddy status" is on for this machine
+ * (`buddy:enabled` in the shell's store), on the default session so it carries the shell's sign-in,
+ * loading the buddy route from the gateway this shell started. A restart moves it with every other
+ * web contents (`followRestartedGateway`). It hears five named sends from its own page and no other
+ * (`registerBuddyIpc`), and a route it opens goes to the main window through `deepLink`.
+ */
+function startBuddy() {
+  if (buddy) return buddyPresence.start();
+  const { screen } = require("electron");
+  buddy = makeBuddyWindow({
+    BrowserWindowCtor: BrowserWindow,
+    screen,
+    store: shellStore,
+    preload: path.join(__dirname, "buddyPreload.js"),
+    log: (msg) => console.warn(`desktop: ${msg}`),
+  });
+  registerBuddyIpc({
+    ipcMain,
+    buddy,
+    isBuddy: (sender) => Boolean(buddy.window) && !buddy.window.isDestroyed() && sender === buddy.window.webContents,
+    openRoute: (hash) => deepLink(hash),
+    log: (msg) => console.warn(`desktop: ${msg}`),
+  });
+  buddyPresence = makeBuddyPresence({
+    buddy,
+    store: shellStore,
+    url: () => (localGatewayUrl ? `${localGatewayUrl}/#/buddy` : null),
+    prepare: guardBuddyContents,
+    log: (msg) => console.log(`desktop: ${msg}`),
+  });
+  return buddyPresence.start();
+}
+
+/** "Show Buddy", for this machine: on creates the window (once there is a gateway), off closes
+ *  it. Before the app is ready the switch is only kept, and the start picks it up. */
+function setBuddyEnabled(on) {
+  if (buddyPresence) return buddyPresence.setEnabled(on);
+  if (shellStore) shellStore.setItem(ENABLED_KEY, on ? "1" : "0");
+  return false;
+}
+
+/** The tray's checkbox reads the store, the one place the switch is kept. */
+function syncBuddyToTray() {
+  trayPresence.setBuddyState({ enabled: Boolean(shellStore) && shellStore.getItem(ENABLED_KEY) === "1" });
+}
+
+/** The buddy's page stays on the gateway it came from and opens no window of any kind. */
+function guardBuddyContents(win) {
+  const wc = win.webContents;
+  const onGateway = (url) => {
+    try {
+      return new URL(url).origin === originOf(localGatewayUrl);
+    } catch {
+      return false;
+    }
+  };
+  const stay = (event, url) => {
+    if (onGateway(url)) return;
+    event.preventDefault();
+    console.warn(`desktop: the buddy's window may not leave its gateway (${String(url).slice(0, 80)})`);
+  };
+  wc.on("will-navigate", stay);
+  wc.on("will-redirect", stay);
+  wc.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
 // ── personalclaw:// links ──
@@ -1740,9 +1831,10 @@ if (!app.requestSingleInstanceLock()) {
       console.warn("running without menu-bar presence — the window will close on close");
     }
     syncLoginItemToTray();
+    syncBuddyToTray();
     const win = createWindow();
     // The sidebar material follows the system's reduced-transparency setting in every window.
-    windowChrome.watch(() => BaseWindow.getAllWindows());
+    windowChrome.watch(() => appWindows());
 
     try {
       await startGateway();
@@ -1781,6 +1873,7 @@ if (!app.requestSingleInstanceLock()) {
     if (startupWarnings.length) openConnectDialog();
     // Health is probed AFTER the window is up: it is switcher decoration, not a gate on booting.
     refreshHealth().catch(() => {});
+    startBuddy();
 
     app.on("activate", () => {
       if (!mainWindow?.isVisible()) mainWindow?.show();

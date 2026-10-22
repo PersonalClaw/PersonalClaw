@@ -493,6 +493,39 @@ Settings → Notifications → PersonalClaw** is the only control. If you have t
 there, ticking Desktop in a rule will silently do nothing — that is macOS's answer, not a
 bug in the rule.
 
+## The buddy
+
+The buddy is a small window of its own that shows what PersonalClaw is doing and what is waiting
+on you, without opening the app. It is off until you turn it on: menu bar → **Show Buddy**, on this
+computer. Turning it off closes the window.
+
+- **Where it sits.** Docked, it hangs from the top centre of the display with the menu bar, just
+  below the menu bar, so it covers no menu-bar item and no window control. On a Mac with a camera
+  notch that puts it just below the notch, centred on it. Drag it more than 48 points down to
+  float it anywhere; drop it within 96 points of the top centre to dock it again. A floating buddy
+  stays on the display you dropped it on and is there after a restart; if that display is gone, it
+  docks.
+- **It never takes your focus.** It shows without taking the keyboard, and takes it only when you
+  click into it.
+- **Clicks pass through it.** Everywhere outside the buddy itself and its open card, a click
+  reaches the window underneath.
+- **Kept out of screen sharing and screenshots** on macOS, by default, so what is waiting on you
+  does not show in a share.
+- **It costs nothing while hidden.** Hidden, its page schedules no timer and no frame and reads no
+  pointer, and it opens no connection of its own.
+- **It never keeps the app running by itself.** Where closing the last window quits the app (no
+  menu-bar item), the buddy closes with it.
+
+It loads from the gateway this app started, signed in as the app's own window is, and follows it
+when the gateway restarts. A route it opens, such as the chat that is waiting on you, opens in the
+main window. Its page can reach the app only through a handful of named calls (where the pointer
+is, a drag of the buddy, the room it needs, and opening a route), and the app checks each one; it
+has none of the main window's desktop capabilities.
+
+**On Linux** the area that takes clicks is the window's shape, and the dock and float land
+without a move. Linux offers an app no way to keep a window out of a capture, so a screenshot or a
+share there shows the buddy.
+
 ## Platforms
 
 The shell ships for **macOS (Apple silicon)** and **Linux x86-64**. There is no Windows

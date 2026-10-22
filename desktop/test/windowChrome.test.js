@@ -178,8 +178,10 @@ describe("main.js takes the window chrome from windowChrome.js", () => {
     assert.match(MAIN, /view\.webContents\.executeJavaScript\(windowChrome\.script\(\)\)/);
   });
 
-  it("watches the system setting once the app is ready", () => {
+  it("watches the system setting once the app is ready, in the app's windows and not the buddy's", () => {
     const ready = MAIN.slice(MAIN.indexOf("app.whenReady().then("));
-    assert.match(ready, /windowChrome\.watch\(\(\) => BaseWindow\.getAllWindows\(\)\);/);
+    assert.match(ready, /windowChrome\.watch\(\(\) => appWindows\(\)\);/);
+    // The buddy's window is transparent all over (#3831): the sidebar's material is not its own.
+    assert.match(MAIN, /function appWindows\(\) \{\n  return BaseWindow\.getAllWindows\(\)\.filter\(\(w\) => !w\.isDestroyed\(\) && w !== buddy\?\.window\);/);
   });
 });
