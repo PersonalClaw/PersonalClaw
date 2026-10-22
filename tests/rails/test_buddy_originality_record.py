@@ -146,7 +146,9 @@ def problems(text: str, ships: set[str], later: set[str]) -> list[str]:
 
 def test_the_record_holds_every_element_and_the_maintainer_signed_it():
     ships, later = shipping_elements(), later_elements()
-    assert len(ships) >= 40, f"vacuity floor: the shipping elements read {len(ships)}"
+    # 39 since the three top-edge rooms and the floating orb became one orb and its two
+    # cards (#5216).
+    assert len(ships) >= 36, f"vacuity floor: the shipping elements read {len(ships)}"
     assert len(later) >= 15, f"vacuity floor: the later elements read {len(later)}"
     assert problems(RECORD.read_text(encoding="utf-8"), ships, later) == []
 

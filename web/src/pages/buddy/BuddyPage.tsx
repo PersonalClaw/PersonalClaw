@@ -24,11 +24,11 @@ import { viewOf, type BuddyState } from '../../lib/buddy/machine'
 import { buddyBridge, type BuddyBridge, type BuddyPresentation } from '../../lib/desktopBridge'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { BuddyCard } from '../../ui/BuddyCard'
-import { BuddyPresence, orbOf } from './BuddyPresence'
+import { BuddyPresence, CARD_WIDTH, ORB_SLOT_WIDTH, orbOf, type PresencePlace } from './BuddyPresence'
+import { cardPlace } from '../../lib/buddy/cardPlacement'
 import { liveCardPropsOf } from './liveCard'
 import { lineOf } from '../../lib/buddy/lines'
 
-const ORB_ID = 'buddy-presence-orb'
 
 /** The size the buddy's window takes for where the machine stands. With nothing to show, a docked
  *  buddy keeps the peek's strip as its top-edge zone, which draws nothing and takes no click; one
@@ -140,9 +140,33 @@ function Announcer({ machine }: { machine: BuddyState }) {
   return <p data-buddy-announce="" role="status" aria-live="polite" className="sr-only">{text}</p>
 }
 
+/** The page's own size: the buddy's window, or the tab it is open in. */
+function useViewport(): { width: number; height: number } {
+  const read = () => ({ width: window.innerWidth, height: window.innerHeight })
+  const [size, setSize] = useState(read)
+  useEffect(() => {
+    const onResize = () => setSize(read())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return size
+}
+
+/** The page's padding (`p-s`) above the orb. */
+const PAGE_PAD = 8
+
+/** Where the card opens: on the side of the orb with room in the page, as tall as the room there,
+ *  its content scrolling inside past that, so nothing of it is cut off by the window's edge. */
+function usePlace(): PresencePlace {
+  const view = useViewport()
+  const orb = { x: view.width / 2 - ORB_SLOT_WIDTH / 2, y: PAGE_PAD, width: ORB_SLOT_WIDTH, height: 48 }
+  return cardPlace(orb, view, { width: CARD_WIDTH, height: view.height })
+}
+
 export function BuddyPage(_: RouteProps) {
   const [snap, setSnap] = useState<HostSnapshot | null>(null)
   const hostRef = useRef<BuddyHost | null>(null)
+  const place = usePlace()
 
   useEffect(() => {
     const host = createBuddyHost({
@@ -206,10 +230,10 @@ export function BuddyPage(_: RouteProps) {
       {snap && host ? (
         <BuddyPresence
           machine={snap.machine}
-          orbId={ORB_ID}
+          place={place}
           onClick={() => host.send({ type: 'click' })}
           onPointer={(at) => host.send({ type: 'pointer', at })}
-          card={truth ? <BuddyCard {...liveCardPropsOf(snap, host, ORB_ID)} state={orbOf(truth, snap.machine)} /> : null}
+          card={truth ? <BuddyCard {...liveCardPropsOf(snap, host)} state={orbOf(truth, snap.machine)} /> : null}
         />
       ) : null}
     </div>

@@ -157,8 +157,9 @@ them, and a test holds the committed files to what the table draws.
   scheme. A dot's depth is its opacity, which is how the agent orb's painter shades a tinted dot
   toward the canvas.
 - **Sizes.** A pose is drawn at the room its surface gives the orb
-  ([`surfaces.md`](surfaces.md#the-room-budget)): 48 px for the families, the focused card and the
-  answers, 22 for the peek and the compact island, and 56 floating. Below 24 px the badge drops its
+  ([`surfaces.md`](surfaces.md#the-room-budget)): the buddy's one orb at 48 in every state, docked
+  or floating ([#5216]), 96 where one piece of work owns the phone's screen, and the small orbs of
+  the work in sight, the tray and the phone's rows. Below 24 px the badge drops its
   ring of dots and its mark fills it, since a ring that small reads as a blur. A waiting badge (the
   "!" and the "?") is solid there instead: one dot of the badge's size in the full warn or info
   tone, its mark cut out of it, so the badge alone tells a still waiting orb from an active one, in
@@ -200,7 +201,7 @@ licensed base and are not judged on their own. Each aspect is a row of the origi
 | The wash | distinct: one alert tone that rises once from under the orb and holds; it never pulses, never takes several colours and never lights the screen's edge |
 | The poses | distinct: the families are told apart by the dots' density and spread and by the badge, in two colours; no colour per state, no spinning arc |
 | The gestures | distinct: motions of one orb's dots; the wave is a ripple out from the centre, and the flourish is one swirl that comes to rest |
-| The presence | changed: the docked pill is the app's raised surface and stands apart from the notch and the edge, the card takes its place rather than growing out of it, with no overshoot, and docking moves the orb rather than melting a shape ([`surfaces.md`](surfaces.md#docking), [`motion.md`](motion.md#transitions)) |
+| The presence | changed: one orb of one size that stays where the owner put it, its state only in its dots, badge and wash, with a card beside it on the side that has room; nothing forms around it or grows out of the edge ([#5216], [`surfaces.md`](surfaces.md#docking), [`motion.md`](motion.md#transitions)) |
 | The whole orb | distinct: a sphere of dots in the app's primary, with a still badge and a one-tone wash; it reads as the agent orb |
 
 The checks. `tests/rails/test_buddy_design_matrix.py` reads the set from this file's own words (the
@@ -275,3 +276,4 @@ an export of the chosen rig ([`rig.md`](rig.md#the-portable-sprite-sheet)).
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
 [#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
+[#5216]: https://github.com/PersonalClaw/PersonalClaw/issues/5216

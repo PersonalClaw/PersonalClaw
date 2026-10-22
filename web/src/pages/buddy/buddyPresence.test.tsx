@@ -148,12 +148,12 @@ describe('the buddy presence', () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
     const line = await waitFor(() => {
-      const b = container.querySelector<HTMLButtonElement>('[data-buddy-island] button')
+      const b = container.querySelector<HTMLButtonElement>('[data-buddy-card-surface] button')
       expect(b).not.toBeNull()
       return b!
     }, { timeout: 2000 })
     await userEvent.click(line)
-    await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="expanded"]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="expanded"]')).not.toBeNull())
     expect(resolveApproval).not.toHaveBeenCalled()
     expect(answerChatQuestion).not.toHaveBeenCalled()
   })
@@ -163,7 +163,7 @@ describe('the buddy presence', () => {
     const { container } = render(<BuddyPage {...route} />)
     await waitFor(() => expect(reads.waiting).toBe(1))
     await act(async () => { await Promise.resolve() })
-    expect(container.querySelector('[data-buddy-island], [data-buddy-floating]')).toBeNull()
+    expect(container.querySelector('[data-buddy-presence]')).toBeNull()
     expect(screen.queryByRole('group', { name: /^Permission needed/ })).toBeNull()
     policy.show = true
     await act(async () => { onFrame?.({ type: 'buddy_policy_changed', data: {} }) })
@@ -176,7 +176,7 @@ describe('the buddy presence', () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
     await waitFor(() => expect(reads.waiting).toBe(1))
-    expect(container.querySelector('[data-buddy-island], [data-buddy-floating]')).toBeNull()
+    expect(container.querySelector('[data-buddy-presence]')).toBeNull()
   })
 })
 
@@ -244,7 +244,7 @@ describe("in the buddy's own window", () => {
     const { container } = render(<BuddyPage {...route} />)
     await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
     await act(async () => { document.dispatchEvent(new MouseEvent('mousemove')) })
-    await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="peek"]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="peek"]')).not.toBeNull())
     expect(resolveApproval).not.toHaveBeenCalled()
   })
 
@@ -262,10 +262,10 @@ describe("in the buddy's own window", () => {
     await prompt()
     await act(async () => { placement?.('moving') })
     await act(async () => { placement?.('floating') })
-    await waitFor(() => expect(container.querySelector('[data-buddy-floating]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="floating"]')).not.toBeNull())
     await act(async () => { placement?.('moving') })
     await act(async () => { placement?.('docked') })
-    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull())
     expect(resolveApproval).not.toHaveBeenCalled()
   })
 
@@ -277,7 +277,7 @@ describe("in the buddy's own window", () => {
     await act(async () => { fullScreen?.(true) })
     lists.waiting = waitingFor(AP)
     await act(async () => { ring?.() })
-    await waitFor(() => expect(container.querySelector('[data-buddy-island][data-room="peek"]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="peek"]')).not.toBeNull())
     expect(screen.queryByRole('group', { name: /^Permission needed/ }), 'not expanded over the full screen').toBeNull()
     expect(resolveApproval).not.toHaveBeenCalled()
   })
@@ -286,7 +286,7 @@ describe("in the buddy's own window", () => {
     const { container } = render(<BuddyPage {...route} />)
     await prompt()
     await act(async () => { connection?.('restarting') })
-    expect(container.querySelector('[data-buddy-island]')).not.toBeNull()
+    expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull()
     expect(resolveApproval).not.toHaveBeenCalled()
   })
 
@@ -295,7 +295,7 @@ describe("in the buddy's own window", () => {
     await prompt()
     await act(async () => { hidden?.(true) })
     await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('hidden'))
-    expect(container.querySelector('[data-buddy-island], [data-buddy-floating]')).toBeNull()
+    expect(container.querySelector('[data-buddy-presence]')).toBeNull()
     await act(async () => { hidden?.(false) })
     await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('expanded'))
     expect(await prompt()).toBeTruthy()
@@ -305,12 +305,12 @@ describe("in the buddy's own window", () => {
   it('away, a docked buddy with work running hides it, keeping the top-edge zone; back, it shows again', async () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
-    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull(), { timeout: 2000 })
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull(), { timeout: 2000 })
     await act(async () => { away?.(true) })
-    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).toBeNull())
     expect(bridge.setPresentation).toHaveBeenLastCalledWith('peek')
     await act(async () => { away?.(false) })
-    await waitFor(() => expect(container.querySelector('[data-buddy-island]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull())
   })
 
   it('a right-click on the face asks the shell for the context menu, and answers nothing', async () => {
@@ -330,7 +330,7 @@ describe("in the buddy's own window", () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
     const face = await waitFor(() => {
-      const f = container.querySelector('[data-buddy-island] [data-buddy-shape][data-buddy-drag]')
+      const f = container.querySelector('[data-buddy-orb-slot][data-buddy-shape][data-buddy-drag]')
       expect(f).not.toBeNull()
       return f!
     }, { timeout: 2000 })

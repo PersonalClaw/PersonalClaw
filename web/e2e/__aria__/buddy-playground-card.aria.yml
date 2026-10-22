@@ -14,8 +14,8 @@
   - status: An answer on a card is written here and never sent.
   - figure "An approval, two more waiting":
     - heading "An approval, two more waiting" [level=#]
+    - text: Needs your OK
     - group "Release notes":
-      - text: Needs your OK
       - heading "Release notes" [level=#]
       - paragraph: "Release notes needs your OK: Bash"
       - paragraph: Needs your OK · updated #:# <am/pm>
@@ -57,8 +57,8 @@
         - /url: "#/mission-control"
   - figure "A question":
     - heading "A question" [level=#]
+    - text: Waiting for your answer
     - group "Release notes":
-      - text: Waiting for your answer
       - heading "Release notes" [level=#]
       - paragraph: "Release notes asks: Which branch should I use?"
       - paragraph: Waiting for your answer · updated #:# <am/pm>
@@ -100,8 +100,8 @@
         - /url: "#/mission-control"
   - figure "An error":
     - heading "An error" [level=#]
+    - text: Stopped
     - group "Release notes":
-      - text: Stopped
       - heading "Release notes" [level=#]
       - paragraph: "Release notes stopped: The tests failed"
       - paragraph: Stopped · updated #:# <am/pm>
@@ -137,8 +137,8 @@
         - /url: "#/mission-control"
   - figure "Five pieces of work in sight":
     - heading "Five pieces of work in sight" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -189,8 +189,8 @@
         - /url: "#/mission-control"
   - figure "The focused work finished":
     - heading "The focused work finished" [level=#]
+    - text: Done
     - group "Release notes":
-      - text: Done
       - heading "Release notes" [level=#]
       - paragraph: Release notes is done in <countdown> #s
       - paragraph: Done · updated #:# <am/pm>
@@ -236,8 +236,8 @@
         - /url: "#/mission-control"
   - figure "Nothing else running":
     - heading "Nothing else running" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -253,8 +253,8 @@
         - /url: "#/mission-control"
   - figure "Many pieces of work":
     - heading "Many pieces of work" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -313,8 +313,8 @@
         - /url: "#/mission-control"
   - figure "Reconnecting":
     - heading "Reconnecting" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -345,8 +345,8 @@
         - /url: "#/mission-control"
   - figure "The list could not be read":
     - heading "The list could not be read" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -362,8 +362,8 @@
         - /url: "#/mission-control"
   - figure "Interrupted and just finished, about to fold":
     - heading "Interrupted and just finished, about to fold" [level=#]
+    - text: Searching
     - group "Release notes":
-      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>

@@ -41,6 +41,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **The buddy is one orb of one size that stays where you put it, and what it says is on a card beside it: one line while work runs, the full card for an alert or a click, opening on the side of the orb that has room and never covering it. Nothing the buddy shows moves the orb or changes its size; its state is in its dots, its badge and its wash. The playground's tabs play it this way (#5216).**
 - **Opening the sidebar, or the phone's navigation drawer, puts focus on the row that last had it (else the thread the page shows), and closing it puts focus back on its toggle, so focus never falls to the page; neither takes focus from a field you are typing in.**
 - **The sidebar comes back to where it was scrolled after a reload or a collapse, as it already kept its width, its open state and each project's disclosure; when that place would hide the thread the page shows, it scrolls just far enough to show it.**
 - **While the gateway isn't answering, the sidebar's threads say Offline, keep the threads it last listed and offer Retry, instead of saying the read failed or that there are no threads.**

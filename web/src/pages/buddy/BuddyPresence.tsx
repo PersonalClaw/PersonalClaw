@@ -1,8 +1,12 @@
-/** The buddy as it shows (#3832): drawn from the state machine's view (`viewOf`), the same for the
- *  playground's stage and the live presence at `#/buddy`.
+/** The buddy as it shows (#3832, #5216): drawn from the state machine's view (`viewOf`), the same
+ *  for the playground's stage and the live presence at `#/buddy`.
  *
- *  Docked, the top edge holds the island: the peek's orb, the compact line with its count of other
- *  work, or the expanded card. Undocked, the floating orb sits with its bubble or its card. The
+ *  The buddy is one orb, of one size, that stays where it was put: its state is in its dots, its
+ *  badge and its wash, never in its size or its place. What it has to say is a card beside it, on
+ *  the side `place` gives (`lib/buddy/cardPlacement.ts`, where the display has room): one line
+ *  while work runs (what the top edge's compact pill said) or on a floating orb's alert, and the
+ *  full card (`ui/BuddyCard.tsx`) when it opens. The card is laid out apart from the orb, so
+ *  opening, growing, shrinking or closing it never moves the orb or changes its size. The full
  *  card is the caller's, so the playground draws it from made-up rows and the presence from the
  *  gateway's. Nothing here answers: a click on the orb or the line is the machine's `click`, and
  *  only the card's answer controls answer. */
@@ -10,10 +14,28 @@
 import type { ReactNode } from 'react'
 import { BuddyOrb } from '../../ui/BuddyOrb'
 import { Button } from '../../ui/Button'
-import { Morph } from '../../ui/motion/Morph'
+import { cx } from '../../ui/cx'
 import { orbStateOf, type BuddyState as OrbState } from '../../ui/buddy/orbPoses'
 import { focusedWork, viewOf, type BuddyState, type Truth } from '../../lib/buddy/machine'
 import { lineOf } from '../../lib/buddy/lines'
+import type { CardAlign, CardSide } from '../../lib/buddy/cardPlacement'
+
+/** The orb's one size, in every state, family and event. */
+export const ORB_SIZE = 48
+/** Its slot: the orb in the shared `Button`'s large size, 48 tall with its side padding. */
+export const ORB_SLOT_WIDTH = 96
+
+/** Where the card opens beside the orb; `width` and `height` are the room it gets, when the display
+ *  has less than it wants. */
+export interface PresencePlace {
+  side: CardSide
+  align: CardAlign
+  width?: number
+  height?: number
+}
+
+/** Until the shell says otherwise: below the orb, centred on it, as at the top of the screen. */
+export const DEFAULT_PLACE: PresencePlace = { side: 'below', align: 'center' }
 
 /** The orb's state for a truth, over the focused work's own phase for the lines the machine adds
  *  of its own (connected again, answered elsewhere, the return summary). */
@@ -22,70 +44,94 @@ export function orbOf(truth: Truth, machine: BuddyState): OrbState {
 }
 
 export interface PresenceHandlers {
-  /** A click on the orb or the compact line: the machine's `click`. */
+  /** A click on the orb or its line: the machine's `click`. */
   onClick?: () => void
   /** The pointer rests on the orb, or leaves it. */
   onPointer?: (at: 'orb' | 'away') => void
 }
 
-/** A control the owner may press, where the caller handles one; the playground's stage draws the
- *  same thing inert, since its inputs are its own controls. The live one is the shared `Button`, a
- *  44 px target and more, and the pointer resting on it is the machine's hover. */
-function Hit({ label, className, children, onClick, onPointer }: { label?: string; className?: string; children: ReactNode } & PresenceHandlers) {
-  if (!onClick) return className ? <div className={className}>{children}</div> : <>{children}</>
+/** Each side and alignment as classes: the card beside the orb, never over it. */
+const AT: Record<CardSide, Record<CardAlign, string>> = {
+  below: { start: 'top-full mt-s left-0', center: 'top-full mt-s left-1/2 -translate-x-1/2', end: 'top-full mt-s right-0' },
+  above: { start: 'bottom-full mb-s left-0', center: 'bottom-full mb-s left-1/2 -translate-x-1/2', end: 'bottom-full mb-s right-0' },
+  right: { start: 'left-full ml-s top-0', center: 'left-full ml-s top-1/2 -translate-y-1/2', end: 'left-full ml-s bottom-0' },
+  left: { start: 'right-full mr-s top-0', center: 'right-full mr-s top-1/2 -translate-y-1/2', end: 'right-full mr-s bottom-0' },
+}
+
+/** The full card's width and its tallest before it scrolls inside, until the display has less
+ *  (`surfaces.md`, the room budget). */
+export const CARD_WIDTH = 420
+export const CARD_HEIGHT = 360
+/** The line card's widest: what the compact pill held. */
+export const LINE_WIDTH = 360
+
+/** The orb, in its one slot. Live (with `onClick`), the face is the shape clicks land on and the
+ *  handle a drag moves the window by (`app/BuddyWindowRoot.tsx`, #3831), and the shared `Button`,
+ *  a 44 px target and more; in the playground's stage it is drawn inert. */
+export function BuddyFace({ state, label, onClick, onPointer }: { state: OrbState; label: string } & PresenceHandlers) {
+  const orb = <BuddyOrb state={state} line="" size={ORB_SIZE} />
   return (
-    // The face: in the buddy's own window, clicks land here and pass through everywhere else, and a
-    // drag of it moves the window (`app/BuddyWindowRoot.tsx`, #3831).
-    <div data-buddy-shape="" data-buddy-drag="" className="flex min-w-0 max-w-full"
+    <div data-buddy-orb-slot="" {...(onClick ? { 'data-buddy-shape': '', 'data-buddy-drag': '' } : {})} className="relative flex shrink-0"
       onPointerEnter={() => onPointer?.('orb')} onPointerLeave={() => onPointer?.('away')}>
-      <Button variant={className ? 'secondary' : 'ghost'} size="lg" ariaLabel={label} onClick={onClick} className="min-w-0 max-w-full">
-        {children}
-      </Button>
+      {onClick ? <Button variant="ghost" size="lg" ariaLabel={label} onClick={onClick}>{orb}</Button> : <span className="flex h-12 items-center px-2xl">{orb}</span>}
     </div>
   )
 }
 
-/** The buddy's room where it stands: `null` when nothing shows. */
-export function BuddyPresence({ machine, card, orbId, onClick, onPointer }: {
+/** A surface beside the orb, at `place`: the line card or the full card. */
+export function CardSurface({ place, live, wide, children }: { place: PresencePlace; live: boolean; wide: boolean; children: ReactNode }) {
+  const width = Math.min(place.width ?? Infinity, wide ? CARD_WIDTH : LINE_WIDTH)
+  return (
+    <div
+      data-buddy-card-surface="" data-side={place.side} data-align={place.align} {...(live ? { 'data-buddy-shape': '' } : {})}
+      className={cx('absolute z-10 flex min-w-0', wide ? '' : 'w-max', AT[place.side][place.align])}
+      // In points, as the display's room is measured: under a bigger text size the card wraps and
+      // grows taller, and never wider than the room it was given.
+      style={{ [wide ? 'width' : 'maxWidth']: width, ...(place.height ? { maxHeight: place.height, overflowY: 'auto' } : {}) }}
+    >
+      {children}
+    </div>
+  )
+}
+
+/** The buddy where it stands: `null` when nothing shows. */
+export function BuddyPresence({ machine, card, place = DEFAULT_PLACE, onClick, onPointer }: {
   machine: BuddyState
-  /** The expanded card, drawn by the caller for the machine as it stands. */
+  /** The full card, drawn by the caller for the machine as it stands. */
   card: ReactNode
-  /** The shared element's id: the compact island's orb and the card's are one object. */
-  orbId: string
+  /** Where the card opens beside the orb. */
+  place?: PresencePlace
 } & PresenceHandlers) {
   const view = viewOf(machine)
   const truth = view.truth
   if (!view.shows || !truth) return null
-  const hit = { onClick, onPointer }
-  // The open card takes clicks in the buddy's own window, as the face does.
-  const shaped = onClick && card ? <div data-buddy-shape="" className="flex w-full min-w-0 justify-center">{card}</div> : card
-  if (machine.docked) {
-    return (
-      <div data-buddy-island="" data-room={view.room ?? 'none'} className="flex w-full min-w-0 max-w-md flex-col items-center">
-        {view.room === 'peek' ? (
-          <Hit {...hit} label={lineOf(truth, 'topEdgeCompact')}>
-            <BuddyOrb state={orbOf(truth, machine)} line="" size={18} />
-          </Hit>
-        ) : view.room === 'expanded' ? (
-          shaped
-        ) : (
-          <Hit {...hit} className="flex w-full min-w-0 max-w-sm items-center gap-s rounded-full bg-surface-high px-m py-xs">
-            <Morph id={orbId} className="flex min-w-0 flex-1"><BuddyOrb state={orbOf(truth, machine)} line={lineOf(truth, 'topEdgeCompact')} size={24} /></Morph>
-            {view.inSight ? <span data-type="label-s" className="shrink-0 text-on-surface-var">+{view.inSight}</span> : null}
-          </Hit>
-        )}
-      </div>
-    )
-  }
+  const live = Boolean(onClick)
+  const room = view.room
+  const open = room === 'expanded' || (room === 'floating' && machine.card === 'open')
+  const line = room === 'compact' ? lineOf(truth, 'topEdgeCompact')
+    : room === 'floating' && (machine.card === 'hover' || machine.shown) ? lineOf(truth, 'floatingBubble')
+      : ''
   return (
-    <div data-buddy-floating="" className="mt-auto flex w-full min-w-0 flex-col items-end gap-s">
-      {machine.card === 'open' ? shaped : null}
-      {machine.card === 'hover' || machine.shown ? (
-        <p data-type="body-s" className="max-w-full rounded-lg bg-surface-high px-m py-xs text-on-surface">{lineOf(truth, 'floatingBubble')}</p>
+    <div data-buddy-presence="" data-room={room ?? 'none'} className="relative inline-flex shrink-0">
+      {/* Its name is the card's whole line, never a shortened one: a listener gets every word. */}
+      <BuddyFace state={orbOf(truth, machine)} label={lineOf(truth, 'expandedCard')} onClick={onClick} onPointer={onPointer} />
+      {open && card ? (
+        <CardSurface place={place} live={live} wide>{card}</CardSurface>
+      ) : line ? (
+        <CardSurface place={place} live={live && room === 'compact'} wide={false}>
+          {live && room === 'compact' ? (
+            <Button variant="secondary" size="sm" onClick={onClick} className="min-w-0 max-w-full">
+              <span className="min-w-0 truncate">{line}</span>
+              {view.inSight ? <span data-type="label-s" className="shrink-0 text-on-surface-var">+{view.inSight}</span> : null}
+            </Button>
+          ) : (
+            <p data-buddy-line-card="" data-type="body-s" className="flex min-w-0 max-w-full items-center gap-s rounded-lg bg-surface-high px-m py-xs text-on-surface">
+              <span className="min-w-0 truncate">{line}</span>
+              {room === 'compact' && view.inSight ? <span data-type="label-s" className="shrink-0 text-on-surface-var">+{view.inSight}</span> : null}
+            </p>
+          )}
+        </CardSurface>
       ) : null}
-      <Hit {...hit} label={lineOf(truth, 'floatingBubble')}>
-        <BuddyOrb state={orbOf(truth, machine)} line="" size={48} />
-      </Hit>
     </div>
   )
 }

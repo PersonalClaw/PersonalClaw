@@ -1,19 +1,20 @@
 /** The playground's stage (#3892): the buddy as each surface holds it, drawn from the state
  *  machine's view (`viewOf`), with the lists it reads beside it.
  *
- *  A screen's top edge holds the island: the peek's orb, the compact line with its count of other
- *  work, or the expanded card. Undocked, the floating orb sits on the screen with its bubble or its
- *  card. Beside the screen: Waiting on You in the waiting list's order, Running Now in start order,
- *  and the focused work. The card is the real expanded card (`ui/BuddyCard.tsx`, #3893), drawn from
+ *  A screen holds the buddy where it stays (#5216): one orb of one size, and beside it a card on
+ *  the side with room, the line while work runs or the full card when it opens. Docked or
+ *  floating, nothing the machine says moves the orb. Beside the screen: Waiting on You in the waiting list's order, Running Now in start order,
+ *  and the focused work. The card is the real card (`ui/BuddyCard.tsx`, #3893), drawn from
  *  the machine by `stageCard.ts`, and its controls send the machine its answer, as the presence will.
  *  The screen's width is the compact width being played (320, 390, 412 px) or the page's. */
 
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { BuddyCard } from '../../ui/BuddyCard'
 import { BuddyOrb } from '../../ui/BuddyOrb'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { focusedWork, viewOf, type BuddyState } from '../../lib/buddy/machine'
-import { BuddyPresence, orbOf } from './BuddyPresence'
+import { BuddyPresence, CARD_HEIGHT, CARD_WIDTH, ORB_SLOT_WIDTH, orbOf } from './BuddyPresence'
+import { CARD_GAP, cardPlace, DISPLAY_EDGE } from '../../lib/buddy/cardPlacement'
 import type { StepWindows } from '../../lib/buddy/steps'
 import { phaseLabel } from '../../lib/workPhase'
 import { cardPropsOf, type StageAnswer } from './stageCard'
@@ -42,30 +43,74 @@ interface StageProps {
   onAnswer: (answer: StageAnswer) => void
 }
 
-/** The focused orb's shared-element id: the compact island's orb and the card's are one object. */
-const ORB_ID = 'buddy-playground-orb'
-
-/** The expanded card, drawn from the machine. */
+/** The full card, drawn from the machine. */
 function Card({ machine, steps, onAnswer }: Pick<StageProps, 'machine' | 'steps' | 'onAnswer'>) {
   const truth = viewOf(machine).truth!
-  return <BuddyCard {...cardPropsOf(machine, steps, onAnswer)} state={orbOf(truth, machine)} orbId={ORB_ID} />
+  return <BuddyCard {...cardPropsOf(machine, steps, onAnswer)} state={orbOf(truth, machine)} />
 }
 
-/** The screen: the buddy as it shows, on a frame the width being played. */
+/** The screen's height: the orb at the top, and the card's room below it. */
+const SCREEN_HEIGHT = 320
+
+/** The screen as laid out: the width its content has, which the card is placed in, and the height
+ *  its open card takes, which the screen grows to hold, so the card is never cut off and the orb
+ *  never moves. */
+function useScreenRoom(): [(el: HTMLDivElement | null) => void, number | null, number] {
+  const [width, setWidth] = useState<number | null>(null)
+  const [card, setCard] = useState(0)
+  const [el, setEl] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const read = () => {
+      setWidth(el.clientWidth - 2 * SCREEN_PAD)
+      const surface = el.querySelector<HTMLElement>('[data-buddy-card-surface]')
+      setCard(surface ? surface.offsetHeight : 0)
+    }
+    read()
+    const watch = new ResizeObserver(read)
+    watch.observe(el)
+    const surfaces = new MutationObserver(() => {
+      watch.disconnect()
+      watch.observe(el)
+      const surface = el.querySelector('[data-buddy-card-surface]')
+      if (surface) watch.observe(surface)
+      read()
+    })
+    surfaces.observe(el, { childList: true, subtree: true })
+    return () => { watch.disconnect(); surfaces.disconnect() }
+  }, [el])
+  return [setEl, width, card]
+}
+
+/** The screen's padding (`p-m`). */
+const SCREEN_PAD = 16
+
+/** The screen: the buddy where it stays, at the top centre (its place until a drag moves it), on a
+ *  frame the width being played, with its card on the side that has room in the frame. Nothing the
+ *  machine says moves the orb, docked or floating. */
 function Screen({ machine, width, steps, onAnswer }: StageProps) {
   const view = viewOf(machine)
+  const [frameRef, inner, cardHeight] = useScreenRoom()
+  const room = inner ?? (width === 'full' ? CARD_WIDTH + 2 * DISPLAY_EDGE : Number(width) - 2 * SCREEN_PAD)
+  const orb = { x: room / 2 - ORB_SLOT_WIDTH / 2, y: 0, width: ORB_SLOT_WIDTH, height: 48 }
+  // The side and the width from the card's budget, on a screen that grows below the orb to the
+  // card's own height.
+  const { side, align, width: cardWidth } = cardPlace(orb, { width: room, height: Infinity }, { width: CARD_WIDTH, height: CARD_HEIGHT })
+  const place = { side, align, width: cardWidth }
+  const tall = Math.max(SCREEN_HEIGHT, 2 * SCREEN_PAD + 48 + CARD_GAP + cardHeight + SCREEN_PAD)
   return (
     <div
+      ref={frameRef}
       data-stage-screen="" data-room={view.room ?? 'none'}
-      className="relative flex min-h-64 w-full min-w-0 flex-col items-center overflow-hidden rounded-xl border border-outline-variant bg-surface-low p-m"
-      style={width === 'full' ? undefined : { maxWidth: `${Number(width) / 16}rem` }}
+      className="relative flex w-full min-w-0 flex-col items-center overflow-auto rounded-xl border border-outline-variant bg-surface-low p-m"
+      style={{ minHeight: tall, ...(width === 'full' ? {} : { maxWidth: `${Number(width) / 16}rem` }) }}
     >
       {!view.shows || !view.truth ? (
         <p data-type="body-s" className="m-auto text-on-surface-var">
           {machine.enabled ? 'Nothing shows: the buddy is hidden.' : 'Nothing shows: Buddy status is off.'}
         </p>
       ) : (
-        <BuddyPresence machine={machine} orbId={ORB_ID} card={<Card machine={machine} steps={steps} onAnswer={onAnswer} />} />
+        <BuddyPresence machine={machine} place={place} card={<Card machine={machine} steps={steps} onAnswer={onAnswer} />} />
       )}
     </div>
   )

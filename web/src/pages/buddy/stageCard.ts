@@ -88,7 +88,6 @@ export function cardPropsOf(machine: BuddyState, steps: StepWindows, onAnswer: (
     list: machine.connection === 'up' ? 'live' : 'reconnecting',
     countdown: view.countdown ? 10 : undefined,
     openHref: '#/mission-control',
-    orbId: 'buddy-playground-orb',
     onAnswer,
   }
 }

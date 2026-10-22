@@ -9,12 +9,27 @@ another. Sizes are in points and are starting values for the prototype to prove 
 These sizes are starting values. Where one conflicts with [compact layouts](#compact-layouts)
 (hit areas of at least 44 px, no clipping at 200% text zoom), compact layouts wins ([#3902]).
 
+The buddy is one orb of one size that stays where the owner put it, and everything it says is on a
+card beside it ([#5216], the owner's ruling after playing the playground). The rooms the machine
+names (peek, compact, expanded, floating) say how much the card shows, never how big the orb is or
+where it sits:
+
+- **Peek, sleeping, and an orb with nothing to say:** the orb alone.
+- **Compact, and an alert's bubble away from the top edge:** the line card.
+- **Expanded, and a click on an orb away from the top edge:** the card.
+
+The card opens on the side of the orb that has room on its display: below an orb near the top,
+above one near the bottom, else to its right or its left. It is centred on the orb when it fits,
+and otherwise kept to the display's edge, and it never covers the orb. A card bigger than every
+side takes the side with the most room and scrolls inside it (`web/src/lib/buddy/cardPlacement.ts`).
+Opening, growing, shrinking or closing it never moves the orb or changes its size: the card is laid
+out apart from the orb (`web/src/pages/buddy/BuddyPresence.tsx`).
+
 | Surface | Size | Shows | Drops |
 |---|---|---|---|
-| **Top-edge peek** | the orb just below the top edge, about 28 tall | the orb's pose and its badge | words, counts |
-| **Top-edge compact** | 28 tall, up to 360 wide | the focused work's orb (22), its one line, `+N` for other live work | steps, controls |
-| **Top-edge expanded** | 420 wide, up to 360 tall | the focused work's orb (48), its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (18) and one line | history, settings |
-| **Floating orb** | the orb at 56, anywhere on screen | the orb; on an alert, a bubble with one line and the alert badge; on click, the expanded card beside it | steps and other work until clicked |
+| **The orb** | 48, in a 96 by 48 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its dots, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
+| **The line card** | one line, up to 360 wide, beside the orb | while work runs, the focused work's one line and `+N` for other live work; on an alert away from the top edge, the alert's one line | steps, controls |
+| **The card** | 420 wide, up to 360 tall, beside the orb; less where the display has less, scrolling inside past that | the focused work's name and its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (20) and one line | history, settings |
 | **Tray or menu-bar icon** | 18 (template image on macOS) | a still orb per state: idle, working, needs you, error, listening, offline; the exact state in words in its tooltip and as the menu's first line | animation, a count standing alone |
 | **Tray menu** | a menu | everything waiting on the owner, in the list's order, then live work, each one line, plus Show or Hide the buddy, Hide for an hour, Hide until tomorrow, Open PersonalClaw | the step flow |
 | **Dock or app icon** | the app icon | the orb's still for the state while something needs the owner, instead of a red count | words |
@@ -38,7 +53,7 @@ These sizes are starting values. Where one conflicts with [compact layouts](#com
 One in focus, the rest in sight. The work in focus (the shown alert's, else the one already in
 focus, else the earliest live one) gets the room for its state and its current step. Every other
 piece of live work collapses to a small orb and the one line it is working on, so its state stays
-readable while it is small. The compact island shows only a count of them.
+readable while it is small. The line card shows only a count of them.
 
 Small orbs are told apart by their state (the orb's density and its badge) and by a small glyph for
 their kind (a chat, a loop, a workflow run, a helper), with the work's name beside them. They are
@@ -48,13 +63,14 @@ colours keep their meanings.
 When the focused work finishes, its orb plays the done beat and the space its step window used goes
 to the work in sight, so the owner sees at once what is still running.
 
-When the room changes (compact to expanded, the phone's two views), the focused orb is the shared
-element: it moves and scales into its new place while the rest enter around it, so the owner never
-loses sight of it.
+The buddy's orb never moves when its card opens or closes, so the owner never loses sight of it.
+On the phone, where one piece of work takes the screen, that work's orb is the shared element
+between its two views: it moves and scales into its new place while the rest enter around it.
 
 ## The expanded card, top to bottom
 
-1. **Header:** the focused work's orb at 48, its name, and its state in words.
+1. **Header:** the focused work's name and its state in words. The buddy's orb beside the card is
+   its orb; the card draws none of its own.
 2. **The run as one continuous flow:** a three-line step window. The middle line is the current
    step (plan, a step, a tool, a result) at full ink with its kind's icon, and its label fills with
    the alive colour as the step runs (a slow shimmer when there is no progress to show). Above it,
@@ -86,8 +102,8 @@ error has Open and Dismiss. The controls only raise the answer, which the presen
 line, its exact phase, its last update and its route, and the list's own states (reconnecting,
 could not be read, interrupted, just finished, many). When the focused work finishes, the step
 window goes and the rows take its room. The card says while the pointer or the keyboard focus is
-on it, so a fold on a timer waits. The focused orb is a shared element with the island's compact
-orb, and the sections enter on the region stagger; both are instant under reduced motion. The
+on it, so a fold on a timer waits. The sections enter on the region stagger, instant under reduced
+motion. The
 next step shows only when the work knows it, so a free chat turn's window has two lines.
 
 ## Compact layouts
@@ -103,31 +119,30 @@ least 44 px ([#3902]).
 
 ## Docking
 
-The docked buddy is a pill of the app's own: the orb, the one line and `+N`, on the app's raised
-surface, never black, and never joined to the notch, the menu bar or the screen's edge as one shape.
-It hangs a small gap below the menu bar, and when it opens, the card takes its place below where it
-was: the pill's outline never stretches into the card, and nothing grows out of the edge
+The orb stays where the owner put it ([#5216]). Only a drag moves it, and the spot is kept per
+display across a restart. No alert, no presence change, no absence and no hide moves it; a display
+that is gone puts it back at the default. It is the app's own: the orb on its own, never on a black
+shape, and never joined to the notch, the menu bar or the screen's edge as one shape
 ([the originality record](decisions/originality.md), [#4570]).
 
-- **macOS with a notch:** the same pill a screen without a notch has, hung just below the notch and
-  centred on it, with no orbs on both sides of the camera and no group of orbs in a wing ([#3831]).
-- **Screens without a notch:** the pill hangs below the menu bar at the top centre; expanded, the
-  card takes its place.
-- **Which display:** docked, it lives on the display with the menu bar. Floating, it stays on the
-  display it was dropped on and comes back there.
-- **Drag out:** dragging the orb more than `undockDistance` from the top edge undocks it.
-  Dropping it within `dockZone` of the top centre docks it again. The starting values are
+- **The default, until the first move:** centred just below the menu bar on the display with the
+  menu bar, or just below the notch on a notched Mac, with no orbs on both sides of the camera and
+  no group of orbs in a wing ([#3831]).
+- **At the top edge or away from it:** a drop within `dockZone` of the top centre counts as the top
+  edge, and a drag more than `undockDistance` from it leaves it. The starting values are
   `undockDistance` 48 points and `dockZone` 96 points, measured from the top centre of the menu-bar
-  display's work area (`desktop/buddyPlacement.js`); the owner's playground session ([#3892]) tunes
-  both, and the values it settles are recorded here.
-- Docked or folded, it covers no menu-bar item and no window control ([#3831]).
+  display's work area (`desktop/buddyPlacement.js`). Where it sits changes what the machine does
+  while the owner is away (at the top edge it steps aside, elsewhere it dozes) and what its card
+  shows on an alert, never the orb's size or look.
+- **Its card** opens beside it on the side with room ([the room budget](#the-room-budget)), and it
+  covers no menu-bar item and no window control ([#3831]).
 
 ## How a state change travels
 
-A state change moves through every surface at once, each in its own room: the orb and line change
-on the island or the floating orb, the tray icon swaps its still orb, the dock icon changes
-only while something needs the owner, and a notification is sent only for an alert (and only when
-the interruption rules allow it). The phone companion follows the same change.
+A state change moves through every surface at once, each in its own room: the orb's dots, badge
+and wash change where it stands and its card's line follows, the tray icon swaps its still orb, the
+dock icon changes only while something needs the owner, and a notification is sent only for an
+alert (and only when the interruption rules allow it). The phone companion follows the same change.
 
 ## Later work
 
@@ -154,4 +169,5 @@ only the text the owner approved, and records the core and app commits validated
 [#3899]: https://github.com/PersonalClaw/PersonalClaw/issues/3899
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570
+[#5216]: https://github.com/PersonalClaw/PersonalClaw/issues/5216
 [PersonalClaw/PersonalClawApps#164]: https://github.com/PersonalClaw/PersonalClawApps/issues/164

@@ -234,6 +234,16 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
       finished: [],
     },
     why: "the run's home has nothing running",
+  }, {
+    url: /\/api\/buddy\/policy(\?.*)?$/,
+    // Buddy status on, as the owner who opens the buddy has it: the page draws only then (#3832).
+    json: {
+      show: true,
+      surfaces: { window: true, tray: true, dock: true, notifications: true },
+      away_after_secs: 180,
+      notifications: { muted: false, quiet_now: false, may_interrupt: true, changes_at: null },
+    },
+    why: "Buddy status is off until its owner turns it on",
   }],
   companion: [{
     url: /\/api\/waiting(\?.*)?$/,
