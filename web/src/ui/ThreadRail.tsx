@@ -21,8 +21,9 @@ export interface ThreadRailGroup {
 }
 
 /** `loading`: nothing read yet. `failed`: the last read failed, and the groups are what the last
- *  good read said (none when no read has succeeded). */
-export type ThreadRailStatus = 'loading' | 'ready' | 'failed'
+ *  good read said (none when no read has succeeded). `offline`: the gateway is not answering at
+ *  all, so the groups are what it said before it stopped, and no read is worth blaming. */
+export type ThreadRailStatus = 'loading' | 'ready' | 'failed' | 'offline'
 
 /** Which groups the owner opened or closed, by project id. A group with no entry is open while it
  *  holds a thread and closed while it holds none. */
@@ -241,6 +242,16 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
       {status === 'failed' && (
         <div data-type="body-s" className="flex items-center gap-s px-s py-1">
           <span className="min-w-0 flex-1 text-on-surface-var">{failure || "Couldn't load your threads."}</span>
+          <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
+        </div>
+      )}
+      {status === 'offline' && (
+        // Offline is not a failed read and not an empty list: the gateway is away, so the threads
+        // are the last ones it listed, or none yet, and they come back with it.
+        <div data-type="body-s" className="flex items-center gap-s px-s py-1">
+          <span className="min-w-0 flex-1 text-on-surface-var">
+            {groups.length ? 'Offline. These are the threads from before the gateway stopped answering.' : 'Offline. Your threads show when the gateway answers again.'}
+          </span>
           <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
         </div>
       )}
