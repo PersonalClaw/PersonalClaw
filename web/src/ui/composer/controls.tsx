@@ -52,7 +52,7 @@ export function PillButton({ icon, label, dimension, open, toggle, wide = false,
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       data-type="label-s"
-      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[16rem]' : 'max-w-[160px]',
+      className={cx('flex min-w-0 items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[var(--composer-pill-max-wide,16rem)]' : 'max-w-[var(--composer-pill-max,160px)]',
         open ? 'bg-surface-high text-on-surface'
           : disabledReason ? 'cursor-not-allowed text-on-surface-var opacity-40'
             : 'text-on-surface-var hover:bg-surface-high active:bg-surface-high')}
@@ -287,8 +287,8 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   const dimension = showAgent && showModel ? 'Agent and model' : showAgent ? 'Agent' : 'Model'
   const heading = 'px-m pt-m pb-1 uppercase tracking-wide text-on-surface-low'
   return (
-    <span className="inline-flex min-w-0 items-center gap-xs">
-      <Popover portal width={300} openSignal={openSignal} trigger={(open, toggle) => (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-xs">
+      <Popover portal width={300} openSignal={openSignal} className="flex min-w-0" trigger={(open, toggle) => (
         <>
           <PillButton icon={showModel ? dot : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
             open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
