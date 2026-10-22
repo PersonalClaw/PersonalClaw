@@ -137,6 +137,7 @@ tiers = ["merge"]
 inputs = [
 ".dockerignore",
 ".env.example",
+".gitattributes",
 ".githooks/",
 ".github/",
 ".gitignore",
