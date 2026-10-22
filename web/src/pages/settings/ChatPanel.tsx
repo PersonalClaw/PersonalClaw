@@ -423,10 +423,11 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     api.saveDashboardConfig(patch).then(() => {
       // Every reader of this section's writes gets its own persisted key, so each needs busting here
       // or the chat keeps the value you just changed until that key happens to go stale. The
-      // composer's Enter binding is the third reader in that same shape.
+      // composer's Enter binding and the pinned question are readers in that same shape.
       invalidateKeys('chat:stream-reveal')
       invalidateKeys('chat:show-timestamps')
       invalidateKeys('chat:send-on-enter')
+      invalidateKeys('chat:keep-question-in-view')
       flash()
     }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
@@ -441,6 +442,9 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
             names. */}
         <Row label="Send on Enter" hint={cfg.send_on_enter ? 'Enter sends · Shift+Enter for a newline.' : 'Enter inserts a newline · sending is button-only.'}>
           <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
+        </Row>
+        <Row label="Keep my question in view" hint={cfg.keep_question_in_view ? 'While a long reply streams, your latest question stays pinned at the top of the conversation.' : 'Off: a long reply scrolls your question out of view as it streams.'}>
+          <Toggle on={!!cfg.keep_question_in_view} onChange={(v) => save({ keep_question_in_view: v })} label="Keep my question in view" />
         </Row>
         <Row label="Show timestamps" hint="Display a time on each message.">
           <Toggle on={cfg.show_timestamps} onChange={(v) => save({ show_timestamps: v })} label="Show timestamps" />

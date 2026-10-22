@@ -1796,6 +1796,15 @@ class DashboardConfig:
             "no model is bound.",
         ),
     )
+    keep_question_in_view: bool = field(
+        default=False,
+        metadata=_meta(
+            "Keep my question in view",
+            "While a reply taller than the window streams, pin a one-line banner with your "
+            "latest question at the top of the conversation. Clicking it scrolls back to the "
+            "question; it leaves once the reply settles or the question is back in view.",
+        ),
+    )
     offer_check_work: bool = field(
         default=True,
         metadata=_meta(
@@ -4445,6 +4454,7 @@ class AppConfig:
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
                 followup_chips=dashboard_data.get("followup_chips", True),
                 offer_check_work=bool(dashboard_data.get("offer_check_work", True)),
+                keep_question_in_view=bool(dashboard_data.get("keep_question_in_view", False)),
                 stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
                 # Opt-in, read with a False default: a config.json that is missing the

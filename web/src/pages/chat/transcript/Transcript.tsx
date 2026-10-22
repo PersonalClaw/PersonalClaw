@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { api } from '../../../lib/api'
 import { useQuery } from '../../../lib/data'
@@ -24,6 +24,7 @@ import { UserEditor } from './UserEditor'
 import { RewindDivider } from './RewindDivider'
 import { SelectionQuote } from './SelectionQuote'
 import { TurnHead } from './TurnHead'
+import { QuestionInView } from './QuestionInView'
 
 // ── The chat's transcript region ──────────────────────────────────────────────────────────────
 //
@@ -56,6 +57,9 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
 }) {
   const { scrollRef, endRef, followTurnRef, followEnd, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
   const { sessionRef, turns, streaming, turnPhase, turnLine, turnEnding, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
+  // The latest question, which "Keep my question in view" pins while a long reply streams.
+  const lastQuestion = turns.map((t) => t.role).lastIndexOf('user')
+  const [questionNode, setQuestionNode] = useState<HTMLElement | null>(null)
   // "Show timestamps" — the same persisted-query shape as the stream's settings reads, and read HERE because
   // this is the component that draws a turn's `ts`. Gating happens by NOT PASSING the stamp down, so
   // the action row never learns about the preference: absent means "no time", which is also what a
@@ -113,6 +117,10 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
             so the end makes room for it (`composer/ComposerFold`). */}
         <div className="mx-auto flex flex-col gap-2xl px-l py-2xl"
           style={{ maxWidth: 'var(--reading-width)', paddingBottom: 'calc(var(--spacing-2xl) + var(--composer-fold-room, 0px))' }}>
+          {/* "Keep my question in view": the latest question, pinned while a reply that scrolled
+              it out streams (Settings › Chat). */}
+          <QuestionInView streaming={streaming} node={questionNode} scrollRef={scrollRef}
+            question={lastQuestion >= 0 ? turns[lastQuestion].segments.map((s) => (s.kind === 'text' ? s.text : '')).join('') : ''} />
           {withTurnHead(turns.map((turn, i) => {
             const isLast = i === turns.length - 1
             const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')
@@ -121,7 +129,11 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
               // browser gate can put a REPLY on screen without its question and check the
               // Session Map still lights that question — the registry itself is a ref.
               <div key={i} className="relative" data-transcript-turn={turn.role}
-                ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
+                ref={(el) => {
+                  const c = markCoordOf(turn, i)
+                  if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c)
+                  if (i === lastQuestion) setQuestionNode(el)
+                }}>
                 {turn.role === 'user' ? (
                   editingTurn === i ? (
                     <UserEditor initial={turnTextOf(turn)} onCancel={() => { setEditingTurn(null); setEditFailure(null) }}
