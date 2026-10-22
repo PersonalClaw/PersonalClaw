@@ -36,9 +36,9 @@ file and the app differ.
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
 | `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/DashboardLive.tsx`, `pages/dashboard/widgets/Discover.tsx` |
 | `#/mission-control` | Mission Control | not in the sidebar | Mission Control | `pages/buddy/cardFixtures.ts`, `pages/buddy/stageCard.ts` |
-| `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/ProjectPicker.tsx` |
-| `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/ProjectPicker.tsx` |
-| `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/ProjectPicker.tsx` |
+| `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
+| `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
+| `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/app` | app | not in the sidebar | none | `pages/apps/AppFrame.tsx`, `pages/apps/AppHostPage.tsx` |
 | `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 7 more |
 | `#/companion` | Companion | Companion, in the phone's drawer only | none | `app/nativePush.ts`, `app/personality.tsx`, `lib/data/keys.ts`, `lib/nativeNotifications.ts` and 2 more |

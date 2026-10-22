@@ -88,7 +88,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   /** The reply being read out, which hands-free waits on. */
   speakingTurn: number | null
 }) {
-  const { acpFor, activatePlanMode, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
+  const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
   const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
   // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
   const contextPinned = useContextPinned()
@@ -317,6 +317,13 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
               {screenShare.sharing && sessionRef.current && (
                 <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
                   onClick={() => { close(); void pinScreenFrame() }} />
+              )}
+              {/* A goal loop, from a new thread (#3824): the draft becomes the loop's task, and the loop
+                  composer drafts and plans it. A started chat is a thread already. */}
+              {!started && (
+                <MenuRow icon={<Repeat size={16} />} label="Start a goal loop"
+                  hint="Hand this draft to a goal loop, which works cycle by cycle until it is done"
+                  onClick={() => { close(); startGoalLoop() }} />
               )}
               {/* Plan mode — an explicit, manual entry. Nothing decides FOR the
                   user that a message needs planning: a quick task just sends. Offered on

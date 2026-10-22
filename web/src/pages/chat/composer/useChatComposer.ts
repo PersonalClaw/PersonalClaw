@@ -61,6 +61,7 @@ const SLASH_HELP = [
   '- `/agent` — switch the agent for this chat',
   '- `/effort` — set the reasoning effort for this chat',
   '- `/project` — scope this new chat to a project (before it starts)',
+  '- `/goal <task>` — start a goal loop on the task instead, from a new chat: it works cycle by cycle until the goal is met',
   '- `/tools` — open the Tools page',
   '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
   '- `/rewind-to-turn N` — put back the files the agent edited after turn N, with its own file tools or as an agent CLI that asked first (preview first; add `--confirm` to apply). A command\'s changes, and an agent CLI\'s edits made without asking, have no backup: the preview lists the files they changed in the chat\'s folder, and those stay. The conversation is not rewound.',
@@ -69,6 +70,9 @@ const SLASH_HELP = [
   '',
   'Type `/` in the message box any time to see and filter the full list.',
 ].join('\n')
+
+/** What `/goal` says in a chat that has started: a goal loop is a thread of its own. */
+const GOAL_FROM_A_NEW_THREAD = 'A goal loop starts from a new thread: open **New thread** (⌘N) and type `/goal` and the goal there, or choose **Start a goal loop** from its **+** menu.'
 
 /** One of her earlier messages for ↑/↓ recall: its text as she wrote it, and the blocks she
  *  pasted into it, which come back to the composer with it. */
@@ -379,6 +383,17 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
         setInput(''); setOpenReasoningSignal((n) => n + 1); return true
       case '/tools':
         setInput(''); navigate('tools'); return true
+      case '/goal':
+        // A goal loop is a thread of its own (#3824): a new chat hands its draft to the loop composer,
+        // which drafts and plans it as ever. A started chat is already its own thread, so it says
+        // where a goal loop starts instead of sending the text to the model.
+        setInput('')
+        if (started) {
+          setTurns((prev) => [...prev, userTurn(t), assistantTurn(GOAL_FROM_A_NEW_THREAD)])
+          return true
+        }
+        startGoalLoop(arg)
+        return true
       case '/project':
         // Project binding is a create-time choice — only actionable before the
         // chat starts. Once started it's frozen (the header shows the binding).
@@ -656,6 +671,17 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // heuristic anywhere: a chat only ever gets a plan gate from this click. When a turn
   // is in flight the server PARKS it (the transcript is kept) and resumes on approval,
   // so the mid-conversation case needs nothing extra here.
+  /** Hand *task* (the draft, by default) to the loop composer as a goal loop, with the project this
+   *  new chat was scoped to. The loop composer drafts and plans it as it always has, through the
+   *  loop-start route and its guards, and opens the loop's thread once it is made. */
+  function startGoalLoop(task: string = input) {
+    const params = new URLSearchParams({ kind: 'goal' })
+    if (task.trim()) params.set('task', task.trim())
+    if (projectId) params.set('project', projectId)
+    setInput('')
+    navigate(`loop?${params}`)
+  }
+
   async function activatePlanMode() {
     const sid = sessionRef.current
     if (!sid) return
@@ -1155,6 +1181,6 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   }
 
   return {
-    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

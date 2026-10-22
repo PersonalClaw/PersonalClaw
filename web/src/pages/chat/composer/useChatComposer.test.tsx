@@ -126,6 +126,31 @@ describe('useChatComposer sends', () => {
   })
 })
 
+describe('a goal loop starts from a new thread\'s composer (#3824)', () => {
+  it('/goal <task> opens the loop composer on that task, as a goal loop, and nothing reaches the model', async () => {
+    const m = mount()
+    await act(async () => { await m.result.current.c.send('/goal Find a seed supplier that ships north') })
+    expect(h.createChatSession).not.toHaveBeenCalled()
+    expect(h.sendChat).not.toHaveBeenCalled()
+    expect(m.navigate).toHaveBeenCalledWith(`loop?${new URLSearchParams({ kind: 'goal', task: 'Find a seed supplier that ships north' })}`)
+  })
+
+  it('the + menu\'s row takes the draft as the task, and the project the chat was scoped to', async () => {
+    const m = mount()
+    act(() => { m.result.current.c.setInput('Plan the raised beds'); m.result.current.c.setProjectId('p-garden') })
+    act(() => { m.result.current.c.startGoalLoop() })
+    expect(m.navigate).toHaveBeenCalledWith(`loop?${new URLSearchParams({ kind: 'goal', task: 'Plan the raised beds', project: 'p-garden' })}`)
+  })
+
+  it('a started chat says a goal loop starts from a new thread, and nothing reaches the model', async () => {
+    const m = mount({ sessionId: NEW_KEY, turns: [userTurn('Hello'), assistantTurn('Hello again.')] })
+    await act(async () => { await m.result.current.c.send('/goal Find a seed supplier') })
+    expect(h.sendChat).not.toHaveBeenCalled()
+    expect(m.navigate).not.toHaveBeenCalled()
+    expect(turnText(m.result.current.turns.at(-1)!)).toContain('A goal loop starts from a new thread')
+  })
+})
+
 describe('useChatComposer applies the selection', () => {
   it('moves the pill at once and persists it to the session', () => {
     const m = mount({ sessionId: NEW_KEY })
