@@ -69,6 +69,9 @@ _EXPECTED_HOMELESS = {
     # stop reason (see the two NONE rows' consequence notes). Argued in the change itself.
     "deadline_secs",
     "stop_reason",
+    # How a loop reports (#3824): the loop watchdog's own notes; a run reports through its
+    # notifications, which no per-run choice governs. Argued in its row.
+    "report",
 }
 
 

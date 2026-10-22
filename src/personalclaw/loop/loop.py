@@ -225,6 +225,10 @@ def held_reason(status: str) -> str:
     return INCIDENT_HOLD if incident_active() else ""
 
 
+#: The three ways a loop may report (``Loop.report``), in the order the start flow offers them.
+REPORT_CHOICES = ("as_it_goes", "when_done", "if_stuck")
+
+
 @dataclass
 class Loop:
     """One autonomous loop of any kind.
@@ -281,6 +285,11 @@ class Loop:
     #: Unattended (they run on a standing grant). Attended unless a creator says otherwise: a
     #: loop nobody chose a Mode for asks (``loop.posture``).
     attended: bool = True
+    #: How the loop reports to its owner (``REPORT_CHOICES``), asked once when it starts:
+    #: ``as_it_goes`` sends a note each cycle, ``when_done`` only its outcome, ``if_stuck`` only a
+    #: failure. A loop waiting on its owner raises its Inbox item whatever this says. A new loop
+    #: reports ``when_done``; a row stored before the field reads ``as_it_goes`` (``store``).
+    report: str = "when_done"
     autopilot: bool = True  # system drives phases vs user queues (code-ish)
     max_cycles: int = 30  # 0 = uncapped
     #: Run ceilings — 0 = uncapped, like ``max_cycles``. ``deadline_secs`` bounds ACTIVE

@@ -27,6 +27,7 @@ from personalclaw.loop.loop import (
     ACTION_SOURCE_STATES,
     KINDS,
     PRELAUNCH_STATUSES,
+    REPORT_CHOICES,
     Loop,
     LoopStatus,
 )
@@ -213,6 +214,9 @@ def _build_loop_from_body(body: dict) -> Loop:
         workflow_ids=[str(w) for w in _as_list(body.get("workflow_ids")) if str(w).strip()],
         # A loop is Unattended only when its creator says so; one that names no Mode asks.
         attended=bool_field(body, "attended", default=True),
+        # How it reports (#3824), asked once when it starts; a creator that does not say gets the
+        # outcome alone. Checked against REPORT_CHOICES by the create route before this.
+        report=str(body.get("report") or "when_done"),
         autopilot=bool_field(body, "autopilot", default=True),
         auto_teardown_on_complete=bool_field(body, "auto_teardown_on_complete", default=False),
         max_cycles=int(body.get("max_cycles", 30)),
@@ -607,6 +611,10 @@ async def api_loop_create(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Task is too short — describe it in more detail."}, status=400
         )
+    if "report" in body and body["report"] not in REPORT_CHOICES:
+        return web.json_response(
+            {"error": f"report must be one of {', '.join(REPORT_CHOICES)}"}, status=400
+        )
     # Validate BEFORE persisting — this is the gate that stops a dangerous verify/test
     # command (rm -rf /, …) from ever landing in the store where the watchdog would
     # auto-run it unattended. Workspace-binding is a warning here (picked later, then
@@ -941,6 +949,10 @@ async def api_loop_update(request: web.Request) -> web.Response:
         blocked = await validation.worker_tools_blocker({"kind": existing.kind, **moved})
         if blocked:
             return _cannot_use_tools(blocked)
+    if "report" in body and body["report"] not in REPORT_CHOICES:
+        return web.json_response(
+            {"error": f"report must be one of {', '.join(REPORT_CHOICES)}"}, status=400
+        )
     updated = store.update_spec(cid, spec)
     if updated is not None:
         # The grill SAVE seam (`grill.SaveFn`). `api_loop_grill_tree` deliberately passes
@@ -956,6 +968,17 @@ async def api_loop_update(request: web.Request) -> web.Response:
         # lesson, which is embedded, a round trip to the model.
         await asyncio.to_thread(_persist_grill_decisions, body, request.app["state"])
     if updated is None:
+        # How it reports: the owner's to change at any time, from the loop's strip (#3824).
+        if set(body) == {"report"}:
+            try:
+                reported = store.set_report(cid, str(body["report"]))
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            return (
+                web.json_response(_loop_view(cid))
+                if reported
+                else web.json_response({"error": "Not found"}, status=404)
+            )
         # spec frozen — allow a name-only patch via rename
         if set(body) <= {"name"}:
             renamed = store.rename(cid, require_string(body, "name"))
