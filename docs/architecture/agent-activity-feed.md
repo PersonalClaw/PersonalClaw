@@ -118,6 +118,12 @@ The buddy's presence (`#/buddy`, `web/src/lib/buddy/host.ts`) reads the same way
 the waiting list and whether the microphone is live, a burst in one turn of the event loop is
 one read, and no field is read off the frame. Its machine's inputs are those levels, diffed
 against what it last showed.
+In the buddy's own window the doorbell is the desktop shell's (`desktop/doorbell.js`): the
+main process's one owner socket, signed in with the shell's session, rings the menu bar's read and
+the buddy's page (a ring over the window's bridge carries nothing), so the page holds no socket of
+its own. A burst inside 100 ms is one read; while the socket is down it retries with backoff and the
+menu bar reads every 5 s. It raises a hidden buddy window only for a waiting item whose
+`interrupt` is `deliver`.
 
 Why it matters: envelope shapes drift per producer, several producers emit the same
 type with different fields, and a stale process can emit a contradicting one. A surface

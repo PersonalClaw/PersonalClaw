@@ -259,6 +259,28 @@ const BUDDY_CHANNELS = Object.freeze({
   open: `${BUDDY_PREFIX}open`,
 });
 
+/** What main tells the buddy's page (#3832), the only two messages that go that way: a ring, which
+ *  carries nothing and says the lists moved (read them again), and the doorbell's connection. */
+const BUDDY_PUSHES = Object.freeze({
+  ring: `${BUDDY_PREFIX}ring`,
+  connection: `${BUDDY_PREFIX}connection`,
+});
+
+/** The doorbell's connection states the page hears (`doorbell.js`). */
+const BUDDY_CONNECTIONS = Object.freeze(["up", "lost", "restarting"]);
+
+/**
+ * Tell the buddy's page *name* (`ring`, or `connection` with one of `BUDDY_CONNECTIONS`). Nothing
+ * else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
+ */
+function pushToBuddy(win, name, value) {
+  if (!win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return false;
+  if (name === "ring") win.webContents.send(BUDDY_PUSHES.ring);
+  else if (name === "connection" && BUDDY_CONNECTIONS.includes(value)) win.webContents.send(BUDDY_PUSHES.connection, value);
+  else return false;
+  return true;
+}
+
 /** At most this many rectangles make the window's shape (the face, the card and their parts). */
 const MAX_REGIONS = 8;
 /** No rectangle or drag step is larger than the largest display the shell has met. */
@@ -333,7 +355,10 @@ module.exports = {
   CAPTURE_KEY,
   ENABLED_KEY,
   BUDDY_CHANNELS,
+  BUDDY_CONNECTIONS,
   BUDDY_PAYLOADS,
+  BUDDY_PUSHES,
+  pushToBuddy,
   buddyWindowOptions,
   makeBuddyWindow,
   makeBuddyPresence,

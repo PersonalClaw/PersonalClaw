@@ -38,6 +38,8 @@ function fakeBridge() {
     dragEnd: vi.fn(),
     setPresentation: vi.fn(),
     openInApp: vi.fn(),
+    onRing: vi.fn(() => () => {}),
+    onConnection: vi.fn(() => () => {}),
   } satisfies BuddyBridge
 }
 

@@ -248,7 +248,7 @@ describe("the tooltip and the poll", () => {
     assert.match(composeTrayTooltip(kept), /last known 1 running/);
   });
 
-  it("main.js polls the running list, and tells a restart by the starts it took", () => {
+  it("main.js reads the running list on each ring, and tells a restart by the starts it took", () => {
     const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
     assert.match(main, /getGateway\("\/api\/running"\)/);
     assert.doesNotMatch(main, /getGateway\("\/api\/loops"\)/);

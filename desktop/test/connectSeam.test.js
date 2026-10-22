@@ -113,16 +113,17 @@ describe("machine-local credentials never leave loopback", () => {
     assert.ok(requestAt > assertAt, "getGateway sends the shell's sign-in before it checks where");
   });
 
-  it("sends the shell's sign-in only through `postGateway` and `getGateway`", () => {
+  it("sends the shell's sign-in only through `postGateway`, `getGateway` and the doorbell's `socketGateway`", () => {
     // The session the ready line hands out is the owner's. Read from one place (`localSignIn`),
-    // and put on a request by the two helpers that target the spawned gateway and nothing else.
+    // and put on a request by the three helpers that target the spawned gateway and nothing else.
     const sites = [...MAIN.matchAll(/localSignIn\.authorization\(\)/g)];
-    assert.strictEqual(sites.length, 2, `expected two sites, found ${sites.length}`);
+    assert.strictEqual(sites.length, 3, `expected three sites, found ${sites.length}`);
     for (const m of sites) {
       const before = MAIN.slice(0, m.index);
-      const opener = Math.max(before.lastIndexOf("function postGateway("), before.lastIndexOf("function getGateway("));
+      const opener = Math.max(before.lastIndexOf("function postGateway("), before.lastIndexOf("function getGateway("), before.lastIndexOf("function socketGateway("));
       const closer = MAIN.indexOf("\n}\n", opener);
-      assert.ok(opener > 0 && m.index < closer, "the sign-in is sent outside the two loopback helpers");
+      assert.ok(opener > 0 && m.index < closer, "the sign-in is sent outside the three loopback helpers");
+      assert.match(MAIN.slice(opener, closer), /assertLoopbackTarget\(localGatewayUrl/, "a helper that sends the sign-in re-asserts loopback");
     }
     // A sign-out is its own session ending itself, still through postGateway.
     const signOut = MAIN.slice(MAIN.indexOf("async function signOutLocalSession("));
@@ -211,11 +212,11 @@ describe("there is no second retry loop racing the SPA", () => {
     assert.ok(stay > 0 && load > stay, "the reload is not gated on a reachable probe");
   });
 
-  it("has exactly one interval in the file, and it is the pre-existing presence poll", () => {
-    const intervals = [...MAIN.matchAll(/setInterval\(/g)];
-    assert.strictEqual(intervals.length, 1);
-    const before = MAIN.slice(Math.max(0, intervals[0].index - 200), intervals[0].index);
-    assert.match(before, /presenceTimer/);
+  it("has no interval in the file: the menu bar's counts ride the doorbell, which polls only while down", () => {
+    // The presence poll was the one interval here. The doorbell (`doorbell.js`) reads on each ring
+    // while its socket is up and on its own timeouts while it is down, so a quit leaves no interval.
+    assert.strictEqual([...MAIN.matchAll(/setInterval\(/g)].length, 0);
+    assert.match(MAIN, /makeDoorbell\(/);
   });
 });
 

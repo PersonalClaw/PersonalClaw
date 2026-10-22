@@ -34,7 +34,8 @@ const {
 } = require("./gatewayLost");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
-const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, registerBuddyIpc } = require("./buddyWindow");
+const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc } = require("./buddyWindow");
+const { makeDoorbell, mayRaise, openGatewaySocket } = require("./doorbell");
 const { pushToBridged } = require("./windowPushes");
 const { loadRegistry } = require("./endpointRegistry");
 const {
@@ -103,7 +104,8 @@ const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
 const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
-/** How often the menu bar refreshes its count of what waits on you and what is running. */
+/** How often the menu bar reads its count of what waits on you and what is running, while the
+ *  doorbell's socket is down (connected, it reads on each ring instead). */
 const PRESENCE_REFRESH_MS = 5000;
 /** How long quit waits for the gateway to stop before escalating. */
 const GATEWAY_GRACE_MS = 8000;
@@ -117,7 +119,6 @@ let buddy = null;
 let buddyPresence = null;
 let gatewayProcess = null;
 let isQuitting = false;
-let presenceTimer = null;
 /** How the latest start of the gateway failed (`startGateway`'s `err.exit`), until one succeeds. */
 let startFailure = null;
 
@@ -418,6 +419,8 @@ async function followRestartedGateway(ready) {
   if (replaced) await signOutLocalSession(replaced);
   shellToken = null;
   await registerWithGateway();
+  // The doorbell rings at the new address, with the new start's session.
+  startPresenceRefresh();
   if (originOf(activeUrl) === previousOrigin) activeUrl = localGatewayUrl;
   for (const wc of webContents.getAllWebContents()) {
     if (wc.isDestroyed()) continue;
@@ -1244,35 +1247,69 @@ function getGateway(pathname) {
 }
 
 /**
- * Refresh the live counts. `GET /api/waiting` is `{waiting: [...], unreadable: [...]}`; `GET /api/running` is
- * `{running: [...], finished: [...]}` — both are folded by `summarizePresence`, which renders a
- * failed poll as "not connected" rather than as a zero that looks like good news, and
- * `carryPresence` carries the last rows over a poll that could not read them. Which start of the
- * gateway the poll read (`gatewayStarts`, taken before the reads) is how a restart that cut work
- * off is told apart: this shell takes every start's ready line, so it needs no read of its own.
+ * Read the live counts. `GET /api/waiting` is `{waiting: [...], unreadable: [...]}`; `GET /api/running` is
+ * `{running: [...], finished: [...]}`. Which start of the gateway the read saw (`gatewayStarts`,
+ * taken before the reads) is how a restart that cut work off is told apart: this shell takes every
+ * start's ready line, so it needs no read of its own.
  */
-async function refreshPresence() {
-  if (!trayPresence.available) return;
+async function readPresence() {
   const before = gatewayStarts;
   const [waiting, running] = await Promise.all([getGateway("/api/waiting"), getGateway("/api/running")]);
   const boot = bootRead(before, gatewayStarts);
-  trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(waiting, running), { boot }));
+  return { waiting, running, boot };
 }
 
-/** Start the presence poll. Polling the loopback API (not the WS) is deliberate: the
- * menu bar needs a low-frequency count, and a poll cannot leave a half-open socket
- * behind on quit. */
+/**
+ * The doorbell's socket at the gateway this shell started, signed in with the shell's session: the
+ * same re-assertion `getGateway` makes, since the socket carries the owner's session. A socket to
+ * anywhere else, or before there is a gateway, is refused (the doorbell waits and tries again).
+ */
+function socketGateway(url, gateway) {
+  if (!localGatewayUrl || originOf(gateway) !== originOf(localGatewayUrl)) throw new Error("not the gateway this shell started");
+  assertLoopbackTarget(localGatewayUrl, "WS /api/ws");
+  return openGatewaySocket(url, gateway, () => localSignIn.authorization());
+}
+
+/**
+ * One read of the lists, for each consumer. The menu bar folds it (`summarizePresence`, which
+ * renders a failed read as "not connected" rather than as a zero that looks like good news, and
+ * `carryPresence`, which carries the last rows over a read that failed). The buddy's page is rung
+ * to read its own, and its window, hidden, is shown again for an item the gateway says may
+ * interrupt you now (`mayRaise`): nothing else raises it.
+ */
+function takePresence({ waiting, running, boot }) {
+  if (trayPresence.available) {
+    trayPresence.setPresence(carryPresence(trayPresence.presence, summarizePresence(waiting, running), { boot }));
+  }
+  const win = buddy?.window;
+  if (!win || win.isDestroyed()) return;
+  if (!buddy.isVisible() && mayRaise(waiting)) buddy.show();
+  pushToBuddy(win, "ring");
+}
+
+/**
+ * The doorbell (`doorbell.js`): the one socket this shell holds to the gateway it started, signed in
+ * with the shell's session. The menu bar and the buddy read the lists on its rings, so nothing polls
+ * while it is connected; while it is down it retries with backoff and the menu bar reads every
+ * `PRESENCE_REFRESH_MS`. Its connection is the buddy's: lost, back, or a restart the gateway
+ * announced.
+ */
+const doorbell = makeDoorbell({
+  openSocket: socketGateway,
+  read: readPresence,
+  onLevels: takePresence,
+  onConnection: (state) => pushToBuddy(buddy?.window, "connection", state),
+  pollMs: PRESENCE_REFRESH_MS,
+  log: (msg) => console.warn(`desktop: ${msg}`),
+});
+
+/** Ring at the gateway this shell started; with no gateway, the menu simply reads "not connected". */
 function startPresenceRefresh() {
-  if (!trayPresence.available || presenceTimer) return;
-  refreshPresence();
-  presenceTimer = setInterval(refreshPresence, PRESENCE_REFRESH_MS);
+  if (localGatewayUrl) doorbell.connect(localGatewayUrl);
 }
 
 function stopPresenceRefresh() {
-  if (presenceTimer) {
-    clearInterval(presenceTimer);
-    presenceTimer = null;
-  }
+  doorbell.stop();
 }
 
 // ── Connect mode: the shell pointed at a gateway it did not spawn ──
@@ -1852,7 +1889,7 @@ if (!app.requestSingleInstanceLock()) {
     // failure here leaves the gateway reporting "not connected" — degraded but
     // honest — and never blocks the window.
     await registerWithGateway();
-    // Counts need `localGatewayUrl`, so the poll starts after the gateway is up. With no
+    // Counts need `localGatewayUrl`, so the doorbell rings once the gateway is up. With no
     // gateway the menu simply reads "not connected".
     startPresenceRefresh();
 

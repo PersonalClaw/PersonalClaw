@@ -48,7 +48,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.error, undefined, root.error);
     assert.deepEqual(root.preloadErrors, []);
     assert.equal(root.bridge.buddy, "object");
-    assert.deepEqual(root.bridge.keys, ["dragBy", "dragEnd", "dragStart", "openInApp", "pointerOver", "setPresentation", "setRegions"]);
+    assert.deepEqual(root.bridge.keys, ["dragBy", "dragEnd", "dragStart", "onConnection", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"]);
     assert.equal(root.bridge.desktop, "undefined", "no capability bridge in the buddy's window");
   });
 

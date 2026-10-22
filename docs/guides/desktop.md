@@ -550,9 +550,11 @@ Its page is `#/buddy`, and a browser tab can open it too.
 - Approvals and agents' questions are answered in the buddy. A workflow's gate, a parked
   automation and the other kinds open in PersonalClaw.
 
-For now, a buddy with nothing to say keeps its window open with nothing drawn on it, so every
-click passes through, rather than hiding: the app cannot yet show a hidden buddy again when
-something starts.
+With nothing to say, the buddy hides its window. The app shows it again when something waits on
+you that may interrupt you now, the same decision every other surface makes for that item: in quiet
+hours, or muted, it waits in the menu bar instead. The app holds one connection to the gateway for
+the menu bar and the buddy, and reads the lists when it says they moved, so nothing polls while it
+is connected; while it is down, the menu bar reads them every five seconds until it is back.
 
 **On Linux** the area that takes clicks is the window's shape, and the dock and float land
 without a move. Linux offers an app no way to keep a window out of a capture, so a screenshot or a
