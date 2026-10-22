@@ -50,6 +50,12 @@ supported width, 320 to 1440 px (#3812):
 5. The keyboard: the keys in the brief's
    [keyboard model](../../web/REDESIGN.md#6-keyboard-model).
 
+The rail toggles from the toolbar, ⌘B and the palette, and comes back as it was: its open state,
+its width, each project's disclosure and how far it was scrolled are kept on the device, and the
+thread it lights is the address's. Opening it puts focus on the row that last had it, else the lit
+thread; closing it puts focus back on the toggle. Hiding it changes chrome only: the address, the
+selected thread and running work are untouched.
+
 ## Where the rest goes
 
 - **Terminal** is the bottom drawer (⌘J or ⌘\`) on every page. "Open full" keeps a full-height

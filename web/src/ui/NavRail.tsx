@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRememberedScroll } from './railScroll'
 import { withWeight } from '../design/fontWeight'
 import { ChevronDown, type LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -111,6 +112,7 @@ export function NavRail({
     return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
   })
   const dragging = useRef(false)
+  const scrollArea = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (!collapsed) localStorage.setItem(W_KEY, String(width)) }, [width, collapsed])
 
@@ -209,6 +211,8 @@ export function NavRail({
   // drawer. In overlay mode it always shows full labels (a drawer has room; icon-only
   // makes no sense once you've deliberately opened it).
   const showFull = overlay ? true : !collapsed
+  // The full rail comes back to where it was scrolled, after a reload or a collapse (`railScroll.ts`).
+  useRememberedScroll(scrollArea, showFull)
   // The threads sit after the leading (unsectioned) destinations, before the first sectioned one.
   const firstSectioned = topItems.findIndex((i) => i.section)
   const threadsAt = firstSectioned < 0 ? topItems.length : firstSectioned
@@ -231,7 +235,7 @@ export function NavRail({
     // clear of either edge, ring and all.
     <nav data-tour="rail" className="flex h-full flex-col"
       style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
-      <div data-rail-scroll className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden px-m pt-l pb-s"
+      <div ref={scrollArea} data-rail-scroll className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden px-m pt-l pb-s"
         style={{ scrollPaddingBottom: RING_REACH }}>
         {/* header — logo (the collapse toggle lives in the main area, not here) */}
         <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
