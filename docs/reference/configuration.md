@@ -312,6 +312,7 @@ Transcription shows the one it found, or where it looked when there is none.
 | `voice.echo_filter_enabled` | boolean | `true` | Settings → Speech & Transcription | Drop a transcription sharing three consecutive words with what the assistant just spoke — the backstop for speaker bleed. Hands-free requests only; the dashboard shows the drop instead of looking deaf. |
 | `voice.clean_for_speech_enabled` | boolean | `true` | Settings → Speech & Transcription | Strip code blocks, reduce URLs to their domain and paths to their filename, and drop CLI flags before synthesis. The chat transcript always keeps the full text — only the audio is cleaned. |
 | `voice.voice_disclaimer_enabled` | boolean | `true` | Settings → Speech & Transcription | Append a one-line note to a dictated message telling the model the text came from speech recognition, so it self-corrects garbled homophones instead of confidently misreading them. |
+| `voice.session_map_audio_enabled` | boolean | `false` | Settings → Speech & Transcription | Let a chat's Session Map move with PersonalClaw's own audio: the reply being read aloud, audio or video playing in the chat, and the microphone while you dictate or talk hands-free. It only measures a microphone you already opened, never opens one itself, and keeps nothing: one loudness level a frame, read and dropped in the page. With reduced motion it shows a still Playing or Listening mark instead. |
 
 ## Dashboard (`dashboard.*`)
 

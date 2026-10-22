@@ -104,6 +104,9 @@
   - text: Voice-origin disclaimer Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them.
   - status
   - switch "Voice-origin disclaimer" [checked]
+  - text: Session Map reacts to audio A chat's Session Map moves with a reply being read aloud, audio or video playing in the chat, and your microphone while you dictate. It never opens the microphone itself and keeps nothing it hears. With reduced motion it shows a still Playing or Listening mark instead.
+  - status
+  - switch "Session Map reacts to audio"
   - heading "Vocabulary & corrections" [level=#]
   - paragraph: Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Built from the names in your knowledge graph, people first, and kept in step with it as your library grows; add your own, or turn off a wrong one.
   - textbox "Add a vocabulary term":

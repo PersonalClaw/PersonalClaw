@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { api, hasApiCode } from '../../lib/api'
 import type { useComposerNotice } from '../../ui/composer/ComposerNotice'
 import { useVoiceConfig } from './voiceConfig'
-import { type ChatTurn, turnText } from './chatTypes'
+import { type ChatTurn, markCoordOf, turnText } from './chatTypes'
+import { analyserLevel, registerAudioSource, type AudioSourceHandle } from '../../lib/audioPresence'
 
 // ── The chat's read-aloud ─────────────────────────────────────────────────────────────────────
 //
@@ -38,7 +39,7 @@ export function useChatVoice({ sessionRef, turns, notice }: {
   // the user stops. Generation counter ignores stale chunks after a stop/restart.
   // The voice settings follow Settings while this chat is open (`chat/voiceConfig`). Read through
   // a ref where a socket frame decides: the frame handler is created once.
-  const { voiceCfg, speakReplies } = useVoiceConfig()
+  const { voiceCfg, speakReplies, mapAudio } = useVoiceConfig()
   const speakRepliesRef = useRef(speakReplies)
   speakRepliesRef.current = speakReplies
   const [speakingTurn, setSpeakingTurn] = useState<number | null>(null)
@@ -48,13 +49,61 @@ export function useChatVoice({ sessionRef, turns, notice }: {
   // it, so a chat open in two tabs (or on a second device) is read out once.
   const readingRef = useRef<{ request: string; auto: boolean } | null>(null)
 
+  // Every chunk plays through ONE gain node on its way out, so the Session Map's audio presence
+  // has one place to listen while a reading plays (`lib/audioPresence`).
+  const audioOutRef = useRef<GainNode | null>(null)
   function getAudioCtx(): AudioContext | null {
     if (!audioCtxRef.current) {
       const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) return null
       audioCtxRef.current = new Ctor()
+      try {
+        audioOutRef.current = audioCtxRef.current.createGain()
+        audioOutRef.current.connect(audioCtxRef.current.destination)
+      } catch { audioOutRef.current = null }
     }
     return audioCtxRef.current
+  }
+
+  // The reading as an audio-presence source: measured only while a Session Map subscribes, live
+  // only from the moment its audio really starts playing to the moment the last of it ends or is
+  // stopped, and owned by the reply being read. Only a level leaves (`analyserLevel`).
+  const presenceRef = useRef<AudioSourceHandle | null>(null)
+  const liveTimerRef = useRef<number | null>(null)
+  useEffect(() => {
+    const handle = registerAudioSource('playback', () => {
+      let analyser: AnalyserNode | null = null
+      let buf: Float32Array<ArrayBuffer> | null = null
+      return {
+        read: () => {
+          const ctx = audioCtxRef.current
+          const out = audioOutRef.current
+          if (!analyser && ctx && out) {
+            analyser = ctx.createAnalyser()
+            analyser.fftSize = 512
+            out.connect(analyser)
+            buf = new Float32Array(analyser.fftSize)
+          }
+          return analyser && buf ? analyserLevel(analyser, buf) : null
+        },
+        detach: () => {
+          if (analyser) { try { audioOutRef.current?.disconnect(analyser) } catch { /* already gone */ } }
+          analyser = null
+          buf = null
+        },
+      }
+    })
+    presenceRef.current = handle
+    return () => {
+      if (liveTimerRef.current !== null) window.clearTimeout(liveTimerRef.current)
+      handle.unregister()
+      presenceRef.current = null
+    }
+  }, [])
+  /** The reading is no longer audible: stopped, failed or ended. */
+  function quiet() {
+    if (liveTimerRef.current !== null) { window.clearTimeout(liveTimerRef.current); liveTimerRef.current = null }
+    presenceRef.current?.setLive(false)
   }
 
   function stopSpeak() {
@@ -64,6 +113,7 @@ export function useChatVoice({ sessionRef, turns, notice }: {
     audioSourcesRef.current = []
     audioPlayHeadRef.current = 0
     setSpeakingTurn(null)
+    quiet()
   }
 
   function speak(text: string, turnIndex: number, auto = false) {
@@ -78,6 +128,10 @@ export function useChatVoice({ sessionRef, turns, notice }: {
     const request = `read-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
     readingRef.current = { request, auto }
     setSpeakingTurn(turnIndex)
+    // Whose audio this is, by the coordinate the Session Map's entries own — said now, but nothing
+    // is live until the audio actually starts.
+    const turn = turns[turnIndex]
+    presenceRef.current?.setOwner(turn ? markCoordOf(turn, turnIndex) : null)
     // Surface TTS failures instead of silently doing nothing after the Speak button's brief
     // spinner. The two refusals are the server's own sentences, and each names its fix: no
     // text-to-speech model set up (`tts_unbound`), or text-to-speech switched off (`tts_disabled`).
@@ -85,6 +139,7 @@ export function useChatVoice({ sessionRef, turns, notice }: {
     return api.voiceSynthesize(text, s ?? '', request).then(() => notice.clear('speak'), (e: Error) => {
       if (readingRef.current?.request === request) readingRef.current = null
       setSpeakingTurn((cur) => (cur === turnIndex ? null : cur))
+      quiet()
       const refused = hasApiCode(e, 'tts_unbound') || hasApiCode(e, 'tts_disabled')
       notice.showError(refused ? e.message : `Couldn’t play audio: ${e.message}`, 'speak')
     })
@@ -150,16 +205,23 @@ export function useChatVoice({ sessionRef, turns, notice }: {
     const startAt = Math.max(now, audioPlayHeadRef.current)
     const src = ctx.createBufferSource()
     src.buffer = buf
-    src.connect(ctx.destination)
+    src.connect(audioOutRef.current ?? ctx.destination)
     src.start(startAt)
     audioSourcesRef.current.push(src)
     audioPlayHeadRef.current = startAt + buf.duration
+    // Audible from its start time, not from the Speak press: the first chunk arrives seconds later.
+    if (liveTimerRef.current === null && audioSourcesRef.current.length === 1) {
+      liveTimerRef.current = window.setTimeout(() => {
+        liveTimerRef.current = null
+        if (gen === speakGenRef.current && audioSourcesRef.current.length) presenceRef.current?.setLive(true)
+      }, Math.max(0, (startAt - ctx.currentTime) * 1000))
+    }
     // When a source ends, drop it; if it was the last one, playback is done.
     src.onended = () => {
       audioSourcesRef.current = audioSourcesRef.current.filter((x) => x !== src)
-      if (gen === speakGenRef.current && audioSourcesRef.current.length === 0) setSpeakingTurn(null)
+      if (gen === speakGenRef.current && audioSourcesRef.current.length === 0) { setSpeakingTurn(null); quiet() }
     }
   }
 
-  return { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef }
+  return { voiceCfg, mapAudio, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef }
 }

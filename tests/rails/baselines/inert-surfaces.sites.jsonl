@@ -4,6 +4,7 @@
 {"site": "src/personalclaw/config/loader.py::config_reader:voice.duplex_mute_enabled", "reason": "read by the browser's voice settings (web/src/pages/chat/voiceConfig.ts), which this Python census cannot see"}
 {"site": "src/personalclaw/config/loader.py::config_reader:voice.exit_phrases", "reason": "read by the browser's hands-free voice mode (web/src/pages/chat/composer/ChatComposer.tsx), which this Python census cannot see"}
 {"site": "src/personalclaw/config/loader.py::config_reader:voice.push_to_talk_chord", "reason": "read by the browser's push-to-talk binding (web/src/lib/pushToTalk.ts), which this Python census cannot see"}
+{"site": "src/personalclaw/config/loader.py::config_reader:voice.session_map_audio_enabled", "reason": "read by the browser's Session Map audio presence (web/src/pages/chat/voiceConfig.ts), which this Python census cannot see", "added": "2026-10-22"}
 {"site": "src/personalclaw/inbox.py::enum:ItemStatus.SENT", "reason": "kept for reply-draft items already on disk that were sent at the source (the class docstring); nothing writes or reads it by name now"}
 {"site": "src/personalclaw/llm/capabilities.py::enum:StructuredOutput.JSON_MODE", "reason": "a grade no provider declares: a structured-output request goes only to a JSON_SCHEMA provider, and JSON_MODE is left out on purpose (llm_helpers.py)"}
 {"site": "src/personalclaw/memory_record.py::enum:MemoryTier.SEGMENT", "reason": "the topic-cluster tier, declared beside the other three; nothing mints or reads a segment-tier record yet"}

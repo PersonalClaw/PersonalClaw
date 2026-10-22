@@ -229,6 +229,10 @@ function HandsFreeSection() {
           cfg={cfg} field="clean_for_speech_enabled" patch={patch} />
         <ToggleRow label="Voice-origin disclaimer" hint="Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them."
           cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
+        {/* Off by default, and read only in the page: one loudness level a frame from a reply being
+            read aloud or the microphone you opened, never stored or sent (`lib/audioPresence`). */}
+        <ToggleRow label="Session Map reacts to audio" hint="A chat's Session Map moves with a reply being read aloud, audio or video playing in the chat, and your microphone while you dictate. It never opens the microphone itself and keeps nothing it hears. With reduced motion it shows a still Playing or Listening mark instead."
+          cfg={cfg} field="session_map_audio_enabled" patch={patch} />
       </RowGroup>
     </Section>
   )

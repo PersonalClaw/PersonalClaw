@@ -9,6 +9,8 @@ export interface VoiceLoopConfig {
   confirmation_phrases: readonly string[]
   exit_phrases: readonly string[]
   duplex_mute_enabled: boolean
+  /** The Session Map moves with PersonalClaw's own audio (`voice.session_map_audio_enabled`). */
+  session_map_audio_enabled?: boolean
 }
 
 const VOICE_CONFIG_KEY = 'chat:voice-config'
@@ -24,7 +26,7 @@ const VOICE_CONFIG_KEY = 'chat:voice-config'
  *  `voice`, sent whoever changed it: Settings in this tab or another, another device, a channel
  *  app) and after a reconnect, which may have missed that frame. A chat that is already open
  *  follows the setting both ways instead of keeping the value it opened with. */
-export function useVoiceConfig(): { voiceCfg: VoiceLoopConfig; speakReplies: boolean } {
+export function useVoiceConfig(): { voiceCfg: VoiceLoopConfig; speakReplies: boolean; mapAudio: boolean } {
   const { data } = useQuery(VOICE_CONFIG_KEY, async () => {
     const [cfg, tts] = await Promise.all([api.personalclawConfig(), api.useCaseSettings('tts')])
     return { ...(cfg.voice as VoiceLoopConfig), speak_replies: !!tts.value.enabled && !!tts.value.auto_speak }
@@ -40,5 +42,7 @@ export function useVoiceConfig(): { voiceCfg: VoiceLoopConfig; speakReplies: boo
       duplex_mute_enabled: data?.duplex_mute_enabled ?? true,
     },
     speakReplies: !!data?.speak_replies,
+    // Opt-in: off unless the setting says on, a failed read included.
+    mapAudio: data?.session_map_audio_enabled === true,
   }
 }

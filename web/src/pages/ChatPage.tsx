@@ -178,7 +178,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   useEffect(() => { if (reading && !started) setReading(false) }, [reading, started, setReading])
 
   // Read-aloud: Speak, "Speak replies aloud" and the audio a reading streams (`chat/useChatVoice`).
-  const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
+  const { voiceCfg, mapAudio, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
 
   const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} navigate={navigate} onOpenFile={setOpenFile}
     voiceCfg={voiceCfg} speakingTurn={speakingTurn} onBriefAgent={header.briefAgent} onChangeFolder={header.setWorkspaceDir} />
@@ -263,7 +263,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <>
               <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}
                 onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { setInput(t); focusComposerSoon() }}
-                send={send} speak={speak} speakingTurn={speakingTurn} />
+                send={send} speak={speak} speakingTurn={speakingTurn} mapAudio={mapAudio} />
               <div ref={setStackSlot} className="contents" />
               {/* Folded (reading mode), this region floats over the end of the transcript, which then
                   takes the column's whole height; its controls are the only part that takes a click. */}
