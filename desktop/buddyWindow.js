@@ -283,6 +283,9 @@ const BUDDY_PUSHES = Object.freeze({
   connection: `${BUDDY_PREFIX}connection`,
   placement: `${BUDDY_PREFIX}placement`,
   fullScreen: `${BUDDY_PREFIX}full-screen`,
+  // A tap on an alert's notification opens the buddy (#3897): a ring carrying nothing, which the
+  // page opens on as a click on the orb opens it, on the alert the one order shows first.
+  openAlert: `${BUDDY_PREFIX}open-alert`,
 });
 
 /** The doorbell's connection states the page hears (`doorbell.js`). */
@@ -293,7 +296,8 @@ const BUDDY_PLACEMENTS = Object.freeze(["moving", "docked", "floating"]);
 
 /**
  * Tell the buddy's page *name*: `ring`; `connection`, one of `BUDDY_CONNECTIONS`; `placement`, one
- * of `BUDDY_PLACEMENTS`; or `fullScreen`, whether one of the app's own windows is full screen.
+ * of `BUDDY_PLACEMENTS`; `fullScreen`, whether one of the app's own windows is full screen; or
+ * `openAlert`, a tap on an alert's notification, carrying nothing.
  * Nothing else is sent, and nothing at all to a window that is gone. Returns whether it was sent.
  */
 function pushToBuddy(win, name, value) {
@@ -302,6 +306,7 @@ function pushToBuddy(win, name, value) {
   else if (name === "connection" && BUDDY_CONNECTIONS.includes(value)) win.webContents.send(BUDDY_PUSHES.connection, value);
   else if (name === "placement" && BUDDY_PLACEMENTS.includes(value)) win.webContents.send(BUDDY_PUSHES.placement, value);
   else if (name === "fullScreen" && typeof value === "boolean") win.webContents.send(BUDDY_PUSHES.fullScreen, value);
+  else if (name === "openAlert") win.webContents.send(BUDDY_PUSHES.openAlert);
   else return false;
   return true;
 }

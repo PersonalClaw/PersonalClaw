@@ -132,6 +132,12 @@ export function BuddyPage(_: RouteProps) {
   // that the machine's hidden is only where it starts.
   const [bridge] = useState(buddyBridge)
   const presentation = snap?.read ? presentationOf(snap.machine) : null
+
+  // A tap on an alert's notification opens the buddy (#3897): the shell shows its window and rings
+  // it, and the page opens as a click on the orb opens it, on the alert the one order shows first.
+  // Here, after the host's own effect, not in the doorbell: a child's effects run first, and a ring
+  // held for the page is handed over the moment it listens.
+  useEffect(() => bridge?.onOpenAlert?.(() => hostRef.current?.send({ type: 'click' })), [bridge])
   useEffect(() => {
     if (presentation) bridge?.setPresentation(presentation)
   }, [bridge, presentation])

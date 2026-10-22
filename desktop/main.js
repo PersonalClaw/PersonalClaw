@@ -516,6 +516,13 @@ const nativeNotifications = makeNativeNotifications({
     const image = nativeImage.createFromDataURL(url);
     return image.isEmpty() ? null : image;
   },
+  // A tap on a buddy alert opens the buddy (#3897) while Buddy status is on for this computer and
+  // its window lives: shown without taking focus, and rung so its page opens as a click opens it.
+  openAlert: () => {
+    if (!buddyPresence?.enabled() || !buddy?.window || buddy.window.isDestroyed()) return false;
+    buddy.show();
+    return pushToBuddy(buddy.window, "openAlert");
+  },
   log: (msg) => console.warn(msg),
 });
 

@@ -84,6 +84,8 @@ function normalizeRoute(raw) {
  * @param {(payload: object) => void} [deps.sendToRenderer]  Forward the tap's route.
  * @param {(dataUrl: string) => object | null} [deps.createIcon]  An alert's icon as an image
  *   (`nativeImage.createFromDataURL`), or null for one that does not read as an image.
+ * @param {() => boolean} [deps.openAlert]  A tap on an alert: open the buddy on it, true when the
+ *   buddy is on and its window could be rung. False ⇒ the app opens on the alert's route instead.
  * @param {(msg: string) => void} [deps.log]
  */
 function makeNativeNotifications({
@@ -91,6 +93,7 @@ function makeNativeNotifications({
   focusWindow = () => false,
   sendToRenderer = () => {},
   createIcon = () => null,
+  openAlert = () => false,
   log = () => {},
 } = {}) {
   const supported =
@@ -146,6 +149,9 @@ function makeNativeNotifications({
 
     try {
       notification.on("click", () => {
+        // A buddy alert opens the buddy on it while Buddy status is on (#3897): the buddy shows
+        // the alert with its brief. Otherwise, and for every other note, the app opens.
+        if (alert && buddyOpened()) return;
         // Focus first and unconditionally: raising the app is useful even when the note
         // named no surface, and it is the half a user actually expects from a tap.
         const focused = focusWindow();
@@ -158,6 +164,16 @@ function makeNativeNotifications({
       return { ok: false, route, reason: err.message };
     }
     return { ok: true, route };
+  }
+
+  /** Whether the buddy took the tap. A buddy that cannot be rung leaves it to the app. */
+  function buddyOpened() {
+    try {
+      return openAlert() === true;
+    } catch (err) {
+      log(`native notification: the buddy could not open: ${err.message}`);
+      return false;
+    }
   }
 
   return { supported, show };
