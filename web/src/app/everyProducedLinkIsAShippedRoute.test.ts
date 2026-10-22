@@ -99,7 +99,8 @@ describe('the personalclaw:// parser opens only catalogued addresses', () => {
 
   it('🔑 each route and alias it takes opens an address in the catalogue, which names the parser', () => {
     expect(parser.ROUTES.size, 'vacuity floor: the parser\'s routes look truncated').toBeGreaterThanOrEqual(20)
-    expect(Object.keys(parser.ALIASES).length).toBeGreaterThanOrEqual(2)
+    // `threads` is the one alias left since `automations` became a route of its own (#5167).
+    expect(Object.keys(parser.ALIASES)).toContain('threads')
     expect(addresses.filter((a) => a.startsWith('refused')), 'a route the parser lists and refuses').toEqual([])
     expect(uncatalogued(addresses), 'opened by a link, missing from shippedRoutes.ts').toEqual([])
     expect(unattributed('deep-link', addresses), 'these entries open from a link and do not say so').toEqual([])
