@@ -139,7 +139,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 29 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 30 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
@@ -196,7 +196,10 @@ describe('the triage, pinned per site', () => {
     // (`pages/loop/LoopSelfApproval.tsx`), the same two classes in one control as "Open at login":
     // a reason only for the precondition (a loop that cannot have it, `choice.unavailable`) and
     // native while its own PUT is in flight. Reasoned 10 → 11.
-    expect(sites.length).toBe(29)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eleven carry a reason; eighteen stay native').toBe(11)
+    // 🔺 29 → 30 (#3901): Settings → Buddy's "Hide from screen sharing and screenshots" is held
+    // until the desktop app says what this computer holds: the PRECONDITION class, so it names
+    // what unlocks it. Reasoned 11 → 12.
+    expect(sites.length).toBe(30)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'twelve carry a reason; eighteen stay native').toBe(12)
   })
 })

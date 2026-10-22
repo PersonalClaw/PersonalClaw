@@ -5,6 +5,9 @@ import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { prefersReducedMotion } from '../../design/motion'
 import { TextLink } from '../../ui/TextLink'
+import { Button } from '../../ui/Button'
+import { Toggle } from '../../ui/Toggle'
+import { desktopBridge, type BuddyPlace, type DesktopBridge } from '../../lib/desktopBridge'
 import { FormSkeleton, InlineLoadError, LoadError } from '../../ui/ListScaffold'
 import { PanelHeader, Section, RowGroup, ToggleRow, Row, SegPills } from './settingsUI'
 
@@ -44,17 +47,52 @@ function postureLine(n: BuddyPolicy['notifications']): string {
   return `Alerts may interrupt you now${n.changes_at ? `; quiet hours begin at ${timeOf(n.changes_at)}` : ''}.`
 }
 
+type BuddyBridge = NonNullable<DesktopBridge['buddy']>
+
+/** This computer's rows: where the buddy sits and whether screen capture sees it. They are the
+ *  desktop app's, in its own store on this machine (`pclawDesktop.buddy`), so they show only in
+ *  the desktop app, and each change moves the live window at once. */
+function ThisComputer({ bridge }: { bridge: BuddyBridge }) {
+  const [place, setPlace] = useState<BuddyPlace | null>(null)
+  const [hidden, setHidden] = useState<boolean | null>(null)
+  const failed = (what: string) => (e: unknown) => notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
+  useEffect(() => {
+    bridge.getPlace().then(setPlace, failed('read where the buddy sits'))
+    bridge.getHideFromCapture().then(setHidden, failed('read whether the buddy is kept out of screen capture'))
+  }, [bridge])
+  const floating = place?.mode === 'floating'
+  return (
+    <Section title="This computer" hint="Kept by the desktop app on this computer only.">
+      <RowGroup>
+        <Row label="Where it sits"
+          hint={floating ? 'Floating where you left it. Drag it to the top centre to dock it, or dock it from here.' : 'Docked at the top centre of the screen. Drag it down to float it.'}>
+          <div className="flex items-center gap-s">
+            <span data-type="body-s" className="text-on-surface-var">{place ? (floating ? 'Floating' : 'Docked') : 'Reading…'}</span>
+            {floating && <Button size="sm" variant="secondary" onClick={() => bridge.resetPlace().then(setPlace, failed('dock the buddy'))}>Dock it</Button>}
+          </div>
+        </Row>
+        <Row label="Hide from screen sharing and screenshots"
+          hint="Keeps what is waiting on you out of a share or a screenshot. Linux offers no way to keep a window out of a capture.">
+          <Toggle on={hidden === true} disabled={hidden === null} disabledReason="Reading this computer’s setting" size="sm" label="Hide from screen sharing and screenshots"
+            onChange={(v) => bridge.setHideFromCapture(v).then(setHidden, failed('change whether screen capture sees the buddy'))} />
+        </Row>
+      </RowGroup>
+    </Section>
+  )
+}
+
 /** Settings → Buddy (#3901): every buddy setting in one place. Buddy status is the opt-in, off
  *  until you turn it on; beside it, the surfaces it shows on and how long you are away before it
  *  steps back. What it follows from elsewhere is shown, not set here: the notification posture
  *  (Settings → Notifications) and the system's reduced motion. Where the buddy sits and whether
- *  screen sharing sees it are this machine's, in the desktop app. */
+ *  screen sharing sees it are this machine's, in the desktop app (`ThisComputer`). */
 export function BuddyPanel() {
   const [cfg, setCfg] = useState<BuddyCfg | null>(null)
   const { data, error: loadErr, refresh } = useQuery('settings:buddy', () =>
     api.personalclawConfig().then((c) => (c.buddy ?? {}) as BuddyCfg), { persist: true })
   const { data: policy, error: policyErr, status: policyStatus, refresh: refreshPolicy } = useQuery('settings:buddy:policy', () => api.buddyPolicy())
   const reduced = useSystemReducedMotion()
+  const buddyBridge = desktopBridge()?.buddy
 
   useEffect(() => { if (data) setCfg(data) }, [data])
   // A change anywhere (another window, the menu bar, the notification settings) rings once.
@@ -109,6 +147,7 @@ export function BuddyPanel() {
           </Row>
         </RowGroup>
       </Section>
+      {buddyBridge && <ThisComputer bridge={buddyBridge} />}
       <Section title="What it follows">
         <div role="group" aria-label="Notifications" className="mb-m flex flex-col gap-xs">
           {!policy && policyStatus === 'error'
