@@ -174,6 +174,9 @@ export interface ComposerProps {
   /** The status-line pin for the context reading (`app/pinnedContext`). Absent: the Context control
    *  offers no pin. */
   contextPin?: { pinned: boolean; onPin: (pinned: boolean) => void }
+  /** Compacts the bound session's conversation (`/compact`), offered beside the near-limit line
+   *  while no turn runs. Absent: the line states the reading only. */
+  onCompact?: () => void
   /** The model that answered the bound chat's latest turn and how it was chosen ("from your Code &
    *  tools chain"), which the model pill's Auto names. Absent before any turn named one. */
   servedModel?: { model: string; chosen: string }
