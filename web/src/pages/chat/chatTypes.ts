@@ -536,6 +536,9 @@ export interface SubagentCard {
   neverRan?: boolean
   /** Her Deny of its start, among those (`declined`). */
   declined?: boolean
+  /** It was stopped, by her or with the work that started it (`stopped`): its error is the
+   *  stop's reason, not a failure. */
+  stopped?: boolean
 }
 
 // ── activity-panel derivation (Files / Links) — all client-side from turns ──

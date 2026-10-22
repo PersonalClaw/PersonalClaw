@@ -849,6 +849,9 @@ export interface ChannelSenderPairing { code: string; expires_at: string; ttl_se
 // `title` is what the run is called — a trigger's run by its trigger's name or instruction; "" for
 // a run nobody named, which reads by its task.
 export interface SpawnedAgent { id: string; task: string; title?: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
+/** One subagent as `GET /api/spawn/{id}` reads it: running (its turns, latest call and elapsed
+ *  seconds) or ended (its report, its error, and whether it was stopped rather than failed). */
+export interface SpawnedAgentStatus { id: string; task: string; title?: string; agent?: string; done: boolean; started?: number; result?: string; error?: string; stopped?: boolean; turns?: number; last_tool?: string; elapsed?: number }
 // A knowledge item scored for chat-context injection (from search-for-context),
 // carrying its token cost so the picker can budget. It also carries the per-item citation
 // locator (source_type/section/line_range/deep_link) so a card can deep-link + cite
@@ -8678,6 +8681,7 @@ export const api = {
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
+  spawnedAgentStatus: (id: string) => get<SpawnedAgentStatus>(`/api/spawn/${encodeURIComponent(id)}`),
   cancelSpawnedAgent: (id: string) => del(`/api/spawn/${encodeURIComponent(id)}`),
   clearSpawnedAgents: () => del('/api/spawn'),
   // Kill EVERY child of one parent/run in one click.

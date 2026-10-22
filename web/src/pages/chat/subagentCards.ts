@@ -29,6 +29,7 @@ export function foldSubagentEvent(cards: SubagentCard[], type: string, d: Record
     costUsd: typeof d.cost_usd === 'number' ? d.cost_usd : undefined,
     tokens: typeof d.tokens === 'number' ? d.tokens : undefined,
     ...(d.never_ran === true ? { neverRan: true, declined: d.declined === true } : {}),
+    ...(d.stopped === true ? { stopped: true } : {}),
   }
   if (cards.some((s) => s.id === id)) return cards.map((s) => s.id === id ? { ...s, ...ended } : s)
   if (d.never_ran !== true) return cards

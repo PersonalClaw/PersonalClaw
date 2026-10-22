@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **The buddy playground, at `#/buddy/playground`: the desktop buddy's state machine and orb, played with made-up work before the buddy ships, with a control for every input, a clock that fires its timers, an event log where an answer is written and never sent, a scripted day to play at speed, pause or step, and every pose at four sizes; it reads nothing from the gateway, and nothing links to it but its address.**
+- **The helpers a step starts show under that step, inside the turn that started them: each with its task, its agent and whether it is running (with its latest call), done, failed, stopped or not started, read again after a reload, and with a Stop while it runs; a stopped helper reads Stopped, not failed. The Activity panel's Subagents tab still lists them all.**
 
 ### Changed
 

@@ -15,6 +15,7 @@ import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflows/workflowMeta'
 import { TextLink } from '../../ui/TextLink'
 import type { ChatTurn, Segment, ToolSegment } from './chatTypes'
+import { coreToolName } from './coreToolName'
 
 // Tools whose result means "a workflow run now exists worth watching". `workflow_start`
 // creates one, and so does `subagent_run` given two or more tasks: they run as one batch run,
@@ -45,12 +46,14 @@ export function workflowRefFromTool(
   toolName: string | undefined,
   output: string | undefined,
 ): WorkflowRunRef | null {
-  if (!toolName || !WORKFLOW_TOOLS.has(toolName) || !output) return null
-  const created = CREATING_TOOLS.has(toolName)
+  // An agent CLI calls the same tools through the gateway's MCP server, titled by the server.
+  const name = coreToolName(toolName)
+  if (!name || !WORKFLOW_TOOLS.has(name) || !output) return null
+  const created = CREATING_TOOLS.has(name)
   const workflow = output.match(/"workflow"\s*:\s*"([a-z0-9][a-z0-9-]*)"/)?.[1]
   const m = output.match(/"run_id"\s*:\s*"([0-9a-f]{6,})"/i)
   if (m) return { runId: m[1], created, ...(workflow ? { workflow } : {}) }
-  const batch = toolName === 'subagent_run' ? output.match(/"batch"\s*:\s*"([a-z0-9][a-z0-9-]*)"/)?.[1] : undefined
+  const batch = name === 'subagent_run' ? output.match(/"batch"\s*:\s*"([a-z0-9][a-z0-9-]*)"/)?.[1] : undefined
   return batch ? { runId: '', created, batch } : null
 }
 
