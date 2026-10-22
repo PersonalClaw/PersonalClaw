@@ -31,6 +31,7 @@ const BUDDY_PUSHES = Object.freeze({
   connection: `${BUDDY_PREFIX}connection`,
   placement: `${BUDDY_PREFIX}placement`,
   fullScreen: `${BUDDY_PREFIX}full-screen`,
+  openAlert: `${BUDDY_PREFIX}open-alert`,
 });
 const BUDDY_CONNECTIONS = ["up", "lost", "restarting"];
 const BUDDY_PLACEMENTS = ["moving", "docked", "floating"];
@@ -44,6 +45,15 @@ function hear(channel, cb, shape) {
   ipcRenderer.on(channel, listener);
   return () => ipcRenderer.removeListener(channel, listener);
 }
+
+/** A ring to open on an alert that came while the page was not listening: the tap that rings the
+ *  buddy may also be what shows its window, so its page can mount after the ring. Kept, and handed
+ *  to the next listener once. */
+let openAlertListeners = 0;
+let openAlertWaiting = false;
+ipcRenderer.on(BUDDY_PUSHES.openAlert, () => {
+  if (openAlertListeners === 0) openAlertWaiting = true;
+});
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
 const rect = (r) => ({ x: num(r && r.x), y: num(r && r.y), width: num(r && r.width), height: num(r && r.height) });
@@ -70,4 +80,22 @@ contextBridge.exposeInMainWorld("pclawBuddy", {
   onPlacement: (cb) => hear(BUDDY_PUSHES.placement, cb, (v) => (BUDDY_PLACEMENTS.includes(v) ? v : undefined)),
   /** Whether one of the app's own windows is full screen. */
   onFullScreen: (cb) => hear(BUDDY_PUSHES.fullScreen, cb, (v) => (typeof v === "boolean" ? v : undefined)),
+  /** A tap on an alert's notification (#3897): open as a click on the orb opens. Carries nothing;
+   *  a ring that came before the page listened is handed over once. */
+  onOpenAlert: (cb) => {
+    if (typeof cb !== "function") return () => {};
+    const stop = hear(BUDDY_PUSHES.openAlert, () => cb(), () => null);
+    openAlertListeners += 1;
+    if (openAlertWaiting) {
+      openAlertWaiting = false;
+      cb();
+    }
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      openAlertListeners -= 1;
+      stop();
+    };
+  },
 });

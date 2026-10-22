@@ -175,6 +175,9 @@ export interface BuddyBridge {
   setPresentation: (presentation: BuddyPresentation) => void
   /** Open a route of this app (a chat, a run) in the main window, as a hash route. */
   openInApp: (route: string) => void
+  /** Hear main ring the buddy open: a tap on an alert's notification (#3897). The ring carries
+   *  nothing. Returns an unsubscribe. Absent from a shell built before it. */
+  onOpenAlert?: (cb: () => void) => () => void
   /** The doorbell rang: something running or waiting changed, so read the lists again. Returns
    *  the way to stop hearing it. */
   onRing: (cb: () => void) => () => void

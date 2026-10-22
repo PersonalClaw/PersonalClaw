@@ -59,6 +59,7 @@ function make(opts = {}) {
   const sent = [];
   const logs = [];
   const icons = [];
+  const opened = [];
   const native = makeNativeNotifications({
     Notification,
     focusWindow: () => {
@@ -70,9 +71,13 @@ function make(opts = {}) {
       icons.push(url);
       return { image: url };
     }),
+    openAlert: () => {
+      opened.push(true);
+      return opts.buddyOn === true;
+    },
     log: (m) => logs.push(m),
   });
-  return { native, Notification, focused, sent, logs, icons };
+  return { native, Notification, focused, sent, logs, icons, opened };
 }
 
 describe("makeNativeNotifications", () => {
@@ -326,5 +331,62 @@ describe("preload notifications surface, for a buddy alert", () => {
   it("passes an alert's kind and icon through, as strings", () => {
     assert.match(preload, /alert: String\(\(note && note\.alert\) \?\? ""\)/);
     assert.match(preload, /icon: String\(\(note && note\.icon\) \?\? ""\)/);
+  });
+});
+
+describe("a tap on a buddy alert (#3897)", () => {
+  it("with the buddy on, opens the buddy on it, and neither raises the app nor routes it", () => {
+    const { native, Notification, focused, sent, opened } = make({ buddyOn: true });
+    native.show({ title: "PersonalClaw", body: "x needs your OK: shell", route: "chat/c1", alert: "approval", icon: PNG });
+    Notification.raised[0].tap();
+    assert.deepStrictEqual(opened, [true]);
+    assert.deepStrictEqual(focused, []);
+    assert.deepStrictEqual(sent, []);
+  });
+
+  it("with the buddy off, opens the app on the item's route", () => {
+    const { native, Notification, focused, sent, opened } = make({ buddyOn: false });
+    native.show({ title: "PersonalClaw", body: "x asks: which?", route: "loops/l1", alert: "question" });
+    Notification.raised[0].tap();
+    assert.deepStrictEqual(opened, [true]);
+    assert.deepStrictEqual(focused, [true]);
+    assert.deepStrictEqual(sent, [{ route: "loops/l1" }]);
+  });
+
+  it("a note that is no alert never asks for the buddy", () => {
+    const { native, Notification, opened, sent } = make({ buddyOn: true });
+    native.show({ title: "Backup finished", body: "", route: "notifications" });
+    Notification.raised[0].tap();
+    assert.deepStrictEqual(opened, []);
+    assert.deepStrictEqual(sent, [{ route: "notifications" }]);
+  });
+
+  it("a buddy that cannot be opened falls back to the app", () => {
+    const Notification = fakeNotification();
+    const focused = [];
+    const sent = [];
+    const native = makeNativeNotifications({
+      Notification,
+      focusWindow: () => { focused.push(true); return true; },
+      sendToRenderer: (p) => sent.push(p),
+      openAlert: () => { throw new Error("the buddy's window is gone"); },
+    });
+    native.show({ title: "PersonalClaw", body: "x stopped: why", route: "loops", alert: "error" });
+    Notification.raised[0].tap();
+    assert.deepStrictEqual(focused, [true]);
+    assert.deepStrictEqual(sent, [{ route: "loops" }]);
+  });
+});
+
+describe("main.js wiring, for a tap on a buddy alert", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+  it("opens the buddy only while Buddy status is on and its window lives, and rings it", () => {
+    const at = main.indexOf("openAlert: () =>");
+    assert.ok(at > 0, "main wires openAlert");
+    const body = main.slice(at, at + 600);
+    assert.match(body, /buddyPresence\?\.enabled\(\)/);
+    assert.match(body, /isDestroyed\(\)/);
+    assert.match(body, /buddy\.show\(\)/);
+    assert.match(body, /pushToBuddy\(buddy\.window, "openAlert"\)/);
   });
 });

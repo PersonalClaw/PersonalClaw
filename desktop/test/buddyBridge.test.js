@@ -12,12 +12,13 @@ const { loadPreloadSandboxed, unsandboxableRequires } = require("./helpers/sandb
 // `window.pclawBuddy` and nothing else: no `send` or `invoke` of its choosing, nothing from the
 // capability bridge. Four more hear main (#3832): the doorbell's ring, which carries nothing, and its
 // connection, one of three words; where the window is, one of three words; and whether one of the
-// app's own windows is full screen, a boolean. Main hears the five channels behind them only from the buddy window's own web
+// app's own windows is full screen, a boolean. A fifth hears a tap on an alert's notification, a
+// ring that carries nothing (#3897). Main hears the five channels behind them only from the buddy window's own web
 // contents, and checks every payload whatever the preload sent. A route it opens is one a
 // `pclaw://` link may open, checked by the deep-link parser itself.
 
 const PRELOAD = path.join(__dirname, "..", "buddyPreload.js");
-const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onConnection", "onFullScreen", "onPlacement", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"];
+const BUDDY_KEYS = ["dragBy", "dragEnd", "dragStart", "onConnection", "onFullScreen", "onOpenAlert", "onPlacement", "onRing", "openInApp", "pointerOver", "setPresentation", "setRegions"];
 
 /** The preload loaded as the sandboxed buddy window loads it, with every send it makes recorded. */
 function loadBuddyBridge() {
@@ -64,7 +65,7 @@ function wired() {
 }
 
 describe("the buddy's preload", () => {
-  it("loads in a sandbox and exposes exactly the eleven named calls, under its own name", () => {
+  it("loads in a sandbox and exposes exactly the twelve named calls, under its own name", () => {
     assert.deepEqual(unsandboxableRequires(fs.readFileSync(PRELOAD, "utf8")), []);
     const { exposed } = loadBuddyBridge();
     assert.deepEqual(Object.keys(exposed), ["pclawBuddy"], "not the capability bridge, and nothing else");
@@ -93,7 +94,8 @@ describe("the buddy's preload", () => {
     const states = [];
     const stopRing = b.onRing((...args) => rings.push(args));
     b.onConnection((s) => states.push(s));
-    assert.deepEqual(channels.filter((c) => Object.values(BUDDY_PUSHES).includes(c)).sort(), [BUDDY_PUSHES.connection, BUDDY_PUSHES.ring].sort(), "the preload's copy of the names is main's");
+    // The open-alert ring is heard from the preload's load (#3897), so a ring before the page listens is kept.
+    assert.deepEqual(channels.filter((c) => Object.values(BUDDY_PUSHES).includes(c)).sort(), [BUDDY_PUSHES.connection, BUDDY_PUSHES.openAlert, BUDDY_PUSHES.ring].sort(), "the preload's copy of the names is main's");
     emit(BUDDY_PUSHES.ring, { phase: "approval", secret: "x" });
     assert.deepEqual(rings, [[]], "a ring hands the page nothing, whatever came with it");
     for (const s of [...BUDDY_CONNECTIONS, "pwned", { toString: () => "up" }, null]) emit(BUDDY_PUSHES.connection, s);
@@ -139,6 +141,46 @@ describe("the buddy's preload", () => {
     assert.deepEqual(Object.keys(regions.rects[0]), ["x", "y", "width", "height"]);
     assert.equal(BUDDY_PAYLOADS.presentation(presentation), null, "and main still refuses what is not a presentation");
     assert.equal(BUDDY_PAYLOADS.drag(drag), null);
+  });
+});
+
+describe("main rings the buddy to open on an alert (#3897)", () => {
+  it("hears the ring on main's own channel, and hands the page nothing but the ring", () => {
+    const { exposed, channels, emit } = loadBuddyBridge();
+    assert.equal(BUDDY_PUSHES.openAlert, "pclaw-buddy:open-alert");
+    assert.ok(channels.includes(BUDDY_PUSHES.openAlert), "the preload hears main's push");
+    const rang = [];
+    const off = exposed.pclawBuddy.onOpenAlert((...args) => rang.push(args));
+    emit(BUDDY_PUSHES.openAlert, { route: "https://elsewhere.example", id: "x" });
+    assert.deepEqual(rang, [[]], "a ring carries nothing the page reads");
+    off();
+    emit(BUDDY_PUSHES.openAlert);
+    assert.equal(rang.length, 1, "unsubscribed");
+  });
+
+  it("keeps a ring that came before the page listened, and hands it over once", () => {
+    // The window may be shown by the very tap that rings it: its page mounts after the ring.
+    const { exposed, emit } = loadBuddyBridge();
+    emit(BUDDY_PUSHES.openAlert);
+    const rang = [];
+    exposed.pclawBuddy.onOpenAlert(() => rang.push(1));
+    exposed.pclawBuddy.onOpenAlert(() => rang.push(2));
+    assert.deepEqual(rang, [1], "the waiting ring goes to the first listener, once");
+    emit(BUDDY_PUSHES.openAlert);
+    assert.deepEqual(rang, [1, 1, 2], "a ring while they listen reaches each");
+  });
+
+  it("takes only a function", () => {
+    const { exposed } = loadBuddyBridge();
+    assert.equal(typeof exposed.pclawBuddy.onOpenAlert("not a function"), "function");
+  });
+
+  it("main sends it only to a window that lives, carrying nothing", () => {
+    const sent = [];
+    const win = { isDestroyed: () => false, webContents: { isDestroyed: () => false, send: (...a) => sent.push(a) } };
+    assert.equal(pushToBuddy(win, "openAlert", { route: "x" }), true);
+    assert.deepEqual(sent, [[BUDDY_PUSHES.openAlert]]);
+    assert.equal(pushToBuddy({ isDestroyed: () => true }, "openAlert"), false);
   });
 });
 
