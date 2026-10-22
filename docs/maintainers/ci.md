@@ -291,9 +291,9 @@ cannot read fails the row. A setup step inside the action counts at the index of
 of those rows has a plant inside the action.
 
 A change under `.github/actions/` runs the planned jobs, the browser run's (`e2e-shard`,
-`e2e-stateful`, their merge `e2e` and the UI quality check `ui-quality`) and `apps-contract`, as a
-change to `ci.yml` does: each
-sets up its toolchain through the action, so it defines them too.
+`e2e-stateful`, their merge `e2e` and the UI quality check `ui-quality`), `desktop-smoke` and
+`apps-contract`, as a change to `ci.yml` does: each sets up its toolchain through the action, so it
+defines them too.
 The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
 local action `apps-contract` calls, and each one that action calls, plans that job, and that
 every one a `ci.yml` job calls plans the whole tier.
@@ -544,8 +544,14 @@ overrides (`--areas`, beside the catalogue by default):
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-The browser run's three jobs, `apps-contract` and `python-suite` name their inputs; every other
-job declares the whole tree today. The browser run's inputs are the whole tree less the paths
+The browser run's three jobs, `desktop-smoke`, `apps-contract` and `python-suite` name their
+inputs; every other job declares the whole tree today. `desktop-smoke`'s are `desktop/` and
+`web/`, the shell and the dashboard it loads (#3942): it packs the shell with electron-builder's
+Linux dir build on a stub backend that runs the checkout's gateway, holds the packed `app.asar`
+to `build.files`, starts the app under Xvfb and watches it, over a DevTools pipe rather than a
+port, load the gateway's origin and draw the chat, and two planted copies (the asar without a module `main.js` requires, a preload that throws)
+must each fail. A backend change is e2e's to catch: the smoke proves the shell starts and draws,
+not the gateway. It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs are the whole tree less the paths
 that cannot reach it, each exclusion carrying its reason in the catalogue, and its three jobs
 name the same ones. `apps-contract`'s are the triggers of the SDK classifier ci.yml ran it by
 before the plan, less the classifier's own file. `python-suite`'s are every top-level entry but
