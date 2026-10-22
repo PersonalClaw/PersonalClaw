@@ -25,6 +25,7 @@ tests/rails/test_automation_spend_is_metered_tree.py
 tests/rails/test_backend_bundle_manifest_tree.py
 tests/rails/test_bounty_wants_list.py
 tests/rails/test_browser_gate_stays_out_of_pytest_tree.py
+tests/rails/test_buddy_originality_record.py
 tests/rails/test_bundled_model_gate_tree.py
 tests/rails/test_by_name_load_census_tree.py
 tests/rails/test_cache_counters_single_store_tree.py

@@ -24,7 +24,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import source_index
+from rails_repo import REPO
+
+ROOT = REPO
 DESIGN = ROOT / "docs" / "design" / "buddy"
 RECORD = DESIGN / "decisions" / "originality.md"
 
@@ -167,10 +170,10 @@ def test_the_docked_layout_on_a_notched_display_is_changed_as_settled():
 
 def test_public_text_names_no_other_product():
     """The record and the design it changed describe the buddy in product terms only."""
-    files = sorted(DESIGN.rglob("*.md"))
+    files = source_index.under(source_index.docs_files(), DESIGN, (".md",))
     assert RECORD in files and DESIGN / "surfaces.md" in files
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = source_index.text(path)
         for name in (
             "Siri",
             "Dynamic Island",
