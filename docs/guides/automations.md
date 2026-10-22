@@ -32,7 +32,8 @@ keeps one order, stated by the gateway (`GET /api/triggers`), in three groups:
 A row moves between groups only when its state changes. Selecting one opens its detail and run
 history beside the list, newest run first; the automation and the run you open are in the address
 (`#/automations?open=<id>&run=<run id>`), so a reload, Back and Forward and a copied link open them
-again. A run that started a workflow links to the workflow run's own page. The **Workflows** tab
+again. A run that started a workflow opens that run's live card, the one its thread and the chat's
+Activity open, with its steps, its state and the way to its page. The **Workflows** tab
 holds the workflow definitions and their runs. The old addresses, `#/triggers` and `#/workflows`
 with every sub-route, open the same pages inside Automations.
 

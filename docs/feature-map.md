@@ -30,7 +30,7 @@ file and the app differ.
 | `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/MissionControl.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
 | `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
-| `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 11 more |
+| `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
 | `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `design/tokenLintRule.ts`, `lib/data/store.ts` and 34 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/widgets/ActionCenter.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
