@@ -517,6 +517,19 @@ class LoopWatchdog:
         "judge_blind": "needs_input",
     }
 
+    #: The outcome notes a loop's ``report`` choice quiets (#3824), by choice; the per-cycle
+    #: progress note is ``_notify_progress``'s, sent only ``as_it_goes``. ``when_done`` keeps every
+    #: outcome, a code loop's "Stage complete" included: a stage is an outcome of its own, and a
+    #: code loop made without the start flow's question would otherwise lose it unasked.
+    #: ``if_stuck`` drops the completion and the stage notes, so its owner hears only a failure, a
+    #: completion that could not be confirmed (``ship_blocked``) and a wait. The waits
+    #: (``_ATTENTION_EVENTS``) are never quieted: the choice quiets reports, it never asks.
+    _QUIETED_BY_REPORT = {
+        "as_it_goes": frozenset(),
+        "when_done": frozenset(),
+        "if_stuck": frozenset({"stage_advance", "complete"}),
+    }
+
     def _attention_dedup_key(self, loop_id: str, event: str) -> str:
         """The idempotency key for one WAIT, scoped to the cycle it happened at.
 
@@ -583,7 +596,9 @@ class LoopWatchdog:
                         refs={"loop": loop_id, "loop_kind": loop.kind if loop else ""},
                         dedup_key=self._attention_dedup_key(loop_id, event),
                     )
-                else:
+                elif event not in self._QUIETED_BY_REPORT.get(
+                    loop.report if loop else "", frozenset()
+                ):
                     self._state.notify(
                         kind,
                         title,
@@ -671,6 +686,10 @@ class LoopWatchdog:
         budget = f"/{max_cycles}" if max_cycles else ""
         try:
             loop = store.get(loop_id)
+            # The per-cycle note is the owner's to ask for (``Loop.report``, #3824): only a loop
+            # reporting as it goes sends one.
+            if loop is not None and loop.report != "as_it_goes":
+                return
             self._state.notify(
                 # `LOOP`, not `INFO` (#341): the `loop/progress` row exists in the matrix and this
                 # is its only emitter, so passing the generic severity string put every cycle

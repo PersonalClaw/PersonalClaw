@@ -36,6 +36,7 @@ from personalclaw.loop.loop import (
     ENDED_STATUSES,
     KINDS,
     PRELAUNCH_STATUSES,
+    REPORT_CHOICES,
     TERMINAL_STATUSES,
     Loop,
     LoopStatus,
@@ -161,7 +162,8 @@ def _connect() -> sqlite3.Connection:
             task_list_ids TEXT NOT NULL DEFAULT '{}',
             linked_task_ids TEXT NOT NULL DEFAULT '[]',
             session_key TEXT NOT NULL DEFAULT '',
-            asked_by TEXT NOT NULL DEFAULT '{}'
+            asked_by TEXT NOT NULL DEFAULT '{}',
+            report TEXT NOT NULL DEFAULT 'as_it_goes'
         )""")
     # Idempotent column migrations for DBs created before a field was added (the
     # CREATE above is IF NOT EXISTS, so an existing table won't gain new columns).
@@ -188,6 +190,9 @@ def _connect() -> sqlite3.Connection:
             # Who asked for it, when the owner did not (`lasting_work.ASKED_BY`): a row made
             # before it was recorded is the owner's, as `{}` says.
             "asked_by": "TEXT NOT NULL DEFAULT '{}'",
+            # How it reports (`Loop.report`): a row made before the owner was asked keeps the
+            # per-cycle notes it always sent, so nothing an owner started changes under them.
+            "report": "TEXT NOT NULL DEFAULT 'as_it_goes'",
         },
     )
     conn.commit()
@@ -228,6 +233,7 @@ _SCALAR_COLS = (
     "workspace_dir",
     "auto_teardown_on_complete",
     "attended",
+    "report",
     "autopilot",
     "max_cycles",
     "max_cost_usd",
@@ -264,6 +270,9 @@ def _row_to_loop(row: sqlite3.Row) -> Loop:
     d["attended"] = d.get("attended") != 0
     d["autopilot"] = bool(d.get("autopilot", 1))
     d["auto_teardown_on_complete"] = bool(d.get("auto_teardown_on_complete", 0))
+    # A choice the record does not know reads as a new loop's: its outcome, and no per-cycle notes.
+    if d.get("report") not in REPORT_CHOICES:
+        d["report"] = "when_done"
     return Loop.from_dict(d)
 
 
@@ -626,6 +635,7 @@ _EDITABLE_SPEC_COLS = frozenset(
         "workflow_ids",
         "workspace_dir",
         "attended",
+        "report",
         "autopilot",
         "max_cycles",
         "idle_secs",
@@ -722,6 +732,19 @@ def rename(loop_id: str, name: str) -> Loop | None:
             return None
     finally:
         conn.close()
+    return get(loop_id)
+
+
+def set_report(loop_id: str, report: str) -> Loop | None:
+    """How the loop reports (``Loop.report``), allowed in ANY state, as a rename is: the owner may
+    change it from the loop's strip while it runs, and the watchdog reads it at the next cycle.
+    A choice the record does not know is refused (``ValueError``)."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.CHANGE)
+    if report not in REPORT_CHOICES:
+        raise ValueError(f"report must be one of {', '.join(REPORT_CHOICES)}")
+    if not files.valid_loop_id(loop_id) or get(loop_id) is None:
+        return None
+    _simple_set(loop_id, "report", report)
     return get(loop_id)
 
 

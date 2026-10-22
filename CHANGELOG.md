@@ -36,6 +36,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A goal loop's page ends like a chat: a thin strip with the cycles it has used ("cycle 4/10", or "cycle 4 · ongoing") and its Start, Pause or Resume and Stop, and under it a composer that nudges the next cycle, always open while the loop runs. The header keeps Rename, the link, Delete and Details.**
 - **The pane beside a chat or a code session expands over the work and collapses back, moves to the other side by pointer or by a keyboard move mode that says its preview, its placing and its cancel, remembers the side for that page, and closes on Esc; none of it touches the work (#3821).**
 - **A code session opens with its review pane on its first uncommitted change, beside the editor, and the pane lists every uncommitted change to step through; a review you close stays closed when the page reloads (#3821).**
+- **A goal loop reports as you ask when it starts: a note each cycle, only its outcome, or only if it gets stuck or fails; a new loop sends only its outcome unless asked, a loop you already started keeps its per-cycle notes, and a loop waiting on you still raises its Inbox item whatever the choice.**
 
 ### Fixed
 

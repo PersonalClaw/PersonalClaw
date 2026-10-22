@@ -271,6 +271,15 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "spawn on (`supervisor_policy.unattended_grant`).",
     ),
     FieldHome(
+        "report",
+        NONE,
+        "",
+        "NO HOME. How a loop reports (#3824) quiets the loop watchdog's own notes, its per-cycle "
+        "progress note and its completion (`watchdog._QUIETED_BY_REPORT`); a run reports through "
+        "the run's notifications, which no per-run choice governs, so a ported kind is created "
+        "with the choice recorded nowhere and reports as a run always has.",
+    ),
+    FieldHome(
         "autopilot",
         POLICY,
         "SupervisorPolicy.autonomy.approval",
