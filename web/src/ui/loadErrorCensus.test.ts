@@ -1382,6 +1382,10 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // `pages/chat/hero/ChatHero.tsx`, below, still owed.
   'pages/agents/AgentDetail.tsx': 1,
   'pages/apps/AppsSection.tsx': 2,
+  // The "Keep the question in view" read, beside the transcript: the same shape as the line above. A
+  // failed or unanswered read leaves the setting at its default, off, so a long reply scrolls as it
+  // always has and no banner stands in for the question.
+  'pages/chat/transcript/QuestionInView.tsx': 1,
   // The "Show timestamps" read that moved out of `ChatPage` with the transcript: same debt, and an
   // unanswered read shows no times, which is the setting's default.
   'pages/chat/transcript/Transcript.tsx': 1,
@@ -1402,6 +1406,12 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/companion/CompanionPage.tsx': 1,
   'pages/dashboard/DashboardPage.tsx': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,
+  // A KEEP: the Discover tip under an empty state reads the catalogue for one optional hint, and a
+  // failed read draws nothing on purpose, as an unread or empty one does. Nothing waits on it, so
+  // there is no spinner to be eternal, and an error notice in an empty state would make the tip what
+  // the page is about. The Discover page says the read failed, with its Retry
+  // (`pages/discover/aDiscoverTipShowsInEmptyStates.test.tsx` holds the silence).
+  'pages/discover/DiscoverTip.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 3,
   'pages/projects/ProjectsSection.tsx': 4,
