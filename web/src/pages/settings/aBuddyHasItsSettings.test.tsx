@@ -102,7 +102,9 @@ describe('the owner\'s knobs', () => {
 
 describe('what the buddy follows, shown and not set here', () => {
   it('the notification posture, with the way to Settings → Notifications', async () => {
-    POLICY.value = policy({}, { quiet_now: true, may_interrupt: false, changes_at: '2026-10-22T07:00:00-07:00' })
+    // 7:00 on this machine's clock, whatever its zone: the line says the time where the owner is.
+    const sevenHere = new Date(2026, 9, 22, 7, 0).toISOString()
+    POLICY.value = policy({}, { quiet_now: true, may_interrupt: false, changes_at: sevenHere })
     await mount()
     const notes = await screen.findByRole('group', { name: 'Notifications' })
     expect(await within(notes).findByText(/In quiet hours until 7:00/)).toBeInTheDocument()
