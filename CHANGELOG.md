@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An artifact a turn saves shows as a card under its answer, by the name it was saved under, and opens beside the conversation or in the Library.**
 - **A chat whose model call is retried, moved to the next model of its chain, sent again after its agent's connection was lost, or held behind other calls on a busy local model says so as it happens: "Retrying (2 of 2)", "Trying <model>" or "Waiting for <model> · 1 ahead", with why and when, and goes back to thinking when the retry or the model starts.**
 - **A chat's plan gate says how the approved plan runs: Approve & run it keeps today's behaviour, and its menu adds "Approve, and run it in a fresh chat", a new chat in the same project and folder, as private as the planning chat, whose only message is the plan, which the gate opens; the planning chat says where the plan runs, and only you can choose it (#3821).**
+- **A new chat can start a goal loop: type `/goal` and the task, or choose Start a goal loop in its + menu, and the draft goes to the loop composer as a goal loop's task, with the chat's project.**
 
 ### Changed
 

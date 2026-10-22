@@ -465,6 +465,7 @@ _SLASH_COMMAND_HINTS: dict[str, str] = {
     "/agent": "Switch the agent for this chat",
     "/effort": "Set reasoning effort for this chat",
     "/project": "Scope this new chat to a project",
+    "/goal": "Start a goal loop on a task, from a new chat",
     "/tools": "Open the Tools page",
     "/undo": "Roll back the last N conversation turns",
     "/rewind-to-turn": "Put back the agent's file edits after turn N (not a command's)",
