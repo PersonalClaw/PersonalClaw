@@ -25,6 +25,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { BuddyCard } from '../../ui/BuddyCard'
 import { BuddyPresence, orbOf } from './BuddyPresence'
 import { liveCardPropsOf } from './liveCard'
+import { lineOf } from '../../lib/buddy/lines'
 
 const ORB_ID = 'buddy-presence-orb'
 
@@ -117,6 +118,27 @@ function WindowShell({ hostRef, bridge }: { hostRef: HostRef; bridge: BuddyBridg
   return null
 }
 
+/** What a screen reader hears of the buddy (#3902): the page's one polite live region. A screen
+ *  reader follows the focused window, and the buddy never takes focus, so its words have to reach a
+ *  listener without it. An alert is said as "Needs you: <its line>", once, when it comes to the
+ *  front, and not again while it waits, however often the lists are read again or its line moves;
+ *  otherwise it says the buddy's one line as it stands, in full. */
+function Announcer({ machine }: { machine: BuddyState }) {
+  const view = viewOf(machine)
+  const truth = view.shows ? view.truth : null
+  const alertId = truth?.kind === 'alert' ? truth.alert.id : null
+  const alertLine = truth?.kind === 'alert' ? `Needs you: ${lineOf(truth, 'expandedCard')}` : ''
+  const [said, setSaid] = useState<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    if (alertId && said?.id !== alertId) setSaid({ id: alertId, text: alertLine })
+  }, [alertId, alertLine, said?.id])
+  // The card's full line, never the island's shortened one: a listener gets every word.
+  const text = alertId
+    ? (said?.id === alertId ? said.text : alertLine)
+    : truth ? lineOf(truth, 'expandedCard') : ''
+  return <p data-buddy-announce="" role="status" aria-live="polite" className="sr-only">{text}</p>
+}
+
 export function BuddyPage(_: RouteProps) {
   const [snap, setSnap] = useState<HostSnapshot | null>(null)
   const hostRef = useRef<BuddyHost | null>(null)
@@ -177,6 +199,7 @@ export function BuddyPage(_: RouteProps) {
   return (
     <div data-full-screen="buddy" onKeyDown={onKeyDown} onClickCapture={onClickCapture} onContextMenu={onContextMenu} className="flex h-full min-w-0 flex-col items-center p-s">
       <h1 className="sr-only">Buddy</h1>
+      {snap ? <Announcer machine={snap.machine} /> : null}
       {/* A shell built before its doorbell has no ring to hear: the page keeps its own socket. */}
       {bridge?.onRing ? <WindowShell hostRef={hostRef} bridge={bridge} /> : <SocketDoorbell hostRef={hostRef} />}
       {snap && host ? (

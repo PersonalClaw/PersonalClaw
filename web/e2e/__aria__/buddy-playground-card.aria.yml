@@ -15,7 +15,7 @@
   - figure "An approval, two more waiting":
     - heading "An approval, two more waiting" [level=#]
     - group "Release notes":
-      - img "Needs your OK"
+      - text: Needs your OK
       - heading "Release notes" [level=#]
       - paragraph: "Release notes needs your OK: Bash"
       - paragraph: Needs your OK · updated #:# <am/pm>
@@ -58,7 +58,7 @@
   - figure "A question":
     - heading "A question" [level=#]
     - group "Release notes":
-      - img "Waiting for your answer"
+      - text: Waiting for your answer
       - heading "Release notes" [level=#]
       - paragraph: "Release notes asks: Which branch should I use?"
       - paragraph: Waiting for your answer · updated #:# <am/pm>
@@ -101,7 +101,7 @@
   - figure "An error":
     - heading "An error" [level=#]
     - group "Release notes":
-      - img "Stopped"
+      - text: Stopped
       - heading "Release notes" [level=#]
       - paragraph: "Release notes stopped: The tests failed"
       - paragraph: Stopped · updated #:# <am/pm>
@@ -138,7 +138,7 @@
   - figure "Five pieces of work in sight":
     - heading "Five pieces of work in sight" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -190,7 +190,7 @@
   - figure "The focused work finished":
     - heading "The focused work finished" [level=#]
     - group "Release notes":
-      - img "Done"
+      - text: Done
       - heading "Release notes" [level=#]
       - paragraph: Release notes is done in <countdown> #s
       - paragraph: Done · updated #:# <am/pm>
@@ -237,7 +237,7 @@
   - figure "Nothing else running":
     - heading "Nothing else running" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -254,7 +254,7 @@
   - figure "Many pieces of work":
     - heading "Many pieces of work" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -314,7 +314,7 @@
   - figure "Reconnecting":
     - heading "Reconnecting" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -346,7 +346,7 @@
   - figure "The list could not be read":
     - heading "The list could not be read" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>
@@ -363,7 +363,7 @@
   - figure "Interrupted and just finished, about to fold":
     - heading "Interrupted and just finished, about to fold" [level=#]
     - group "Release notes":
-      - img "Searching"
+      - text: Searching
       - heading "Release notes" [level=#]
       - paragraph: "Release notes: searching changelog style"
       - paragraph: Searching · updated #:# <am/pm>

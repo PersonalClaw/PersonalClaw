@@ -125,6 +125,17 @@ function howOf(ended: RunningRow | undefined): 'done' | 'error' | 'stopped' {
   return ended?.phase === 'error' ? 'error' : ended?.phase === 'done' ? 'done' : 'stopped'
 }
 
+/** The step windows of the work the card can still show (#3902): live work, the finished work in
+ *  its hold, and the work the card was opened on. A window for work the machine has let go of is
+ *  dropped, or a day's errands would each keep one forever (the twelve-hour day's test). */
+function keptSteps(steps: StepWindows, machine: BuddyState): StepWindows {
+  const kept = new Set<string>(machine.live.map((w) => w.id))
+  if (machine.finished) kept.add(machine.finished.work.id)
+  if (machine.opened) kept.add(machine.opened.id)
+  const ids = Object.keys(steps)
+  return ids.every((id) => kept.has(id)) ? steps : Object.fromEntries(ids.filter((id) => kept.has(id)).map((id) => [id, steps[id]]))
+}
+
 export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => void): BuddyHost {
   let machine: BuddyState = INITIAL
   let steps: StepWindows = {}
@@ -209,7 +220,7 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     if (stopped || !possible(input)) return
     const step = reduce(machine, input, deps.now())
     machine = step.state
-    steps = stepsOnInput(steps, input)
+    steps = keptSteps(stepsOnInput(steps, input), machine)
     for (const e of step.effects) run(e)
     if (isHidden(machine)) for (const name of [...timers.keys(), ...waitingFolds]) clear(name)
   }

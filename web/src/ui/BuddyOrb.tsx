@@ -110,13 +110,16 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
       className="inline-flex min-w-0 items-center gap-2"
     >
       <span className="relative inline-block shrink-0" style={{ width: size, height: size }}>
+        {/* Decoration (#3902): its state is said in words beside it, by the line or, without one,
+            by the words below, never by the drawing. */}
         <canvas
-          ref={canvas} role="img" aria-label={wordsOf(state)}
+          ref={canvas} aria-hidden="true"
           className="absolute block"
           style={{ width: size + pad * 2, height: size + pad * 2, left: -pad, top: -pad }}
         />
       </span>
       <span data-buddy-line="" data-type="body-s" className="min-w-0 truncate text-on-surface">{line}</span>
+      {line ? null : <span data-buddy-words="" className="sr-only">{wordsOf(state)}</span>}
     </span>
   )
 }

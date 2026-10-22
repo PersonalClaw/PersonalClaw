@@ -126,7 +126,8 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
     reduced: 'still',
     animated: 'animated',
     // The orb is still drawn, named for its state, with its line: the branch is not "draw nothing".
-    positiveControl: (el) => el.querySelector('canvas[role="img"][aria-label="Thinking"]') && el.querySelector('[data-buddy-line]')?.textContent,
+    // The drawing is decoration (#3902): the line beside it says the state.
+    positiveControl: (el) => el.querySelector('[data-buddy-state="thinking"] canvas[aria-hidden="true"]') && el.querySelector('[data-buddy-line]')?.textContent,
   },
   {
     id: 'AgentOrb — live work is one still frame of its drawing',
