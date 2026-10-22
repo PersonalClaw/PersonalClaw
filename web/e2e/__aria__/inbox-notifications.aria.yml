@@ -14,9 +14,8 @@
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
   - button "Inbox"
-  - button "Triggers"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:

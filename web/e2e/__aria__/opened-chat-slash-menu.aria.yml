@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -60,7 +57,9 @@
   - option "/agent Switch the agent for this chat"
   - option "/effort Set reasoning effort for this chat"
   - option "/project Scope this new chat to a project"
+  - option "/goal Start a goal loop on a task, from a new chat"
   - option "/tools Open the Tools page"
   - option "/undo Roll back the last N conversation turns"
   - option "/rewind-to-turn Put back the agent's file edits after turn N (not a command's)"
   - option "/compact Compact the conversation to free context"
+  - option "/context Show what fills the context window, part by part"

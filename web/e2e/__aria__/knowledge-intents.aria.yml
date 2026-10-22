@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -49,5 +46,11 @@
   - heading "Knowledge base is empty" [level=#]
   - paragraph: Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve.
   - button "Add knowledge"
+  - complementary "A tip from Discover":
+    - paragraph: Start a conversation
+    - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+    - link "Open Chat":
+      - /url: "#/chat/new"
+    - button "Dismiss this tip"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

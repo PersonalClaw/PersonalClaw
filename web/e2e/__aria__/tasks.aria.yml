@@ -13,12 +13,9 @@
     - button "Personal, no threads": Personal #
     - button "Repeatable, no threads": Repeatable #
   - text: Platform
-  - button "Tasks"
   - button "Inbox"
-  - button "Triggers"
-  - button "Terminal"
+  - button "Automations"
   - button "Capabilities"
-  - button "Workflows"
   - button "Settings"
 - separator "Resize navigation — arrow keys to resize"
 - main:
@@ -28,7 +25,7 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - heading "Tasks" [level=#]
+  - heading "All tasks" [level=#]
   - radiogroup "View":
     - radio "List view" [checked]
     - radio "Cards view"

@@ -65,7 +65,7 @@
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Tasks\" clips at #%: #x# in #x#"
+        "<h#> \"All tasks\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -135,7 +135,7 @@
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Tasks\" clips at #%: #x# in #x#"
+        "<h#> \"All tasks\" clips at #%: #x# in #x#"
       ]
     }
   }

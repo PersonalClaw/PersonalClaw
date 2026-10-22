@@ -15,7 +15,14 @@ describe("the matrix's accessibility tree folds a relative time in each spelling
     expect(normalizeTree(later)).toBe(normalizeTree(early))
   })
 
-  it.each(['just now', '3m ago', '3 min ago', '1 minute ago', '1 hour ago', '4 days ago', '2 months ago'])(
+  it('reads the Doctor\'s snapshot row before and after its first minute as the same line', () => {
+    // The row says "under a minute ago" until the minute passes, and the tree kept it whole.
+    const early = '  - group: Scheduled snapshots and exports are working last snapshot under a minute ago'
+    const later = '  - group: Scheduled snapshots and exports are working last snapshot 4 minutes ago'
+    expect(normalizeTree(early)).toBe(normalizeTree(later))
+  })
+
+  it.each(['just now', 'under a minute ago', '3m ago', '3 min ago', '1 minute ago', '1 hour ago', '4 days ago', '2 months ago'])(
     'reads "%s" as <when>',
     (when) => {
       expect(normalizeTree(`  - text: "Restore drill ${when} Run now:"`)).toBe('  - text: "Restore drill <when> Run now:"')
