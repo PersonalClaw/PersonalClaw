@@ -47,7 +47,8 @@ def attention(row: Mapping[str, Any], seen: chat_seen.Seen, waiting: Iterable[st
     """What *row* (a ``GET /api/chat/sessions`` row) says needs your attention, read against
     *seen* and the chats something waiting on you is shown in (*waiting*)."""
     key = str(row.get("key") or "")
-    phase = row.get("run_state") if isinstance(row.get("run_state"), Mapping) else {}
+    state = row.get("run_state")
+    phase: Mapping[str, Any] = state if isinstance(state, Mapping) else {}
     running = phase.get("turn") is not None
     outcome = phase.get("last_outcome")
     needs_you = bool(key) and key in set(waiting)
