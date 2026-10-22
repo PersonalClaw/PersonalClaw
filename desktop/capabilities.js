@@ -312,12 +312,23 @@ function registerCapabilityIpc(ipcMain, caps) {
   });
 }
 
+/** Where Electron can keep a window out of screen capture (`setContentProtection`): macOS and
+ * Windows. On Linux no window can be kept out of a share or a screenshot, so the shell says so
+ * rather than offering a switch that does nothing. */
+const CAPTURE_HIDING_PLATFORMS = ["darwin", "win32"];
+
+/** Whether this platform can keep a window out of screen capture. */
+function captureHidingSupported(platform) {
+  return CAPTURE_HIDING_PLATFORMS.includes(platform);
+}
+
 module.exports = {
   CAPABILITIES,
   GRANT_STATES,
   IPC_CHANNELS,
   IPC_PREFIX,
   SPECS,
+  captureHidingSupported,
   makeCapabilities,
   registerCapabilityIpc,
 };

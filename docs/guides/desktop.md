@@ -537,8 +537,10 @@ its gateway answers, it does what you last chose.
   click into it.
 - **Clicks pass through it.** Everywhere outside the buddy itself and its open card, a click
   reaches the window underneath.
-- **Kept out of screen sharing and screenshots** on macOS, by default, so what is waiting on you
-  does not show in a share.
+- **Kept out of screen sharing and screenshots** on macOS and Windows, by default, so what is
+  waiting on you does not show in a share. Linux offers no way to keep a window out of a capture,
+  so there the buddy shows in a share, and Settings → Buddy says the row is not available on this
+  computer instead of offering a switch.
 - **It costs nothing while hidden.** Hidden, its page schedules no timer and no frame and reads no
   pointer, and it opens no connection of its own.
 - **It never keeps the app running by itself.** Where closing the last window quits the app (no
