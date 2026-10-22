@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Mic, Square, Pause, Play, Trash2 } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { useCaptureReport } from '../../lib/pushToTalk'
 
 type RecState = 'idle' | 'recording' | 'paused' | 'done'
 
@@ -30,6 +31,10 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
   const [level, setLevel] = useState(0)  // 0..1 live input level for the meter
   const [url, setUrl] = useState<string | null>(null)
   const [err, setErr] = useState('')
+
+  // While its stream is open (recording or paused), the microphone is held: said to the shell as
+  // the recorder, so listening shows in the tray and every window (#3833).
+  useCaptureReport(state === 'recording' || state === 'paused', 'recorder')
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)

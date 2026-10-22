@@ -258,23 +258,23 @@ describe('the capturing indicator', () => {
     const { bridge, fire } = installBridge()
     mountComposer()
     await chord(fire)
-    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(true, 'dictation'))
     await chord(fire)
-    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(false, 'dictation'))
   })
 
   it('takes the shell indicator down when the composer unmounts mid-capture', async () => {
     const { bridge, fire } = installBridge()
     const { view } = mountComposer()
     await chord(fire)
-    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(true, 'dictation'))
 
     bridge.pushToTalk.setCapturing.mockClear()
     await act(async () => { view.unmount() })
 
     // Navigating away kills the stream, so an indicator left lit in the menu bar would
     // outlive the capture it describes.
-    expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(false)
+    expect(bridge.pushToTalk.setCapturing).toHaveBeenCalledWith(false, 'dictation')
   })
 })
 

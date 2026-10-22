@@ -117,8 +117,12 @@ RUNNING_LIST_FRAMES: frozenset[str] = frozenset({"running_changed"})
 WAITING_LIST_FRAMES: frozenset[str] = frozenset({"waiting_changed"})
 WAITING_LIST_ROUTE = "/api/waiting"
 
+#: Frames about the owner alone, whatever they carry: whether her microphone is live
+#: (``handlers/listening.py``, #3833). They reach her sockets and never an app's.
+OWNER_FRAMES: frozenset[str] = frozenset({"listening"})
+
 #: What a frame is about, when only some apps may hear of it: ``("conversation", name)``,
-#: ``("inbox_item", source)``, ``("work", name)`` or ``("waiting", "")``.
+#: ``("inbox_item", source)``, ``("work", name)``, ``("waiting", "")`` or ``("owner", frame)``.
 FrameSubject = tuple[str, str]
 
 
@@ -136,6 +140,8 @@ def frame_subject(event_type: str, data: object) -> FrameSubject | None:
     (:data:`WAITING_LIST_FRAMES`), whatever it carries."""
     if event_type in WAITING_LIST_FRAMES:
         return ("waiting", "")
+    if event_type in OWNER_FRAMES:
+        return ("owner", event_type)
     if not isinstance(data, dict) or event_type in NOTIFICATION_FRAMES:
         return None
     if event_type in INBOX_ITEM_FRAMES:
@@ -366,7 +372,7 @@ class DashboardWebSocketState:
         (:data:`WAITING_LIST_FRAMES`). Never one about work no chat started (:data:`WORK_FRAMES`).
         """
         kind, key = subject
-        if kind == "work":
+        if kind in ("work", "owner"):
             return False
         if kind == "waiting":
             return self._app_may_read(app, WAITING_LIST_ROUTE)

@@ -132,8 +132,8 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
   `terminal`, `capabilities`, `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`,
   `apps`, `settings`, `notifications`, `discover`, `loop`, `loops`, `code`, `app` or
   `mission-control`. `threads` is another name for `chat` and `automations` for `triggers`. Names
-  are lower case. The app's two shell pages, `onboarding` and `companion`, are not on the list: a
-  link to either is refused.
+  are lower case. The app's three shell pages, `onboarding`, `companion` and the buddy playground (`buddy`), are not on the list: a
+  link to any of them is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
   `. _ : @ ~ -`.
 - **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder), on a
@@ -432,6 +432,13 @@ Two indicators are lit while the microphone is live, and both matter:
    because the shortcut is global: if the window were hidden behind a full-screen app, an
    in-window indicator would be a capture indicator you could not see. Inside the app
    there is also a "Listening" chip beside the composer.
+
+The menu-bar item shows every capture, not only the shortcut's: the composer's dictation,
+hands-free, and the Knowledge recorder each say when they hold the microphone. Every
+PersonalClaw window hears it too (the buddy shows its listening face), and so does the
+gateway, which tells your open pages. It clears when the capture stops, or when the
+window that captured closes or its page crashes, since its stream went with it. A plain
+browser tab has no shell to tell, so the browser's own tab indicator is the one there.
 
 Releasing the toggle ends the recording and **stops the microphone track**. The app does
 not hold an idle-but-open microphone between captures.

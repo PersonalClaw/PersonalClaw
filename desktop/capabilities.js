@@ -63,6 +63,9 @@ const IPC_CHANNELS = {
   capturing: `${IPC_PREFIX}capturing`,
   /** main → renderer push: the chord fired, or the shell is asking capture to stop. */
   pushToTalk: `${IPC_PREFIX}push-to-talk`,
+  /** main → every window: whether the microphone is live, and which capture sources hold it
+   * (#3833), so the buddy and every other window show listening wherever the owner looks. */
+  listening: `${IPC_PREFIX}listening`,
   /** renderer → main: read the "open at login" registration. A preference,
    * not an OS permission — so it is handled by `registerLoginItemIpc` on its own
    * channels rather than folded into the capability vocabulary. */

@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat's plan gate says how the approved plan runs: Approve & run it keeps today's behaviour, and its menu adds "Approve, and run it in a fresh chat", a new chat in the same project and folder, as private as the planning chat, whose only message is the plan, which the gate opens; the planning chat says where the plan runs, and only you can choose it (#3821).**
 - **A new chat can start a goal loop: type `/goal` and the task, or choose Start a goal loop in its + menu, and the draft goes to the loop composer as a goal loop's task, with the chat's project.**
 - **Mission Control, the phone companion and the menu bar read everything waiting on you, not approvals alone: a workflow's gate, a loop's question and every other kind are listed (Mission Control's Needs approval and Your turn lanes, the phone's first section, in the list's one order, each with its text) and counted (the menu bar's "N waiting on you", which opens Mission Control), and a card past answering says so and keeps nothing that could still send.**
+- **The menu bar's ● Listening shows for every capture, not only the push-to-talk shortcut: the composer's dictation, hands-free and the Knowledge recorder each say when they hold the microphone, every PersonalClaw window and your open pages hear it, and it clears when the window that captured closes or crashes.**
 
 ### Changed
 

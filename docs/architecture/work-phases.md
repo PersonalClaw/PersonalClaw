@@ -226,6 +226,19 @@ measured each and never from a timer:
 
 Each field is set only in its phase, `null` otherwise.
 
+## Listening
+
+Listening is the shell's system state, with the sources that hold the microphone, not a
+phase of one chat: a dictation is not yet anyone's message. A window reports each capture
+source it holds (the composer's dictation, hands-free, the Knowledge recorder) through
+`web/src/lib/pushToTalk.ts`'s `useCaptureReport`; the shell keeps them per window and
+source, clears a window's when it closes or its renderer is gone, and tells the tray,
+every window (`pclaw-desktop:listening`) and the gateway (`desktop/pushToTalk.js`,
+`listeningReport`). The gateway keeps it (`POST /api/listening`, `GET /api/listening`,
+both the owner's) and sends a `listening` frame `{on, sources, since}` when it changed,
+which reaches the owner's sockets and no app's (`ws_state.OWNER_FRAMES`). A plain browser
+tab has no shell and reports nothing.
+
 ## The routes serve the last frame
 
 `GET /api/chat/sessions` rows, `GET /api/chat/sessions/{session}` and the chats of

@@ -191,21 +191,34 @@ export function usePushToTalk({
   }, [available])
 
   // 2. Report the microphone's real state to the shell — this is what the always-on
-  // indicator is drawn from.
+  // indicator is drawn from — as dictation, and its stop on unmount.
+  useCaptureReport(capturing, 'dictation', available)
+
+  return { available, chord, bindError }
+}
+
+/** The capture sources a window reports to the shell (#3833). */
+export type CaptureSource = 'dictation' | 'hands-free' | 'recorder'
+
+/** Report to the shell that *source* holds the microphone while *capturing*, and that it no
+ *  longer does when it stops or the component goes away. The shell shows it in the tray and in
+ *  every window, and tells the gateway (`desktop/pushToTalk.js`). Every place that opens the
+ *  microphone reports through this. In a browser tab there is no shell, and nothing is reported. */
+export function useCaptureReport(capturing: boolean, source: CaptureSource, enabled = true): void {
+  const bridge = desktopBridge()
+  const on = !!bridge && enabled
   useEffect(() => {
-    if (!available || !bridge) return
-    void bridge.pushToTalk?.setCapturing?.(capturing)
-  }, [available, bridge, capturing])
+    if (!on || !bridge) return
+    void bridge.pushToTalk?.setCapturing?.(capturing, source)
+  }, [on, bridge, capturing, source])
 
   // …including on unmount. An indicator that outlived its stream would be worse than no
   // indicator, and this is the one teardown a component-scoped effect can guarantee.
   useEffect(() => {
-    if (!available || !bridge) return
-    return () => { void bridge.pushToTalk?.setCapturing?.(false) }
+    if (!on || !bridge) return
+    return () => { void bridge.pushToTalk?.setCapturing?.(false, source) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [available])
-
-  return { available, chord, bindError }
+  }, [on, source])
 }
 
 /** Bind a chord immediately and report the result — what the Settings control calls when

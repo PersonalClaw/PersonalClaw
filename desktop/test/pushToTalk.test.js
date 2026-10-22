@@ -383,3 +383,103 @@ describe("system audio is refused honestly, not half-shipped", () => {
     assert.match(guide, /system audio/i);
   });
 });
+
+// ── Listening reaches the gateway and every window, from every capture source (#3833) ──────────
+
+const { EventEmitter } = require("node:events");
+
+/** A window's web contents as the IPC event names it: an id, and the events Electron sends. */
+function contents(id) {
+  const c = new EventEmitter();
+  c.id = id;
+  c.sent = [];
+  c.send = (channel, payload) => c.sent.push({ channel, payload });
+  return c;
+}
+
+/** The capturing channel's handler, on a harness whose indicator records every report. */
+function capturingChannel() {
+  const handlers = new Map();
+  const ipc = { handle: (ch, fn) => handlers.set(ch, fn) };
+  const reports = [];
+  const ptt = makePushToTalk({
+    globalShortcut: shortcutStub(),
+    onCapturing: (on, sources) => reports.push({ on, sources }),
+    setTimer: () => 1,
+    clearTimer: () => {},
+  });
+  registerPushToTalkIpc(ipc, ptt, IPC_CHANNELS);
+  const report = (sender, on, source) => handlers.get(IPC_CHANNELS.capturing)({ sender }, on, source);
+  return { ptt, reports, report };
+}
+
+describe("listening, from every capture source", () => {
+  test("each source is reported by name, and listening lasts while any source captures", () => {
+    const { ptt, reports, report } = capturingChannel();
+    const win = contents(1);
+    report(win, true, "dictation");
+    report(win, true, "recorder");
+    assert.deepEqual(reports.at(-1), { on: true, sources: ["dictation", "recorder"] });
+    report(win, false, "dictation");
+    assert.deepEqual(reports.at(-1), { on: true, sources: ["recorder"] });
+    assert.equal(ptt.isCapturing(), true);
+    report(win, false, "recorder");
+    assert.deepEqual(reports.at(-1), { on: false, sources: [] });
+  });
+
+  test("a source the shell does not know is read as dictation, never passed on as sent", () => {
+    const { reports, report } = capturingChannel();
+    report(contents(1), true, "../../etc/passwd");
+    assert.deepEqual(reports.at(-1), { on: true, sources: ["dictation"] });
+  });
+
+  test("the window that captured going away clears its capture, and only its", () => {
+    const { ptt, reports, report } = capturingChannel();
+    const main = contents(1);
+    const buddy = contents(2);
+    report(main, true, "hands-free");
+    report(buddy, true, "dictation");
+    main.emit("destroyed");
+    assert.deepEqual(reports.at(-1), { on: true, sources: ["dictation"] });
+    buddy.emit("render-process-gone");
+    assert.deepEqual(reports.at(-1), { on: false, sources: [] });
+    assert.equal(ptt.isCapturing(), false);
+  });
+
+  test("the report reaches the gateway and every window", async () => {
+    const { listeningReport } = require("../pushToTalk");
+    const windows = [contents(1), contents(2)];
+    const posted = [];
+    const indicator = [];
+    const say = listeningReport({
+      windows: () => windows.map((webContents) => ({ webContents })),
+      postGateway: async (route, body) => posted.push({ route, body }),
+      onIndicator: (on) => indicator.push(on),
+      channel: IPC_CHANNELS.listening,
+    });
+    say(true, ["dictation"]);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(posted, [{ route: "/api/listening", body: { on: true, sources: ["dictation"] } }]);
+    for (const w of windows) {
+      assert.deepEqual(w.sent, [{ channel: IPC_CHANNELS.listening, payload: { on: true, sources: ["dictation"] } }]);
+    }
+    assert.deepEqual(indicator, [true]);
+  });
+
+  test("a gateway that cannot be told, or a window gone mid-send, never stops the report", async () => {
+    const { listeningReport } = require("../pushToTalk");
+    const gone = { webContents: { send: () => { throw new Error("destroyed"); } } };
+    const live = contents(2);
+    const indicator = [];
+    const say = listeningReport({
+      windows: () => [gone, { webContents: live }],
+      postGateway: async () => { throw new Error("offline"); },
+      onIndicator: (on) => indicator.push(on),
+      channel: IPC_CHANNELS.listening,
+    });
+    say(false, []);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(indicator, [false]);
+    assert.equal(live.sent.length, 1);
+  });
+});
