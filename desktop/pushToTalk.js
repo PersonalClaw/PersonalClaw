@@ -47,6 +47,10 @@ const DEFAULT_CHORD = "CommandOrControl+Shift+Space";
  * the bound on "pressed the chord and walked away", not a normal code path. */
 const MAX_CAPTURE_MS = 120000;
 
+/** The capture sources a window may report (#3833): the composer's dictation, hands-free, and the
+ * Knowledge recorder. Anything else a renderer sends is read as dictation. */
+const CAPTURE_SOURCES = new Set(["dictation", "hands-free", "recorder"]);
+
 /** Accelerator modifier tokens Electron understands. */
 const MODIFIERS = new Set([
   "Command",
@@ -150,7 +154,8 @@ function validateChord(chord) {
  * @param {object} deps
  * @param {object} deps.globalShortcut  Electron globalShortcut (register/unregister/isRegistered)
  * @param {function} [deps.send]        (payload) => void — main → renderer push
- * @param {function} [deps.onCapturing] (boolean) => void — drives the tray indicator
+ * @param {function} [deps.onCapturing] (boolean, sources) => void — drives the tray indicator,
+ *   and says which capture sources hold the microphone (`listeningReport`)
  * @param {function} [deps.setTimer]    setTimeout (injected for tests)
  * @param {function} [deps.clearTimer]  clearTimeout (injected for tests)
  * @param {number} [deps.maxCaptureMs]  capture ceiling (defaults to MAX_CAPTURE_MS)
@@ -166,6 +171,12 @@ function makePushToTalk(deps = {}) {
   let bound = "";
   let capturing = false;
   let timer = null;
+  /** Each live capture, by `<window>:<source>`, with its source: listening lasts while any is. */
+  const live = new Map();
+  let said = "false:";
+
+  /** The sources capturing now, each once, in a stable order. */
+  const sources = () => [...new Set(live.values())].sort();
 
   const cancelTimer = () => {
     if (timer !== null) {
@@ -252,13 +263,23 @@ function makePushToTalk(deps = {}) {
    * The renderer's report that the microphone is (or is no longer) live. This is the
    * ONLY thing that moves the indicator.
    */
-  function setCapturing(next) {
-    const on = Boolean(next);
-    if (on === capturing) return capturing;
+  function setCapturing(next, source = { key: "", kind: "dictation" }) {
+    if (next) live.set(source.key, source.kind);
+    else live.delete(source.key);
+    return settle();
+  }
+
+  /** Say what is capturing when it changed, and arm or cancel the ceiling with it. */
+  function settle() {
+    const on = live.size > 0;
+    const now = `${on}:${sources().join(",")}`;
+    if (now === said) return capturing;
+    said = now;
+    const started = on && !capturing;
     capturing = on;
-    cancelTimer();
-    onCapturing(on);
-    if (on) {
+    if (!on) cancelTimer();
+    onCapturing(on, sources());
+    if (started) {
       timer = setTimer(() => {
         timer = null;
         // Ask, do not assume: the renderer owns the stream, so it performs the stop
@@ -273,9 +294,15 @@ function makePushToTalk(deps = {}) {
   /** The renderer went away (window closed / crashed), so its stream went with it. */
   function clearCapturing() {
     cancelTimer();
+    live.clear();
     if (!capturing) return;
-    capturing = false;
-    onCapturing(false);
+    settle();
+  }
+
+  /** One window went away (closed, or its renderer gone): every capture it held went with it. */
+  function clearSource(windowId) {
+    for (const key of [...live.keys()]) if (key.startsWith(`${windowId}:`)) live.delete(key);
+    return settle();
   }
 
   return {
@@ -285,6 +312,7 @@ function makePushToTalk(deps = {}) {
     press,
     setCapturing,
     clearCapturing,
+    clearSource,
     validateChord,
     boundChord: () => bound,
     isCapturing: () => capturing,
@@ -300,7 +328,53 @@ function makePushToTalk(deps = {}) {
  */
 function registerPushToTalkIpc(ipcMain, ptt, channels) {
   ipcMain.handle(channels.hotkeyBind, (_e, chord) => ptt.bind(chord));
-  ipcMain.handle(channels.capturing, (_e, on) => ptt.setCapturing(on));
+  // Each report names the window that sent it (`event.sender`) and its capture source, so one
+  // window's stop never clears another's capture, and a window that goes away (closed, or its
+  // renderer gone) takes its captures with it, as its streams went with it.
+  const watched = new WeakSet();
+  ipcMain.handle(channels.capturing, (e, on, source) => {
+    const sender = e && e.sender;
+    const id = sender && typeof sender.id === "number" ? sender.id : 0;
+    if (sender && typeof sender.once === "function" && !watched.has(sender)) {
+      watched.add(sender);
+      const gone = () => ptt.clearSource(id);
+      sender.once("destroyed", gone);
+      sender.once("render-process-gone", gone);
+    }
+    const kind = CAPTURE_SOURCES.has(source) ? source : "dictation";
+    return ptt.setCapturing(on, { key: `${id}:${kind}`, kind });
+  });
+}
+
+/**
+ * Who hears that the microphone is live (#3833): the tray's indicator, every window (the buddy's
+ * included), and the gateway, which tells the owner's pages. A window gone mid-send or a gateway
+ * that cannot be told never stops the others hearing it.
+ *
+ * @param {object} deps
+ * @param {function} deps.windows      () => BrowserWindow[] — every window, at the time of the report
+ * @param {function} deps.postGateway  (route, body) => Promise — the shell's loopback call
+ * @param {function} deps.onIndicator  (boolean) => void — the tray's indicator
+ * @param {string} deps.channel        the IPC channel every window hears it on
+ * @returns {function} (on, sources) => void, for `makePushToTalk`'s `onCapturing`
+ */
+function listeningReport({ windows, postGateway, onIndicator, channel }) {
+  return (on, sources = []) => {
+    const said = { on: Boolean(on), sources: [...sources] };
+    onIndicator(said.on);
+    for (const win of windows() || []) {
+      try {
+        win.webContents.send(channel, said);
+      } catch {
+        /* the window is going away: its own renderer is gone */
+      }
+    }
+    Promise.resolve()
+      .then(() => postGateway("/api/listening", said))
+      .catch(() => {
+        /* the gateway hears the next report; the tray and the windows already did */
+      });
+  };
 }
 
 module.exports = {
@@ -311,4 +385,6 @@ module.exports = {
   validateChord,
   makePushToTalk,
   registerPushToTalkIpc,
+  listeningReport,
+  CAPTURE_SOURCES,
 };

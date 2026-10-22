@@ -281,6 +281,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     from personalclaw.dashboard.handlers.model_waits import register_model_waits_routes
 
     register_model_waits_routes(app)
+    # Whether the microphone is live, as the desktop shell says it (#3833): the owner's only.
+    from personalclaw.dashboard.handlers.listening import register_listening_routes
+
+    register_listening_routes(app)
     # The learning flywheel — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of the human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.

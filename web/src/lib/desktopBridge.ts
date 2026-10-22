@@ -87,8 +87,11 @@ export interface DesktopBridge {
    *  lights the menu-bar indicator. */
   pushToTalk?: {
     bind: (chord: string) => Promise<ChordBindResult>
-    setCapturing: (on: boolean) => Promise<boolean>
+    /** The microphone's state, with the capture source that holds it (`lib/pushToTalk`). */
+    setCapturing: (on: boolean, source?: string) => Promise<boolean>
     on: (cb: (push: { action: 'toggle' | 'stop'; reason?: string }) => void) => () => void
+    /** Whether the microphone is live in any window, and which sources hold it (#3833). */
+    onListening?: (cb: (state: { on: boolean; sources: string[] }) => void) => () => void
   }
   /** Native OS notifications — the `native` delivery target. Deliberately not
    *  a general "notify the user" API: `show()` is called only for a gateway note whose rule

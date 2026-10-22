@@ -17,7 +17,7 @@ import { api } from '../lib/api'
 import { cx } from './cx'
 import { Button } from './Button'
 import { useQuery } from '../lib/data'
-import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
+import { usePushToTalk, ensureMicGrant, useCaptureReport } from '../lib/pushToTalk'
 import { MicCaptureChip } from './MicCaptureChip'
 import { ContextDisclosure, nearLimit, nearLimitSaid } from './composer/ContextDisclosure'
 
@@ -144,6 +144,9 @@ export function Composer({
     onStart: () => { void ensureMicGrant().then((err) => (err ? onMicError?.(err) : mic.toggle())) },
     onStop: mic.toggle,
   })
+  // Hands-free holds the same recorder open while it listens: said as its own capture source, so
+  // the tray, every window and the gateway show it as the composer's dictation shows (#3833).
+  useCaptureReport(listening && mic.state === 'recording', 'hands-free')
 
   // `restH` is the user-set resting height — the editor is at least this tall
   // even when empty (so the handle resizes it at rest), and auto-grows with

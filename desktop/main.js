@@ -7,7 +7,7 @@ const http = require("http");
 const { findPersonalclawBin } = require("./find-bin");
 const { attachContextMenu } = require("./context-menu");
 const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./capabilities");
-const { makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
+const { listeningReport, makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
 const {
   DEEP_LINKS,
   bootRead,
@@ -466,7 +466,20 @@ const pushToTalk = makePushToTalk({
       /* window may be gone mid-press */
     }
   },
-  onCapturing: (on) => setCaptureIndicator(on),
+  // The tray, every window and the gateway hear it (#3833). `postGateway` is a function
+  // declaration below, read when a report is made, never while this module evaluates.
+  onCapturing: listeningReport({
+    // Every window's contents (the main window is a BaseWindow holding views), as the shell
+    // reaches all of them when the gateway moves.
+    windows: () =>
+      webContents
+        .getAllWebContents()
+        .filter((wc) => !wc.isDestroyed())
+        .map((wc) => ({ webContents: wc })),
+    postGateway: (route, body) => postGateway(route, body),
+    onIndicator: (on) => setCaptureIndicator(on),
+    channel: IPC_CHANNELS.listening,
+  }),
 });
 
 /**

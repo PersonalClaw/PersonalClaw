@@ -43,6 +43,7 @@ const IPC_CHANNELS = {
   hotkeyBind: `${IPC_PREFIX}hotkey-bind`,
   capturing: `${IPC_PREFIX}capturing`,
   pushToTalk: `${IPC_PREFIX}push-to-talk`,
+  listening: `${IPC_PREFIX}listening`,
   loginItemGet: `${IPC_PREFIX}login-item-get`,
   loginItemSet: `${IPC_PREFIX}login-item-set`,
   notify: `${IPC_PREFIX}notify`,
@@ -131,8 +132,19 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
      * chord comes back as `conflict: true` so Settings can say which it was. */
     bind: (chord) => ipcRenderer.invoke(IPC_CHANNELS.hotkeyBind, String(chord ?? "")),
 
-    /** Report the microphone's real state to the shell (drives the indicator). */
-    setCapturing: (on) => ipcRenderer.invoke(IPC_CHANNELS.capturing, Boolean(on)),
+    /** Report the microphone's real state to the shell (drives the indicator), with the
+     * capture source that holds it: "dictation", "hands-free" or "recorder". */
+    setCapturing: (on, source) =>
+      ipcRenderer.invoke(IPC_CHANNELS.capturing, Boolean(on), String(source ?? "dictation")),
+
+    /** Subscribe to whether the microphone is live in any window, and which sources hold it
+     * ({on, sources}). Returns an unsubscribe fn. */
+    onListening: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on(IPC_CHANNELS.listening, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.listening, handler);
+    },
 
     /** Subscribe to chord presses and to the shell's stop requests. Returns an
      * unsubscribe fn. */

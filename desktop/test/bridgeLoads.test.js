@@ -109,6 +109,7 @@ describe("the capability preload loads under a sandboxed require (tier 1)", () =
       [IPC_CHANNELS.hotkeyBind, () => bridge.pushToTalk.bind("Cmd+Shift+Space")],
       [IPC_CHANNELS.capturing, () => bridge.pushToTalk.setCapturing(true)],
       [IPC_CHANNELS.pushToTalk, () => bridge.pushToTalk.on(noop)],
+      [IPC_CHANNELS.listening, () => bridge.pushToTalk.onListening(noop)],
       [IPC_CHANNELS.loginItemGet, () => bridge.loginItem.get()],
       [IPC_CHANNELS.loginItemSet, () => bridge.loginItem.set(true)],
       [IPC_CHANNELS.notify, () => bridge.notifications.show({ title: "t", body: "b" })],
