@@ -9,7 +9,7 @@ import { CONTROLS, advance, fire, startPlayground, use, type Playground } from '
 // Driven through every control of the playground's matrix, three rounds, with the clock run past
 // the timers each step starts, the orb is drawn the same way in every state: one slot, the same
 // node while it shows, its drawing at 48 and the slot's own classes and style the same whatever
-// the machine says. What the buddy has to say is a card beside it: a surface laid out apart from
+// the machine says. What the buddy has to say is a card beside it, in an area laid out apart from
 // the slot (absolutely placed, never around it), so opening, growing, shrinking or closing it takes
 // no room from the orb. The box itself, read in a browser, is `e2e/buddyPlayground.spec.ts`'s.
 
@@ -67,10 +67,11 @@ describe('the orb holds its box', () => {
       const here = `${slot.className}|${slot.getAttribute('style') ?? ''}`
       if (look) expect(here, `${step}: the slot's look does not follow the state`).toBe(look)
       look = here
-      for (const card of view.container.querySelectorAll<HTMLElement>('[data-buddy-card-surface]')) {
+      for (const area of view.container.querySelectorAll<HTMLElement>('[data-buddy-card-area]')) {
         cards++
-        expect(card.contains(slot), `${step}: the card is beside the orb, never around it`).toBe(false)
-        expect(card.className.split(/\s+/), `${step}: the card is laid out apart from the orb`).toContain('absolute')
+        expect(area.contains(slot), `${step}: the card is beside the orb, never around it`).toBe(false)
+        expect(area.className.split(/\s+/), `${step}: the card is laid out apart from the orb`).toContain('absolute')
+        expect(area.querySelectorAll('[data-buddy-card-surface]').length, `${step}: one card in its area`).toBe(1)
       }
     }
     // The sweep reached the rooms the old shape drew at other sizes, and opened cards.

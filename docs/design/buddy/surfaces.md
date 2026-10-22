@@ -18,18 +18,22 @@ where it sits:
 - **Compact, and an alert's bubble away from the top edge:** the line card.
 - **Expanded, and a click on an orb away from the top edge:** the card.
 
-The card opens on the side of the orb that has room on its display: below an orb near the top,
-above one near the bottom, else to its right or its left. It is centred on the orb when it fits,
-and otherwise kept to the display's edge, and it never covers the orb. A card bigger than every
-side takes the side with the most room and scrolls inside it (`web/src/lib/buddy/cardPlacement.ts`).
-Opening, growing, shrinking or closing it never moves the orb or changes its size: the card is laid
-out apart from the orb (`web/src/pages/buddy/BuddyPresence.tsx`).
+The card opens on the side of the orb that has room on its display, chosen where the orb settles
+and never when the card opens: to the orb's right if the card fits there, else to its left, opening
+down from the orb's top if it fits, else up from its bottom; and if neither side has the width,
+below the orb or above it (where there is more room), centred on it and kept on the display. It
+never covers the orb, and past its area's height (560) it scrolls inside. The buddy's window is
+the orb's 56 pt box and that area, one fixed size, and the shell pushes the shape to the page
+(`desktop/buddyPlacement.js`, `layoutAt`); the playground and a browser tab run the same rule
+(`web/src/lib/buddy/cardPlacement.ts`). Opening, growing, shrinking or closing the card never moves
+the orb or changes its size: the card is laid out apart from the orb, anchored to its edge
+(`web/src/pages/buddy/BuddyPresence.tsx`).
 
 | Surface | Size | Shows | Drops |
 |---|---|---|---|
-| **The orb** | 48, in a 96 by 48 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its dots, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
+| **The orb** | 48, in a 56 by 56 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its dots, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
 | **The line card** | one line, up to 360 wide, beside the orb | while work runs, the focused work's one line and `+N` for other live work; on an alert away from the top edge, the alert's one line | steps, controls |
-| **The card** | 420 wide, up to 360 tall, beside the orb; less where the display has less, scrolling inside past that | the focused work's name and its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (20) and one line | history, settings |
+| **The card** | 420 wide, as tall as its content up to 560, beside the orb; less where the display has less, scrolling inside past that | the focused work's name and its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (20) and one line | history, settings |
 | **Tray or menu-bar icon** | 18 (template image on macOS) | a still orb per state: idle, working, needs you, error, listening, offline; the exact state in words in its tooltip and as the menu's first line | animation, a count standing alone |
 | **Tray menu** | a menu | everything waiting on the owner, in the list's order, then live work, each one line, plus Show or Hide the buddy, Hide for an hour, Hide until tomorrow, Open PersonalClaw | the step flow |
 | **Dock or app icon** | the app icon | the orb's still for the state while something needs the owner, instead of a red count | words |

@@ -1,73 +1,58 @@
 // ── Where the buddy's card opens beside its orb (#5216, `docs/design/buddy/surfaces.md`) ──────────
 //
 // The orb stays where the owner put it, and nothing the buddy says moves it. Its card goes on the
-// side of the orb that has room on that display: below an orb near the top, above one near the
-// bottom, then to its right or its left, and it never covers the orb. Along that side it is centred
-// on the orb when it fits, and otherwise kept to the display's edge. A card bigger than every side
-// takes the side with the most room at the size that fits, and its content scrolls inside it.
+// side of the orb that has room on that display, by the shell's own rule (`desktop/buddyPlacement.js`,
+// `layoutAt`), so the playground and a browser tab lay the buddy out as its window does: right of
+// the orb if the card's width fits there, else left, opening down from the orb's top if the card's
+// height fits, else up from its bottom; and if neither side has the width, below the orb or above
+// it (where there is more room), centred on it and kept on the display. The card's area is the
+// largest it may use; the card is drawn in it, anchored to the orb, and never covers the orb.
 //
-// Pure: the orb's box and the display in points, the card's wanted size in, where it goes out.
+// Pure: the display's work area and the orb's spot in points, the card's budget in, the layout out,
+// in the display's points.
 
 export interface Box { x: number; y: number; width: number; height: number }
-export interface Size { width: number; height: number }
 
-export type CardSide = 'below' | 'above' | 'right' | 'left'
-/** Along the side: the card's start edge on the orb's start edge, centred on the orb, or its end on
- *  the orb's end. */
-export type CardAlign = 'start' | 'center' | 'end'
-
-export interface CardPlace {
-  side: CardSide
-  align: CardAlign
-  /** The room the card gets: its wanted size, or less where the display has less. */
-  width: number
-  height: number
-}
-
+/** The orb's box: its 48 pt drawing in a 56 pt target. */
+export const ORB_BOX = 56
 /** Between the orb and its card. */
 export const CARD_GAP = 8
-/** Kept clear at the display's edges. */
-export const DISPLAY_EDGE = 8
+/** The card's largest area: its width, and its tallest before it scrolls inside. */
+export const CARD_BUDGET = Object.freeze({ width: 420, maxHeight: 560 })
 
-const SIDES: readonly CardSide[] = ['below', 'above', 'right', 'left']
-const across = (side: CardSide) => side === 'below' || side === 'above'
+export type CardSide = 'right' | 'left' | 'below' | 'above'
 
-/** Where the card goes for an orb at *orb* on *display*, wanting *card*. */
-export function cardPlace(orb: Box, display: Size, card: Size): CardPlace {
-  const room: Record<CardSide, number> = {
-    below: display.height - (orb.y + orb.height) - CARD_GAP - DISPLAY_EDGE,
-    above: orb.y - CARD_GAP - DISPLAY_EDGE,
-    right: display.width - (orb.x + orb.width) - CARD_GAP - DISPLAY_EDGE,
-    left: orb.x - CARD_GAP - DISPLAY_EDGE,
-  }
-  const maxWidth = Math.max(0, display.width - 2 * DISPLAY_EDGE)
-  const maxHeight = Math.max(0, display.height - 2 * DISPLAY_EDGE)
-  const sizeOn = (side: CardSide): Size => across(side)
-    ? { width: Math.min(card.width, maxWidth), height: Math.min(card.height, Math.max(0, room[side])) }
-    : { width: Math.min(card.width, Math.max(0, room[side])), height: Math.min(card.height, maxHeight) }
-  const fits = (side: CardSide) => {
-    const s = sizeOn(side)
-    return s.width >= Math.min(card.width, maxWidth) && s.height >= Math.min(card.height, maxHeight) && room[side] > 0
-  }
-  const area = (side: CardSide) => { const s = sizeOn(side); return s.width * s.height }
-  const side = SIDES.find(fits) ?? [...SIDES].sort((a, b) => area(b) - area(a))[0]
-  const size = sizeOn(side)
-  const align = (['center', 'start', 'end'] as const).find((a) => onDisplay(cardRect(orb, { side, align: a, ...size }), display)) ?? 'center'
-  return { side, align, ...size }
+export interface CardLayout {
+  side: CardSide
+  opens: 'down' | 'up'
+  orb: Box
+  /** The area the card may use. */
+  card: Box
 }
 
-const onDisplay = (r: Box, d: Size) =>
-  r.x >= DISPLAY_EDGE && r.y >= DISPLAY_EDGE && r.x + r.width <= d.width - DISPLAY_EDGE && r.y + r.height <= d.height - DISPLAY_EDGE
+const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi))
 
-/** The card's box for *place* beside the orb at *orb*. */
-export function cardRect(orb: Box, place: CardPlace): Box {
-  const { side, align, width, height } = place
-  if (across(side)) {
-    const y = side === 'below' ? orb.y + orb.height + CARD_GAP : orb.y - CARD_GAP - height
-    const x = align === 'start' ? orb.x : align === 'end' ? orb.x + orb.width - width : orb.x + orb.width / 2 - width / 2
-    return { x, y, width, height }
+/** The orb's box at *orb* on a display with the work area *display*, and its card's area. */
+export function layoutAt(display: Box, orb: { x: number; y: number }, budget: { width: number; maxHeight: number } = CARD_BUDGET): CardLayout {
+  const right = display.x + display.width
+  const bottom = display.y + display.height
+  const cardWidth = Math.min(budget.width, display.width)
+  const orbBox: Box = { x: orb.x, y: orb.y, width: ORB_BOX, height: ORB_BOX }
+  const fitsRight = orb.x + ORB_BOX + CARD_GAP + cardWidth <= right
+  const fitsLeft = orb.x - CARD_GAP - cardWidth >= display.x
+  if (fitsRight || fitsLeft) {
+    const side: CardSide = fitsRight ? 'right' : 'left'
+    const height = Math.min(budget.maxHeight, display.height)
+    const x = side === 'right' ? orb.x + ORB_BOX + CARD_GAP : orb.x - CARD_GAP - cardWidth
+    if (orb.y + height <= bottom) return { side, opens: 'down', orb: orbBox, card: { x, y: orb.y, width: cardWidth, height } }
+    if (orb.y + ORB_BOX - height >= display.y) return { side, opens: 'up', orb: orbBox, card: { x, y: orb.y + ORB_BOX - height, width: cardWidth, height } }
+    return { side, opens: 'down', orb: orbBox, card: { x, y: Math.max(display.y, bottom - height), width: cardWidth, height } }
   }
-  const x = side === 'right' ? orb.x + orb.width + CARD_GAP : orb.x - CARD_GAP - width
-  const y = align === 'start' ? orb.y : align === 'end' ? orb.y + orb.height - height : orb.y + orb.height / 2 - height / 2
-  return { x, y, width, height }
+  const below = bottom - (orb.y + ORB_BOX + CARD_GAP)
+  const above = orb.y - CARD_GAP - display.y
+  const side: CardSide = below >= above ? 'below' : 'above'
+  const height = Math.max(0, Math.min(budget.maxHeight, side === 'below' ? below : above))
+  const x = Math.round(clamp(orb.x + ORB_BOX / 2 - cardWidth / 2, display.x, right - cardWidth))
+  const y = side === 'below' ? orb.y + ORB_BOX + CARD_GAP : orb.y - CARD_GAP - height
+  return { side, opens: side === 'below' ? 'down' : 'up', orb: orbBox, card: { x, y, width: cardWidth, height } }
 }

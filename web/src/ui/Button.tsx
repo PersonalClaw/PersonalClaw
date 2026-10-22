@@ -7,7 +7,7 @@ import { fvs } from '../design/fontWeight'
 import { usePersonality } from '../app/personality'
 
 type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
-type Size = 'xs' | 'sm' | 'md' | 'lg'
+type Size = 'xs' | 'sm' | 'md' | 'lg' | 'orb'
 
 // The two SOLID tiers draw their focus ring in the ink, not the accent. The app-wide `:focus-visible`
 // ring in `design/tokens.css` is `--color-primary`, which on `primary` is the fill's own colour
@@ -65,6 +65,8 @@ const sizes: Record<Size, string> = {
   sm: 'h-8 px-l',
   md: 'h-10 px-xl',
   lg: 'h-12 px-2xl',
+  // The buddy's face (#5216): one 56 pt square around its 48 pt orb, the same in every state.
+  orb: 'h-14 w-14 justify-center px-0',
 }
 // The label's type role per size — the label-* tier (wght 470, which the inline
 // fvs(470) below already pinned; the role now carries size + line-height too).
@@ -73,6 +75,7 @@ const sizeRole: Record<Size, string> = {
   sm: 'label-s',
   md: 'label-m',
   lg: 'label-l',
+  orb: 'label-l',
 }
 
 /** The one shared button. A press and a hover show by COLOUR, at once: each variant's
