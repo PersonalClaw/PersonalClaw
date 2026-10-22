@@ -91,8 +91,8 @@ describe('the cockpit status strip', () => {
   it('carries the status TONE, so the state is legible without reading', async () => {
     render(<CockpitMeta project={project()} />)
     const chip = await screen.findByText('Blocked')
-    // warn, per the registry's own tone language (warn = stalled or a non-genuine finish).
-    expect(chip.getAttribute('style') ?? '').toContain('--color-warn')
+    // info: a blocked loop waits on her answer, and is painted in that phase's tone (#3833).
+    expect(chip.getAttribute('style') ?? '').toContain('--color-info')
   })
 
   it('🪤 the strip renders for a bare pre-run draft, which used to return null', async () => {

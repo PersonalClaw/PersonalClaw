@@ -25,6 +25,7 @@ import { Button } from '../../ui/Button'
 import { Checkbox, FieldHintProvider, FieldLabelProvider, TextArea, TextInput, useSyncedDraft } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { StatusPill } from '../../ui/StatusPill'
+import { phaseColor } from '../../lib/workPhase'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { api, ApiError, MAX_NAME_LEN, type ProjectImportResult, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy, type RunState } from '../../lib/api'
@@ -1074,11 +1075,14 @@ function HubColumn({ title, children, className }: { title: string; children: Re
   )
 }
 
+/** The needs-you group's dot: what waits in it waits on her answer, input's tone (#3833). */
+export const NEEDS_YOU_DOT = phaseColor('input')
+
 /** A sub-group label inside the Work column (one per board state group). */
-function WorkGroupLabel({ text, count, tone }: { text: string; count: number; tone: 'ok' | 'muted' }) {
+function WorkGroupLabel({ text, count, dot }: { text: string; count: number; dot?: string }) {
   return (
     <div className="flex items-center gap-1.5 text-[0.75rem] uppercase tracking-wide">
-      {tone === 'ok' && <span className="size-1.5 rounded-full" style={{ background: 'var(--color-ok)' }} />}
+      {dot && <span className="size-1.5 rounded-full" style={{ background: dot }} />}
       <span className="text-on-surface-low">{text}</span>
       <span className="text-on-surface-low">· {count}</span>
     </div>
@@ -1174,7 +1178,7 @@ export function WorkBoardColumn({ work, loading, onResume, onOpen, onStop }: {
         board.map((group) => (
           <div key={group.state} data-testid={`work-group-${group.state}`} className="flex flex-col gap-1.5">
             <WorkGroupLabel text={WORK_STATE_LABEL[group.state]} count={group.count}
-              tone={group.state === 'needs_input' ? 'ok' : 'muted'} />
+              dot={group.state === 'needs_input' ? NEEDS_YOU_DOT : undefined} />
             {group.rows.map((row) => (
               <WorkRowCard key={`${row.origin}:${row.run_id}`} row={row}
                 onResume={() => onResume(row)} onOpen={() => onOpen(row)} onStop={() => onStop(row)} />

@@ -2,6 +2,7 @@ import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, Server, HeartPulse, 
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 import { epochSeconds } from '../../lib/epoch'
+import { phaseColor } from '../../lib/workPhase'
 
 // ── kind → icon + tone (the `kind`s the backend actually emits) ──
 //
@@ -13,6 +14,8 @@ import { epochSeconds } from '../../lib/epoch'
 // "Success" beside a bare "proposal". The registry is the authority for the wording; if
 // you add a kind there, add its row here with the SAME label.
 export interface KindMeta { label: string; icon: LucideIcon; tone: string }
+//: A kind that is a phase of some work (an agent's request for her yes, a loop running, finishing
+//: or failing, a job failing) is painted in that phase's tone (`lib/workPhase`, #3833).
 const KINDS: Record<string, KindMeta> = {
   cron: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
   schedule: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
@@ -20,7 +23,7 @@ const KINDS: Record<string, KindMeta> = {
   // cron/failed's own wire string (#415). The kind had no emitter after the ScheduleService
   // removal — scheduled-job failures arrived as `error` and were indistinguishable from any other
   // system error — so the trigger substrate now emits this pair for a CLOCK trigger that breaks.
-  cron_failed: { label: 'Scheduled job failed', icon: XCircle, tone: 'var(--color-danger)' },
+  cron_failed: { label: 'Scheduled job failed', icon: XCircle, tone: phaseColor('error') },
   // cron/trigger_import — the triggers an upgrade brought over from an older version and left
   // switched off until the owner reviews them. Warn tone: they have stopped, and only the owner
   // can start them again.
@@ -34,7 +37,7 @@ const KINDS: Record<string, KindMeta> = {
   agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },
   subagent: { label: 'Subagent update', icon: Bot, tone: 'var(--color-primary)' },
   message: { label: 'Agent message', icon: MessageSquare, tone: 'var(--color-on-surface-low)' },
-  agent_request: { label: 'Agent request', icon: ShieldQuestion, tone: 'var(--color-warn)' },
+  agent_request: { label: 'Agent request', icon: ShieldQuestion, tone: phaseColor('approval') },
   // system/auto_denied: a call denied with no answer — an approval nobody answered in time,
   // or one an unattended run could not ask about. Warn: work the user asked for did not happen.
   auto_denied: { label: 'Denied without an answer', icon: ShieldX, tone: 'var(--color-warn)' },
@@ -47,13 +50,13 @@ const KINDS: Record<string, KindMeta> = {
   status: { label: 'Heartbeat', icon: HeartPulse, tone: 'var(--color-info)' },
   inbox_alert: { label: 'Inbox alert', icon: BellRing, tone: 'var(--color-warn)' },
   alert: { label: 'Inbox alert', icon: BellRing, tone: 'var(--color-warn)' },
-  loop: { label: 'Loop progress', icon: Target, tone: 'var(--color-primary)' },
-  complete: { label: 'Loop complete', icon: CheckCircle2, tone: 'var(--color-ok)' },
+  loop: { label: 'Loop progress', icon: Target, tone: phaseColor('thinking') },
+  complete: { label: 'Loop complete', icon: CheckCircle2, tone: phaseColor('done') },
   // The loop watchdog's OWN wire strings (#341). It used to pass `success`/`error`, so a loop
   // outcome was labelled "Success"/"System error" here and governed by a `system/*` rule; these
   // are the strings it emits now, and the rows that make the `loop/*` matrix controls real.
-  loop_complete: { label: 'Loop complete', icon: CheckCircle2, tone: 'var(--color-ok)' },
-  loop_failed: { label: 'Loop failed', icon: XCircle, tone: 'var(--color-danger)' },
+  loop_complete: { label: 'Loop complete', icon: CheckCircle2, tone: phaseColor('done') },
+  loop_failed: { label: 'Loop failed', icon: XCircle, tone: phaseColor('error') },
   // The bare kind is registered under BOTH loop/failed ("Loop failed") and cron/failed
   // ("Scheduled job failed"), and keyed by bare kind alone this map cannot express both. The loop
   // wording wins because its sibling bare kinds (complete/progress) are both loop-domain.

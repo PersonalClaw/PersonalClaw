@@ -9,11 +9,11 @@ import { WORKFLOW_LIFECYCLE } from './useWorkflowStream'
 // user who reads it as a failure "fixes" something that worked.
 
 describe('runLook', () => {
-  it('needs_input is the only status toned as actionable', () => {
-    // It is the one row a user can act on; toning others the same way would make the
-    // actionable case invisible in a list.
-    expect(runLook('needs_input').tone).toBe('text-warning')
-    expect(runLook('running').tone).toBe('text-on-surface')
+  it('each status is toned as its phase: waiting on her answer is info, live work coral', () => {
+    // One tone per phase (#3833, `RUN_STATUS_PHASES`): the row she can act on is the only one
+    // waiting on her, and its words say so beside the tone.
+    expect(runLook('needs_input').tone).toBe('text-info')
+    expect(runLook('running').tone).toBe('text-primary')
     expect(runLook('complete').tone).toBe('text-success')
   })
 
@@ -27,10 +27,11 @@ describe('runLook', () => {
     expect(runLook('complete').spin).toBeUndefined()
   })
 
-  it('a running run incident mode holds reads Held, in the warning tone, and does not spin', () => {
-    // Its status stays `running` through the hold; the sentence it carries is what says so.
+  it('a running run incident mode holds reads Held, queued, and does not spin', () => {
+    // Its status stays `running` through the hold; the sentence it carries is what says so. A held
+    // run waits to start again, so it is painted as queued work is (#3833).
     const held = runLook('running', 'Held: incident mode is on')
-    expect([held.label, held.tone, held.spin]).toEqual(['Held', 'text-warning', undefined])
+    expect([held.label, held.tone, held.spin]).toEqual(['Held', 'text-primary', undefined])
     expect(runLook('running', '').label).toBe('Running')
     // Only a running run is held: the sentence on any other status names a cause it lacks.
     expect(runLook('complete', 'Held: incident mode is on').label).toBe('Completed')

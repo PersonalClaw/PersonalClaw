@@ -5,6 +5,7 @@ import { approvalDestination, placeOfRefs } from '../../app/approvalDestination'
 import { notificationLink } from '../notifications/notificationMeta'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
+import { phaseColor } from '../../lib/workPhase'
 
 // ── classification (what KIND of message the triage layer decided) ──
 export interface ClassMeta { key: InboxClassification; label: string; tone: string; icon: LucideIcon }
@@ -126,8 +127,9 @@ export const ITEM_KINDS: KindMeta[] = [
   { key: 'message', label: 'Messages', tone: 'var(--color-primary)', icon: MessageSquare },
   { key: 'mention', label: 'Mentions', tone: 'var(--color-primary)', icon: AtSign },
   { key: 'email', label: 'Email', tone: 'var(--color-primary)', icon: Mail },
-  { key: 'needs_input', label: 'Needs you', tone: 'var(--color-warn)', icon: HelpCircle },
-  { key: 'agent_request', label: 'Agent requests', tone: 'var(--color-warn)', icon: ShieldQuestion },
+  // A question waits on her answer and a request on her yes: each in its phase's tone (#3833).
+  { key: 'needs_input', label: 'Needs you', tone: phaseColor('input'), icon: HelpCircle },
+  { key: 'agent_request', label: 'Agent requests', tone: phaseColor('approval'), icon: ShieldQuestion },
   { key: 'proposal', label: 'Proposals', tone: 'var(--color-info)', icon: Lightbulb },
   { key: 'digest', label: 'Digests', tone: 'var(--color-on-surface-low)', icon: Newspaper },
   { key: 'system', label: 'System', tone: 'var(--color-on-surface-low)', icon: Settings2 },

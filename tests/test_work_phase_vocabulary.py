@@ -182,3 +182,37 @@ def test_each_family_is_read_from_the_one_table() -> None:
         assert work_phase.family_of(phase) is look.family
         assert work_phase.family_of(phase.value) is look.family
     assert {f.value for f in Family} == {"quiet", "active", "waiting", "blocked"}
+
+
+#: One row of a web status table: ``  review: 'approval',``.
+_STATUS_ROW = re.compile(r"^\s{2}(\w+):\s*'(\w+)',\s*$", re.MULTILINE)
+
+
+#: The loop's statuses are beside its words, in the one loop-status registry.
+_LOOP_TS = _REPO / "web" / "src" / "lib" / "loopStatus.ts"
+
+
+def _web_status_phases(name: str, path: Path) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8")
+    parts = text.split(f"export const {name}", 1)
+    assert len(parts) == 2, f"{path.name} no longer declares {name} — parser drift?"
+    rows = dict(_STATUS_ROW.findall(parts[1].split("\n}", 1)[0]))
+    assert len(rows) >= 9, f"parsed {len(rows)} rows of {name} out of {path.name} — vacuous"
+    return rows
+
+
+@pytest.mark.parametrize(
+    "name,path,gateway",
+    [
+        ("LOOP_STATUS_PHASES", _LOOP_TS, work_phase.LOOP_STATUS_PHASES),
+        ("RUN_STATUS_PHASES", _TS, work_phase.RUN_STATUS_PHASES),
+    ],
+)
+def test_the_web_paints_each_status_as_the_phase_the_gateway_says(
+    name: str, path: Path, gateway: Mapping[str, tuple[WorkPhase, str]]
+) -> None:
+    """A loop's and a run's status are painted in their phase's tone on the web (#3833), so the
+    web's status-to-phase tables are the gateway's, in both directions."""
+    assert _web_status_phases(name, path) == {
+        status: phase.value for status, (phase, _) in gateway.items()
+    }
