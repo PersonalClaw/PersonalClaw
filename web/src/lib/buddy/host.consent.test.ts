@@ -339,6 +339,23 @@ describe('the doorbell, levels and timers', () => {
     expect(w.answers).toEqual([])
   })
 
+  it('answering one alert with the next queued keeps the next on screen through every timer the answer started', async () => {
+    const w = world(LIVE, { waiting: [approval('ap-1'), approval('ap-2')], unreadable: [] } as WaitingList)
+    w.host.ring()
+    await w.settle()
+    expect(w.state().shown).toBe('approval:ap-1')
+    expect(await w.host.answer('approval:ap-1', { kind: 'allow' }, { confirmed: true })).toBe(true)
+    w.lists.waiting = { waiting: [approval('ap-2')], unreadable: [] } as WaitingList
+    await w.settle()
+    await w.advance(TIMINGS.alertGap)
+    expect(w.state().shown).toBe('approval:ap-2')
+    for (const ms of [TIMINGS.beat, TIMINGS.collapse, TIMINGS.collapseCountdown, TIMINGS.finishedHold, TIMINGS.sleep]) {
+      await w.advance(ms)
+      expect(w.state().shown, 'an alert never collapses').toBe('approval:ap-2')
+      expect(w.state().presence).toBe('expanded')
+    }
+  })
+
   it('hidden, the host holds no timer', async () => {
     const w = world({ running: [], finished: [] }, { waiting: [], unreadable: [] } as WaitingList)
     w.host.ring()

@@ -14,8 +14,14 @@
  * the probe can see a page that schedules work while hidden. Every `setTimeout`, `setInterval` and
  * `requestAnimationFrame` the page makes is counted.
  *
+ * Covered while shown by a window above it, as a screen saver or a sleeping display covers it, the
+ * page must still read visible: it is the shell's show and hide the page follows, not the OS's
+ * occlusion (#3832). `PC_PROBE_SHOW=inactive` shows the window with a bare `showInactive()`, the
+ * control that proves this host reports occlusion at all.
+ *
  * Env:
  *   PC_PROBE_PAGE     `root` (default) or `ticks`
+ *   PC_PROBE_SHOW     `shell` (default, `showOnScreen`) or `inactive`
  *   PC_PROBE_IDLE_MS  how long to keep the window hidden and watch it (default 60000)
  *
  * Emits exactly one line on stdout:
@@ -27,6 +33,7 @@ const { app, BrowserWindow } = require("electron");
 const { contentProtection } = require("./electronHost");
 
 const PAGE = process.env.PC_PROBE_PAGE === "ticks" ? "ticks" : "root";
+const SHOW = process.env.PC_PROBE_SHOW === "inactive" ? "inactive" : "shell";
 const IDLE_MS = Number(process.env.PC_PROBE_IDLE_MS) > 0 ? Number(process.env.PC_PROBE_IDLE_MS) : 60_000;
 const ROOT = path.join(__dirname, "..", "..");
 
@@ -59,7 +66,7 @@ app.whenReady().then(async () => {
   const out = { electronReady: true, page: PAGE, idleMs: IDLE_MS, preloadErrors: [] };
   try {
     app.dock?.hide?.();
-    const { buddyWindowOptions } = require(path.join(ROOT, "buddyWindow.js"));
+    const { buddyWindowOptions, showOnScreen, hideFromScreen } = require(path.join(ROOT, "buddyWindow.js"));
     const options = buddyWindowOptions({ bounds: { x: 40, y: 40, width: 360, height: 28 }, preload: path.join(ROOT, "buddyPreload.js") });
     const win = new BrowserWindow(options);
     win.setContentProtection(true);
@@ -73,7 +80,8 @@ app.whenReady().then(async () => {
       desktop: await page("typeof window.pclawDesktop"),
     };
 
-    win.showInactive();
+    if (SHOW === "inactive") win.showInactive();
+    else showOnScreen(win);
     await wait(800);
     out.shown = {
       visible: win.isVisible(),
@@ -85,7 +93,18 @@ app.whenReady().then(async () => {
       frames: await page("window.__pcCounts.frames"),
     };
 
-    win.hide();
+    // Covered by a window above it, then uncovered.
+    const cover = new BrowserWindow({ x: 0, y: 0, width: 600, height: 300, show: false, backgroundColor: "#000000", alwaysOnTop: true });
+    cover.setAlwaysOnTop(true, "screen-saver");
+    await cover.loadURL("data:text/html;charset=utf-8,<body style='background:black'></body>");
+    cover.showInactive();
+    await wait(1500);
+    out.covered = { documentHidden: await page("document.hidden") };
+    cover.destroy();
+    await wait(500);
+    out.covered.afterDocumentHidden = await page("document.hidden");
+
+    hideFromScreen(win);
     await wait(500);
     out.hidden = { documentHidden: await page("document.hidden") };
     await page("window.__pcCounts.timers = 0; window.__pcCounts.frames = 0;");

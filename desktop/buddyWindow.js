@@ -11,6 +11,7 @@
  *   (`pointerOver`); on Linux the window's shape is the page's regions (`setRegions`).
  * - **Free while hidden.** Hiding the window stops the forwarded pointer as well, so a hidden page
  *   samples nothing; the page itself schedules no timer and no frame while `document.hidden`.
+ *   `document.hidden` follows the shell's show and hide, not the OS's guess (`showOnScreen`).
  * - **Kept out of screen capture** while "Hide from screen sharing and screenshots" is on, which it
  *   is unless this machine's store says `"0"` under `CAPTURE_KEY`.
  * - **Placed** by `buddyPlacement.js`: docked on the menu-bar display, or floating where it was
@@ -55,6 +56,24 @@ function buddyWindowOptions({ bounds, preload }) {
       spellcheck: false,
     },
   };
+}
+
+/**
+ * Show *win* without taking focus, and have its page read itself visible for as long as it is.
+ * macOS can report an unfocused window as occluded while it is on screen, and the page then reads
+ * `document.hidden` and the root unmounts the buddy (#3832): the real-Electron answer tier caught
+ * the next card gone for seconds after an answer, until the window was focused. A shown page is not
+ * throttled as a background page, so the OS's guess no longer hides it.
+ */
+function showOnScreen(win) {
+  win.showInactive();
+  win.webContents?.setBackgroundThrottling?.(false);
+}
+
+/** Hide *win*, throttled again first, so its page reads `document.hidden` and schedules nothing. */
+function hideFromScreen(win) {
+  win.webContents?.setBackgroundThrottling?.(true);
+  win.hide();
 }
 
 function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform = process.platform, onPlacement = () => {}, log = () => {} }) {
@@ -122,14 +141,14 @@ function makeBuddyWindow({ BrowserWindowCtor, screen, store, preload, platform =
       if (!win) return;
       visible = true;
       place();
-      win.showInactive();
+      showOnScreen(win);
       passClicks();
     },
     hide() {
       if (!win) return;
       visible = false;
       passClicks();
-      win.hide();
+      hideFromScreen(win);
     },
     destroy() {
       if (win) win.destroy();
@@ -469,6 +488,8 @@ module.exports = {
   BUDDY_PUSHES,
   pushToBuddy,
   buddyWindowOptions,
+  showOnScreen,
+  hideFromScreen,
   makeBuddyWindow,
   makeBuddyPresence,
   buddyOutlivesClose,

@@ -95,7 +95,7 @@ app.whenReady().then(async () => {
     if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error(`the web app is not built at ${DIST}`);
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const { buddyWindowOptions, BUDDY_PUSHES } = require(path.join(ROOT, "buddyWindow.js"));
+    const { buddyWindowOptions, showOnScreen, BUDDY_PUSHES } = require(path.join(ROOT, "buddyWindow.js"));
 
     // The app the owner is working in: it has focus.
     const other = new BrowserWindow({ x: 480, y: 40, width: 320, height: 200, show: false, title: "another app" });
@@ -109,7 +109,8 @@ app.whenReady().then(async () => {
     out.consoleErrors = [];
     wc.on("console-message", (_e, level, message) => { if (level >= 3) out.consoleErrors.push(String(message).slice(0, 300)); });
     await win.loadURL(`${origin}/#/buddy`);
-    win.showInactive();
+    // Shown as the shell shows it: on screen, unfocused, and read as visible while it is.
+    showOnScreen(win);
 
     const page = (js) => wc.executeJavaScript(js);
     const until = async (js, ms = 8000) => {

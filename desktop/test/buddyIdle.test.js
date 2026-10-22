@@ -24,12 +24,12 @@ const { electronCommand, electronTier, electronUnavailable, launchDetail } = req
 /** How long the window stays hidden and watched: the issue's 60 s unless the env asks less. */
 const IDLE_MS = Number(process.env.PC_BUDDY_IDLE_MS) > 0 ? Number(process.env.PC_BUDDY_IDLE_MS) : 60_000;
 
-function probe(page, idleMs) {
+function probe(page, idleMs, show = "shell") {
   const { command, args } = electronCommand([path.join(__dirname, "helpers", "buddyProbe.js")]);
   const res = spawnSync(command, args, {
     timeout: idleMs + 60_000,
     encoding: "utf8",
-    env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
+    env: { ...process.env, PC_PROBE_PAGE: page, PC_PROBE_IDLE_MS: String(idleMs), PC_PROBE_SHOW: show, ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
   });
   const line = (res.stdout || "").split("\n").find((l) => l.startsWith("PC_PROBE "));
   if (!line) return { launchFailed: true, detail: launchDetail(res) };
@@ -70,6 +70,17 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.hidden.rendererFound, true, "the buddy's renderer is in app.getAppMetrics(), by its pid");
     assert.equal(root.hidden.idleWakeupsPerSecond, 0);
     assert.ok(root.hidden.percentCPU < 0.5, `the renderer used ${root.hidden.percentCPU}% of a core while hidden`);
+  });
+
+  // Covered while shown (a screen saver, a sleeping display, a window above it), macOS reports the
+  // window occluded and a bare `showInactive()` page reads itself hidden: the root unmounts the
+  // buddy, and it comes back as a new page that has lost what the shell told it. The real-Electron
+  // answer tier caught the next card gone until the window was focused (#3832).
+  it("covered while shown, its page still reads visible, as the shell shows it", { skip: skipped }, (t) => {
+    const control = probe("root", 1000, "inactive");
+    if (control.covered?.documentHidden !== true) return t.skip("this host reports no occlusion for a covered window");
+    assert.equal(root.covered.documentHidden, false);
+    assert.equal(root.covered.afterDocumentHidden, false);
   });
 
   it("can see a page that keeps ticking while hidden", { skip: skipped }, () => {
