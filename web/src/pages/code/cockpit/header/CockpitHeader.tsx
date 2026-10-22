@@ -1,10 +1,12 @@
-import { Code2, Play, Pause, Square, Trash2, ListChecks, TerminalSquare, ChevronLeft, Target } from 'lucide-react'
+import { Code2, Play, Pause, Square, Trash2, ListChecks, TerminalSquare, ChevronLeft, Target, GitCommitHorizontal } from 'lucide-react'
 import { TopBar } from '../../../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../../../ui/HeaderActions'
 import { IconButton } from '../../../../ui/IconButton'
 import { confirmStopLoop } from '../../../loop/stopLoop'
 import { type CodeProject } from '../../../../lib/api'
-import { LOOP_ACTION_SOURCE_STATUSES } from '../../../../lib/loopStatus'
+import { ENDED_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../../../lib/loopStatus'
+import { useWorkspaceChanges } from '../files/useWorkspaceChanges'
+import { COMMIT_HOOKS_NOTE, useCommit } from './useCommit'
 import { type CodeToastState } from '../../CodeToast'
 import { cmdLabel, type MissingCommandNotice } from '../cockpitCommands'
 import { useTitleRename } from './useTitleRename'
@@ -13,7 +15,8 @@ import { useTitleRename } from './useTitleRename'
 //
 // The cockpit's title bar: back to the containing Project, the project's name (click to rename),
 // whether the run's feed is live, and its actions: run controls, the terminal, build and tests,
-// a new target on the same workspace, all projects, and delete. `useTitleRename` keeps the rename.
+// Commit once the run has ended, a new target on the same workspace, all projects, and delete.
+// `useTitleRename` keeps the rename, and `useCommit` the commit.
 
 export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProject, active, connected, acting, act, ws, showTerm, setShowTerm,
   missingBuild, missingTest, runInWorkspaceTerminal, onNewTarget, onBack, del }: {
@@ -25,6 +28,11 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
   onNewTarget?: (workspaceDir: string) => void; onBack: () => void; del: () => Promise<void>
 }) {
   const { editingTitle, titleDraft, setTitleDraft, startRename, abortRename, commitRename } = useTitleRename({ id, project: p, setProject, setToast })
+  // Commit is offered once the run has ended (its supervisor commits into the tree until then)
+  // and while its workspace holds something uncommitted. Open PR is absent: no app opens one yet.
+  const { statuses } = useWorkspaceChanges(ws, !ws, false)
+  const canCommit = !!ws && ENDED_LOOP_STATUSES.has(p.status) && Object.keys(statuses).length > 0
+  const commit = useCommit({ id, ws, setToast })
   return (
     <TopBar
       left={<div className="flex min-w-0 items-center gap-2">
@@ -98,6 +106,8 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
           onClick={() => runInWorkspaceTerminal(p.test_command || '')} />}
         {/* Reuse this project's BOUND workspace for a fresh target — only with a real
             codebase dir + not mid-run. */}
+        {canCommit && <HeaderControl icon={GitCommitHorizontal} label="Commit" priority="primary" onClick={() => { void commit() }}
+          title={`Commit the session's changes. ${COMMIT_HOOKS_NOTE}`} hint={COMMIT_HOOKS_NOTE} />}
         {onNewTarget && !active && !!ws && <HeaderControl icon={Target} label="New target" priority="low" onClick={() => onNewTarget(ws)} />}
         <HeaderControl icon={ListChecks} label="All projects" priority="low" onClick={onBack} />
         <HeaderControl icon={Trash2} label="Delete project" danger priority="low" onClick={() => { void del() }} />

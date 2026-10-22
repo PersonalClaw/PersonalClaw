@@ -156,6 +156,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/screen-frame` — can this session share its screen?
 - `POST /api/chat/screen-frame` — stage one screen frame for the next chat turn.
 - `POST /api/chat/screen-frame/pin` — promote one frame to an ordinary attachment.
+- `POST /api/chat/seen` — you have seen every chat through ``through`` (now when absent): every
 - `GET /api/chat/sessions` — list all chat sessions.
 - `POST /api/chat/sessions` — create a new chat session.
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
@@ -205,6 +206,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
 - `GET /api/chat/sessions/{session}/rewind` — what a rewind would do. Read-only.
 - `POST /api/chat/sessions/{session}/rewind` — restore files to the end of turn N.
+- `POST /api/chat/sessions/{session}/seen` — you have seen the chat through ``through`` (now
 - `POST /api/chat/sessions/{session}/share` — a redacted, read-only artifact of a chat.
 - `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy
 - `POST /api/chat/sessions/{session}/side/open` — open (or reset) the side buffer.
@@ -461,6 +463,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lexicon/terms` — {canonical, aliases?} — add a manual term.
 - `DELETE /api/lexicon/terms/{id}` — remove a term you added, or one learned from a fix.
 - `PATCH /api/lexicon/terms/{id}` — {enabled?} — enable/disable (prune) a term.
+- `GET /api/listening` — whether the microphone is live, and which sources hold it.
+- `POST /api/listening` — the shell's report: ``{"on": bool, "sources": [...]}``.
 - `POST /api/logout` — sign every dashboard session out, everywhere.
 - `GET /api/logs` — SSE stream of live log entries.
 - `GET /api/logs/level` — current backend logger level.
@@ -475,6 +479,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/loops/{id}` — edit a pre-launch spec, or a name-only rename in any
 - `PUT /api/loops/{id}/agent-cli-self-approval` — {allowed: bool} — its CLI approves its calls.
 - `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
+- `POST /api/loops/{id}/commit` — {message} — its owner commits the code session's changes.
 - `GET /api/loops/{id}/conflict` — the finished task's work that conflicts with your branch.
 - `POST /api/loops/{id}/conflict` — {choice, task_id, tip, confirm: true} — redo or drop that work.
 - `GET /api/loops/{id}/design/tokens` — the RESOLVED token tree

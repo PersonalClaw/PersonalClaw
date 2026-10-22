@@ -9578,6 +9578,9 @@ export const api = {
     put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body, basedOn(base)),
   uLoopAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop') =>
     fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
+  /** Its owner commits a code session's uncommitted changes with *message* (`POST /api/loops/{id}/commit`):
+   *  the loop's own workspace, once the loop has ended; nothing is pushed. */
+  loopCommit: (id: string, message: string) => post<{ ok: boolean; sha: string }>(`/api/loops/${encodeURIComponent(id)}/commit`, { message }),
   uLoopNudge: (id: string, text: string, taskId?: string) => post(`/api/loops/${encodeURIComponent(id)}/nudge`, taskId ? { text, task_id: taskId } : { text }),
   deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   uLoopQueue: (id: string, taskIds: string[], action: 'queue' | 'unqueue' = 'queue') =>

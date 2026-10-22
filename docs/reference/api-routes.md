@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **943 registrations** over **766 distinct paths** — 936 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **944 registrations** over **767 distinct paths** — 937 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -29,7 +29,7 @@ The 131 families the surface divides into, largest first.
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
-| `/api/loops` | 29 | 23 |
+| `/api/loops` | 30 | 24 |
 | `/api/artifacts` | 26 | 17 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
@@ -158,7 +158,7 @@ The 131 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 936 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 937 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -635,6 +635,7 @@ The 936 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/loops/{id}` | edit a pre-launch spec, or a name-only rename in any |
 | `PUT` | `/api/loops/{id}/agent-cli-self-approval` | {allowed: bool} — its CLI approves its calls. |
 | `POST` | `/api/loops/{id}/autopilot` | {on: bool} — toggle the execution drive live. |
+| `POST` | `/api/loops/{id}/commit` | {message} — its owner commits the code session's changes. |
 | `GET` | `/api/loops/{id}/conflict` | the finished task's work that conflicts with your branch. |
 | `POST` | `/api/loops/{id}/conflict` | {choice, task_id, tip, confirm: true} — redo or drop that work. |
 | `GET` | `/api/loops/{id}/design/tokens` | the RESOLVED token tree |

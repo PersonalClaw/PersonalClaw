@@ -857,6 +857,21 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
     return MergeResult(ok=True, conflicts=[], head=head.strip())
 
 
+def commit_workspace(workspace: str, message: str) -> str:
+    """Commit everything *workspace* holds and has not committed, untracked files included, with
+    *message*, as git is configured to commit there: its owner's own commit from the code session
+    (``POST /api/loops/{id}/commit``). Nothing is pushed. It runs as every git here does
+    (:func:`_git`), so no hook or other program the repository names runs. The commit made, or
+    ``""`` when git did not make one."""
+    _git(workspace, "add", "-A")
+    rc, out = _git(workspace, *_CONFIGURED_IDENTITY_ONLY, "commit", "-q", "-m", message)
+    if rc != 0:
+        logger.info("workspace %s could not be committed: %s", workspace, mask_child_output(out))
+        return ""
+    rc, sha = _git(workspace, "rev-parse", "HEAD", errors=False)
+    return sha.strip() if rc == 0 else ""
+
+
 def commit_pending(workspace: str, task_id: str, project_id: str = "") -> bool:
     """Commit what the task's worktree holds and has not committed, on its branch, as git is
     configured to commit there. True when nothing is left uncommitted (a worktree that is gone has

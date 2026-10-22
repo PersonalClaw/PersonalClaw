@@ -1410,6 +1410,24 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This work has commits made under another name than yours, so it was not merged; it is "
         "kept."
     ),
+    # ── its owner commits a code session's changes (dashboard/handlers/loop_routes.py
+    #    — POST /api/loops/{id}/commit, #3821) ──
+    # 403 `commit_owner_only`: an agent's tool or an app asked. 400 `commit_message_required` /
+    # `commit_message_too_long`: no message, or one past the cap. 409 `commit_no_workspace`: the
+    # session has no git workspace with a commit to build on. 409 `nothing_to_commit`: the
+    # workspace holds nothing uncommitted. 409 `commit_no_identity`: git has no name and email to
+    # commit as there. 500 `commit_failed`: git did not make the commit. A loop still at work
+    # answers `loop_still_at_work`, as a merge of its kept work does.
+    "commit_owner_only": "Only you commit a code session's changes.",
+    "commit_message_required": "Write a message for the commit.",
+    "commit_message_too_long": "The commit message is longer than a commit message is let be.",
+    "commit_no_workspace": "This session has no git workspace with a commit to build on.",
+    "nothing_to_commit": "The workspace has nothing uncommitted.",
+    "commit_no_identity": (
+        "Git has no name and email set to commit as in this workspace, so nothing was committed. "
+        "Set them there, then commit again."
+    ),
+    "commit_failed": "Git did not make the commit; the changes are as they were.",
     # ── a finished task whose work conflicts with the workspace (dashboard/handlers/loop_routes.py
     #    — GET/POST /api/loops/{id}/conflict) ──
     # 409 `loop_conflict_not_waiting`: the loop is not paused on a task's work that conflicts, or
