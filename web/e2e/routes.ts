@@ -143,6 +143,7 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // The phone companion's view two (#3898): the push link opens the one approval it names, owning
   // the screen. View one is `companion` itself, in NON_NAV_ROUTES; both read the same stubbed list.
   { route: 'companion?approval=ap-0a1b2c3d', id: 'companion-one-work', label: 'Companion › one piece of work', needsData: true },
+  // The composer's voice mode (#4963) has no address: it is `composer voice mode` in `OPENERS`.
   { route: 'memory?tab=health', id: 'memory-health', label: 'Library › Memory › health', needsData: true },
   { route: 'memory?tab=recall', id: 'memory-recall', label: 'Library › Memory › recall', needsData: true },
   { route: 'memory?tab=inspect', id: 'memory-inspect', label: 'Library › Memory › inspect', needsData: true },
