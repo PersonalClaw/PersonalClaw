@@ -108,7 +108,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           icon={FolderTree} label="Files">
           <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} merges={p.merges} query={query} setQuery={setQuery} />
         </CollapsiblePanel>
-        <CenterEditor ws={fileRoot} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd}
+        <CenterEditor ws={fileRoot} isProjectDir={!ws} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd}
           query={query} setQuery={setQuery} />
         <CollapsiblePanel side="right" panelKey="code-right" def={340} min={260} max={520}
           icon={ListChecks} label="Tasks">

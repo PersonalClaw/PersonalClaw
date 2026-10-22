@@ -175,7 +175,11 @@ same review:
   at a time, so a link that names more than one of the three is refused. A commit's hash is only
   read: it opens that commit's changes and goes nowhere else. A commit the Changes tab lists by a
   shorter hash, as git abbreviates in some repositories, opens when you click it, and the address
-  then names none of the three.
+  then names none of the three. A diff opens in the review pane beside the editor, under the list
+  of the workspace's uncommitted changes.
+- A cockpit address with no key at all opens the review pane on the first uncommitted change, and
+  the address then names its `diff`. A review you close stays closed in that window until you open a
+  diff again, so a reload does not bring it back.
 - **`task`** opens that task's detail in the Tasks panel. Opening it only shows it: its steer box
   starts empty, and nothing is queued or sent. A task that is not in the project's lists is closed
   again once they are read and hold a task.
