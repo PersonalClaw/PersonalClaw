@@ -185,6 +185,35 @@ tokens, in [`docs/design/motion.md` §9](../motion.md#9-the-desktop-buddys-timin
 The full matrix of every situation crossed with every event is in
 [`interruption-matrix.md`](interruption-matrix.md).
 
+## The module
+
+The machine is `web/src/lib/buddy/machine.ts`: one pure reducer, `reduce(state, input, now)`, that
+returns the next state and what its host is to do (start or cancel a named timer, re-read the
+levels, play a beat, or send an answer on the item's own route). It does no I/O and imports no
+React; the inputs it takes and the effects it asks for are in `inputs.ts`, the focus rule in
+`focus.ts`, the queue's order in `alertQueue.ts`, and the timing names and their values in
+`timing.ts`. It says what the line says as data, a truth, which `lines.ts` puts in
+[`copy.md`](copy.md)'s words. A cell the matrix says cannot occur throws in development and in the
+tests, and is ignored in a production build, so a shell bug cannot freeze the buddy.
+
+Its tests read this design:
+
+- `machine.matrix.test.ts` reads [`interruption-matrix.json`](interruption-matrix.json) and holds a
+  test for each shipping cell, keyed `situation/event`; it fails when the JSON gains a cell the
+  table does not have, and every cell whose outcome changes something fails against a reducer that
+  changes nothing.
+- `machine.invariants.test.ts` has one test per invariant above, each shown to catch a reducer
+  broken the way the invariant forbids.
+- `machine.states.test.ts` drives the nine shipping states and asserts each one's family and exact
+  line; `machine.clock.test.ts` holds every timing name to its value on a fake clock, the focus rule,
+  the queue's order and the return summary, and replays a scripted day; `machine.scan.test.ts`
+  fails on a literal duration outside `timing.ts`, or on React, `lib/api.ts` or `fetch(` anywhere
+  the machine reaches.
+
+`showDelay` holds new work until it has run that long, so work that ends sooner never shows.
+`minHold` holds through the done beat, since every fold to hidden goes through `finishedHold`; a
+phase change still shows within one `beat` (invariant 14).
+
 ## Later work
 
 Play, the drop and quick ask are designed here and return only after the status MVP's sign-off
