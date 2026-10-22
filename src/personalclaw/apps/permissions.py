@@ -1559,6 +1559,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "PATCH /api/chat/sessions/{session}/pin": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/folder": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PUT /api/chat/sessions/{session}/tags": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PUT /api/chat/sessions/{session}/bookmarks": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "POST /api/chat/sessions/{session}/drop": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/lifecycle": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "POST /api/chat/sessions/{session}/organize/accept": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),

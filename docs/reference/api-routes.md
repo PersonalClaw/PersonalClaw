@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **945 registrations** over **768 distinct paths** — 938 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **946 registrations** over **769 distinct paths** — 939 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 132 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 88 | 75 |
+| `/api/chat` | 89 | 76 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -159,7 +159,7 @@ The 132 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 938 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 939 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -331,6 +331,7 @@ The 938 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/acp-agent` | bind a DISCOVERED ACP agent. |
 | `POST` | `/api/chat/sessions/{session}/agent` | set agent for a chat session. |
 | `POST` | `/api/chat/sessions/{session}/approve` | resolve a pending tool approval. |
+| `PUT` | `/api/chat/sessions/{session}/bookmarks` | bookmark messages, or take bookmarks off. |
 | `POST` | `/api/chat/sessions/{session}/channel-link` | link a dashboard session to a channel. |
 | `PATCH` | `/api/chat/sessions/{session}/color` | set session color. |
 | `POST` | `/api/chat/sessions/{session}/context` | inject silent background context. |
