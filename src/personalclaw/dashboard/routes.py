@@ -285,6 +285,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     from personalclaw.dashboard.handlers.listening import register_listening_routes
 
     register_listening_routes(app)
+    # The buddy's policy (#3901): its knobs and the notification posture, the owner's only.
+    from personalclaw.dashboard.handlers.buddy import register_buddy_routes
+
+    register_buddy_routes(app)
     # The learning flywheel — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of the human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.

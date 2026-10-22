@@ -1266,6 +1266,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # is the opt-in to announcing this gateway on the local network.
     "companion.discovery_enabled": {"type": "bool"},
     "companion.instance_name": {"type": "str", "max_len": 64},
+    # The buddy's owner knobs (#3901): its status opt-in, its surfaces and its away time. Read
+    # through `GET /api/buddy/policy`; a write rings `buddy_policy_changed` so every window
+    # reads it again.
+    "buddy.show": {"type": "bool"},
+    "buddy.window": {"type": "bool"},
+    "buddy.tray": {"type": "bool"},
+    "buddy.dock": {"type": "bool"},
+    "buddy.notifications": {"type": "bool"},
+    "buddy.away_after_secs": {"type": "int", "min": 30, "max": 3600},
     # The connector toggle for the `user_browser` execution target.
     # Editable here so the Settings control has a write path; there is deliberately no knob for
     # the `gateway` target, which needs no permission to drive this machine's own profile.

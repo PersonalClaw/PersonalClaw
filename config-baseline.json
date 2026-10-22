@@ -264,6 +264,42 @@
     "type": "bool"
   },
   {
+    "default": 180,
+    "path": "buddy.away_after_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "buddy.dock",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "buddy.notifications",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "buddy.show",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "buddy.tray",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "buddy.window",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "checkpoints.enabled",
     "sensitive": false,
@@ -320,6 +356,12 @@
   {
     "default": true,
     "path": "dashboard.followup_chips",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "dashboard.keep_question_in_view",
     "sensitive": false,
     "type": "bool"
   },

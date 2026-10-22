@@ -1036,6 +1036,65 @@ class CompanionConfig:
     )
 
 
+#: The buddy's away time, in seconds, the shell's ``absence`` by default (``web/src/lib/buddy``).
+BUDDY_AWAY_DEFAULT_SECS = 180
+
+
+def _buddy_away(raw: object) -> int:
+    """The away time a config holds, kept within what the editor allows (30 s to an hour); the
+    default for anything else."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return BUDDY_AWAY_DEFAULT_SECS
+    return max(30, min(3600, int(raw)))
+
+
+@dataclass
+class BuddyConfig:
+    """The buddy's owner knobs (#3901): whether it shows at all, where, and how long you are away
+    before it steps back. Every window and every machine reads them through one answer,
+    ``GET /api/buddy/policy`` (``personalclaw.buddy_policy``), with the notification posture its
+    alerts follow. Where it sits and whether screen sharing sees it are this machine's, in the
+    desktop shell's store. Play, sound and the rest come back with their own features.
+    """
+
+    show: bool = field(
+        default=False,
+        metadata=_meta(
+            "Buddy status",
+            "Show the buddy: its window, its tray and dock faces and its alerts' notifications. "
+            "Off until you turn it on; turning it off takes every buddy surface away at once.",
+        ),
+    )
+    window: bool = field(
+        default=True,
+        metadata=_meta("Buddy window", "Show the buddy's own window, docked or floating."),
+    )
+    tray: bool = field(
+        default=True,
+        metadata=_meta("Tray face", "Show the buddy's state on its menu bar or tray icon."),
+    )
+    dock: bool = field(
+        default=True,
+        metadata=_meta("Dock face", "Show the buddy's state on the app's dock icon."),
+    )
+    notifications: bool = field(
+        default=True,
+        metadata=_meta(
+            "Alert notifications",
+            "Let the buddy's alerts raise system notifications, under your notification rules, "
+            "mute and quiet hours.",
+        ),
+    )
+    away_after_secs: int = field(
+        default=BUDDY_AWAY_DEFAULT_SECS,
+        metadata=_meta(
+            "When you're away",
+            "How long, in seconds, you are gone before the buddy steps back: docked it hides, "
+            "floating it dozes. Alerts still appear.",
+        ),
+    )
+
+
 #: Push transports. Kept beside the dataclass so the enum and the
 #: field that validates against it cannot drift.
 PUSH_BACKENDS: tuple[str, ...] = ("webpush", "ntfy", "relay", "none")
@@ -3813,6 +3872,12 @@ class AppConfig:
             "Companion apps", "LAN discovery + instance name for native companion clients."
         ),
     )
+    buddy: BuddyConfig = field(
+        default_factory=BuddyConfig,
+        metadata=_meta(
+            "Buddy", "Whether the buddy shows, on which surfaces, and when it steps back."
+        ),
+    )
     browse: BrowseConfig = field(
         default_factory=BrowseConfig,
         metadata=_meta("Browsing", "Which browser an autonomous browse task is allowed to drive."),
@@ -4096,6 +4161,9 @@ class AppConfig:
         companion_data = data.get("companion", {})
         if not isinstance(companion_data, dict):
             companion_data = {}
+        buddy_data = data.get("buddy", {})
+        if not isinstance(buddy_data, dict):
+            buddy_data = {}
         browse_data = data.get("browse", {})
         if not isinstance(browse_data, dict):
             browse_data = {}
@@ -4485,6 +4553,16 @@ class AppConfig:
                 # the user never asked to expose.
                 discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
                 instance_name=str(companion_data.get("instance_name", "") or ""),
+            ),
+            buddy=BuddyConfig(
+                # Opt-in, as the approved update asks: a plain read defaulting False, so an
+                # unreadable config shows no buddy rather than one nobody turned on.
+                show=buddy_data.get("show", False) is True,
+                window=buddy_data.get("window", True) is not False,
+                tray=buddy_data.get("tray", True) is not False,
+                dock=buddy_data.get("dock", True) is not False,
+                notifications=buddy_data.get("notifications", True) is not False,
+                away_after_secs=_buddy_away(buddy_data.get("away_after_secs")),
             ),
             browse=BrowseConfig(
                 # Opt-in for the same reason `discovery_enabled` directly above is: a plain
@@ -5211,6 +5289,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
+            "buddy": asdict(self.buddy),
             "browse": asdict(self.browse),
             "mobile": asdict(self.mobile),
             "local_models": asdict(self.local_models),

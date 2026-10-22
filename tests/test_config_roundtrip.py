@@ -274,6 +274,7 @@ _SECTIONS = [
     "evals",
     "packs",
     "companion",
+    "buddy",
     "local_models",
     "background",
     "proactive",

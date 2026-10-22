@@ -532,6 +532,10 @@ async def handle_notifications_settings_put(request: web.Request) -> web.Respons
     current = load_notifications_settings()
     current.update(known)
     _save_entity_settings("notifications", current)
+    # The buddy's alerts follow mute and quiet hours, so its policy may have changed (#3901).
+    from personalclaw import buddy_policy
+
+    buddy_policy.announce(request.app.get("state"))
     return web.json_response({"ok": True, "settings": current})
 
 

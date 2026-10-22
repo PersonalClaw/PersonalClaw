@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **944 registrations** over **767 distinct paths** — 937 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **945 registrations** over **768 distinct paths** — 938 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 131 families the surface divides into, largest first.
+The 132 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -109,6 +109,7 @@ The 131 families the surface divides into, largest first.
 | `/api/attachment-extract` | 1 | 1 |
 | `/api/auth-status` | 1 | 1 |
 | `/api/browse-dirs` | 1 | 1 |
+| `/api/buddy` | 1 | 1 |
 | `/api/changelog` | 1 | 1 |
 | `/api/companion` | 1 | 1 |
 | `/api/config-fs` | 1 | 1 |
@@ -158,7 +159,7 @@ The 131 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 937 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 938 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -278,6 +279,7 @@ The 937 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/browse/kill` | stop unattended browsing. Body: ``{reason?: str}``. |
 | `POST` | `/api/browse/kill/release` | re-enable unattended browsing. |
 | `GET` | `/api/browse/status` | the mirror's read model: kill state, expired sites, pending grants. |
+| `GET` | `/api/buddy/policy` | the buddy's effective policy now (``buddy_policy.policy``). |
 | `GET` | `/api/changelog` | read full CHANGELOG.md from project. |
 | `POST` | `/api/channel/profile` | read the owner's profile on the channel whose owner id it is. |
 | `POST` | `/api/channel/upload-file` | upload a file to the active channel (internal, called by notify_attachment). |

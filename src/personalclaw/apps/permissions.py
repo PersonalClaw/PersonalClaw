@@ -330,6 +330,9 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # Whether your microphone is live, as the desktop shell says it (#3833): reading it, and
     # saying it, which every surface you look at then shows.
     "/api/listening": "whether your microphone is live, and which of your capture sources holds it",
+    # The buddy's policy (#3901): whether your buddy shows, and whether your notifications are
+    # muted or in quiet hours right now.
+    "/api/buddy": "your buddy's settings, and whether your notifications are muted or quiet now",
     # #2964's measured hole: `GET /api/ws/terminal/{id}` + an app token returned 101 and
     # ran `whoami` as the owner. No handler check existed — `api_terminal_ws` authorizes on
     # `request.get("user")` plus the feature flag, both of which an app-scoped request
