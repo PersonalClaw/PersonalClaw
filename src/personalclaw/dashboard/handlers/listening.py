@@ -24,6 +24,7 @@ from aiohttp import web
 from personalclaw import approval_answer
 from personalclaw.http_errors import json_error
 from personalclaw.instants import utc_now_iso
+from personalclaw.request_validation import json_object_body
 
 #: The capture sources a window may report.
 CAPTURE_SOURCES = frozenset({"dictation", "hands-free", "recorder"})
@@ -48,12 +49,11 @@ async def api_listening_report(request: web.Request) -> web.Response:
     """POST /api/listening — the shell's report: ``{"on": bool, "sources": [...]}``."""
     if approval_answer.of_request(request).kind != approval_answer.OWNER:
         return json_error("listening_owner_only", status=403)
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 — any unreadable body is the same refusal
-        body = None
-    on = body.get("on") if isinstance(body, dict) else None
-    sources = body.get("sources", []) if isinstance(body, dict) else None
+    # The one body reader (`request_validation`): a malformed body is refused at the boundary as
+    # every door refuses one, and an empty body reads as {} and is refused below.
+    body = await json_object_body(request)
+    on = body.get("on")
+    sources = body.get("sources", [])
     if (
         not isinstance(on, bool)
         or not isinstance(sources, list)

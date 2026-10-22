@@ -16,6 +16,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps.permissions import app_request_denial, owner_only_api_reason
 from personalclaw.dashboard.handlers.listening import register_listening_routes
+from personalclaw.dashboard.request_boundary import request_boundary_middleware
 from personalclaw.dashboard.ws_state import OWNER_FRAMES, DashboardWebSocketState, frame_subject
 
 
@@ -38,7 +39,8 @@ async def _signed_in(request: web.Request, handler: Any) -> web.StreamResponse:
 
 
 def _app(state: _State) -> web.Application:
-    app = web.Application(middlewares=[_signed_in])
+    # The gateway's own boundary, which answers a body that is not one 400, as it does live.
+    app = web.Application(middlewares=[request_boundary_middleware(), _signed_in])
     app["state"] = state
     register_listening_routes(app)
     return app
