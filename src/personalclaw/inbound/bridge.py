@@ -70,7 +70,6 @@ import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
 from aiohttp import web
@@ -474,7 +473,7 @@ def pending_confirmations() -> list[dict[str, Any]]:
             {
                 "token": token,
                 "action": row["action"],
-                "body": _confirmation_body(SimpleNamespace(name=row["action"]), row["params"]),
+                "body": _confirmation_body(row["action"], row["params"]),
                 "asked_by": row["asked_by"],
                 "asked_at": asked_at,
                 "expires_at": asked_at + CONFIRM_TTL_SECS,
@@ -724,7 +723,7 @@ async def handle_action(request: web.Request) -> web.Response:
                 source="loop",
                 kind="needs_input",
                 title="Confirm a control-bridge action",
-                body=_confirmation_body(action, params),
+                body=_confirmation_body(action.name, params),
                 refs={
                     "source": "control_bridge",
                     "action": action.name,
@@ -750,7 +749,7 @@ async def handle_action(request: web.Request) -> web.Response:
     return await _run(state, action, params, "/action")
 
 
-def _confirmation_body(action: Action, params: dict) -> str:
+def _confirmation_body(action: str, params: dict) -> str:
     """What the Inbox row asks you: which action, with what, and what Confirm does.
 
     The parameters are shown because a confirmation you cannot read is one you approve blind.
@@ -760,7 +759,7 @@ def _confirmation_body(action: Action, params: dict) -> str:
     from personalclaw.security import redact_field
 
     shown = redact_field(json.dumps(params, sort_keys=True, default=str))[:300] if params else ""
-    what = f"{action.name} with {shown}" if shown else action.name
+    what = f"{action} with {shown}" if shown else action
     return (
         f"A local agent on the control bridge asks to run {what}. Confirm runs it once; the "
         "agent cannot confirm it itself. It expires 10 minutes after it was asked."

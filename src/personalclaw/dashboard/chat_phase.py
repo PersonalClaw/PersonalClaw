@@ -517,11 +517,11 @@ def model_waits_changed(state: DashboardState, waits: list[dict[str, Any]]) -> N
         run = session._run
         if run is None or run.turn is None:
             continue
-        row = waiting.get(key)
-        if row is not None:
-            model = str(row.get("model") or "").partition(":")[2] or str(row.get("model") or "")
-            behind = int(row.get("ahead") or 0)
-            run.queue = {"model": str(row.get("model") or ""), "behind": behind}
+        held = waiting.get(key)
+        if held is not None:
+            model = str(held.get("model") or "").partition(":")[2] or str(held.get("model") or "")
+            behind = int(held.get("ahead") or 0)
+            run.queue = {"model": str(held.get("model") or ""), "behind": behind}
             say(state, session, WorkPhase.WAITING_MODEL, f"Waiting for {model} · {behind} ahead")
         elif run.phase is WorkPhase.WAITING_MODEL:
             say(state, session, thinking(session))
