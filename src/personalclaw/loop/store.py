@@ -300,7 +300,7 @@ def _loop_to_params(loop: Loop) -> dict[str, Any]:
 def _origin_chat() -> str:
     """The chat the current work is done for, by its own name, or ``""`` for work no chat is at
     the top of (a page's request, a schedule, a loop's worker): ``memory_writes.filed_under``,
-    read as ``dashboard.work_phases.chat_of`` reads a helper's parent."""
+    read as ``work_phases.chat_of`` reads a helper's parent."""
     from personalclaw import memory_writes, session_keys
 
     name = memory_writes.filed_under().removeprefix(session_keys.DASHBOARD.prefix)
@@ -568,7 +568,7 @@ def _announce() -> None:
 
 def _say_phase(loop: Loop | None, *, deleted: str = "") -> None:
     """Say what *loop* is doing now, from the status it was written with: its ``work_phase``
-    (``dashboard.work_phases``); or, for the loop *deleted*, that it stopped, when it had not ended.
+    (``work_phases``); or, for the loop *deleted*, that it stopped, when it had not ended.
     Here, beside :func:`_announce`, because every status a loop moves to is written here.
     Best-effort, and a no-op headless."""
     try:

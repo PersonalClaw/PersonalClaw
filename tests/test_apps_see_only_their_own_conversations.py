@@ -933,7 +933,7 @@ async def _a_helper_no_chat_started_reaches_no_app(state, socks) -> None:
     app, whoever's key its parent has, an app's own run's too. Your socket hears every one."""
     from types import SimpleNamespace
 
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     parents = {
         "ours": "ours",
@@ -1338,7 +1338,7 @@ def _a_phase_of_other_work_names_its_chat_or_only_the_work() -> None:
     """The other producer of `work_phase`: `work_phases` builds a helper's, a loop's and a
     workflow run's payload, naming the chat a helper works for, and for work no chat started
     nothing but the work, which `frame_subject` reads as a subject no app owns."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.dashboard.ws_state import frame_subject
 
     state = MagicMock()

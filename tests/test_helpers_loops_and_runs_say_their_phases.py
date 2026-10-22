@@ -3,7 +3,7 @@
 A chat's turn said its phases and nothing else did, so a helper waiting for a slot, a loop stalled
 on its owner and a run parked at a gate read as nothing at all until a page polled each kind's own
 status. Each now says its phase from what the gateway already measures, through the same frame a
-chat's turn uses (``dashboard/work_phases.py``): ``{work, kind, session, phase, line, since, seq}``,
+chat's turn uses (``work_phases.py``): ``{work, kind, session, phase, line, since, seq}``,
 sent when the phase or its line changes, never per chunk, with the last frame saying how it ended.
 
 Everything runs through the real producers: the gateway's subagent event handler and the real
@@ -172,7 +172,7 @@ async def test_a_helper_names_a_chat_only_when_a_chat_started_it(subtests, tmp_p
     to its end, and its start's wait on her OK too. Started by anything else, they name no chat,
     so its phase is about that work alone (``ws_state.WORK_FRAMES``), whatever key its parent
     runs under."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.dashboard.ws_state import frame_subject
 
     w = _World(tmp_path, _scripted())
@@ -242,7 +242,7 @@ async def test_a_spawn_stopped_while_it_waits_for_a_slot_ends_stopped(
 ):
     """Its last frame says it stopped, and nothing is kept of it, even when it is stopped before
     the manager's word that it waits has been heard."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     w = _World(tmp_path, _scripted())
     agent = await _a_spawn_stopped_while_it_waits(w, in_the_tick_it_queued=in_the_tick_it_queued)
@@ -257,7 +257,7 @@ async def test_a_helper_stopped_while_its_call_waits_on_her_ends_stopped(tmp_pat
     """The reaper says a stopped helper ended before its cancelled call takes back the approval it
     waited on: the helper's last frame says it stopped, not that it still waits on her OK, and the
     approval taken back after says nothing of it."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     w = _World(tmp_path, _scripted())
     on_event, manager = _gateway_events(w.state)
@@ -397,8 +397,7 @@ async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) 
     order, and what each party was answered, with the helper's own frames left out, and the
     running list's and the waiting list's rings, which go out on their own clock once their window
     closes."""
-    from personalclaw import auto_denials, inbox
-    from personalclaw.dashboard import work_phases
+    from personalclaw import auto_denials, inbox, work_phases
     from personalclaw.triggers import lifecycle_fire
 
     tmp_path.mkdir()
@@ -476,7 +475,7 @@ async def test_the_helpers_phase_only_reads_the_approval_it_waits_on(tmp_path, a
     reads: an approval asked, answered, expired or cancelled has every effect it had with no hook
     at all, in the same order, and answers both parties the same, and so it does when the hook
     fails."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     failures: list[bool] = []
 
@@ -652,7 +651,7 @@ async def test_a_loop_says_its_phase_as_its_status_moves(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_loop_deleted_before_it_ended_says_it_stopped(tmp_path):
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.loop import store
     from personalclaw.loop.loop import LoopStatus
 
@@ -701,7 +700,7 @@ async def test_a_running_loop_says_what_its_worker_does(tmp_path):
 async def _a_loop_workers_own_phases(tmp_path, worker_said: Any) -> list[tuple[str, str]]:
     """The phases a running loop's worker's turn says of its own chat, with the loop's said from
     them by *worker_said*."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.loop import manager, store
     from personalclaw.loop.loop import LoopStatus
 
@@ -726,7 +725,7 @@ async def _a_loop_workers_own_phases(tmp_path, worker_said: Any) -> list[tuple[s
 async def test_a_failure_saying_a_loops_phase_leaves_its_workers_turn_alone(tmp_path):
     """The loop's phase is read from its worker's chat frame: one that fails to be said leaves the
     chat's own phases, and so every approval it waits on, as they were."""
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
 
     tried: list[str] = []
 
@@ -1034,7 +1033,7 @@ async def test_a_failure_saying_a_runs_phase_leaves_its_events_alone(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ended_work_is_forgotten_once_its_last_frame_is_sent(tmp_path):
-    from personalclaw.dashboard import work_phases
+    from personalclaw import work_phases
     from personalclaw.workflows.watchdog import WorkflowWatchdog
 
     w = _World(tmp_path, _scripted())

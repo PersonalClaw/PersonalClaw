@@ -369,6 +369,15 @@ class DashboardWebSocketState:
             return False
         return subject is None or self._app_may_hear_about(app, event_type, subject)
 
+    def _app_hears_of(self, app: str, event_type: str, data: object) -> bool:
+        """Whether a frame of *event_type* carrying *data* is about something *app* may hear of:
+        its subject (:func:`frame_subject`) is one :meth:`_app_may_hear_about` allows. A frame
+        about nothing answers ``False``. The running list reads its rows by this
+        (``running_now.Reach``), so the gateway's core asks it of the state, never of this module.
+        """
+        subject = frame_subject(event_type, data)
+        return subject is not None and self._app_may_hear_about(app, event_type, subject)
+
     def _app_may_hear_about(self, app: str, event_type: str, subject: FrameSubject) -> bool:
         """Whether *app*'s socket may carry a frame about *subject*: an inbox item it raised, a
         conversation it started, an approval frame when it holds the approval relay

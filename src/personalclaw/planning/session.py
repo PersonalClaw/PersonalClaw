@@ -22,6 +22,10 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+#: The folder under the home that keeps each chat's plan, one sidecar per chat
+#: (``dashboard.chat_plan``). The waiting list reads it too (``waiting``).
+CHAT_PLANS_DIR = "chat_plans"
+
 
 class StepStatus(str, Enum):
     """Lifecycle of a single planning step.

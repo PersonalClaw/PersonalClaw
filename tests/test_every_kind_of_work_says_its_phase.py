@@ -3,7 +3,7 @@
 Only a chat's turn said its phases (``dashboard/chat_phase.py``). A helper waiting for a slot, a
 loop stalled on its owner and a workflow run parked at a gate said none, so a surface that shows
 what runs had to read each kind's own status words again. Now a helper, a loop and a workflow run
-say their phases through the same ``work_phase`` frame (``dashboard/work_phases.py``), each
+say their phases through the same ``work_phase`` frame (``work_phases.py``), each
 classified by ``personalclaw.work_phase``, and this census holds every kind of work
 (``workref.WORK_KINDS``) to one of two lists: the kinds that say their phases, each with the module
 that says them, and the kinds that say none of their own, each with why.

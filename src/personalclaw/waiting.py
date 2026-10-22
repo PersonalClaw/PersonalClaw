@@ -240,8 +240,7 @@ def interrupt_for(kind: str) -> str:
 
 
 def _approvals(entries: list[dict[str, Any]], window: float, now: float) -> list[dict[str, Any]]:
-    from personalclaw import running_now
-    from personalclaw.dashboard import work_phases
+    from personalclaw import running_now, work_phases
 
     out = []
     for entry in entries:
@@ -415,11 +414,10 @@ def _chat_plans(now: float) -> list[dict[str, Any]]:
     import json
 
     from personalclaw.config.loader import config_dir
-    from personalclaw.dashboard import chat_plan
     from personalclaw.planning import session as plans
 
     out = []
-    folder = config_dir() / chat_plan._DIR_NAME
+    folder = config_dir() / plans.CHAT_PLANS_DIR
     for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
         try:
             raw = json.loads(f.read_text())
