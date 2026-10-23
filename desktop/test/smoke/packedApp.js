@@ -11,12 +11,15 @@
  * `check` lists the asar against `build.files` and exits 1 naming any entry it lacks, or any file
  * in it that carries a remote-debugging switch: the smoke's DevTools pipe is the harness's alone,
  * and the app never opens a debugging port or pipe of its own. `controls`
- * runs the smoke on two planted copies, which must each fail for their own reason:
+ * runs the smoke on four planted copies, which must each fail for their own reason:
  *
  *   - the asar without a module `main.js` requires, which must fail at launch naming it: what only
  *     the packed app shows (`packaging.test.js` reads the source, not the asar);
  *   - a preload that throws, so the window loads no desktop bridge: a renderer that loads nothing
- *     of the shell's.
+ *     of the shell's;
+ *   - a shell that drops every `personalclaw://` link, so none opens its route (#3827);
+ *   - a shell whose link delivery also presses Enter in the composer once the page shows a draft:
+ *     a link that acts, which the smoke must see leave the page.
  */
 
 const fs = require("node:fs");
@@ -34,6 +37,29 @@ const DEBUG_SWITCH = /remote[-_]debugging/i;
 const SOURCE = /\.(js|cjs|mjs|html|json)$/;
 /** The module the first control removes: `main.js` requires it, and no fallback covers it. */
 const PLANTED_MISSING = "doorbell.js";
+
+/** Rewrite *file* in the extracted *tree*: *find* must be there once. */
+function rewrite(tree, file, find, replace) {
+  const p = path.join(tree, file);
+  const text = fs.readFileSync(p, "utf8");
+  if (text.split(find).length !== 2) throw new Error(`the plant's anchor is not once in ${file}: ${find}`);
+  fs.writeFileSync(p, text.replace(find, replace));
+}
+
+/**
+ * What the sending control appends to every hash a link assigns: once the composer shows a draft,
+ * press Enter in it, as a link that acts would. It looks every 200 ms for 10 s, so it acts however
+ * long the page takes to mount the composer.
+ */
+const PLANTED_SEND = [
+  "(() => { let tries = 0; const t = setInterval(() => {",
+  '  const el = document.querySelector(\'[aria-label="Message input"]\');',
+  "  if (++tries > 50) clearInterval(t);",
+  "  if (!el || !el.textContent.includes(\"smoke-draft-\")) return;",
+  "  clearInterval(t); el.focus();",
+  "  el.dispatchEvent(new KeyboardEvent(\"keydown\", { key: \"Enter\", bubbles: true, cancelable: true }));",
+  "}, 200); })();",
+].join(" ");
 
 /** The executable and the asar of the app unpacked at *dir* (electron-builder's `linux-unpacked`). */
 function packed(dir) {
@@ -110,6 +136,16 @@ const CONTROLS = [
     plant: (tree) => fs.writeFileSync(path.join(tree, "preload.js"), 'throw new Error("planted: the preload throws");\n'),
     reads: (r) => /no desktop bridge/.test(r.reason || ""),
   },
+  {
+    name: "a shell that drops every personalclaw:// link",
+    plant: (tree) => rewrite(tree, "deepLinks.js", "function registerDeepLinks({ app, inbox, isPackaged, argv, log = () => {} }) {", "function registerDeepLinks({ app, inbox, isPackaged, argv, log = () => {} }) {\n  return;"),
+    reads: (r) => /personalclaw:\/\/settings did not open/.test(r.reason || ""),
+  },
+  {
+    name: "a shell whose link delivery sends the draft it fills",
+    plant: (tree) => rewrite(tree, "deepLinks.js", "return `window.location.hash = ${JSON.stringify(hash)};`;", `return \`window.location.hash = \${JSON.stringify(hash)}; ${PLANTED_SEND}\`;`),
+    reads: (r) => /the draft left the page/.test(r.reason || ""),
+  },
 ];
 
 async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = {}) {
@@ -128,7 +164,7 @@ async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = 
   return results;
 }
 
-module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packed, plantedCopy, runControls, shellSources };
+module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packed, plantedCopy, runControls, shellSources };
 
 if (require.main === module) {
   const [cmd, dir, ...rest] = process.argv.slice(2);

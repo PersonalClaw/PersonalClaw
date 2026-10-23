@@ -666,9 +666,17 @@ inputs; every other job declares the whole tree today. `desktop-smoke`'s are `de
 `web/`, the shell and the dashboard it loads (#3942): it packs the shell with electron-builder's
 Linux dir build on a stub backend that runs the checkout's gateway, holds the packed `app.asar`
 to `build.files`, starts the app under Xvfb and watches it, over a DevTools pipe rather than a
-port, load the gateway's origin and draw the chat, and two planted copies (the asar without a module `main.js` requires, a preload that throws)
-must each fail. A backend change is e2e's to catch: the smoke proves the shell starts and draws,
-not the gateway. It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs are the whole tree less the paths
+port, load the gateway's origin and draw the chat. It then hands the running app
+`personalclaw://` links by a second launch, as another app does (#3827): `personalclaw://settings`
+opens `#/settings`, a link to no route moves nothing, and a new thread's `?prompt=` link shows its
+draft in the composer and sends nothing, which it reads off every request body, non-GET address
+and WebSocket frame the page sends. Reloading the address the link left, and the same link
+again, bring back the same draft and still send nothing. Four planted copies must each fail for
+their own reason: the asar without a module `main.js` requires, a preload that throws, a shell
+that drops every link, and one whose link delivery presses Enter on the draft. A backend change
+is e2e's to catch: the smoke proves the shell starts, draws and follows a link, not the gateway.
+It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs
+are the whole tree less the paths
 that cannot reach it, each exclusion carrying its reason in the catalogue, and its three jobs
 name the same ones. `apps-contract`'s are the triggers of the SDK classifier ci.yml ran it by
 before the plan, less the classifier's own file. `python-suite`'s are every top-level entry but

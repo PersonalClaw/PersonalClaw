@@ -655,6 +655,27 @@ describe('viewTransition', () => {
     expect(ran).toBe(true)
   })
 
+  it('leaves no rejection unhandled when the platform skips the transition', async () => {
+    // A second navigation while one is animating, or a reload, makes the platform skip the
+    // transition: `ready` rejects (InvalidStateError, "Transition was aborted because of invalid
+    // state"), and `finished` may too. Both are decoration. Left unhandled, every quick pair of
+    // navigations reported an uncaught error in the page, which the packed shell's smoke found.
+    const unhandled: unknown[] = []
+    const seen = (reason: unknown) => { unhandled.push(reason) }
+    process.on('unhandledRejection', seen)
+    try {
+      const skipped = () => Promise.reject(new DOMException('Transition was aborted because of invalid state', 'InvalidStateError'))
+      install((cb) => { cb(); return { ready: skipped(), finished: skipped(), updateCallbackDone: Promise.resolve(), skipTransition: () => {} } })
+      let ran = 0
+      viewTransition(() => { ran += 1 })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(ran).toBe(1)
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', seen)
+    }
+  })
+
   it('does not start a transition under reduced motion, and still applies the update', () => {
     // "Crossfade or none" resolves to NONE — the instant swap. The gate lives in this
     // function alone, read at call time, so no call site can forget it or overrule it.

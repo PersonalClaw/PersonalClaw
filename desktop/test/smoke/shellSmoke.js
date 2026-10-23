@@ -16,6 +16,12 @@
  *   - the window loaded an origin that answers as a PersonalClaw gateway (`/api/healthz`);
  *   - the preload put the desktop bridge on the page (`window.pclawDesktop`);
  *   - the chat shell mounted: `#/chat` draws its composer ("Message input");
+ *   - `personalclaw://` links, handed over by a second launch as another app hands them (#3827),
+ *     only move the page: `personalclaw://settings` opens `#/settings`, a link to no route moves
+ *     nothing, and `personalclaw://threads/new?prompt=<draft>` opens a new thread with the draft in
+ *     its composer, unsent. The draft is a word of the run's own, and it never leaves the page: no
+ *     request's body or non-GET address and no WebSocket frame carries it. Reloading the address
+ *     the link left, and the same link again, bring back the same draft and still send nothing;
  *   - and nothing threw: no JavaScript error in the main process, no uncaught one in the page.
  *
  * It prints one line per step, and `SHELL_SMOKE {"ok":…}` last; it exits 0 only when ok. Where
@@ -25,6 +31,7 @@
  * smoke where the packed app is not this platform's.
  */
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -38,6 +45,9 @@ const COMPOSER = '[aria-label="Message input"]';
 const LOOPBACK_PAGE = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+\//;
 /** The one DevTools switch the smoke gives the app: a pipe, never a port. */
 const DEVTOOLS_SWITCH = "--remote-debugging-pipe";
+/** A link to a route, and one to no route the app has. */
+const SETTINGS_LINK = "personalclaw://settings";
+const NO_ROUTE_LINK = "personalclaw://nowhere-the-app-has";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -104,6 +114,49 @@ function pageErrors(events, sessionId = undefined) {
   return out;
 }
 
+/**
+ * What carried *marker* out of *sessionId*'s page: a request's body (as sent, or as *bodies* holds
+ * it by request id, for a body the event left out), a non-GET request's address, or a WebSocket
+ * frame the page sent. A GET's address is not the page sending the text, nor is a frame received.
+ */
+function carriedOut(events, marker, sessionId, bodies = new Map()) {
+  const out = [];
+  for (const e of events) {
+    if (sessionId && e.sessionId !== sessionId) continue;
+    if (e.method === "Network.requestWillBeSent") {
+      const r = e.params.request;
+      const body = r.postData ?? bodies.get(e.params.requestId) ?? "";
+      if (body.includes(marker)) out.push(`${r.method} ${r.url} carried it in its body`);
+      else if (!["GET", "HEAD", "OPTIONS"].includes(r.method) && r.url.includes(marker)) out.push(`${r.method} ${r.url} carried it in its address`);
+    } else if (e.method === "Network.webSocketFrameSent" && String(e.params.response?.payloadData).includes(marker)) {
+      out.push("a WebSocket frame carried it");
+    }
+  }
+  return out;
+}
+
+/** A second launch's arguments: the app's own, with the link, and no DevTools pipe of its own. */
+const linkLaunchArgs = (appDir, userDataDir, link) => [...(appDir ? [appDir] : []), `--user-data-dir=${userDataDir}`, link];
+
+/** Hand *link* to the running app as another app does: a second launch, which forwards it and quits. */
+function deliverLink(executable, args, env, timeoutMs = 30_000) {
+  return new Promise((resolve) => {
+    const second = spawn(executable, args, { env, stdio: "ignore" });
+    const timer = setTimeout(() => {
+      second.kill("SIGKILL");
+      resolve(false);
+    }, timeoutMs);
+    second.on("exit", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    second.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
 /** Stop the gateway the stub backend started, by the pid it left: SIGTERM, then SIGKILL. */
 async function stopGateway(pidFile) {
   let pid = 0;
@@ -142,7 +195,8 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
   };
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pclaw-shell-smoke-"));
   const xvfb = needsDisplay(env) ? await startXvfb() : null;
-  const args = [...(appDir ? [appDir] : []), DEVTOOLS_SWITCH, `--user-data-dir=${path.join(scratch, "user-data")}`];
+  const userDataDir = path.join(scratch, "user-data");
+  const args = [...(appDir ? [appDir] : []), DEVTOOLS_SWITCH, `--user-data-dir=${userDataDir}`];
   const childEnv = { ...env, PERSONALCLAW_HOME: path.join(scratch, "shell-home"), ELECTRON_ENABLE_LOGGING: "1", ...(xvfb ? { DISPLAY: xvfb.display } : {}) };
   delete childEnv.ELECTRON_RUN_AS_NODE;
   step(`launch: ${executable} ${args.join(" ")}${xvfb ? ` on Xvfb ${xvfb.display}` : ""}`);
@@ -182,6 +236,17 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
       if (r.exceptionDetails) throw new Error(`evaluate: ${r.exceptionDetails.text}`);
       return r.result.value;
     };
+    await cdp.send("Page.enable", {}, sessionId);
+    // Every request and WebSocket frame from here on, so a link's draft is seen if it leaves. The
+    // page opened its sockets before this, and a socket's frames are reported only when it opens
+    // after it, so the page loads once more.
+    await cdp.send("Network.enable", {}, sessionId);
+    const reloaded = cdp.events.length;
+    await cdp.send("Page.reload", {}, sessionId);
+    while (!cdp.events.slice(reloaded).some((e) => e.method === "Page.loadEventFired" && e.sessionId === sessionId)) {
+      if (Date.now() > end) return fail("the page did not load again after its reload");
+      await wait(250);
+    }
     const bridge = await evaluate("typeof window.pclawDesktop");
     if (bridge !== "object") return fail(`the preload put no desktop bridge on the page (window.pclawDesktop is ${bridge})`);
     step("the preload's desktop bridge is on the page");
@@ -194,7 +259,72 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
     }
     step(`the chat shell mounted: ${COMPOSER} on #/chat`);
 
-    // 3. Nothing threw on the way.
+    // 3. Links from other apps move the page and act on nothing (#3827).
+    const hash = () => evaluate("location.hash");
+    const composerText = () => evaluate(`document.querySelector(${JSON.stringify(COMPOSER)})?.textContent ?? ""`).catch(() => "");
+    const until = async (what, test, ms = 20_000) => {
+      const by = Math.min(end, Date.now() + ms);
+      for (;;) {
+        const got = await test().catch(() => false);
+        if (got) return true;
+        if (Date.now() > by) return false;
+        await wait(250);
+      }
+    };
+    const hand = async (link) => {
+      if (!(await deliverLink(executable, linkLaunchArgs(appDir, userDataDir, link), childEnv))) throw new Error(`the second launch with ${link} did not exit`);
+    };
+    const bodies = new Map();
+    const leftThePage = async (marker) => {
+      for (const e of cdp.events) {
+        const r = e.method === "Network.requestWillBeSent" && e.sessionId === sessionId ? e.params : null;
+        if (r && r.request.hasPostData && r.request.postData === undefined && !bodies.has(r.requestId)) {
+          const got = await cdp.send("Network.getRequestPostData", { requestId: r.requestId }, sessionId).catch(() => null);
+          bodies.set(r.requestId, got?.postData ?? "");
+        }
+      }
+      return carriedOut(cdp.events, marker, sessionId, bodies);
+    };
+
+    await hand(SETTINGS_LINK);
+    if (!(await until("settings", async () => (await hash()) === "#/settings"))) return fail(`${SETTINGS_LINK} did not open #/settings: the page stayed on ${await hash()}`);
+    step(`${SETTINGS_LINK} opened #/settings`);
+    await hand(NO_ROUTE_LINK);
+    await wait(2000);
+    if ((await hash()) !== "#/settings") return fail(`${NO_ROUTE_LINK} moved the page to ${await hash()}, though it names no route`);
+    step(`${NO_ROUTE_LINK} moved nothing`);
+
+    const draft = `smoke-draft-${crypto.randomBytes(4).toString("hex")}`;
+    const promptLink = `personalclaw://threads/new?prompt=${draft}`;
+    const shown = async () => (await hash()).startsWith("#/chat/new") && (await composerText()).includes(draft);
+    await hand(promptLink);
+    // What left the page is read before where the page is: a link that sends its draft moves the
+    // page on to the thread it started, and the send is the failure to name.
+    const opened = await until("the draft", async () => (await shown()) || (await leftThePage(draft)).length > 0);
+    let gone = await leftThePage(draft);
+    if (gone.length) return fail(`the draft left the page: ${gone.join("; ")}`);
+    if (!opened) return fail(`${promptLink} did not open a new thread with the draft in its composer: the page is on ${await hash()}`);
+    const address = await hash();
+    await wait(2000);
+    gone = await leftThePage(draft);
+    if (gone.length) return fail(`the draft left the page: ${gone.join("; ")}`);
+    step(`${promptLink} opened ${address} with the draft in the composer, and sent nothing`);
+
+    const again = cdp.events.length;
+    await cdp.send("Page.reload", {}, sessionId);
+    const loaded = async () => cdp.events.slice(again).some((e) => e.method === "Page.loadEventFired" && e.sessionId === sessionId);
+    if (!(await until("the reload", async () => (await loaded()) && (await hash()) === address && (await composerText()).includes(draft)))) {
+      return fail(`reloading ${address} did not bring back the draft: the page is on ${await hash()}`);
+    }
+    await hand(promptLink);
+    await wait(2000);
+    gone = await leftThePage(draft);
+    if (gone.length) return fail(`the draft left the page: ${gone.join("; ")}`);
+    const text = await composerText();
+    if ((await hash()) !== address || text.split(draft).length !== 2) return fail(`the same link again left ${await hash()} with ${JSON.stringify(text)}, not the one draft on ${address}`);
+    step("reloading the address and the same link again brought back the same draft, and sent nothing");
+
+    // 4. Nothing threw on the way.
     await wait(500);
     const errors = pageErrors(cdp.events, sessionId);
     if (errors.length) return fail(`the page threw: ${errors.join("; ")}`);
@@ -219,7 +349,7 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
   }
 }
 
-module.exports = { COMPOSER, DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, devtoolsPipe, needsDisplay, pageErrors, smoke, stopGateway };
+module.exports = { COMPOSER, DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
 
 if (require.main === module) {
   const [executable, ...rest] = process.argv.slice(2);
