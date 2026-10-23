@@ -444,7 +444,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
           <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
         </Row>
         <Row label="Keep my question in view" hint={cfg.keep_question_in_view ? 'While a long reply streams, your latest question stays pinned at the top of the conversation.' : 'Off: a long reply scrolls your question out of view as it streams.'}>
-          <Toggle on={!!cfg.keep_question_in_view} onChange={(v) => save({ keep_question_in_view: v })} label="Keep my question in view" />
+          <Toggle on={!!cfg.keep_question_in_view} onChange={(v) => save({ keep_question_in_view: v })} label="Keep my question in view" touchTarget />
         </Row>
         <Row label="Show timestamps" hint="Display a time on each message.">
           <Toggle on={cfg.show_timestamps} onChange={(v) => save({ show_timestamps: v })} label="Show timestamps" />

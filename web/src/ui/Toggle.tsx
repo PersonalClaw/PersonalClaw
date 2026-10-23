@@ -2,12 +2,17 @@ import { motion } from 'framer-motion'
 import { spring } from '../design/motion'
 import { useFieldDescription } from './forms'
 
+/** The compact widths' 44 px hit box (`touchTarget`): min-h-11 and min-w-11 are 2.75rem, and `max-lg:`
+ *  is under 1024 px. */
+export const TOUCH_TARGET = 'max-lg:min-h-11 max-lg:min-w-11'
+
 /** The ONE canonical on/off switch for the whole app. A pill track + a knob that
  *  springs across on toggle (bounce-tier settle). Track = primary when on, neutral
  *  when off; knob uses the on-primary ink token. role="switch" + aria-checked for
  *  a11y. Replaces ~11 hand-rolled inline-styled copies scattered across pages. */
 export function Toggle({
   on, onChange, label, disabled = false, disabledReason, size = 'md', readOnly = false, decorative = false,
+  touchTarget = false,
 }: {
   on: boolean
   /** Omit + set readOnly for a display-only indicator (renders a non-interactive
@@ -34,6 +39,11 @@ export function Toggle({
    *  (a wrapping <button aria-label>). Hidden from the a11y tree so it doesn't
    *  surface as a second, unnamed switch node duplicating the button. */
   decorative?: boolean
+  /** A 44 px hit box at the compact widths (320 to 768 px), the kit's own above them. The track is
+   *  drawn the same: only the transparent box around it grows, and with it the row. Set on a
+   *  switch that has no baselined allowance under 44 px (#3905); the switches the UI quality
+   *  matrix already holds under it keep their box until every one moves at once. */
+  touchTarget?: boolean
 }) {
   // ── THE SENTENCE BESIDE THE SWITCH BECOMES THE SWITCH'S DESCRIPTION ─────────────────────────
   //
@@ -129,7 +139,7 @@ export function Toggle({
       aria-disabled={softOff || undefined}
       title={softOff ? disabledReason : undefined}
       onClick={() => { if (!softOff) onChange(!on) }}
-      className={`inline-flex shrink-0 items-center justify-center rounded-pill disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${sm ? 'h-6 -my-0.5' : 'h-6'}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-pill disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${sm ? 'h-6 -my-0.5' : 'h-6'}${touchTarget ? ` ${TOUCH_TARGET}` : ''}`}
     >
       <span className={trackCls} style={trackStyle}>{knobEl}</span>
     </button>
