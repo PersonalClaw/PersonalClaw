@@ -371,6 +371,36 @@ def test_a_job_that_exits_non_zero_is_red(tmp_path):
     assert result.violations == ("the job exited 3",)
 
 
+# (d2) a job's output, kept when asked: for the lint remediation (#3915)
+
+_SPEAKS = "import sys; print('to stdout', flush=True); print('to stderr', file=sys.stderr)"
+
+
+def test_a_jobs_kept_output_holds_its_stdout_and_stderr_and_still_reaches_the_log(tmp_path, capfd):
+    kept = tmp_path / "kept.out"
+    result = _run(tmp_path, [sys.executable, "-c", _SPEAKS + "; raise SystemExit(1)"], output=kept)
+    assert result.violations == ("the job exited 1",)
+    assert kept.read_bytes().splitlines() == [b"to stdout", b"to stderr"]
+    log = capfd.readouterr().out
+    assert "to stdout" in log and "to stderr" in log, "the log reads as it would"
+
+
+def test_a_kept_output_past_the_limit_is_cut_and_the_log_still_has_it_whole(
+    tmp_path, capfd, monkeypatch
+):
+    monkeypatch.setattr(run, "OUTPUT_LIMIT", 10)
+    kept = tmp_path / "kept.out"
+    _run(tmp_path, [sys.executable, "-c", "print('x' * 100)"], output=kept)
+    assert kept.read_bytes() == b"x" * 10 + run.OUTPUT_CUT
+    assert "x" * 100 in capfd.readouterr().out
+
+
+def test_without_an_output_file_the_job_writes_to_the_runners_own_output(tmp_path, capfd):
+    _run(tmp_path, [sys.executable, "-c", _SPEAKS])
+    captured = capfd.readouterr()
+    assert "to stdout" in captured.out and "to stderr" in captured.err, "nothing is piped"
+
+
 # (e) a declared env can't undo the scrub
 
 

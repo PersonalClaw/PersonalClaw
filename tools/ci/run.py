@@ -49,6 +49,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
+from typing import IO
 
 #: The run's exit codes: the job passed; it failed, timed out or broke its isolation; it was
 #: interrupted before it finished.
@@ -71,6 +72,17 @@ _RUNNER_SETS = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "GIT_TERMI
 
 #: The folder a job must not make in the real home: PersonalClaw's own.
 _PERSONALCLAW_DIR = ".personalclaw"
+
+#: The most of a job's output :func:`run_job` keeps when it is given an ``output`` file: what the
+#: lint remediation comment shows at most (``scripts/ci_pr_feedback.mjs``'s ``MAX_VIOLATIONS``).
+OUTPUT_LIMIT = 60_000
+#: What a kept output that was cut ends with.
+OUTPUT_CUT = b"\n... cut here: the full output is in the job's log\n"
+#: How long the copy of a job's output may run on once the job's group is gone: a process that
+#: left the group could hold its end of the pipe open for ever.
+_COPY_JOIN_S = 10.0
+#: The runner's own output, where a job's output goes as it arrives, kept or not.
+_LOG_FD = 1
 
 #: The longest value the tripwire records of a request's field.
 _FIELD = 200
@@ -262,6 +274,27 @@ def _stop(proc: subprocess.Popen[bytes], grace: float, noted: _Noted) -> None:
     proc.wait()
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def _copy(source: IO[bytes], kept: Path, limit: int) -> None:
+    """Copy a job's output to the runner's log as it arrives, and its first *limit* bytes to
+    *kept*, then :data:`OUTPUT_CUT` when there was more."""
+    held, cut = 0, False
+    with kept.open("wb") as out:
+        while chunk := os.read(source.fileno(), 65536):
+            _write_all(_LOG_FD, chunk)
+            room = max(limit - held, 0)
+            out.write(chunk[:room])
+            held += min(room, len(chunk))
+            cut = cut or len(chunk) > room
+        if cut:
+            out.write(OUTPUT_CUT)
+
+
 def _tripwire_violations(scratch: Scratch) -> list[str]:
     try:
         lines = scratch.tripwire_log.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -315,6 +348,7 @@ def run_job(
     grace: float = GRACE,
     before_stop: Callable[[int], None] | None = None,
     budget: float | None = None,
+    output: Path | None = None,
 ) -> Result:
     """Run *argv* in *cwd* with :func:`job_env`, in a process group of its own, and say how it
     ended.
@@ -340,7 +374,12 @@ def run_job(
     job with a 2 s budget always reads "timed out after 2s", however late a step started.
 
     *timeout* and *budget* must be finite numbers of seconds above 0, and *grace* a finite number
-    of seconds, 0 or more."""
+    of seconds, 0 or more.
+
+    *output*, when given, is a file for the job's output, its stdout and stderr together: the job
+    writes to a pipe, which a thread copies to the runner's own output as it arrives, so the log
+    reads as it would, and the first :data:`OUTPUT_LIMIT` bytes to *output*, which a cut one ends
+    with :data:`OUTPUT_CUT`. The file is data for a reader to show, never to run."""
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("run_job runs a job only on the main thread, which takes its signals")
     if not _finite(timeout) or timeout <= 0:
@@ -359,13 +398,22 @@ def run_job(
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             handlers[signum] = signal.signal(signum, noted)
+        piped = output is not None
         proc = subprocess.Popen(
             list(argv),
             cwd=cwd,
             env=full_env,
             stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if piped else None,
+            stderr=subprocess.STDOUT if piped else None,
             start_new_session=True,
         )
+        copier = None
+        if output is not None and proc.stdout is not None:
+            copier = threading.Thread(
+                target=_copy, args=(proc.stdout, output, OUTPUT_LIMIT), daemon=True
+            )
+            copier.start()
         try:
             timed_out = _wait(proc, timeout, noted)
             if timed_out and before_stop is not None and proc.poll() is None:
@@ -378,6 +426,10 @@ def run_job(
         finally:
             _signal_group(proc.pid, signal.SIGKILL)
             proc.wait()
+            if copier is not None:
+                copier.join(_COPY_JOIN_S)
+                if not copier.is_alive() and proc.stdout is not None:
+                    proc.stdout.close()
     finally:
         for restored, handler in handlers.items():
             signal.signal(restored, handler)  # type: ignore[arg-type]

@@ -14,13 +14,30 @@
 // It is a module so that `scripts/ci_pr_feedback.test.mjs` can run it against a stubbed API.
 
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import path from "node:path";
 
 export const MARKER = "<!-- lint-help -->";
 export const BOT = "github-actions[bot]";
 // GitHub refuses a comment over 65536 characters. The rest of the body is under 1000.
 export const MAX_VIOLATIONS = 60000;
+// The most of an artifact file ever read: its uploader keeps 60000 bytes of a step's output
+// (tools/ci/run.py, OUTPUT_LIMIT), and a larger file is read only this far, never whole.
+export const MAX_FILE_BYTES = 256 * 1024;
+// A pull request's number, read only this far.
+const MAX_PR_BYTES = 64;
+
+/** The first `limit` bytes of `file`, as text: an artifact's file is never read whole. */
+export async function readCapped(file, limit) {
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(limit);
+    const { bytesRead } = await handle.read(buffer, 0, limit, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
 
 /** The text inside a code fence no backtick run in it can close. */
 export function fence(text) {
@@ -91,7 +108,7 @@ export async function relay({ github, context, core, dir }) {
   if (!existsSync(prFile) || !existsSync(violationsFile)) {
     return skip("this run left no lint feedback");
   }
-  const violations = (await readFile(violationsFile, "utf8")).trim();
+  const violations = (await readCapped(violationsFile, MAX_FILE_BYTES)).trim();
   if (!violations) return skip("the violations text is empty");
 
   const { owner, repo } = context.repo;
@@ -99,7 +116,7 @@ export async function relay({ github, context, core, dir }) {
   if (number === null) {
     return skip("no single open pull request has this run's head commit");
   }
-  const claimed = (await readFile(prFile, "utf8")).trim();
+  const claimed = (await readCapped(prFile, MAX_PR_BYTES)).trim();
   if (claimed !== String(number)) {
     core.warning(
       `the artifact names pull request ${JSON.stringify(claimed.slice(0, 40))}, ` +

@@ -48,6 +48,8 @@ jobs = [
 ]
 every_push = ["browse-live", "security", "apps-contract"]
 
+# A failed static step's output is a pull request's lint remediation (lint_feedback): run-job
+# leaves it, the stage job uploads it as lint-feedback, and pr-feedback.yml posts it.
 [[job]]
 id = "static"
 tiers = ["change", "merge"]
@@ -56,6 +58,7 @@ external_inputs = []
 toolchain = ["uv-sync", "shellcheck", "dash"]
 cache = ["uv"]
 security = "ordinary"
+lint_feedback = true
 python = "3.12.15"
 timeout_min = 10
 junit = ["reports/junit-lint-installer.xml"]

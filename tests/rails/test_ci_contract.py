@@ -1228,6 +1228,10 @@ NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE = Row(
             "ref: the workflow run's head sha fails",
             _feedback_checkout("ref", "${{ github.event.workflow_run.head_sha }}"),
         ),
+        Control(
+            "ref: the workflow run's head branch, a PR run's as a CI run's, fails",
+            _feedback_checkout("ref", "${{ github.event.workflow_run.head_branch }}"),
+        ),
         Control("ref: refs/pull/<n>/merge fails", _feedback_checkout("ref", "refs/pull/7/merge")),
         Control("ref: github.head_ref fails", _feedback_checkout("ref", "${{ github.head_ref }}")),
         Control(
@@ -11796,6 +11800,12 @@ def owning_job_violations(root: Path) -> list[str]:
 
 
 _STATIC = 'id = "static"\ntiers = ["change", "merge"]'
+#: static's entry down to its lint_feedback flag, which only a change-tier job may set.
+_STATIC_ENTRY = (
+    f"{_STATIC}\n"
+    'inputs = [":(glob)**"]\nexternal_inputs = []\ntoolchain = ["uv-sync", "shellcheck", "dash"]\n'
+    'cache = ["uv"]\nsecurity = "ordinary"\nlint_feedback = true\n'
+)
 _RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
 _VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },\n'
 _SCAN_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n'
@@ -11869,10 +11879,11 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             expect="no workflow step runs harness validate --strict",
         ),
         _plant(
+            # Its lint remediation goes with it: the loader holds that job to the change tier.
             "static held to the merge tier only",
             catalogue.CATALOGUE,
-            _STATIC,
-            'id = "static"\ntiers = ["merge"]',
+            _STATIC_ENTRY,
+            _STATIC_ENTRY.replace('"change", ', "").replace("lint_feedback = true\n", ""),
             expect="the whole-tree harness scan runs in no job of the change tier",
         ),
         _plant(

@@ -1148,6 +1148,42 @@ def run_attempt(host: Host) -> int:
     return int(text)
 
 
+#: The folder under a run's folder a ``lint_feedback`` job's remediation is left in, which the
+#: stage job uploads as ``lint-feedback`` for ``pr-feedback.yml`` to post (#3915).
+FEEDBACK = "feedback"
+
+
+def pull_request_number(host: Host) -> str | None:
+    """The pull request this run is for, from its own event: a ``pull_request`` event's number
+    on GitHub, else none. A dispatched or pushed run has none, and so leaves no remediation."""
+    event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if not host.on_github or not event_path:
+        return None
+    try:
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    pull = event.get("pull_request") if isinstance(event, dict) else None
+    number = pull.get("number") if isinstance(pull, dict) else None
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        return None
+    return str(number)
+
+
+def write_feedback(folder: Path, argv: Sequence[str], kept: Path, number: str) -> None:
+    """Leave a failed step's kept output as the remediation ``pr-feedback.yml`` posts:
+    ``violations.md``, the step's command and its output as ``ci.yml``'s lint job writes them,
+    and ``pr.txt``, the pull request's number. The output is data the relay fences; nothing here
+    reads it as anything else."""
+    words = list(argv[2:] if list(argv[:2]) == ["uv", "run"] else argv)
+    text = kept.read_bytes().decode("utf-8", errors="replace").rstrip()
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "violations.md").write_text(
+        f"**{' '.join(words)}**\n```\n{text}\n```\n", encoding="utf-8"
+    )
+    (folder / "pr.txt").write_text(number, encoding="utf-8")
+
+
 def run_id_of(host: Host) -> int | None:
     """The run a record names: on GitHub, ``$GITHUB_RUN_ID``, so the run's verdict reads a record
     of another run red; locally, none, so no run's verdict ever reads a local record green. On
@@ -1211,6 +1247,8 @@ def run_one(
     planned: list[tuple[list[str], str, dict[str, str]]] = [
         (list(INSTALL_ARGV[tool]), "", {}) for tool in job.toolchain if tool in INSTALL_ARGV
     ]
+    # The first command step's number: the installs before it leave no remediation.
+    first_command = len(planned) + 1
     for step in job.command:
         env = {name: _render(value, values) for name, value in {**job.env, **step.env}.items()}
         planned.append((_step_argv(step, job, values, options), step.workdir, env))
@@ -1233,6 +1271,7 @@ def run_one(
             break
         print(f"[{key}] step {n}: {' '.join(argv)}", file=sys.stderr, flush=True)
         began = time.monotonic()
+        kept = scratch.root / f"step-{n}.out" if job.lint_feedback and n >= first_command else None
         result = run.run_job(
             argv,
             cwd=host.root / workdir,
@@ -1244,10 +1283,17 @@ def run_one(
             before_stop=_hang_report(host) if "pytest" in argv else None,
             # The reason names the job's budget, not what was left of it as this step started.
             budget=total,
+            output=kept,
         )
         steps.append((argv, result.returncode, time.monotonic() - began))
         if result.code != run.OK:
             reasons.extend(f"step {n}: {v}" for v in result.violations)
+            # A lint step that exited non-zero on its own, as ci.yml's lint job hands its
+            # violations on: a timeout, a signal or the tripwire is no remediation.
+            number = pull_request_number(host)
+            exited = result.violations == (f"the job exited {result.returncode}",)
+            if kept is not None and kept.is_file() and exited and number is not None:
+                write_feedback(work / FEEDBACK, argv, kept, number)
             code = result.code
             interrupted = result.interrupted
             # A pytest step whose tests ran and some failed (exit 1), and nothing else went wrong:
