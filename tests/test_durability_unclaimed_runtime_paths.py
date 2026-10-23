@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from personalclaw.durability import footprint, inventory
+from personalclaw.durability import footprint, ignored, inventory
 from personalclaw.triggers import claims
 from personalclaw.triggers.scheduling import Claim
 
@@ -155,7 +155,7 @@ def test_the_ignore_rows_carry_their_reasoning() -> None:
     way every other machine-local row here is justified. A row with no argument is
     indistinguishable from someone silencing a probe.
     """
-    src = Path(inventory.__file__).read_text()
+    src = Path(ignored.__file__).read_text()
     block = src[src.index("IGNORED: tuple[str, ...] = (") :]
     lines = block[: block.index("\n)\n")].splitlines()
 
