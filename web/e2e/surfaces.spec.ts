@@ -6,6 +6,7 @@ import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, 
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
+import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── The UI quality check: every surface, once per theme, every check ────────────────────────────
 //
@@ -191,13 +192,12 @@ const MAPPED_CHAT = {
   ]),
 }
 
-/** Reads a surface's row answers with a fixed body, and why. Only for a read whose answer depends on
- *  what other specs did first in the shared home or on state outside the run, so the surface would
- *  hold one of several states on any run, or one the run's home can only answer empty. Each state
- *  the stub hides is held by a unit test instead, named here. A `patch` answers with the live body
- *  and only the moving fields pinned, so the rest of the read is still the gateway's. */
-type StubbedRead = { url: RegExp; why: string } & ({ json: unknown } | { patch: (live: any) => unknown })
+/** Reads a surface's row answers with a fixed body, and why (`StubbedRead`, `e2e/stubbedReads.ts`).
+ *  Each state the stub hides is held by a unit test instead, named here. */
 const STUBBED_READS: Record<string, StubbedRead[]> = {
+  // The Store's catalogue, a snapshot: the live one is the registry's, which another repository
+  // edits (`STORE_CATALOGUE`).
+  'apps?view=store': [STORE_CATALOGUE],
   // The chat the Session Map row opens. The run's home holds no chat long enough for a map, and
   // one driven through real turns would differ by the scripted provider's timing. The rail's
   // behaviour is held by `src/pages/chat/SessionMapRail*.test.tsx`.
@@ -510,11 +510,7 @@ for (const theme of THEMES) {
         if (FIXED_CLOCK[route]) await page.clock.setFixedTime(new Date(FIXED_CLOCK[route]))
         for (const stub of STUBBED_READS[route] ?? []) {
           info.annotations.push({ type: 'stubbed-read', description: `${stub.url.source}: ${stub.why}` })
-          await page.route(stub.url, async (r) => {
-            if ('json' in stub) return r.fulfill({ json: stub.json })
-            const live = await r.fetch()
-            return r.fulfill({ response: live, json: stub.patch(await live.json()) })
-          })
+          await page.route(stub.url, (r) => answerStubbedRead(stub, r))
         }
         const arranged = ARRANGED[route]
         if (arranged) {

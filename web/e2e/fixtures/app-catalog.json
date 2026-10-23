@@ -1,0 +1,5297 @@
+{
+  "bundled": [],
+  "gitSources": [
+    "https://github.com/PersonalClaw/PersonalClawApps.git",
+    "https://github.com/PersonalClaw/registry.git"
+  ],
+  "defaultGitSources": [
+    "https://github.com/PersonalClaw/PersonalClawApps.git",
+    "https://github.com/PersonalClaw/registry.git"
+  ],
+  "builtinGitSources": [
+    "https://github.com/PersonalClaw/PersonalClawApps.git"
+  ],
+  "localSources": [],
+  "firstPartySources": [],
+  "localApps": [],
+  "remoteApps": [],
+  "gitApps": [
+    {
+      "name": "a2a-action",
+      "displayName": "A2A Agent Call",
+      "description": "Hand one task to an external A2A agent when a trigger fires. Reaches only hosts the operator has allow-listed under Settings › Security › Network egress.",
+      "version": "0.1.0",
+      "icon": "Share2",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "action",
+      "providerCapabilities": [
+        "execute"
+      ],
+      "tags": [
+        "action"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#a2a-action",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "action",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "alibaba-models",
+      "displayName": "Alibaba Model Studio",
+      "description": "Alibaba Cloud Model Studio (DashScope) — Qwen chat and embedding models. Image generation too (Qwen-Image, Wan), and more. Select your regional endpoint.",
+      "version": "0.1.8",
+      "icon": "Cloud",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision",
+        "embedding",
+        "image_gen"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "embedding",
+        "image_gen"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#alibaba-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "anthropic-compatible",
+      "displayName": "Anthropic-Compatible",
+      "description": "Any Anthropic-compatible (Messages API) endpoint. Supply the base URL + API key.",
+      "version": "0.1.3",
+      "icon": "Sparkles",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#anthropic-compatible",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "anthropic>=0.20,<1",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "anthropic-models",
+      "displayName": "Anthropic",
+      "description": "Anthropic Claude chat models (Messages API). Bring your own Anthropic API key.",
+      "version": "0.1.7",
+      "icon": "Sparkles",
+      "heroUrl": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iMjQwIiB2aWV3Qm94PSIwIDAgNjAwIDI0MCIgZmlsbD0ibm9uZSI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjYwMCIgeTI9IjI0MCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgogICAgICA8c3RvcCBzdG9wLWNvbG9yPSIjZDk3NzU3Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFhMWExYSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjYwMCIgaGVpZ2h0PSIyNDAiIGZpbGw9InVybCgjZykiLz4KICA8ZyBmaWxsPSIjZmZmZmZmIiBvcGFjaXR5PSIwLjk1Ij4KICAgIDx0ZXh0IHg9IjQ4IiB5PSIxMjAiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWksIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNDQiIGZvbnQtd2VpZ2h0PSI3MDAiPkFudGhyb3BpYzwvdGV4dD4KICAgIDx0ZXh0IHg9IjQ5IiB5PSIxNTgiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWksIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIG9wYWNpdHk9IjAuODUiPkNsYXVkZSBtb2RlbHMgwrcgTWVzc2FnZXMgQVBJPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#anthropic-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "anthropic>=0.20,<1",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "bedrock-models",
+      "displayName": "Amazon Bedrock",
+      "description": "Amazon Bedrock models, authenticated with your own AWS credential chain. No key is stored by PersonalClaw. Chat (Converse API), embedding (Titan/Cohere/Nova), image generation (Nova Canvas, Stability AI) and video generation (Nova Reel) where your region serves them, and speech-to-text. One instance per AWS profile/region.",
+      "version": "0.1.21",
+      "icon": "Cloud",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision",
+        "embedding",
+        "image_gen",
+        "video_gen",
+        "stt"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "embedding",
+        "image_gen",
+        "video_gen",
+        "stt",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#bedrock-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "boto3>=1.34",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "brave-search",
+      "displayName": "Brave Search",
+      "description": "Cheap, broad web search: ranked links with descriptions and a recency filter. Extra snippets come with each result. Links-only (no answer or page content — web_fetch a result to read it). API key from search.brave.com.",
+      "version": "0.1.4",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search"
+      ],
+      "tags": [
+        "search",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#brave-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "browser-connector",
+      "displayName": "Browser Connector",
+      "description": "Attach your own everyday browser to a PersonalClaw you already run. A browse task with target 'user_browser' can then act inside a session you are already logged into, and only in a tab it opens for itself: when you allow a task, the extension opens a new background tab in a tab group named after the task (or a window of its own, in a browser without tab groups), and the run never touches a tab you already have open. Close the group to stop the run; bring its tab to the front to take over, which pauses it. If the extension cannot open a tab of the run's own, the task is refused. The extension pairs with the gateway the way your phone does and talks to it over loopback only: its host permissions are loopback-only, and it opens no listening surface of its own. In your browser it asks for tabs (to open the run's tab and act on it), tab groups (to name the run's group and notice when you close it) and storage (its settings, and which tab belongs to which run). It speaks a narrow, closed contract: navigate, read-outline, click, type, close. It never reads, stores, or types into a password field.",
+      "version": "0.1.2",
+      "icon": "AppWindow",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": false,
+      "providerType": "",
+      "providerCapabilities": [],
+      "tags": [
+        "companion",
+        "browse",
+        "automation",
+        "extension"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#browser-connector",
+      "consentKnown": true,
+      "permissions": {
+        "api": [
+          "/api/devices/pair/complete",
+          "/api/browse/connector"
+        ]
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "",
+      "quality": {
+        "tested": true,
+        "designSystem": "n/a"
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "claude-code-agent",
+      "displayName": "Claude Code",
+      "description": "Run Anthropic's Claude Code as an agent (acp:claude-code) via the Zed ACP adapter. It runs with a Claude config of its own that starts empty, and loads nothing from the folder it works in (no .claude settings, .mcp.json servers, CLAUDE.md or skills), so no auto-approve rule of yours or of a repository's comes along: apart from the file reads and read-only commands Claude Code allows itself, every tool asks through PersonalClaw's approval gate. Sign in to Claude once for it (Settings → Providers → Claude Code → Sign in); PersonalClaw stores no key. Turn off Isolated Claude settings to use your own ~/.claude, rules included, and the Claude settings of the folder it works in. Enabling it installs its ACP adapter (@agentclientprotocol/claude-agent-acp) from npm into your PersonalClaw home when no copy is installed; a failed install says why on its card, with Retry.",
+      "version": "0.2.6",
+      "icon": "SquareTerminal",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "agent",
+      "providerCapabilities": [
+        "acp"
+      ],
+      "tags": [
+        "agent",
+        "acp",
+        "claude-code"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#claude-code-agent",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "claude",
+          "why": "Claude Code does the work of each chat. Its ACP adapter starts it and hands it each turn.",
+          "inherits": [
+            "sign-in",
+            "settings",
+            "auto-approve-rules",
+            "folder-settings"
+          ],
+          "inheritsWhile": {
+            "setting": "isolated_config",
+            "label": "Isolated Claude settings",
+            "value": false,
+            "default": true
+          },
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [
+        "@agentclientprotocol/claude-agent-acp"
+      ],
+      "writes": [
+        {
+          "path": "cc-config",
+          "why": "The Claude config Claude Code runs with while Isolated Claude settings is on. It starts empty, and signing in to Claude for this app keeps that sign-in there."
+        }
+      ],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "agent",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the npm package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "claude-subscription",
+      "displayName": "Claude (Subscription)",
+      "description": "Claude models over your existing Claude Code sign-in — no API key. Reads the CLI's own credential store read-only.",
+      "version": "0.1.5",
+      "icon": "Sparkles",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "subscription"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#claude-subscription",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "anthropic>=0.20,<1",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "code-review",
+      "displayName": "Code Review",
+      "description": "Deep-review a GitHub pull request one file at a time, riskiest changes first. It works through the GitHub CLI you are already signed in to. Findings stay in a local log on your machine — nothing is ever posted back to the PR.",
+      "version": "0.1.4",
+      "icon": "GitPullRequest",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "code"
+      ],
+      "tags": [
+        "tool",
+        "code",
+        "review",
+        "github"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#code-review",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "gh",
+          "why": "Code Review reads each pull request's diff from GitHub with gh pr diff, and personalclaw doctor runs gh auth status. It never writes to GitHub.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "codex-agent",
+      "displayName": "OpenAI Codex",
+      "description": "Run the OpenAI Codex CLI as an agent (acp:codex) via the Zed ACP adapter. Codex manages its own configuration and authentication; every tool call it asks about routes through PersonalClaw's host approval gate. Enabling it installs its ACP adapter (@agentclientprotocol/codex-acp) from npm into your PersonalClaw home when no copy is installed; a failed install says why on its card, with Retry.",
+      "version": "0.1.6",
+      "icon": "SquareTerminal",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "agent",
+      "providerCapabilities": [
+        "acp"
+      ],
+      "tags": [
+        "agent",
+        "acp",
+        "codex"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#codex-agent",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "codex",
+          "why": "The Codex CLI does the work of each chat. Its ACP adapter starts it and hands it each turn.",
+          "inherits": [
+            "sign-in",
+            "settings",
+            "auto-approve-rules",
+            "folder-settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [
+        "@agentclientprotocol/codex-acp"
+      ],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "agent",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the npm package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "companion",
+      "displayName": "Companion",
+      "description": "An opt-in day companion: three surfaces, all off out of the box. Reminders that actually go off, a watchlist that speaks up when a folder really changes, and a day plan you can ask for. Every automation it contributes only ever raises a notification, and turning a surface off, disabling the app or uninstalling it removes every trigger it contributed.",
+      "version": "0.1.1",
+      "icon": "Sunrise",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "companion"
+      ],
+      "tags": [
+        "tool",
+        "companion",
+        "reminders",
+        "automation"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#companion",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "trigger",
+          "implementation": "provider:create_trigger_store",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its 2 provider modules and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "deepseek-models",
+      "displayName": "DeepSeek",
+      "description": "DeepSeek chat + reasoner models (OpenAI-compatible). Bring your own DeepSeek API key.",
+      "version": "0.1.2",
+      "icon": "Waves",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#deepseek-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "design-critique",
+      "displayName": "Design Critique",
+      "description": "The review a colleague would give you, before you spend their attention. Point it at a URL or a screenshot and it returns evidence-backed accessibility and craft findings — each with its WCAG clause where one applies and the change that clears it — plus an explicit rubric for the judgment no measurement can make.",
+      "version": "0.1.3",
+      "icon": "Eye",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "design"
+      ],
+      "tags": [
+        "tool",
+        "design",
+        "accessibility",
+        "review"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#design-critique",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "Pillow>=10,<14",
+          "coreOwned": true
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "diarization-onnx",
+      "displayName": "Diarization (ONNX)",
+      "description": "Non-gated speaker diarization (\"who spoke when\") — no HuggingFace token. Runs a sherpa-onnx segmentation + speaker-embedding pipeline, install-and-go. Provides a model for the diarization use-case; bind it in Settings → Models.",
+      "version": "0.1.11",
+      "icon": "Users",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "diarization"
+      ],
+      "tags": [
+        "model",
+        "diarization",
+        "onnx"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#diarization-onnx",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "sherpa-onnx>=1.10",
+          "coreOwned": false
+        },
+        {
+          "spec": "numpy>=1.24",
+          "coreOwned": true
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "ffmpeg",
+          "why": "ffmpeg decodes each recording into the sound the speaker model hears, whatever format it was uploaded in.",
+          "inherits": [],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "diarization-pyannote",
+      "displayName": "Diarization (pyannote)",
+      "description": "Higher-accuracy speaker diarization via the pyannote.audio pretrained pipeline. Requires a HuggingFace token + license acceptance. Provides a model for the diarization use-case; bind it in Settings → Models. Large install (pulls torch).",
+      "version": "0.1.9",
+      "icon": "Users",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "diarization"
+      ],
+      "tags": [
+        "model",
+        "diarization",
+        "pyannote"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#diarization-pyannote",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "pyannote.audio>=3.1",
+          "coreOwned": false
+        },
+        {
+          "spec": "torch>=2.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the 2 Python packages it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "dir-notification",
+      "displayName": "Folder Notification Drop",
+      "description": "Deliver a teammate-addressed notification into a shared folder, one JSON file per note. Pairs with Folder Sync or S3 Sync: that folder is how the note actually reaches the other person's machine. Only usernames on the roster you declare are accepted; anything else is declined so another backend can take it.",
+      "version": "0.1.0",
+      "icon": "FolderInput",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "notification",
+      "providerCapabilities": [
+        "deliver"
+      ],
+      "tags": [
+        "notification",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#dir-notification",
+      "consentKnown": true,
+      "permissions": {},
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "notification",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "dir-sync",
+      "displayName": "Folder Sync",
+      "description": "Sync PersonalClaw state between your machines through a shared or synced folder. That can be a cloud-sync mount, an NFS share, or a mounted USB drive. No credentials, no server: point two machines at the same folder and durability converges. The folder holds shard objects only; secrets are excluded upstream and never touch it.",
+      "version": "0.1.3",
+      "icon": "FolderSync",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "sync",
+      "providerCapabilities": [
+        "sync"
+      ],
+      "tags": [
+        "sync",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#dir-sync",
+      "consentKnown": true,
+      "permissions": {},
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "sync",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "discord-channel",
+      "displayName": "Discord Channel",
+      "description": "Discord bot integration over the raw Gateway WebSocket + REST API. Pair a DM, converse in servers, and receive results with approval buttons.",
+      "version": "0.1.21",
+      "icon": "MessagesSquare",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "channel",
+      "providerCapabilities": [
+        "messaging",
+        "reactions",
+        "threads"
+      ],
+      "tags": [
+        "channel",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#discord-channel",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "channel",
+          "implementation": "discord_runtime.transport:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "trigger_source",
+          "implementation": "discord_runtime.trigger_source:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "cli_setup:run",
+      "cliDoctor": "cli_doctor:probe",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its 2 provider modules and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "docs-slides",
+      "displayName": "Docs & Slides",
+      "description": "Turn a brief into a real PowerPoint deck (.pptx) or a compiled document (.docx/.pdf). You can open and send the result. Write the brief as ordinary markdown — '## ' per slide for a deck, headings and lists for a document — and the document writers PersonalClaw already ships render the file. Nothing leaves your machine and nothing is written outside this app's own data directory.",
+      "version": "0.1.2",
+      "icon": "Presentation",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "documents"
+      ],
+      "tags": [
+        "tool",
+        "documents",
+        "slides",
+        "pptx",
+        "docx",
+        "productivity"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#docs-slides",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "duckduckgo-search",
+      "displayName": "DuckDuckGo",
+      "description": "Keyless, zero-config web search — no API key and no self-hosted instance. The out-of-box default so web_search works for everyone; bind a higher-quality provider (Tavily/Exa/…) per use-case in Search to upgrade. Links + snippets only.",
+      "version": "0.1.3",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search"
+      ],
+      "tags": [
+        "search",
+        "no-key"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#duckduckgo-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "email-channel",
+      "displayName": "Email Channel",
+      "description": "Two-way email channel over stdlib IMAP/SMTP. Converse with your agent by email, replies thread back, and results arrive in the same conversation. No streaming; approvals answer by reply token.",
+      "version": "0.1.18",
+      "icon": "Mails",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "channel",
+      "providerCapabilities": [
+        "messaging",
+        "threads",
+        "attachments"
+      ],
+      "tags": [
+        "channel",
+        "email",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#email-channel",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "channel",
+          "implementation": "email_runtime.transport:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "trigger_source",
+          "implementation": "email_runtime.trigger_source:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "cli_setup:run",
+      "cliDoctor": "cli_doctor:probe",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its 2 provider modules and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "exa-search",
+      "displayName": "Exa",
+      "description": "Neural/semantic web search: embeddings-ranked results with relevant highlights. Also returns extracted content, plus single-URL content retrieval. Good for discovering non-obvious sources. API key from exa.ai.",
+      "version": "0.1.4",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search",
+        "fetch"
+      ],
+      "tags": [
+        "search",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#exa-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "fal-image",
+      "displayName": "FAL",
+      "description": "Image and video generation via FAL's hosted models (FLUX, Kling, Veo and others). Generate images and videos from a prompt; bind a FAL model to the Image Generation or Video Generation use case in Models. Needs a FAL API key (fal.ai).",
+      "version": "0.1.6",
+      "icon": "Image",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "image_gen",
+        "video_gen"
+      ],
+      "tags": [
+        "model",
+        "image_gen",
+        "video_gen",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#fal-image",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "faster-whisper",
+      "displayName": "Faster Whisper",
+      "description": "Speech-to-text using CTranslate2-optimized Whisper models. Download and manage STT models for voice input.",
+      "version": "0.1.7",
+      "icon": "Mic",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "stt"
+      ],
+      "tags": [
+        "model",
+        "stt"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#faster-whisper",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "faster-whisper>=1.0",
+          "coreOwned": false
+        },
+        {
+          "spec": "av<19",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the 2 Python packages it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "gemini-cli-agent",
+      "displayName": "Gemini CLI",
+      "description": "Run Google's Gemini CLI as an agent (acp:gemini-cli) over ACP. Gemini enters ACP mode via its own `--experimental-acp` flag — no adapter package — and self-authenticates with your `gemini` login (Google OAuth) or a GEMINI_API_KEY you pass through to it by name (Settings → Security → Child environment passthrough); PersonalClaw stores no key. The provider activates only when the `gemini` binary is present, and is unavailable otherwise.",
+      "version": "0.1.4",
+      "icon": "SquareTerminal",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "agent",
+      "providerCapabilities": [
+        "acp"
+      ],
+      "tags": [
+        "agent",
+        "acp",
+        "gemini-cli",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#gemini-cli-agent",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "gemini",
+          "why": "The Gemini CLI does the work of each chat. PersonalClaw starts it in its ACP mode and talks to it over ACP.",
+          "inherits": [
+            "sign-in",
+            "settings",
+            "auto-approve-rules",
+            "folder-settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "agent",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the program it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "git-repo",
+      "displayName": "Git Repository",
+      "description": "Index the CONTENT of a git repository you own into your knowledge library. Source code AND docs, from a local clone or a github.com URL; each file becomes a searchable knowledge item, and a re-poll after a new commit ingests only the changed files (commit-cursor), never the whole tree. Remote fetches route through the core network chokepoint; it owns no socket.",
+      "version": "0.1.2",
+      "icon": "GitBranch",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "knowledge",
+      "providerCapabilities": [
+        "source"
+      ],
+      "tags": [
+        "knowledge",
+        "git",
+        "source",
+        "code",
+        "docs"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#git-repo",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "git",
+          "why": "git reads the commits and files of the local clone you point the app at, to index them. It runs only commands that read the clone.",
+          "inherits": [
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "knowledge",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the program it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "git-sync",
+      "displayName": "Git Sync",
+      "description": "Sync PersonalClaw state between your machines through a git remote you own. The transport keeps a local working clone and moves durability shard objects as files it commits and pushes, so `git log -p` over the shards is a human-diffable audit history of what the assistant knows — the whole point of this transport. It stays plaintext (never encrypted) so that history stays readable; secrets are excluded upstream and never touch it.",
+      "version": "0.1.11",
+      "icon": "GitBranch",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "sync",
+      "providerCapabilities": [
+        "sync"
+      ],
+      "tags": [
+        "sync",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#git-sync",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "git",
+          "why": "git keeps your synced PersonalClaw data in the working clone you set and syncs it with your remote: it clones, commits, pulls and pushes. With an Access token set, it signs in with that token instead of yours.",
+          "inherits": [
+            "sign-in",
+            "settings",
+            "folder-settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "sync",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the program it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "google-models",
+      "displayName": "Google Gemini",
+      "description": "Google Gemini models — bring your own Gemini API key. Chat, embedding, image generation (Imagen / gemini-image), video generation (Veo), and text-to-speech. One instance serves every use case.",
+      "version": "0.1.9",
+      "icon": "Sparkle",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision",
+        "embedding",
+        "image_gen",
+        "video_gen",
+        "tts"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "embedding",
+        "image_gen",
+        "video_gen",
+        "tts"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#google-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "groq-models",
+      "displayName": "Groq",
+      "description": "Groq LPU inference (OpenAI-compatible), very low latency. Bring your own Groq API key.",
+      "version": "0.1.4",
+      "icon": "Zap",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#groq-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "growth",
+      "displayName": "Growth Tracker",
+      "description": "Turn your real work into evidenced growth artifacts. It draws on your chat sessions, the projects you ran, the tasks you closed, and your notes. Track growth areas, score against a customizable rubric, and generate a shareable accomplishment doc that cites its evidence.",
+      "version": "0.1.5",
+      "icon": "TrendingUp",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": false,
+      "providerType": "",
+      "providerCapabilities": [],
+      "tags": [
+        "career",
+        "worklog",
+        "brag-doc",
+        "growth",
+        "productivity"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#growth",
+      "consentKnown": true,
+      "permissions": {
+        "api": [
+          "/api/apps/growth",
+          "/api/projects",
+          "/api/tasks",
+          "/api/knowledge"
+        ],
+        "events": [
+          "refresh"
+        ],
+        "storage": true,
+        "network": false,
+        "agent": "text"
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": true,
+      "uiComponents": "",
+      "hasBackend": true,
+      "backendSandbox": "",
+      "providers": [],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its server runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true,
+        "designSystem": "v2",
+        "a11y": false
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "inbox-github-notifications",
+      "displayName": "GitHub Notifications Inbox",
+      "description": "Your GitHub notifications, as inbox items you can triage here. Review requests, mentions, CI failures and issue activity arrive read-only, and GitHub filters by time, so history never floods in.",
+      "version": "0.2.2",
+      "icon": "BellDot",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "inbox",
+      "providerCapabilities": [],
+      "tags": [
+        "inbox",
+        "github"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#inbox-github-notifications",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "inbox",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "issue-radar",
+      "displayName": "Issue Radar",
+      "description": "Triages a repository's open issues through your local gh or glab. It suggests labels from the repository's own label set and ranks the queue by which issues need a maintainer first. Investigation notes stay on your machine, and nothing is ever labeled, commented on or closed on the tracker.",
+      "version": "0.1.4",
+      "icon": "Radar",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "issues"
+      ],
+      "tags": [
+        "tool",
+        "issues",
+        "triage",
+        "github",
+        "gitlab"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#issue-radar",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "gh",
+          "why": "Issue Radar reads a GitHub repository's open issues and labels with gh, and personalclaw doctor runs gh auth status. It never writes to a tracker.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        },
+        {
+          "program": "glab",
+          "why": "Issue Radar reads a GitLab project's open issues and labels with glab, and personalclaw doctor runs glab auth status. It never writes to a tracker.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the 2 programs it starts and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "kiro-cli-agent",
+      "displayName": "Kiro CLI",
+      "description": "Run the kiro-cli agent (acp:kiro-cli) over ACP. This provider activates only when the `kiro-cli` binary is present on the machine, and is unavailable otherwise.",
+      "version": "0.1.5",
+      "icon": "SquareTerminal",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "agent",
+      "providerCapabilities": [
+        "acp"
+      ],
+      "tags": [
+        "agent",
+        "acp",
+        "kiro-cli",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#kiro-cli-agent",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "kiro-cli",
+          "why": "kiro-cli does the work of each chat. PersonalClaw starts it as kiro-cli acp and talks to it over ACP.",
+          "inherits": [
+            "sign-in",
+            "settings",
+            "auto-approve-rules",
+            "folder-settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "agent",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the program it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "lima-sandbox",
+      "displayName": "Lima Sandbox",
+      "description": "The isolated (virtual-machine) execution-isolation tier, backed by Lima. Lima runs Linux virtual machines on macOS and Linux. It runs an agent-influenced command inside a Lima instance through `limactl shell` instead of on the host, so the virtual machine — not a host path filter — is the boundary. Registers as a `sandbox` provider through the SandboxProvider seam: a cached availability probe greys the tier out with a reason when the instance is stopped, and host paths are translated to their in-guest mount location so a run opened \"inside the sandbox\" resolves the same working directory.",
+      "version": "0.1.1",
+      "icon": "Box",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "sandbox",
+      "providerCapabilities": [
+        "isolated"
+      ],
+      "tags": [
+        "sandbox",
+        "isolation",
+        "vm",
+        "lima"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#lima-sandbox",
+      "consentKnown": true,
+      "permissions": {},
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "limactl",
+          "why": "limactl runs each command sent to the isolated tier inside your Lima virtual machine (limactl shell), and lists your machines to check that it is running. It never creates or starts one.",
+          "inherits": [
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "sandbox",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the program it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "local-image-gen",
+      "displayName": "Local Image Generation",
+      "description": "Generate images with a ComfyUI server you run on your own machine. PersonalClaw does not install or start ComfyUI: start it yourself on this machine, then set its address on this app's Configure page (default http://127.0.0.1:8188). Bind a checkpoint you pulled into ComfyUI to the Image Generation use case in Models. No cloud and no API key: no prompt or pixel leaves the host, and this app downloads no weights. Recommended permissive default: FLUX.1-schnell (Apache-2.0).",
+      "version": "0.1.7",
+      "icon": "Image",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "image_gen"
+      ],
+      "tags": [
+        "model",
+        "image_gen",
+        "local",
+        "offline"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#local-image-gen",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [
+        {
+          "name": "ComfyUI",
+          "why": "Every image is made by a ComfyUI server running on this machine: this app sends it the prompt and saves the picture it returns.",
+          "how": "Install ComfyUI and start it on this machine (it listens on http://127.0.0.1:8188 unless you change that), put a checkpoint such as FLUX.1-schnell in its models/checkpoints folder, and set its address on this app's Configure page."
+        }
+      ],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "mail-inbox",
+      "displayName": "Mail Inbox",
+      "description": "IMAP mail as an inbox source. Polls a mailbox, surfaces messages from a fail-closed sender allowlist as inbox items, reads multipart and HTML mail, and hands each attachment to the Inbox as a file to list and download. Purpose-specific addresses can each carry a stored prompt, so mail to them runs it against the fenced mail body. Replies are composed as threaded drafts and are NOT sent until you turn sending on. Passwords are kept in the credential store, never in the settings file.",
+      "version": "0.1.6",
+      "icon": "Mail",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "inbox",
+      "providerCapabilities": [
+        "poll",
+        "attachments",
+        "send"
+      ],
+      "tags": [
+        "inbox",
+        "email"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#mail-inbox",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "inbox",
+          "implementation": "mail_inbox_runtime.provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "cli_setup:run",
+      "cliDoctor": "cli_doctor:probe",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "menu-bar-companion",
+      "displayName": "Menu Bar Companion",
+      "description": "A macOS menu-bar companion for a PersonalClaw you already run. It lives in the status bar on YOUR Mac (not on the server). It lists everything waiting on you, every kind, each linking to where it is answered: a tool approval opens with what it would run, where it came from and what it can touch before you Approve or Deny it, and a loop's question, a workflow's gate or anything else opens in the PersonalClaw dashboard. It also lists everything running, each saying what it is doing. A badge counts everything waiting on you. It holds ONE /api/ws connection and treats every frame as nothing but a doorbell — it re-reads the two lists over HTTP, once per burst of frames, and never renders anything out of a socket payload. Native notifications can be muted from its Settings menu. Your gateway URL and token are stored locally in a 0600 file on your own machine, or supplied by environment variable and never persisted, and the token travels only in a request header, never in a link it opens.",
+      "version": "0.1.9",
+      "icon": "PanelTop",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": false,
+      "providerType": "",
+      "providerCapabilities": [],
+      "tags": [
+        "companion",
+        "macos",
+        "approvals",
+        "ambient"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#menu-bar-companion",
+      "consentKnown": true,
+      "permissions": {
+        "api": [
+          "/api/waiting",
+          "/api/running",
+          "/api/approvals",
+          "/api/ws"
+        ],
+        "events": [
+          "waiting_changed",
+          "running_changed"
+        ],
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "open",
+          "why": "The companion opens the PersonalClaw dashboard in your browser when you pick something waiting on you or something running, or Review in PersonalClaw on an approval, from its menu.",
+          "inherits": [],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        },
+        {
+          "program": "osascript",
+          "why": "The companion shows a macOS notification through osascript, unless you mute notifications in its Settings menu.",
+          "inherits": [],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "The 2 programs it starts run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true,
+        "designSystem": "n/a"
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "meta-muse-spark",
+      "displayName": "Meta Muse Spark",
+      "description": "Meta Muse Spark chat models via the Meta AI API (OpenAI-compatible). Bring your own Meta AI API key.",
+      "version": "0.1.4",
+      "icon": "Brain",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#meta-muse-spark",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "minutes",
+      "displayName": "Minutes",
+      "description": "Tie recordings, videos, notes and docs into one meeting. Watch it cohesively on a synced timeline with speaker-attributed transcripts. Tag participants, generate multiple minutes/summaries from templates, and consolidate dates, action items, follow-ups and decisions — then turn action items into a task list under a project.",
+      "version": "0.1.4",
+      "icon": "CalendarClock",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": false,
+      "providerType": "",
+      "providerCapabilities": [],
+      "tags": [
+        "meetings",
+        "minutes",
+        "notes",
+        "transcription",
+        "knowledge",
+        "productivity"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#minutes",
+      "consentKnown": true,
+      "permissions": {
+        "api": [
+          "/api/knowledge",
+          "/api/lexicon",
+          "/api/apps/minutes",
+          "/api/projects",
+          "/api/task-lists",
+          "/api/tasks"
+        ],
+        "events": [
+          "knowledge",
+          "refresh"
+        ],
+        "storage": true,
+        "network": false,
+        "agent": "text"
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": true,
+      "uiComponents": "",
+      "hasBackend": true,
+      "backendSandbox": "",
+      "providers": [],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its server runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true,
+        "designSystem": "v2",
+        "a11y": false
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "mistral-models",
+      "displayName": "Mistral AI",
+      "description": "Mistral AI models via its OpenAI-compatible endpoint. Bring your own Mistral API key.",
+      "version": "0.1.3",
+      "icon": "Wind",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#mistral-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "notes",
+      "displayName": "Notes",
+      "description": "A git-backed markdown notebook. Notes are plain `.md` files in a git repository on your machine, so every version is recoverable, the whole notebook is portable, and it stays readable in any editor without PersonalClaw. Drafting and history live here; indexed recall stays with Knowledge — this app builds no index of its own.",
+      "version": "0.1.2",
+      "icon": "NotebookPen",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "notes"
+      ],
+      "tags": [
+        "tool",
+        "notes",
+        "markdown",
+        "git"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#notes",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "git",
+          "why": "git keeps your notebook's history: each note you save or delete is committed in the notebook folder, and an older version is read back from it.",
+          "inherits": [
+            "settings",
+            "folder-settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "openai-compatible",
+      "displayName": "OpenAI-Compatible",
+      "description": "Any OpenAI-compatible Chat Completions endpoint. Self-hosted, a proxy, or an unlisted cloud. Supply the base URL + API key.",
+      "version": "0.1.3",
+      "icon": "Brain",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "embedding",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#openai-compatible",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "openai-models",
+      "displayName": "OpenAI",
+      "description": "OpenAI chat + embedding models (Chat Completions API). Bring your own OpenAI API key.",
+      "version": "0.1.6",
+      "icon": "Brain",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "embedding",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#openai-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "openai-tools",
+      "displayName": "OpenAI Tool Servers",
+      "description": "Connect OpenAI-compatible tool servers that expose tools via REST API.",
+      "version": "0.1.3",
+      "icon": "Wrench",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "tool_execution",
+        "tool_discovery"
+      ],
+      "tags": [
+        "tool"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#openai-tools",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_openai_tool_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "openrouter-models",
+      "displayName": "OpenRouter",
+      "description": "OpenRouter — one key for hundreds of models across providers. Chat (with image input), embedding, image generation, and video generation from a single instance. Bring your own OpenRouter API key.",
+      "version": "0.1.7",
+      "icon": "Route",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision",
+        "embedding",
+        "image_gen",
+        "video_gen"
+      ],
+      "tags": [
+        "model",
+        "llm",
+        "embedding",
+        "image_gen",
+        "video_gen"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#openrouter-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "ops",
+      "displayName": "Ops",
+      "description": "An on-call first responder that walks the shift with you. It files each alarm your monitor writes as an incident, ranks the queue by what needs a human first, and works each one with you — claim, investigate against your own runbook, record findings, propose a fix. Proposing changes nothing, and running a fix is off by default, needs an explicit confirm, and can only ever be a command your own runbook already declared.",
+      "version": "0.1.3",
+      "icon": "Siren",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "ops"
+      ],
+      "tags": [
+        "tool",
+        "ops",
+        "on-call",
+        "incidents"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#ops",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false,
+        "cron": true,
+        "agent": "tools"
+      },
+      "crons": [
+        {
+          "name": "ops-sweep",
+          "every": 0,
+          "cron_expr": "*/10 * * * *",
+          "cadence": "Every 10 minutes",
+          "agent": "",
+          "message": "Take one on-call sweep.\n\n1. Call ops_watch. If it opened and reopened nothing, stop — say nothing and end the turn.\n2. For each incident it opened or reopened at severity high or critical, or that paged: ops_claim it, then ops_investigate to get its plan.\n3. Walk that plan with your own READ-ONLY tools. Call ops_record once per check with what you actually saw, including the ones that came back clean — a ruled-out cause is worth as much to the next responder as a found one.\n4. When you can name a fix, call ops_propose_fix with the fix, its blast radius and its rollback. If the incident's runbook declares an action that is the fix, name it.\n5. NEVER call ops_apply_fix. An unattended turn does not get to change the system — leave the proposal and its confirm token for a human.\n\nIf you cannot name a fix, record why not and leave the incident claimed. An honest 'not diagnosed, here is what was ruled out' is the useful outcome.",
+          "tier": "tools",
+          "scheduled": true
+        }
+      ],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "*",
+          "why": "Applying a fix runs the command a runbook action of yours declares, exactly as your runbook gives it.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": {
+            "setting": "allow_apply",
+            "label": "Allow gated remediation",
+            "value": true,
+            "default": false
+          },
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the programs you name for it and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "perplexity-search",
+      "displayName": "Perplexity Sonar",
+      "description": "Answer-first web search: Sonar answers your query and cites its sources. Answers come directly from live web results. Best when you want a synthesized answer with citations, not just links. API key from perplexity.ai.",
+      "version": "0.1.4",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search"
+      ],
+      "tags": [
+        "search",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#perplexity-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "piper-tts",
+      "displayName": "Piper TTS",
+      "description": "Text-to-speech using Piper neural voice models. Download and manage TTS voices for audio output.",
+      "version": "0.1.6",
+      "icon": "Volume2",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "tts"
+      ],
+      "tags": [
+        "model",
+        "tts"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#piper-tts",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "piper-tts>=1.2",
+          "coreOwned": false
+        },
+        {
+          "spec": "huggingface-hub>=0.23",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "piper",
+          "why": "Piper turns each spoken reply into audio, with the voice you chose.",
+          "inherits": [],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the 2 Python packages it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "rapidocr",
+      "displayName": "RapidOCR (Offline)",
+      "description": "Read text out of scans and screenshots with no model bound. Runs the RapidOCR ONNX engine entirely on this machine — the weights ship in the wheel, so nothing is downloaded and nothing leaves the device — and returns the same text for the same image every time. Install it and a scanned PDF or a photographed page becomes searchable knowledge.",
+      "version": "0.1.0",
+      "icon": "ScanText",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "ocr",
+      "providerCapabilities": [
+        "ocr"
+      ],
+      "tags": [
+        "ocr",
+        "offline",
+        "local",
+        "knowledge",
+        "scan"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#rapidocr",
+      "consentKnown": true,
+      "permissions": {},
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "rapidocr-onnxruntime==1.2.3",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "ocr",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "research-lab",
+      "displayName": "Research Lab",
+      "description": "Unattended research campaigns as an agent tool. One question becomes a tree of sub-questions that hourly cycles work down through subagents, recording findings with their sources. When the tree is answered — or the cycle budget runs out — it synthesizes everything into one markdown report on your machine.",
+      "version": "0.1.3",
+      "icon": "FlaskConical",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "research"
+      ],
+      "tags": [
+        "tool",
+        "research",
+        "unattended"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#research-lab",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false,
+        "cron": true,
+        "agent": "tools"
+      },
+      "crons": [
+        {
+          "name": "advance-campaigns",
+          "every": 0,
+          "cron_expr": "23 * * * *",
+          "cadence": "At 23 minutes past the hour",
+          "agent": "",
+          "message": "Advance the open Research Lab campaign by one cycle.\n\n1. Call research_next. If its metadata says done: true, call research_report once and stop — do not open a new campaign.\n2. Otherwise take the worklist it returns and research each sub-question in its own subagent, in parallel, so one slow question does not stall the cycle.\n3. For each answered sub-question call research_record with the finding, the sources it rests on, and any follow-up questions the work raised.\n4. Stop after this one cycle. The next cron tick runs the next one.\n\nRecord what you actually found, including \"no reliable source says\" — an unattended campaign is only worth reading if its findings are honest.",
+          "tier": "tools",
+          "scheduled": true
+        }
+      ],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "rsync-sync",
+      "displayName": "Rsync Sync",
+      "description": "Sync PersonalClaw state between your machines with rsync over ssh. Any host you can already log into works — a home server, a NAS, a VPS. No object store, no credentials beyond your existing ssh key. Shards are encrypted end-to-end by default, and secrets are excluded upstream so they never reach the host.",
+      "version": "0.1.9",
+      "icon": "Server",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "sync",
+      "providerCapabilities": [
+        "sync"
+      ],
+      "tags": [
+        "sync",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#rsync-sync",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "rsync",
+          "why": "rsync copies your PersonalClaw data to the folder or host you set, and reads it back from there.",
+          "inherits": [],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        },
+        {
+          "program": "ssh",
+          "why": "rsync starts ssh to reach the host you set, when you set one.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "sync",
+          "implementation": "rsync_sync_transport:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the 2 programs it starts and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "s3-sync",
+      "displayName": "S3 Sync",
+      "description": "Sync PersonalClaw state between your machines through an S3-compatible store. Use AWS S3, a self-hosted MinIO, a NAS gateway, or any object store that speaks the S3 API — one you own. Requests are signed with AWS Signature V4 and travel through PersonalClaw's guarded egress chokepoint, pinned to the one endpoint you configure. Shards are encrypted end-to-end by default (the store never sees plaintext), and secrets are excluded upstream so they never reach it.",
+      "version": "0.1.8",
+      "icon": "Database",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "sync",
+      "providerCapabilities": [
+        "sync"
+      ],
+      "tags": [
+        "sync",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#s3-sync",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "sync",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "searxng-search",
+      "displayName": "SearXNG",
+      "description": "Self-hosted, no-key web search via a SearXNG meta-search instance. Point it at your own SearXNG URL for private, free web search and links.",
+      "version": "0.1.2",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search"
+      ],
+      "tags": [
+        "search",
+        "self-hosted"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#searxng-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "sentence-transformers",
+      "displayName": "Sentence Transformers (local embeddings)",
+      "description": "Local, in-process text embedding models that run on your machine's CPU, with no API key. Built on sentence-transformers. Provides the embedding capability; bind a model in Settings → Models. Needs the sentence-transformers/torch package (server or container build).",
+      "version": "0.1.6",
+      "icon": "Binary",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "embedding"
+      ],
+      "tags": [
+        "model",
+        "embedding",
+        "local"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#sentence-transformers",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "sentence-transformers>=5.6",
+          "coreOwned": false
+        },
+        {
+          "spec": "faiss-cpu>=1.7",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the 2 Python packages it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "shared-automations",
+      "displayName": "Shared Automations",
+      "description": "Serve trigger rows from a shared automations file. That can be a synced folder, an NFS share, or a checked-out team repo. Everyone pointed at the file sees the same automations on their Automations page, and each machine arms and fires ONLY the rows attributed to its own owner: everybody else's render read-only and structurally cannot arm. No server and no credentials; the file holds trigger definitions only, and your harness does all the firing under all of its own gates.",
+      "version": "0.1.0",
+      "icon": "CalendarSync",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "trigger",
+      "providerCapabilities": [
+        "rows",
+        "write-back"
+      ],
+      "tags": [
+        "automation",
+        "triggers",
+        "team",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#shared-automations",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "trigger",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "skills-sh",
+      "displayName": "Skills.sh Marketplace",
+      "description": "Browse and install community skills from skills.sh. Search, preview, and manage external skill packages.",
+      "version": "0.1.6",
+      "icon": "Store",
+      "heroUrl": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iMjQwIiB2aWV3Qm94PSIwIDAgNjAwIDI0MCIgZmlsbD0ibm9uZSI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjYwMCIgeTI9IjI0MCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgogICAgICA8c3RvcCBzdG9wLWNvbG9yPSIjN2M1Y2ZmIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzIyZDNlZSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjYwMCIgaGVpZ2h0PSIyNDAiIGZpbGw9InVybCgjZykiLz4KICA8ZyBmaWxsPSIjZmZmZmZmIiBvcGFjaXR5PSIwLjkyIj4KICAgIDxjaXJjbGUgY3g9IjEyMCIgY3k9IjEyMCIgcj0iMTAiLz4KICAgIDxjaXJjbGUgY3g9IjE2MCIgY3k9IjkwIiByPSI2Ii8+CiAgICA8Y2lyY2xlIGN4PSIxNjAiIGN5PSIxNTAiIHI9IjYiLz4KICAgIDxwYXRoIGQ9Ik0xMjggMTE2IEwxNTQgOTQgTTEyOCAxMjQgTDE1NCAxNDYiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgICA8dGV4dCB4PSIyMjAiIHk9IjExNSIgZm9udC1mYW1pbHk9InN5c3RlbS11aSwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9IjcwMCI+c2tpbGxzLnNoPC90ZXh0PgogICAgPHRleHQgeD0iMjIxIiB5PSIxNTAiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWksIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIG9wYWNpdHk9IjAuODUiPkNvbW11bml0eSBza2lsbCBtYXJrZXRwbGFjZTwvdGV4dD4KICA8L2c+Cjwvc3ZnPgo=",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "skills",
+      "providerCapabilities": [
+        "search",
+        "install",
+        "uninstall"
+      ],
+      "tags": [
+        "skills",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#skills-sh",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "npx",
+          "why": "Without a skills.sh API key, or when the skills.sh API fails, each search you make runs skills find with what you typed.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "skills",
+          "hosts": [
+            "registry.npmjs.org",
+            "skills.sh"
+          ]
+        },
+        {
+          "program": "git",
+          "why": "Without a skills.sh API key, showing or installing a skill clones its repository from GitHub into a temporary folder, which is removed once its files are read.",
+          "inherits": [
+            "sign-in",
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": [
+            "github.com"
+          ]
+        }
+      ],
+      "npmPackages": [],
+      "writes": [
+        {
+          "path": "~/.npm",
+          "why": "npx keeps the skills package it downloads, and the packages it depends on, in npm's own cache folder."
+        }
+      ],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "skills",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the 2 programs it starts and the npm package npx fetches for it run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "slack-channel",
+      "displayName": "Slack Channel",
+      "description": "Slack workspace integration. Monitor channels, respond to mentions, and interact via Slack.",
+      "version": "0.1.47",
+      "icon": "Slack",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "channel",
+      "providerCapabilities": [
+        "messaging",
+        "reactions",
+        "threads"
+      ],
+      "tags": [
+        "channel",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#slack-channel",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "slack-sdk>=3.27,<4",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "channel",
+          "implementation": "slack_runtime.transport:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "inbox",
+          "implementation": "slack_runtime.inbox_source:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "trigger_source",
+          "implementation": "slack_runtime.trigger_source:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "cli_setup:run",
+      "cliDoctor": "cli_doctor:probe",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its 3 provider modules, the steps it adds to personalclaw setup and personalclaw doctor and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "spec-builder",
+      "displayName": "Spec Builder",
+      "description": "Write a spec, then compile it into a workflow definition PersonalClaw's engine runs. The spec spells out the problem, done-when clauses, steps, and how done-ness is decided. It is the artifact you review and argue with; the compiled definition is what executes, and this app never runs one.",
+      "version": "0.1.2",
+      "icon": "ClipboardList",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "specs"
+      ],
+      "tags": [
+        "tool",
+        "spec",
+        "planning",
+        "workflow"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#spec-builder",
+      "consentKnown": true,
+      "permissions": {
+        "storage": true,
+        "network": false
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [
+        {
+          "program": "git",
+          "why": "git reads the source repository you set: a spec is seeded from its files at a commit. It only reads.",
+          "inherits": [
+            "settings"
+          ],
+          "inheritsWhile": null,
+          "npmPackage": "",
+          "hosts": []
+        }
+      ],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the program it starts and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "tavily-search",
+      "displayName": "Tavily",
+      "description": "Agent-optimized web search: a synthesized answer plus scored results. Optional extracted page content and single-URL extraction too. Best out-of-box quality; free-tier API key.",
+      "version": "0.1.4",
+      "icon": "Search",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search",
+        "fetch"
+      ],
+      "tags": [
+        "search",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#tavily-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "telegram-channel",
+      "displayName": "Telegram Channel",
+      "description": "Telegram bot integration over the raw Bot API. Pair a chat, converse in DMs, track groups, and receive results with inline approvals.",
+      "version": "0.1.22",
+      "icon": "Send",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "channel",
+      "providerCapabilities": [
+        "messaging",
+        "threads"
+      ],
+      "tags": [
+        "channel",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#telegram-channel",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "channel",
+          "implementation": "telegram_runtime.transport:create_provider",
+          "execution": "in-process"
+        },
+        {
+          "type": "trigger_source",
+          "implementation": "telegram_runtime.trigger_source:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "cli_setup:run",
+      "cliDoctor": "cli_doctor:probe",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its 2 provider modules and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "together-models",
+      "displayName": "Together AI",
+      "description": "Together AI serverless inference (OpenAI-compatible). Bring your own Together API key.",
+      "version": "0.1.3",
+      "icon": "Boxes",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#together-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "vector-store-qdrant",
+      "displayName": "Qdrant Vector Store",
+      "description": "Point knowledge vector search at your own Qdrant instead of the built-in sqlite-vec index. Chunk vectors are written to Qdrant as documents are ingested, and Qdrant answers the vector half of hybrid retrieval — FTS5 keyword search, the graph arm and RRF fusion are unchanged. Your documents stay in PersonalClaw's own database; Qdrant holds vectors and chunk ids only. Enable it to bind it; disable it and retrieval returns to the built-in index.",
+      "version": "0.1.6",
+      "icon": "Database",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "vector_store",
+      "providerCapabilities": [
+        "vector_store"
+      ],
+      "tags": [
+        "knowledge",
+        "vector-store",
+        "retrieval",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#vector-store-qdrant",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "qdrant-client>=1.9,<2",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "vector_store",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {
+        "tested": true,
+        "designSystem": "n/a"
+      },
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "vllm-models",
+      "displayName": "vLLM",
+      "description": "A local vLLM server (OpenAI-compatible). Point it at your vLLM endpoint; capabilities are model-dependent.",
+      "version": "0.1.6",
+      "icon": "Cpu",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "chat",
+        "code_tools",
+        "streaming",
+        "embedding",
+        "vision"
+      ],
+      "tags": [
+        "model",
+        "llm"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#vllm-models",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "openai>=1.0",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the Python package it installs run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "voice-clone-tts",
+      "displayName": "Voice Clone TTS",
+      "description": "Clone a voice from a short clip and speak with it, on your own machine. It needs the OmniVoice engine (torch, several GB), which Install engine on its card in Settings → Providers puts in this app's own Python environment; then download OmniVoice in Settings → Models. The engine runs in a process of its own, so a crash in it leaves the gateway up. A clone-kind voice profile routes here instead of being refused.",
+      "version": "0.2.3",
+      "icon": "AudioLines",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "model",
+      "providerCapabilities": [
+        "tts"
+      ],
+      "tags": [
+        "model",
+        "tts"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#voice-clone-tts",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [
+        {
+          "spec": "huggingface-hub>=0.23",
+          "coreOwned": false
+        }
+      ],
+      "sidecarDependencies": [
+        "omnivoice>=0.2.1,<0.3"
+      ],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "model",
+          "implementation": "provider:create_provider",
+          "execution": "sidecar"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module, the Python package it installs and the engine package it installs when you choose Install engine run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "watched-source-github",
+      "displayName": "GitHub Repo Watcher",
+      "description": "Fires your automations when a GitHub repo you watch ships a release or opens an issue. A newly watched repository starts from what exists now, so its history never floods in, and every request goes through your network egress settings.",
+      "version": "0.2.0",
+      "icon": "Telescope",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "trigger_source",
+      "providerCapabilities": [],
+      "tags": [
+        "trigger_source",
+        "github"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#watched-source-github",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "trigger_source",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "app_cli:setup",
+      "cliDoctor": "app_cli:doctor",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module and the steps it adds to personalclaw setup and personalclaw doctor run as you on this machine. They can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "web-tools",
+      "displayName": "Web Tools",
+      "description": "General web primitives the agent can call: web_search, web_fetch, and web_extract. web_search runs over the search provider you bind in Settings → Search, web_fetch is an SSRF-guarded page fetch + extraction, and web_extract does structured extraction. No key of its own — it uses the bound search provider's.",
+      "version": "0.1.5",
+      "icon": "Globe",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "tool",
+      "providerCapabilities": [
+        "web"
+      ],
+      "tags": [
+        "tool",
+        "web"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#web-tools",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "tool",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "0.2.3",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "webhook-action",
+      "displayName": "HTTP Webhook Hooks",
+      "description": "POST agent lifecycle events to an HTTP endpoint. Supports method/headers overrides and a templated body.",
+      "version": "0.1.1",
+      "icon": "Webhook",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "action",
+      "providerCapabilities": [
+        "execute"
+      ],
+      "tags": [
+        "action"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#webhook-action",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "action",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    },
+    {
+      "name": "wikipedia-search",
+      "displayName": "Wikipedia Search",
+      "description": "Keyless encyclopedic search over Wikipedia: ranked articles with intro-extract snippets. No API key — uses the public MediaWiki API. Links-only (web_fetch an article to read its full body). Best for factual/reference lookups.",
+      "version": "0.1.3",
+      "icon": "BookMarked",
+      "heroUrl": "",
+      "author": "PersonalClaw",
+      "source": "https://github.com/PersonalClaw/PersonalClawApps.git",
+      "sourceKind": "git",
+      "isProvider": true,
+      "providerType": "search",
+      "providerCapabilities": [
+        "search"
+      ],
+      "tags": [
+        "search",
+        "bundled"
+      ],
+      "pointer": "https://github.com/PersonalClaw/PersonalClawApps.git#wikipedia-search",
+      "consentKnown": true,
+      "permissions": {
+        "network": true
+      },
+      "crons": [],
+      "pythonDependencies": [],
+      "sidecarDependencies": [],
+      "requires": [],
+      "launches": [],
+      "npmPackages": [],
+      "writes": [],
+      "hasUI": false,
+      "uiComponents": "",
+      "hasBackend": false,
+      "backendSandbox": "",
+      "providers": [
+        {
+          "type": "search",
+          "implementation": "provider:create_provider",
+          "execution": "in-process"
+        }
+      ],
+      "onInstall": "",
+      "onUpdate": "",
+      "onEnable": "",
+      "onDisable": "",
+      "onUninstall": "",
+      "cliSetup": "",
+      "cliDoctor": "",
+      "sources": [],
+      "mcpServers": [],
+      "skills": [],
+      "runsAsYou": "Its provider module runs as you on this machine. It can read and change your files, your PersonalClaw settings included, and the permissions listed here limit what the app asks the gateway for, not what this code does.",
+      "quality": {},
+      "coreCompatibility": {
+        "state": "ok",
+        "required": "",
+        "host": "0.2.6",
+        "missing": [],
+        "reason": ""
+      },
+      "maintainer": "",
+      "lastValidated": "",
+      "lastScanVerdict": "",
+      "refused": "",
+      "listedBy": ""
+    }
+  ],
+  "networkSources": [
+    "github.com"
+  ],
+  "unavailableSources": []
+}
