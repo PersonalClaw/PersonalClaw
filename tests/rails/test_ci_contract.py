@@ -822,6 +822,13 @@ _PR_REF_MARKERS = (
 )
 _PUBLISHING_SCOPES = {"contents", "packages", "id-token", "attestations", "deployments"}
 _RELEASE_WORKFLOW = "release.yml"
+#: The one environment a workflow other than release.yml may name, by workflow and job: it holds
+#: the settings report's read-only credential and deploys only from main (the report reads that
+#: policy back every week), and its workflow runs only on a schedule or a dispatch, so no
+#: candidate's run can name it. It may hold no publishing permission, as any job outside
+#: release.yml may not.
+_READ_ONLY_ENVIRONMENTS = {("settings-report.yml", "report"): "settings-report"}
+_SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 
 
 def _trust_workflows(root: Path) -> list[tuple[str, dict]]:
@@ -969,10 +976,19 @@ def _only_the_release_controller_publishes(root: Path) -> list[str]:
             held = _publishing(job.get("permissions"))
             if held:
                 found.append(f"{name}:{job_name} holds {held} outside {_RELEASE_WORKFLOW}")
-            if job.get("environment") is not None:
+            environment = job.get("environment")
+            if environment is None:
+                continue
+            named = environment.get("name") if isinstance(environment, dict) else environment
+            allowed = _READ_ONLY_ENVIRONMENTS.get((name, job_name))
+            if allowed is None or named != allowed:
                 found.append(
-                    f"{name}:{job_name} deploys to {job['environment']!r} outside "
-                    f"{_RELEASE_WORKFLOW}"
+                    f"{name}:{job_name} deploys to {environment!r} outside {_RELEASE_WORKFLOW}"
+                )
+            elif not set(_triggers(wf)) <= _SCHEDULED_ONLY:
+                found.append(
+                    f"{name}:{job_name} names the read-only environment {named!r} in a workflow "
+                    f"that runs on {sorted(set(_triggers(wf)) - _SCHEDULED_ONLY)}"
                 )
     return found
 
@@ -1051,6 +1067,41 @@ jobs:
         env:
           TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
 """
+
+_SETTINGS_REPORT = """\
+name: Settings report
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    environment: settings-report
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: python3 -m tools.ci settings-report
+        env:
+          SETTINGS_READ_TOKEN: ${{ secrets.SETTINGS_READ_TOKEN }}
+"""
+
+
+def _settings_report(old: str = "", new: str = "") -> Callable[[Path], None]:
+    """Add the settings report's workflow, with *old* replaced by *new* in it."""
+
+    def plant(root: Path) -> None:
+        text = _SETTINGS_REPORT
+        if old:
+            assert old in text, f"the plant's anchor is not in the settings report: {old!r}"
+            text = text.replace(old, new, 1)
+        _write(root, f"{_WORKFLOWS}/settings-report.yml", text)
+
+    return plant
+
 
 _MAIN_ONLY = """\
 name: Full
@@ -1305,6 +1356,35 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
             ),
         ),
         Control("pull-requests: write in a trusted workflow passes", _nothing, fails=False),
+        Control(
+            "the settings report's read-only environment, on its scheduled job, passes",
+            _settings_report(),
+            fails=False,
+        ),
+        Control(
+            "the read-only environment on another job fails",
+            _settings_report("  report:\n", "  other:\n"),
+        ),
+        Control(
+            "another environment on the settings report's job fails",
+            _settings_report("environment: settings-report", "environment: release"),
+        ),
+        Control(
+            "the read-only environment in a workflow a pull request runs fails",
+            _settings_report("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n"),
+        ),
+        Control(
+            "the read-only environment on a push-triggered workflow fails",
+            _settings_report("  workflow_dispatch:\n", "  push:\n    branches: [main]\n"),
+        ),
+        Control(
+            "the read-only environment named in its mapping form passes",
+            _settings_report(
+                "    environment: settings-report\n",
+                "    environment:\n      name: settings-report\n",
+            ),
+            fails=False,
+        ),
         Control(
             "release.yml's own publishing jobs pass",
             _replace(

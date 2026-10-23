@@ -1,0 +1,62 @@
+# Weekly settings report (#3907, #4585, #4584): the live repository settings of core, the apps
+# and the website against .github/settings-expected.json and each repository's own
+# .github/rulesets/*.json (`python -m tools.ci settings-report`, tools/ci/settings_report.py).
+#
+# It reads and never writes a setting. Rulesets and environments answer the job token. The
+# Actions, security, CodeQL, merge-method and classic-protection settings and the week's bypass
+# use need administration read, which no workflow token can hold: they are read with
+# SETTINGS_READ_TOKEN, a read-only credential the maintainer keeps in the `settings-report`
+# environment, which only main may deploy to, so no branch's copy of this file can reach it. A
+# setting it cannot read fails the report, as a changed one does.
+#
+# On main it opens or edits the one open "Repository settings drift" issue this workflow's
+# account opened, naming each difference, and closes it once a run finds none. A person's issue
+# of that title is never touched.
+#
+# Its own schedule slot, Mondays 07:41 UTC, is clear of every other workflow's.
+name: Settings report
+
+on:
+  schedule:
+    - cron: "41 7 * * 1"  # Mondays, 07:41 UTC
+  workflow_dispatch:
+
+# One report at a time, never cancelled: a second run waits, and then edits the issue the first
+# opened.
+concurrency:
+  group: settings-report
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    # About forty GETs per repository.
+    timeout-minutes: 10
+    environment: settings-report
+    permissions:
+      contents: read
+      issues: write   # the one "Repository settings drift" issue; nothing else
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: read the settings and compare, and on main write the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SETTINGS_READ_TOKEN: ${{ secrets.SETTINGS_READ_TOKEN }}
+          ISSUE_REPO: ${{ github.ref == 'refs/heads/main' && github.repository || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          more=()
+          if [ -n "$ISSUE_REPO" ]; then
+            more+=(--issue-repo "$ISSUE_REPO")
+          fi
+          python3 -m tools.ci settings-report --run-url "$RUN_URL" "${more[@]}"

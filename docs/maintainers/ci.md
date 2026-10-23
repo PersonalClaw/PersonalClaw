@@ -160,7 +160,10 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   `secrets.` reference anywhere in the job, or `secrets: inherit`.
 - Only `release.yml` holds a publishing permission (`contents`, `packages`, `id-token`,
   `attestations` or `deployments` write, or `write-all`) or any deployment environment. A new
-  environment has to argue its way into `release.yml`.
+  environment has to argue its way into `release.yml`. The one other is `settings-report`, on
+  `settings-report.yml`'s `report` job alone, in a workflow that runs only on its schedule or a
+  dispatch: it holds the settings report's read-only credential and deploys only from `main`
+  (see [The settings report](#the-settings-report)).
 - No workflow that runs candidate code posts `merge-verdict`, the one check the default branch's
   controller posts: no job whose id or name is `merge-verdict` (in any case, a matrix-built name
   included), and no step, action input, key or workflow-level value that names it. A job name the
@@ -2334,6 +2337,7 @@ The audited writes today:
 | `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
 | `flake-report.yml` | `report` | `issues: write` | the one "Weekly CI health" issue |
+| `settings-report.yml` | `report` | `issues: write` | the one "Repository settings drift" issue |
 
 ### The dependency audit
 
@@ -2395,3 +2399,56 @@ its end of life gets no security fixes. Renew or fix before the date.
 
 There are no exceptions today. The contract's exception rows plant their own exception beside a
 planted install, so they hold whether or not the policy has one.
+
+## The settings report
+
+`.github/workflows/settings-report.yml` runs `python -m tools.ci settings-report` every Monday at
+07:41 UTC, and on a dispatch. It reads the live settings of core, the apps and the website and
+compares them with `.github/settings-expected.json` and with each repository's own
+`.github/rulesets/*.json` on its default branch. It sends GETs only and writes no setting. Any
+difference fails the run, and on `main` it opens or edits the one open issue titled "Repository
+settings drift" that the workflow's account opened, one line per difference, and closes it once
+a run finds none.
+
+What it reads, for each repository:
+
+| Setting | What it compares | Read with |
+|---|---|---|
+| each ruleset | target, enforcement, conditions and rules, against the file of the same name; a ruleset with no file, or a file with no ruleset, is drift | the job token |
+| bypass use | the week's rule suites whose result is `bypass`; each one fails unless `allowed bypass` names its actor and ref prefix (none does) | `SETTINGS_READ_TOKEN` |
+| `classic protection` | the default branch's classic protection, or `null` for none | `SETTINGS_READ_TOKEN` |
+| `merge methods` | merge commits, squash and rebase | `SETTINGS_READ_TOKEN` |
+| `security` | secret scanning, push protection, Dependabot security updates | `SETTINGS_READ_TOKEN` |
+| `dependabot alerts` | on or off | `SETTINGS_READ_TOKEN` |
+| `codeql default setup` | its state, query suite and languages | `SETTINGS_READ_TOKEN` |
+| `actions` | whether Actions run, the allowed actions, `sha_pinning_required` | `SETTINGS_READ_TOKEN` |
+| `workflow token` | the default token's permissions, whether Actions may approve pull requests | `SETTINGS_READ_TOKEN` |
+| `fork approval` | which outside contributors' runs wait for approval | `SETTINGS_READ_TOKEN` |
+| `environments` | every environment: reviewers, self-review, wait timer, and the branches and tags it deploys from | the job token |
+
+GitHub returns a ruleset's bypass list only to a caller with write access to that ruleset, so
+the report compares a ruleset's `bypass_actors` only when an answer carries them, and otherwise
+checks what a bypass list allows by its use: any bypass in the week fails. The list itself is
+read back with the maintainer's own login when a ruleset is applied.
+
+**The credential.** No workflow token can hold administration read. `SETTINGS_READ_TOKEN` is a
+fine-grained token the maintainer mints for the three repositories with Administration and
+Metadata read and nothing else, and keeps as a secret of the `settings-report` environment, which
+only `main` may deploy to, so a branch's copy of the workflow cannot reach it (a repository
+secret would reach every branch's runs). The report holds that environment's deployment policy
+to `main` alone, and `tests/rails/test_ci_settings_report_tree.py` holds the workflow to its one
+job, its schedule and dispatch, and the issue on `main`. A setting the report cannot read,
+because the token is missing, expired or short of a permission, fails as `not read`, never as a
+pass. Renew the token before it expires.
+
+**Changing a setting.** Change the setting and its value in `.github/settings-expected.json` (or
+the ruleset file) together, in a pull request that says why. A setting changed by hand alone is
+drift the next Monday.
+
+`tests/test_ci_settings_report.py` holds each row on planted API answers: a secret scanning,
+push protection, CodeQL or SHA-pinning setting turned off, a widened workflow token, a changed
+fork policy, a merge method turned back on, an environment opened to every ref or stripped of
+its reviewer, an added environment, classic protection put back, a removed required check, a
+required check bound to another App, an added bypass actor, a ruleset with no file, a deleted
+ruleset, a bypass used in the week, and an answer the API refused, each fails; the unchanged
+answers pass.

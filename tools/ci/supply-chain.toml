@@ -88,6 +88,13 @@ permission = "issues: write"
 steps = ["report, and on main write the weekly issue"]
 reason = "Edits the one open issue titled `Weekly CI health` that the workflow's own account opened, or opens it once; it writes the issue only on main, and nothing else."
 
+[[audited_write]]
+workflow = "settings-report.yml"
+job = "report"
+permission = "issues: write"
+steps = ["read the settings and compare, and on main write the drift issue"]
+reason = "Opens or edits the one open issue titled `Repository settings drift` that the workflow's own account opened, and closes it when a run finds no drift; it writes the issue only on main, and no setting."
+
 # Exceptions. One waives exactly one violation of one rule (scope) in one file, and expires at
 # most 30 days after the day it is written or renewed. Renewing is a new expiry with a new
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one
