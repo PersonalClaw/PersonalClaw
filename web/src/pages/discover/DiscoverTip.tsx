@@ -5,6 +5,11 @@ import { IconButton } from '../../ui/IconButton'
 import { TextLink } from '../../ui/TextLink'
 import { reportingWrite } from '../../app/reportingWrite'
 
+/** A 44 px target at the compact widths (320 to 768 px), the kit's own size above them, as the
+ *  buddy card's controls are (`ui/BuddyCard.tsx`): the tip's link and its dismiss are a phone's to
+ *  press, and the dismiss is drawn at 24 px. */
+export const TIP_TARGET = 'max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center'
+
 /** A tip's link, as an address after `#/`. */
 function tryItPath(t: DiscoverTryIt): string {
   const q = new URLSearchParams(t.query ?? {}).toString()
@@ -53,11 +58,11 @@ export function DiscoverTip({ here, onGo }: {
         <p data-type="body-s" className="mt-0.5 text-on-surface-low">{tip.lesson}</p>
         <div className="mt-xs">
           {onGo
-            ? <TextLink size="sm" ink="emphasis" onClick={() => onGo(to)}>{tip.try_it.label}</TextLink>
-            : <TextLink size="sm" ink="emphasis" href={`#/${to}`}>{tip.try_it.label}</TextLink>}
+            ? <TextLink size="sm" ink="emphasis" onClick={() => onGo(to)} className={TIP_TARGET}>{tip.try_it.label}</TextLink>
+            : <TextLink size="sm" ink="emphasis" href={`#/${to}`} className={TIP_TARGET}>{tip.try_it.label}</TextLink>}
         </div>
       </div>
-      <IconButton icon={X} label="Dismiss this tip" size={24} iconSize={14} onClick={dismiss} className="shrink-0" />
+      <IconButton icon={X} label="Dismiss this tip" size={24} iconSize={14} onClick={dismiss} className={`shrink-0 ${TIP_TARGET}`} />
     </aside>
   )
 }
