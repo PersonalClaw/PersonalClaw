@@ -33,11 +33,14 @@ const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
  *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
  *  the dimension is already obvious from position and icon on screen, which is exactly why the
  *  visible label spends its width on the value. */
-export function PillButton({ icon, label, dimension, open, toggle, wide = false, title, disabledReason }: {
+export function PillButton({ icon, label, dimension, open, toggle, wide = false, iconBelowMd = false, title, disabledReason }: {
   icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void
   /** Room for a two-part value ("Codex · Careful coder", or one marked unavailable) that the
    *  standard width would cut to its first word. */
   wide?: boolean
+  /** Below 768 px the pill is its icon and chevron, for a row that cannot also hold its value
+   *  there. The value stays in its name and its title. */
+  iconBelowMd?: boolean
   /** The whole sentence behind a value the pill can only show the start of. */
   title?: string
   /** Why the pill cannot open right now: it stays reachable, announced unavailable, dimmed, and
@@ -59,7 +62,7 @@ export function PillButton({ icon, label, dimension, open, toggle, wide = false,
       style={fvs(470)}
     >
       {icon}
-      <span className="truncate">{label}</span>
+      <span className={cx('truncate', iconBelowMd && 'max-md:hidden')}>{label}</span>
       <motion.span className="shrink-0" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
         <ChevronDown size={15} strokeWidth={2} />
       </motion.span>

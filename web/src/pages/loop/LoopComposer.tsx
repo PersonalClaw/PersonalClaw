@@ -385,7 +385,8 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                   projectId={projectId} disabled={busy} />
                 {/* Asked once how it should report (#3824). A run-backed kind reports as a run does,
                     through the run's notifications, so it is not asked. */}
-                {!isRunBackedKind(kind) && <LoopReportPill value={report} onChange={setReport} />}
+                {/* Its icon below 768 px, so at 600 the footer stays one row (#3905). */}
+                {!isRunBackedKind(kind) && <LoopReportPill value={report} onChange={setReport} iconBelowMd />}
               </>}
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}
