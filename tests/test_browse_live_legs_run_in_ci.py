@@ -211,7 +211,7 @@ def test_the_leg_actually_puts_a_browser_on_the_runner() -> None:
     assert provisions_a_browser(block), (
         f"job `{name}` runs the browse proof but no step installs a Chromium, so every "
         "behavioural case either skips (no proof) or fails (no signal). Its install step is "
-        "`npx playwright install --with-deps chromium`."
+        "`npx playwright install chromium`."
     )
 
 
@@ -271,7 +271,7 @@ def test_every_path_the_leg_names_exists() -> None:
 
 # ── the detectors, both directions ────────────────────────────────────────────
 
-_INSTALL = "        run: npx playwright install --with-deps chromium"
+_INSTALL = "        run: npx playwright install chromium"
 _REQUIRE = '      PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"'
 _PYTEST = "uv run pytest tests/test_browse_cdp_live.py -n0"
 

@@ -1343,8 +1343,29 @@ jobs:
         with:
           name: web-dist
           path: web/dist
+      # Chromium comes from Playwright's CDN, its build pinned by the lock, and apt is touched only
+      # when the browser cannot start. `--with-deps` ran apt on every run, where a hung Ubuntu mirror
+      # can hold a job for its whole limit. The hosted image carries Chromium's system libraries,
+      # which the next step checks; only if it fails do they install from apt, bounded, so a
+      # hung mirror fails in minutes and names itself.
       - name: install chromium (the one browser this leg installs)
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
+      - name: Check that Chromium starts
+        id: chromium-starts
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
+      - name: Install Chromium's system libraries
+        if: ${{ steps.chromium-starts.outcome == 'failure' }}
+        timeout-minutes: 6
+        run: |
+          echo "::warning::Chromium did not start on this runner image, so its system libraries install from apt"
+          if ! timeout 300 npx playwright install-deps chromium; then
+            echo "::error::Chromium's system libraries did not install within 5 minutes: the apt mirror is slow or down" >&2
+            exit 1
+          fi
+          node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
       - name: this leg's half of the smoke and the shared specs (web/e2e/*.spec.ts)
         working-directory: web
         env:
@@ -1414,8 +1435,29 @@ jobs:
         with:
           name: web-dist
           path: web/dist
+      # Chromium comes from Playwright's CDN, its build pinned by the lock, and apt is touched only
+      # when the browser cannot start. `--with-deps` ran apt on every run, where a hung Ubuntu mirror
+      # can hold a job for its whole limit. The hosted image carries Chromium's system libraries,
+      # which the next step checks; only if it fails do they install from apt, bounded, so a
+      # hung mirror fails in minutes and names itself.
       - name: install chromium (the one browser this leg installs)
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
+      - name: Check that Chromium starts
+        id: chromium-starts
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
+      - name: Install Chromium's system libraries
+        if: ${{ steps.chromium-starts.outcome == 'failure' }}
+        timeout-minutes: 6
+        run: |
+          echo "::warning::Chromium did not start on this runner image, so its system libraries install from apt"
+          if ! timeout 300 npx playwright install-deps chromium; then
+            echo "::error::Chromium's system libraries did not install within 5 minutes: the apt mirror is slow or down" >&2
+            exit 1
+          fi
+          node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
       - name: the stateful set, then its second pass in a seeded order (web/e2e/isolation.ts)
         working-directory: web
         env:
@@ -1623,8 +1665,29 @@ jobs:
       # browser installer.
       - name: npm ci (root)
         run: npm ci
+      # Chromium comes from Playwright's CDN, its build pinned by the lock, and apt is touched only
+      # when the browser cannot start. `--with-deps` ran apt on every run, where a hung Ubuntu mirror
+      # can hold a job for its whole limit. The hosted image carries Chromium's system libraries,
+      # which the next step checks, launched as the proof launches it; only if it fails do they install from apt, bounded, so a
+      # hung mirror fails in minutes and names itself.
       - name: install chromium (the browser the proof drives)
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
+      - name: Check that Chromium starts
+        id: chromium-starts
+        continue-on-error: true
+        timeout-minutes: 2
+        run: uv run python -c "import subprocess, sys; sys.path.insert(0, 'tests'); import browse_chrome; subprocess.run([browse_chrome.find_chrome() or sys.exit('no Chromium found'), '--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--dump-dom', 'about:blank'], check=True, timeout=60, stdout=subprocess.DEVNULL)"
+      - name: Install Chromium's system libraries
+        if: ${{ steps.chromium-starts.outcome == 'failure' }}
+        timeout-minutes: 6
+        run: |
+          echo "::warning::Chromium did not start on this runner image, so its system libraries install from apt"
+          if ! timeout 300 npx playwright install-deps chromium; then
+            echo "::error::Chromium's system libraries did not install within 5 minutes: the apt mirror is slow or down" >&2
+            exit 1
+          fi
+          uv run python -c "import subprocess, sys; sys.path.insert(0, 'tests'); import browse_chrome; subprocess.run([browse_chrome.find_chrome() or sys.exit('no Chromium found'), '--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--dump-dom', 'about:blank'], check=True, timeout=60, stdout=subprocess.DEVNULL)"
       # One process, pytest's default: the live fixture is module-scoped and launches a browser,
       # so xdist would launch one per worker for no gain. The modules are named explicitly rather
       # than globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim
