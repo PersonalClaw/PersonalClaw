@@ -194,3 +194,38 @@ def test_main_refuses_to_create_without_the_controllers_token(
         )
         == 1
     )
+
+
+def test_a_rehearsal_is_checked_like_the_release_and_named_apart(
+    planted: dict[str, object],
+) -> None:
+    repo = planted["repo"]
+    assert isinstance(repo, Path)
+    readme = str(planted["readme"])
+    release_tag.check(repo, "v1.2.3", readme, rehearsal=True)
+    # The tag is still the release's: the parser and main hold it the same way.
+    with pytest.raises(trust.Refused, match="planted parser"):
+        release_tag.check(repo, "1.2.3", readme, rehearsal=True)
+    with pytest.raises(trust.Refused, match="is not on origin/main"):
+        release_tag.check(repo, "v1.2.3", str(planted["side"]), rehearsal=True)
+    # Its own name is the one that must not exist; the release tag's does not stop it.
+    _git(repo, "tag", "v1.2.3", str(planted["first"]))
+    release_tag.check(repo, "v1.2.3", readme, rehearsal=True)
+    _git(repo, "tag", "rehearsal-v1.2.4", str(planted["first"]))
+    with pytest.raises(trust.Refused, match="rehearsal-v1.2.4 exists already"):
+        release_tag.check(repo, "v1.2.4", readme, rehearsal=True)
+
+
+def test_a_rehearsal_creates_the_rehearsal_name_and_never_the_release_tag(
+    planted: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/rehearsal-v1.2.3"}))
+    monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    argv = ["--tag", "v1.2.3", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
+    assert release_tag.main([*argv, "--create", "owner/project", "--rehearsal"]) == 0
+    assert [body.get("tag") or body.get("ref") for _, body in post.calls] == [
+        "rehearsal-v1.2.3",
+        "refs/tags/rehearsal-v1.2.3",
+    ]
+    assert release_tag.tag_name("v1.2.3") == "v1.2.3"

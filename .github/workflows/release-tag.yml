@@ -8,6 +8,8 @@
 # that name exists. Only then is the release controller's App token made, and the tag created
 # with it: the `release-tag-creation` ruleset lets that App alone create a `v*` tag, and
 # `release-tags` lets nobody move or delete one. #3911 adds its release gate before the create.
+# `rehearsal: true` creates `rehearsal-<tag>` instead, with the same checks and the same App, a
+# name no `v*` rule and no release trigger sees: how the path is proved without a release.
 #
 # The App's key is a secret of the `ci-controller` environment, which only main may deploy to,
 # so no branch's copy of this file can reach it; the job also runs only on main. The inputs reach
@@ -25,6 +27,11 @@ on:
         description: "The full commit id on main to tag"
         required: true
         type: string
+      rehearsal:
+        description: "Create rehearsal-<tag> instead, to prove the path without a release"
+        required: false
+        type: boolean
+        default: false
 
 # One tag at a time, never cancelled.
 concurrency:
@@ -55,7 +62,12 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           COMMIT: ${{ inputs.commit }}
-        run: python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT"
+          REHEARSAL: ${{ inputs.rehearsal }}
+        run: |
+          set -euo pipefail
+          more=()
+          if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi
+          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" "${more[@]}"
       - name: the release controller's token
         id: controller
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -68,4 +80,9 @@ jobs:
           GH_TOKEN: ${{ steps.controller.outputs.token }}
           TAG: ${{ inputs.tag }}
           COMMIT: ${{ inputs.commit }}
-        run: python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --create "$GITHUB_REPOSITORY"
+          REHEARSAL: ${{ inputs.rehearsal }}
+        run: |
+          set -euo pipefail
+          more=()
+          if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi
+          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --create "$GITHUB_REPOSITORY" "${more[@]}"

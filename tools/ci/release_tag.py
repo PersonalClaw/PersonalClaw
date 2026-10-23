@@ -10,6 +10,10 @@ it with a tag and a commit. It refuses, naming why, unless:
   equal ``main``'s tip's (``trust.compare``), so the tag's release run is the one ``main`` holds;
 - no tag of that name exists, here or on the remote.
 
+With ``--rehearsal`` the tag it checks for, and creates, is ``rehearsal-<tag>``: every check and
+the App are the same, and no ``v*`` rule or release trigger sees it, so the whole path can be
+proved without a release.
+
 With ``--create`` it then creates the annotated tag and its ref through the API with
 ``GH_TOKEN``, the release controller's App token: the one actor the ``release-tag-creation``
 ruleset lets create a ``v*`` tag. The tag's push starts ``release.yml``. Nothing else is written,
@@ -35,6 +39,15 @@ from . import trust
 
 API = "https://api.github.com"
 MAIN = "origin/main"
+#: A rehearsal creates ``rehearsal-<tag>`` instead: the same checks and the same App, under a name
+#: no ``v*`` rule or ``release.yml`` trigger matches, so the path is proved without a release.
+REHEARSAL_PREFIX = "rehearsal-"
+
+
+def tag_name(tag: str, *, rehearsal: bool = False) -> str:
+    """The ref name the tag is created as: *tag* itself, or its rehearsal name."""
+    return f"{REHEARSAL_PREFIX}{tag}" if rehearsal else tag
+
 
 #: ``post(path, body)`` returns the HTTP status and the decoded JSON answer.
 Post = Callable[[str, dict[str, object]], tuple[int, object]]
@@ -69,8 +82,9 @@ def _tag_exists(repo: Path, tag: str) -> bool:
     return False
 
 
-def check(repo: Path, tag: str, commit: str, *, main: str = MAIN) -> None:
-    """Refuse (``trust.Refused``) unless *commit* on *main* may be tagged *tag*."""
+def check(repo: Path, tag: str, commit: str, *, main: str = MAIN, rehearsal: bool = False) -> None:
+    """Refuse (``trust.Refused``) unless *commit* on *main* may be tagged *tag* (or, with
+    *rehearsal*, its rehearsal name: the tag itself is still held to the release's parser)."""
     _parse_tag(repo, tag)
     trust.require_on_main(repo, commit, main=main)
     tip = subprocess.run(
@@ -87,8 +101,9 @@ def check(repo: Path, tag: str, commit: str, *, main: str = MAIN) -> None:
             f"{commit}'s definitions differ from {main}'s: {names}. Tag a commit whose "
             "workflows, actions and tools/ci are main's, or land the change first"
         )
-    if _tag_exists(repo, tag):
-        raise trust.Refused(f"{tag} exists already; a release tag is never moved")
+    name = tag_name(tag, rehearsal=rehearsal)
+    if _tag_exists(repo, name):
+        raise trust.Refused(f"{name} exists already; a release tag is never moved")
 
 
 def github_post(token: str) -> Post:
@@ -116,6 +131,7 @@ def create(repository: str, tag: str, commit: str, post: Post) -> str:
     status, answer = post(
         f"/repos/{repository}/git/tags",
         {"tag": tag, "message": f"PersonalClaw {tag}", "object": commit, "type": "commit"},
+        # *tag* is the name to create: the release tag, or its rehearsal name.
     )
     sha = answer.get("sha") if isinstance(answer, dict) else None
     if status != 201 or not isinstance(sha, str):
@@ -134,16 +150,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--repo", default=".", type=Path, help="the checkout to read")
     parser.add_argument("--create", metavar="OWNER/NAME", help="create the tag in this repository")
+    parser.add_argument(
+        "--rehearsal", action="store_true", help=f"create {REHEARSAL_PREFIX}<tag> instead"
+    )
     args = parser.parse_args(argv)
+    name = tag_name(args.tag, rehearsal=args.rehearsal)
     try:
-        check(args.repo, args.tag, args.commit)
-        print(f"may tag: {args.commit} on main as {args.tag}")
+        check(args.repo, args.tag, args.commit, rehearsal=args.rehearsal)
+        print(f"may tag: {args.commit} on main as {name}")
         if args.create:
             token = os.environ.get("GH_TOKEN")
             if not token:
                 raise trust.Refused("no GH_TOKEN: the controller's App token creates the tag")
-            sha = create(args.create, args.tag, args.commit, github_post(token))
-            print(f"created: {args.tag} -> {args.commit} (tag object {sha})")
+            sha = create(args.create, name, args.commit, github_post(token))
+            print(f"created: {name} -> {args.commit} (tag object {sha})")
     except trust.Refused as refused:
         print(f"::error title=release tag refused::{refused}")
         return 1
