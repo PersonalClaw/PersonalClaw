@@ -23,15 +23,19 @@ export const reportLabel = (report: LoopReport | undefined): string =>
  *  from its strip while it runs. Whatever the choice, a loop waiting on its owner still says so in
  *  the Inbox: the choice quiets reports, it never asks. Drawn as the composer's own pill; its menu
  *  is radio items with the shared cursor (`lib/useMenuCursor`), opening on the loop's choice. */
-export function LoopReportPill({ value, onChange, placement = 'top', disabled = false }: {
+export function LoopReportPill({ value, onChange, placement = 'top', disabled = false, iconBelowMd = false }: {
   value: LoopReport
   onChange: (report: LoopReport) => void
   placement?: 'top' | 'bottom'
   disabled?: boolean
+  /** The pill as its icon below 768 px (`PillButton`'s): the new loop's composer, whose one row
+   *  at 600 px holds Runs on, the Execution Boundary, this and the send cluster. */
+  iconBelowMd?: boolean
 }) {
   return (
     <Popover portal width={300} placement={placement} trigger={(open, toggle) => (
       <PillButton icon={<Bell size={16} strokeWidth={2} />} label={reportLabel(value)} dimension="Reports"
+        title={`Reports: ${reportLabel(value)}`} iconBelowMd={iconBelowMd}
         open={open} toggle={toggle} wide disabledReason={disabled ? 'Wait for the loop to finish starting' : undefined} />
     )}>
       {(close) => <ReportMenu value={value} close={close} onPick={(r) => { onChange(r); close() }} />}
