@@ -17,6 +17,7 @@ const doc: UiDoc = {
     { name: 'size', description: "'md' default (h-6 w-10), 'sm' for dense rows (h-5 w-9)." },
     { name: 'readOnly', description: 'Render a display-only indicator (non-interactive span) — pair with omitting onChange so it can sit inside a larger clickable row without nesting buttons.' },
     { name: 'decorative', description: 'Purely visual — drops the switch role/aria entirely (aria-hidden) for a toggle sitting INSIDE an already-labeled clickable control, so it does not surface as a second unnamed switch node.' },
+    { name: 'touchTarget', description: 'A 44 px hit box under 1024 px (TOUCH_TARGET), for a switch the UI quality matrix holds to a phone-sized target. The switches it already allows under 44 px keep their box until every one moves at once.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Toggle for any on/off switch rather than hand-rolling an inline-styled track — spring knob, token track colors, and role="switch"/aria-checked come built in.' },
