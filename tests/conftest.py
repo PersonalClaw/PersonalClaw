@@ -1532,6 +1532,25 @@ def _reset_app_restart_reasons() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _restore_event_router() -> object:
+    """Put the event bus's router back as the test found it.
+
+    ``event_triggers`` keeps one router per process on purpose: the gateway attaches it at boot and
+    detaches it at shutdown, and an event goes to it, or to the spool when this process has none.
+    A test that started a gateway and never shut it down left its router attached for the rest of
+    its worker, so a later test's sync write was handed to a gateway that was gone instead of
+    parked (``test_the_SHIPPED_sync_context_drop_is_FIXED`` on macOS, #3905). The guard names
+    such a test: ``event_router`` in ``state_leak_guard.fenced_state``.
+    """
+    from personalclaw import event_triggers
+
+    found = event_triggers._router
+    yield
+    with event_triggers._router_lock:
+        event_triggers._router = found
+
+
+@pytest.fixture(autouse=True)
 def _reset_provider_measurement_boards() -> object:
     """Forget every provider availability and connection answer a test measured.
 
@@ -1820,6 +1839,7 @@ def _a_test_leaves_process_state_as_it_found_it(
     _restore_pipeline_node_registry,
     _restore_local_model_registry,
     _restore_notification_kinds,
+    _restore_event_router,
 ):
     """Name the test that leaves a fenced registry changed, read before its fence restores it.
 

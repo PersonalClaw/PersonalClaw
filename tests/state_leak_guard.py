@@ -200,6 +200,12 @@ def fenced_state() -> dict[str, frozenset[str]]:
             + [f"root:{id(h)}" for h in top.handlers]
         )
 
+    def event_router() -> frozenset[str]:
+        from personalclaw import event_triggers
+
+        router = event_triggers._router
+        return frozenset() if router is None else frozenset({f"<router {id(router)}>"})
+
     readers = {
         "notification_kinds": notification_kinds,
         "provider_registry": provider_registry,
@@ -209,6 +215,7 @@ def fenced_state() -> dict[str, frozenset[str]]:
         "pipeline_node_registry": pipeline_nodes,
         "local_model_registry": local_models,
         "personalclaw_logging": logging_sinks,
+        "event_router": event_router,
     }
     out: dict[str, frozenset[str]] = {}
     for name, read in readers.items():
