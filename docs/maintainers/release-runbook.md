@@ -249,10 +249,13 @@ fixes, and rehearse (step 5), before you tag.
 
 `main` takes changes only through pull requests, for everyone ([the ruleset on `main`](ci.md#the-ruleset-on-main)), so the commit you tag is a pull request's merge.
 
-Tag only a `main` commit whose **own** push run of `ci.yml` is green. During a burst of
-merges a commit's suite shard can be replaced by a newer push's, and its `test` check then
-reads red as `superseded by <newer commit>`: its tree was not tested on its own. Tag the newer
-commit once its own run is green instead. Nothing enforces this yet; #3911's release gate must.
+Tag only a `main` commit whose **own** push run is green (`merge.yml`'s once CI's flip lands,
+`ci.yml`'s until then). During a burst of merges a commit's suite shard can be replaced by a
+newer push's, and its `test` check then reads red as `superseded by <newer commit>`: its tree
+was not tested on its own. Tag the newer commit once its own run is green instead. The tagging
+workflow refuses any other. A run re-run to green counts as green, since its conclusion is its
+latest attempt's: tagging a commit whose run went green only on a re-run of a flaky job is a
+choice, so make it on purpose, after reading the attempt that failed.
 
 A `v*` tag can never be moved or deleted once pushed, and only the release controller's App can
 create one ([the release tags](ci.md#the-release-tags)): a hand-pushed `v*` tag is refused, yours
@@ -265,7 +268,9 @@ gh workflow run release-tag.yml --ref main -f tag=v0.1.3 -f commit="$(git rev-pa
 ```
 
 It refuses, naming why, a tag the release's parser refuses, a commit that is not on `main`, a
-commit whose workflows, actions or `tools/ci` differ from `main`'s, and a tag that exists. Then
+commit whose workflows, actions or `tools/ci` differ from `main`'s, a tag that exists, and a
+commit whose own push run on `main` is not green: still running, failed, cancelled or
+superseded, with the run's link. Then
 it creates the annotated tag (`PersonalClaw v0.1.3`) through the App, and the tag's push starts
 `release.yml` as before. To try the path without a release, add `-f rehearsal=true`: it makes
 `rehearsal-v0.1.3`, which nothing releases; delete it after.

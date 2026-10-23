@@ -69,11 +69,18 @@ maintainer dispatches it on `main` with the tag and the commit
 `python -m tools.ci release-tag` (`tools/ci/release_tag.py`), from `main`'s own checkout, refuses
 unless the tag is a release tag by `scripts/release_tags.py`, the commit is on `main`
 (`trust.require_on_main`), its workflows, actions, `tools/ci` and the entry points they run are
-`main`'s tip's (`trust.compare`), and no tag of that name exists here or on the remote. Only then
-is the App's token made, asked for `contents: write` alone and handed only to the step that
-creates the annotated tag and its ref. The job runs only on `main`, in the `ci-controller`
-environment, which deploys only from `main` and holds the App's key. #3911 adds its release gate
-before the create. `-f rehearsal=true` creates `rehearsal-<tag>` instead: the same checks and the
+`main`'s tip's (`trust.compare`), no tag of that name exists here or on the remote, and the
+commit's own push run on `main` is green (#3911's gate, `release_tag.main_push_green`). That run
+is read in each workflow a push to `main` runs in, the newer shape first (`workflows.MAIN_PUSH`:
+`merge.yml` once #3915's flip lands, `ci.yml` until then), and the first with a run for the
+commit decides, so a red there is never passed over for the other's green. Its newest run must
+have completed with success: one still going, failed, cancelled, or whose gate read a shard as
+superseded or unproven is refused, naming the run. The job reads it with its own token, given
+`actions: read` for that alone. Only then is the App's token made, asked for `contents: write`
+alone and handed only to the step that creates the annotated tag and its ref. The job runs only
+on `main`, in the `ci-controller` environment, which deploys only from `main` and holds the
+App's key. The trusted `merge-verdict` (#3910) and the breadth evidence (#3913) join the gate
+once they exist. `-f rehearsal=true` creates `rehearsal-<tag>` instead: the same checks and the
 same App, under a name no `v*` rule and no release trigger sees, which is how the path is proved
 without a release (on a scratch copy of the creation ruleset over `refs/tags/rehearsal-v*`).
 `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape, both steps passing the
