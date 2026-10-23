@@ -42,6 +42,9 @@ PROBE_TIMEOUT = 4.0
 #: Where Linux publishes its process facts. A module constant so a test can stand up a fake one.
 PROC = Path("/proc")
 
+#: The probe that reads every process where there is no ``/proc``.
+_PS_TABLE = ("ps", "-Awwo", "pid=,ppid=,command=")
+
 
 def run_probe(argv: list[str]) -> str:
     """Best-effort capture of *argv*'s stdout. Never raises; returns "" on any failure."""
@@ -168,7 +171,13 @@ def process_table() -> dict[int, tuple[int, str]]:
     """
     if PROC.is_dir():
         return _proc_table()
-    return parse_ps_table(run_probe(["ps", "-Awwo", "pid=,ppid=,command="]))
+    table = parse_ps_table(run_probe(list(_PS_TABLE)))
+    # `ps` lists itself, a child of this process still running as it printed. Its row is left
+    # out, so no caller finds the probe it just ran among this process's descendants (an unload
+    # asked `lsof` for that gone probe's working directory every time, #3905). Only this process's
+    # child running exactly this argv is the probe: any other `ps` is a process like any other.
+    me, probe = os.getpid(), " ".join(_PS_TABLE)
+    return {pid: row for pid, row in table.items() if row != (me, probe)}
 
 
 def descendants(of: int, table: dict[int, tuple[int, str]]) -> dict[int, frozenset[int]]:
