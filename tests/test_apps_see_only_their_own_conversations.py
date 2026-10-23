@@ -50,7 +50,7 @@ from shared_app_rows import (
     planted_rows,
     written_since,
 )
-from table_rows import row
+from table_rows import labelled, row, tasks_ended
 from test_apps_cannot_post_into_your_chats import (
     _app_gateway,
     _gateway,
@@ -275,8 +275,7 @@ def _read_routes(reached: list[tuple[str, str]]) -> list[tuple[str, str, Any]]:
     return _stand_ins(reached, [(m, t, None) for m, t in [*SESSION_READS, *heads, TOMORROW]])
 
 
-@pytest.mark.asyncio
-async def test_a_read_that_names_a_conversation_reaches_only_the_apps_own(
+async def _a_read_that_names_a_conversation_reaches_only_the_apps_own(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -456,10 +455,7 @@ async def _the_export(r: Row) -> None:
     )(r)
 
 
-@pytest.mark.asyncio
-async def test_your_transcript_never_reaches_the_app(
-    subtests, tmp_path_factory, monkeypatch
-) -> None:
+async def _your_transcript_never_reaches_the_app(subtests, tmp_path_factory, monkeypatch) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
     rows = [
         ("the chat detail", _the_chat_detail),
@@ -538,8 +534,7 @@ def _the_search(answered_by: str):
     return case
 
 
-@pytest.mark.asyncio
-async def test_a_list_holds_only_the_apps_own_conversations(
+async def _a_list_holds_only_the_apps_own_conversations(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -636,8 +631,7 @@ YOURS_OUTRIGHT: list[tuple[str, str, Any]] = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_an_app_is_refused_what_is_yours_outright_and_you_are_not(
+async def _an_app_is_refused_what_is_yours_outright_and_you_are_not(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1148,8 +1142,7 @@ SOCKET_ROWS: dict[str, Any] = {
 }
 
 
-@pytest.mark.asyncio
-async def test_an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
+async def _an_apps_socket_carries_only_its_own_conversations(subtests, tmp_path) -> None:
     """The three apps installed once, in this test's home; every row on sockets and a state of its
     own, the home as the install left it after every row."""
     assert len(SOCKET_ROWS) == len(CHAT_FRAMES) + 15, "a frame or a case was left out"
@@ -1219,8 +1212,7 @@ async def _connect_as_the_app(home: Path, *, yolo: bool) -> list[dict]:
             token_auth.revoke_all_sessions()
 
 
-@pytest.mark.asyncio
-async def test_the_session_list_an_app_reads_on_connecting_is_its_own(subtests, tmp_path) -> None:
+async def _the_session_list_an_app_reads_on_connecting_is_its_own(subtests, tmp_path) -> None:
     """The first frame of every connection holds the app's own rows, and nothing but rows, with
     your YOLO on too. Each row in a home of its own."""
     for yolo in (False, True):
@@ -1234,7 +1226,7 @@ async def test_the_session_list_an_app_reads_on_connecting_is_its_own(subtests, 
             assert set(frame) == {"type", "data"}, f"the app's first frame carries {sorted(frame)}"
 
 
-def test_a_lapsed_yolo_still_expires_when_the_list_is_pushed(tmp_path) -> None:
+def _a_lapsed_yolo_still_expires_when_the_list_is_pushed(tmp_path) -> None:
     """The push used to READ YOLO to put it in the frame, and a read is what expires a lapsed TTL
     (`trust_mode`), clearing the auto-approve it left on your chats. The push runs on every
     session change, mid-turn included, so it keeps doing that without sending it."""
@@ -1399,7 +1391,7 @@ def _every_notification_frame_in_the_tree_is_listed() -> None:
     assert produced | {"notification"} <= NOTIFICATION_FRAMES
 
 
-def test_the_gate_reads_every_frame_that_names_a_conversation_or_a_note(subtests) -> None:
+def _the_gate_reads_every_frame_that_names_a_conversation_or_a_note(subtests) -> None:
     checks = {
         "a frame naming it outside session is listed": (
             _a_frame_naming_it_outside_session_is_listed
@@ -1417,6 +1409,27 @@ def test_the_gate_reads_every_frame_that_names_a_conversation_or_a_note(subtests
     for name, check in checks.items():
         with row(subtests, check=name):
             check()
+
+
+def test_the_gate_and_the_list_push_hold_an_app_to_its_own(subtests, tmp_path_factory) -> None:
+    """The cases with no event loop of their own, each a row: a lapsed YOLO still expiring when
+    the list is pushed, and the gate reading every frame that names a conversation or a note."""
+    with (
+        row(subtests, check="a lapsed yolo still expires when the list is pushed"),
+        fences_unchanged(),
+    ):
+        _a_lapsed_yolo_still_expires_when_the_list_is_pushed(
+            tmp_path_factory.mktemp("a-lapsed-yolo-still")
+        )
+    with (
+        row(subtests, check="the gate reads every frame that names a conversation or a note"),
+        fences_unchanged(),
+    ):
+        _the_gate_reads_every_frame_that_names_a_conversation_or_a_note(
+            labelled(
+                subtests, check="the gate reads every frame that names a conversation or a note"
+            )
+        )
 
 
 # ── 8. The route table: every read in these families is driven here ─────────────────────
@@ -1515,8 +1528,7 @@ def _auto_approved(rows: MagicMock) -> list[dict]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_the_runtime_says_when_its_policy_answered_the_ask() -> None:
+async def _the_runtime_says_when_its_policy_answered_the_ask() -> None:
     """The native runtime answers a waived ask in-loop, so no approval reaches the chat runner's
     gate: the call was logged `invoked` and nothing said a grant had approved it."""
     from test_native_runtime import _defn, _drain, _ScriptedModel, _Tool
@@ -1573,8 +1585,7 @@ async def _one_turn(state, session, rows: MagicMock) -> None:
     await asyncio.gather(*left, return_exceptions=True)
 
 
-@pytest.mark.asyncio
-async def test_an_auto_approved_call_says_whose_grant_it_was(subtests, tmp_path) -> None:
+async def _an_auto_approved_call_says_whose_grant_it_was(subtests, tmp_path) -> None:
     """Each row in a home of its own, with the app installed."""
     from personalclaw.dashboard.state import _ChatSession
 
@@ -1673,8 +1684,7 @@ def _an_apps_folder_never_enters_your_recent_projects(by_the_app: bool):
     return case
 
 
-@pytest.mark.asyncio
-async def test_you_see_which_app_started_a_conversation(
+async def _you_see_which_app_started_a_conversation(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1694,7 +1704,71 @@ async def test_you_see_which_app_started_a_conversation(
 
 
 @pytest.mark.asyncio
-async def test_without_the_agent_grant_the_chat_still_says_whose_permissions_it_runs_under(
+async def test_an_app_reads_only_its_own_conversations(subtests, tmp_path_factory) -> None:
+    """The tables on the shared app, each a row: a read that names a conversation, your
+    transcript, a list, what is yours outright, and which app started a conversation."""
+    with (
+        row(subtests, check="a read that names a conversation reaches only the apps own"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _a_read_that_names_a_conversation_reaches_only_the_apps_own(
+                labelled(
+                    subtests, check="a read that names a conversation reaches only the apps own"
+                ),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="your transcript never reaches the app"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _your_transcript_never_reaches_the_app(
+                labelled(subtests, check="your transcript never reaches the app"),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="a list holds only the apps own conversations"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _a_list_holds_only_the_apps_own_conversations(
+                labelled(subtests, check="a list holds only the apps own conversations"),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="an app is refused what is yours outright and you are not"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_app_is_refused_what_is_yours_outright_and_you_are_not(
+                labelled(
+                    subtests, check="an app is refused what is yours outright and you are not"
+                ),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="you see which app started a conversation"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _you_see_which_app_started_a_conversation(
+                labelled(subtests, check="you see which app started a conversation"),
+                tmp_path_factory,
+                mp,
+            )
+
+
+async def _without_the_agent_grant_the_chat_still_says_whose_permissions_it_runs_under(
     tmp_path,
 ) -> None:
     """The app that declares no ``agent``, installed for this test alone."""
@@ -1925,8 +1999,7 @@ NOTE_ROWS: dict[str, Any] = {
 }
 
 
-@pytest.mark.asyncio
-async def test_an_app_reads_only_the_notifications_it_raised(subtests, tmp_path) -> None:
+async def _an_app_reads_only_the_notifications_it_raised(subtests, tmp_path) -> None:
     """Each row in a home of its own, installing the apps it raises notes as."""
     for at, (name, check) in enumerate(NOTE_ROWS.items()):
         with (
@@ -2102,8 +2175,7 @@ NOTE_SOCKET_ROWS: dict[str, Any] = {
 }
 
 
-@pytest.mark.asyncio
-async def test_an_apps_socket_carries_only_its_own_notifications(subtests, tmp_path) -> None:
+async def _an_apps_socket_carries_only_its_own_notifications(subtests, tmp_path) -> None:
     """Each row in a home of its own: the notes it raises are written there."""
     for at, (name, check) in enumerate(NOTE_SOCKET_ROWS.items()):
         with row(subtests, case=name), fences_unchanged():
@@ -2111,3 +2183,66 @@ async def test_an_apps_socket_carries_only_its_own_notifications(subtests, tmp_p
             where.mkdir()
             with _home(where):
                 await check(where, *_noted(where))
+
+
+@pytest.mark.asyncio
+async def test_an_apps_sockets_and_grants_carry_only_its_own(subtests, tmp_path_factory) -> None:
+    """The cases on a socket or the runtime of their own, each a row on a folder, patches and
+    SEL rows of its own: what an app's socket carries, whose policy answered an ask and whose
+    grant approved a call, and the notifications an app raised."""
+    with (
+        row(subtests, check="an apps socket carries only its own conversations"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _an_apps_socket_carries_only_its_own_conversations(
+                labelled(subtests, check="an apps socket carries only its own conversations"),
+                tmp_path_factory.mktemp("an-apps-socket-carries"),
+            )
+    with (
+        row(subtests, check="the session list an app reads on connecting is its own"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _the_session_list_an_app_reads_on_connecting_is_its_own(
+                labelled(subtests, check="the session list an app reads on connecting is its own"),
+                tmp_path_factory.mktemp("the-session-list-an"),
+            )
+    with (
+        row(subtests, check="the runtime says when its policy answered the ask"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _the_runtime_says_when_its_policy_answered_the_ask()
+    with row(subtests, check="an auto approved call says whose grant it was"), fences_unchanged():
+        async with tasks_ended():
+            await _an_auto_approved_call_says_whose_grant_it_was(
+                labelled(subtests, check="an auto approved call says whose grant it was"),
+                tmp_path_factory.mktemp("an-auto-approved-call"),
+            )
+    with (
+        row(
+            subtests,
+            check="without the agent grant the chat still says whose permissions it runs under",
+        ),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _without_the_agent_grant_the_chat_still_says_whose_permissions_it_runs_under(
+                tmp_path_factory.mktemp("without-the-agent-grant")
+            )
+    with row(subtests, check="an app reads only the notifications it raised"), fences_unchanged():
+        async with tasks_ended():
+            await _an_app_reads_only_the_notifications_it_raised(
+                labelled(subtests, check="an app reads only the notifications it raised"),
+                tmp_path_factory.mktemp("an-app-reads-only"),
+            )
+    with (
+        row(subtests, check="an apps socket carries only its own notifications"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _an_apps_socket_carries_only_its_own_notifications(
+                labelled(subtests, check="an apps socket carries only its own notifications"),
+                tmp_path_factory.mktemp("an-apps-socket-carries"),
+            )
