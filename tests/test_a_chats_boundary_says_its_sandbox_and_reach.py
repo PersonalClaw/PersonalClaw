@@ -293,7 +293,7 @@ async def test_it_says_no_path_secret_or_command_and_changes_nothing(tmp_path, b
     """The answer is two readings of fixed words: nothing of the runtime's command, its
     environment, the chat's folder or the query is said back, and a read writes nothing."""
     agent_cli["command"] = [str(tmp_path / "bin" / "boundary-test-cli"), "--acp"]
-    agent_cli["env"] = {"BOUNDARY_TEST_KEY": "sk-boundary-test-not-a-real-key"}
+    agent_cli["env"] = {"BOUNDARY_TEST_KEY": "fake-boundary-test-value"}
     state = _make_state(tmp_path)
     chat = state.get_or_create_session()
     chat.acp_provider = AGENT_CLI
@@ -308,7 +308,13 @@ async def test_it_says_no_path_secret_or_command_and_changes_nothing(tmp_path, b
         assert set(body["sandbox"]) == {"confined", "label", "said"}
         assert set(body["reach"]) == {"tier", "label", "said"}
         said = repr(body)
-        for leak in (str(tmp_path), "boundary-test-cli", "sk-boundary", "BOUNDARY_TEST_KEY", "<b>"):
+        for leak in (
+            str(tmp_path),
+            "boundary-test-cli",
+            "fake-boundary",
+            "BOUNDARY_TEST_KEY",
+            "<b>",
+        ):
             assert leak not in said, (query, leak)
 
     assert sorted((p, p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()) == before
