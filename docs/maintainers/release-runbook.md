@@ -248,17 +248,30 @@ merges a commit's suite shard can be replaced by a newer push's, and its `test` 
 reads red as `superseded by <newer commit>`: its tree was not tested on its own. Tag the newer
 commit once its own run is green instead. Nothing enforces this yet; #3911's release gate must.
 
-A `v*` tag can never be moved or deleted once pushed ([the release tags](ci.md#the-release-tags)).
-Once `release-tag-creation` is applied too, a hand-pushed `v*` tag is refused, yours included:
-dispatch `release-tag.yml` on `main` with the tag and the commit instead. Until then:
-
-Tag the **merge commit on `main`**, not your branch tip:
+A `v*` tag can never be moved or deleted once pushed, and only the release controller's App can
+create one ([the release tags](ci.md#the-release-tags)): a hand-pushed `v*` tag is refused, yours
+included. Tag the **merge commit on `main`** by dispatching the tagging workflow on `main` with
+the tag and that commit:
 
 ```bash
 git checkout main && git pull --ff-only
-git tag -a v0.1.3 -m "PersonalClaw v0.1.3"
-git push origin v0.1.3
+gh workflow run release-tag.yml --ref main -f tag=v0.1.3 -f commit="$(git rev-parse HEAD)"
 ```
+
+It refuses, naming why, a tag the release's parser refuses, a commit that is not on `main`, a
+commit whose workflows, actions or `tools/ci` differ from `main`'s, and a tag that exists. Then
+it creates the annotated tag (`PersonalClaw v0.1.3`) through the App, and the tag's push starts
+`release.yml` as before. To try the path without a release, add `-f rehearsal=true`: it makes
+`rehearsal-v0.1.3`, which nothing releases; delete it after.
+
+**Break glass, the owner only.** If the App cannot tag (its key revoked or lost, the App
+suspended, a GitHub outage that stops the workflow), the owner, and no agent, disables the
+`release-tag-creation` ruleset (Settings → Rules → Rulesets, or `gh api -X PUT
+repos/PersonalClaw/PersonalClaw/rulesets/<id>` with `"enforcement": "disabled"`), pushes the
+annotated tag by hand from the merge commit on `main` as above, and turns the ruleset back on
+from `.github/rulesets/release-tag-creation.json` at once. The gap is then logged in the CI
+settings log, with the time the ruleset went off and the time it came back, and the weekly report
+shows the hand-pushed tag as bypass use until the week has passed.
 
 > **Annotated tags dereference.** `git rev-parse v0.1.3` gives you the *tag
 > object* SHA, not the commit. Anything that needs the commit — notably the

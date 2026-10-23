@@ -7,12 +7,13 @@ conversation resolved and stale reviews dismissed, merged without a merge commit
 no force push and no deletion. The weekly settings report compares the live rulesets with these
 files; this rail keeps the files themselves from losing a rule.
 
-``release-tags`` refuses moving and deleting a release tag, with no bypass actor, and is applied.
-``release-tag-creation`` refuses creating one, and waits under ``.github/rulesets/pending/`` until
-the release controller's App exists, so the report does not expect it live yet; it is the one
-ruleset with a bypass actor: exactly one, an App (``Integration``), whose id may be unset only
-while the file waits. A ruleset's bypass list covers every rule in it, which is
-why the two are apart. Each rule fails on a planted edit of the real files.
+``release-tags`` refuses moving and deleting a release tag, with no bypass actor.
+``release-tag-creation`` refuses creating one, and is the one ruleset with a bypass actor: exactly
+one, an App (``Integration``), the release controller's. Both are applied; a ruleset not yet
+applied waits under ``.github/rulesets/pending/``, where the report does not read it, and only
+there may that id be unset: an applied ruleset's bypass actor names a real id. A ruleset's bypass
+list covers every rule in it, which is why the two are apart. Each rule fails on a planted edit
+of the real files.
 """
 
 from __future__ import annotations
@@ -229,20 +230,35 @@ def _tags(applied: dict[str, dict[str, Any]], pending: dict[str, dict[str, Any]]
     return applied.get(_TAGS) or pending[_TAGS]
 
 
-def _creation_actor(pending: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    actor: dict[str, Any] = pending[_CREATION]["bypass_actors"][0]
+def _creation(
+    applied: dict[str, dict[str, Any]], pending: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """release-tag-creation, applied or pending."""
+    return applied.get(_CREATION) or pending[_CREATION]
+
+
+def _actor(
+    applied: dict[str, dict[str, Any]], pending: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    actor: dict[str, Any] = _creation(applied, pending)["bypass_actors"][0]
     return actor
+
+
+def _to_pending(applied: dict[str, dict[str, Any]], pending: dict[str, dict[str, Any]]) -> None:
+    """Put release-tag-creation back where it waited, as it was before the App existed."""
+    if _CREATION in applied:
+        pending[_CREATION] = applied.pop(_CREATION)
 
 
 @pytest.mark.parametrize(
     "plant, says",
     [
         (lambda a, p: (a.pop(_TAGS, None), p.pop(_TAGS, None)), "no release-tags.json"),
-        (lambda a, p: p.pop(_CREATION), "no release-tag-creation.json"),
+        (lambda a, p: (a.pop(_CREATION, None), p.pop(_CREATION, None)), "no release-tag-creation"),
         (lambda a, p: _tags(a, p).update(enforcement="evaluate"), "not an active rule"),
         (lambda a, p: _tags(a, p).update(target="branch"), "not an active rule"),
         (
-            lambda a, p: p[_CREATION]["conditions"]["ref_name"].update(include=["refs/tags/*"]),
+            lambda a, p: _creation(a, p)["conditions"]["ref_name"].update(include=["refs/tags/*"]),
             "not an active rule on every v* tag",
         ),
         (
@@ -266,49 +282,28 @@ def _creation_actor(pending: dict[str, dict[str, Any]]) -> dict[str, Any]:
             ),
             "release-tags.json has bypass actors",
         ),
-        (lambda a, p: p[_CREATION]["rules"].append({"type": "update"}), "not creation alone"),
-        (lambda a, p: p[_CREATION].update(bypass_actors=[]), "not the controller's one App"),
+        (lambda a, p: _creation(a, p)["rules"].append({"type": "update"}), "not creation alone"),
+        (lambda a, p: _creation(a, p).update(bypass_actors=[]), "not the controller's one App"),
         (
-            lambda a, p: p[_CREATION]["bypass_actors"].append(
+            lambda a, p: _creation(a, p)["bypass_actors"].append(
                 {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
             ),
             "not the controller's one App",
         ),
-        (lambda a, p: _creation_actor(p).update(actor_type="RepositoryRole"), "one App"),
-        (lambda a, p: _creation_actor(p).update(bypass_mode="pull_request"), "one App"),
-        (lambda a, p: _creation_actor(p).update(actor_id="815"), "App id is '815'"),
+        (lambda a, p: _actor(a, p).update(actor_type="RepositoryRole"), "one App"),
+        (lambda a, p: _actor(a, p).update(bypass_mode="pull_request"), "one App"),
+        (lambda a, p: _actor(a, p).update(actor_id="815"), "applied with no App id ('815')"),
+        (lambda a, p: _actor(a, p).update(actor_id=None), "applied with no App id (None)"),
+        (lambda a, p: _actor(a, p).update(actor_id=0), "applied with no App id (0)"),
+        (lambda a, p: _actor(a, p).update(actor_id=True), "applied with no App id (True)"),
+        (lambda a, p: _actor(a, p).update(actor_id=-1), "names no real id"),
         (
-            lambda a, p: (
-                _creation_actor(p).update(actor_id=None),
-                a.update({_CREATION: p.pop(_CREATION)}),
-            ),
-            "applied with no App id (None)",
+            lambda a, p: (_to_pending(a, p), _actor(a, p).update(actor_id=0)),
+            "App id is 0",
         ),
-        (
-            lambda a, p: (
-                _creation_actor(p).update(actor_id=0),
-                a.update({_CREATION: p.pop(_CREATION)}),
-            ),
-            "applied with no App id (0)",
-        ),
-        (
-            lambda a, p: (
-                _creation_actor(p).update(actor_id=True),
-                a.update({_CREATION: p.pop(_CREATION)}),
-            ),
-            "applied with no App id (True)",
-        ),
-        (
-            lambda a, p: (
-                _creation_actor(p).update(actor_id=-1),
-                a.update({_CREATION: p.pop(_CREATION)}),
-            ),
-            "names no real id",
-        ),
-        (lambda a, p: _creation_actor(p).update(actor_id=0), "App id is 0"),
         (lambda a, p: p.update({_TAGS: _tags(a, p)}), "both applied and pending"),
         (
-            lambda a, p: p[_CREATION].update(name="creation"),
+            lambda a, p: (_to_pending(a, p), _creation(a, p).update(name="creation")),
             "pending/release-tag-creation.json names",
         ),
         (lambda a, p: _tags(a, p).update(name="tags"), "release-tags.json names the ruleset"),
@@ -323,9 +318,10 @@ def test_a_planted_edit_of_a_tag_ruleset_fails(
     assert any(says in p for p in found), found
 
 
-def test_the_creation_ruleset_applied_with_its_app_id_passes() -> None:
+def test_the_creation_ruleset_may_wait_with_no_app_id_but_not_go_live_without_one() -> None:
     applied, pending = _both()
-    creation = pending.pop(_CREATION)
-    creation["bypass_actors"][0]["actor_id"] = 815
-    applied[_CREATION] = creation
+    _to_pending(applied, pending)
+    _actor(applied, pending)["actor_id"] = None
     assert _problems(applied, pending) == []
+    applied[_CREATION] = pending.pop(_CREATION)
+    assert any("applied with no App id" in p for p in _problems(applied, pending))

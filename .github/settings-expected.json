@@ -81,7 +81,16 @@
           "wait_timer": 0
         }
       },
-      "allowed bypass": []
+      "allowed bypass": [
+        {
+          "actor_name": "personalclaw-ci-controller[bot]",
+          "ref_prefix": "refs/tags/v"
+        },
+        {
+          "actor_name": "personalclaw-ci-controller[bot]",
+          "ref_prefix": "refs/tags/rehearsal-v"
+        }
+      ]
     },
     "PersonalClaw/PersonalClawApps": {
       "merge methods": {
