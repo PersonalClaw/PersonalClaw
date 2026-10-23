@@ -44,13 +44,13 @@ def _info(name: str, compress: int = zipfile.ZIP_STORED) -> zipfile.ZipInfo:
 
 
 def _history_lines(ci_run: int, days_ago: float, *, attempt: int = 1, **head: object) -> bytes:
-    """A history as the collector writes one: its run line a push to main of ci.yml unless
+    """A history as the collector writes one: its run line a push to main of merge.yml unless
     ``head`` says otherwise, and two test lines."""
     created = _iso(NOW - datetime.timedelta(days=days_ago))
     line = dict.fromkeys(telemetry.RUN_FIELDS)
     line.update(kind="run", schema=telemetry.SCHEMA, version=telemetry.VERSION, run_id=ci_run)
     line.update(attempt=attempt, created_at=created, sha=f"{ci_run:040x}", jobs=[])
-    line.update(workflow="ci.yml", event="push", branch="main")
+    line.update(workflow=workflows.MERGE, event="push", branch="main")
     line.update(head)
     lines = [line]
     for i in range(2):
@@ -134,7 +134,7 @@ class Gh:
         self.runs.sort(key=lambda r: r["created_at"], reverse=True)
         return run
 
-    def source(self, run_id: int, days_ago: float, workflow: str = "ci.yml", **changes: object):
+    def source(self, run_id: int, days_ago: float, workflow: str = workflows.MERGE, **changes):
         """The CI, Merge or Breadth run a history came from, as its workflow's listing shows it."""
         run = {
             "id": run_id,
@@ -278,7 +278,7 @@ def test_the_window_is_every_collector_history_and_the_newest_slots_in_one_archi
             id="a-pr-run",
         ),
         pytest.param(
-            {"path": telemetry.CI_PATH}, "is not the collector's own run", id="another-workflow"
+            {"path": telemetry.MERGE_PATH}, "is not the collector's own run", id="another-workflow"
         ),
         pytest.param(
             {"head_branch": "feature-x"},
@@ -422,7 +422,7 @@ def test_an_archive_over_the_limit_is_never_downloaded_nor_kept(tmp_path: Path) 
 def test_a_history_whose_source_run_cannot_be_shown_is_refused(
     tmp_path: Path, head: dict, source: dict | None, why: str
 ) -> None:
-    """A history is kept only when its run line names a counted run (a push to main of ci.yml or
+    """A history is kept only when its run line names a counted run (a push to main of
     merge.yml, or a scheduled or dispatched Breadth run on main) that the workflow's own listing
     shows, in this repository, with that attempt, and the archive is named after that run and
     attempt."""
@@ -524,15 +524,16 @@ def test_a_breadth_history_is_shown_by_breadths_own_listing(tmp_path: Path) -> N
     assert _fetch(gh, tmp_path / "window").fetched == 1
 
 
-def test_a_merge_history_is_shown_by_merges_own_listing(tmp_path: Path) -> None:
-    """A push to main of merge.yml counts as ci.yml's does, so its history is fetched too (#3915):
-    both shapes are read until the flip deletes ci.yml."""
+def test_a_history_of_the_deleted_ci_yml_is_refused(tmp_path: Path) -> None:
+    """The flip deleted ci.yml (#3915): a history whose run line names it is no counted run, and
+    the fetch lists no run of it."""
     gh = Gh()
     gh.collector(30, "workflow_run", 1)
-    gh.artifact(30, "telemetry-history-300-1", _history_zip(300, 1, workflow=workflows.MERGE))
-    gh.source(300, 1, workflow=workflows.MERGE)
-    assert _fetch(gh, tmp_path / "window").fetched == 1
-    assert any(f"/actions/workflows/{workflows.MERGE}/runs?" in a for a in gh.asked), gh.asked
+    gh.artifact(30, "telemetry-history-300-1", _history_zip(300, 1, workflow="ci.yml"))
+    out = tmp_path / "window"
+    assert _fetch(gh, out).refused == 1
+    assert _refused(out, "run 300 (ci.yml, push, main) is not a counted run"), _status(out)
+    assert not any("/actions/workflows/ci.yml/" in a for a in gh.asked), gh.asked
 
 
 def test_a_second_archive_of_one_name_is_refused(tmp_path: Path) -> None:
@@ -845,7 +846,7 @@ def test_a_carried_history_is_checked_again_as_a_fetched_one_and_dropped(
     if change == "collector":
         gh.runs = [r for r in gh.runs if r["id"] != 20]
     elif change == "source":
-        gh.sources["ci.yml"] = [r for r in gh.sources["ci.yml"] if r["id"] != 200]
+        gh.sources[workflows.MERGE] = [r for r in gh.sources[workflows.MERGE] if r["id"] != 200]
     elif change == "content":
         members["telemetry-history-200-1.zip"] = _history_zip(200, 3, run_id=201)
     else:

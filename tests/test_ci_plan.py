@@ -605,15 +605,27 @@ def test_reaches_matches_what_git_ls_files_selects(tmp_path) -> None:
 # ── the rails floor ──────────────────────────────────────────────────────────────────────────
 
 
+def _rails_legs(minutes: object, conclusion: str = "success") -> str:
+    """The three legs as a history's jobs JSON, by matrix key: the first at *minutes* (spelled
+    as given), the other two at 1."""
+    return ", ".join(
+        (
+            json.dumps({"name": f"rails ({n}/3)", "conclusion": conclusion, "minutes": 1.0})
+            if n > 1
+            else f'{{"name": "rails ({n}/3)", "conclusion": "{conclusion}", "minutes": {minutes}}}'
+        )
+        for n in (1, 2, 3)
+    )
+
+
 def _history(folder: Path, run_id: int, workflow: str, rails: float, conclusion: str) -> None:
+    """A run of *workflow* whose rails legs end at *rails* minutes with *conclusion*."""
+    legs = json.loads(f"[{_rails_legs(rails, conclusion)}]")
     head = {
         "kind": "run",
         "run_id": run_id,
         "workflow": workflow,
-        "jobs": [
-            {"name": "rails", "conclusion": conclusion, "minutes": rails},
-            {"name": "lint", "conclusion": "success", "minutes": 1.0},
-        ],
+        "jobs": [*legs, {"name": "lint", "conclusion": "success", "minutes": 1.0}],
     }
     test = {"kind": "test", "test": "tests/test_x.py::test_it"}
     lines = [json.dumps(head), json.dumps(test)]
@@ -625,32 +637,33 @@ def _head(folder: Path, run_id: int, head: str) -> None:
 
 
 def test_the_rails_floor_is_the_median_of_cis_recorded_rails_runs(tmp_path) -> None:
-    """The median, not the mean (14.5 here), of ci.yml's passing rails runs alone."""
-    _history(tmp_path, 1, "ci.yml", 6.0, "success")
-    _history(tmp_path, 2, "ci.yml", 30.0, "success")
-    _history(tmp_path, 3, "ci.yml", 7.5, "success")
+    """The median, not the mean (14.5 here), of merge.yml's passing rails runs alone: not
+    breadth's, not a cancelled one, not ci.yml's (#3915 deleted it), not a test line's."""
+    _history(tmp_path, 1, "merge.yml", 6.0, "success")
+    _history(tmp_path, 2, "merge.yml", 30.0, "success")
+    _history(tmp_path, 3, "merge.yml", 7.5, "success")
     _history(tmp_path, 4, "breadth.yml", 99.0, "success")
-    _history(tmp_path, 5, "ci.yml", 1.0, "cancelled")
-    rails = '{"name": "rails", "conclusion": "success", "minutes": %s}'
-    _head(tmp_path, 6, '{"kind": "test", "workflow": "ci.yml", "jobs": [%s]}' % (rails % 2))
-    _head(tmp_path, 7, '{"kind": "run", "workflow": "ci.yml", "jobs": [%s]}' % (rails % "true"))
+    _history(tmp_path, 5, "merge.yml", 1.0, "cancelled")
+    _history(tmp_path, 8, "ci.yml", 2.0, "success")
+    legs = _rails_legs(2)
+    _head(tmp_path, 6, '{"kind": "test", "workflow": "merge.yml", "jobs": [%s]}' % legs)
+    _head(
+        tmp_path, 7, '{"kind": "run", "workflow": "merge.yml", "jobs": [%s]}' % _rails_legs("true")
+    )
     assert planner.rails_floor(tmp_path) == {"minutes": 7.5, "runs": 3}
 
 
 @pytest.mark.parametrize(
     "head",
     [
-        '{"kind": "run", "workflow": "ci.yml", "jobs": 5}',
-        '{"kind": "run", "workflow": "ci.yml", "jobs": true}',
-        '{"kind": "run", "workflow": "ci.yml", "jobs": {"rails": 3}}',
-        '{"kind": "run", "workflow": "ci.yml", "jobs": [5, "rails", null]}',
+        '{"kind": "run", "workflow": "merge.yml", "jobs": 5}',
+        '{"kind": "run", "workflow": "merge.yml", "jobs": true}',
+        '{"kind": "run", "workflow": "merge.yml", "jobs": {"rails": 3}}',
+        '{"kind": "run", "workflow": "merge.yml", "jobs": [5, "rails", null]}',
         "[1, 2]",
-        '{"kind": "run", "workflow": "ci.yml", "jobs": [{"name": "rails", "conclusion": "success",'
-        ' "minutes": NaN}]}',
-        '{"kind": "run", "workflow": "ci.yml", "jobs": [{"name": "rails", "conclusion": "success",'
-        ' "minutes": Infinity}]}',
-        '{"kind": "run", "workflow": "ci.yml", "jobs": [{"name": "rails", "conclusion": "success",'
-        ' "minutes": -3}]}',
+        '{"kind": "run", "workflow": "merge.yml", "jobs": [%s]}' % _rails_legs("NaN"),
+        '{"kind": "run", "workflow": "merge.yml", "jobs": [%s]}' % _rails_legs("Infinity"),
+        '{"kind": "run", "workflow": "merge.yml", "jobs": [%s]}' % _rails_legs(-3),
     ],
     ids=[
         "jobs-int",
@@ -664,7 +677,7 @@ def test_the_rails_floor_is_the_median_of_cis_recorded_rails_runs(tmp_path) -> N
     ],
 )
 def test_a_history_head_it_cannot_measure_from_is_skipped(tmp_path, head) -> None:
-    _history(tmp_path, 1, "ci.yml", 6.0, "success")
+    _history(tmp_path, 1, "merge.yml", 6.0, "success")
     _head(tmp_path, 2, head)
     assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 1}
     p = _plan(["docs/a.md"], history=tmp_path)
@@ -695,57 +708,49 @@ def test_every_plan_reports_the_floor() -> None:
 
 
 def _legs(
-    folder: Path, run_id: int, *legs: tuple[str, str, float], workflow: str = workflows.LEGACY
+    folder: Path, run_id: int, *legs: tuple[str, str, float], workflow: str = workflows.MERGE
 ) -> None:
     jobs = [{"name": n, "conclusion": c, "minutes": m} for n, c, m in legs]
     _head(folder, run_id, json.dumps({"kind": "run", "workflow": workflow, "jobs": jobs}))
 
 
-#: The three legs, passing, in minutes.
+#: The three legs, passing, in minutes, by matrix key as merge.yml names them.
 def _three(first: float, second: float, third: float) -> tuple[tuple[str, str, float], ...]:
     return (
-        ("rails (1)", "success", first),
-        ("rails (2)", "success", second),
-        ("rails (3)", "success", third),
+        ("rails (1/3)", "success", first),
+        ("rails (2/3)", "success", second),
+        ("rails (3/3)", "success", third),
+    )
+
+
+#: The same legs as the deleted ci.yml's matrix named them.
+def _numbered(first: float, second: float, third: float) -> tuple[tuple[str, str, float], ...]:
+    return tuple(
+        (f"rails ({n})", c, m) for n, (_, c, m) in enumerate(_three(first, second, third), 1)
     )
 
 
 def test_the_floor_reads_the_rails_job_as_three_legs() -> None:
-    assert planner.FLOOR_LEGS == ("rails (1)", "rails (2)", "rails (3)")
     # merge.yml names each leg by its matrix key, as run-job keys its record.
     assert planner.FLOOR_MATRIX_LEGS == ("rails (1/3)", "rails (2/3)", "rails (3/3)")
 
 
-def test_the_floor_reads_each_workflow_a_push_to_main_runs_in() -> None:
-    assert planner.FLOOR_WORKFLOWS == workflows.MAIN_PUSH == (workflows.MERGE, workflows.LEGACY)
-
-
-def _matrix_three(first: float, second: float, third: float) -> tuple[tuple[str, str, float], ...]:
-    return tuple(
-        (f"rails ({n}/3)", c, m) for n, (_, c, m) in enumerate(_three(first, second, third), 1)
-    )
-
-
-def test_a_merge_yml_push_floor_is_its_slowest_leg_by_matrix_key(tmp_path) -> None:
-    """Both shapes of a push to main's run, while both exist: merge.yml's legs by matrix key and
-    ci.yml's by number. Each workflow's run reads by its own names alone."""
-    _legs(tmp_path, 1, *_matrix_three(6.0, 4.0, 5.0), workflow=workflows.MERGE)
-    _legs(tmp_path, 2, *_three(5.0, 5.5, 3.0))
-    _legs(tmp_path, 3, *_matrix_three(9.0, 1.0, 1.0), workflow=workflows.MERGE)
-    assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 3}
+def test_the_floor_reads_the_workflow_a_push_to_main_runs_in() -> None:
+    assert planner.FLOOR_WORKFLOWS == workflows.MAIN_PUSH == (workflows.MERGE,)
 
 
 @pytest.mark.parametrize(
     ("workflow", "legs"),
     [
-        pytest.param(workflows.MERGE, _three(6.0, 5.0, 4.0), id="merge.yml with ci.yml's names"),
-        pytest.param(workflows.LEGACY, _matrix_three(6.0, 5.0, 4.0), id="ci.yml with merge.yml's"),
+        pytest.param(workflows.MERGE, _numbered(6.0, 5.0, 4.0), id="ci.yml's names in merge.yml"),
+        pytest.param("ci.yml", _three(6.0, 5.0, 4.0), id="a run of the deleted ci.yml"),
+        pytest.param("ci.yml", (("rails", "success", 6.0),), id="ci.yml's one rails job"),
         pytest.param(
             workflows.MERGE,
-            _matrix_three(6.0, 5.0, 4.0)[:2] + (("rails (3)", "success", 4.0),),
+            _three(6.0, 5.0, 4.0)[:2] + (("rails (3)", "success", 4.0),),
             id="both names in one run",
         ),
-        pytest.param(workflows.FEEDBACK, _matrix_three(6.0, 5.0, 4.0), id="pr.yml's run"),
+        pytest.param(workflows.FEEDBACK, _three(6.0, 5.0, 4.0), id="pr.yml's run"),
     ],
 )
 def test_a_run_whose_legs_are_not_its_workflows_measures_nothing(tmp_path, workflow, legs) -> None:
@@ -757,14 +762,14 @@ def test_a_run_in_legs_floor_is_its_slowest_leg(tmp_path) -> None:
     """The rails end when the slowest leg ends: 6, 4 and 5 is a 6-minute run, never 4 or 15."""
     _legs(tmp_path, 1, *_three(6.0, 4.0, 5.0))
     _legs(tmp_path, 2, *_three(5.0, 5.5, 3.0))
-    _history(tmp_path, 3, "ci.yml", 9.0, "success")
+    _legs(tmp_path, 3, *_three(9.0, 1.0, 1.0))
     assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 3}
 
 
 @pytest.mark.parametrize(
     "legs",
     [
-        _three(6.0, 4.0, 5.0)[:2] + (("rails (3)", "cancelled", 10.3),),
+        _three(6.0, 4.0, 5.0)[:2] + (("rails (3/3)", "cancelled", 10.3),),
         _three(6.0, float("nan"), 5.0),
     ],
     ids=["a-leg-cut-off", "a-leg-unmeasured"],
@@ -775,14 +780,15 @@ def test_a_run_with_a_leg_that_did_not_pass_measures_nothing(tmp_path, legs) -> 
     assert planner.rails_floor(tmp_path) == planner.NOT_MEASURED
 
 
-#: Runs whose rails jobs are not one whole job, nor exactly the three legs, each once.
+#: Runs whose rails jobs are not exactly the three legs, each once.
 _NOT_THE_LEGS = {
-    "only leg 1": (("rails (1)", "success", 6.0),),
+    "only leg 1": (("rails (1/3)", "success", 6.0),),
     "legs 1 and 2, as the two halves were": _three(6.0, 5.0, 4.0)[:2],
     "legs 1 and 3": (_three(6.0, 5.0, 4.0)[0], _three(6.0, 5.0, 4.0)[2]),
-    "leg 1 twice": _three(6.0, 5.0, 4.0) + (("rails (1)", "success", 5.0),),
-    "a fourth leg": _three(6.0, 5.0, 4.0) + (("rails (4)", "success", 4.0),),
+    "leg 1 twice": _three(6.0, 5.0, 4.0) + (("rails (1/3)", "success", 5.0),),
+    "a fourth leg": _three(6.0, 5.0, 4.0) + (("rails (4/4)", "success", 4.0),),
     "the whole job beside the legs": (("rails", "success", 9.0), *_three(6.0, 5.0, 4.0)),
+    "the whole job alone, as ci.yml ran it before the legs": (("rails", "success", 6.0),),
     "the whole job twice": (("rails", "success", 6.0), ("rails", "success", 5.0)),
 }
 
@@ -959,8 +965,9 @@ def test_the_command_exits_2_on_a_tier_with_no_job(tmp_path, tier, why) -> None:
 def test_the_command_prints_strict_json_whatever_the_history(tmp_path, minutes) -> None:
     history = tmp_path / "history"
     history.mkdir()
-    head = '{"kind": "run", "workflow": "ci.yml", "jobs": [{"name": "rails", "conclusion": '
-    _head(history, 1, head + f'"success", "minutes": {minutes}' + "}]}")
+    _head(
+        history, 1, '{"kind": "run", "workflow": "merge.yml", "jobs": [%s]}' % _rails_legs(minutes)
+    )
     code, out = _cli(tmp_path, "--history", str(history))
     assert code == 0
     data = json.loads(out, parse_constant=lambda c: pytest.fail(f"not strict JSON: {c}"))
@@ -971,7 +978,7 @@ def test_the_command_prints_strict_json_whatever_the_history(tmp_path, minutes) 
 def test_the_command_plans_on_a_history_it_cannot_read(tmp_path, jobs) -> None:
     history = tmp_path / "history"
     history.mkdir()
-    _head(history, 1, '{"kind": "run", "workflow": "ci.yml", "jobs": %s}' % jobs)
+    _head(history, 1, '{"kind": "run", "workflow": "merge.yml", "jobs": %s}' % jobs)
     code, out = _cli(tmp_path, "--history", str(history))
     assert code == 0 and json.loads(out)["rails_floor"] == planner.NOT_MEASURED
 
@@ -1318,20 +1325,21 @@ _REPO = "example/repo"
 def _zip(
     run_id: int,
     rails: float,
-    workflow: str = "ci.yml",
+    workflow: str = workflows.MERGE,
     *,
     kind: str = "run",
     line_bytes: int | None = None,
     legs: tuple[tuple[str, str, float], ...] = (),
 ) -> bytes:
-    """One history archive whose run line names ``run_id``: one passing ``rails`` job of
-    ``rails`` minutes, or the jobs ``legs`` names (name, conclusion, minutes). ``line_bytes``
+    """One history archive whose run line names ``run_id``: the three legs passing, the slowest
+    at ``rails`` minutes, or the jobs ``legs`` names (name, conclusion, minutes). ``line_bytes``
     pads that line, its newline included, to exactly that length."""
     import io
     import zipfile
 
-    jobs = [{"name": n, "conclusion": c, "minutes": m} for n, c, m in legs] or [
-        {"name": "rails", "conclusion": "success", "minutes": rails}
+    jobs = [
+        {"name": n, "conclusion": c, "minutes": m}
+        for n, c, m in (legs or _three(rails, min(rails, 1.0), min(rails, 1.0)))
     ]
     head: dict[str, object] = {"kind": kind, "run_id": run_id, "workflow": workflow, "jobs": jobs}
     line = json.dumps(head) + "\n"
@@ -1366,10 +1374,9 @@ def _gh(
     clock: _Clock | None = None,
     cost=None,
     timeouts: list[float | None] | None = None,
-    merge: tuple[int, ...] = (),
 ):
     """A fake gh: the listed runs, each with its conclusion and its history archive, all of them
-    ci.yml's but those ``merge`` names, which merge.yml lists. With a ``clock``, each call takes
+    merge.yml's, and no other workflow's. With a ``clock``, each call takes
     ``cost(args)`` seconds, or its timeout, when that is shorter, and then fails as a hung call
     would."""
     from tools.ci import telemetry
@@ -1390,7 +1397,7 @@ def _gh(
         path = args[1]
         if path.startswith(f"repos/{_REPO}/actions/workflows/"):
             of_merge = path.startswith(f"repos/{_REPO}/actions/workflows/{workflows.MERGE}/")
-            listed = {r: v for r, v in runs.items() if (r in merge) == of_merge}
+            listed = runs if of_merge else {}
             return "".join(f"{r} {c} {owner}\n" for r, (c, _) in listed.items())
         if path.startswith(f"repos/{_REPO}/actions/artifacts?name="):
             run = int(path.split("telemetry-history-")[1].split("-")[0])
@@ -1425,18 +1432,19 @@ def _floor(text, binary, **kw):
     return planner.rails_floor_from_ci(_REPO, text=text, binary=binary, **kw)
 
 
-def test_the_ci_floor_lists_merge_yml_s_runs_before_ci_yml_s() -> None:
-    """The newer shape first: merge.yml's push runs once the flip lands, ci.yml's until then. A
-    run listed under one workflow counts only when its history names that workflow."""
+def test_the_ci_floor_lists_merge_yml_s_runs_alone() -> None:
+    """merge.yml's push runs, the one workflow a push to main runs in since the flip (#3915). A
+    run listed under it counts only when its history names it: one that names the deleted
+    ci.yml measures nothing."""
     asked: list[str] = []
     runs = {
-        3: ("success", _zip(3, 0, workflows.MERGE, legs=_matrix_three(8.0, 1.0, 1.0))),
+        3: ("success", _zip(3, 8.0)),
         2: ("success", _zip(2, 6.0)),
-        1: ("success", _zip(1, 7.0)),
         # Listed under merge.yml, but its history names ci.yml: no measurement of merge.yml's.
-        0: ("success", _zip(0, 99.0)),
+        1: ("success", _zip(1, 99.0, "ci.yml")),
+        0: ("success", _zip(0, 7.0)),
     }
-    text, binary = _gh(runs, merge=(3, 0))
+    text, binary = _gh(runs)
 
     def listing(*args: str, timeout: float | None = None) -> str:
         if "/actions/workflows/" in args[1]:
@@ -1444,7 +1452,7 @@ def test_the_ci_floor_lists_merge_yml_s_runs_before_ci_yml_s() -> None:
         return text(*args, timeout=timeout)
 
     assert _floor(listing, binary) == {"minutes": 7.0, "runs": 3}
-    assert asked == [workflows.MERGE, workflows.LEGACY]
+    assert asked == [workflows.MERGE]
 
 
 def test_the_ci_floor_is_the_median_of_the_newest_three_collected_runs() -> None:
@@ -1471,10 +1479,10 @@ def _ordered(
 
 @pytest.mark.parametrize("slowest_first", [True, False], ids=["slowest-first", "slowest-last"])
 def test_the_ci_floor_of_runs_in_legs_is_each_runs_slowest_leg(slowest_first) -> None:
-    """The path ci.yml's `changes` job reads: a run's rails minutes are its slowest leg's, in
-    whichever order its history lists them; a run with a leg cut off measures nothing, so the
-    next run is read instead; a run from before the legs counts by its one job."""
-    cut_off = _three(3.0, 2.0, 1.0)[:2] + (("rails (3)", "cancelled", 10.3),)
+    """The path the plan step reads: a run's rails minutes are its slowest leg's, in whichever
+    order its history lists them; a run with a leg cut off measures nothing, so the next run is
+    read instead."""
+    cut_off = _three(3.0, 2.0, 1.0)[:2] + (("rails (3/3)", "cancelled", 10.3),)
     runs = {
         5: ("success", _zip(5, 0, legs=_ordered(6.0, 4.0, 5.0, slowest_first))),
         4: ("failure", _zip(4, 0, legs=cut_off)),
@@ -1587,9 +1595,9 @@ def test_reading_never_passes_its_time_limit(listing: float, each: float) -> Non
 def test_a_read_that_runs_out_of_time_keeps_what_it_read(capsys) -> None:
     clock = _Clock()
     runs = {2: ("success", _zip(2, 8.0)), 1: ("success", _zip(1, 6.0))}
-    # 12 s a call: merge.yml's listing, ci.yml's, then run 2's artifact, uploader and archive
-    # spend the 60 s, and run 1 is never read.
-    text, binary = _gh(runs, clock=clock, cost=lambda args: 12.0)
+    # 15 s a call: merge.yml's listing, then run 2's artifact, uploader and archive spend the
+    # 60 s, and run 1 is never read.
+    text, binary = _gh(runs, clock=clock, cost=lambda args: 15.0)
     assert _floor(text, binary, clock=clock) == {"minutes": 8.0, "runs": 1}
     assert clock.now <= planner.FLOOR_SECONDS
     assert "rails floor not read" in capsys.readouterr().err

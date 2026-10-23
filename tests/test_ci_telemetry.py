@@ -60,8 +60,8 @@ def _run(**changes: object) -> dict:
     run = {
         "id": RUN,
         "run_attempt": 1,
-        "name": "CI",
-        "path": telemetry.CI_PATH,
+        "name": "Merge",
+        "path": telemetry.MERGE_PATH,
         "event": "push",
         "head_branch": "main",
         "head_sha": "a" * 40,
@@ -226,6 +226,10 @@ def _collect(tmp_path: Path, monkeypatch, gh: FakeGh, attempt: int = 1) -> tuple
             _run(name="Merge", path=telemetry.MERGE_PATH, event="pull_request"),
             id="merge.yml on a pull request",
         ),
+        # The workflow the flip deleted (#3915): a run of it, were one to come, counts for nothing.
+        pytest.param(
+            _run(name="CI", path=f"{telemetry.WORKFLOWS}/ci.yml"), id="the deleted ci.yml's push"
+        ),
     ],
 )
 def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monkeypatch) -> None:
@@ -240,9 +244,7 @@ def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monk
 @pytest.mark.parametrize(
     "run",
     [
-        pytest.param(_run(), id="a push to main"),
-        # merge.yml's push stage once the flip retires ci.yml: the newer shape of the same run.
-        pytest.param(_run(name="Merge", path=telemetry.MERGE_PATH), id="merge.yml's push to main"),
+        pytest.param(_run(), id="merge.yml's push to main"),
         pytest.param(
             _run(name="Breadth", path=telemetry.BREADTH_PATH, event="schedule"),
             id="breadth's night",
@@ -291,7 +293,7 @@ def test_each_test_case_is_one_line_with_its_first_result(tmp_path: Path, monkey
 def test_the_run_line_carries_the_facts_only_the_api_knows(tmp_path: Path, monkeypatch) -> None:
     _, lines = _collect(tmp_path, monkeypatch, FakeGh())
     run = lines[0]
-    assert run["run_id"] == RUN and run["attempt"] == 1 and run["workflow"] == "ci.yml"
+    assert run["run_id"] == RUN and run["attempt"] == 1 and run["workflow"] == "merge.yml"
     assert run["verdict_seconds"] == 40 * 60
     assert run["queue_delay_seconds"] == 60, "the first job started a minute after the run"
     assert run["runner_minutes"] == 30 + 5 + 10
@@ -542,7 +544,7 @@ def test_a_listing_that_comes_up_short_writes_nothing(tmp_path: Path, monkeypatc
 @pytest.mark.parametrize(
     "run",
     [
-        pytest.param(_run(event="workflow_dispatch"), id="ci.yml dispatched on main"),
+        pytest.param(_run(event="workflow_dispatch"), id="merge.yml dispatched on main"),
         pytest.param(
             _run(name="Breadth", path=telemetry.BREADTH_PATH, event="push"), id="breadth pushed"
         ),
@@ -1327,7 +1329,9 @@ def _collector(**changes: object) -> dict:
         ),
         pytest.param({"event": "schedule"}, telemetry.HISTORY_EVENTS, False, id="slots-as-history"),
         pytest.param({"event": "pull_request"}, telemetry.HISTORY_EVENTS, False, id="a-pr-run"),
-        pytest.param({"path": telemetry.CI_PATH}, telemetry.HISTORY_EVENTS, False, id="ci-yml"),
+        pytest.param(
+            {"path": telemetry.MERGE_PATH}, telemetry.HISTORY_EVENTS, False, id="merge-yml"
+        ),
         pytest.param({"head_branch": "feature-x"}, telemetry.HISTORY_EVENTS, False, id="a-branch"),
         pytest.param(
             {"head_repository": {"full_name": "someone/fork"}},

@@ -499,6 +499,23 @@ def test_on_github_the_caches_are_the_setup_actions_own_folders(repo, tmp_path, 
     assert seen["UV_PYTHON"] == "3.12.15"
 
 
+def test_on_github_a_step_gets_the_runs_event_and_ref_and_here_neither(repo, tmp_path, monkeypatch):
+    """A rails leg records what each rail read only on a push to main (tests/rails_reads.py),
+    which it reads from the event and the full ref, as GitHub gives every step: so on GitHub a
+    step gets both, and here, where they name no run, neither."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    seen = _seen_env(repo, tmp_path, _host(repo, on_github=True))
+    assert (seen["GITHUB_EVENT_NAME"], seen["GITHUB_REF"]) == ("push", "refs/heads/main")
+    assert "GITHUB_ACTIONS" not in seen
+    (tmp_path / "here").mkdir()
+    here = _seen_env(repo, tmp_path / "here", _host(repo))
+    assert not {"GITHUB_EVENT_NAME", "GITHUB_REF"} & set(here), here
+
+
 def test_on_github_a_runner_python_that_is_not_the_jobs_own_is_refused(repo, tmp_path, monkeypatch):
     """The job's declared Python is the contract: setup-uv's UV_PYTHON may only agree with it."""
     monkeypatch.setenv("UV_PYTHON", "3.13.16")
@@ -1219,8 +1236,8 @@ def _on_a_pull_request(tmp_path: Path, monkeypatch, event: object) -> None:
 def test_a_lint_feedback_jobs_failed_step_leaves_its_output_for_the_pull_request(
     repo, tmp_path, monkeypatch
 ):
-    """ci.yml's lint job hands its violations on; under run-job a lint_feedback job does: the
-    failed step's command and output, and the pull request's number from the run's own event.
+    """A lint_feedback job hands its violations on under run-job: the failed step's command and
+    output, and the pull request's number from the run's own event.
     A step that passed before it is no part of it."""
     _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
     job = _job("static", "print('formatted')", _LINT_RED, lint_feedback=True)
@@ -1271,6 +1288,56 @@ def test_off_github_a_run_names_no_pull_request(tmp_path, monkeypatch) -> None:
     assert jobs.pull_request_number(_host(tmp_path)) is None
     path.write_text("not json")
     assert jobs.pull_request_number(_host(tmp_path, on_github=True)) is None
+
+
+_BEFORE = "b" * 40
+
+
+def _on_github_event(tmp_path: Path, monkeypatch, event: object, name: str, ref: str) -> None:
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(event) if not isinstance(event, str) else event)
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(path))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", name)
+    monkeypatch.setenv("GITHUB_REF", ref)
+
+
+def test_a_push_to_mains_base_is_the_commit_it_replaced(tmp_path, monkeypatch) -> None:
+    """A push to main diffs from the commit it replaced, as its own event names it: the
+    merge-base with origin/main would be the pushed commit itself, and compare it with nothing."""
+    _on_github_event(tmp_path, monkeypatch, {"before": _BEFORE}, "push", "refs/heads/main")
+    host = _host(tmp_path, on_github=True)
+    assert jobs.pushed_before(host) == _BEFORE
+    assert jobs._base(host, jobs.Options()) == _BEFORE
+    assert jobs._base(host, jobs.Options(base="v1")) == "v1"
+    sha256 = "c" * 64
+    _on_github_event(tmp_path, monkeypatch, {"before": sha256}, "push", "refs/heads/main")
+    assert jobs.pushed_before(host) == sha256
+
+
+@pytest.mark.parametrize(
+    ("event", "name", "ref", "on_github"),
+    [
+        pytest.param({"before": _BEFORE}, "push", "refs/heads/main", False, id="off-github"),
+        pytest.param({"before": _BEFORE}, "pull_request", "refs/pull/7/merge", True, id="a-pr"),
+        pytest.param({"before": _BEFORE}, "push", "refs/heads/feature", True, id="another-branch"),
+        pytest.param({"before": _BEFORE}, "push", "refs/tags/main", True, id="a-tag-named-main"),
+        pytest.param(
+            {"before": _BEFORE}, "workflow_dispatch", "refs/heads/main", True, id="a-dispatch"
+        ),
+        pytest.param({"before": "0" * 40}, "push", "refs/heads/main", True, id="a-new-branch"),
+        pytest.param({"before": "B" * 40}, "push", "refs/heads/main", True, id="uppercase"),
+        pytest.param({"before": "b" * 39}, "push", "refs/heads/main", True, id="short"),
+        pytest.param({"before": "-" + "b" * 39}, "push", "refs/heads/main", True, id="an-option"),
+        pytest.param({"before": 7}, "push", "refs/heads/main", True, id="a-number"),
+        pytest.param({}, "push", "refs/heads/main", True, id="none-named"),
+        pytest.param("not json", "push", "refs/heads/main", True, id="unreadable"),
+    ],
+)
+def test_no_other_run_reads_a_replaced_commit_as_its_base(
+    tmp_path, monkeypatch, event, name, ref, on_github
+) -> None:
+    _on_github_event(tmp_path, monkeypatch, event, name, ref)
+    assert jobs.pushed_before(_host(tmp_path, on_github=on_github)) is None
 
 
 def test_the_remediation_names_the_tool_as_ci_yml_does(tmp_path) -> None:

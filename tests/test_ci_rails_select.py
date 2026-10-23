@@ -210,7 +210,7 @@ def _run(run_id: int, **given: Any) -> dict[str, Any]:
         "head_branch": "main",
         "head_sha": COMMIT,
         # The workflow's file: _run_refusal reads only its name.
-        "path": "workflows/ci.yml",
+        "path": "workflows/merge.yml",
         "created_at": "2026-10-24T11:00:00Z",
         "repository": {"full_name": "o/r"},
         "head_repository": {"full_name": "o/r"},
@@ -218,10 +218,10 @@ def _run(run_id: int, **given: Any) -> dict[str, Any]:
     return {**run, **given}
 
 
-def _artifact(art_id: int, leg: str, run_id: int, **given: Any) -> dict[str, Any]:
+def _artifact(art_id: int, leg: str, run_id: int, attempt: int = 1, **given: Any) -> dict[str, Any]:
     return {
         "id": art_id,
-        "name": f"rails-reads-{leg}",
+        "name": f"reports-rails-{leg}-3-{attempt}",
         "expired": False,
         "size_in_bytes": 100,
         "workflow_run": {"id": run_id},
@@ -245,11 +245,9 @@ class _Gh:
 def _gh(
     runs: list[dict[str, Any]], artifacts: dict[int, list[dict[str, Any]]], zips: dict[int, bytes]
 ) -> _Gh:
-    # The first workflow read is merge.yml's, which runs no push to main before the flip.
-    first, last = rails_select.WORKFLOWS[0], rails_select.WORKFLOWS[-1]
+    (workflow,) = rails_select.WORKFLOWS
     answers = {
-        f"repos/{{owner}}/{{repo}}/actions/workflows/{first}/runs": b'{"workflow_runs": []}',
-        f"repos/{{owner}}/{{repo}}/actions/workflows/{last}/runs": json.dumps(
+        f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}/runs": json.dumps(
             {"workflow_runs": runs}
         ).encode(),
     }
@@ -263,7 +261,7 @@ def _gh(
 
 
 def test_main_s_newest_push_run_with_a_record_is_read_and_others_are_refused() -> None:
-    good = _zip("rails-reads-1.json", _record({A: _reads(files=["src/pkg/a.py"])}))
+    good = _zip("reports/rails-reads-1.json", _record({A: _reads(files=["src/pkg/a.py"])}))
     gh = _gh(
         [
             _run(9, event="pull_request"),
@@ -275,7 +273,7 @@ def test_main_s_newest_push_run_with_a_record_is_read_and_others_are_refused() -
         {70: good},
     )
     record, notes = rails_select.fetch(gh, NOW)
-    assert record is not None and record.source == "run 7 of ci.yml, legs 1"
+    assert record is not None and record.source == "run 7 of merge.yml, legs 1"
     assert set(record.rails) == {A}
     assert notes == ["run 9: not a push to main", "run 8: its head is another repository's"]
     assert not any("/runs/6/" in asked for asked in gh.asked)
@@ -284,22 +282,27 @@ def test_main_s_newest_push_run_with_a_record_is_read_and_others_are_refused() -
 @pytest.mark.parametrize(
     ("artifact", "member", "data", "refusal"),
     [
-        (_artifact(70, "1", 6), "rails-reads-1.json", None, "was not uploaded by run 7"),
-        (_artifact(70, "1", 7, expired=True), "rails-reads-1.json", None, "has expired"),
+        (_artifact(70, "1", 6), "reports/rails-reads-1.json", None, "was not uploaded by run 7"),
+        (_artifact(70, "1", 7, expired=True), "reports/rails-reads-1.json", None, "has expired"),
         (
             _artifact(70, "1", 7, size_in_bytes=rails_select.MAX_ARTIFACT_BYTES + 1),
-            "rails-reads-1.json",
+            "reports/rails-reads-1.json",
             None,
             "past",
         ),
-        (_artifact(70, "1", 7), "reports/rails-reads-1.json", None, "holds no rails-reads-1.json"),
         (
             _artifact(70, "1", 7),
-            "rails-reads-1.json",
+            "other/rails-reads-1.json",
+            None,
+            "holds no reports/rails-reads-1.json",
+        ),
+        (
+            _artifact(70, "1", 7),
+            "reports/rails-reads-1.json",
             _record({}, commit="b" * 40),
             "not the run's",
         ),
-        (_artifact(70, "1", 7), "rails-reads-1.json", _record({}, leg="2"), "not 1"),
+        (_artifact(70, "1", 7), "reports/rails-reads-1.json", _record({}, leg="2"), "not 1"),
     ],
 )
 def test_an_artifact_not_the_runs_own_record_is_refused(
@@ -313,6 +316,21 @@ def test_an_artifact_not_the_runs_own_record_is_refused(
     record, notes = rails_select.fetch(gh, NOW)
     assert record is None
     assert len(notes) == 1 and refusal in notes[0], notes
+
+
+def test_a_leg_s_newest_attempt_is_read_and_its_record_may_sit_at_the_artifact_s_root() -> None:
+    """A rerun uploads the leg again under its own attempt: the newest is read. An upload whose
+    one folder is reports/ itself holds the record at its root."""
+    older = _zip("reports/rails-reads-1.json", _record({A: _reads(files=["src/pkg/a.py"])}))
+    newer = _zip("rails-reads-1.json", _record({B: _reads(files=["src/pkg/b.py"])}))
+    gh = _gh(
+        [_run(7)],
+        {7: [_artifact(70, "1", 7, attempt=1), _artifact(71, "1", 7, attempt=2)]},
+        {70: older, 71: newer},
+    )
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is not None and set(record.rails) == {B}, (record, notes)
+    assert not any("/artifacts/70/" in asked for asked in gh.asked)
 
 
 def test_only_runs_of_the_last_day_are_asked_for() -> None:

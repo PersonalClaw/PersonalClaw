@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The Nix flake installs 0.2.7. It had stayed on 0.2.2, so a Nix install missed the five releases since, among them Pillow 13, which fixes the JPEG decoder's heap overflow and eight other image advisories, and the certifi bundle that drops the root certificates whose intermediate keys were compromised. Both are built from the files 0.2.7's lock pins, as `uv sync --locked` installs them.**
+- **CI is two workflows, each running the catalogue's jobs as its plan names them: `PR`, a pull request's fast feedback, and `Merge`, its merge verdict, which also checks every push to `main` and runs only the security corpus, the SDK contract and the browse proof when a pull request's run already tested the pushed tree. The one `CI` workflow and its checks are gone; a pull request's checks are its plan's entries, each named by its catalogue job.**
 
 ### Fixed
 

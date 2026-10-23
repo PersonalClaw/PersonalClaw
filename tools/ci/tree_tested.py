@@ -3,7 +3,7 @@
 A pull request's run is its tree's one expensive execution. When the push that merges it lands
 the very tree that run tested, the push repeats none of it; when it lands any other tree, the
 push runs every job on it, as that tree's one execution. This check answers which, for one
-workflow (``--workflow ci.yml``, or ``docker-single-container.yml``), and writes
+workflow (``--workflow merge.yml``), and writes
 ``tested=true|false`` to ``$GITHUB_OUTPUT`` with a summary naming why.
 
 **Yes** needs every one of these, read from the API, never from a candidate's artifact:

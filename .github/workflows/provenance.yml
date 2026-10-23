@@ -6,11 +6,11 @@
 # pushed tree against the tree the merge verdict recorded, is not checked here: #3908 keeps it
 # open until that record exists.
 #
-# WHY ITS OWN WORKFLOW, not a job in ci.yml. Each push checks only its own range, so a run that
+# WHY ITS OWN WORKFLOW, not a job in merge.yml. Each push checks only its own range, so a run that
 # never finishes leaves its commits unchecked for good: the next push starts from its own
 # `before`. A workflow with one job and no `needs:` cannot be dropped by tree-check's answer or
 # by any other job's outcome, and at a few seconds on one runner it is never worth cancelling,
-# whatever later becomes of ci.yml's main runs (#3915 plans one run per candidate). Its group
+# whatever a tested push lets merge.yml skip. Its group
 # is the commit's own, so no run can replace another.
 #
 # WHY THE PREVIOUS COMMIT'S COPY. The pushed commit is what is being judged, so its check, its

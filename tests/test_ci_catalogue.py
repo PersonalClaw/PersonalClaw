@@ -1,8 +1,8 @@
 """tools/ci/catalogue.py reads the catalogue of CI's jobs into typed jobs, and refuses a bad one.
 
 Every catalogue here is built from inline text or under tmp_path, so this module reads nothing of
-the tree; the real catalogue is held to ci.yml by the CI contract table's row "every catalogue
-command is the workflow's".
+the tree; the real catalogue's breadth entries are held to breadth.yml by the CI contract table's
+row "every catalogue command is the workflow's".
 """
 
 from __future__ import annotations
@@ -279,7 +279,8 @@ def test_a_merge_tier_without_the_rails_job_is_refused() -> None:
     assert any("the merge tier lacks the rails job" in p for p in problems), problems
 
 
-#: The rails in three legs, as ci.yml runs them, and the job that runs `rails check`.
+#: The rails in three legs, as the catalogue's rails entry runs them, and the job that runs
+#: `rails check`.
 _RAILS_IN_LEGS = (
     'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
     'shards = 3\ncommand = [{ argv = ["uv", "run", "pytest", "tests/rails", "--shard-list",'
@@ -767,7 +768,7 @@ def test_a_lint_feedback_value_that_is_not_a_boolean_is_refused() -> None:
 
 
 def test_the_catalogues_lint_feedback_job_is_static() -> None:
-    """The one job whose failed step pr-feedback.yml posts: ci.yml's lint job's, as an entry."""
+    """The one job whose failed step pr-feedback.yml posts: static, the lint job."""
     assert [job.id for job in catalogue.read().jobs if job.lint_feedback] == ["static"]
 
 

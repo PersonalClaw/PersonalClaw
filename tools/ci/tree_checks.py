@@ -63,8 +63,7 @@ class Check:
     :attr:`sources`, the test replaces at least one of the group's names.
 
     :attr:`owner` is ``"<catalogue job>: <what it runs>"``, the job's id in
-    ``tools/ci/catalogue.toml``, so it names the job in ``ci.yml``'s shape and the tier
-    workflows' alike."""
+    ``tools/ci/catalogue.toml``, which the tier workflows run."""
 
     owner: str
     entries: Mapping[tuple[str, str], str]

@@ -11,9 +11,10 @@
 # tests/test_website_installer.py, which reds if the job it names stops existing or
 # stops naming this file — an earlier version of this header advertised a weekly
 # container smoke that had never been written, and nothing noticed:
-#   · ci.yml   `lint`          shellcheck -s sh + sh -n + dash -n on this file (every PR)
-#   · ci.yml   `test`          offline contract: --help / --container / unknown-arg, the
-#                              truncation-safe structure, staged-vs-pinned digest
+#   · pr.yml   `test`          the catalogue's static entry, on every PR: shellcheck -s sh +
+#                              sh -n + dash -n on this file, then the offline contract:
+#                              --help / --container / unknown-arg, the truncation-safe
+#                              structure, staged-vs-pinned digest
 #   · breadth.yml `install-smoke` runs BOTH this file AND the bytes actually served at
 #                              /install, in a bare ubuntu container (nightly),
 #                              and reds when the two disagree. A fetch that

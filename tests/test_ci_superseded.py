@@ -3,8 +3,8 @@ API proves GitHub's own concurrency replacement.
 
 Decision 9 puts main's suite shards in one group per job and shard, with cancel-in-progress
 false, so a newer commit's waiting job replaces an older one that has not started, and GitHub
-reports the replaced job as cancelled. The ``test`` gate stays red either way. This module only
-decides which red it names: ``superseded by <newer commit>``, or ``unproven``.
+reports the replaced job as cancelled. merge.yml's ``results`` verdict stays red either way.
+This module only decides which red it names: ``superseded by <newer commit>``, or ``unproven``.
 
 Superseded needs all of these, read from the API:
 
@@ -23,6 +23,7 @@ Security-marked: this is a fail-closed boundary (rule 2 in ``docs/maintainers/te
 from __future__ import annotations
 
 import copy
+import json
 import os
 import subprocess
 import sys
@@ -37,9 +38,9 @@ from tools.ci import superseded as sp
 pytestmark = pytest.mark.security
 
 REPO = "PersonalClaw/PersonalClaw"
-WORKFLOW = "ci.yml"
-JOB = "test-shard"
-PREFIX = "ci-suite-main-main-test-shard-"
+WORKFLOW = "merge.yml"
+JOB = "python-suite"
+PREFIX = "merge-suite-"
 SHA = "a" * 40
 NEWER = "b" * 40
 NEWEST = "c" * 40
@@ -54,7 +55,7 @@ _REPLACED_BARE = "Canceling since a higher priority waiting request for {} exist
 def _job(job_id: int, shard: int, conclusion: str, steps: list[dict[str, Any]] | None = None):
     return {
         "id": job_id,
-        "name": f"{JOB} ({shard})",
+        "name": f"{JOB} ({shard}/3)",
         "status": "completed",
         "conclusion": conclusion,
         "head_sha": SHA,
@@ -70,7 +71,7 @@ def _answers() -> dict[str, Any]:
             "jobs": [_job(11, 1, "success", ran), _job(12, 2, "cancelled")]
         },
         f"/repos/{REPO}/check-runs/12/annotations": [
-            {"annotation_level": "failure", "message": _REPLACED.format(PREFIX + "2")}
+            {"annotation_level": "failure", "message": _REPLACED.format(PREFIX + f"{JOB} (2/3)")}
         ],
         f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
             "workflow_runs": [
@@ -81,10 +82,12 @@ def _answers() -> dict[str, Any]:
             ]
         },
         f"/repos/{REPO}/actions/runs/501/jobs": {
-            "jobs": [{"id": 21, "name": f"{JOB} (2)", "status": "in_progress", "conclusion": None}]
+            "jobs": [
+                {"id": 21, "name": f"{JOB} (2/3)", "status": "in_progress", "conclusion": None}
+            ]
         },
         f"/repos/{REPO}/actions/runs/502/jobs": {
-            "jobs": [{"id": 31, "name": f"{JOB} (2)", "status": "queued", "conclusion": None}]
+            "jobs": [{"id": 31, "name": f"{JOB} (2/3)", "status": "queued", "conclusion": None}]
         },
         f"/repos/{REPO}/compare/{SHA}...{NEWER}": {"status": "ahead", "behind_by": 0},
         f"/repos/{REPO}/compare/{SHA}...{NEWEST}": {"status": "ahead", "behind_by": 0},
@@ -122,7 +125,7 @@ def _decide(answers: dict[str, Any], **overrides: Any) -> sp.Answer:
 
 def test_a_shard_replaced_by_the_next_commits_waiting_shard_is_superseded() -> None:
     got = _decide(_answers())
-    assert got.superseded == {f"{JOB} (2)": NEWER}, got
+    assert got.superseded == {f"{JOB} (2/3)": NEWER}, got
     assert got.unproven == {}, got
     # Only cancelled shards are judged: shard 1 passed and is in neither list.
     assert sp.output_line(got) == f"superseded={NEWER}"
@@ -133,10 +136,10 @@ def test_a_replacement_annotation_naming_its_group_bare_is_superseded_too() -> N
     only the quoted wording was read."""
     answers = _answers()
     answers[f"/repos/{REPO}/check-runs/12/annotations"] = [
-        {"annotation_level": "failure", "message": _REPLACED_BARE.format(PREFIX + "2")}
+        {"annotation_level": "failure", "message": _REPLACED_BARE.format(PREFIX + f"{JOB} (2/3)")}
     ]
     got = _decide(answers)
-    assert got.superseded == {f"{JOB} (2)": NEWER}, got
+    assert got.superseded == {f"{JOB} (2/3)": NEWER}, got
     assert sp.output_line(got) == f"superseded={NEWER}"
 
 
@@ -190,22 +193,22 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
     ("no annotation on the cancelled shard", _set(_NOTES, []), "no replacement annotation"),
     (
         "the replacement annotation names another group",
-        _set(_NOTES, [{"message": _REPLACED.format(PREFIX + "3")}]),
+        _set(_NOTES, [{"message": _REPLACED.format(PREFIX + f"{JOB} (3/3)")}]),
         "names the group",
     ),
     (
         "the bare replacement annotation names another group",
-        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + "3")}]),
+        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + f"{JOB} (3/3)")}]),
         "names the group",
     ),
     (
-        "the bare replacement annotation's group runs on past a space",
-        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + "2 and more")}]),
-        "no replacement annotation",
+        "the bare replacement annotation's group with more after it",
+        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + f"{JOB} (2/3) and more")}]),
+        "names the group",
     ),
     (
         "the replacement annotation names a pull request's group",
-        _set(_NOTES, [{"message": _REPLACED.format("ci-suite-someone/x-branch-test-shard-2")}]),
+        _set(_NOTES, [{"message": _REPLACED.format(f"merge-41-{JOB} (2/3)")}]),
         "names the group",
     ),
     (
@@ -215,7 +218,7 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
     ),
     (
         "the annotation text only contains the replacement message",
-        _set(_NOTES, [{"message": "note: " + _REPLACED.format(PREFIX + "2")}]),
+        _set(_NOTES, [{"message": "note: " + _REPLACED.format(PREFIX + f"{JOB} (2/3)")}]),
         "no replacement annotation",
     ),
     (
@@ -250,13 +253,13 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
         "the later run has no job of the same name",
         lambda a: (
             _only_newer_run(a),
-            a[_NEWER_JOBS].update(jobs=[{"id": 21, "name": f"{JOB} (1)"}]),
+            a[_NEWER_JOBS].update(jobs=[{"id": 21, "name": f"{JOB} (1/3)"}]),
         ),
         "no later push run",
     ),
     (
         "the cancelled job's name is not a shard of the job",
-        _cancelled_job(lambda j: j.update(name="test-shard-extra (2)")),
+        _cancelled_job(lambda j: j.update(name=f"{JOB} (x/3)")),
         "not a shard of",
     ),
     ("the API cannot be read", _set(_NOTES, OSError("rate limited")), "could not find out"),
@@ -277,12 +280,12 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
     ),
     (
         "the replacement message followed by more text",
-        _set(_NOTES, [{"message": _REPLACED.format(PREFIX + "2") + " (and more)"}]),
+        _set(_NOTES, [{"message": _REPLACED.format(PREFIX + f"{JOB} (2/3)") + " (and more)"}]),
         "no replacement annotation",
     ),
     (
         "a cancelled job named like a shard with more after it",
-        _cancelled_job(lambda j: j.update(name=f"{JOB} (2) extra")),
+        _cancelled_job(lambda j: j.update(name=f"{JOB} (2/3) extra")),
         "not a shard of",
     ),
     (
@@ -291,7 +294,12 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
             _only_newer_run(a),
             a[_NEWER_JOBS].update(
                 jobs=[
-                    {"id": 21, "name": f"{JOB} (2)", "status": "completed", "conclusion": "skipped"}
+                    {
+                        "id": 21,
+                        "name": f"{JOB} (2/3)",
+                        "status": "completed",
+                        "conclusion": "skipped",
+                    }
                 ]
             ),
         ),
@@ -367,8 +375,8 @@ def test_one_unproven_shard_leaves_the_run_unproven() -> None:
     answers[_JOBS]["jobs"].append(_job(13, 3, "cancelled"))
     answers[f"/repos/{REPO}/check-runs/13/annotations"] = []
     got = _decide(answers)
-    assert got.superseded == {f"{JOB} (2)": NEWER}
-    assert set(got.unproven) == {f"{JOB} (3)"}
+    assert got.superseded == {f"{JOB} (2/3)": NEWER}
+    assert set(got.unproven) == {f"{JOB} (3/3)"}
     # The gate names superseded only when every cancelled shard is proven.
     assert sp.output_line(got) == "superseded="
 
@@ -379,21 +387,44 @@ def test_shards_replaced_by_different_commits_name_no_one_commit() -> None:
     answers = _answers()
     answers[_JOBS]["jobs"] = [_job(11, 1, "cancelled"), _job(12, 2, "cancelled")]
     answers[f"/repos/{REPO}/check-runs/11/annotations"] = [
-        {"message": _REPLACED.format(PREFIX + "1")}
+        {"message": _REPLACED.format(PREFIX + f"{JOB} (1/3)")}
     ]
     answers[f"/repos/{REPO}/actions/runs/502/jobs"]["jobs"].append(
-        {"id": 32, "name": f"{JOB} (1)", "status": "queued", "conclusion": None}
+        {"id": 32, "name": f"{JOB} (1/3)", "status": "queued", "conclusion": None}
     )
     got = _decide(answers)
-    assert got.superseded == {f"{JOB} (1)": NEWEST, f"{JOB} (2)": NEWER}, got
+    assert got.superseded == {f"{JOB} (1/3)": NEWEST, f"{JOB} (2/3)": NEWER}, got
     assert got.unproven == {}, got
     assert sp.output_line(got) == "superseded="
+
+
+def test_a_cancelled_shard_of_the_other_suite_job_is_not_this_one_s() -> None:
+    """python-suite-macos's keys start with python-suite's name: judging python-suite reads none
+    of them, superseded or not, so its own answer is only its own shards'."""
+    answers = _answers()
+    other = _job(14, 2, "cancelled")
+    other["name"] = f"{JOB}-macos (2/3)"
+    answers[_JOBS]["jobs"].append(other)
+    got = _decide(answers)
+    assert got.superseded == {f"{JOB} (2/3)": NEWER}, got
+    assert got.unproven == {}, got
+
+
+def test_out_gathers_each_job_s_superseded_shards_and_replaces_none(tmp_path: Path) -> None:
+    """The results job runs the check once per suite job into one file: each answer adds its
+    superseded shards, an unproven shard adds nothing, and a key already there stays."""
+    out = tmp_path / "superseded.json"
+    sp.write_out(sp.Answer(superseded={f"{JOB} (2/3)": NEWER}, unproven={"x": "why"}), str(out))
+    sp.write_out(
+        sp.Answer(superseded={f"{JOB}-macos (1/3)": NEWEST, f"{JOB} (2/3)": NEWEST}), str(out)
+    )
+    assert json.loads(out.read_text()) == {f"{JOB} (2/3)": NEWER, f"{JOB}-macos (1/3)": NEWEST}
 
 
 def test_the_earliest_later_descendant_is_named() -> None:
     answers = _answers()
     got = _decide(answers)
-    assert got.superseded == {f"{JOB} (2)": NEWER}, "the next commit, not the newest one"
+    assert got.superseded == {f"{JOB} (2/3)": NEWER}, "the next commit, not the newest one"
 
 
 def test_a_cancelled_run_with_no_cancelled_shard_has_nothing_to_prove() -> None:

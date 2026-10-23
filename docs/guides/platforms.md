@@ -18,9 +18,9 @@ one, and the token points at something you can go read or re-run:
 
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | `CI:ci/test (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
+| Linux x86-64 | first-class | `CI:merge/python-suite (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
 | Linux arm64 | first-class | `CI:breadth/arm (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
-| macOS Apple silicon | first-class | `CI:ci/test-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
+| macOS Apple silicon | first-class | `CI:merge/python-suite-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
 | macOS Intel | best-effort | `CI:release/desktop-mac smoke (x64)` boots the bundled backend on `macos-26-intel`; the test suite runs on Apple silicon only, and the x86-64 Python/wheel path is the same as Linux x86-64 |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` (this page) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |

@@ -15,9 +15,10 @@
 #
 # The keys are written for a closed event, not copied from each workflow. When a pull request
 # closes because it merged, `github.ref` is the branch it merged into (`refs/heads/main`), not
-# `refs/pull/N/merge` (GitHub's "Events that trigger workflows", `pull_request`). ci.yml's own key
-# would then name the merge commit's main group, and its cancel-in-progress would read false.
-# Each key here is what that workflow's key evaluated to on the pull request's own runs.
+# `refs/pull/N/merge` (GitHub's "Events that trigger workflows", `pull_request`), and
+# `github.sha` is the merge commit, so a key read from either would name main's run of that
+# commit. Each key here is what that workflow's key evaluated to on the pull request's own runs:
+# pr.yml's and merge.yml's key on the pull request's number.
 # tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
 # holds them equal, merged or not, from this repository or a fork.
 #
@@ -32,24 +33,24 @@ on:
 permissions: {}
 
 jobs:
-  ci:
+  pr:
     runs-on: ubuntu-24.04
     permissions: {}
     timeout-minutes: 5
     concurrency:
-      group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      group: pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
 
-  docker-single-container:
+  merge:
     runs-on: ubuntu-24.04
     permissions: {}
     timeout-minutes: 5
     concurrency:
-      group: docker-single-container-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      group: merge-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity

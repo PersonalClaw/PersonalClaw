@@ -24,9 +24,9 @@ test that times out only on a busy laptop is not given a longer one.
 The worker cap resolves `auto` to three workers for these measurements. A bare
 `python -m pytest` names no workers, so it runs the suite in one process.
 
-CI does not run the same shape. The pull-request gate's `test-shard` (Ubuntu,
-Python 3.12) and `test-macos` (macOS 26, Python 3.13) jobs in `ci.yml` partition
-the suite into three shards of whole test files, planned from
+CI does not run the same shape. The pull-request gate's `python-suite` (Ubuntu,
+Python 3.12) and `python-suite-macos` (macOS 26, Python 3.13) jobs in `merge.yml`
+partition the suite into three shards of whole test files, planned from
 recorded per-file durations (`python -m tools.ci shards`), measure no coverage,
 and cap macOS shards at two xdist workers. The nightly `breadth.yml` runs
 the suite the same way: four shards on Ubuntu and arm64, and six on macOS. Every
@@ -36,7 +36,7 @@ separately, nightly in `breadth.yml`, in six shards of its own
 
 No shard runs the rails. The modules in `tests/rails/`, which check the source
 tree rather than run the product, are left out of every shard plan and run once
-per CI run in `ci.yml`'s `rails` job, in three parallel legs, each as `pytest
+per CI run in the catalogue's `rails` job, in three parallel shards, each as `pytest
 tests/rails -n 4 --dist worksteal --shard-list tools/ci/rails-leg-<i>.txt`, and
 nightly on macOS in `breadth.yml`'s `rails-macos` leg. `pytest tests/rails -n 4
 --dist worksteal` runs every leg's rails locally. A whole-suite `make test`
@@ -44,7 +44,7 @@ still collects them.
 
 No shard runs a test file that a workflow job runs by name, either. Each such file is listed,
 with its job, in `JOB_OWNED` in `tools/ci/shards.py`, so it runs once per CI run, in that job:
-`tests/test_website_installer.py` runs in `ci.yml`'s `lint` job, and
+`tests/test_website_installer.py` runs in the catalogue's `static` job, and
 `tests/test_npm_advisory_floors.py` in its `rails-checks` job.
 
 ## Measurement protocol

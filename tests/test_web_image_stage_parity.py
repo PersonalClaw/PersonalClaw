@@ -6,7 +6,7 @@ image stage that builds the web starts from an empty tree, copies ``web/`` and n
 file it needs, and ``tsc`` resolves every import of every file under ``web/``. So a cross-tree
 import that a stage does not name breaks that image's build with TS2307. Nothing else sees it:
 every pull-request check builds the web from a full checkout, and only the image workflows
-(``release.yml``, ``docker-single-container.yml``) build these stages. It happened when the
+(``release.yml``, the catalogue's ``image`` entry) build these stages. It happened when the
 hands-free voice phrases moved into ``src/personalclaw/voice/phrases.json``: both images stopped
 building, and both pull-request gates stayed green.
 

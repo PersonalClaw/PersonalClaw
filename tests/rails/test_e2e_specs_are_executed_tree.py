@@ -9,13 +9,9 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import itertools
 import re
-import shutil
-import subprocess
 
 import pytest
-import yaml
 from ci_catalogue_steps import read
 from ci_catalogue_steps import text as catalogue_text
 from e2e_specs_are_executed_shared import _E2E, _ROOT, LOCAL_ONLY, _specs
@@ -25,13 +21,10 @@ from tools.ci.catalogue import Catalogue, Step
 _WORKFLOWS = _ROOT / ".github" / "workflows"
 
 
-def _workflow_text(without: str = "") -> str:
-    """Every workflow's text (but *without*'s), then each catalogue step as a ``run:`` line: both
-    of CI's shapes, ``ci.yml``'s own lines and the tier workflows' stage jobs, which run the
-    catalogue's through ``run-job`` (``tests/ci_catalogue_steps.py``)."""
-    workflows = [
-        p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml")) if p.name != without
-    ]
+def _workflow_text() -> str:
+    """Every workflow's text, then each catalogue step as a ``run:`` line: the tier workflows'
+    stage jobs run the catalogue's through ``run-job`` (``tests/ci_catalogue_steps.py``)."""
+    workflows = [p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml"))]
     steps = [f"run: {each}" for job in read().jobs for each in catalogue_text(job).splitlines()]
     return "\n".join([*workflows, *steps])
 
@@ -130,7 +123,7 @@ def names_spec(text: str, spec: str, tags: set[str] | None = None) -> bool:
     runs its half of every shared spec but the visual rail, and none of the stateful set, which
     `e2e-stateful`'s line names.
 
-    Matched against the run line, not the whole file: specs are mentioned in ci.yml's comments,
+    Matched against the run line, not the whole file: specs are mentioned in workflow comments,
     and a substring search would have called a spec "executed" on the strength of prose
     describing it — the precise mistake this file exists to catch one level up. Takes the text
     as an argument so the vacuity test below can feed it a comment-only workflow and see the
@@ -181,12 +174,6 @@ def test_every_e2e_spec_is_executed_or_declared():
     )
 
 
-def test_without_ci_yml_the_catalogue_still_runs_every_spec():
-    """The flip (#3915) deletes ci.yml, and the tier workflows run the catalogue's steps: those
-    and the other workflows must run every spec the sweep counts on their own."""
-    assert silent(_workflow_text(without="ci.yml")) == []
-
-
 def test_no_exemption_is_also_wired():
     """A spec cannot be both exempt and executed — one of the two claims would be a lie."""
     both = sorted(s for s in LOCAL_ONLY if _run_by_ci(s))
@@ -198,9 +185,8 @@ def test_no_exemption_is_also_wired():
 def test_the_run_line_matcher_is_not_fooled_by_a_comment():
     """Vacuity for `_run_by_ci`, which is the one function every assertion above trusts.
 
-    `a11y.spec.ts` appears in four ci.yml COMMENTS. A matcher that counted those would report
-    every mentioned spec as executed, and the sweep would be green for a repo running none of
-    them.
+    A spec is mentioned in workflow COMMENTS. A matcher that counted those would report every
+    mentioned spec as executed, and the sweep would be green for a repo running none of them.
     """
     assert _run_by_ci("a11y.spec.ts"), "the matcher missed the spec that genuinely does run"
     assert not _run_by_ci("definitely-not-a-real.spec.ts"), "the matcher invents matches"
@@ -409,122 +395,30 @@ def test_a_missing_shard_or_an_unmerged_leg_is_named():
         assert leg_folders(dropped) - merged_folders(dropped) == {"blob-report/stateful"}, merging
 
 
-def _jobs() -> dict:
-    """ci.yml's jobs, for the leg gate below: ``ci.yml``'s own orchestration, which the flip
-    (#3915) retires with ci.yml, where the merge verdict reads each leg's record."""
-    return yaml.safe_load((_WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))["jobs"]
-
-
-def _playwright_steps(jobs: dict):
-    for name, job in jobs.items():
-        for step in job.get("steps") or []:
-            if "playwright test" in str(step.get("run", "")):
-                yield name, job, step
-
-
-# ── The merge is red whenever a leg did not pass ─────────────────────────────────────────────────
+# ── The merge waits on every leg ─────────────────────────────────────────────────────────────────
 #
-# `e2e` runs whatever the legs answered (`!cancelled()`), so it runs after a red leg too, and what
-# it checks is the report the legs left. A leg can fail where that report shows nothing: a step
-# after its blob was uploaded, or a gateway that never booted, which ends the leg before
-# Playwright lists its tests, so its blob holds none of them. So `e2e` reads each leg's own
-# result, and a leg that failed, was cancelled, was skipped or has no result is red there too.
-# The step is run as written, against every answer each leg can give.
-
-_NEEDS_RESULT = re.compile(r"\$\{\{\s*needs\.([A-Za-z0-9_-]+)\.result\s*\}\}")
-#: What `needs.<job>.result` can be: GitHub's four results, and nothing for a job never run.
-_ANSWERS = ("success", "failure", "cancelled", "skipped", "")
+# `e2e` and `ui-quality` judge the report the legs left, so each runs after every leg (`after`),
+# and the run's verdict reads each leg's own record: a leg that failed, was cancelled, was skipped
+# or has no record is red there, whatever its blob held. (ci.yml's `e2e` read each leg's
+# `needs.<leg>.result` itself; the flip, #3915, gave that to the verdict.)
 
 
-def browser_legs(jobs: dict) -> list[str]:
-    """The jobs that run `playwright test`: the legs the `e2e` merge is made of."""
-    return sorted({name for name, _, _ in _playwright_steps(jobs) if name != "e2e"})
+def browser_legs(cat: Catalogue) -> list[str]:
+    """The jobs that run `playwright test`: the legs the merges are made of."""
+    return sorted({job.id for job, _ in _browser_steps(cat)})
 
 
-def leg_gate_gaps(jobs: dict) -> list[str]:
-    """Each way the `e2e` merge could be green while a leg did not pass."""
-    merge = jobs.get("e2e") or {}
-    legs = browser_legs(jobs)
-    gaps = [f"e2e does not wait on {leg}" for leg in legs if leg not in (merge.get("needs") or [])]
-    gates = [
-        step
-        for step in merge.get("steps") or []
-        if any(_NEEDS_RESULT.fullmatch(str(v).strip()) for v in (step.get("env") or {}).values())
-    ]
-    if len(gates) != 1:
-        return [*gaps, f"e2e has {len(gates)} steps that read a leg's result, not one"]
-    gate = gates[0]
-    reads: dict[str, str] = {}
-    for var, value in (gate.get("env") or {}).items():
-        found = _NEEDS_RESULT.fullmatch(str(value).strip())
-        if found:
-            reads[found.group(1)] = str(var)
-    gaps += [f"e2e's leg gate does not read {leg}'s result" for leg in legs if leg not in reads]
-    if re.sub(r"\s", "", str(gate.get("if", ""))) != "${{!cancelled()}}":
-        gaps.append(
-            f"e2e's leg gate runs under if: {gate.get('if')!r}, not !cancelled(), so it can be"
-            " skipped after a red leg"
+def test_each_merge_runs_after_every_leg():
+    cat = read()
+    assert browser_legs(cat) == ["e2e-shard", "e2e-stateful"], browser_legs(cat)
+    for merging in sorted(merges(cat)):
+        assert set(cat.job(merging).after) >= set(browser_legs(cat)), (
+            f"{merging} merges the legs' reports but does not run after"
+            f" {sorted(set(browser_legs(cat)) - set(cat.job(merging).after))}"
         )
-    if gate.get("continue-on-error"):
-        gaps.append("e2e's leg gate has continue-on-error, so its red counts for nothing")
-    # A run: step with no shell is `bash -e {0}` on a GitHub runner.
-    bash = shutil.which("bash") or "/bin/bash"
-    for answers in itertools.product(_ANSWERS, repeat=len(reads)):
-        said = dict(zip(reads, answers, strict=True))
-        env = {"PATH": "/usr/bin:/bin", **{reads[leg]: said[leg] for leg in said}}
-        ran = subprocess.run(
-            [bash, "-e", "-c", str(gate.get("run", ""))],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        passed = all(a == "success" for a in answers)
-        if (ran.returncode == 0) != passed:
-            gaps.append(
-                f"e2e's leg gate exits {ran.returncode} when the legs answered {said}: it must be"
-                f" {'green' if passed else 'red'}"
-            )
-    return gaps
 
 
-def test_the_merge_is_red_whenever_a_leg_did_not_pass():
-    jobs = _jobs()
-    assert browser_legs(jobs) == ["e2e-shard", "e2e-stateful"], browser_legs(jobs)
-    assert leg_gate_gaps(jobs) == []
-
-
-def test_a_merge_that_can_be_green_after_a_red_leg_is_named():
-    """The planted controls, through the same function the check above uses."""
-    jobs = _jobs()
-    merge = jobs["e2e"]
-    gate = next(
-        s
-        for s in merge["steps"]
-        if any(_NEEDS_RESULT.fullmatch(str(v).strip()) for v in (s.get("env") or {}).values())
-    )
-
-    def with_gate(new: dict | None) -> dict:
-        steps = [(new if s is gate else s) for s in merge["steps"]]
-        return {**jobs, "e2e": {**merge, "steps": [s for s in steps if s is not None]}}
-
-    assert leg_gate_gaps(with_gate(None)) == ["e2e has 0 steps that read a leg's result, not one"]
-    var = next(k for k, v in gate["env"].items() if "e2e-stateful" in str(v))
-    one = {**gate, "env": {k: v for k, v in gate["env"].items() if k != var}}
-    assert "e2e's leg gate does not read e2e-stateful's result" in leg_gate_gaps(with_gate(one))
-    assert any(
-        "not !cancelled()" in g
-        for g in leg_gate_gaps(with_gate({**gate, "if": "${{ success() }}"}))
-    )
-    assert any(
-        "continue-on-error" in g
-        for g in leg_gate_gaps(with_gate({**gate, "continue-on-error": True}))
-    )
-    quiet = leg_gate_gaps(with_gate({**gate, "run": str(gate["run"]) + "\ntrue\n"}))
-    assert quiet == [], quiet
-    swallowed = leg_gate_gaps(with_gate({**gate, "run": f"( {gate['run']} ) || true\n"}))
-    assert any(
-        "when the legs answered" in g and "it must be red" in g for g in swallowed
-    ), swallowed
-    unwaited = {**jobs, "e2e": {**merge, "needs": [n for n in merge["needs"] if n != "e2e-shard"]}}
-    assert leg_gate_gaps(unwaited) == ["e2e does not wait on e2e-shard"]
+def test_a_merge_that_does_not_wait_on_a_leg_is_named():
+    cat = read()
+    early = _with_job(cat, "e2e", after=("e2e-stateful",))
+    assert not set(early.job("e2e").after) >= set(browser_legs(early))

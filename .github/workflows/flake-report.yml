@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 env:
-  # Every uv step uses a uv-managed CPython, never the runner image's own (as ci.yml's env says).
+  # Every uv step uses a uv-managed CPython, never the runner image's own (as breadth.yml's env says).
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:

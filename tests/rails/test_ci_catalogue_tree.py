@@ -16,8 +16,9 @@ from tools.ci import catalogue, jobs, run
 
 @pytest.mark.parametrize("module", [catalogue, jobs, run], ids=lambda m: m.__name__)
 def test_it_imports_only_the_standard_library(module) -> None:
-    """ci.yml's shard planner runs ``python -m tools.ci`` on the runner image's own python3,
-    before anything is installed, and that imports these modules."""
+    """merge.yml's shard plan and every orchestration job of the tier workflows run
+    ``python -m tools.ci`` on the runner image's own python3, before anything is installed, and
+    that imports these modules."""
     tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     imported = {
         alias.name.split(".")[0]
@@ -34,18 +35,20 @@ def test_it_imports_only_the_standard_library(module) -> None:
     assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
 
 
-def _ci() -> dict:
+def _workflow(name: str) -> dict:
     import yaml
 
-    path = Path(catalogue.REPO) / ".github/workflows/ci.yml"
+    path = Path(catalogue.REPO) / ".github/workflows" / name
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_run_jobs_workflow_env_is_ci_ymls() -> None:
-    """A step run here gets the env ci.yml gives every job, no more and no less."""
+@pytest.mark.parametrize("name", ["pr.yml", "merge.yml"])
+def test_run_jobs_workflow_env_is_the_tier_workflows(name: str) -> None:
+    """A step run here gets the env each tier workflow gives every job, no more and no less."""
     from tools.ci import jobs
 
-    assert jobs.WORKFLOW_ENV == {str(k): str(v) for k, v in (_ci().get("env") or {}).items()}
+    env = _workflow(name).get("env") or {}
+    assert jobs.WORKFLOW_ENV == {str(k): str(v) for k, v in env.items()}
 
 
 #: The variables a GitHub-hosted runner gives every step that run-job gives a step too. CI is
@@ -65,22 +68,9 @@ def test_the_runner_variables_run_job_sets_are_the_declared_ones() -> None:
     assert not any(run.runner_owns(name) for name in jobs.RUNNER_ENV)
 
 
-def test_each_install_run_job_runs_is_one_ci_yml_runs() -> None:
-    """The toolchain installs run-job runs are ci.yml's, word for word."""
-    import shlex
-
+def test_each_install_word_the_catalogue_names_is_one_run_job_runs() -> None:
+    """run-job runs each toolchain install itself, in the tier workflows and here alike, so its
+    INSTALL_ARGV is the one definition, and each install word the catalogue knows is one."""
     from tools.ci import jobs
 
-    ran: set[tuple[str, ...]] = set()
-    for job in (_ci().get("jobs") or {}).values():
-        for step in job.get("steps") or []:
-            for line in str(step.get("run", "")).replace("\\\n", " ").splitlines():
-                try:
-                    words = shlex.split(line, comments=True)
-                except ValueError:  # a line no argv could be, such as an unmatched quote
-                    continue
-                if words:
-                    ran.add(tuple(words))
-    for tool, argv in jobs.INSTALL_ARGV.items():
-        assert argv in ran, f"{tool}: {shlex.join(argv)} is no run: line of ci.yml"
     assert {tool for _, tool in catalogue.INSTALLS} == set(jobs.INSTALL_ARGV)

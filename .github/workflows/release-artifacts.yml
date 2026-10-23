@@ -299,7 +299,7 @@ jobs:
     # `gateway-dashboard` names the contract.
     #
     # ONE RECIPE. `tools/docker_single_container_smoke.py` owns the assertion, as it does for
-    # `.github/workflows/docker-single-container.yml` — healthz 200, `/` 200 HTML carrying the
+    # the catalogue's `image` entry, which merge.yml runs — healthz 200, `/` 200 HTML carrying the
     # SPA mount point, and the shell's FIRST script fetched and required to come back as
     # JavaScript — plus its own negative control, because a fabricated `/assets/*.js` answered
     # by the SPA's index.html fallback is 200 too, and a status-only check calls that green. It
@@ -822,8 +822,10 @@ jobs:
         # -> electron-builder --linux (AppImage + deb per desktop/package.json).
         run: make desktop-dist-linux
       - name: Smoke the artifacts (release-blocking)
-        # The Electron shell itself is NOT launched — that needs a display, and
-        # ci.yml's desktop tier declines display-dependent smoke on purpose. What
+        # The Electron shell itself is NOT launched here. The merge tier's `desktop-smoke`
+        # launches the packed shell under xvfb on every pull request that touches
+        # desktop/ or web/ (#3942), from electron-builder's Linux dir build on a stub
+        # backend: a fast smoke, never this release's artifacts. What
         # IS run for real is the bundled backend: extract the AppImage (no FUSE
         # needed) and execute the frozen personalclaw-backend on this OS/arch —
         # a bundle that packages but cannot start must fail the release, same

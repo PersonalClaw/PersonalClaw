@@ -42,8 +42,8 @@ so the caller runs everything. Main's catalogue is also the reference the tree's
 against (``catalogue.against``): a pull request's catalogue that drops a security or live job of
 main's, unless main marks it retiring, is refused, and plans nothing either.
 
-``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
-and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
+``--outputs`` prints ``full=true|false`` and ``jobs=<JSON list>`` as GitHub output lines on
+stdout, and the plan on stderr.
 
 ``--matrix`` prints the plan as a job matrix (:func:`matrix`): one entry per planned job and
 shard, keyed as ``run-job`` keys its record, each with the stage it runs in after the planned
@@ -85,22 +85,14 @@ from .catalogue import Catalogue, Job, Override
 NOT_MEASURED: dict[str, Any] = {"minutes": None, "runs": 0}
 
 #: The workflows and job whose runs the rails floor is measured from: each a push to main runs
-#: in, the newer shape first (:data:`workflows.MAIN_PUSH`).
+#: in (:data:`workflows.MAIN_PUSH`).
 FLOOR_WORKFLOWS, FLOOR_JOB = workflows.MAIN_PUSH, catalogue.MERGE_NEEDS_JOB
 
-#: The rails job's legs as ci.yml's matrix names them, one per list (``rails_census.LEGS``).
-FLOOR_LEGS: tuple[str, ...] = tuple(
-    f"{FLOOR_JOB} ({n})" for n in range(1, len(rails_census.LEGS) + 1)
-)
-#: The same legs as merge.yml names them: by matrix key, as run-job keys each one's record.
+#: The rails job's legs as merge.yml names them, one per list (``rails_census.LEGS``): by matrix
+#: key, as run-job keys each one's record.
 FLOOR_MATRIX_LEGS: tuple[str, ...] = tuple(
     f"{FLOOR_JOB} ({n}/{len(rails_census.LEGS)})" for n in range(1, len(rails_census.LEGS) + 1)
 )
-#: Each workflow's names for the legs.
-_LEGS_BY_WORKFLOW: dict[str, tuple[str, ...]] = {
-    workflows.LEGACY: FLOOR_LEGS,
-    workflows.MERGE: FLOOR_MATRIX_LEGS,
-}
 
 _WILD = frozenset("*?[")
 
@@ -564,8 +556,9 @@ def stage_jobs(grid: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 def _is_floor_job(name: object) -> bool:
-    """The rails job, or one of its legs: ci.yml's matrix names a leg ``rails (1)``, merge.yml's
-    by its key, ``rails (1/3)``."""
+    """A rails job by its name: a leg by its key, ``rails (1/3)``, and any other spelling of one
+    (the one ``rails`` job, or a leg named ``rails (1)``), so a run that names its legs otherwise
+    is seen and measures nothing."""
     if not isinstance(name, str):
         return False
     if name == FLOOR_JOB:
@@ -577,17 +570,14 @@ def _is_floor_job(name: object) -> bool:
     return shard.isdigit() and (not of or of.isdigit())
 
 
-def _run_minutes(jobs: list[Any], workflow: str = workflows.LEGACY) -> float | None:
+def _run_minutes(jobs: list[Any]) -> float | None:
     """One run's rails minutes: the slowest of its rails jobs, which is when the rails ended.
-    Its rails jobs are the one ``rails`` job of a ci.yml run before the legs, or exactly the legs
-    by its workflow's names (:data:`FLOOR_LEGS`, :data:`FLOOR_MATRIX_LEGS`), each once: a run
-    missing a leg (one of the two halves the rails ran in before is such a run), naming one twice,
-    by the other workflow's names or both kinds says nothing, and so does one with any rails job
+    Its rails jobs are exactly the legs (:data:`FLOOR_MATRIX_LEGS`), each once: a run missing a
+    leg, naming one twice or naming one otherwise says nothing, and so does one with any rails job
     that is not a passing measurement."""
     legs = [job for job in jobs if isinstance(job, dict) and _is_floor_job(job.get("name"))]
     names = sorted(str(job["name"]) for job in legs)
-    whole = [FLOOR_JOB] if workflow == workflows.LEGACY else None
-    if names != whole and names != sorted(_LEGS_BY_WORKFLOW.get(workflow, ("",))):
+    if names != sorted(FLOOR_MATRIX_LEGS):
         return None
     measured = [_measured(job) for job in legs]
     if any(m is None for m in measured):
@@ -613,13 +603,12 @@ FLOOR_RUNS, FLOOR_SECONDS = 3, 60.0
 
 def _rails_minutes(head: object, workflow: str) -> float | None:
     """One history file's run line's rails minutes, when it is a run of ``workflow`` and they are
-    a measurement: the slowest leg, or the one job a run before the legs had
-    (:func:`_run_minutes`)."""
+    a measurement: the slowest leg (:func:`_run_minutes`)."""
     if not isinstance(head, dict) or head.get("kind") != "run":
         return None
     if head.get("workflow") != workflow or not isinstance(head.get("jobs"), list):
         return None
-    return _run_minutes(head["jobs"], workflow)
+    return _run_minutes(head["jobs"])
 
 
 def _floor(minutes: Sequence[float]) -> dict[str, Any]:
@@ -643,7 +632,7 @@ def rails_floor(folder: Path | None) -> dict[str, Any]:
         workflow = head.get("workflow")
         if workflow not in FLOOR_WORKFLOWS or not isinstance(head.get("jobs"), list):
             continue
-        run = _run_minutes(head["jobs"], str(workflow))
+        run = _run_minutes(head["jobs"])
         if run is not None:
             minutes.append(run)
     return _floor(minutes)
@@ -693,8 +682,8 @@ def rails_floor_from_ci(
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """The rails floor from main's recorded CI runs: the median over the newest
-    :data:`FLOOR_RUNS` completed main runs of each of :data:`FLOOR_WORKFLOWS` in turn (merge.yml's,
-    then ci.yml's), whose history the collector itself uploaded (``shards.TelemetryRecord`` checks
+    :data:`FLOOR_RUNS` completed main runs of each of :data:`FLOOR_WORKFLOWS` in turn (merge.yml's),
+    whose history the collector itself uploaded (``shards.TelemetryRecord`` checks
     who uploaded each archive), counting a red run whose rails jobs passed and never a cancelled
     one.
 

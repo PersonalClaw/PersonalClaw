@@ -25,11 +25,11 @@ python -m pytest -k provider_lazy_imports -v
 python -m pytest --lf -v
 ```
 
-CI's gate is `.github/workflows/ci.yml`: its `lint` job runs `make lint` (black,
-isort, flake8 and mypy), and its `test-shard` and `test-macos` jobs run the suite.
-Locally, `make lint` and `make test` run the same checks. `make check` and
-`make gate` run the change and merge tiers' jobs from `tools/ci/catalogue.toml`
-the way CI runs them (`python -m tools.ci run-job <id>` runs one); a job this
+CI's gate is `.github/workflows/pr.yml` and `.github/workflows/merge.yml`, which run
+the change and merge tiers' jobs from `tools/ci/catalogue.toml`: its `static` job runs
+black, isort, flake8 and mypy, and its `python-suite` and `python-suite-macos` jobs run
+the suite. Locally, `make lint` and `make test` run the same checks. `make check` and
+`make gate` run the change and merge tiers' jobs the way CI runs them (`python -m tools.ci run-job <id>` runs one); a job this
 machine cannot run, such as the other platform's suite, is named and the run
 exits 2 (see "Local runs" in `docs/maintainers/ci.md`).
 
@@ -128,9 +128,9 @@ roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDE
 
 A rail that holds what CI runs (a job runs this file, sets that lever, checks that output) reads
 the catalogue's steps through `tests/ci_catalogue_steps.py` rather than a workflow's `run:`
-lines. Both of CI's shapes run them: `ci.yml`'s jobs, held to them token for token by the
-contract row "every catalogue command is the workflow's", and the tier workflows' stage jobs
-through `run-job`. The rails census counts a test that reads them as reading the tree.
+lines. The tier workflows' stage jobs run them through `run-job`, and breadth's jobs are held to
+them token for token by the contract row "every catalogue command is the workflow's". The rails
+census counts a test that reads them as reading the tree.
 
 ## A test that needs another timeout
 
@@ -160,7 +160,7 @@ says how a mark's site is named.
 
 A rail checks the source tree rather than running the product: a census, a ratchet, a parity
 or wiring check, a row of the CI contract table. Rails live in `tests/rails/` and run once per
-CI run, in the three legs of `ci.yml`'s `rails` job, and nightly on macOS in `breadth.yml`'s
+CI run, in the three shards of the catalogue's `rails` job, and nightly on macOS in `breadth.yml`'s
 `rails-macos` leg. No suite shard runs them. To run every rail, as the three legs together do:
 
 ```bash

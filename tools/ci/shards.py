@@ -59,7 +59,7 @@ RAILS = "tests/rails"
 
 #: The test files a job runs by name, and so no shard collects (#3929): each runs once per run,
 #: in the job that owns it. ``file: "catalogue job"``, the job's id in ``tools/ci/catalogue.toml``,
-#: which ``ci.yml``'s jobs and the tier workflows' both run. A rail
+#: which the tier workflows run through run-job. A rail
 #: (``tests/rails/test_each_tree_check_runs_in_one_place.py``) holds that each owner's command
 #: still runs its file by name, so leaving a file out here never leaves it running nowhere.
 JOB_OWNED: Mapping[str, str] = {
@@ -474,8 +474,8 @@ class TelemetryRecord:
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         """The leg's runs are read workflow by workflow (:attr:`Leg.workflows`), each one's
-        newest first, until :data:`RUNS` hold its history: merge.yml's push runs before ci.yml's
-        for ``main-push``, so the plan reads whichever shape has run."""
+        newest first, until :data:`RUNS` hold its history (``main-push``: merge.yml's push
+        runs)."""
         identity: Identity | None = None
         read: list[tuple[int, dict[str, dict[str, float]], Mapping[str, str | None]]] = []
         lines = (line for workflow in leg.workflows for line in self._listed(workflow))

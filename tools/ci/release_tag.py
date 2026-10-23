@@ -9,9 +9,8 @@ it with a tag and a commit. It refuses, naming why, unless:
 - the commit's definitions (its workflows, actions, ``tools/ci`` and the entry points they run)
   equal ``main``'s tip's (``trust.compare``), so the tag's release run is the one ``main`` holds;
 - no tag of that name exists, here or on the remote;
-- the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in each
-  workflow a push to ``main`` runs in, the newer shape first (``workflows.MAIN_PUSH``,
-  ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then), so the gate outlives the flip.
+- the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in
+  ``merge.yml`` (``workflows.MAIN_PUSH``).
 - the commit's breadth is green (#3911, :func:`breadth_green`), for a release tag: the newest
   ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, with a
   digest-verified record of every attempt in which every gating leg ran and is green and every
@@ -171,12 +170,11 @@ def main_push_green(repository: str, commit: str, get: Get) -> str:
     """The URL of *commit*'s own push run on ``main``, which must have finished green; else
     ``trust.Refused``, naming the run and what it concluded.
 
-    The first workflow in ``workflows.MAIN_PUSH`` with a push run for the commit holds its run:
-    ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then. A red there is never passed
-    over for the older shape's green. Of its runs the newest is read. A run still going, failed,
-    cancelled or timed out is not green, and neither is one whose gate read a shard as superseded
-    by a newer push or unproven: that gate is red, so the run concluded failure. A run re-run to
-    green is green: its conclusion is its latest attempt's (the runbook's Tagging says so).
+    The commit's push runs are ``merge.yml``'s (``workflows.MAIN_PUSH``), and of them the newest
+    is read. A run still going, failed, cancelled or timed out is not green, and neither is one
+    whose verdict read a suite shard a newer push replaced: that shard reads cancelled, so the
+    verdict is red and the run concluded failure. A run re-run to green is green: its conclusion
+    is its latest attempt's (the runbook's Tagging says so).
     """
     for workflow in workflows.MAIN_PUSH:
         runs = _runs(repository, workflow, commit, get)

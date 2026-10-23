@@ -581,7 +581,8 @@ def violations(root: Path) -> list[str]:
 
 
 #: The rails job's legs: each names the rail modules one leg runs, one per line, and
-#: ``ci.yml``'s rails job runs leg ``i`` with ``--shard-list tools/ci/rails-leg-<i>.txt``.
+#: the catalogue's rails entry runs leg ``i`` as its shard ``i``, with ``--shard-list
+#: tools/ci/rails-leg-<i>.txt``.
 LEGS: tuple[str, ...] = tuple(f"tools/ci/rails-leg-{i}.txt" for i in (1, 2, 3))
 
 

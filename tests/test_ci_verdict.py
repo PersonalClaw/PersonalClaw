@@ -725,6 +725,46 @@ MAIN_PUSH_ROWS: list[
         [("s1", "missing"), ("s2", "superseded")],
         "",
     ),
+    (
+        "a proven shard that never started, so left no record",
+        ["s1", "s2"],
+        [pushed("s1")],
+        {"s2": NEWER},
+        [("s2", "superseded")],
+        NEWER,
+    ),
+    (
+        "its stage, cancelled in needs, when every planned fault is superseded by one commit",
+        ["s1", "s2"],
+        [pushed("s1"), pushed("test", "cancelled")],
+        {"s2": NEWER},
+        [("s2", "superseded"), ("test", "superseded")],
+        NEWER,
+    ),
+    (
+        "a failed job beside its stage stays failed, and the stage reads superseded",
+        ["s1", "s2"],
+        [pushed("s1"), pushed("test", "cancelled"), pushed("tree-check", "failure")],
+        {"s2": NEWER},
+        [("s2", "superseded"), ("test", "superseded"), ("tree-check", "unplanned failure")],
+        "",
+    ),
+    (
+        "its stage stays cancelled beside a missing key no proof names",
+        ["s1", "s2"],
+        [pushed("test", "cancelled")],
+        {"s2": NEWER},
+        [("s1", "missing"), ("s2", "superseded"), ("test", "unplanned cancelled")],
+        "",
+    ),
+    (
+        "its stage stays cancelled when two commits replaced the legs",
+        ["s1", "s2"],
+        [pushed("test", "cancelled")],
+        {"s1": NEWER, "s2": OTHER},
+        [("s1", "superseded"), ("s2", "superseded"), ("test", "unplanned cancelled")],
+        "",
+    ),
 ]
 
 
@@ -732,7 +772,7 @@ MAIN = {"event": "push", "ref": "refs/heads/main"}
 
 
 def test_a_superseded_shard_on_main_reads_red_under_its_own_name(subtests: object) -> None:
-    assert len(MAIN_PUSH_ROWS) == 6, "a row was dropped from the table"
+    assert len(MAIN_PUSH_ROWS) == 11, "a row was dropped from the table"
     for name, planned, results, proven, reasons, by in MAIN_PUSH_ROWS:
         with row(subtests, case=name):
             got = verdict.decide_main_push(planned, results, PUSHED, proven, **MAIN)
@@ -751,9 +791,11 @@ def test_the_main_push_reading_refuses_a_proof_it_cannot_trust(subtests: object)
         ("a newer commit that is the pushed one", {"s1": HEAD}, "is the pushed commit"),
         ("a newer commit that is not an object id", {"s1": "abc123"}, "full object id"),
         ("a newer commit with a trailing newline", {"s1": NEWER + "\n"}, "full object id"),
+        ("a newer commit of hex but 39 characters", {"s1": NEWER[:39]}, "full object id"),
+        ("a newer commit in uppercase hex", {"s1": NEWER.upper()}, "full object id"),
         ("an empty key", {"": NEWER}, "non-empty"),
     ]
-    assert len(rows) == 4, "a refusal was dropped from the table"
+    assert len(rows) == 6, "a refusal was dropped from the table"
     for name, proven, why in rows:
         with row(subtests, case=name):
             with pytest.raises(Refused, match=why):

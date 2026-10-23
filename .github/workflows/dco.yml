@@ -6,8 +6,8 @@
 # commit message or the title, that would start no run). Rule 2, the committer list, applies on
 # main only: on a pull request a contributor commits their own work.
 #
-# WHY THIS IS ITS OWN WORKFLOW, not a job in ci.yml.
-# ci.yml runs on `pull_request`. This repo's fork-PR policy is
+# WHY THIS IS ITS OWN WORKFLOW, not a job in pr.yml.
+# pr.yml runs on `pull_request`. This repo's fork-PR policy is
 # `approval_policy: first_time_contributors_new_to_github`, so a PR from an account new
 # to GitHub runs no workflow until a maintainer clicks "Approve and run". PR #680 (a fork
 # PR with 8 unsigned commits) had ZERO check-runs on its head SHA, and neither it
@@ -28,8 +28,8 @@
 # would replace. The pull request's commits arrive as metadata over the commits API: no fork
 # file and no fork git object is ever on disk, so there is nothing to execute.
 # Do NOT add a checkout of the PR head, or a fetch of its ref, here. `actions/checkout` refuses
-# a fork ref under this trigger anyway, and a step that runs contributor code belongs in ci.yml
-# under `pull_request`, where the first-time-contributor approval gate guards it.
+# a fork ref under this trigger anyway, and a step that runs contributor code belongs in pr.yml
+# or merge.yml under `pull_request`, where the first-time-contributor approval gate guards it.
 name: DCO
 
 on:

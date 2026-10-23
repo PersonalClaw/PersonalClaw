@@ -256,6 +256,50 @@ def test_a_cancelled_matrix_job_in_needs_reads_red_even_with_every_record(tmp_pa
     assert _run(_setup(tmp_path, _all_green(), needs=needs)) == 1
 
 
+# ── a push to main's replaced shard (merge.yml's results, --superseded) ───────────────────
+
+NEWER = "e" * 40
+
+
+def _replaced(tmp_path: Path) -> list[str]:
+    """``suite (2/2)`` never started, so it left no record, and its stage reads cancelled in
+    needs; superseded.py proved a newer push's waiting shard replaced it."""
+    records = _all_green()
+    del records[_folder("suite (2/2)")]
+    args = _setup(tmp_path, records, needs=dict(NEEDS, test={"result": "cancelled", "outputs": {}}))
+    proof = tmp_path / "superseded.json"
+    proof.write_text(json.dumps({"suite (2/2)": NEWER}))
+    return [*args, "--superseded", str(proof)]
+
+
+def test_a_push_to_main_reads_a_replaced_shard_and_its_stage_superseded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    assert _run(_replaced(tmp_path)) == 1, "a replaced shard is still red"
+    out = capsys.readouterr().out
+    assert "superseded" in out and NEWER in out, out
+    assert "missing" not in out and "cancelled" not in out, out
+
+
+def test_superseded_is_refused_on_any_run_but_a_push_to_main(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/41/merge")
+    assert _run(_replaced(tmp_path)) == 2
+    assert "only a push to refs/heads/main" in capsys.readouterr().err
+
+
+def test_superseded_that_is_not_a_mapping_is_refused(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    args = _replaced(tmp_path)
+    Path(args[-1]).write_text("[]")
+    assert _run(args) == 2
+
+
 # ── the failed tests the records name ────────────────────────────────────────────────────────
 
 FLAKY = "tests/test_x.py::test_flaky"

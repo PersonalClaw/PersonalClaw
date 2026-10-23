@@ -48,13 +48,13 @@ RUN npm ci --workspace=web --prefer-offline
 # relative path that resolves to /app/src/personalclaw/… from WORKDIR /app. Without them the
 # build cannot resolve those imports and fails. Each lands where its import resolves, and before
 # the build. (The build is `vite build` alone: the image is typechecked by the job that gates it,
-# `release.yml`'s `build`, and on a pull request by ci.yml's `web`.)
+# `release.yml`'s `build`, and on a pull request by pr.yml's `web-unit` entry.)
 #
 # This list is the web build's complete set of reads outside `web/` (node_modules aside, which
 # `npm ci` installs). tests/test_web_image_stage_parity.py holds it to that in both images: it
 # resolves every import under `web/` and fails on a read no COPY here brings in, and on a COPY
 # here that nothing reads. A missing one otherwise surfaces only when an image is built, after
-# every pull-request check is green: `release.yml` and the single-container workflow are the
+# every pull-request check is green: `release.yml` and the catalogue's `image` entry are the
 # only builders of these stages.
 COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
 COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/

@@ -2,7 +2,7 @@
 ``tests/test_apps_sdk_contract.py``.
 
 They run once per CI run, in the rails job. The module named above says what they
-hold to: here, which diffs plan the apps contract, and how ci.yml wires the plan to the job.
+hold to: here, which diffs plan the apps contract, and how merge.yml runs the planned job.
 """
 
 from __future__ import annotations
@@ -32,8 +32,9 @@ def _planned(*paths: str) -> planner.Plan:
         "src/personalclaw/sdk/signatures.json",
         "scripts/apps_sdk_contract.py",
         "scripts/sdk_signature_snapshot.py",
-        ".github/workflows/ci.yml",
-        # The local action the job sets its toolchain up with, which defines it as ci.yml does.
+        # The workflow that runs the job, and the local action it sets its toolchain up with:
+        # either defines the job's run, so any workflow plans the whole tier (areas.toml).
+        ".github/workflows/merge.yml",
         ".github/actions/setup/action.yml",
     ],
 )
@@ -53,35 +54,35 @@ def test_an_unenumerated_diff_plans_the_job():
     assert "apps-contract" in _planned().jobs
 
 
-def _ci() -> dict:
-    return yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+def _merge() -> dict:
+    return yaml.safe_load((REPO / ".github/workflows/merge.yml").read_text(encoding="utf-8"))
 
 
-#: The job's whole condition: run unless the planner answered `full=false` without it, and
-#: when `changes` failed too (`!cancelled()`), since its outputs are then never written.
-GATED_IF = (
-    "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "
-    "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'apps-contract')) }}"
-)
-
-
-def test_the_workflow_wires_the_plan_to_the_job():
-    jobs = _ci()["jobs"]
-    contract = jobs["apps-contract"]
-    assert contract["needs"] == ["changes"]
-    assert " ".join(contract["if"].split()) == GATED_IF
-    runs = " ".join(str(s.get("run", "")) for s in contract["steps"])
-    assert "scripts/apps_sdk_contract.py" in runs
-    assert "--base-ref" in runs and "--install-deps" in runs
-    repos = [s.get("with", {}).get("repository") for s in contract["steps"]]
-    assert "PersonalClaw/PersonalClawApps" in repos
+def test_the_workflow_runs_the_planned_job_against_the_partner():
+    """merge.yml's stage job runs each planned entry through run-job, so the plan alone decides
+    whether apps-contract runs. Its catalogue entry runs the contract against the base with the
+    apps' dependencies, and reads the apps partner, which the stage job checks out at the head
+    `changes` published."""
+    job = _CAT.job("apps-contract")
+    words = [w for step in job.command for w in step.argv]
+    assert "scripts/apps_sdk_contract.py" in words
+    assert "--base-ref" in words and "--install-deps" in words
+    assert "apps-partner" in job.external_inputs
+    stage = _merge()["jobs"]["test"]
+    partner = [
+        s
+        for s in stage["steps"]
+        if (s.get("with") or {}).get("repository") == "PersonalClaw/PersonalClawApps"
+    ]
+    assert len(partner) == 1 and "apps-partner" in str(partner[0].get("if"))
+    assert "needs.changes.outputs.apps-partner" in str(partner[0]["with"].get("ref"))
 
 
 def test_every_local_action_the_job_calls_runs_it():
     """The job runs its own steps and those of each local action it calls, and of each one that
     action calls, so a change to the check is checked by it: a diff to any file of such an
-    action alone runs the job, as a diff to ci.yml does."""
-    steps = _ci()["jobs"]["apps-contract"].get("steps") or []
+    action alone runs the job, as a diff to merge.yml does."""
+    steps = _merge()["jobs"]["test"].get("steps") or []
     folders = local_actions.called(steps, local_actions.actions_at(REPO))
     assert folders, "apps-contract calls no local action, so this check read nothing"
     # The action's file under each name GitHub reads it from, and a file beside it its steps

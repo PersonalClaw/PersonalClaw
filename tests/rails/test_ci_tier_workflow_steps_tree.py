@@ -20,7 +20,13 @@ the plan's, a stage job the workflow does not run, a stage job's matrix that is 
 entries alone, an entry in a container, entries other than the keys) publishes nothing and fails the
 step, so the verdict reads an empty plan and a failed job. A main whose tools/ci cannot be fetched
 plans nothing either. The planner is main's, run from a folder of its own over this checkout's
-catalogue. The check step refuses a catalogue main refuses, and a run of main checks nothing. The
+catalogue and main's areas file, so a candidate that drops one of main's whole-tier overrides
+still plans the whole tier, and a catalogue main refuses plans nothing. Each changed name reaches
+it whole, a newline in it included, and a listing the step cannot read, or an enumeration that
+fails, plans the whole tier. What the planner writes to stderr goes to the summary, and only its
+warnings reach the log. The check step refuses a catalogue main refuses, by main's copy of the
+rules and never the candidate's own, is red when main's catalogue is missing, and a run of main
+checks nothing. The
 verdict step reads main's ``verdict.py``, the plan's keys, the run's records and the partner head
 and the partners by key the plan job published: green only with every record, red on a missing
 record, an empty plan or a failed job, red on a record of another partner head, on a record of a job
@@ -60,6 +66,12 @@ _TIERS = {
 }
 _REPO = "o/r"
 _HEAD = "a" * 40
+#: merge.yml's line its plan and verdict steps read their judge's ref from: on a push to main
+#: the commit the push replaced, else nothing, which reads main's tip. pr.yml's is empty.
+_JUDGE = (
+    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    " && github.event.before || '' }}"
+)
 _PARTNER = "c" * 40
 _RUN_ID = "4242"
 
@@ -119,7 +131,8 @@ printf '%s\\n' "$*" >> "$STUB/gh.log"
 for a in "$@"; do
   case "$a" in
     */compare/*) cat "$STUB/changed"; exit 0 ;;
-    */contents/tools/ci/verdict.py?ref=main) cat "$STUB/verdict.py"; exit 0 ;;
+    */contents/tools/ci/verdict.py?ref=*)
+      printf '%s\n' "$a" > "$STUB/verdict.url"; cat "$STUB/verdict.py"; exit 0 ;;
     */contents/tools/ci/tree_tested.py?ref=*)
       [ -f "$STUB/tree_tested.py" ] || exit 1
       printf '%s\n' "$a" > "$STUB/tree-check.url"; cat "$STUB/tree_tested.py"; exit 0 ;;
@@ -144,6 +157,7 @@ if [ "$1" = "-m" ] && [ "$2" = "tools.ci" ] && [ "$3" = "plan" ]; then
   for a in "$@"; do printf '%s\\n' "$a"; done > "$STUB/planner.argv"
   if [ -f "$STUB/answer" ]; then
     cat "$STUB/answer"
+    [ -f "$STUB/err" ] && cat "$STUB/err" >&2
     exit "$(cat "$STUB/rc")"
   fi
 fi
@@ -186,18 +200,30 @@ def _run_plan(
     *,
     answer: str | None = None,
     rc: int = 0,
+    err: str = "",
     changed: tuple[str, ...] = ("docs/a.md",),
+    listing: str | None = None,
+    gh_down: bool = False,
     fetch_fails: bool = False,
     push_plan: str = "",
+    judge: str = "",
+    checkout: Path = REPO,
 ) -> Ran:
-    """Run ``workflow``'s plan step once, over this checkout. ``answer`` plants the planner's
-    stdout and ``rc``; without one the real planner runs from the archived judge."""
+    """Run ``workflow``'s plan step once, over ``checkout`` (this one by default). ``gh`` lists
+    the ``changed`` names as ``--jq '... | @json'`` prints them, or ``listing`` as it is.
+    ``answer`` plants the planner's stdout, ``rc`` and ``err``; without one the real planner runs
+    from the archived judge."""
     stub, bin_, temp = _stubs(tmp)
     shutil.copy(judge_tar, stub / "judge.tar")
     if answer is not None:
         (stub / "answer").write_text(answer, encoding="utf-8", newline="")
         (stub / "rc").write_text(str(rc))
-    (stub / "changed").write_text("".join(json.dumps(n) + "\n" for n in changed))
+        (stub / "err").write_text(err, encoding="utf-8")
+    if listing is None:
+        listing = "".join(json.dumps(n) + "\n" for n in changed)
+    (stub / "changed").write_text(listing, encoding="utf-8", newline="")
+    if gh_down:
+        (stub / "gh-down").write_text("")
     if fetch_fails:
         (stub / "fetch-fails").write_text("")
     output, summary = tmp / "GITHUB_OUTPUT", tmp / "GITHUB_STEP_SUMMARY"
@@ -213,15 +239,17 @@ def _run_plan(
         "HEAD_SHA": _HEAD,
         # What merge.yml's expression gives: "tested" or "full" on a push, else empty.
         "PUSH_PLAN": push_plan,
+        # What the tiers' JUDGE gives: the commit a push to main replaced, else empty.
+        "JUDGE": judge,
         "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_REF": "refs/heads/feature",
         "GITHUB_REPOSITORY": _REPO,
-        "GITHUB_WORKSPACE": str(REPO),
+        "GITHUB_WORKSPACE": str(checkout),
         "GITHUB_OUTPUT": str(output),
         "GITHUB_STEP_SUMMARY": str(summary),
         "RUNNER_TEMP": str(temp),
     }
-    done = _bash(step["run"], tmp, env, REPO)
+    done = _bash(step["run"], tmp, env, checkout)
     argv, cwd = stub / "planner.argv", stub / "planner.cwd"
     return Ran(
         rc=done.returncode,
@@ -281,6 +309,7 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
         "STAGE_JOBS": " ".join(jobs),
         # pr.yml carries no push stage: its plan step is the same text, given no push plan.
         "PUSH_PLAN": push_plan if workflow == "merge.yml" else "",
+        "JUDGE": _JUDGE if workflow == "merge.yml" else "",
     }
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
@@ -289,7 +318,45 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
 def test_both_workflows_plan_with_the_same_step() -> None:
     # One step text, its tier and stage jobs in its env: a fix to one is a fix to both.
     assert _step("pr.yml", "changes", "plan")["run"] == _step("merge.yml", "changes", "plan")["run"]
-    assert _verdict_step("pr.yml") == _verdict_step("merge.yml")
+    pr, merge = _verdict_step("pr.yml"), _verdict_step("merge.yml")
+    # The same step but for JUDGE, which only merge.yml's push stage sets.
+    assert {**pr, "env": {**pr["env"], "JUDGE": ""}} == {
+        **merge,
+        "env": {**merge["env"], "JUDGE": ""},
+    }
+
+
+@pytest.mark.parametrize("workflow", sorted(_TIERS))
+def test_a_push_to_main_plans_with_the_planner_of_the_commit_it_replaced(
+    tmp_path: Path, judge_tar: Path, workflow: str
+) -> None:
+    """On a push to main, main's tip is the pushed commit, so the planner is fetched at the
+    commit the push replaced (JUDGE); any other run fetches main's branch by its full name."""
+    for judge, want in ((_BEFORE, _BEFORE), ("", "refs/heads/main")):
+        tmp = tmp_path / (judge or "main")
+        ran = _run_plan(tmp, workflow, judge_tar, judge=judge)
+        assert ran.rc == 0, ran.log
+        fetched = [
+            line.split()
+            for line in (tmp / "stub" / "git.log").read_text().splitlines()
+            if line.startswith("fetch ")
+        ]
+        assert fetched == [["fetch", "--no-tags", "--depth=1", "origin", want]], fetched
+
+
+@pytest.mark.parametrize("workflow", sorted(_TIERS))
+def test_a_push_to_mains_verdict_is_the_commit_it_replaced(tmp_path: Path, workflow: str) -> None:
+    """The verdict's copy is read at the commit a push to main replaced (JUDGE), and at main on
+    any other run, so a commit never judges its own push."""
+    for judge, want in ((_BEFORE, _BEFORE), ("", "main")):
+        tmp = tmp_path / (judge or "main")
+        records = {k: _record(k) for k in _KEYS}
+        ran = _run_verdict(
+            tmp, workflow, keys=_KEYS, records=records, needs=_GREEN_NEEDS, judge=judge
+        )
+        assert ran.rc == 0, ran.log
+        url = (tmp / "stub" / "verdict.url").read_text().strip()
+        assert url.endswith(f"/contents/tools/ci/verdict.py?ref={want}"), url
 
 
 # ── the plan step ────────────────────────────────────────────────────────────────────────────
@@ -358,6 +425,102 @@ def test_an_answer_that_is_not_a_plan_publishes_nothing_and_fails(
     tmp_path: Path, judge_tar: Path, answer: str, rc: int
 ) -> None:
     _no_plan(_run_plan(tmp_path, "pr.yml", judge_tar, answer=answer, rc=rc))
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        pytest.param(('docs/it\'s "quoted".md',), id="quotes in a name"),
+        pytest.param(("docs/${{ github.token }}.md",), id="an expression in a name"),
+        pytest.param(("docs/two\nlines.md",), id="a newline in a name"),
+        pytest.param(("x.md\ndocs/y.md",), id="a newline between two known names"),
+        pytest.param(("docs/a\rb.md",), id="a carriage return in a name"),
+    ],
+)
+def test_each_name_reaches_the_planner_whole(
+    tmp_path: Path, judge_tar: Path, changed: tuple[str, ...]
+) -> None:
+    """A name with a newline in it reaches the planner as one name, never as two it would read
+    as two known paths: the step publishes the plan of the names as they are."""
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, changed=changed)
+    assert ran.rc == 0, ran.log
+    assert json.loads(ran.published["keys"]) == _own_plan("merge", changed)["keys"]
+
+
+@pytest.mark.parametrize(
+    "listing",
+    ["docs/a.md\n", '"docs/a.md"\n\n', '"docs/a.md"\n["x"]\n', '"docs/a\\u0000b.md"\n'],
+    ids=["a bare name", "a blank line", "a line not a string", "a NUL in a name"],
+)
+def test_a_listing_it_cannot_read_plans_the_whole_tier(tmp_path, judge_tar, listing) -> None:
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, listing=listing)
+    assert ran.rc == 0, ran.log
+    assert (ran.runner_temp / "changed.txt").read_bytes() == b""
+    assert json.loads(ran.published["keys"]) == _own_plan("merge", ())["keys"]
+
+
+def test_an_enumeration_that_fails_plans_the_whole_tier(tmp_path, judge_tar) -> None:
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, gh_down=True)
+    assert ran.rc == 0, ran.log
+    assert json.loads(ran.published["keys"]) == _own_plan("merge", ())["keys"]
+
+
+#: The whole-tier overrides a planted candidate drops, each by the line that opens its
+#: ``paths``, with a path under it the step is handed.
+_DROPPED_OVERRIDES = {
+    "the workflows'": ('paths = [".github/workflows/"]', ".github/workflows/merge.yml"),
+    "tools/ci's": ('paths = ["tools/ci/"]', "tools/ci/plan.py"),
+    "deploy/docker's": ('paths = [\n  "deploy/docker/",', "deploy/docker/Dockerfile.backend"),
+}
+
+
+def _without_override(text: str, opening: str) -> str:
+    """The areas file with the one ``[[override]]`` whose paths open with ``opening`` removed."""
+    blocks = text.split("[[override]]\n")
+    kept = [b for b in blocks if not b.startswith(opening)]
+    assert len(kept) == len(blocks) - 1, f"no override opens with {opening!r}"
+    return "[[override]]\n".join(kept)
+
+
+@pytest.mark.parametrize("dropped", sorted(_DROPPED_OVERRIDES))
+def test_a_candidate_that_drops_a_whole_tier_override_still_plans_the_whole_tier(
+    tmp_path: Path, judge_tar: Path, dropped: str
+) -> None:
+    """The planted candidate: this tree's catalogue, and its areas file without one of main's
+    whole-tier overrides. Its own files alone plan the path narrowly, so the plant takes effect;
+    through the step, main's areas file, which the judge carries, plans the whole tier."""
+    opening, path = _DROPPED_OVERRIDES[dropped]
+    checkout = tmp_path / "checkout"
+    (checkout / "tools" / "ci").mkdir(parents=True)
+    for name in (catalogue.CATALOGUE, catalogue.AREAS):
+        text = (REPO / name).read_text(encoding="utf-8")
+        if name == catalogue.AREAS:
+            text = _without_override(text, opening)
+        (checkout / name).write_text(text, encoding="utf-8")
+    cat = catalogue.read(checkout)
+    alone = planner.plan(cat, "merge", [path], overrides=catalogue.read_areas(checkout, cat))
+    assert not alone.full, f"the plant took no effect: {path} is whole-tier on its own"
+    (tmp_path / "plan").mkdir()
+    ran = _run_plan(tmp_path / "plan", "merge.yml", judge_tar, changed=(path,), checkout=checkout)
+    assert ran.rc == 0, ran.log
+    assert json.loads(ran.published["keys"]) == _own_plan("merge", (path,))["keys"]
+    summary = (tmp_path / "plan" / "GITHUB_STEP_SUMMARY").read_text(encoding="utf-8")
+    assert "main's tools/ci/areas.toml" in summary, summary
+
+
+def test_the_planners_warnings_reach_the_log_and_the_rest_the_summary(tmp_path, judge_tar) -> None:
+    """What the planner writes to stderr goes to the summary; only its own warnings reach the
+    log, so nothing else it prints is read as a workflow command."""
+    warning = "::warning title=rails floor not read::TimeoutError: out of time"
+    stray = "::error title=planted::not the planner's warning"
+    err = '{\n "full": false\n}\n' + warning + "\n" + stray + "\nan ordinary line\n"
+    answer = _answer(_own_plan("change", ("docs/a.md",)))
+    ran = _run_plan(tmp_path, "pr.yml", judge_tar, answer=answer, err=err)
+    assert ran.rc == 0, ran.log
+    assert warning in ran.log.splitlines()
+    assert stray not in ran.log and "an ordinary line" not in ran.log
+    summary = (tmp_path / "GITHUB_STEP_SUMMARY").read_text(encoding="utf-8")
+    assert '"full": false' in summary and warning in summary
 
 
 def test_a_planner_that_fails_after_a_whole_answer_publishes_nothing(
@@ -583,12 +746,39 @@ def test_a_main_whose_tools_ci_cannot_be_fetched_plans_nothing(
 # ── merge.yml's check of the catalogue (#3909) ───────────────────────────────────────────────
 
 
-def _run_check(tmp: Path, judge_tar: Path, *, candidate: str | None = None, ref: str) -> Ran:
+#: What a planted candidate appends to its own copy of the rules, one file at a time: a check
+#: that passes, or a reference that objects to nothing, whatever the catalogue.
+_ACCEPT_ALL = {
+    "catalogue_check.py": "\n\ndef main(argv):\n    return 0\n",
+    "catalogue.py": "\n\ndef against(candidate, trusted):\n    return []\n",
+}
+
+
+def _run_check(
+    tmp: Path,
+    judge_tar: Path,
+    *,
+    candidate: str | None = None,
+    ref: str,
+    own_rules: str | None = None,
+    without: tuple[str, ...] = (),
+) -> Ran:
+    """Run merge.yml's check step once: main's tools/ci where the plan step leaves it, less the
+    files in ``without``; ``candidate`` as this checkout's catalogue. ``own_rules`` names a file
+    of ``_ACCEPT_ALL``: the checkout then carries tools/ci too, that file of it planted to accept
+    everything."""
     bin_, temp, workspace = tmp / "bin", tmp / "runner", tmp / "workspace"
     for folder in (bin_, temp / "judge", workspace / "tools" / "ci"):
         folder.mkdir(parents=True)
     with tarfile.open(judge_tar) as tar:
         tar.extractall(temp / "judge", filter="data")
+    for rel in without:
+        (temp / "judge" / rel).unlink()
+    if own_rules is not None:
+        with tarfile.open(judge_tar) as tar:
+            tar.extractall(workspace, filter="data")
+        with (workspace / "tools" / "ci" / own_rules).open("a", encoding="utf-8") as planted:
+            planted.write(_ACCEPT_ALL[own_rules])
     own = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
     (workspace / catalogue.CATALOGUE).write_text(candidate or own, encoding="utf-8")
     (bin_ / "python3").write_text(f'#!/bin/sh\nexec {sys.executable} "$@"\n')
@@ -637,6 +827,67 @@ def test_a_run_of_main_checks_main_against_itself_no_further(
     )
     assert ran.rc == 0, ran.log
     assert "the catalogue under test is main's own" in ran.log
+
+
+@pytest.mark.parametrize("planted", sorted(_ACCEPT_ALL))
+def test_a_candidates_own_rules_never_judge_its_catalogue(tmp_path, judge_tar, planted) -> None:
+    """The planted candidate drops a security job main runs and edits its own copy of the rules to
+    accept any catalogue. Run from its checkout, that copy passes it; the step runs main's copy,
+    so the job is red all the same."""
+    own = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    ran = _run_check(
+        tmp_path,
+        judge_tar,
+        candidate=_drop_entry(own, "security-macos"),
+        ref="refs/pull/7/merge",
+        own_rules=planted,
+    )
+    assert ran.rc == 1, ran.log
+    assert "security-macos: main's catalogue has this security job" in ran.log, ran.log
+    workspace, judge = tmp_path / "workspace", tmp_path / "runner" / "judge"
+    theirs = subprocess.run(
+        [sys.executable, "-m", "tools.ci", "catalogue-check"]
+        + ["--catalogue", str(workspace / catalogue.CATALOGUE)]
+        + ["--against", str(judge / catalogue.CATALOGUE)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert theirs.returncode == 0, "the plant took no effect: " + theirs.stdout + theirs.stderr
+
+
+def test_a_main_without_its_catalogue_is_red(tmp_path: Path, judge_tar: Path) -> None:
+    ran = _run_check(tmp_path, judge_tar, ref="refs/heads/feature", without=(catalogue.CATALOGUE,))
+    assert ran.rc == 1, ran.log
+    assert "::error title=catalogue refused::" in ran.log
+
+
+def test_the_real_planner_plans_nothing_for_a_catalogue_main_refuses(
+    tmp_path: Path, judge_tar: Path
+) -> None:
+    """The planted candidate drops a security job main runs. Its own files alone plan a docs path
+    narrowly; through the step, main's planner reads the catalogue against main's and refuses it,
+    so nothing is planned and the verdict is red."""
+    checkout = tmp_path / "checkout"
+    (checkout / "tools" / "ci").mkdir(parents=True)
+    own = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    (checkout / catalogue.CATALOGUE).write_text(
+        _drop_entry(own, "security-macos"), encoding="utf-8"
+    )
+    shutil.copy(REPO / catalogue.AREAS, checkout / catalogue.AREAS)
+    cat = catalogue.read(checkout)
+    alone = planner.plan(
+        cat, "merge", ["docs/guides/x.md"], overrides=catalogue.read_areas(checkout, cat)
+    )
+    assert not alone.full, "the plant took no effect: the path is whole-tier on its own"
+    (tmp_path / "plan").mkdir()
+    ran = _run_plan(
+        tmp_path / "plan", "merge.yml", judge_tar, changed=("docs/guides/x.md",), checkout=checkout
+    )
+    _no_plan(ran)
+    summary = (tmp_path / "plan" / "GITHUB_STEP_SUMMARY").read_text(encoding="utf-8")
+    assert "security-macos: main's catalogue has this security job" in summary, summary
 
 
 def test_the_check_is_the_last_step_of_the_job_the_merge_decision_requires() -> None:
@@ -747,6 +998,7 @@ def _run_verdict(
     plant: Callable[[Path], None] | None = None,
     partner: str = _PARTNER,
     key_partners: object = "none read",
+    judge: str = "",
 ) -> Ran:
     stub, bin_, temp = _stubs(tmp)
     (stub / "verdict.py").write_bytes((REPO / "tools" / "ci" / "verdict.py").read_bytes())
@@ -773,6 +1025,7 @@ def _run_verdict(
         "KEY_PARTNERS": _by_key(keys, key_partners),
         "APPS_PARTNER": partner,
         "HEAD_SHA": _HEAD,
+        "JUDGE": judge,
         "GITHUB_REPOSITORY": _REPO,
         "GITHUB_RUN_ID": _RUN_ID,
         "GITHUB_RUN_ATTEMPT": attempt,
@@ -808,6 +1061,8 @@ def test_the_verdict_step_reads_the_env_the_harness_gives_it(workflow: str) -> N
         "KEY_PARTNERS": "${{ needs.changes.outputs.key-partners }}",
         "APPS_PARTNER": "${{ needs.changes.outputs.apps-partner }}",
         "HEAD_SHA": "${{ github.sha }}",
+        # pr.yml has no push stage, so it leaves JUDGE empty, as it does PUSH_PLAN.
+        "JUDGE": _JUDGE if workflow == "merge.yml" else "",
     }
     assert "${{" not in step["run"]
     # The harness runs the step as if its condition held: it is `!cancelled()` alone, so a run

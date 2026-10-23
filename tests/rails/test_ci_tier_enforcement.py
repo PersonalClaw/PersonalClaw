@@ -45,8 +45,8 @@ def _tested_workspaces() -> list[str]:
 
 
 def _ci_run_commands() -> list[str]:
-    """Every catalogue step's command, its argv joined by spaces: what both of CI's shapes run
-    (``tests/ci_catalogue_steps.py``), ``ci.yml``'s jobs held to it token for token."""
+    """Every catalogue step's command, its argv joined by spaces: what CI runs
+    (``tests/ci_catalogue_steps.py``)."""
     return [" ".join(step.argv) for job in read().jobs for step in job.command]
 
 

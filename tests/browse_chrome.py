@@ -37,7 +37,7 @@ proof and failing there would take the whole suite down over an environment. Wha
 allowed is for that skip to be *unnoticed* — so :data:`REQUIRE_ENV` turns it into a failure, which
 is how a gate demands the proof actually ran.
 
-``ci.yml``'s ``e2e`` job is that gate: its browse-proof step sets :data:`REQUIRE_ENV` on the
+The catalogue's ``browse-live`` job is that gate: its step sets :data:`REQUIRE_ENV` on the
 Chromium that job installs, so on the merge gate a missing/renamed/unlaunchable browser is a RED
 rather than a green full of skips. The strictness lives there and nowhere else — a contributor
 with no browser still gets a skip. ``tests/test_browse_live_legs_run_in_ci.py`` is the rail over

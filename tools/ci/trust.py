@@ -311,6 +311,41 @@ def _script_entries(text: str, workdir: str, tracked: Mapping[str, Entry]) -> se
     return found
 
 
+#: The catalogue whose steps the tier workflows run (tools/ci/catalogue.py reads it).
+CATALOGUE_PATH = "tools/ci/catalogue.toml"
+
+
+def _catalogue_entries(text: str, tracked: Mapping[str, Entry]) -> set[str]:
+    """The files the catalogue's steps run: each step's argv (from its ``workdir``), read as a
+    workflow's ``run:`` line is, and each ``script`` a path. Read as data with ``tomllib``. A
+    file it cannot parse, or a step that is no argv (which the catalogue's loader refuses),
+    names none; the catalogue is a definition itself (``tools/ci/``), so a candidate that breaks
+    it is compared all the same."""
+    import tomllib
+
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return set()
+    jobs = data.get("job")
+    entries = jobs.values() if isinstance(jobs, Mapping) else jobs if isinstance(jobs, list) else ()
+    found: set[str] = set()
+    for job in entries:
+        if not isinstance(job, Mapping):
+            continue
+        command = job.get("command")
+        for step in command if isinstance(command, list) else ():
+            if isinstance(step, Mapping) and isinstance(step.get("argv"), list):
+                line = shlex.join(str(word) for word in step["argv"])
+                found |= _script_entries(line, str(step.get("workdir") or ""), tracked)
+        scripts = job.get("script")
+        for script in scripts if isinstance(scripts, list) else ():
+            hit = _resolve(str(script), "", tracked)
+            if hit:
+                found.add(hit)
+    return found
+
+
 def _strings(value: object) -> Iterable[str]:
     if isinstance(value, str):
         yield value
@@ -363,10 +398,12 @@ def _workflow_entries(text: str, tracked: Mapping[str, Entry]) -> set[str]:
 def entry_points(
     repo: Path, rev: str, *, helpers: Mapping[str, tuple[str, ...]] = REVIEWED_HELPERS
 ) -> frozenset[str]:
-    """The files a command in the revision's workflows runs, with the helpers they load.
+    """The files a command in the revision's workflows or its catalogue runs, with the helpers
+    they load.
 
-    Until the workflows run the catalogue's commands (#3909), a workflow step is a catalogue
-    command. A step names an entry point when it runs a tracked file, hands one to an
+    A workflow step is a command, and so is each step of the catalogue, which pr.yml's and
+    merge.yml's stage jobs run through run-job (#3915). A step names an entry point when it runs
+    a tracked file, hands one to an
     interpreter, runs ``make`` (the ``Makefile``) or ``npm``/``npx`` (the ``package.json`` it
     reads), uses a local action, or names a file under ``scripts/``, ``tools/``, ``harness/`` or
     ``.github/``. Tests are code under test and never count, except the contract table.
@@ -380,6 +417,9 @@ def _entry_points(tree: Tree, helpers: Mapping[str, tuple[str, ...]]) -> frozens
     for path, entry in tracked.items():
         if path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml")):
             found |= _workflow_entries(_text(tree, entry), tracked)
+    catalogue = tracked.get(CATALOGUE_PATH)
+    if catalogue is not None:
+        found |= _catalogue_entries(_text(tree, catalogue), tracked)
     for point in list(found):
         for helper in helpers.get(point, ()):
             if helper.endswith("/"):
