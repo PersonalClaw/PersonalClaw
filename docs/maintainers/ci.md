@@ -1,7 +1,48 @@
 # CI
 
-The rest of this page, the rulesets on `main` and how they are applied and read back, comes with
-the change that replaces classic branch protection with rulesets.
+## The ruleset on `main`
+
+`main` in core and in the apps is protected by one repository ruleset, `main-protect`, checked
+in as `.github/rulesets/main-protect.json` in each repository. It has **no bypass actor**: it
+holds everyone, the maintainer and every App included, and nothing toggles it around a merge.
+Its rules:
+
+- `pull_request`: a change reaches `main` only as the merge of a pull request, with 0
+  approvals, stale reviews dismissed on a push, and every conversation resolved, as classic
+  protection held it. Squash and rebase merges are allowed; #3910 makes squash the only one.
+  GitHub's `require_extra_approval_for_unattributed_changes` is off, as nothing in classic
+  protection asked for it.
+- `required_linear_history`, `non_fast_forward` (no force push) and `deletion`.
+
+#3910 adds the one required check, `merge-verdict`, bound to the merge controller's App, with
+branches up to date. Classic branch protection is gone; `tests/rails/test_ci_rulesets_tree.py`
+holds the file to these rules and to its empty bypass list.
+
+**Apply or change it** (the maintainer, with an admin login), from the repository's root:
+
+```bash
+gh api repos/PersonalClaw/PersonalClaw/rulesets --method POST --input .github/rulesets/main-protect.json
+gh api repos/PersonalClaw/PersonalClaw/rulesets/<id> --method PUT --input .github/rulesets/main-protect.json
+```
+
+The first creates it; the second, with the id `gh api repos/PersonalClaw/PersonalClaw/rulesets`
+lists, replaces it with the file. Use `PersonalClaw/PersonalClawApps` for the apps.
+
+**Read it back** with the same login, which is the one way to see its bypass list, and compare it
+with the file, leaving out what GitHub adds (ids, links, times, `source`):
+
+```bash
+gh api repos/PersonalClaw/PersonalClaw/rulesets/<id> \
+  --jq '{name, target, enforcement, conditions, rules, bypass_actors}' | jq -S . \
+  | diff - <(jq -S . .github/rulesets/main-protect.json)
+```
+
+The weekly [settings report](#the-settings-report) compares the rules every Monday, and fails on
+any bypass used in the week.
+
+**The emergency path** is an audited ruleset change, never a normal merge: edit the ruleset (the
+audit log records who and when), do the one thing, put the file's version back, and open an
+issue that says why. A bypass actor added for it shows in the next report as bypass use.
 
 ## Trust boundary
 
@@ -1775,10 +1816,11 @@ Two rules hold for every seam:
 | A release | a tag on a `main` commit whose own main-push run is green ([release runbook](release-runbook.md#tagging)) | the release |
 
 There is no batch step: each change gets its own pull request and its own verdict. Every change
-is meant to reach `main` as the squash merge of an up-to-date pull request. Until the rulesets
-and the required merge verdict land (#3907, #3910), `main` still accepts a direct push; its
-main-push run finds no pull request merged as that commit, so `tree-check` answers no and every
-job runs. The `merge-verdict` check is not posted yet: its controller App comes with #3910. The
+is meant to reach `main` as the squash merge of an up-to-date pull request. `main` refuses a
+direct push for everyone ([the ruleset on `main`](#the-ruleset-on-main)); a push that reaches it
+some other way finds no pull request merged as that commit, so `tree-check` answers no and every
+job runs. Until #3910's required verdict lands, a pull request can still merge with red checks:
+the `merge-verdict` check is not posted yet, and its controller App comes with #3910. The
 release gate that refuses any other commit and reads the nightly breadth is #3911's and is not
 built: until then the runbook's rule is the check.
 
