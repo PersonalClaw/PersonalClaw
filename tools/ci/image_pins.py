@@ -224,8 +224,9 @@ def markdown(moved: Sequence[Moved], problems: Sequence[str], run_url: str) -> s
     if not moved and not problems:
         return f"Every pinned workflow image is its tag's current digest. From {run_url}.\n"
     lines = [
-        "The weekly image check found pinned workflow images to refresh. For each, put the new "
-        "digest on the pin and the new index in the comment above it, in one reviewed pull "
+        "The weekly image check found pinned workflow images to refresh. For each, move every "
+        "copy of its old digest and old index in the tree to the new ones (`git grep` each old "
+        "digest: the catalogue, a step or a test can hold one too), in one reviewed pull "
         'request (docs/maintainers/ci.md, "How a refresh arrives").',
         "",
     ]

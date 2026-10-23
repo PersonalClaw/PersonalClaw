@@ -2417,7 +2417,9 @@ arrive, and images have no separate security-update path.
   registry every Monday, anonymously, what its tag names now (`python -m tools.ci image-pins`
   runs the same check locally). It names each pin whose tag has moved, with the new digest for
   the pin and the new index for its comment, and keeps one "Pinned images to refresh" issue
-  open on `main` until the refresh merges. A pin whose comment names no platform and index, an
+  open on `main` until the refresh merges. The refresh moves every copy of each old digest in
+  the tree, not only the pin: the catalogue, a step that records the image and the rails'
+  plants can hold one too (#5273 moved five files for two pins). A pin whose comment names no platform and index, an
   unknown registry, or a tag or platform that is gone fails it too. It holds `contents: read`
   and `issues: write`, and moves no pin itself.
 - **Tools named by hand** (`pip-audit` in the audit job, `wheel` in the gateway image,
