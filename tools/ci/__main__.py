@@ -16,7 +16,6 @@ from . import (
     quarantine_rerun,
     rails_census,
     release_manifest,
-    release_tag,
     report,
     selection_map,
     settings_report,
@@ -25,6 +24,14 @@ from . import (
     variation_census,
     verdict,
 )
+
+
+def _release_tag(argv: list[str]) -> int:
+    # Imported when called, as the verifier is: the tagging command reads tools/ci/trust.py,
+    # which no other command, and so no ordinary CI run, loads.
+    from . import release_tag
+
+    return release_tag.main(argv)
 
 
 def _verify_check_run(argv: list[str]) -> int:
@@ -46,7 +53,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "quarantine-rerun": quarantine_rerun.main,
     "rails": rails_census.main,
     "release-manifest": release_manifest.main,
-    "release-tag": release_tag.main,
+    "release-tag": _release_tag,
     "report": report.main,
     "run": jobs.run_main,
     "run-job": jobs.run_job_main,
