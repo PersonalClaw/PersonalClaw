@@ -33,9 +33,8 @@ const DOCK_ZONE = 96;
 
 const PLACEMENT_KEY = "buddy:placement";
 /** What the page may say it presents: the orb alone, its line card, or its full card. Only `hidden`
- *  changes the window: it hides it. `peek`, `compact` and `expanded` are the earlier names, kept
- *  until the page moves to the new ones. */
-const PRESENTATIONS = Object.freeze(["hidden", "orb", "line", "card", "peek", "compact", "expanded"]);
+ *  changes the window: it hides it. */
+const PRESENTATIONS = Object.freeze(["hidden", "orb", "line", "card"]);
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 

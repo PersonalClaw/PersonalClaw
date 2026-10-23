@@ -151,8 +151,9 @@ export interface DesktopBridge {
 /** A rectangle in the buddy window's own points. */
 export interface BuddyRect { x: number; y: number; width: number; height: number }
 
-/** The buddy's room: `hidden` hides its window until the shell shows it again. */
-export type BuddyPresentation = 'hidden' | 'peek' | 'compact' | 'expanded'
+/** What the buddy's page presents (#5216): the orb alone, its line card, or its full card. Only
+ *  `hidden` changes the window: it hides it until the shell shows it again. */
+export type BuddyPresentation = 'hidden' | 'orb' | 'line' | 'card'
 
 /** The doorbell's connection, as the shell tells the buddy's page (`desktop/doorbell.js`). */
 export type BuddyConnection = 'up' | 'lost' | 'restarting'

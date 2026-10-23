@@ -30,16 +30,16 @@ import { liveCardPropsOf } from './liveCard'
 import { lineOf } from '../../lib/buddy/lines'
 
 
-/** The size the buddy's window takes for where the machine stands. With nothing to show, a docked
- *  buddy keeps the peek's strip as its top-edge zone, which draws nothing and takes no click; one
- *  hidden by the owner, switched off or floating is `hidden`, which the shell's doorbell undoes for
- *  something that may interrupt you. */
+/** What the page presents for where the machine stands: its full card, its line card, or the orb
+ *  alone. With nothing to show, a docked buddy keeps its window up as its top-edge zone, which draws
+ *  nothing and takes no click (`orb`); one hidden by the owner, switched off or floating is
+ *  `hidden`, which the shell's doorbell undoes for something that may interrupt you. */
 export function presentationOf(machine: BuddyState): BuddyPresentation {
   const view = viewOf(machine)
-  if (!view.shows) return machine.enabled && machine.docked && !machine.muted ? 'peek' : 'hidden'
-  if (view.room === 'expanded' || machine.card === 'open') return 'expanded'
-  if (view.room === 'compact' || view.room === 'floating' || view.room === 'sleeping') return 'compact'
-  return 'peek'
+  if (!view.shows) return machine.enabled && machine.docked && !machine.muted ? 'orb' : 'hidden'
+  if (view.room === 'expanded' || machine.card === 'open') return 'card'
+  if (view.room === 'compact' || (view.room === 'floating' && (machine.card === 'hover' || Boolean(machine.shown)))) return 'line'
+  return 'orb'
 }
 
 /** The frames that say a list or the buddy's policy moved: a doorbell, carrying nothing the page reads. */
