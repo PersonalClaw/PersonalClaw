@@ -50,6 +50,10 @@ jobs:
   artifacts:
     needs: [version]
     uses: ./.github/workflows/release-artifacts.yml
+    permissions:
+      contents: read
+      # Its manifest job reads this run's own job logs: what built each artifact.
+      actions: read
     with:
       ref: ${{ needs.version.outputs.ref }}
       retention-days: 3

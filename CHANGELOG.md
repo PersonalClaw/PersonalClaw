@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **CI's supply chain is pinned and checked in PersonalClaw, its apps and its website: every action is pinned to a commit SHA and GitHub refuses one that is not, every workflow container and image base is pinned to a digest, secret scanning and push protection are on, a pull request that adds a dependency with a known vulnerability fails dependency review, and a job may hold a write permission only where a checked-in list names it. A weekly check opens an issue when a pinned workflow image's tag moves.**
 - **A release builds and smokes every artifact, and records each in one digest-bound manifest, before anything publishes: the images it pushes are the layouts it smoked, byte for byte, and the weekly rehearsal runs the same build.**
 - **A release tag is created only for a commit whose own push run on `main` is green: one still running, red, cancelled or superseded by a newer push is refused, with a link to the run.**
+- **The release manifest records what built each artifact as it ran: the runner image, every action its job downloaded with the SHA it resolved to, every base image by digest, and the Python, uv, Node and npm versions, and refuses an artifact with any of them missing.**
 
 ## [0.2.6] — 2026-10-22
 

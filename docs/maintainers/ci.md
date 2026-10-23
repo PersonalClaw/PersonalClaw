@@ -2230,6 +2230,18 @@ release's approval and its publish phase will read it.
   sha256 of every other field in canonical form (sorted keys, no spaces, UTF-8). The attestation
   manifests a BuildKit build adds beside each platform's are covered by the index digest, and are
   not platforms.
+- **What built each artifact, as it ran** (#4585's step 7). One build per job that built an
+  artifact: the runner image its set-up log reported (`Image` and `Version`); every action the job
+  downloaded, nested ones included, with the SHA each resolved to, read from that same log rather
+  than from the workflow text; the base images that ran, by digest (an image's from the SLSA
+  provenance BuildKit attached to each platform, with the workflow containers the job pulled); the
+  Python, uv, Node and npm versions it used (an image's build names none, its bases being its
+  toolchain); and the artifacts it built. Each job writes its part as its last step
+  (`tools/ci/build_identity.py record`); the manifest job finds that job in its own run by the
+  runner's name and reads its set-up log through the API with `actions: read`
+  (`build_identity.py collect`). The write refuses a build with no runner image version, an
+  action with no SHA, an image's build with no base digest, a file's build missing a tool, and an
+  artifact no job or two jobs claim.
 - **What it refuses to stage.** A symlink, a special file, a file or folder it cannot read, an
   empty folder, a hidden name, and a name with a space or a control character, each by name, never
   skipped: a release publishes what the folder holds. An index that is not a multi-platform index,
@@ -2239,10 +2251,10 @@ release's approval and its publish phase will read it.
   canonical, that repeats a key, that does not hash to its own digest, or that is not the approved
   one is refused.
 - **`python -m tools.ci release-manifest write --staged <folder> --image NAME=INDEX_FILE ... --ref
-  <full ref> --commit <sha> --out <file>`** writes it outside the folder it describes, and prints
-  `digest=` to the step's outputs. Inside is decided by the folder's identity, not the spelling of
-  the path, so neither a symlink into the folder nor a case variant of its name on a disk that
-  ignores case puts the manifest in it.
+  <full ref> --commit <sha> --builds <file> --out <file>`** writes it outside the folder it
+  describes, and prints `digest=` to the step's outputs. Inside is decided by the folder's
+  identity, not the spelling of the path, so neither a symlink into the folder nor a case variant
+  of its name on a disk that ignores case puts the manifest in it.
 - **`verify --manifest <file> --digest <approved> --staged <folder> --image NAME=INDEX_FILE ...`**
   names every missing, extra and changed file and image, and exits 1 on any.
 - **`compare --manifest <file> --digest <approved> --select <glob> ... --published <file>`** holds
