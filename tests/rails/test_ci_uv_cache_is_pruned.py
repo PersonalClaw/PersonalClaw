@@ -76,11 +76,14 @@ def _workflows() -> dict[str, dict]:
 
 
 def test_the_rule_reads_every_setup_uv_step_the_workflows_have():
-    """Vacuity floor: ci.yml and breadth.yml install uv in most of their jobs, and the release,
-    Nix and headless-smoke workflows each install it too."""
+    """Vacuity floor: breadth.yml installs uv in most of its jobs, each stage job of the tier
+    workflows does through the setup action (merge.yml's four, pr.yml's one), and the release,
+    Nix and headless-smoke workflows each install it too. Read from the tier workflows, not
+    ci.yml, so the floor holds through the flip (#3915)."""
     actions = _actions()
     found = {name: len(setup_uv_steps(wf, actions)) for name, wf in _workflows().items()}
-    assert found.get("ci.yml", 0) >= 10 and found.get("breadth.yml", 0) >= 5, found
+    assert found.get("breadth.yml", 0) >= 5, found
+    assert found.get("merge.yml", 0) >= 4 and found.get("pr.yml", 0) >= 1, found
     assert {"release.yml", "nix.yml", "headless-run-smoke.yml"} <= {
         n for n, c in found.items() if c
     }

@@ -11,8 +11,8 @@ can hold the tree to it.
 A test **reads the tree** when its own body, a module-level helper or fixture it reaches, or the
 parameters its decorators compute, does one of these:
 
-- reads the suite's source index (``tests/source_index.py``) or the controller sources built on
-  it (``tests/controller_sources.py``);
+- reads the suite's source index (``tests/source_index.py``), the controller sources built on
+  it (``tests/controller_sources.py``) or the catalogue's steps (``tests/ci_catalogue_steps.py``);
 - names ``.github`` (a workflow, an action, Dependabot's settings);
 - walks a path the module binds at its top level or derives from ``__file__`` (``rglob``,
   ``os.walk``, a ``**`` glob, recursive ``glob.glob``); a walk of a path the test was handed,
@@ -63,8 +63,10 @@ RAILS = "tests/rails"
 #: The names pytest collects as test modules when its configuration names none.
 PYTEST_FILES: tuple[str, ...] = ("test_*.py", "*_test.py")
 
-#: The suite's test helpers that read the tree for a rail.
-TREE_HELPERS = frozenset({"source_index", "controller_sources"})
+#: The suite's test helpers that read the tree for a rail: the source index, the controller
+#: sources built on it, and the catalogue's steps (``tests/ci_catalogue_steps.py``), the CI
+#: definition both of CI's shapes run.
+TREE_HELPERS = frozenset({"source_index", "controller_sources", "ci_catalogue_steps"})
 
 #: Helpers that only name the repository's root (``tests/rails/rails_repo.py``): a path built
 #: from one is a repository path, but importing one reads nothing.

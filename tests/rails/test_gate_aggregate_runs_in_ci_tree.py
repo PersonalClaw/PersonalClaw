@@ -3,98 +3,63 @@
 
 They run once per CI run, in the rails job. The module named above says what they
 hold to.
+
+The call site is read from the catalogue (``tests/ci_catalogue_steps.py``), whose steps both of
+CI's shapes run: ``ci.yml``'s jobs, held to them token for token, and the tier workflows' stage
+jobs through ``run-job``. A step there is an argv, so no comment can stand in for the call.
 """
 
 from __future__ import annotations
 
-import re
+import dataclasses
 
-import pytest
-from gate_aggregate_runs_in_ci_shared import _REPO
+from ci_catalogue_steps import read, steps_naming
 
-_CI = _REPO / ".github" / "workflows" / "ci.yml"
-
+from tools.ci.catalogue import Catalogue
 
 #: The script the aggregate lives in. `make gates` is a thin wrapper over it, and CI
 #: invokes the script directly so a failure names the gate rather than "make: *** Error 1".
 _AGGREGATE = "scripts/gate_report.py"
 
 
-def _run_lines(text: str) -> list[str]:
-    """Every shell line reachable from a ``run:`` key, comments excluded.
-
-    Handles both ``run: cmd`` and the block forms (``run: |`` / ``run: >``). A line whose
-    first non-space character is ``#`` is dropped, because a comment cannot execute.
-    """
-    out: list[str] = []
-    lines = text.split("\n")
-    for i, raw in enumerate(lines):
-        m = re.match(r"^(\s*)-?\s*run:\s*(.*)$", raw)
-        if not m:
-            continue
-        indent, inline = m.group(1), m.group(2).strip()
-        if inline and inline not in ("|", ">", "|-", ">-", "|+", ">+"):
-            out.append(inline)
-            continue
-        # Block scalar: take the more-indented lines that follow.
-        base = len(indent)
-        for follow in lines[i + 1 :]:
-            if not follow.strip():
-                continue
-            if len(follow) - len(follow.lstrip()) <= base:
-                break
-            body = follow.strip()
-            if not body.startswith("#"):
-                out.append(body)
-    return out
+def _runners(cat: Catalogue) -> list[str]:
+    """Each change-tier job a step of which runs the aggregate: every pull request runs it."""
+    return sorted(job.id for job, _ in steps_naming(_AGGREGATE, cat) if "change" in job.tiers)
 
 
-@pytest.fixture(scope="module")
-def ci_text() -> str:
-    assert _CI.is_file(), f"{_CI} moved — re-point this rail"
-    return _CI.read_text(encoding="utf-8")
+def test_the_catalogue_is_read() -> None:
+    """Vacuity floor: a reader that read nothing would make the assertion below vacuous."""
+    steps = [step for job in read().jobs for step in job.command]
+    assert len(steps) > 15, f"read only {len(steps)} catalogue steps; the reader is broken"
+    assert any("pytest" in step.argv for step in steps), "no pytest step: steps are not read"
 
 
-@pytest.fixture(scope="module")
-def runs(ci_text: str) -> list[str]:
-    return _run_lines(ci_text)
-
-
-def test_the_parser_found_a_real_workflow(runs: list[str], ci_text: str) -> None:
-    """Vacuity floor #1: a matcher that parsed nothing would make every assertion below
-    trivially true, which is exactly how a rail reads clean forever."""
-    assert len(ci_text) > 2000, "ci.yml is implausibly short — did the read succeed?"
-    assert len(runs) > 15, f"parsed only {len(runs)} run-lines out of ci.yml; parser is broken"
-    # A control the parser must find, unrelated to this rail's subject.
-    assert any(
-        "pytest" in r for r in runs
-    ), "no pytest step found — the parser is not reading steps"
-
-
-def test_the_gate_aggregate_is_executed(runs: list[str]) -> None:
-    """The load-bearing assertion: some CI step RUNS the aggregate."""
-    hits = [r for r in runs if _AGGREGATE in r]
-    assert hits, (
-        f"no CI step runs {_AGGREGATE}. The six ratchets then reach CI only through their "
-        "individual pytest counterparts, and a gate without one does not reach CI at all."
+def test_the_gate_aggregate_is_executed() -> None:
+    """The load-bearing assertion: a change-tier job RUNS the aggregate."""
+    assert _runners(read()), (
+        f"no change-tier catalogue step runs {_AGGREGATE}. The six ratchets then reach CI only"
+        " through their individual pytest counterparts, and a gate without one does not reach"
+        " CI at all."
     )
 
 
-def test_a_comment_alone_does_not_satisfy_this_rail(ci_text: str, runs: list[str]) -> None:
-    """Vacuity floor #2, and the reason this file parses instead of grepping.
-
-    The step's own comment says ``make gates``. Assert that the phrase really is present in
-    a comment, and that stripping every ``run:`` line would therefore leave a substring
-    search satisfied while the aggregate no longer executes.
-    """
-    commented = [
-        ln for ln in ci_text.split("\n") if ln.strip().startswith("#") and "make gates" in ln
-    ]
-    assert commented, (
-        "expected the step's explanatory comment to mention `make gates` — if that comment "
-        "was reworded, this floor no longer proves the parser is doing real work"
+def test_a_catalogue_without_the_call_fails_this_rail() -> None:
+    """The positive control: the real catalogue less the step that calls the aggregate, and
+    the same step moved to a merge-tier job, each leave no runner."""
+    cat = read()
+    without = Catalogue(
+        jobs=tuple(
+            dataclasses.replace(
+                job, command=tuple(s for s in job.command if _AGGREGATE not in s.argv)
+            )
+            for job in cat.jobs
+        )
     )
-    # The floor: the phrase in the comment is NOT what satisfies the rail above.
-    assert not any("make gates" in r for r in runs) or any(
-        _AGGREGATE in r for r in runs
-    ), "the rail must key on the aggregate script in a run-line, never on prose"
+    assert _runners(cat) and not _runners(without)
+    merge_only = Catalogue(
+        jobs=tuple(
+            dataclasses.replace(job, tiers=("merge",)) if job.id in _runners(cat) else job
+            for job in cat.jobs
+        )
+    )
+    assert not _runners(merge_only)
