@@ -277,7 +277,13 @@ def _creation_actor(pending: dict[str, dict[str, Any]]) -> dict[str, Any]:
         (lambda a, p: _creation_actor(p).update(actor_type="RepositoryRole"), "one App"),
         (lambda a, p: _creation_actor(p).update(bypass_mode="pull_request"), "one App"),
         (lambda a, p: _creation_actor(p).update(actor_id="815"), "App id is '815'"),
-        (lambda a, p: a.update({_CREATION: p.pop(_CREATION)}), "applied with no App id (None)"),
+        (
+            lambda a, p: (
+                _creation_actor(p).update(actor_id=None),
+                a.update({_CREATION: p.pop(_CREATION)}),
+            ),
+            "applied with no App id (None)",
+        ),
         (
             lambda a, p: (
                 _creation_actor(p).update(actor_id=0),
