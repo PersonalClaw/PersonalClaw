@@ -5,7 +5,7 @@ No suite shard collects the corpus (``tools/ci/shards.py`` ``JOB_OWNED``), so th
 copy cannot then silently stop running there: each tier names its owner, the merge tier requires
 ``security``, and the merge verdict reads a plan without that job's success as red.
 
-Each owner runs exactly the files ``JOB_OWNED`` gives ``ci.yml security``, and no pytest step of
+Each owner runs exactly the files ``JOB_OWNED`` gives ``security``, and no pytest step of
 one runs under a step ``if:``. Between them the owners run every Python ``requires-python``
 allows, so no supported Python goes without the corpus.
 
@@ -43,9 +43,9 @@ OWNERS: tuple[tuple[str, str, str], ...] = (
     ("breadth.yml", "security", "ubuntu-"),
     ("breadth.yml", "security-macos", "macos-"),
 )
-#: The corpus: the files the shards leave to ``ci.yml``'s ``security`` job. Each owner runs these.
+#: The corpus: the files the shards leave to the ``security`` job. Each owner runs these.
 CORPUS: frozenset[str] = frozenset(
-    rel for rel, owner in shards.JOB_OWNED.items() if owner == "ci.yml security"
+    rel for rel, owner in shards.JOB_OWNED.items() if owner == "security"
 )
 _PYTEST = re.compile(r"\bpytest\b")
 #: A file a control writes to stand for the merge run's results, ``{job: result}``; a job left

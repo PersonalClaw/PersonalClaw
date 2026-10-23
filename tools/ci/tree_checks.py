@@ -60,7 +60,11 @@ _LICENCE = "licence_governance_shared"
 class Check:
     """A whole-tree check: the job that owns its real-tree run, the calls that run it, and the
     sources it reads the tree through. A call runs the real tree unless, for each group of
-    :attr:`sources`, the test replaces at least one of the group's names."""
+    :attr:`sources`, the test replaces at least one of the group's names.
+
+    :attr:`owner` is ``"<catalogue job>: <what it runs>"``, the job's id in
+    ``tools/ci/catalogue.toml``, so it names the job in ``ci.yml``'s shape and the tier
+    workflows' alike."""
 
     owner: str
     entries: Mapping[tuple[str, str], str]
@@ -82,7 +86,7 @@ _STRUCTURAL_TREE = _group(_STRUCTURAL, "_src_py_files", "_src_root", "_repo_root
 
 CHECKS: Mapping[str, Check] = {
     "gate-report": Check(
-        owner="ci.yml rails-checks: python scripts/gate_report.py",
+        owner="rails-checks: python scripts/gate_report.py",
         entries={(_GATES, "run_all_gates"): ANY, (_GATES, "main"): ANY},
         sources=(
             _group(_CONFIG, "build_baseline"),
@@ -93,17 +97,17 @@ CHECKS: Mapping[str, Check] = {
         ),
     ),
     "inert-surface": Check(
-        owner="ci.yml rails-checks: python scripts/gate_report.py (the inert-surface gate)",
+        owner="rails-checks: python scripts/gate_report.py (the inert-surface gate)",
         entries={(_INERT, "build_inventory"): NO_ARGS, (_INERT, "main"): ANY},
         sources=(_INERT_TREE,),
     ),
     "docs-lint": Check(
-        owner="ci.yml rails-checks: python scripts/gate_report.py (the docs-lint gate)",
+        owner="rails-checks: python scripts/gate_report.py (the docs-lint gate)",
         entries={(_DOCS, "build_inventory"): NO_ARGS, (_DOCS, "build_baseline"): NO_ARGS},
         sources=(_DOCS_TREE,),
     ),
     "structural": Check(
-        owner="ci.yml rails-checks: python scripts/gate_report.py (the three structural gates)",
+        owner="rails-checks: python scripts/gate_report.py (the three structural gates)",
         entries={
             (_STRUCTURAL, name): NO_ARGS
             for name in (
@@ -117,7 +121,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_STRUCTURAL_TREE,),
     ),
     "asset-licences": Check(
-        owner="ci.yml rails-checks: python scripts/check_asset_licenses.py",
+        owner="rails-checks: python scripts/check_asset_licenses.py",
         entries={
             (_ASSETS, "violations"): NO_ARGS,
             (_ASSETS, "asset_paths"): NO_ARGS,
@@ -128,7 +132,7 @@ CHECKS: Mapping[str, Check] = {
     # The whole-repository readers that no job but the suite's shards ran. The licence sweep's
     # one place is now the rails job, and the scanner's whole-tree scan's is the harness step.
     "licence-sweep": Check(
-        owner="ci.yml rails: tests/rails/test_licence_governance_tree.py",
+        owner="rails: tests/rails/test_licence_governance_tree.py",
         entries={
             **{
                 (_LICENCE, name): ROOT
@@ -149,14 +153,14 @@ CHECKS: Mapping[str, Check] = {
         sources=(_group(_LICENCE, "_ROOT"),),
     ),
     "harness-scanner": Check(
-        owner="ci.yml harness: python -m harness scan, over the whole tree",
+        owner="static: python -m harness scan, over the whole tree",
         entries={("harness.scanner", "scan"): ROOT},
         sources=(),
     ),
     # The census's verdict: every rail in tests/rails, and in exactly one of the rails job's
     # legs. It reads the tree it is handed, so only the root as its argument is a copy.
     "rails-census": Check(
-        owner="ci.yml rails-checks: python -m tools.ci rails check",
+        owner="rails-checks: python -m tools.ci rails check",
         entries={
             ("tools.ci.rails_census", name): ROOT
             for name in ("census", "violations", "leg_violations")
@@ -164,7 +168,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(),
     ),
     "harness": Check(
-        owner="ci.yml harness: python -m harness validate --strict, and python -m harness scan",
+        owner="static: python -m harness validate --strict, and python -m harness scan",
         entries={(_HARNESS, "main"): "harness"},
         sources=(_group(_HARNESS, "_repo_root"),),
     ),
