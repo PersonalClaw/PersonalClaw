@@ -637,8 +637,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
-          --leg test-shard:ci.yml:junit-test-shard-:4
-          --leg test-macos:ci.yml:junit-test-macos-:4
+          --leg test-shard:ci.yml:junit-test-shard-:3
+          --leg test-macos:ci.yml:junit-test-macos-:3
           --out "$RUNNER_TEMP/shard-plan/plan.json"
       - name: every collectable file is in exactly one shard of each leg
         run: python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
@@ -681,7 +681,7 @@ jobs:
       # set it). N is exactly the `shard` list below: extend it to re-shard, nothing else moves.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3]
     env:
       # NOTE: do NOT set PERSONALCLAW_HOME here. The suite runs under the documented
       # no-global-home contract (CONTRIBUTING: destructive tests isolate via per-test
@@ -735,8 +735,8 @@ jobs:
       - name: this shard's test files
         run: >-
           uv run python -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg test-shard --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/shard.txt"
-      - name: pytest (shard ${{ matrix.shard }} of 4 — xdist within the shard, no coverage)
+          --leg test-shard --shard ${{ matrix.shard }}/3 --out "$RUNNER_TEMP/shard.txt"
+      - name: pytest (shard ${{ matrix.shard }} of 3 — xdist within the shard, no coverage)
         # -n auto --dist worksteal: one xdist worker per core (4 on this runner), each test handed
         #   to whichever worker is free. pytest's own default is one process, so a suite step
         #   names its workers (tests/rails/test_ci_contract.py holds every suite step to that).
@@ -761,7 +761,7 @@ jobs:
       # is where the detail lives now, so the two levers no longer trade off.
       #
       # `name` carries the shard index because artifact names must be unique within a run —
-      # a fixed name would make the four shards collide and only one would survive.
+      # a fixed name would make the three shards collide and only one would survive.
       - name: Upload JUnit results (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -926,7 +926,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3]
     env:
       # As `test-shard`: no PERSONALCLAW_HOME, app backends off, and Docker where the runner
       # has one.
@@ -958,8 +958,8 @@ jobs:
       - name: this shard's test files
         run: >-
           uv run python -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg test-macos --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/shard.txt"
-      - name: pytest (macOS shard ${{ matrix.shard }} of 4 — two workers, no coverage)
+          --leg test-macos --shard ${{ matrix.shard }}/3 --out "$RUNNER_TEMP/shard.txt"
+      - name: pytest (macOS shard ${{ matrix.shard }} of 3 — two workers, no coverage)
         run: uv run pytest -n 2 --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-test-macos-${{ matrix.shard }}.xml
       # Same argument as `test-shard`'s upload steps.
       - name: Upload JUnit results (macOS shard ${{ matrix.shard }})

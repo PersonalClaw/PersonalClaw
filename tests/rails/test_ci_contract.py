@@ -2012,7 +2012,7 @@ def _runs_whatever_its_needs_concluded(job: dict[str, Any]) -> bool:
 
 
 #: The macOS legs that wait for the macOS suite instead of running beside its shards, which hold
-#: two macOS runners at a time (``max-parallel: 2``).
+#: one macOS runner at a time (``max-parallel: 1``, :func:`macos_budget_violations`).
 _AFTER_THE_MACOS_SUITE = ("security-macos", "planned-ids-macos")
 
 
@@ -2031,6 +2031,48 @@ def macos_suite_first_violations(tree: Tree) -> list[str]:
             bad.append(f"breadth.yml:{job_id} does not wait on macos, so it runs beside its shards")
         if not _runs_whatever_its_needs_concluded(jobs[job_id]):
             bad.append(f"breadth.yml:{job_id} does not run whatever macos concluded")
+    return bad
+
+
+#: The macOS runners the account runs at once: a pull request's macOS shards and breadth's macOS
+#: leg, which a night's run and a day's pull request can hold together, share them (#3915).
+_MACOS_RUNNERS = 5
+
+
+def _macos_at_once(job: dict[str, Any]) -> int:
+    """The macOS runners one job holds at once: its matrix's legs (each list's values crossed,
+    and each ``include`` entry), capped by ``max-parallel``; none for a job off macOS."""
+    if not any(re.fullmatch(r"macos-.+", label, re.IGNORECASE) for label in _runner_labels(job)):
+        return 0
+    strategy = job.get("strategy") or {}
+    matrix = strategy.get("matrix") or {}
+    legs = 1
+    if isinstance(matrix, dict):
+        for key, values in matrix.items():
+            if key not in ("include", "exclude") and isinstance(values, list):
+                legs *= len(values)
+        legs += len(matrix.get("include") or []) - len(matrix.get("exclude") or [])
+    cap = strategy.get("max-parallel")
+    return min(legs, cap) if isinstance(cap, int) and cap > 0 else legs
+
+
+def macos_budget_violations(tree: Tree) -> list[str]:
+    """A pull request's macOS jobs and breadth's macOS suite leg, at once, fit the account's
+    macOS runners: ci.yml's macOS jobs today, and the merge tier's macOS shards, which merge.yml
+    runs, as the catalogue gives them. The legs that wait for breadth's macOS suite run after
+    it, never beside it (:data:`_AFTER_THE_MACOS_SUITE`), so they are not counted."""
+    breadth = _macos_at_once(_breadth_jobs(tree).get("macos") or {})
+    ci_jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
+    ci = sum(_macos_at_once(job) for job in ci_jobs.values())
+    cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    merge = sum(j.shards for j in cat.tier("merge") if j.platform.startswith("macos"))
+    bad: list[str] = []
+    for what, held in (("ci.yml's pull request run", ci), ("the merge tier's run", merge)):
+        if held + breadth > _MACOS_RUNNERS:
+            bad.append(
+                f"{what} holds {held} macOS runners and breadth's macos leg {breadth} at once:"
+                f" {held + breadth}, more than the {_MACOS_RUNNERS} the account runs"
+            )
     return bad
 
 
@@ -3936,9 +3978,9 @@ ROWS: tuple[Row, ...] = (
                 "a shard count other than test-shard's",
                 _CI,
                 "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3, 4]\n",
-                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
                 "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n",
+                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
+                "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n",
             ),
             _plant(
                 "a -k only test-macos has",
@@ -3974,14 +4016,14 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "every macOS shard lists shard 1",
                 _CI,
-                "--leg test-macos --shard ${{ matrix.shard }}/4",
-                "--leg test-macos --shard 1/4",
+                "--leg test-macos --shard ${{ matrix.shard }}/3",
+                "--leg test-macos --shard 1/3",
             ),
             _plant(
                 "test-macos listing test-shard's plan",
                 _CI,
-                "--leg test-macos --shard ${{ matrix.shard }}/4",
-                "--leg test-shard --shard ${{ matrix.shard }}/4",
+                "--leg test-macos --shard ${{ matrix.shard }}/3",
+                "--leg test-shard --shard ${{ matrix.shard }}/3",
             ),
             _plant(
                 "a positional path only test-macos has",
@@ -4020,26 +4062,26 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a step-level if: on test-macos's pytest",
                 _CI,
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 4"
+                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
                 " — two workers, no coverage)\n",
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 4"
+                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
                 " — two workers, no coverage)\n"
                 "        if: github.event_name == 'pull_request'\n",
             ),
             _plant(
                 "test-macos's pytest narrowed by working-directory",
                 _CI,
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 4"
+                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
                 " — two workers, no coverage)\n",
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 4"
+                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
                 " — two workers, no coverage)\n"
                 "        working-directory: tests/security\n",
             ),
             _plant(
                 "test-macos excludes a shard",
                 _CI,
-                "        shard: [1, 2, 3, 4]\n    env:\n      # As `test-shard`",
-                "        shard: [1, 2, 3, 4]\n        exclude:\n          - shard: 4\n"
+                "        shard: [1, 2, 3]\n    env:\n      # As `test-shard`",
+                "        shard: [1, 2, 3]\n        exclude:\n          - shard: 3\n"
                 "    env:\n      # As `test-shard`",
             ),
         ),
@@ -4242,6 +4284,48 @@ ROWS: tuple[Row, ...] = (
                 "coverage, which reaches freshness through coverage-shard, passes",
                 _nothing,
                 fails=False,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners",
+        macos_budget_violations,
+        (
+            _plant(
+                "breadth's macos leg two at a time beside three shards fits: 5 of 5",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      max-parallel: 2\n      matrix:\n        python: ["3.12.15"]\n',
+                fails=False,
+            ),
+            _plant(
+                "breadth's macos leg three at a time beside three shards",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      max-parallel: 3\n      matrix:\n        python: ["3.12.15"]\n',
+                expect="breadth's macos leg 3 at once: 6",
+            ),
+            _plant(
+                "the merge tier's macOS suite in five shards",
+                catalogue.CATALOGUE,
+                "timeout_min = 50\nworkers = 2\nshards = 3\n",
+                "timeout_min = 50\nworkers = 2\nshards = 5\n",
+                expect="the merge tier's run holds 5 macOS runners",
+            ),
+            _plant_in_job(
+                "ci.yml's test-macos in five shards",
+                ".github/workflows/ci.yml",
+                "test-macos",
+                "        shard: [1, 2, 3]\n",
+                "        shard: [1, 2, 3, 4, 5]\n",
+                expect="ci.yml's pull request run holds 5 macOS runners",
+            ),
+            _plant(
+                "breadth's macos leg uncapped: six shards at once",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      matrix:\n        python: ["3.12.15"]\n',
+                expect="breadth's macos leg 6 at once",
             ),
         ),
     ),
@@ -5082,14 +5166,14 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a shard listing another N",
                 _CI,
-                "--leg test-shard --shard ${{ matrix.shard }}/4",
                 "--leg test-shard --shard ${{ matrix.shard }}/3",
+                "--leg test-shard --shard ${{ matrix.shard }}/2",
             ),
             _plant(
                 "the plan naming a leg in another N",
                 _CI,
-                "--leg test-shard:ci.yml:junit-test-shard-:4",
                 "--leg test-shard:ci.yml:junit-test-shard-:3",
+                "--leg test-shard:ci.yml:junit-test-shard-:2",
             ),
             _plant(
                 "a plan nobody checks",
@@ -8395,9 +8479,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a shard count that differs from the job's, its steps unchanged",
             catalogue.CATALOGUE,
-            "shards = 4\n",
-            "shards = 2\n",
-            expect="python-suite: shards is 2, and ci.yml runs 4",
+            'workers = "auto"\nshards = 3\n',
+            'workers = "auto"\nshards = 2\n',
+            expect="python-suite: shards is 2, and ci.yml runs 3",
         ),
         _plant(
             "a run: line folded over two lines with a backslash still matches",
@@ -11969,7 +12053,7 @@ fi
     _SHARD_PLAN_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
         "one shard plan for the run, as ci.yml's": r"""
-python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:ci.yml:junit-test-shard-:4 --leg test-macos:ci.yml:junit-test-macos-:4 --out "$RUNNER_TEMP/shard-plan/plan.json"
+python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:ci.yml:junit-test-shard-:3 --leg test-macos:ci.yml:junit-test-macos-:3 --out "$RUNNER_TEMP/shard-plan/plan.json"
 """,  # noqa: E501
         "every file in exactly one shard of each leg": r"""
 python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
