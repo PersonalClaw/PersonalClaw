@@ -465,6 +465,28 @@ async def _as(state: Any, caller: str, path: str, **headers: str) -> tuple[int, 
         return resp.status, body
 
 
+def test_a_frame_about_nothing_is_heard_by_no_app():
+    """The running list asks the state whether an app hears of a row's frame
+    (``_app_hears_of``), and a frame whose subject is nothing answers no: an app that would own
+    any conversation still hears no notification frame and no phase frame without a mapping. A
+    row that names no work and no session reads as work no chat started, which no app hears of,
+    so the list shows it to no app either."""
+    from personalclaw.dashboard.ws_state import DashboardWebSocketState, frame_subject
+    from personalclaw.running_now import Reach
+
+    ws = DashboardWebSocketState.__new__(DashboardWebSocketState)
+    ws.session_creating_app = lambda key: APP  # it would own any conversation
+    assert frame_subject("notification", {"session": "c1"}) is None
+    assert ws._app_hears_of(APP, "notification", {"session": "c1"}) is False
+    assert frame_subject("work_phase", None) is None
+    assert ws._app_hears_of(APP, "work_phase", None) is False
+    assert Reach(ws, app=APP).sees({}) is False
+    assert Reach(ws, app=APP).sees({"work": None, "session": ""}) is False
+    # The control: the same app hears of, and reads, the work of a chat it started.
+    assert ws._app_hears_of(APP, "work_phase", {"work": "chat:c1", "session": "c1"}) is True
+    assert Reach(ws, app=APP).sees({"work": "chat:c1", "session": "c1"}) is True
+
+
 @pytest.mark.asyncio
 async def test_an_app_reads_only_the_work_its_socket_would_hear_of(tmp_path):
     """The differential: every row the owner reads, an app reads exactly when its socket would
