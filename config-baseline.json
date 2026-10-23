@@ -1853,6 +1853,12 @@
     "type": "str"
   },
   {
+    "default": false,
+    "path": "voice.session_map_audio_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "voice.voice_disclaimer_enabled",
     "sensitive": false,
