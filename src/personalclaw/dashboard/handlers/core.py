@@ -670,8 +670,8 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
                 f"(writable: {', '.join(agent_fields)})"
             )
         # An app writes only the settings its manifest declares — none of these three is a
-        # security setting (`test_the_put_endpoint_writes_no_security_setting`), so the
-        # declaration is the whole rule here.
+        # security setting (the posture rail's "the put endpoint writes no security setting"
+        # row), so the declaration is the whole rule here.
         app_name = request.get("app", "")
         if app_name:
             declared = set(_app_config_fields(app_name))
