@@ -262,7 +262,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         python: ["3.12.15"]
         shard: [1, 2, 3, 4, 5, 6]
@@ -945,7 +945,7 @@ jobs:
     # nothing would run them on macOS. It runs 3.13, test-macos's Python, and `security` runs
     # 3.12, so the corpus runs on each Python requires-python allows. Methodology:
     # docs/security/scanner-testing.md.
-    # It waits for the macos suite, whose shards hold two macOS runners at a time, instead of
+    # It waits for the macos suite, whose shards hold one macOS runner at a time, instead of
     # taking another beside them; it runs whatever the suite concluded.
     needs: [freshness, macos]
     if: ${{ !cancelled() }}

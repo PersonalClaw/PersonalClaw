@@ -189,11 +189,11 @@ security = "security"
 python = "3.12.15"
 timeout_min = 55
 workers = "auto"
-shards = 4
+shards = 3
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-test-shard-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-shard", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-shard", "--shard", "{shard}/3", "--out", "{runner_temp}/shard.txt"] },
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"] },
 ]
 
@@ -209,11 +209,11 @@ platform = "macos-26"
 python = "3.13.16"
 timeout_min = 50
 workers = 2
-shards = 4
+shards = 3
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-test-macos-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/3", "--out", "{runner_temp}/shard.txt"] },
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
 ]
 

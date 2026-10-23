@@ -338,7 +338,7 @@ def test_each_key_names_the_partner_checkouts_its_job_reads() -> None:
     m = planner.matrix(cat, planner.plan(cat, "merge", None, overrides=()))
     assert list(m["partners"]) == m["keys"]
     assert m["partners"]["apps-contract"] == ["apps-partner"]
-    assert m["partners"]["python-suite (1/4)"] == []
+    assert m["partners"]["python-suite (1/3)"] == []
     assert m["partners"]["rails (1/3)"] == []
     assert {n for names in m["partners"].values() for n in names} == {"apps-partner"}
 

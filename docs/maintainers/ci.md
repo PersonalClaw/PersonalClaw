@@ -958,13 +958,17 @@ group and its `cancel-in-progress` would read false. A workflow added later that
 
 ### `test-macos`
 
-Pull requests into `main` run the suite on `macos-26` with Python 3.13, in four shards of whole
+Pull requests into `main` run the suite on `macos-26` with Python 3.13, in three shards of whole
 test files planned from macOS's own durations, two xdist workers each and no coverage. With
 `test-shard` on Ubuntu and 3.12, every change that merges has run both operating systems and
 both Pythons. The security corpus is the exception: no shard collects it, so a pull request
 runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
-3.13. The four shards take four of the five macOS runners a run can hold, so concurrent pull
-requests queue on macOS.
+3.13. The three shards take three of the five macOS runners the account runs at once, and
+breadth's `macos` leg runs one shard at a time (`max-parallel: 1`), so a pull request's run and a
+night's breadth fit the five together; the contract row
+"a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a count that does
+not (ci.yml's macOS jobs and the merge tier's macOS shards, each with breadth's). Concurrent pull
+requests still queue on macOS.
 
 ### The suite's shards
 
