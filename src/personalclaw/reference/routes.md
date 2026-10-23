@@ -122,6 +122,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/browse/kill` — stop unattended browsing. Body: ``{reason?: str}``.
 - `POST /api/browse/kill/release` — re-enable unattended browsing.
 - `GET /api/browse/status` — the mirror's read model: kill state, expired sites, pending grants.
+- `GET /api/buddy/policy` — the buddy's effective policy now (``buddy_policy.policy``).
 - `GET /api/changelog` — read full CHANGELOG.md from project.
 - `POST /api/channel/profile` — read the owner's profile on the channel whose owner id it is.
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
@@ -173,6 +174,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/acp-agent` — bind a DISCOVERED ACP agent.
 - `POST /api/chat/sessions/{session}/agent` — set agent for a chat session.
 - `POST /api/chat/sessions/{session}/approve` — resolve a pending tool approval.
+- `PUT /api/chat/sessions/{session}/bookmarks` — bookmark messages, or take bookmarks off.
 - `POST /api/chat/sessions/{session}/channel-link` — link a dashboard session to a channel.
 - `PATCH /api/chat/sessions/{session}/color` — set session color.
 - `POST /api/chat/sessions/{session}/context` — inject silent background context.
