@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -60,11 +61,16 @@ def _parse_tag(repo: Path, tag: str) -> None:
     if spec is None or spec.loader is None:
         raise trust.Refused(f"cannot read the release's tag parser at {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # A dataclass looks its module up in sys.modules while the class is built, so the module is
+    # registered for as long as it runs, and taken out again after.
+    sys.modules[spec.name] = module
     try:
+        spec.loader.exec_module(module)
         module.parse_release_ref(tag)
     except ValueError as error:
         raise trust.Refused(str(error)) from None
+    finally:
+        sys.modules.pop(spec.name, None)
     if tag != tag.strip():
         raise trust.Refused(f"{tag!r} has spaces around it")
 

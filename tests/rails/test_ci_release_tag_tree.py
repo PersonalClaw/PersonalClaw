@@ -161,3 +161,16 @@ def test_a_token_made_before_the_check_fails() -> None:
     assert "the token is made before the commit and the tag are checked" in _problems(
         yaml.safe_dump(data)
     )
+
+
+def test_the_check_loads_the_real_release_parser() -> None:
+    """The tag check reads scripts/release_tags.py from the checkout, as the workflow's job does:
+    it loads, takes a release tag, and refuses what the release refuses, naming why."""
+    from tools.ci import release_tag, trust
+
+    release_tag._parse_tag(REPO, "v0.2.6")
+    release_tag._parse_tag(REPO, "v0.3.0-rc.1")
+    with pytest.raises(trust.Refused, match="the leading 'v' is required"):
+        release_tag._parse_tag(REPO, "0.2.6")
+    with pytest.raises(trust.Refused, match="build metadata"):
+        release_tag._parse_tag(REPO, "v0.2.6+local")

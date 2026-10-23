@@ -16,11 +16,19 @@ import pytest
 
 from tools.ci import release_tag, trust
 
+#: Shaped as the real parser is: postponed annotations and a frozen dataclass, which only load
+#: when the module is registered while it runs.
 PARSER = (
+    "from __future__ import annotations\n"
     "import re\n"
-    "def parse_release_ref(ref):\n"
+    "from dataclasses import dataclass\n"
+    "@dataclass(frozen=True)\n"
+    "class ReleaseRef:\n"
+    "    ref: str\n"
+    "def parse_release_ref(ref: str) -> ReleaseRef:\n"
     "    if not re.fullmatch(r'v\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?', ref):\n"
     "        raise ValueError(f'{ref!r} is not a release tag (planted parser)')\n"
+    "    return ReleaseRef(ref)\n"
 )
 #: A definition in the planted tree: a workflow, under the first of trust's definition roots.
 RELEASE = trust.DEFINITION_ROOTS[0] + "release.yml"
